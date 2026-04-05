@@ -116,6 +116,13 @@ async def _startup():
     log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
     if IS_PRODUCTION and not os.environ.get("GATEWAY_COOKIE_SECRET"):
         log.warning("PRODUCTION=1 but GATEWAY_COOKIE_SECRET is unset — reserved for future signed-cookie use; not fatal.")
+    # Auto-generate first admin invite token if none exist
+    tokens = db.list_invite_tokens()
+    if not tokens:
+        first_token = db.create_invite_token("Auto-generated admin token")
+        log.info("=" * 50)
+        log.info("  FIRST ADMIN INVITE TOKEN: %s", first_token)
+        log.info("=" * 50)
 
 
 @app.on_event("shutdown")
@@ -320,23 +327,51 @@ def _render_landing() -> HTMLResponse:
     )
 
 
+@app.get("/gate", response_class=HTMLResponse)
+async def gate_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/gate")
+    return render_page("gate", error="")
+
+
+@app.post("/gate")
+async def gate_submit(request: Request, token: str = Form("")):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/gate")
+    token = token.strip().upper()
+    if not token:
+        return render_page("gate", error="Please enter an invite token.")
+    invite = db.get_invite_token(token)
+    if not invite or invite["status"] == "revoked":
+        return render_page("gate", error="Invalid or revoked token.")
+    if invite["status"] == "claimed":
+        email_hint = db.mask_email(invite["claimed_by_email"] or "")
+        return render_page("login", error="", email_hint=f"Account: {email_hint}", invite_token=invite["token"])
+    # Unclaimed — go to signup
+    return render_page("signup", error="", invite_token=invite["token"])
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
-    return render_page("login", error="")
+    return render_page("login", error="", email_hint="One login, every dashboard.", invite_token="")
 
 
 @app.post("/login")
-async def login_submit(request: Request, email: str = Form(...), password: str = Form(...)):
+async def login_submit(request: Request, email: str = Form(...), password: str = Form(...), invite_token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
     email = (email or "").lower().strip()
     user = db.get_user_by_email(email) if email else None
+    if user and user["suspended"]:
+        return render_page("login", error="Account suspended. Contact admin.", email_hint="", invite_token=invite_token)
     if not user or not db.verify_password(password, user["password_hash"], user["password_salt"]):
-        return render_page("login", error="Invalid email or password.")
+        return render_page("login", error="Invalid email or password.", email_hint="", invite_token=invite_token)
     token = db.create_session(user["id"])
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)
@@ -348,24 +383,32 @@ async def signup_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
-    return render_page("signup", error="")
+    # Direct access without a token — redirect to gate
+    return RedirectResponse("/gate", status_code=302)
 
 
 @app.post("/signup")
-async def signup_submit(request: Request, email: str = Form(...), password: str = Form(...)):
+async def signup_submit(request: Request, email: str = Form(...), password: str = Form(...), invite_token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
+
+    invite_token = invite_token.strip().upper()
+    invite = db.get_invite_token(invite_token) if invite_token else None
+    if not invite or invite["status"] != "unclaimed":
+        return render_page("gate", error="Invalid or already used invite token. Please enter a valid token.")
+
     email = (email or "").lower().strip()
     if not is_valid_email(email):
-        return render_page("signup", error="Enter a valid email address.")
+        return render_page("signup", error="Enter a valid email address.", invite_token=invite_token)
     if len(password) < 8:
-        return render_page("signup", error="Password must be at least 8 characters.")
+        return render_page("signup", error="Password must be at least 8 characters.", invite_token=invite_token)
     if len(password) > 256:
-        return render_page("signup", error="Password is too long.")
+        return render_page("signup", error="Password is too long.", invite_token=invite_token)
     if db.get_user_by_email(email):
-        return render_page("signup", error="An account with that email already exists.")
+        return render_page("signup", error="An account with that email already exists.", invite_token=invite_token)
     user_id = db.create_user(email, password)
+    db.claim_invite_token(invite_token, user_id, email)
     token = db.create_session(user_id)
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)
@@ -380,7 +423,7 @@ async def logout(request: Request):
     token = request.cookies.get(COOKIE_NAME)
     if token:
         db.delete_session(token)
-    response = RedirectResponse("/login", status_code=302)
+    response = RedirectResponse("/gate", status_code=302)
     clear_session_cookie(response, request)
     return response
 
@@ -392,7 +435,7 @@ async def my_dashboards(request: Request):
         return await proxy_request(request, "/dashboards")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("/gate", status_code=302)
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     local_mode = is_local_host(request)
@@ -427,10 +470,12 @@ async def my_dashboards(request: Request):
         </div>
         """)
 
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
         "dashboards",
         email=user["email"],
         dashboard_cards="".join(cards_html),
+        raw_admin_link=admin_link,
     )
 
 
@@ -447,7 +492,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         return await proxy_request(request, forwarded_path)
     user = current_user(request)
     if not user:
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("/gate", status_code=302)
 
     if dashboard and dashboard not in DASHBOARDS:
         dashboard = None
@@ -503,7 +548,7 @@ async def billing_action(request: Request, action: str = Form(...)):
         return await proxy_request(request, "/billing")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("/gate", status_code=302)
 
     # Placeholder checkout: no real payment. Stripe hook lives here later.
     parts = action.split(":")
@@ -526,6 +571,181 @@ async def billing_action(request: Request, action: str = Form(...)):
     return RedirectResponse("/billing", status_code=302)
 
 
+# ── Admin panel ──────────────────────────────────────────────────────────────
+
+
+def _require_admin_user(request: Request) -> dict:
+    """Return the current user dict if admin, otherwise raise 403."""
+    user = current_user(request)
+    if not user or not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _build_admin_context(new_token_str: str = "") -> dict:
+    """Build the template context for the admin page."""
+    tokens = db.list_invite_tokens()
+    users = db.list_all_users()
+
+    # Token rows HTML
+    token_rows = []
+    for t in tokens:
+        status = t["status"]
+        if status == "unclaimed":
+            badge = '<span class="badge badge-active">Active</span>'
+        elif status == "claimed":
+            badge = '<span class="badge" style="background:var(--green-bg);color:var(--green)">Claimed</span>'
+        else:
+            badge = '<span class="badge" style="background:var(--red-bg);color:var(--red)">Revoked</span>'
+        prefix = html.escape(t["token"][:8]) + "..." + html.escape(t["token"][-4:])
+        meta_parts = []
+        if t["claimed_by_email"]:
+            meta_parts.append(f'User: {html.escape(t["claimed_by_email"])}')
+        if t["note"]:
+            meta_parts.append(html.escape(t["note"]))
+        import datetime as _dt
+        meta_parts.append(_dt.datetime.fromtimestamp(t["created_at"]).strftime("%Y-%m-%d %H:%M"))
+        if t["claimed_at"]:
+            meta_parts.append(f'Claimed {_dt.datetime.fromtimestamp(t["claimed_at"]).strftime("%Y-%m-%d")}')
+        meta = " &middot; ".join(meta_parts)
+        revoke_btn = ""
+        if status == "unclaimed":
+            revoke_btn = (
+                f'<form method="post" action="/admin/tokens/revoke">'
+                f'<input type="hidden" name="token_id" value="{t["id"]}">'
+                f'<button type="submit" class="btn btn-danger">Revoke</button></form>'
+            )
+        token_rows.append(
+            f'<div class="admin-row token-row" data-status="{status}">'
+            f'<div class="admin-row-info"><div class="admin-row-main">'
+            f'<span class="token-mono">{prefix}</span>{badge}</div>'
+            f'<div class="admin-row-meta">{meta}</div></div>'
+            f'<div class="admin-row-actions">{revoke_btn}</div></div>'
+        )
+
+    # User rows HTML
+    user_rows = []
+    for u in users:
+        badges = ""
+        if u["is_admin"]:
+            badges += '<span class="badge" style="background:var(--accent-light);color:var(--accent)">ADMIN</span> '
+        if u["suspended"]:
+            badges += '<span class="badge" style="background:var(--red-bg);color:var(--red)">SUSPENDED</span> '
+        import datetime as _dt
+        joined = _dt.datetime.fromtimestamp(u["created_at"]).strftime("%Y-%m-%d")
+        actions = ""
+        if u["id"] != 1:  # Protect root admin
+            if not u["is_admin"]:
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/promote" onsubmit="return confirm(\'Promote to admin?\')"><button class="btn btn-primary-outline" style="font-size:11px">Promote</button></form>'
+            else:
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/demote" onsubmit="return confirm(\'Demote to user?\')"><button class="btn btn-danger" style="font-size:11px">Demote</button></form>'
+            if not u["suspended"]:
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/suspend" onsubmit="return confirm(\'Suspend this user?\')"><button class="btn btn-danger" style="font-size:11px">Suspend</button></form>'
+            else:
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend"><button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
+        else:
+            actions = '<span style="font-size:12px;color:var(--text-muted)">Root admin</span>'
+        user_rows.append(
+            f'<div class="admin-row"><div class="admin-row-info">'
+            f'<div class="admin-row-main"><span style="font-weight:600">{html.escape(u["email"])}</span> {badges}</div>'
+            f'<div class="admin-row-meta">Joined {joined}</div></div>'
+            f'<div class="admin-row-actions">{actions}</div></div>'
+        )
+
+    # Stats
+    total_users = len(users)
+    active_tokens = sum(1 for t in tokens if t["status"] == "unclaimed")
+    claimed_tokens = sum(1 for t in tokens if t["status"] == "claimed")
+    revoked_tokens = sum(1 for t in tokens if t["status"] == "revoked")
+    stat_cards = (
+        f'<div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-value">{total_users}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Active Tokens</div><div class="stat-value" style="color:var(--amber)">{active_tokens}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Claimed Tokens</div><div class="stat-value" style="color:var(--green)">{claimed_tokens}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Revoked Tokens</div><div class="stat-value" style="color:var(--red)">{revoked_tokens}</div></div>'
+    )
+
+    # New token banner
+    new_token_banner = ""
+    if new_token_str:
+        new_token_banner = (
+            f'<div class="new-token-banner">'
+            f'<div style="display:flex;align-items:center;justify-content:space-between">'
+            f'<div><div style="font-size:12px;color:var(--green);margin-bottom:4px">New token generated:</div>'
+            f'<span class="token-mono">{html.escape(new_token_str)}</span></div>'
+            f'<button onclick="copyToken(this)" class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Copy</button>'
+            f'</div></div>'
+        )
+
+    return {
+        "raw_token_rows": "".join(token_rows) or '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No tokens yet.</div></div></div>',
+        "raw_user_rows": "".join(user_rows),
+        "raw_stat_cards": stat_cards,
+        "raw_new_token_banner": new_token_banner,
+    }
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    user = _require_admin_user(request)
+    ctx = _build_admin_context()
+    return render_page("admin", email=user["email"], **ctx)
+
+
+@app.post("/admin/tokens/generate")
+async def admin_generate_token(request: Request, note: str = Form("")):
+    user = _require_admin_user(request)
+    new_token = db.create_invite_token(note.strip())
+    log.info("Admin %s generated invite token: %s", user["email"], new_token)
+    ctx = _build_admin_context(new_token_str=new_token)
+    return render_page("admin", email=user["email"], **ctx)
+
+
+@app.post("/admin/tokens/revoke")
+async def admin_revoke_token(request: Request, token_id: int = Form(0)):
+    user = _require_admin_user(request)
+    db.revoke_invite_token(token_id)
+    log.info("Admin %s revoked token id=%d", user["email"], token_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/promote")
+async def admin_promote(request: Request, user_id: int):
+    _require_admin_user(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root admin")
+    db.set_user_admin(user_id, True)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/demote")
+async def admin_demote(request: Request, user_id: int):
+    _require_admin_user(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root admin")
+    db.set_user_admin(user_id, False)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/suspend")
+async def admin_suspend(request: Request, user_id: int):
+    _require_admin_user(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root admin")
+    db.set_user_suspended(user_id, True)
+    log.info("Admin suspended user id=%d", user_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/unsuspend")
+async def admin_unsuspend(request: Request, user_id: int):
+    _require_admin_user(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root admin")
+    db.set_user_suspended(user_id, False)
+    log.info("Admin unsuspended user id=%d", user_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 
@@ -536,7 +756,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         return await proxy_request(request, "/settings")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("/gate", status_code=302)
 
     current_pref = db.get_default_dashboard(user["user_id"]) or ""
     # Subscriptions the user has access to (admins get everything).
@@ -579,7 +799,7 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
         return await proxy_request(request, "/settings")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("/gate", status_code=302)
 
     # Blank → clear preference. Otherwise must be a real dashboard key the
     # user has access to (admin bypasses the subscription check).
@@ -610,7 +830,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     # 1. Require login.
     user = current_user(request)
     if not user:
-        return RedirectResponse(f"https://{DOMAIN}/login", status_code=302)
+        return RedirectResponse(f"https://{DOMAIN}/gate", status_code=302)
 
     # 2. Require active subscription.
     if not db.has_active_subscription(user["user_id"], key):

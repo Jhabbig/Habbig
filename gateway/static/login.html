@@ -16,9 +16,10 @@
 
     <div class="auth-card">
       <div class="auth-title">Welcome back</div>
-      <div class="auth-sub">One login, every dashboard.</div>
+      <div class="auth-sub">{{ email_hint }}</div>
 
       <form class="auth-form" method="post" action="/login">
+        <input type="hidden" name="invite_token" value="{{ invite_token }}">
         <label for="email">Email</label>
         <input id="email" type="email" name="email" required autocomplete="email" autofocus>
 
@@ -31,7 +32,7 @@
       <div class="auth-error">{{ error }}</div>
 
       <div class="auth-footer">
-        New to Habbig? <a href="/signup">Create an account</a>
+        <a href="/gate">Use a different token</a>
       </div>
     </div>
 

@@ -19,6 +19,7 @@
       <div class="auth-sub">No credit card required to sign up.</div>
 
       <form class="auth-form" method="post" action="/signup">
+        <input type="hidden" name="invite_token" value="{{ invite_token }}">
         <label for="email">Email</label>
         <input id="email" type="email" name="email" required autocomplete="email" autofocus>
 
@@ -32,7 +33,7 @@
       <div class="auth-error">{{ error }}</div>
 
       <div class="auth-footer">
-        Already have an account? <a href="/login">Sign in</a>
+        Already have an account? <a href="/gate">Use your token to sign in</a>
       </div>
     </div>
 

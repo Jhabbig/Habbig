@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enter Invite Token — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    .auth-error:empty { display: none; }
+    .token-input {
+      letter-spacing: 0.12em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      text-align: center;
+      font-size: 15px;
+    }
+    .gate-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background: var(--accent-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+    }
+    .gate-icon svg { width: 26px; height: 26px; color: var(--accent); }
+  </style>
+</head>
+<body class="auth-body">
+  <div class="auth-wrap">
+    <a href="/" class="auth-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </a>
+
+    <div class="auth-card" style="text-align: center;">
+      <div class="gate-icon">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"/></svg>
+      </div>
+      <div class="auth-title">Enter your invite token</div>
+      <div class="auth-sub">You need a valid invite token to access Habbig.</div>
+
+      <form class="auth-form" method="post" action="/gate">
+        <label for="token">Invite Token</label>
+        <input id="token" type="text" name="token" required autofocus class="token-input"
+               placeholder="Paste your 32-character token">
+
+        <button type="submit" class="auth-submit">Continue →</button>
+      </form>
+
+      <div class="auth-error">{{ error }}</div>
+    </div>
+
+    <div class="auth-reassure">
+      No token? Contact the admin for an invite.
+    </div>
+  </div>
+</body>
+</html>

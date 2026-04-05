@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS users (
     password_salt     TEXT NOT NULL,
     created_at        INTEGER NOT NULL,
     is_admin          INTEGER NOT NULL DEFAULT 0,
-    default_dashboard TEXT
+    suspended         INTEGER NOT NULL DEFAULT 0,
+    default_dashboard TEXT,
+    invite_token_id   INTEGER REFERENCES invite_tokens(id)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -46,8 +48,21 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS invite_tokens (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    token           TEXT UNIQUE NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'unclaimed',
+    claimed_by_user_id INTEGER REFERENCES users(id),
+    claimed_by_email TEXT,
+    note            TEXT DEFAULT '',
+    created_at      INTEGER NOT NULL,
+    claimed_at      INTEGER
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_invite_token ON invite_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_invite_status ON invite_tokens(status);
 """
 
 
@@ -72,6 +87,10 @@ def init_db() -> None:
         existing_cols = {row["name"] for row in c.execute("PRAGMA table_info(users)")}
         if "default_dashboard" not in existing_cols:
             c.execute("ALTER TABLE users ADD COLUMN default_dashboard TEXT")
+        if "suspended" not in existing_cols:
+            c.execute("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
+        if "invite_token_id" not in existing_cols:
+            c.execute("ALTER TABLE users ADD COLUMN invite_token_id INTEGER REFERENCES invite_tokens(id)")
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────
@@ -238,3 +257,80 @@ def cancel_subscription(user_id: int, dashboard_key: str) -> None:
             "WHERE user_id = ? AND dashboard_key = ?",
             (user_id, dashboard_key),
         )
+
+
+# ── Invite token operations ──────────────────────────────────────────────────
+
+
+def generate_invite_token() -> str:
+    """Generate a 32-character hex invite token."""
+    return secrets.token_hex(16).upper()
+
+
+def create_invite_token(note: str = "") -> str:
+    """Create a new unclaimed invite token. Returns the token string."""
+    token = generate_invite_token()
+    with conn() as c:
+        c.execute(
+            "INSERT INTO invite_tokens (token, status, note, created_at) VALUES (?, 'unclaimed', ?, ?)",
+            (token, note, int(time.time())),
+        )
+    return token
+
+
+def get_invite_token(token: str) -> Optional[sqlite3.Row]:
+    token = token.strip().upper()
+    with conn() as c:
+        return c.execute("SELECT * FROM invite_tokens WHERE token = ?", (token,)).fetchone()
+
+
+def claim_invite_token(token_str: str, user_id: int, email: str) -> None:
+    with conn() as c:
+        c.execute(
+            "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, "
+            "claimed_by_email = ?, claimed_at = ? WHERE token = ?",
+            (user_id, email, int(time.time()), token_str.strip().upper()),
+        )
+        c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
+                   (token_str.strip().upper(), user_id))
+
+
+def revoke_invite_token(token_id: int) -> None:
+    with conn() as c:
+        c.execute("UPDATE invite_tokens SET status = 'revoked' WHERE id = ? AND status = 'unclaimed'", (token_id,))
+
+
+def list_invite_tokens() -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute("SELECT * FROM invite_tokens ORDER BY created_at DESC").fetchall()
+
+
+# ── User management (admin) ─────────────────────────────────────────────────
+
+
+def list_all_users() -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+
+
+def set_user_admin(user_id: int, is_admin: bool) -> None:
+    with conn() as c:
+        c.execute("UPDATE users SET is_admin = ? WHERE id = ?", (1 if is_admin else 0, user_id))
+
+
+def set_user_suspended(user_id: int, suspended: bool) -> None:
+    with conn() as c:
+        c.execute("UPDATE users SET suspended = ? WHERE id = ?", (1 if suspended else 0, user_id))
+        if suspended:
+            # Kill all sessions for this user
+            c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
+
+def mask_email(email: str) -> str:
+    """Mask email like sh***@gmail.com."""
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.rsplit("@", 1)
+    if len(local) <= 2:
+        return f"{local[0]}***@{domain}"
+    return f"{local[:2]}***@{domain}"
