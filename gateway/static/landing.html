@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Habbig — prediction market dashboards, built for edge</title>
+  <meta name="description" content="A suite of dashboards that decode Polymarket, crypto, stocks, sports, weather, and geopolitics. Pick the signals you want. Pay only for what you use.">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+</head>
+<body class="landing-body">
+  <header class="landing-header">
+    <div class="gw-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </div>
+    <nav class="landing-nav">
+      <a href="#features">Dashboards</a>
+      <a href="#pricing">Pricing</a>
+      <a href="/login" class="landing-nav-signin">Sign in</a>
+      <a href="/signup" class="landing-nav-cta">Get started</a>
+    </nav>
+  </header>
+
+  <section class="landing-hero">
+    <div class="landing-hero-inner">
+      <div class="landing-eyebrow">{{ dashboard_count }} dashboards · one login · cancel anytime</div>
+      <h1 class="landing-headline">
+        The signals<br>
+        <span class="landing-gradient">markets don't show you.</span>
+      </h1>
+      <p class="landing-sub">
+        Habbig turns raw Polymarket, crypto, stock, weather and geopolitical data
+        into focused dashboards you actually want to look at. Subscribe to the
+        ones that sharpen your edge. Ignore the rest.
+      </p>
+      <div class="landing-cta-row">
+        <a href="/signup" class="landing-primary-cta">Create your account →</a>
+        <a href="/login" class="landing-secondary-cta">I already have one</a>
+      </div>
+      <div class="landing-trust">
+        <div class="landing-trust-dot"></div>
+        No free tier gimmicks. No ads. No data reselling.
+      </div>
+    </div>
+  </section>
+
+  <section class="landing-section" id="features">
+    <div class="landing-section-head">
+      <div class="landing-eyebrow-sm">What's inside</div>
+      <h2 class="landing-section-title">Pick and mix dashboards</h2>
+      <p class="landing-section-sub">
+        Every card is a separate subscription. Start with one, add more when
+        you want them, cancel individually.
+      </p>
+    </div>
+    <div class="landing-dash-grid">
+      {{ dashboard_cards }}
+    </div>
+  </section>
+
+  <section class="landing-section landing-section-dark" id="pricing">
+    <div class="landing-section-head">
+      <div class="landing-eyebrow-sm">How billing works</div>
+      <h2 class="landing-section-title">Simple, per-dashboard pricing</h2>
+    </div>
+    <div class="landing-pricing-grid">
+      <div class="landing-pricing-card">
+        <div class="landing-pricing-num">1</div>
+        <div class="landing-pricing-title">Create an account</div>
+        <div class="landing-pricing-desc">Email and password. No credit card to sign up. You'll see every dashboard the moment you're in.</div>
+      </div>
+      <div class="landing-pricing-card">
+        <div class="landing-pricing-num">2</div>
+        <div class="landing-pricing-title">Subscribe to what you want</div>
+        <div class="landing-pricing-desc">Pick monthly or annual per dashboard. Each one is billed and cancelled independently.</div>
+      </div>
+      <div class="landing-pricing-card">
+        <div class="landing-pricing-num">3</div>
+        <div class="landing-pricing-title">One login, every dashboard</div>
+        <div class="landing-pricing-desc">Single sign-on across every subdomain. Switch dashboards from the hub or set a default landing page.</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="landing-footer">
+    <div>© Habbig · prediction market dashboards</div>
+    <div class="landing-footer-right">
+      <a href="/login">Sign in</a>
+      <a href="/signup">Get started</a>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,2256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/globe.gl@2.35.1/dist/globe.gl.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg-0: #0a0a0a;
+  --bg-1: #161616;
+  --bg-2: #1e1e1e;
+  --bg-3: #252525;
+  --border: #363636;
+  --border-light: #444444;
+  --text-0: #e0e0e0;
+  --text-1: #a0a0a0;
+  --text-2: #666666;
+  --green: #16a34a;
+  --green-dim: #0f5040;
+  --green-bright: #4ade80;
+  --red: #dc2626;
+  --red-dim: rgba(220,38,38,0.15);
+  --orange: #ea580c;
+  --orange-dim: rgba(234,88,12,0.15);
+  --yellow: #ca8a04;
+  --blue: #2563eb;
+  --teal: #0d9488;
+  --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Monaco, Consolas, 'Courier New', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--mono);
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+/* ── Header ──────────────────────────────────────── */
+.header {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 200;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--green-bright);
+}
+
+.header-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: blink 2s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-stat {
+  font-size: 10px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.header-stat span { color: var(--text-1); }
+
+.threat-pill {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 3px;
+}
+
+.threat-pill.elevated {
+  background: var(--orange-dim);
+  color: var(--orange);
+  border: 1px solid rgba(234,88,12,0.3);
+}
+
+.threat-pill.critical {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(220,38,38,0.3);
+}
+
+/* ── Map Section ─────────────────────────────────── */
+.map-section {
+  position: relative;
+  height: 55vh;
+  min-height: 380px;
+  background: #050505;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  isolation: isolate;
+  z-index: 1;
+}
+
+#globe-container {
+  width: 100%;
+  height: 100%;
+}
+
+#globe-container canvas { cursor: grab; }
+#globe-container canvas:active { cursor: grabbing; }
+
+.map-overlay-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(180deg, rgba(5,5,5,0.8) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.map-overlay-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(0deg, rgba(10,10,10,0.9) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.map-legend {
+  position: absolute;
+  bottom: 12px;
+  left: 16px;
+  display: flex;
+  gap: 14px;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.legend-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.map-stats {
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
+  display: flex;
+  gap: 16px;
+  z-index: 20;
+  font-size: 10px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.map-stats span { color: var(--green); }
+
+/* Heatmap indicator */
+.heatmap-indicator {
+  display: none;
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  background: rgba(10,10,10,0.9);
+  border: 1px solid var(--green-bright);
+  border-radius: 4px;
+  padding: 6px 12px;
+  z-index: 25;
+  align-items: center;
+  gap: 10px;
+  backdrop-filter: blur(4px);
+}
+.heatmap-indicator.active { display: flex; }
+.heatmap-indicator-label { font-size: 10px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.6px; }
+.heatmap-indicator-country { font-size: 11px; font-weight: 700; color: var(--text-0); }
+.heatmap-indicator-flag { font-size: 14px; }
+.heatmap-clear-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.heatmap-clear-btn:hover { border-color: var(--red); color: var(--red); }
+
+/* ── Panels Grid ─────────────────────────────────── */
+.panels-container {
+  padding: 12px;
+  position: relative;
+  z-index: 2;
+}
+
+.panels-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+/* ── Panel Base ──────────────────────────────────── */
+.panel {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 340px;
+}
+
+.panel-head {
+  height: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-1);
+}
+
+.panel-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+
+.panel-badge.red { background: var(--red-dim); color: var(--red); }
+.panel-badge.orange { background: var(--orange-dim); color: var(--orange); }
+.panel-badge.green { background: rgba(22,163,74,0.15); color: var(--green); }
+.panel-badge.blue { background: rgba(37,99,235,0.15); color: var(--blue); }
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.panel-body::-webkit-scrollbar { width: 4px; }
+.panel-body::-webkit-scrollbar-track { background: transparent; }
+.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Conflict Rows ───────────────────────────────── */
+.c-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: background 0.15s;
+  gap: 8px;
+}
+
+.c-row:hover { background: var(--bg-2); }
+.c-row:last-child { border-bottom: none; }
+
+.c-row-left { flex: 1; min-width: 0; }
+
+.c-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.c-meta {
+  font-size: 9px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.c-type {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(37,99,235,0.1);
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.c-bars {
+  display: flex;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.c-bar {
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.c-bar.on { background: var(--red); }
+.c-bar.on.med { background: var(--orange); }
+.c-bar.on.low { background: var(--yellow); }
+
+/* ── Hotspot Rows ────────────────────────────────── */
+.h-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.h-row:hover { background: var(--bg-2); }
+.h-row:last-child { border-bottom: none; }
+
+.h-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-0);
+}
+
+.h-note {
+  font-size: 9px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.h-level {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.h-level.high { background: var(--red-dim); color: var(--red); }
+.h-level.elevated { background: var(--orange-dim); color: var(--orange); }
+.h-level.watch { background: rgba(37,99,235,0.15); color: var(--blue); }
+
+/* ── Indicator Panel ─────────────────────────────── */
+.ind-body { padding: 10px; }
+
+.ind-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ind-icon { font-size: 18px; line-height: 1; }
+
+.ind-status {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ind-status.critical { background: var(--red-dim); color: var(--red); }
+.ind-status.elevated { background: var(--orange-dim); color: var(--orange); }
+.ind-status.normal { background: rgba(22,163,74,0.15); color: var(--green); }
+.ind-status.low { background: rgba(37,99,235,0.15); color: var(--blue); }
+
+.ind-value {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  line-height: 1;
+  margin-bottom: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ind-unit {
+  font-size: 10px;
+  color: var(--text-2);
+  margin-left: 4px;
+  font-weight: 400;
+}
+
+.ind-bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 1px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.ind-bar-fill {
+  height: 100%;
+  border-radius: 1px;
+  transition: width 1s ease;
+}
+
+.ind-spark {
+  height: 32px !important;
+  max-height: 32px;
+  width: 100% !important;
+  margin: 6px 0;
+  display: block;
+}
+
+.ind-desc {
+  font-size: 10px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.ind-source {
+  font-size: 9px;
+  color: var(--text-2);
+  opacity: 0.5;
+  margin-top: 4px;
+}
+
+/* ── Sanction Rows ───────────────────────────────── */
+.s-row {
+  display: flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  gap: 8px;
+  font-size: 11px;
+}
+
+.s-row:last-child { border-bottom: none; }
+.s-from { color: var(--text-1); font-weight: 600; min-width: 80px; }
+.s-arrow { color: var(--text-2); }
+.s-target { color: var(--orange); font-weight: 600; min-width: 70px; }
+.s-note { color: var(--text-2); font-size: 10px; flex: 1; }
+
+/* ── Nuclear Rows ────────────────────────────────── */
+.n-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 60px;
+  align-items: center;
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  gap: 8px;
+  font-size: 11px;
+}
+
+.n-row:last-child { border-bottom: none; }
+.n-flag { font-size: 14px; }
+.n-info { display: flex; flex-direction: column; }
+.n-country { font-weight: 600; font-size: 11px; }
+
+.n-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.n-bar {
+  flex: 1;
+  height: 3px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.n-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--orange), var(--red));
+  border-radius: 1px;
+}
+
+.n-count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--red);
+  text-align: right;
+}
+
+.n-status { font-size: 9px; color: var(--text-2); }
+
+/* ── Militia Rows ───────────────────────────────── */
+.m-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.m-row:hover { background: var(--bg-2); }
+.m-row:last-child { border-bottom: none; }
+.m-row-left { flex: 1; min-width: 0; }
+.m-name { font-size: 11px; font-weight: 600; color: var(--text-0); }
+.m-meta { font-size: 9px; color: var(--text-2); margin-top: 1px; }
+.m-type {
+  font-size: 9px; padding: 1px 4px; border-radius: 2px;
+  background: rgba(168,85,247,0.12); color: #a855f7;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.m-strength { font-size: 9px; color: var(--text-2); flex-shrink: 0; text-align: right; }
+
+/* ── News Rows ──────────────────────────────────── */
+.news-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  transition: background 0.15s;
+  text-decoration: none;
+  display: block;
+}
+
+.news-row:hover { background: var(--bg-2); }
+.news-row:last-child { border-bottom: none; }
+
+.news-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.news-source {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--green);
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.news-time {
+  font-size: 9px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.news-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-0);
+  line-height: 1.35;
+}
+
+.news-desc {
+  font-size: 10px;
+  color: var(--text-2);
+  line-height: 1.35;
+  margin-top: 2px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.news-loading {
+  padding: 16px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ── Polymarket Rows ────────────────────────────── */
+.poly-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  transition: background 0.15s;
+  text-decoration: none;
+  color: inherit;
+}
+.poly-row:hover { background: var(--bg-2); }
+.poly-row:last-child { border-bottom: none; }
+
+.poly-gauge {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  position: relative;
+}
+.poly-gauge-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.poly-gauge-bg { fill: none; stroke: rgba(255,255,255,0.08); stroke-width: 5; }
+.poly-gauge-fg { fill: none; stroke-width: 5; stroke-linecap: round; transition: stroke-dasharray 0.8s ease; }
+.poly-gauge-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.poly-info { flex: 1; min-width: 0; }
+.poly-question {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-0);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.poly-meta {
+  font-size: 9px;
+  color: var(--text-2);
+  margin-top: 4px;
+  display: flex;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.poly-meta-label { color: var(--text-2); }
+.poly-meta-value { color: var(--text-1); font-weight: 600; }
+.poly-outcome {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  background: rgba(22,163,74,0.15);
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.poly-outcome.no { background: var(--red-dim); color: var(--red); }
+
+/* ── Relations Overlay ──────────────────────────── */
+.relations-overlay {
+  display: none;
+  position: fixed;
+  top: 40px;
+  right: 0;
+  width: 340px;
+  max-height: calc(100vh - 52px);
+  background: var(--bg-1);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  z-index: 150;
+  overflow-y: auto;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+}
+
+.relations-overlay.open { display: block; }
+
+.relations-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.relations-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+.relations-close {
+  width: 24px; height: 24px; background: none; border: 1px solid var(--border);
+  color: var(--text-1); cursor: pointer; font-size: 14px; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono);
+}
+.relations-close:hover { border-color: var(--text-0); color: var(--text-0); }
+
+.rel-row {
+  display: flex; align-items: center; padding: 6px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer; transition: background 0.15s; gap: 8px;
+}
+.rel-row:hover { background: var(--bg-2); }
+.rel-row:last-child { border-bottom: none; }
+
+.rel-flag { font-size: 16px; flex-shrink: 0; }
+.rel-info { flex: 1; min-width: 0; }
+.rel-name { font-size: 11px; font-weight: 600; }
+.rel-detail { font-size: 9px; color: var(--text-2); margin-top: 1px; }
+.rel-type {
+  font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 2px;
+  text-transform: uppercase; letter-spacing: 0.3px; flex-shrink: 0;
+}
+.rel-type.ally { background: rgba(22,163,74,0.15); color: var(--green); }
+.rel-type.partner { background: rgba(37,99,235,0.15); color: var(--blue); }
+.rel-type.rival { background: var(--orange-dim); color: var(--orange); }
+.rel-type.adversary { background: var(--red-dim); color: var(--red); }
+
+/* ── Country Selector ───────────────────────────── */
+.country-select-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+}
+
+.country-select-row select {
+  flex: 1; background: var(--bg-2); color: var(--text-0); border: 1px solid var(--border);
+  padding: 4px 8px; border-radius: 3px; font-family: var(--mono); font-size: 11px;
+}
+
+/* ── Country Profile Modal ──────────────────────── */
+.country-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 300;
+  overflow-y: auto;
+  backdrop-filter: blur(4px);
+}
+.country-modal.open { display: block; }
+
+.cm-dialog {
+  max-width: 1100px;
+  margin: 40px auto;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+}
+
+.cm-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+.cm-flag { font-size: 48px; line-height: 1; }
+.cm-title-block { flex: 1; min-width: 0; }
+.cm-title { font-size: 22px; font-weight: 800; color: var(--text-0); letter-spacing: 0.5px; }
+.cm-subtitle { font-size: 11px; color: var(--text-2); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.8px; }
+.cm-close {
+  width: 32px; height: 32px; background: var(--bg-3); border: 1px solid var(--border);
+  color: var(--text-1); cursor: pointer; font-size: 18px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono);
+}
+.cm-close:hover { border-color: var(--text-0); color: var(--text-0); }
+
+.cm-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+.cm-stat {
+  padding: 12px 16px;
+  border-right: 1px solid var(--border);
+}
+.cm-stat:last-child { border-right: none; }
+.cm-stat-label { font-size: 9px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
+.cm-stat-value { font-size: 14px; font-weight: 700; color: var(--text-0); }
+
+.cm-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.cm-section:last-child { border-bottom: none; }
+
+.cm-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--green-bright);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cm-section-title::before {
+  content: '';
+  width: 4px; height: 12px;
+  background: var(--green-bright);
+  border-radius: 1px;
+}
+
+.cm-leaders {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+.cm-leader {
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.cm-leader-role { font-size: 9px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.6px; }
+.cm-leader-name { font-size: 13px; font-weight: 600; color: var(--text-0); margin-top: 2px; }
+
+.cm-memberships { display: flex; flex-wrap: wrap; gap: 6px; }
+.cm-membership {
+  font-size: 10px;
+  padding: 4px 10px;
+  background: rgba(37,99,235,0.1);
+  color: var(--blue);
+  border: 1px solid rgba(37,99,235,0.3);
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.cm-policies {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+.cm-policy {
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-light);
+  border-radius: 4px;
+}
+.cm-policy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.cm-policy-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-0);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.cm-policy-status {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-1);
+}
+.cm-policy-status.legal, .cm-policy-status.active, .cm-policy-status.universal,
+.cm-policy-status.open, .cm-policy-status.protected { background: rgba(22,163,74,0.15); color: var(--green); }
+.cm-policy-status.restricted, .cm-policy-status.mixed, .cm-policy-status.limited,
+.cm-policy-status.moderate, .cm-policy-status.complex { background: var(--orange-dim); color: var(--orange); }
+.cm-policy-status.banned, .cm-policy-status.strict, .cm-policy-status.reduced,
+.cm-policy-status.closed, .cm-policy-status.low, .cm-policy-status.minimal { background: var(--red-dim); color: var(--red); }
+.cm-policy-status.abolished, .cm-policy-status.moratorium,
+.cm-policy-status.non-nuclear { background: rgba(37,99,235,0.15); color: var(--blue); }
+.cm-policy-detail { font-size: 10px; color: var(--text-1); line-height: 1.45; }
+
+.cm-relations-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 4px;
+}
+.cm-rel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-2);
+  border-radius: 3px;
+  border: 1px solid transparent;
+}
+.cm-rel:hover { border-color: var(--border); cursor: pointer; }
+.cm-rel-flag { font-size: 16px; flex-shrink: 0; }
+.cm-rel-name { font-size: 11px; font-weight: 600; color: var(--text-0); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-rel-bar {
+  width: 60px;
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.cm-rel-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+.cm-rel-score {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ── Country Browser Panel Cards ───────────────── */
+.cb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px;
+  padding: 10px;
+}
+.cb-card {
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cb-card:hover {
+  border-color: var(--green-bright);
+  transform: translateY(-1px);
+}
+.cb-card-flag { font-size: 22px; flex-shrink: 0; }
+.cb-card-info { flex: 1; min-width: 0; }
+.cb-card-name { font-size: 11px; font-weight: 700; color: var(--text-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-card-meta { font-size: 9px; color: var(--text-2); margin-top: 2px; }
+
+/* ── Footer ──────────────────────────────────────── */
+.footer {
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-2);
+  border-top: 1px solid var(--border);
+  letter-spacing: 0.3px;
+}
+
+/* ── Theme Switcher ──────────────────────────────── */
+.theme-switcher {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.theme-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+  position: relative;
+}
+
+.theme-btn:hover { transform: scale(1.15); border-color: var(--text-1); }
+.theme-btn.active { border-color: var(--text-0); box-shadow: 0 0 4px rgba(255,255,255,0.2); }
+.theme-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--green);
+}
+
+.theme-btn[data-theme="dark"] { background: #0a0a0a; }
+.theme-btn[data-theme="light"] { background: #f0f0f0; }
+.theme-btn[data-theme="green"] { background: #0a1a0a; }
+.theme-btn[data-theme="amber"] { background: #1a150a; }
+.theme-btn[data-theme="blue"] { background: #0a0a1a; }
+
+/* ── Theme: Light ────────────────────────────────── */
+[data-theme="light"] {
+  --bg-0: #f0f0f0;
+  --bg-1: #ffffff;
+  --bg-2: #f5f5f5;
+  --bg-3: #eaeaea;
+  --border: #d0d0d0;
+  --border-light: #bbb;
+  --text-0: #1a1a1a;
+  --text-1: #555;
+  --text-2: #888;
+  --green: #16a34a;
+  --green-dim: #dcfce7;
+  --green-bright: #15803d;
+  --red: #dc2626;
+  --red-dim: rgba(220,38,38,0.1);
+  --orange: #ea580c;
+  --orange-dim: rgba(234,88,12,0.1);
+  --yellow: #a16207;
+  --blue: #2563eb;
+  --teal: #0d9488;
+}
+
+[data-theme="light"] .map-section { background: #e0e0e0; }
+[data-theme="light"] .map-overlay-top { background: linear-gradient(180deg, rgba(240,240,240,0.8) 0%, transparent 100%); }
+[data-theme="light"] .map-overlay-bottom { background: linear-gradient(0deg, rgba(240,240,240,0.9) 0%, transparent 100%); }
+[data-theme="light"] .c-row:hover,
+[data-theme="light"] .h-row:hover { background: var(--bg-3); }
+[data-theme="light"] .c-row, [data-theme="light"] .h-row,
+[data-theme="light"] .s-row, [data-theme="light"] .n-row { border-bottom-color: rgba(0,0,0,0.06); }
+
+/* ── Theme: Green Terminal ───────────────────────── */
+[data-theme="green"] {
+  --bg-0: #060d06;
+  --bg-1: #0c160c;
+  --bg-2: #122012;
+  --bg-3: #1a2a1a;
+  --border: #1e3a1e;
+  --border-light: #2a4a2a;
+  --text-0: #33ff33;
+  --text-1: #22aa22;
+  --text-2: #116611;
+  --green: #33ff33;
+  --green-dim: #0a2a0a;
+  --green-bright: #33ff33;
+  --red: #ff3333;
+  --red-dim: rgba(255,50,50,0.15);
+  --orange: #ffaa00;
+  --orange-dim: rgba(255,170,0,0.15);
+  --yellow: #aaaa00;
+  --blue: #3388ff;
+  --teal: #33ddaa;
+}
+
+[data-theme="green"] .map-section { background: #030803; }
+
+/* ── Theme: Amber Terminal ───────────────────────── */
+[data-theme="amber"] {
+  --bg-0: #0d0a06;
+  --bg-1: #16120c;
+  --bg-2: #201a12;
+  --bg-3: #2a221a;
+  --border: #3a2e1e;
+  --border-light: #4a3e2a;
+  --text-0: #ffbb33;
+  --text-1: #cc9922;
+  --text-2: #886611;
+  --green: #ffbb33;
+  --green-dim: #2a1a0a;
+  --green-bright: #ffcc44;
+  --red: #ff4444;
+  --red-dim: rgba(255,68,68,0.15);
+  --orange: #ff8800;
+  --orange-dim: rgba(255,136,0,0.15);
+  --yellow: #ffaa00;
+  --blue: #4499ff;
+  --teal: #33ccaa;
+}
+
+[data-theme="amber"] .map-section { background: #080604; }
+
+/* ── Theme: Blue ─────────────────────────────────── */
+[data-theme="blue"] {
+  --bg-0: #060810;
+  --bg-1: #0c1020;
+  --bg-2: #121828;
+  --bg-3: #1a2238;
+  --border: #1e3050;
+  --border-light: #2a4060;
+  --text-0: #c0d8ff;
+  --text-1: #7098cc;
+  --text-2: #405880;
+  --green: #4488ff;
+  --green-dim: #0a1a3a;
+  --green-bright: #66aaff;
+  --red: #ff4466;
+  --red-dim: rgba(255,68,102,0.15);
+  --orange: #ff8844;
+  --orange-dim: rgba(255,136,68,0.15);
+  --yellow: #ffcc44;
+  --blue: #4488ff;
+  --teal: #44bbdd;
+}
+
+[data-theme="blue"] .map-section { background: #040610; }
+
+/* ── Scrollbar ───────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 768px) {
+  .map-section { height: 40vh; min-height: 280px; }
+  .panels-grid { grid-template-columns: 1fr 1fr; }
+  .header-right { display: none; }
+}
+
+@media (max-width: 480px) {
+  .panels-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ────────────────────────────────────── -->
+<header class="header">
+  <div class="header-left">
+    <span class="header-title">World Monitor</span>
+    <span class="header-live"><span class="live-dot"></span> live</span>
+  </div>
+  <div class="header-right">
+    <span class="header-stat">conflicts: <span id="h-conflicts">--</span></span>
+    <span class="header-stat">hotspots: <span id="h-hotspots">--</span></span>
+    <span class="header-stat">indicators: <span id="h-indicators">--</span></span>
+    <span class="threat-pill elevated" id="threat-pill">elevated</span>
+    <div class="theme-switcher">
+      <div class="theme-btn active" data-theme="dark" title="Dark"></div>
+      <div class="theme-btn" data-theme="light" title="Light"></div>
+      <div class="theme-btn" data-theme="green" title="Green Terminal"></div>
+      <div class="theme-btn" data-theme="amber" title="Amber Terminal"></div>
+      <div class="theme-btn" data-theme="blue" title="Blue"></div>
+    </div>
+  </div>
+</header>
+
+<!-- ── Map ────────────────────────────────────────── -->
+<div class="map-section">
+  <div id="globe-container"></div>
+  <div class="map-overlay-top"></div>
+  <div class="map-overlay-bottom"></div>
+  <div class="map-legend">
+    <div class="legend-item"><span class="legend-dot" style="background:var(--red)"></span> active war</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--orange)"></span> tension</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span> watch</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#a855f7"></span> militia</div>
+  </div>
+  <div class="map-stats">
+    <span>layers: <span>3</span></span>
+    <span>sources: <span>osint</span></span>
+  </div>
+  <div class="heatmap-indicator" id="heatmap-indicator">
+    <span class="heatmap-indicator-label">Relations:</span>
+    <span class="heatmap-indicator-flag" id="heatmap-flag"></span>
+    <span class="heatmap-indicator-country" id="heatmap-country"></span>
+    <button class="heatmap-clear-btn" id="heatmap-clear">Clear</button>
+  </div>
+</div>
+
+<!-- ── Panels Grid ───────────────────────────────── -->
+<div class="panels-container">
+  <div class="panels-grid" id="panels-grid">
+    <!-- Populated by JS -->
+  </div>
+</div>
+
+<!-- ── Relations Overlay ────────────────────────── -->
+<div class="relations-overlay" id="relations-overlay">
+  <div class="relations-header">
+    <span class="relations-title" id="relations-title">Country Relations</span>
+    <button class="relations-close" id="relations-close">&times;</button>
+  </div>
+  <div class="country-select-row">
+    <select id="country-select">
+      <option value="">Select a country...</option>
+    </select>
+  </div>
+  <div id="relations-list"></div>
+</div>
+
+<!-- ── Country Profile Modal ─────────────────────── -->
+<div class="country-modal" id="country-modal">
+  <div class="cm-dialog" id="cm-dialog">
+    <!-- Populated by JS -->
+  </div>
+</div>
+
+<!-- ── Footer ────────────────────────────────────── -->
+<div class="footer">
+  Data curated / simulated for indicators without live feeds. Conflict data based on open-source intelligence.
+  Updated: <span id="last-updated"></span>
+</div>
+
+<script>
+// ── Theme ────────────────────────────────────────────────
+(function() {
+  const saved = localStorage.getItem('wm-theme') || 'dark';
+  if (saved !== 'dark') document.documentElement.setAttribute('data-theme', saved);
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    if (btn.dataset.theme === saved) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
+})();
+
+function setTheme(theme) {
+  if (theme === 'dark') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('wm-theme', theme);
+  document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
+  // Update globe background
+  if (globe) {
+    const bgMap = { dark: '#050505', light: '#e0e0e0', green: '#030803', amber: '#080604', blue: '#040610' };
+    globe.backgroundColor(bgMap[theme] || '#050505');
+  }
+}
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.theme-btn');
+  if (btn) setTheme(btn.dataset.theme);
+});
+
+// ── Helpers ───────────────────────────────────────────────
+function countryFlag(code) {
+  return code.toUpperCase().replace(/./g, c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65));
+}
+
+const ICONS = {
+  'pentagon-pizza': '\u{1F355}', 'doomsday-clock': '\u{23F0}',
+  'vix': '\u{1F4C9}', 'baltic-dry': '\u{1F6A2}',
+  'big-mac': '\u{1F354}', 'misery-index': '\u{1F629}',
+  'waffle-house': '\u{1F9C7}', 'lipstick-index': '\u{1F484}',
+  'cardboard-box': '\u{1F4E6}', 'underwear-index': '\u{1FA72}',
+  'copper-gold': '\u{2696}\u{FE0F}', 'skyscraper-index': '\u{1F3D7}\u{FE0F}',
+};
+
+const STATUS_COLORS = {
+  critical: '#dc2626', elevated: '#ea580c',
+  normal: '#16a34a', low: '#2563eb',
+};
+
+let globe;
+let data = {};
+let relationArcs = [];
+
+// ── Init ─────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadData();
+  try { initGlobe(); } catch(e) { console.warn('Globe init failed:', e); }
+  renderPanels();
+  updateHeaderStats();
+  document.getElementById('last-updated').textContent = new Date().toLocaleString();
+  // Fetch news asynchronously (may take a few seconds from RSS feeds)
+  loadNews();
+  loadPolymarket();
+  // Refresh news every 5 minutes, polymarket every 3 minutes
+  setInterval(loadNews, 5 * 60 * 1000);
+  setInterval(loadPolymarket, 3 * 60 * 1000);
+});
+
+async function loadData() {
+  try {
+    const resp = await fetch('/api/all');
+    data = await resp.json();
+    data.news = [];
+    data.polymarket = [];
+  } catch (e) {
+    console.error('Failed to load data:', e);
+    data = { conflicts: [], hotspots: [], indicators: [], sanctions: [], nuclear: [], militias: [], relations: {}, profiles: {}, news: [], polymarket: [], threat_level: 'UNKNOWN', threat_note: '' };
+  }
+}
+
+async function loadPolymarket() {
+  try {
+    const resp = await fetch('/api/polymarket');
+    const d = await resp.json();
+    data.polymarket = d.markets || [];
+    const body = document.getElementById('poly-panel-body');
+    if (body) body.innerHTML = buildPolyRows();
+  } catch (e) {
+    console.error('Failed to load polymarket:', e);
+  }
+}
+
+async function loadNews() {
+  try {
+    const resp = await fetch('/api/news');
+    const d = await resp.json();
+    data.news = d.news || [];
+    // Update just the news panel
+    const newsBody = document.getElementById('news-panel-body');
+    if (newsBody) newsBody.innerHTML = buildNewsRows();
+  } catch (e) {
+    console.error('Failed to load news:', e);
+  }
+}
+
+// ── Globe ────────────────────────────────────────────────
+function initGlobe() {
+  const container = document.getElementById('globe-container');
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+
+  // Combine hotspots + militias into points layer
+  const hotspotPts = (data.hotspots || []).map(h => ({...h, _kind: 'hotspot'}));
+  const militiaPts = (data.militias || []).map(m => ({...m, _kind: 'militia'}));
+  const allPoints = [...hotspotPts, ...militiaPts];
+
+  globe = Globe()
+    .width(w).height(h)
+    .backgroundColor('#050505')
+    .globeImageUrl('https://unpkg.com/three-globe@2.35.1/example/img/earth-night.jpg')
+    .atmosphereColor('#0f5040')
+    .atmosphereAltitude(0.18)
+    .arcsData(data.conflicts)
+    .arcStartLat(d => d.startLat).arcStartLng(d => d.startLng)
+    .arcEndLat(d => d.endLat).arcEndLng(d => d.endLng)
+    .arcColor(d => {
+      // Score arcs (country profile heatmap) use _scoreArc + _score
+      if (d._scoreArc) {
+        const c = scoreColor(d._score);
+        return [c + 'e6', c + '55'];
+      }
+      // Relation arcs use _relType
+      if (d._relType === 'ally') return ['rgba(22,163,74,0.9)', 'rgba(22,163,74,0.4)'];
+      if (d._relType === 'partner') return ['rgba(37,99,235,0.9)', 'rgba(37,99,235,0.4)'];
+      if (d._relType === 'rival') return ['rgba(234,88,12,0.9)', 'rgba(234,88,12,0.4)'];
+      if (d._relType === 'adversary') return ['rgba(220,38,38,0.9)', 'rgba(220,38,38,0.4)'];
+      // Conflict arcs
+      if (d.intensity >= 5) return ['rgba(220,38,38,0.9)', 'rgba(220,38,38,0.4)'];
+      if (d.intensity >= 4) return ['rgba(234,88,12,0.9)', 'rgba(234,88,12,0.4)'];
+      return ['rgba(202,138,4,0.8)', 'rgba(202,138,4,0.3)'];
+    })
+    .arcDashLength(d => d._scoreArc ? 0.4 : (d._relType ? 0.3 : 0.5))
+    .arcDashGap(d => d._scoreArc ? 0.2 : (d._relType ? 0.15 : 0.25))
+    .arcDashAnimateTime(d => d._scoreArc ? 2000 : (d._relType ? 1500 : 2500))
+    .arcStroke(d => d._scoreArc ? 0.6 : (d._relType ? 0.8 : 0.2 + (d.intensity || 0) * 0.2))
+    .arcLabel(d => {
+      if (d._scoreArc) return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
+        <b style="color:${scoreColor(d._score)}">${d._relName}</b><br>
+        <span style="color:#999">Relation: ${d._score}/100 &middot; ${scoreLabel(d._score)}</span>
+      </div>`;
+      if (d._relType) return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
+        <b style="color:#e0e0e0">${d._relName}</b><br>
+        <span style="color:#666">${d._relDetail}</span>
+      </div>`;
+      return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
+        <b style="color:#e0e0e0">${d.name}</b><br>
+        <span style="color:#666">Since ${d.started} &middot; ${d.casualties}</span>
+      </div>`;
+    })
+    .pointsData(allPoints)
+    .pointLat(d => d.lat).pointLng(d => d.lng)
+    .pointColor(d => {
+      if (d._kind === 'score-self') return d._color || '#22d3ee';
+      if (d._kind === 'score') return d._color;
+      if (d._kind === 'militia') return '#a855f7';
+      return d.level === 'high' ? '#dc2626' : d.level === 'elevated' ? '#ea580c' : '#2563eb';
+    })
+    .pointAltitude(d => {
+      if (d._kind === 'score-self') return 0.18;
+      if (d._kind === 'score') return 0.08 + (d._score || 0) * 0.001;
+      if (d._kind === 'militia') return 0.06;
+      return 0.05;
+    })
+    .pointRadius(d => {
+      if (d._kind === 'score-self') return 0.55;
+      if (d._kind === 'score') return 0.38;
+      if (d._kind === 'militia') return 0.3;
+      return 0.35;
+    })
+    .pointLabel(d => {
+      if (d._kind === 'score-self') return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #22d3ee;max-width:220px">
+        <b style="color:#22d3ee">${d.name}</b><br>
+        <span style="color:#999">Selected country</span>
+      </div>`;
+      if (d._kind === 'score') return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
+        <b style="color:${d._color}">${d.name}</b><br>
+        <span style="color:#999">Relation: ${d._score}/100 &middot; ${scoreLabel(d._score)}</span>
+      </div>`;
+      if (d._kind === 'militia') return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
+        <b style="color:#a855f7">${d.name}</b><br>
+        <span style="color:#999">${d.country}</span><br>
+        <span style="color:#666">${d.type} &middot; ${d.strength}</span><br>
+        <span style="color:#555">${d.note}</span>
+      </div>`;
+      return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:200px">
+        <b style="color:#e0e0e0">${d.name}</b><br>
+        <span style="color:#666">${d.note}</span>
+      </div>`;
+    })
+    .ringsData([...data.hotspots, ...data.militias.map(m => ({...m, level: 'militia'}))])
+    .ringLat(d => d.lat).ringLng(d => d.lng)
+    .ringColor(d => {
+      if (d.level === 'militia') return t => `rgba(168,85,247,${1 - t})`;
+      if (d.level === 'high') return t => `rgba(220,38,38,${1 - t})`;
+      if (d.level === 'elevated') return t => `rgba(234,88,12,${1 - t})`;
+      return t => `rgba(37,99,235,${1 - t})`;
+    })
+    .ringMaxRadius(2.5).ringPropagationSpeed(1.2).ringRepeatPeriod(2000)
+    (container);
+
+  globe.pointOfView({ lat: 20, lng: 40, altitude: 2.0 }, 1000);
+  globe.controls().autoRotate = true;
+  globe.controls().autoRotateSpeed = 0.25;
+  globe.controls().enableDamping = true;
+
+  window.addEventListener('resize', () => {
+    globe.width(container.clientWidth).height(container.clientHeight);
+  });
+}
+
+function focusGlobe(lat, lng, alt = 1.5) {
+  if (!globe) return;
+  globe.pointOfView({ lat, lng, altitude: alt }, 800);
+  globe.controls().autoRotate = false;
+}
+
+// ── Header Stats ─────────────────────────────────────────
+function updateHeaderStats() {
+  document.getElementById('h-conflicts').textContent = data.conflicts.length;
+  document.getElementById('h-hotspots').textContent = data.hotspots.length;
+  document.getElementById('h-indicators').textContent = data.indicators.length;
+
+  const pill = document.getElementById('threat-pill');
+  const level = (data.threat_level || 'unknown').toLowerCase();
+  pill.textContent = level;
+  pill.className = 'threat-pill ' + (level === 'critical' || level === 'severe' ? 'critical' : 'elevated');
+}
+
+// ── Render All Panels ────────────────────────────────────
+function renderPanels() {
+  const grid = document.getElementById('panels-grid');
+  let html = '';
+
+  // 0. News feed panel
+  html += buildNewsPanel();
+
+  // 0.5 Polymarket prediction markets panel
+  html += buildPolyPanel();
+
+  // 1. Active Conflicts panel
+  html += buildConflictsPanel();
+
+  // 2. Tension Zones panel
+  html += buildHotspotsPanel();
+
+  // 3. Each indicator as its own panel
+  data.indicators.forEach(ind => {
+    html += buildIndicatorPanel(ind);
+  });
+
+  // 3.5 Country Browser panel
+  html += buildCountryBrowserPanel();
+
+  // 4. Militias panel
+  html += buildMilitiasPanel();
+
+  // 5. Sanctions panel
+  html += buildSanctionsPanel();
+
+  // 6. Nuclear Arsenals panel
+  html += buildNuclearPanel();
+
+  grid.innerHTML = html;
+
+  // Post-render: sparklines + click handlers
+  data.indicators.forEach(ind => drawSparkline(ind));
+  bindConflictClicks();
+  bindHotspotClicks();
+  bindMilitiaClicks();
+  bindCountryBrowserClicks();
+  initRelations();
+  initCountryModal();
+}
+
+// ── Conflicts Panel ──────────────────────────────────────
+function buildConflictsPanel() {
+  const rows = data.conflicts.map(c => {
+    const bars = Array.from({length: 5}, (_, i) => {
+      let cls = 'c-bar';
+      if (i < c.intensity) {
+        cls += ' on';
+        if (c.intensity <= 3) cls += ' low';
+        else if (c.intensity <= 4) cls += ' med';
+      }
+      return `<div class="${cls}"></div>`;
+    }).join('');
+    const typeLabel = c.type.replace(/_/g, ' ');
+    return `<div class="c-row" data-lat="${(c.startLat+c.endLat)/2}" data-lng="${(c.startLng+c.endLng)/2}">
+      <div class="c-row-left">
+        <div class="c-name">${c.name}</div>
+        <div class="c-meta"><span class="c-type">${typeLabel}</span> ${c.started} &middot; ${c.casualties}</div>
+      </div>
+      <div class="c-bars">${bars}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="panel">
+    <div class="panel-head">Active Conflicts <span class="panel-badge red">${data.conflicts.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Hotspots Panel ───────────────────────────────────────
+function buildHotspotsPanel() {
+  const rows = data.hotspots.map(h => `
+    <div class="h-row" data-lat="${h.lat}" data-lng="${h.lng}">
+      <div>
+        <div class="h-name">${h.name}</div>
+        <div class="h-note">${h.note}</div>
+      </div>
+      <span class="h-level ${h.level}">${h.level}</span>
+    </div>
+  `).join('');
+
+  return `<div class="panel">
+    <div class="panel-head">Tension Zones <span class="panel-badge orange">${data.hotspots.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Indicator Panel ──────────────────────────────────────
+function buildIndicatorPanel(ind) {
+  const pct = Math.min((ind.value / ind.max) * 100, 100);
+  const displayVal = ind.display_value || ind.value;
+  const color = STATUS_COLORS[ind.status] || '#16a34a';
+
+  return `<div class="panel">
+    <div class="panel-head">${ind.name} <span class="ind-status ${ind.status}">${ind.status}</span></div>
+    <div class="panel-body">
+      <div class="ind-body">
+        <div class="ind-top">
+          <span class="ind-icon">${ICONS[ind.id] || ''}</span>
+        </div>
+        <div class="ind-value">${displayVal}<span class="ind-unit">${ind.unit}</span></div>
+        <div class="ind-bar"><div class="ind-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <canvas class="ind-spark" id="spark-${ind.id}" width="260" height="32"></canvas>
+        <div class="ind-desc">${ind.description}</div>
+        <div class="ind-source">${ind.source}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Sanctions Panel ──────────────────────────────────────
+function buildSanctionsPanel() {
+  const rows = data.sanctions.map(s => `
+    <div class="s-row">
+      <span class="s-from">${s.from}</span>
+      <span class="s-arrow">&rarr;</span>
+      <span class="s-target">${s.target}</span>
+      <span class="s-note">${s.note}</span>
+    </div>
+  `).join('');
+
+  return `<div class="panel">
+    <div class="panel-head">Sanctions Regimes <span class="panel-badge orange">${data.sanctions.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Nuclear Panel ────────────────────────────────────────
+function buildNuclearPanel() {
+  const max = Math.max(...data.nuclear.map(n => n.warheads));
+  const rows = data.nuclear.map(n => {
+    const pct = (n.warheads / max) * 100;
+    return `<div class="n-row">
+      <span class="n-flag">${countryFlag(n.flag)}</span>
+      <div class="n-info">
+        <span class="n-country">${n.country}</span>
+        <div class="n-bar-wrap">
+          <div class="n-bar"><div class="n-bar-fill" style="width:${pct}%"></div></div>
+          <span class="n-status">${n.status}</span>
+        </div>
+      </div>
+      <span class="n-count">${n.warheads.toLocaleString()}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="panel">
+    <div class="panel-head">Nuclear Arsenals <span class="panel-badge red">9</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Sparklines ───────────────────────────────────────────
+function drawSparkline(ind) {
+  const canvas = document.getElementById(`spark-${ind.id}`);
+  if (!canvas || !ind.history) return;
+
+  new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: ind.history.map((_, i) => i),
+      datasets: [{
+        data: ind.history,
+        borderColor: STATUS_COLORS[ind.status] || '#16a34a',
+        backgroundColor: (STATUS_COLORS[ind.status] || '#16a34a') + '15',
+        fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5,
+      }],
+    },
+    options: {
+      responsive: false, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: { x: { display: false }, y: { display: false, beginAtZero: false } },
+      animation: { duration: 800 },
+    },
+  });
+}
+
+// ── Click Handlers ───────────────────────────────────────
+function bindConflictClicks() {
+  document.querySelectorAll('.c-row').forEach(el => {
+    el.addEventListener('click', () => focusGlobe(parseFloat(el.dataset.lat), parseFloat(el.dataset.lng)));
+  });
+}
+
+function bindHotspotClicks() {
+  document.querySelectorAll('.h-row').forEach(el => {
+    el.addEventListener('click', () => focusGlobe(parseFloat(el.dataset.lat), parseFloat(el.dataset.lng), 1.8));
+  });
+}
+
+function bindMilitiaClicks() {
+  document.querySelectorAll('.m-row').forEach(el => {
+    el.addEventListener('click', () => focusGlobe(parseFloat(el.dataset.lat), parseFloat(el.dataset.lng), 1.6));
+  });
+}
+
+// ── News Panel ──────────────────────────────────────────
+function buildNewsPanel() {
+  return `<div class="panel" style="grid-column: span 2; max-height: 520px;">
+    <div class="panel-head">World News Feed <span class="panel-badge blue" id="news-count">loading...</span></div>
+    <div class="panel-body" id="news-panel-body">
+      <div class="news-loading">Fetching headlines from BBC, Al Jazeera, Guardian, NPR, DW, France24...</div>
+    </div>
+  </div>`;
+}
+
+function buildNewsRows() {
+  if (!data.news || data.news.length === 0) {
+    return '<div class="news-loading">No headlines available</div>';
+  }
+  const badge = document.getElementById('news-count');
+  if (badge) badge.textContent = data.news.length;
+
+  return data.news.map(n => {
+    const safeTitle = (n.title || '').replace(/"/g, '&quot;');
+    const safeDesc = (n.description || '').replace(/"/g, '&quot;');
+    return `<a class="news-row" href="${n.link}" target="_blank" rel="noopener noreferrer">
+      <div class="news-meta">
+        <span class="news-source">${n.source}</span>
+        <span class="news-time">${formatNewsTime(n.pub_date)}</span>
+      </div>
+      <div class="news-title">${safeTitle}</div>
+      ${safeDesc ? `<div class="news-desc">${safeDesc}</div>` : ''}
+    </a>`;
+  }).join('');
+}
+
+// ── Polymarket Panel ────────────────────────────────────
+function buildPolyPanel() {
+  return `<div class="panel" style="grid-column: span 2; max-height: 480px;">
+    <div class="panel-head">
+      Polymarket — What Traders Think
+      <span class="panel-badge green" id="poly-count">loading...</span>
+    </div>
+    <div class="panel-body" id="poly-panel-body">
+      <div class="news-loading">Fetching live prediction market odds...</div>
+    </div>
+  </div>`;
+}
+
+function buildPolyRows() {
+  const markets = data.polymarket || [];
+  if (markets.length === 0) {
+    return '<div class="news-loading">No markets available</div>';
+  }
+  const badge = document.getElementById('poly-count');
+  if (badge) badge.textContent = markets.length;
+
+  return markets.map(m => {
+    const pct = Math.round((m.top_price || 0) * 100);
+    const color = pct >= 70 ? '#16a34a' : pct >= 40 ? '#ca8a04' : '#dc2626';
+    const circumference = 2 * Math.PI * 20;
+    const dash = (pct / 100) * circumference;
+    const vol24 = formatVolume(m.volume_24h);
+    const volTot = formatVolume(m.volume_total);
+    const endStr = formatEndDate(m.end_date);
+    const outcomeClass = (m.top_outcome || '').toLowerCase() === 'no' ? 'no' : '';
+    const url = m.slug ? `https://polymarket.com/event/${m.slug}` : 'https://polymarket.com';
+    const safeQ = (m.question || '').replace(/"/g, '&quot;');
+    return `<a class="poly-row" href="${url}" target="_blank" rel="noopener noreferrer">
+      <div class="poly-gauge">
+        <svg class="poly-gauge-svg" viewBox="0 0 48 48">
+          <circle class="poly-gauge-bg" cx="24" cy="24" r="20"/>
+          <circle class="poly-gauge-fg" cx="24" cy="24" r="20"
+            stroke="${color}" stroke-dasharray="${dash} ${circumference}"/>
+        </svg>
+        <div class="poly-gauge-text" style="color:${color}">${pct}%</div>
+      </div>
+      <div class="poly-info">
+        <div class="poly-question">${safeQ}</div>
+        <div class="poly-meta">
+          <span><span class="poly-meta-label">24h:</span> <span class="poly-meta-value">$${vol24}</span></span>
+          <span><span class="poly-meta-label">vol:</span> <span class="poly-meta-value">$${volTot}</span></span>
+          ${endStr ? `<span><span class="poly-meta-label">ends:</span> <span class="poly-meta-value">${endStr}</span></span>` : ''}
+        </div>
+      </div>
+      <span class="poly-outcome ${outcomeClass}">${m.top_outcome || 'Yes'}</span>
+    </a>`;
+  }).join('');
+}
+
+function formatVolume(v) {
+  if (!v || v < 1) return '0';
+  if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return Math.round(v).toString();
+}
+
+function formatEndDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const diffMs = d.getTime() - Date.now();
+  if (diffMs < 0) return 'ended';
+  const days = Math.floor(diffMs / 86400000);
+  if (days === 0) return 'today';
+  if (days === 1) return '1d';
+  if (days < 30) return days + 'd';
+  const months = Math.floor(days / 30);
+  if (months < 12) return months + 'mo';
+  return Math.floor(days / 365) + 'y';
+}
+
+function formatNewsTime(pubDate) {
+  if (!pubDate) return '';
+  const d = new Date(pubDate);
+  if (isNaN(d)) return '';
+  const diffMs = Date.now() - d.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return days + 'd ago';
+  return d.toLocaleDateString();
+}
+
+// ── Militias Panel ──────────────────────────────────────
+function buildMilitiasPanel() {
+  const rows = (data.militias || []).map(m => `
+    <div class="m-row" data-lat="${m.lat}" data-lng="${m.lng}">
+      <div class="m-row-left">
+        <div class="m-name">${m.name}</div>
+        <div class="m-meta"><span class="m-type">${m.type}</span> ${m.country} &middot; Backed by: ${m.backers}</div>
+      </div>
+      <div class="m-strength">${m.strength}</div>
+    </div>
+  `).join('');
+
+  return `<div class="panel" style="grid-column: span 2;">
+    <div class="panel-head">Militias & Armed Groups <span class="panel-badge" style="background:rgba(168,85,247,0.15);color:#a855f7">${(data.militias||[]).length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Country Relations ───────────────────────────────────
+function initRelations() {
+  const sel = document.getElementById('country-select');
+  const overlay = document.getElementById('relations-overlay');
+  const closeBtn = document.getElementById('relations-close');
+
+  // Populate dropdown
+  if (data.relations) {
+    Object.keys(data.relations).sort().forEach(code => {
+      const c = data.relations[code];
+      const opt = document.createElement('option');
+      opt.value = code;
+      opt.textContent = `${countryFlag(code)} ${c.name}`;
+      sel.appendChild(opt);
+    });
+  }
+
+  sel.addEventListener('change', () => {
+    if (sel.value) showRelations(sel.value);
+    else clearRelations();
+  });
+
+  closeBtn.addEventListener('click', () => {
+    overlay.classList.remove('open');
+    clearRelations();
+    sel.value = '';
+  });
+
+  // Also allow clicking on the globe to open relations (via header button)
+  document.getElementById('relations-title').addEventListener('click', () => {
+    overlay.classList.toggle('open');
+  });
+}
+
+function showRelations(code) {
+  const overlay = document.getElementById('relations-overlay');
+  const list = document.getElementById('relations-list');
+  const title = document.getElementById('relations-title');
+  const c = data.relations[code];
+  if (!c) return;
+
+  overlay.classList.add('open');
+  title.textContent = `${countryFlag(code)} ${c.name}`;
+
+  // Build relation rows
+  list.innerHTML = c.relations.map(r => `
+    <div class="rel-row" data-lat="${r.lat}" data-lng="${r.lng}">
+      <span class="rel-flag">${countryFlag(r.target)}</span>
+      <div class="rel-info">
+        <div class="rel-name">${r.name}</div>
+        <div class="rel-detail">${r.detail}</div>
+      </div>
+      <span class="rel-type ${r.type}">${r.type}</span>
+    </div>
+  `).join('');
+
+  // Click on a relation row to focus globe there
+  list.querySelectorAll('.rel-row').forEach(el => {
+    el.addEventListener('click', () => focusGlobe(parseFloat(el.dataset.lat), parseFloat(el.dataset.lng), 1.8));
+  });
+
+  // Draw arcs on globe
+  drawRelationArcs(code);
+
+  // Focus globe on the selected country
+  focusGlobe(c.lat, c.lng, 1.8);
+}
+
+function drawRelationArcs(code) {
+  if (!globe) return;
+  const c = data.relations[code];
+  if (!c) return;
+
+  // Merge conflict arcs + relation arcs
+  const relArcs = c.relations.map(r => ({
+    startLat: c.lat, startLng: c.lng,
+    endLat: r.lat, endLng: r.lng,
+    _relType: r.type,
+    _relName: r.name,
+    _relDetail: r.detail,
+  }));
+
+  relationArcs = relArcs;
+  globe.arcsData([...data.conflicts, ...relationArcs]);
+}
+
+function clearRelations() {
+  if (!globe) return;
+  relationArcs = [];
+  globe.arcsData(data.conflicts);
+}
+
+// ── Country Profiles ────────────────────────────────────
+function buildCountryBrowserPanel() {
+  const profiles = data.profiles || {};
+  const codes = Object.keys(profiles).sort((a, b) => profiles[a].name.localeCompare(profiles[b].name));
+  const cards = codes.map(code => {
+    const p = profiles[code];
+    return `<div class="cb-card" data-code="${code}">
+      <span class="cb-card-flag">${countryFlag(code)}</span>
+      <div class="cb-card-info">
+        <div class="cb-card-name">${p.name}</div>
+        <div class="cb-card-meta">${p.population} &middot; ${p.gdp}</div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" style="grid-column: span 2; max-height: 420px;">
+    <div class="panel-head">Country Profiles <span class="panel-badge green">${codes.length}</span></div>
+    <div class="panel-body"><div class="cb-grid">${cards}</div></div>
+  </div>`;
+}
+
+function bindCountryBrowserClicks() {
+  document.querySelectorAll('.cb-card').forEach(el => {
+    el.addEventListener('click', () => showCountryProfile(el.dataset.code));
+  });
+}
+
+function initCountryModal() {
+  const modal = document.getElementById('country-modal');
+  modal.addEventListener('click', e => {
+    if (e.target === modal) closeCountryProfile();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeCountryProfile();
+  });
+  // Heatmap clear button
+  const clearBtn = document.getElementById('heatmap-clear');
+  if (clearBtn) clearBtn.addEventListener('click', clearRelationHeatmap);
+}
+
+function scoreColor(score) {
+  // 0 = red, 50 = yellow, 100 = green
+  if (score >= 75) return '#16a34a';
+  if (score >= 60) return '#65a30d';
+  if (score >= 45) return '#ca8a04';
+  if (score >= 30) return '#ea580c';
+  return '#dc2626';
+}
+
+function scoreLabel(score) {
+  if (score >= 85) return 'ally';
+  if (score >= 65) return 'partner';
+  if (score >= 45) return 'neutral';
+  if (score >= 25) return 'tension';
+  return 'adversary';
+}
+
+function showCountryProfile(code) {
+  const p = (data.profiles || {})[code];
+  if (!p) return;
+  const dialog = document.getElementById('cm-dialog');
+  const modal = document.getElementById('country-modal');
+
+  // Build sections
+  const leaders = (p.leaders || []).map(l =>
+    `<div class="cm-leader">
+      <div class="cm-leader-role">${l.role}</div>
+      <div class="cm-leader-name">${l.name}</div>
+    </div>`).join('');
+
+  const memberships = (p.memberships || []).map(m =>
+    `<span class="cm-membership">${m}</span>`).join('');
+
+  const POLICY_LABELS = {
+    abortion: 'Abortion',
+    lgbtq_rights: 'LGBTQ+ Rights',
+    death_penalty: 'Death Penalty',
+    gun_control: 'Gun Control',
+    healthcare: 'Healthcare',
+    climate: 'Climate Policy',
+    immigration: 'Immigration',
+    nuclear_stance: 'Nuclear Stance',
+  };
+  const policies = Object.entries(p.policies || {}).map(([key, v]) => {
+    const label = POLICY_LABELS[key] || key.replace(/_/g, ' ');
+    const statusClass = (v.status || '').toLowerCase().split('-')[0];
+    return `<div class="cm-policy">
+      <div class="cm-policy-head">
+        <span class="cm-policy-name">${label}</span>
+        <span class="cm-policy-status ${statusClass}">${v.status}</span>
+      </div>
+      <div class="cm-policy-detail">${v.detail}</div>
+    </div>`;
+  }).join('');
+
+  // Relations sorted by score desc
+  const scores = p.relation_scores || {};
+  const sortedCodes = Object.keys(scores).sort((a, b) => scores[b] - scores[a]);
+  const relations = sortedCodes.map(rc => {
+    const score = scores[rc];
+    const color = scoreColor(score);
+    const otherName = (data.profiles && data.profiles[rc] && data.profiles[rc].name)
+      || (COUNTRY_COORDS[rc] && COUNTRY_COORDS[rc].name)
+      || rc;
+    return `<div class="cm-rel" data-code="${rc}">
+      <span class="cm-rel-flag">${countryFlag(rc)}</span>
+      <span class="cm-rel-name">${otherName}</span>
+      <div class="cm-rel-bar"><div class="cm-rel-bar-fill" style="width:${score}%;background:${color}"></div></div>
+      <span class="cm-rel-score" style="color:${color}">${score}</span>
+    </div>`;
+  }).join('');
+
+  dialog.innerHTML = `
+    <div class="cm-header">
+      <span class="cm-flag">${countryFlag(code)}</span>
+      <div class="cm-title-block">
+        <div class="cm-title">${p.name}</div>
+        <div class="cm-subtitle">${p.govt}</div>
+      </div>
+      <button class="cm-close" onclick="closeCountryProfile()">&times;</button>
+    </div>
+    <div class="cm-stats">
+      <div class="cm-stat"><div class="cm-stat-label">Capital</div><div class="cm-stat-value">${p.capital}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">Population</div><div class="cm-stat-value">${p.population}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">GDP</div><div class="cm-stat-value">${p.gdp}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">Military Rank</div><div class="cm-stat-value">#${p.military_rank}</div></div>
+    </div>
+    <div class="cm-section">
+      <div class="cm-section-title">Leadership</div>
+      <div class="cm-leaders">${leaders}</div>
+    </div>
+    <div class="cm-section">
+      <div class="cm-section-title">International Memberships</div>
+      <div class="cm-memberships">${memberships}</div>
+    </div>
+    <div class="cm-section">
+      <div class="cm-section-title">Policies on Major Issues</div>
+      <div class="cm-policies">${policies}</div>
+    </div>
+    <div class="cm-section">
+      <div class="cm-section-title">Foreign Relations (green=ally, red=adversary)</div>
+      <div class="cm-relations-list">${relations}</div>
+    </div>
+  `;
+
+  // Click a relation row to jump to that country
+  dialog.querySelectorAll('.cm-rel').forEach(el => {
+    el.addEventListener('click', () => {
+      const target = el.dataset.code;
+      if (data.profiles && data.profiles[target]) {
+        showCountryProfile(target);
+      }
+    });
+  });
+
+  modal.classList.add('open');
+
+  // Paint the globe with this country's relation scores
+  drawRelationHeatmap(code);
+  focusGlobe(p.lat, p.lng, 2.2);
+}
+
+function closeCountryProfile() {
+  document.getElementById('country-modal').classList.remove('open');
+  // Keep heatmap visible on the globe so user can see relations.
+  // User can click "Clear" in the heatmap indicator to remove.
+}
+
+function drawRelationHeatmap(code) {
+  if (!globe) return;
+  const p = (data.profiles || {})[code];
+  if (!p) return;
+
+  // Update the heatmap indicator on the map
+  const ind = document.getElementById('heatmap-indicator');
+  if (ind) {
+    ind.classList.add('active');
+    document.getElementById('heatmap-flag').textContent = countryFlag(code);
+    document.getElementById('heatmap-country').textContent = p.name;
+  }
+
+  // Build a points layer: the selected country + every country in its relation_scores
+  const scoreSet = p.relation_scores || {};
+  const scorePts = [];
+
+  // Center marker (the selected country itself) — bright cyan
+  scorePts.push({
+    lat: p.lat, lng: p.lng, _kind: 'score-self',
+    name: p.name, _score: 100, _color: '#22d3ee',
+  });
+
+  // All countries that have a relation score from this one
+  Object.entries(scoreSet).forEach(([rc, score]) => {
+    const target = (data.profiles || {})[rc];
+    let lat, lng, name;
+    if (target) {
+      lat = target.lat; lng = target.lng; name = target.name;
+    } else {
+      // Fall back to COUNTRY_COORDS lookup
+      const fb = COUNTRY_COORDS[rc];
+      if (!fb) return;
+      lat = fb.lat; lng = fb.lng; name = fb.name;
+    }
+    scorePts.push({
+      lat, lng, _kind: 'score', _code: rc,
+      name, _score: score, _color: scoreColor(score),
+    });
+  });
+
+  // Combine with existing hotspots + militias
+  const hotspotPts = (data.hotspots || []).map(h => ({...h, _kind: 'hotspot'}));
+  const militiaPts = (data.militias || []).map(m => ({...m, _kind: 'militia'}));
+  const combined = [...hotspotPts, ...militiaPts, ...scorePts];
+
+  globe.pointsData(combined);
+
+  // Also draw arcs from the center country to every scored country
+  const scoreArcs = Object.entries(scoreSet).map(([rc, score]) => {
+    const target = (data.profiles || {})[rc] || COUNTRY_COORDS[rc];
+    if (!target) return null;
+    return {
+      startLat: p.lat, startLng: p.lng,
+      endLat: target.lat, endLng: target.lng,
+      _scoreArc: true, _score: score,
+      _relName: target.name || rc,
+    };
+  }).filter(Boolean);
+
+  globe.arcsData([...data.conflicts, ...scoreArcs]);
+}
+
+function clearRelationHeatmap() {
+  if (!globe) return;
+  const hotspotPts = (data.hotspots || []).map(h => ({...h, _kind: 'hotspot'}));
+  const militiaPts = (data.militias || []).map(m => ({...m, _kind: 'militia'}));
+  globe.pointsData([...hotspotPts, ...militiaPts]);
+  globe.arcsData(data.conflicts);
+  const ind = document.getElementById('heatmap-indicator');
+  if (ind) ind.classList.remove('active');
+}
+
+// Fallback country coords for targets not in profiles
+const COUNTRY_COORDS = {
+  GB: {lat: 51.51, lng: -0.13, name: 'United Kingdom'},
+  CA: {lat: 45.42, lng: -75.70, name: 'Canada'},
+  AU: {lat: -35.28, lng: 149.13, name: 'Australia'},
+  NZ: {lat: -41.29, lng: 174.78, name: 'New Zealand'},
+  DE: {lat: 52.52, lng: 13.41, name: 'Germany'},
+  FR: {lat: 48.86, lng: 2.35, name: 'France'},
+  IT: {lat: 41.90, lng: 12.50, name: 'Italy'},
+  ES: {lat: 40.42, lng: -3.70, name: 'Spain'},
+  PT: {lat: 38.72, lng: -9.14, name: 'Portugal'},
+  NL: {lat: 52.37, lng: 4.89, name: 'Netherlands'},
+  BE: {lat: 50.85, lng: 4.35, name: 'Belgium'},
+  PL: {lat: 52.23, lng: 21.01, name: 'Poland'},
+  UA: {lat: 50.45, lng: 30.52, name: 'Ukraine'},
+  BY: {lat: 53.90, lng: 27.57, name: 'Belarus'},
+  CZ: {lat: 50.08, lng: 14.44, name: 'Czech Republic'},
+  SK: {lat: 48.15, lng: 17.11, name: 'Slovakia'},
+  AT: {lat: 48.21, lng: 16.37, name: 'Austria'},
+  CH: {lat: 46.95, lng: 7.45, name: 'Switzerland'},
+  HU: {lat: 47.50, lng: 19.04, name: 'Hungary'},
+  RO: {lat: 44.43, lng: 26.10, name: 'Romania'},
+  GR: {lat: 37.98, lng: 23.73, name: 'Greece'},
+  CY: {lat: 35.17, lng: 33.37, name: 'Cyprus'},
+  RS: {lat: 44.79, lng: 20.45, name: 'Serbia'},
+  NO: {lat: 59.91, lng: 10.75, name: 'Norway'},
+  SE: {lat: 59.33, lng: 18.07, name: 'Sweden'},
+  FI: {lat: 60.17, lng: 24.94, name: 'Finland'},
+  DK: {lat: 55.68, lng: 12.57, name: 'Denmark'},
+  IE: {lat: 53.35, lng: -6.26, name: 'Ireland'},
+  EE: {lat: 59.44, lng: 24.75, name: 'Estonia'},
+  LV: {lat: 56.95, lng: 24.11, name: 'Latvia'},
+  LT: {lat: 54.69, lng: 25.28, name: 'Lithuania'},
+  MD: {lat: 47.01, lng: 28.86, name: 'Moldova'},
+  GE: {lat: 41.72, lng: 44.79, name: 'Georgia'},
+  AM: {lat: 40.18, lng: 44.51, name: 'Armenia'},
+  AZ: {lat: 40.41, lng: 49.87, name: 'Azerbaijan'},
+  KZ: {lat: 51.17, lng: 71.45, name: 'Kazakhstan'},
+  UZ: {lat: 41.31, lng: 69.28, name: 'Uzbekistan'},
+  MX: {lat: 19.43, lng: -99.13, name: 'Mexico'},
+  AR: {lat: -34.60, lng: -58.38, name: 'Argentina'},
+  BR: {lat: -15.79, lng: -47.88, name: 'Brazil'},
+  CL: {lat: -33.45, lng: -70.67, name: 'Chile'},
+  CO: {lat: 4.71, lng: -74.07, name: 'Colombia'},
+  PE: {lat: -12.05, lng: -77.04, name: 'Peru'},
+  UY: {lat: -34.90, lng: -56.16, name: 'Uruguay'},
+  PY: {lat: -25.26, lng: -57.58, name: 'Paraguay'},
+  VE: {lat: 10.48, lng: -66.90, name: 'Venezuela'},
+  CU: {lat: 23.13, lng: -82.38, name: 'Cuba'},
+  NI: {lat: 12.12, lng: -86.25, name: 'Nicaragua'},
+  JP: {lat: 35.68, lng: 139.69, name: 'Japan'},
+  CN: {lat: 39.90, lng: 116.40, name: 'China'},
+  KR: {lat: 37.57, lng: 126.98, name: 'South Korea'},
+  KP: {lat: 39.02, lng: 125.75, name: 'North Korea'},
+  TW: {lat: 25.03, lng: 121.57, name: 'Taiwan'},
+  IN: {lat: 28.61, lng: 77.21, name: 'India'},
+  PK: {lat: 33.69, lng: 73.04, name: 'Pakistan'},
+  BD: {lat: 23.81, lng: 90.41, name: 'Bangladesh'},
+  LK: {lat: 6.93, lng: 79.86, name: 'Sri Lanka'},
+  NP: {lat: 27.72, lng: 85.32, name: 'Nepal'},
+  AF: {lat: 34.53, lng: 69.17, name: 'Afghanistan'},
+  MM: {lat: 16.87, lng: 96.20, name: 'Myanmar'},
+  TH: {lat: 13.76, lng: 100.50, name: 'Thailand'},
+  VN: {lat: 21.03, lng: 105.85, name: 'Vietnam'},
+  KH: {lat: 11.55, lng: 104.92, name: 'Cambodia'},
+  LA: {lat: 17.97, lng: 102.60, name: 'Laos'},
+  MY: {lat: 3.14, lng: 101.69, name: 'Malaysia'},
+  SG: {lat: 1.35, lng: 103.82, name: 'Singapore'},
+  ID: {lat: -6.21, lng: 106.85, name: 'Indonesia'},
+  PH: {lat: 14.60, lng: 120.98, name: 'Philippines'},
+  SA: {lat: 24.71, lng: 46.68, name: 'Saudi Arabia'},
+  IR: {lat: 35.69, lng: 51.39, name: 'Iran'},
+  IQ: {lat: 33.31, lng: 44.37, name: 'Iraq'},
+  IL: {lat: 31.77, lng: 35.21, name: 'Israel'},
+  PS: {lat: 31.90, lng: 35.20, name: 'Palestine'},
+  LB: {lat: 33.87, lng: 35.51, name: 'Lebanon'},
+  JO: {lat: 31.95, lng: 35.93, name: 'Jordan'},
+  SY: {lat: 33.51, lng: 36.29, name: 'Syria'},
+  TR: {lat: 39.93, lng: 32.86, name: 'Turkey'},
+  AE: {lat: 24.45, lng: 54.65, name: 'UAE'},
+  UAE: {lat: 24.45, lng: 54.65, name: 'UAE'},
+  QA: {lat: 25.28, lng: 51.53, name: 'Qatar'},
+  BH: {lat: 26.07, lng: 50.56, name: 'Bahrain'},
+  KW: {lat: 29.37, lng: 47.98, name: 'Kuwait'},
+  OM: {lat: 23.59, lng: 58.41, name: 'Oman'},
+  YE: {lat: 15.37, lng: 44.19, name: 'Yemen'},
+  EG: {lat: 30.04, lng: 31.24, name: 'Egypt'},
+  ZA: {lat: -25.75, lng: 28.19, name: 'South Africa'},
+  NG: {lat: 9.08, lng: 7.50, name: 'Nigeria'},
+  ET: {lat: 9.03, lng: 38.74, name: 'Ethiopia'},
+  KE: {lat: -1.29, lng: 36.82, name: 'Kenya'},
+  SO: {lat: 2.05, lng: 45.34, name: 'Somalia'},
+  MA: {lat: 34.02, lng: -6.83, name: 'Morocco'},
+  TN: {lat: 36.81, lng: 10.18, name: 'Tunisia'},
+  LY: {lat: 32.89, lng: 13.19, name: 'Libya'},
+  ML: {lat: 12.64, lng: -8.00, name: 'Mali'},
+  NE: {lat: 13.51, lng: 2.11, name: 'Niger'},
+  BF: {lat: 12.37, lng: -1.52, name: 'Burkina Faso'},
+  SN: {lat: 14.69, lng: -17.45, name: 'Senegal'},
+  CI: {lat: 6.83, lng: -5.28, name: 'Côte d\u2019Ivoire'},
+  CM: {lat: 3.87, lng: 11.52, name: 'Cameroon'},
+  PG: {lat: -9.44, lng: 147.18, name: 'Papua New Guinea'},
+  FJ: {lat: -18.12, lng: 178.44, name: 'Fiji'},
+};
+</script>
+</body>
+</html>

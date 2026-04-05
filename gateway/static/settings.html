@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards">Dashboards</a>
+      <a href="/billing">Billing</a>
+      <a href="/settings" class="active">Settings</a>
+      <div class="gw-user-pill">{{ email }}</div>
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+
+  <main class="gw-main gw-main-narrow">
+    <h1 class="gw-page-title">Settings</h1>
+    <p class="gw-page-sub">Control how Habbig opens up for you.</p>
+
+    {{ raw_saved_banner }}
+
+    <form method="post" action="/settings" class="settings-card">
+      <div class="settings-section">
+        <div class="settings-section-title">Default landing page</div>
+        <div class="settings-section-desc">
+          When you visit <code>habbig.com</code> while signed in, where should
+          we drop you? Pick a dashboard you're subscribed to, or leave it on
+          the hub to see everything each time.
+        </div>
+        <label class="settings-label" for="default_dashboard">Land on</label>
+        <select class="settings-select" id="default_dashboard" name="default_dashboard">
+          {{ raw_options }}
+        </select>
+      </div>
+
+      <div class="settings-actions">
+        <button type="submit" class="btn btn-primary">Save settings</button>
+      </div>
+    </form>
+
+    <div class="settings-hints">
+      <div class="settings-hint">
+        <div class="settings-hint-title">Want to subscribe to more dashboards?</div>
+        <div class="settings-hint-body">Head to <a href="/billing">Billing</a> to add or cancel any plan. Each dashboard is billed independently.</div>
+      </div>
+      <div class="settings-hint">
+        <div class="settings-hint-title">Signed in on another device?</div>
+        <div class="settings-hint-body">Use <a href="/logout">Sign out</a> here to revoke this session. Other sessions stay active until you sign out of them.</div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

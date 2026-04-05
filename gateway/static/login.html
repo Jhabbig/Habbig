@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>.auth-error:empty { display: none; }</style>
+</head>
+<body class="auth-body">
+  <div class="auth-wrap">
+    <a href="/" class="auth-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </a>
+
+    <div class="auth-card">
+      <div class="auth-title">Welcome back</div>
+      <div class="auth-sub">One login, every dashboard.</div>
+
+      <form class="auth-form" method="post" action="/login">
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" required autocomplete="email" autofocus>
+
+        <label for="password">Password</label>
+        <input id="password" type="password" name="password" required autocomplete="current-password">
+
+        <button type="submit" class="auth-submit">Sign in</button>
+      </form>
+
+      <div class="auth-error">{{ error }}</div>
+
+      <div class="auth-footer">
+        New to Habbig? <a href="/signup">Create an account</a>
+      </div>
+    </div>
+
+    <div class="auth-reassure">
+      Signing in gives you access to every dashboard you've subscribed to — no
+      re-authenticating as you move across <code>crypto.habbig.com</code>,
+      <code>sports.habbig.com</code> and the rest.
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Billing — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards">Dashboards</a>
+      <a href="/billing" class="active">Billing</a>
+      <a href="/settings">Settings</a>
+      <div class="gw-user-pill">{{ email }}</div>
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+
+  <main class="gw-main">
+    <h1 class="gw-page-title">Billing & subscriptions</h1>
+    <p class="gw-page-sub">
+      Each dashboard is priced independently. Monthly subscriptions renew every
+      30 days, annual every 365. Cancel any one without affecting the others.
+    </p>
+
+    <div class="notice">
+      <strong>Placeholder checkout.</strong> Stripe isn't wired up yet — clicking
+      a button flips a flag so you can test gated access.
+    </div>
+
+    <div class="billing-list">
+      {{ billing_rows }}
+    </div>
+  </main>
+</body>
+</html>

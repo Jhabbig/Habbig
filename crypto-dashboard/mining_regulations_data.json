@@ -1,0 +1,684 @@
+{
+  "metadata": {
+    "title": "Global Crypto Mining Regulations & Hashrate Distribution",
+    "last_updated": "2026-04-04",
+    "data_sources": [
+      "Hashrate Index (Top 10 Bitcoin Mining Countries 2026)",
+      "MiningLegit (Legal/Regulatory Environment by Jurisdiction)",
+      "MEXC Blog (Crypto Tax by Country)",
+      "CoinDesk, CoinPedia, GlobalLegalInsights, various 2025-2026 reports"
+    ],
+    "notes": "Hashrate percentages from Q1 2026. Tax and regulatory data as of early 2026. Some countries have unofficial/underground mining not captured in official hashrate figures."
+  },
+  "countries": [
+    {
+      "country": "United States",
+      "iso_code": "US",
+      "hashrate_rank": 1,
+      "hashrate_share_pct": 37.5,
+      "hashrate_ehs": 400,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal, state-level variation",
+      "key_policies": [
+        "No federal mining ban; regulated at state level",
+        "Texas and Wyoming most mining-friendly states",
+        "Form 1099-DA required from exchanges/brokers starting 2025",
+        "Trump administration generally pro-crypto since 2025"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as ordinary income at fair market value when received",
+        "capital_gains_short": "10-37% (held <1 year)",
+        "capital_gains_long": "0-20% (held >1 year)",
+        "deductions": "Hardware depreciation, electricity costs deductible as business expenses"
+      },
+      "energy_environment_policies": [
+        "No federal energy restrictions on mining",
+        "Some states (e.g., New York) restrict proof-of-work mining using fossil fuels",
+        "Texas offers demand-response incentives for miners to curtail during grid stress",
+        "Diverse energy mix: renewables, natural gas, nuclear"
+      ],
+      "primary_energy_sources": ["Natural gas", "Renewables", "Nuclear"],
+      "recent_changes": "Pro-crypto executive orders under Trump administration; FIT21 framework advancing in Congress",
+      "key_regions": ["Texas", "Wyoming", "Georgia", "New York"]
+    },
+    {
+      "country": "Russia",
+      "iso_code": "RU",
+      "hashrate_rank": 2,
+      "hashrate_share_pct": 16.4,
+      "hashrate_ehs": 175,
+      "mining_status": "legal_restricted",
+      "regulatory_stance": "Mining legal, crypto payments banned domestically",
+      "key_policies": [
+        "Mining legalized under 2024 Digital Currency Mining Law",
+        "Licensing required for large-scale operations",
+        "Using crypto for domestic payments is prohibited",
+        "Foreign participation limited by sanctions and geopolitical risk",
+        "Regional mining bans in some energy-stressed areas (e.g., Dagestan, Chechnya)"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as business income under standard corporate/income tax",
+        "capital_gains_short": "13-15% for individuals",
+        "capital_gains_long": "13-15% for individuals",
+        "deductions": "Business expense deductions available for registered miners"
+      },
+      "energy_environment_policies": [
+        "Low-cost natural gas and hydropower in Siberia",
+        "Cold climate reduces cooling costs",
+        "Some regions ban mining due to grid strain (Irkutsk region imposed winter restrictions)",
+        "Government balancing energy export revenue vs. mining consumption"
+      ],
+      "primary_energy_sources": ["Natural gas", "Hydroelectric"],
+      "recent_changes": "Comprehensive mining regulation law took effect 2024-2025; regional bans in energy-deficit areas expanded in 2025",
+      "key_regions": ["Siberia", "Krasnoyarsk", "Irkutsk"]
+    },
+    {
+      "country": "China",
+      "iso_code": "CN",
+      "hashrate_rank": 3,
+      "hashrate_share_pct": 11.7,
+      "hashrate_ehs": 125,
+      "mining_status": "banned",
+      "regulatory_stance": "Complete ban on mining and crypto transactions (since 2021)",
+      "key_policies": [
+        "Total ban on crypto mining enacted September 2021",
+        "All crypto transactions prohibited",
+        "Renewed crackdowns in Xinjiang province December 2025",
+        "Authorities actively monitor electricity consumption for illegal mining",
+        "Despite ban, significant underground mining persists"
+      ],
+      "tax_treatment": {
+        "mining_income": "N/A (activity is illegal)",
+        "capital_gains_short": "N/A",
+        "capital_gains_long": "N/A",
+        "deductions": "N/A"
+      },
+      "energy_environment_policies": [
+        "Ban partly motivated by energy consumption and carbon neutrality goals",
+        "Electricity monitoring used to detect illegal mining",
+        "Underground operations often use seasonal hydropower in Sichuan/Yunnan"
+      ],
+      "primary_energy_sources": ["Hydroelectric (underground ops)", "Coal (underground ops)"],
+      "recent_changes": "December 2025 renewed crackdown in Xinjiang; underground mining still estimated at ~12% of global hashrate",
+      "key_regions": ["Sichuan (underground)", "Yunnan (underground)", "Xinjiang (underground)"]
+    },
+    {
+      "country": "Paraguay",
+      "iso_code": "PY",
+      "hashrate_rank": 4,
+      "hashrate_share_pct": 4.0,
+      "hashrate_ehs": 43,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal with new registration requirements",
+      "key_policies": [
+        "Mining is legal with regulatory framework encouraging development",
+        "Mandatory registration for miners approved December 2024",
+        "DNIT requires reporting of digital asset transactions over $5,000",
+        "Regulatory inconsistency remains a concern"
+      ],
+      "tax_treatment": {
+        "mining_income": "Subject to standard business taxation; comprehensive tax framework in development",
+        "capital_gains_short": "Standard income tax rates",
+        "capital_gains_long": "Standard income tax rates",
+        "deductions": "Business expense deductions for registered operations"
+      },
+      "energy_environment_policies": [
+        "Surplus hydroelectric capacity from Itaipu Dam (world's second largest)",
+        "Among the lowest electricity costs globally",
+        "Energy abundance is the primary driver of mining growth"
+      ],
+      "primary_energy_sources": ["Hydroelectric"],
+      "recent_changes": "Mandatory miner registration and transaction reporting adopted late 2024; oversight implementation continuing through 2026",
+      "key_regions": ["Ciudad del Este", "Alto Parana"]
+    },
+    {
+      "country": "United Arab Emirates",
+      "iso_code": "AE",
+      "hashrate_rank": 5,
+      "hashrate_share_pct": 3.1,
+      "hashrate_ehs": 33,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal and government-supported",
+      "key_policies": [
+        "Dubai's Virtual Assets Regulatory Authority (VARA) provides comprehensive licensing",
+        "Abu Dhabi Global Market has separate regulatory framework",
+        "Government actively promotes crypto/blockchain sector",
+        "Coordinated strategy with state-level involvement in mining"
+      ],
+      "tax_treatment": {
+        "mining_income": "0% personal income tax",
+        "capital_gains_short": "0%",
+        "capital_gains_long": "0%",
+        "deductions": "N/A (no tax)"
+      },
+      "energy_environment_policies": [
+        "Diversified energy sources (solar, natural gas, nuclear)",
+        "Extreme heat requires advanced immersion cooling solutions",
+        "Government investing in sustainable energy for mining"
+      ],
+      "primary_energy_sources": ["Natural gas", "Solar", "Nuclear"],
+      "recent_changes": "Continued expansion of VARA licensing framework; growing institutional mining operations",
+      "key_regions": ["Dubai", "Abu Dhabi", "Ras Al Khaimah"]
+    },
+    {
+      "country": "Canada",
+      "iso_code": "CA",
+      "hashrate_rank": 7,
+      "hashrate_share_pct": 2.6,
+      "hashrate_ehs": 28,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal with provincial variation",
+      "key_policies": [
+        "Clear federal regulations for crypto",
+        "Must register as money service business if exchanging crypto",
+        "Quebec allocates specific energy blocks to mining operations",
+        "Policy fragmentation across provinces creates uneven growth"
+      ],
+      "tax_treatment": {
+        "mining_income": "Hobby mining: not taxed on receipt, capital gains on disposal (50% inclusion rate). Business mining: income tax on receipt",
+        "capital_gains_short": "15-53% (marginal rate on 50% of gain)",
+        "capital_gains_long": "7.5-26.5% (effective rate with 50% inclusion)",
+        "deductions": "Business miners can deduct electricity, hardware, and operational costs"
+      },
+      "energy_environment_policies": [
+        "Abundant hydroelectric resources in Quebec and British Columbia",
+        "Quebec paused new mining connections in 2018, later created dedicated allocation",
+        "Alberta has cheaper natural gas-based electricity",
+        "Cold climate reduces cooling costs"
+      ],
+      "primary_energy_sources": ["Hydroelectric", "Natural gas"],
+      "recent_changes": "Provincial energy policies continuing to evolve; some provinces tightening allocations",
+      "key_regions": ["Quebec", "Alberta", "British Columbia"]
+    },
+    {
+      "country": "Ethiopia",
+      "iso_code": "ET",
+      "hashrate_rank": 8,
+      "hashrate_share_pct": 2.6,
+      "hashrate_ehs": 27.5,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal, government-supported for energy monetization",
+      "key_policies": [
+        "Government views mining as way to monetize underutilized hydroelectric capacity",
+        "One of the fastest-growing mining markets globally",
+        "Grew from 0% hashrate in 2021 to ~2.6% in Q1 2026",
+        "Political instability poses long-term operational risk"
+      ],
+      "tax_treatment": {
+        "mining_income": "Standard business taxation; specific crypto tax framework still developing",
+        "capital_gains_short": "Business income tax rates",
+        "capital_gains_long": "Business income tax rates",
+        "deductions": "Standard business deductions"
+      },
+      "energy_environment_policies": [
+        "Massive underutilized hydroelectric capacity (Grand Ethiopian Renaissance Dam)",
+        "Government eager to monetize excess energy via compute/mining",
+        "Among cheapest electricity globally for mining operations"
+      ],
+      "primary_energy_sources": ["Hydroelectric"],
+      "recent_changes": "Rapid growth trajectory; hashrate share nearly doubled from 1.5% (Q1 2025) to 2.6% (Q1 2026)",
+      "key_regions": ["Addis Ababa region"]
+    },
+    {
+      "country": "Kazakhstan",
+      "iso_code": "KZ",
+      "hashrate_rank": 9,
+      "hashrate_share_pct": 2.1,
+      "hashrate_ehs": 22,
+      "mining_status": "legal_restricted",
+      "regulatory_stance": "Legal with licensing and energy restrictions",
+      "key_policies": [
+        "Licensing regime required for all mining operations",
+        "Elevated electricity rates for miners",
+        "Subject to energy capacity restrictions and grid caps",
+        "Declining from post-China-ban highs due to regulation"
+      ],
+      "tax_treatment": {
+        "mining_income": "Commercial operation taxation; additional electricity surcharge acts as de facto mining tax",
+        "capital_gains_short": "Standard corporate/income tax rates",
+        "capital_gains_long": "Standard corporate/income tax rates",
+        "deductions": "Standard business deductions"
+      },
+      "energy_environment_policies": [
+        "Grid strain from mining growth post-2021 China ban",
+        "Government imposed energy caps and elevated rates for miners",
+        "Coal-based energy raises environmental concerns",
+        "Infrastructure limitations constrain further growth"
+      ],
+      "primary_energy_sources": ["Coal", "Natural gas"],
+      "recent_changes": "Continued decline in hashrate share as regulation tightens and energy costs rise",
+      "key_regions": ["Ekibastuz", "Almaty region"]
+    },
+    {
+      "country": "Germany",
+      "iso_code": "DE",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal under EU MiCA framework",
+      "key_policies": [
+        "Subject to EU MiCA regulation (Markets in Crypto-Assets)",
+        "BaFin oversees crypto activities",
+        "DAC8 (Crypto Asset Tax Transparency Act / KStTG) effective January 2026",
+        "Crypto service providers must auto-report all user data to tax authorities"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as business or miscellaneous income",
+        "capital_gains_short": "Up to 45% (personal income tax rate)",
+        "capital_gains_long": "0% if held >1 year",
+        "deductions": "Annual exemption limit of 1,000 EUR; business expenses deductible"
+      },
+      "energy_environment_policies": [
+        "High electricity costs make mining largely uncompetitive",
+        "EU environmental sustainability requirements for crypto operations",
+        "Post-nuclear phase-out, energy costs remain among highest in Europe"
+      ],
+      "primary_energy_sources": ["Wind", "Solar", "Coal", "Natural gas"],
+      "recent_changes": "DAC8 implementation from January 2026 requiring automated reporting of all crypto transactions to German tax authorities",
+      "key_regions": ["Frankfurt", "Berlin"]
+    },
+    {
+      "country": "Malaysia",
+      "iso_code": "MY",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal, regulated by Securities Commission",
+      "key_policies": [
+        "Crypto mining is legal but taxable as business activity",
+        "Securities Commission Malaysia regulates digital asset exchanges",
+        "No specific crypto mining laws; falls under general income tax",
+        "Illegal electricity theft for mining is heavily prosecuted"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as income if conducted as business for profit",
+        "capital_gains_short": "Standard income tax rates (0-30%)",
+        "capital_gains_long": "Capital gains tax introduced 2024 on disposals",
+        "deductions": "Business expense deductions available"
+      },
+      "energy_environment_policies": [
+        "Subsidized electricity has attracted illegal mining operations",
+        "Government cracking down on electricity theft by miners",
+        "Tropical climate increases cooling costs"
+      ],
+      "primary_energy_sources": ["Natural gas", "Coal", "Hydroelectric"],
+      "recent_changes": "Ongoing crackdowns on illegal mining operations stealing electricity; capital gains tax on crypto disposals introduced",
+      "key_regions": ["Sarawak", "Johor"]
+    },
+    {
+      "country": "Iran",
+      "iso_code": "IR",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal_restricted",
+      "regulatory_stance": "Mining legal with license; crypto payments banned domestically",
+      "key_policies": [
+        "Mining legalized in 2019 with licensing requirement",
+        "Licensed miners must sell mined BTC to central bank to fund imports",
+        "Central Bank of Iran (CBI) is sole regulatory authority",
+        "Using digital currency for domestic payments strictly prohibited",
+        "Mining operations halted seasonally during peak summer electricity demand"
+      ],
+      "tax_treatment": {
+        "mining_income": "Licensed miners must sell to central bank; taxed as business income",
+        "capital_gains_short": "Subject to standard taxation",
+        "capital_gains_long": "Subject to standard taxation",
+        "deductions": "Subsidized electricity for licensed operators"
+      },
+      "energy_environment_policies": [
+        "Licensed miners receive subsidized electricity in exchange for selling BTC to central bank",
+        "Ministry of Energy imposes consumption ceilings on licensed miners",
+        "Mining consumes ~2% of national electricity production",
+        "Operations halted during summer peak demand periods",
+        "Widespread illegal mining exacerbates grid strain"
+      ],
+      "primary_energy_sources": ["Natural gas"],
+      "recent_changes": "January 2025 directive formalizing crypto market regulations; $7.78 billion crypto ecosystem in 2025; central bank accumulated $507M in USDT",
+      "key_regions": ["Various (licensed facilities)", "Rafsanjan (illegal operations)"]
+    },
+    {
+      "country": "Iceland",
+      "iso_code": "IS",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal with energy allocation caps",
+      "key_policies": [
+        "No ban on crypto mining",
+        "Over 10 mining facilities operating",
+        "Sector expected to grow 20% in 2026",
+        "Power companies cap new capacity at 25 MW per site"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as business income",
+        "capital_gains_short": "Standard income tax rates (up to 46%)",
+        "capital_gains_long": "Standard income tax rates",
+        "deductions": "Business expense deductions available"
+      },
+      "energy_environment_policies": [
+        "100% renewable energy (geothermal and hydroelectric)",
+        "Low electricity prices",
+        "Cold climate dramatically reduces cooling costs",
+        "Power companies trimming new capacity allocations (25 MW cap per site)",
+        "Investment in immersion cooling to reduce electricity draw"
+      ],
+      "primary_energy_sources": ["Geothermal", "Hydroelectric"],
+      "recent_changes": "Power companies implementing per-site capacity caps; immersion cooling adoption growing",
+      "key_regions": ["Reykjanes Peninsula", "Southwestern Iceland"]
+    },
+    {
+      "country": "Norway",
+      "iso_code": "NO",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal_restricted",
+      "regulatory_stance": "Existing operations legal; new mining data centers banned since October 2025",
+      "key_policies": [
+        "Temporary ban on NEW crypto mining data centers (October 2025)",
+        "Existing mining operations allowed to continue",
+        "Mandatory national data center registry (first in Europe) since January 2025",
+        "All data centers must register with Norwegian Communications Authority (Nkom)",
+        "Fines up to 5% of annual turnover for non-compliance"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as business income",
+        "capital_gains_short": "22% flat rate on gains",
+        "capital_gains_long": "22% flat rate on gains",
+        "deductions": "Business deductions available"
+      },
+      "energy_environment_policies": [
+        "Government prefers allocating renewable power to manufacturing, heating, or AI workloads over mining",
+        "Nearly 100% renewable electricity (hydroelectric)",
+        "New mining facilities blocked to preserve power for other uses",
+        "Cold climate favorable for cooling"
+      ],
+      "primary_energy_sources": ["Hydroelectric"],
+      "recent_changes": "October 2025: temporary ban on new crypto mining data centers; mandatory data center registry launched January 2025",
+      "key_regions": ["Northern Norway (existing operations)"]
+    },
+    {
+      "country": "Sweden",
+      "iso_code": "SE",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal_restricted",
+      "regulatory_stance": "Legal but increasingly hostile regulatory environment",
+      "key_policies": [
+        "Crypto-Asset Environmental Transparency Act effective January 2025",
+        "Mining operations >0.5 MW must publish real-time energy consumption data",
+        "Banks cutting off services to mining companies",
+        "68% of Swedish mining companies planned to relocate by 2026"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as business or hobby income",
+        "capital_gains_short": "30% flat rate",
+        "capital_gains_long": "30% flat rate",
+        "deductions": "Business deductions available"
+      },
+      "energy_environment_policies": [
+        "Crypto-Asset Environmental Transparency Act (Jan 2025) mandates energy reporting",
+        "Swedish Energy Agency investing 150M SEK ($13.8M) in waste heat recovery projects",
+        "Pilot in Lulea recovering 65% of mining heat for district heating",
+        "Banks de-banking mining companies despite renewable energy use",
+        "Strong push to redirect energy from mining to other uses"
+      ],
+      "primary_energy_sources": ["Hydroelectric", "Nuclear", "Wind"],
+      "recent_changes": "Environmental Transparency Act (Jan 2025); mass exodus of miners planned; banking access increasingly difficult",
+      "key_regions": ["Norrbotten County", "Lulea"]
+    },
+    {
+      "country": "El Salvador",
+      "iso_code": "SV",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Fully legal and government-championed",
+      "key_policies": [
+        "Bitcoin adopted as legal tender in 2021",
+        "Government actively mines Bitcoin using volcanic geothermal energy",
+        "Full tax exemption for foreign crypto investors",
+        "Bitcoin bonds (Volcano Bonds) launched"
+      ],
+      "tax_treatment": {
+        "mining_income": "0% for foreign investors",
+        "capital_gains_short": "0% for foreign investors",
+        "capital_gains_long": "0% for foreign investors",
+        "deductions": "N/A (no tax for foreign investors)"
+      },
+      "energy_environment_policies": [
+        "Government-backed volcanic geothermal mining operation",
+        "Renewable energy focus for mining",
+        "Small-scale compared to major mining countries"
+      ],
+      "primary_energy_sources": ["Geothermal (volcanic)"],
+      "recent_changes": "Continued government commitment to Bitcoin despite IMF pressure; Volcano Bond issuance",
+      "key_regions": ["Tecapa volcano region"]
+    },
+    {
+      "country": "United Kingdom",
+      "iso_code": "GB",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal; comprehensive regulatory framework being built (2025-2027)",
+      "key_policies": [
+        "Individual mining is legal without a license",
+        "Commercial mining services require FCA compliance",
+        "New FSMA-based crypto regime: applications open Sept 2026, go-live Oct 2027",
+        "CARF-aligned reporting obligations from January 2026"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as miscellaneous income or trading income depending on scale",
+        "capital_gains_short": "18-24% CGT",
+        "capital_gains_long": "18-24% CGT",
+        "deductions": "Annual CGT allowance of 3,000 GBP; business expenses deductible"
+      },
+      "energy_environment_policies": [
+        "High electricity costs make mining largely uncompetitive",
+        "Government discourages high energy use but no mining-specific energy restrictions",
+        "No dedicated energy allocation for mining"
+      ],
+      "primary_energy_sources": ["Natural gas", "Wind", "Nuclear"],
+      "recent_changes": "CARF reporting from Jan 2026; FCA authorization gateway opening Sept 2026; new comprehensive regime by Oct 2027",
+      "key_regions": ["Various (small-scale)"]
+    },
+    {
+      "country": "Brazil",
+      "iso_code": "BR",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal with new comprehensive framework (2026)",
+      "key_policies": [
+        "Mining legal, not regulated by specific crypto laws",
+        "Virtual Assets Law (2022) operationalized via BCB resolutions (Nov 2025)",
+        "Compliance deadline February 2026 with 9-month grace period",
+        "Miners must comply with standard tax registration and reporting"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as income",
+        "capital_gains_short": "15-22.5%",
+        "capital_gains_long": "15-22.5%",
+        "deductions": "Sales under R$35,000/month exempt; CAMEX reduced import tax on SHA-256 mining equipment to 0% (through Dec 2025)"
+      },
+      "energy_environment_policies": [
+        "Large hydroelectric capacity",
+        "No specific energy restrictions on mining",
+        "Environmental concerns about mining in Amazon/wetland regions"
+      ],
+      "primary_energy_sources": ["Hydroelectric", "Wind", "Biomass"],
+      "recent_changes": "BCB published operational crypto resolutions Nov 2025; compliance deadline Feb 2026; mining equipment import tariff reduction expired Dec 2025",
+      "key_regions": ["Sao Paulo", "Southern Brazil"]
+    },
+    {
+      "country": "Argentina",
+      "iso_code": "AR",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal with VASP registration framework",
+      "key_policies": [
+        "Law 27,739 (March 2024) created VASP framework under CNV oversight",
+        "CNV Resolution 1058/2025 establishes mandatory VASP registration",
+        "Businesses with monthly volumes >35,000 UVA (~$29,246) must register",
+        "Full enforcement from December 31, 2025"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as income; crypto treated as intangible property",
+        "capital_gains_short": "Standard income tax rates",
+        "capital_gains_long": "Holding crypto is not taxed; profits from transactions are taxable",
+        "deductions": "Tax amnesty program (Blanqueo) offered 5-15% rates; first $100K exempt if kept in Argentine bank"
+      },
+      "energy_environment_policies": [
+        "Industrial electricity ~$0.03-0.04/kWh (competitive)",
+        "Patagonia offers cheap energy and cold climate",
+        "No specific mining energy restrictions"
+      ],
+      "primary_energy_sources": ["Natural gas", "Hydroelectric", "Wind (Patagonia)"],
+      "recent_changes": "VASP registration mandatory from late 2025; CARF data collection begins 2026 for international reporting by 2027-2028",
+      "key_regions": ["Buenos Aires", "Patagonia"]
+    },
+    {
+      "country": "Thailand",
+      "iso_code": "TH",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal, unregulated activity; favorable tax changes",
+      "key_policies": [
+        "Mining is legal and not subject to specific regulation",
+        "Revenue Department treats mining as manufacturing (taxable under Section 40(8))",
+        "5-year personal income exemption on crypto capital gains (2025-2029) via licensed exchanges",
+        "Mining income does NOT qualify for the tax exemption (business income)"
+      ],
+      "tax_treatment": {
+        "mining_income": "Taxed as business income (does not qualify for 2025-2029 exemption)",
+        "capital_gains_short": "0% via licensed exchange (2025-2029 exemption); otherwise up to 35%",
+        "capital_gains_long": "0% via licensed exchange (2025-2029 exemption); otherwise up to 35%",
+        "deductions": "Standard business deductions"
+      },
+      "energy_environment_policies": [
+        "No specific energy restrictions on mining",
+        "Moderate electricity costs",
+        "Tropical climate increases cooling costs"
+      ],
+      "primary_energy_sources": ["Natural gas", "Coal"],
+      "recent_changes": "5-year crypto capital gains tax exemption launched January 2025 (for licensed exchange transactions only)",
+      "key_regions": ["Bangkok", "Chiang Mai"]
+    },
+    {
+      "country": "India",
+      "iso_code": "IN",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal_restricted",
+      "regulatory_stance": "Ambiguous; no clear mining regulations but heavy taxation",
+      "key_policies": [
+        "No clear regulations specifically for mining",
+        "30% flat tax on all crypto gains (no loss offset between tokens)",
+        "1% TDS (Tax Deducted at Source) on all transactions",
+        "Some states restrict mining due to energy concerns",
+        "RBI historically hostile to crypto but no outright ban"
+      ],
+      "tax_treatment": {
+        "mining_income": "30% flat tax on gains",
+        "capital_gains_short": "30% flat rate + 1% TDS",
+        "capital_gains_long": "30% flat rate + 1% TDS",
+        "deductions": "Losses CANNOT offset gains from different tokens; very restrictive"
+      },
+      "energy_environment_policies": [
+        "Some states restrict mining operations due to energy concerns",
+        "High and variable electricity costs across states",
+        "No dedicated energy policy for mining"
+      ],
+      "primary_energy_sources": ["Coal", "Solar", "Natural gas"],
+      "recent_changes": "30% tax and 1% TDS remain in effect; no softening of stance expected",
+      "key_regions": ["Various (limited scale)"]
+    },
+    {
+      "country": "Georgia",
+      "iso_code": "GE",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal",
+      "regulatory_stance": "Legal and crypto-friendly; tax-free for individuals",
+      "key_policies": [
+        "One of the most crypto-friendly jurisdictions globally",
+        "0% tax on crypto for individuals",
+        "Crypto not considered Georgian-sourced income",
+        "Historical hub for mining due to cheap electricity"
+      ],
+      "tax_treatment": {
+        "mining_income": "0% for individuals; 15% corporate tax for businesses",
+        "capital_gains_short": "0% for individuals",
+        "capital_gains_long": "0% for individuals",
+        "deductions": "N/A for individuals (no tax); corporate deductions available"
+      },
+      "energy_environment_policies": [
+        "Cheap hydroelectric power",
+        "Cold mountainous climate reduces cooling costs",
+        "No energy restrictions on mining"
+      ],
+      "primary_energy_sources": ["Hydroelectric"],
+      "recent_changes": "Remains one of the most favorable jurisdictions for individual crypto miners",
+      "key_regions": ["Tbilisi", "Kutaisi"]
+    },
+    {
+      "country": "Bhutan",
+      "iso_code": "BT",
+      "hashrate_rank": null,
+      "hashrate_share_pct": null,
+      "hashrate_ehs": null,
+      "mining_status": "legal_restricted",
+      "regulatory_stance": "Legal only within Gelephu Mindfulness City; state-backed mining",
+      "key_policies": [
+        "Mining and exchanges permitted only for Gelephu Mindfulness City (GMC) registered entities",
+        "Royal Monetary Authority (RMA) regulates crypto activities",
+        "Government holds ~11,711 BTC (~$1.3 billion as of mid-2025)",
+        "State-backed mining operation using hydroelectric power"
+      ],
+      "tax_treatment": {
+        "mining_income": "Governed by GMC-specific regulations",
+        "capital_gains_short": "GMC-specific framework",
+        "capital_gains_long": "GMC-specific framework",
+        "deductions": "GMC-specific framework"
+      },
+      "energy_environment_policies": [
+        "Abundant hydroelectric power (Bhutan exports electricity to India)",
+        "State-run mining leverages surplus hydroelectric capacity",
+        "One of the largest government Bitcoin holdings globally relative to GDP"
+      ],
+      "primary_energy_sources": ["Hydroelectric"],
+      "recent_changes": "April 2025 RMA notice restricting crypto mining/exchanges to GMC-registered entities only",
+      "key_regions": ["Gelephu Mindfulness City"]
+    }
+  ],
+  "summary_stats": {
+    "total_countries_tracked": 22,
+    "legal_count": 12,
+    "legal_restricted_count": 7,
+    "banned_count": 1,
+    "ambiguous_count": 2,
+    "top_3_hashrate_share_pct": 65.6,
+    "top_10_hashrate_share_pct": 86.0
+  },
+  "status_legend": {
+    "legal": "Mining is legal with standard business regulations",
+    "legal_restricted": "Mining is legal but with significant restrictions (licensing, energy caps, geographic limits, or payment bans)",
+    "banned": "Mining is officially prohibited (may still occur underground)",
+    "ambiguous": "No clear legal framework; regulatory status uncertain"
+  }
+}

@@ -1,0 +1,350 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ */
+/* CSS Custom Properties                                               */
+/* ------------------------------------------------------------------ */
+:root {
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: #eff6ff;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base layer                                                          */
+/* ------------------------------------------------------------------ */
+@layer base {
+  body {
+    @apply antialiased font-sans;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    transition: background-color 0.2s, color 0.2s;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-stone-300 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-stone-400; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Component layer                                                     */
+/* ------------------------------------------------------------------ */
+@layer components {
+  .card {
+    @apply bg-white rounded-xl p-6 shadow-sm border border-stone-100 transition-shadow hover:shadow-md;
+  }
+  .btn-primary {
+    background-color: var(--accent);
+    @apply text-white font-medium px-5 py-2.5 rounded-lg transition-all text-sm;
+  }
+  .btn-primary:hover {
+    background-color: var(--accent-hover);
+  }
+  .btn-secondary {
+    @apply bg-white hover:bg-stone-50 text-stone-700 font-medium px-5 py-2.5 rounded-lg transition-all border border-stone-200 text-sm;
+  }
+  .badge-dem {
+    @apply bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-rep {
+    @apply bg-rose-50 text-rose-700 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-free {
+    @apply bg-stone-100 text-stone-600 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-premium {
+    @apply bg-amber-50 text-amber-700 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .input-field {
+    @apply w-full bg-white border border-stone-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-stone-900/10 focus:border-stone-400 transition-all placeholder:text-stone-400;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Dark Mode                                                           */
+/* ------------------------------------------------------------------ */
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+[data-theme="dark"] body {
+  background-color: #0c0a09;
+  color: #e7e5e4;
+}
+
+/* Backgrounds */
+[data-theme="dark"] .bg-white {
+  background-color: #1c1917 !important;
+}
+[data-theme="dark"] .bg-stone-50 {
+  background-color: #0c0a09 !important;
+}
+[data-theme="dark"] .bg-stone-100 {
+  background-color: #292524 !important;
+}
+[data-theme="dark"] .bg-stone-200 {
+  background-color: #44403c !important;
+}
+[data-theme="dark"] .hover\:bg-stone-50:hover {
+  background-color: #292524 !important;
+}
+[data-theme="dark"] .hover\:bg-stone-100:hover {
+  background-color: #44403c !important;
+}
+
+/* Borders */
+[data-theme="dark"] .border-stone-50 {
+  border-color: #1c1917 !important;
+}
+[data-theme="dark"] .border-stone-100 {
+  border-color: #292524 !important;
+}
+[data-theme="dark"] .border-stone-200 {
+  border-color: #44403c !important;
+}
+[data-theme="dark"] .border-stone-200\/60 {
+  border-color: rgba(68, 64, 60, 0.6) !important;
+}
+[data-theme="dark"] .divide-stone-50 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1c1917 !important;
+}
+[data-theme="dark"] .divide-stone-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #292524 !important;
+}
+
+/* Text */
+[data-theme="dark"] .text-stone-900 {
+  color: #fafaf9 !important;
+}
+[data-theme="dark"] .text-stone-800 {
+  color: #e7e5e4 !important;
+}
+[data-theme="dark"] .text-stone-700 {
+  color: #d6d3d1 !important;
+}
+[data-theme="dark"] .text-stone-600 {
+  color: #a8a29e !important;
+}
+[data-theme="dark"] .text-stone-500 {
+  color: #78716c !important;
+}
+[data-theme="dark"] .text-stone-400 {
+  color: #57534e !important;
+}
+[data-theme="dark"] .text-stone-300 {
+  color: #44403c !important;
+}
+[data-theme="dark"] .text-gray-800 {
+  color: #e7e5e4 !important;
+}
+[data-theme="dark"] .hover\:text-stone-800:hover {
+  color: #fafaf9 !important;
+}
+[data-theme="dark"] .hover\:text-stone-700:hover {
+  color: #e7e5e4 !important;
+}
+
+/* Shadows */
+[data-theme="dark"] .shadow-sm {
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4) !important;
+}
+[data-theme="dark"] .hover\:shadow-md:hover {
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.5) !important;
+}
+
+/* Nav */
+[data-theme="dark"] .bg-white\/80 {
+  background-color: rgba(28, 25, 23, 0.85) !important;
+}
+
+/* Form elements */
+[data-theme="dark"] .input-field {
+  background-color: #292524 !important;
+  border-color: #44403c !important;
+  color: #e7e5e4 !important;
+}
+[data-theme="dark"] .input-field::placeholder {
+  color: #57534e !important;
+}
+[data-theme="dark"] select {
+  background-color: #292524 !important;
+  color: #e7e5e4 !important;
+}
+[data-theme="dark"] input[type="checkbox"] {
+  background-color: #292524;
+  border-color: #44403c;
+}
+
+/* Cards & panels */
+[data-theme="dark"] .card {
+  background-color: #1c1917 !important;
+  border-color: #292524 !important;
+}
+[data-theme="dark"] .btn-secondary {
+  background-color: #1c1917 !important;
+  border-color: #44403c !important;
+  color: #d6d3d1 !important;
+}
+[data-theme="dark"] .btn-secondary:hover {
+  background-color: #292524 !important;
+}
+
+/* Badges */
+[data-theme="dark"] .badge-free {
+  background-color: #292524 !important;
+  color: #a8a29e !important;
+}
+[data-theme="dark"] .badge-premium {
+  background-color: rgba(245, 158, 11, 0.15) !important;
+}
+
+/* Scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background-color: #44403c;
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background-color: #57534e;
+}
+
+/* Colored badges in dark mode need subtle adjustment */
+[data-theme="dark"] .bg-blue-50 { background-color: rgba(59, 130, 246, 0.12) !important; }
+[data-theme="dark"] .bg-rose-50 { background-color: rgba(244, 63, 94, 0.12) !important; }
+[data-theme="dark"] .bg-amber-50 { background-color: rgba(245, 158, 11, 0.12) !important; }
+[data-theme="dark"] .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.12) !important; }
+[data-theme="dark"] .bg-violet-100 { background-color: rgba(139, 92, 246, 0.15) !important; }
+[data-theme="dark"] .bg-blue-100 { background-color: rgba(59, 130, 246, 0.15) !important; }
+[data-theme="dark"] .bg-emerald-100 { background-color: rgba(16, 185, 129, 0.15) !important; }
+[data-theme="dark"] .bg-amber-100 { background-color: rgba(245, 158, 11, 0.15) !important; }
+[data-theme="dark"] .bg-purple-100 { background-color: rgba(168, 85, 247, 0.15) !important; }
+[data-theme="dark"] .bg-red-50 { background-color: rgba(239, 68, 68, 0.12) !important; }
+[data-theme="dark"] .bg-red-100 { background-color: rgba(239, 68, 68, 0.15) !important; }
+[data-theme="dark"] .bg-indigo-50 { background-color: rgba(99, 102, 241, 0.12) !important; }
+
+[data-theme="dark"] .border-amber-200 { border-color: rgba(245, 158, 11, 0.3) !important; }
+[data-theme="dark"] .border-red-100 { border-color: rgba(239, 68, 68, 0.2) !important; }
+
+/* Recharts overrides for dark mode */
+[data-theme="dark"] .recharts-cartesian-grid line {
+  stroke: #292524;
+}
+[data-theme="dark"] .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: #1c1917 !important;
+  border-color: #44403c !important;
+}
+
+/* Table rows */
+[data-theme="dark"] thead tr {
+  border-color: #292524;
+}
+[data-theme="dark"] tbody tr {
+  border-color: #1c1917;
+}
+
+/* Animate pulse dark */
+[data-theme="dark"] .animate-pulse {
+  background-color: #292524 !important;
+}
+
+/* Footer */
+[data-theme="dark"] footer {
+  border-color: rgba(68, 64, 60, 0.6);
+}
+
+/* ------------------------------------------------------------------ */
+/* Accent Color — applied via CSS variable                             */
+/* ------------------------------------------------------------------ */
+.accent-text { color: var(--accent); }
+.accent-bg { background-color: var(--accent); }
+.accent-border { border-color: var(--accent); }
+
+/* Ring focus states using accent */
+.ring-accent { --tw-ring-color: var(--accent); }
+
+/* ------------------------------------------------------------------ */
+/* High Contrast                                                       */
+/* ------------------------------------------------------------------ */
+[data-contrast="high"] .text-stone-500 {
+  color: #44403c !important;
+}
+[data-contrast="high"] .text-stone-400 {
+  color: #57534e !important;
+}
+[data-contrast="high"] .text-stone-300 {
+  color: #78716c !important;
+}
+[data-contrast="high"] .border-stone-100 {
+  border-color: #d6d3d1 !important;
+}
+[data-contrast="high"] .border-stone-50 {
+  border-color: #e7e5e4 !important;
+}
+[data-contrast="high"] .text-xs {
+  font-weight: 500;
+}
+[data-contrast="high"] .text-\[10px\] {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* High contrast + dark */
+[data-theme="dark"][data-contrast="high"] .text-stone-500 {
+  color: #a8a29e !important;
+}
+[data-theme="dark"][data-contrast="high"] .text-stone-400 {
+  color: #a8a29e !important;
+}
+[data-theme="dark"][data-contrast="high"] .text-stone-300 {
+  color: #78716c !important;
+}
+[data-theme="dark"][data-contrast="high"] .border-stone-100 {
+  border-color: #44403c !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Compact Density                                                     */
+/* ------------------------------------------------------------------ */
+[data-density="compact"] .card {
+  padding: 1rem;
+}
+[data-density="compact"] .rounded-xl {
+  border-radius: 0.5rem;
+}
+[data-density="compact"] .p-6 {
+  padding: 1rem !important;
+}
+[data-density="compact"] .p-5 {
+  padding: 0.75rem !important;
+}
+[data-density="compact"] .p-4 {
+  padding: 0.625rem !important;
+}
+[data-density="compact"] .py-8 {
+  padding-top: 1.25rem !important;
+  padding-bottom: 1.25rem !important;
+}
+[data-density="compact"] .mb-6 {
+  margin-bottom: 1rem !important;
+}
+[data-density="compact"] .mb-4 {
+  margin-bottom: 0.5rem !important;
+}
+[data-density="compact"] .gap-6 {
+  gap: 1rem !important;
+}
+[data-density="compact"] .gap-4 {
+  gap: 0.5rem !important;
+}
+[data-density="compact"] .text-3xl {
+  font-size: 1.5rem;
+  line-height: 2rem;
+}
+[data-density="compact"] .text-2xl {
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+}
+[data-density="compact"] .text-lg {
+  font-size: 0.9375rem;
+  line-height: 1.375rem;
+}

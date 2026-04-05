@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Account — Signal Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        :root { --accent: #2D64F3; --accent-hover: #3B73FF; --accent-glow: rgba(45,100,243,0.15); }
+        .req-met { color: #22c55e; }
+        .req-unmet { color: #484f58; }
+    </style>
+</head>
+<body class="bg-[#0d1117] min-h-screen flex items-center justify-center">
+<div class="w-full max-w-sm mx-auto px-6">
+
+    <div class="text-center mb-6">
+        <div class="inline-flex items-center gap-2 mb-3"><div class="w-3 h-3 rounded-full" style="background:var(--accent)"></div><span class="text-xl font-semibold text-white tracking-tight">Signal Dashboard</span></div>
+        <p class="text-sm text-gray-500">Create your account</p>
+    </div>
+    <div class="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-8">
+        {% if error %}<div class="mb-5 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{{ error }}</div>{% endif %}
+        <form method="POST" action="/register" class="space-y-4" id="reg-form">
+            <input type="hidden" name="start_platform" value="polymarket">
+
+            <!-- Username -->
+            <div>
+                <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">Username</label>
+                <input type="text" name="username" id="reg-username" required minlength="3" maxlength="15"
+                    class="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none transition-all"
+                    placeholder="3–15 characters" oninput="checkUsername()">
+                <p id="username-hint" class="text-[10px] mt-1.5 req-unmet hidden">&#10005; 3–15 characters</p>
+            </div>
+
+            <!-- Email -->
+            <div>
+                <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">Email <span class="text-gray-600">(optional)</span></label>
+                <input type="email" name="email" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none transition-all" placeholder="you@example.com">
+            </div>
+
+            <!-- Password -->
+            <div>
+                <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">Password</label>
+                <input type="password" name="password" id="reg-password" required
+                    class="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none transition-all"
+                    placeholder="Create a strong password" oninput="checkPassword()" onfocus="document.getElementById('pw-reqs').classList.remove('hidden')">
+                <!-- Password requirements checklist -->
+                <div id="pw-reqs" class="hidden mt-2.5 space-y-1">
+                    <p class="text-[11px] req-unmet" id="req-length"><span class="inline-block w-3.5">&#10005;</span> At least 12 characters</p>
+                    <p class="text-[11px] req-unmet" id="req-upper"><span class="inline-block w-3.5">&#10005;</span> One uppercase letter</p>
+                    <p class="text-[11px] req-unmet" id="req-lower"><span class="inline-block w-3.5">&#10005;</span> One lowercase letter</p>
+                    <p class="text-[11px] req-unmet" id="req-number"><span class="inline-block w-3.5">&#10005;</span> One number</p>
+                </div>
+            </div>
+
+            <!-- Confirm Password -->
+            <div>
+                <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">Confirm Password</label>
+                <input type="password" name="password2" id="reg-password2" required
+                    class="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none transition-all"
+                    placeholder="Repeat password" oninput="checkMatch()">
+                <p id="match-hint" class="text-[10px] mt-1.5 hidden">&#10005; Passwords don't match</p>
+            </div>
+
+            <button type="submit" id="reg-btn"
+                class="w-full text-white font-medium text-sm py-3 rounded-xl transition-all active:scale-[0.98]"
+                style="background:var(--accent)" onmouseenter="this.style.background='var(--accent-hover)'" onmouseleave="this.style.background='var(--accent)'">
+                Create Account
+            </button>
+        </form>
+        <p class="text-center text-xs text-gray-500 mt-5">Already have an account? <a href="/login" class="hover:opacity-80" style="color:var(--accent)">Sign in</a></p>
+    </div>
+</div>
+<script>
+function setReq(id, met) {
+    const el = document.getElementById(id);
+    el.classList.toggle('req-met', met);
+    el.classList.toggle('req-unmet', !met);
+    el.querySelector('span').textContent = met ? '\u2713' : '\u2717';
+}
+
+function checkPassword() {
+    const pw = document.getElementById('reg-password').value;
+    setReq('req-length', pw.length >= 12);
+    setReq('req-upper', /[A-Z]/.test(pw));
+    setReq('req-lower', /[a-z]/.test(pw));
+    setReq('req-number', /[0-9]/.test(pw));
+    checkMatch();
+}
+
+function checkUsername() {
+    const u = document.getElementById('reg-username').value;
+    const hint = document.getElementById('username-hint');
+    hint.classList.remove('hidden');
+    if (u.length >= 3 && u.length <= 15) {
+        hint.classList.add('req-met'); hint.classList.remove('req-unmet');
+        hint.innerHTML = '\u2713 Looks good (' + u.length + '/15)';
+    } else {
+        hint.classList.remove('req-met'); hint.classList.add('req-unmet');
+        hint.innerHTML = '\u2717 3\u201315 characters (' + u.length + '/15)';
+    }
+}
+
+function checkMatch() {
+    const pw = document.getElementById('reg-password').value;
+    const pw2 = document.getElementById('reg-password2').value;
+    const hint = document.getElementById('match-hint');
+    if (pw2.length === 0) { hint.classList.add('hidden'); return; }
+    hint.classList.remove('hidden');
+    if (pw === pw2) {
+        hint.classList.add('req-met'); hint.classList.remove('req-unmet');
+        hint.innerHTML = '\u2713 Passwords match';
+    } else {
+        hint.classList.remove('req-met'); hint.classList.add('req-unmet');
+        hint.innerHTML = '\u2717 Passwords don\'t match';
+    }
+}
+
+document.getElementById('reg-form').addEventListener('submit', function(e) {
+    const pw = document.getElementById('reg-password').value;
+    if (pw.length < 12 || !/[A-Z]/.test(pw) || !/[a-z]/.test(pw) || !/[0-9]/.test(pw)) {
+        e.preventDefault();
+        document.getElementById('pw-reqs').classList.remove('hidden');
+        checkPassword();
+    }
+});
+</script>
+</body>
+</html>

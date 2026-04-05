@@ -1,0 +1,55 @@
+scraping:
+  limit_per_source: 100
+  keywords:
+    prediction_keywords:
+      - "will win"
+      - "going to"
+      - "% chance"
+      - "predict"
+      - "bet on"
+      - "likely"
+      - "odds"
+      - "my prediction"
+      - "I think"
+      - "called it"
+    category_keywords:
+      politics: ["election", "president", "senate", "vote", "congress", "poll", "ballot", "referendum"]
+      sports: ["championship", "finals", "match", "season", "playoffs", "league", "title", "tournament"]
+      crypto: ["bitcoin", "ethereum", "btc", "eth", "token", "price target", "altcoin", "crypto"]
+      geopolitics: ["war", "sanctions", "treaty", "ceasefire", "conflict", "invasion", "diplomatic"]
+
+credibility:
+  min_qualifying_predictions: 10
+  min_categories_for_unlock: 3
+  min_predictions_per_category: 3
+  min_hours_remaining: 12
+  decay_half_life_days: 60
+  bayesian_prior: 0.5
+  bayesian_strength: 4
+  category_dominance_threshold: 0.60
+  category_dominance_penalty: 0.15
+  weights:
+    accuracy: 0.45
+    engagement: 0.18
+    verified: 0.12
+    volume: 0.12
+    manual: 0.13
+  manual_trust_delta:
+    trusted: 0.20
+    untrusted: -0.40
+  spread_penalty:
+    1: 0.30
+    2: 0.60
+    3: 0.85
+    4: 1.00
+
+scoring:
+  risk_thresholds:
+    min_global_credibility: 0.4
+    min_category_credibility: 0.35
+    extreme_market_bounds: [0.05, 0.95]
+  market_match_threshold: 0.35
+
+quota:
+  twitter_warn_pct: 0.80
+  twitter_hard_stop_pct: 1.00

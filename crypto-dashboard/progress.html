@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="30">
+<title>Pipeline Progress</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e;
+          --green:#3fb950; --red:#f85149; --blue:#58a6ff; --yellow:#d29922; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,'Segoe UI',sans-serif;
+         padding:40px; display:flex; flex-direction:column; align-items:center; min-height:100vh; }
+  h1 { font-size:1.5em; margin-bottom:24px; }
+  .pipeline { width:100%; max-width:700px; }
+  .asset-row { background:var(--card); border:1px solid var(--border); border-radius:10px;
+               padding:20px; margin-bottom:14px; }
+  .asset-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .asset-name { font-size:1.2em; font-weight:700; }
+  .status-badge { font-size:0.75em; font-weight:600; padding:4px 10px; border-radius:12px; text-transform:uppercase; letter-spacing:0.05em; }
+  .status-done { background:rgba(63,185,80,0.15); color:var(--green); }
+  .status-active { background:rgba(88,166,255,0.15); color:var(--blue); }
+  .status-pending { background:rgba(139,148,158,0.15); color:var(--muted); }
+  .bar-bg { width:100%; height:8px; background:var(--border); border-radius:4px; overflow:hidden; margin-bottom:8px; }
+  .bar-fill { height:100%; border-radius:4px; transition:width 0.5s ease; }
+  .bar-done { background:var(--green); }
+  .bar-active { background:var(--blue); animation:pulse 1.5s infinite; }
+  .bar-pending { background:var(--muted); }
+  .details { color:var(--muted); font-size:0.8em; display:flex; justify-content:space-between; }
+  .accuracy { color:var(--green); font-weight:600; }
+  .timeline { width:100%; max-width:700px; margin-top:20px; background:var(--card); border:1px solid var(--border);
+              border-radius:10px; padding:20px; }
+  .timeline h3 { font-size:0.9em; color:var(--muted); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.05em; }
+  .est-row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); font-size:0.85em; }
+  .est-row:last-child { border-bottom:none; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
+  .total-bar { margin-top:20px; width:100%; max-width:700px; }
+  .total-label { display:flex; justify-content:space-between; font-size:0.85em; color:var(--muted); margin-bottom:6px; }
+  .total-bar-bg { width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden; }
+  .total-bar-fill { height:100%; background:linear-gradient(90deg, var(--green), var(--blue)); border-radius:6px; transition:width 0.5s; }
+</style>
+</head>
+<body>
+
+<h1>Multi-Asset Pipeline Progress</h1>
+
+<div class="pipeline" id="pipeline"></div>
+
+<div class="total-bar">
+  <div class="total-label"><span>Overall Progress</span><span id="total-pct">—</span></div>
+  <div class="total-bar-bg"><div class="total-bar-fill" id="total-fill" style="width:0%"></div></div>
+</div>
+
+<div class="timeline">
+  <h3>Estimated Timeline</h3>
+  <div id="timeline"></div>
+</div>
+
+<script>
+const ASSETS = [
+  { ticker: "BTC",  name: "Bitcoin",  steps: ["fetch","train","backtest","predict"] },
+  { ticker: "ETH",  name: "Ethereum", steps: ["fetch","train","backtest","predict"] },
+  { ticker: "SOL",  name: "Solana",   steps: ["fetch","train","backtest","predict"] },
+  { ticker: "DOGE", name: "Dogecoin", steps: ["fetch","train","backtest","predict"] },
+  { ticker: "XRP",  name: "XRP",      steps: ["fetch","train","backtest","predict"] },
+];
+
+// Hardcoded current state — this page auto-refreshes every 30s
+// Update these based on actual progress from the log
+const PROGRESS = {
+  BTC:  { status: "done",    pct: 100, accuracy: "54.8%", hc: "55.1%", detail: "2.6M candles, 7 models trained" },
+  ETH:  { status: "done",    pct: 100, accuracy: "51.1%", hc: "52.2%", detail: "2.6M candles, 7 models trained" },
+  SOL:  { status: "done",    pct: 100, accuracy: "51.0%", hc: "52.0%", detail: "2.6M candles, 7 models trained" },
+  DOGE: { status: "done",    pct: 100, accuracy: "52.3%", hc: "51.4%", detail: "2.6M candles, 7 models trained" },
+  XRP:  { status: "active",  pct: 10,  accuracy: "—",     hc: "—",     detail: "Fetching data... ~10%" },
+};
+
+// Per-asset time estimates (minutes)
+const TIME_PER_ASSET = 15; // ~8 min fetch + ~5 min train + ~2 min backtest
+const START_TIME = new Date("2026-03-30T15:40:00Z"); // approximate start
+
+const pipeline = document.getElementById("pipeline");
+const timeline = document.getElementById("timeline");
+
+let totalPct = 0;
+let html = "";
+let timeHtml = "";
+
+ASSETS.forEach((asset, i) => {
+  const p = PROGRESS[asset.ticker];
+  const statusClass = p.status === "done" ? "status-done" : (p.status === "active" ? "status-active" : "status-pending");
+  const barClass = p.status === "done" ? "bar-done" : (p.status === "active" ? "bar-active" : "bar-pending");
+  const statusText = p.status === "done" ? "Complete" : (p.status === "active" ? "In Progress" : "Pending");
+
+  totalPct += p.pct;
+
+  const accHtml = p.accuracy !== "—" ? `<span class="accuracy">Acc: ${p.accuracy} | HC: ${p.hc}</span>` : "";
+
+  html += `
+    <div class="asset-row">
+      <div class="asset-header">
+        <span class="asset-name">${asset.ticker} — ${asset.name}</span>
+        <span class="status-badge ${statusClass}">${statusText}</span>
+      </div>
+      <div class="bar-bg"><div class="bar-fill ${barClass}" style="width:${p.pct}%"></div></div>
+      <div class="details">
+        <span>${p.detail}</span>
+        ${accHtml}
+      </div>
+    </div>`;
+
+  // Timeline estimate
+  const estStart = new Date(START_TIME.getTime() + i * TIME_PER_ASSET * 60000);
+  const estEnd = new Date(estStart.getTime() + TIME_PER_ASSET * 60000);
+  const now = new Date();
+  let timeStatus = "";
+  if (p.status === "done") timeStatus = "&#10003; Done";
+  else if (p.status === "active") timeStatus = `<span style="color:var(--blue)">~${Math.max(0, Math.round((estEnd - now)/60000))} min left</span>`;
+  else timeStatus = `<span style="color:var(--muted)">ETA: ${estEnd.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>`;
+
+  timeHtml += `
+    <div class="est-row">
+      <span>${asset.ticker}</span>
+      <span>${estStart.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} → ${estEnd.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
+      <span>${timeStatus}</span>
+    </div>`;
+});
+
+pipeline.innerHTML = html;
+timeline.innerHTML = timeHtml;
+
+const overallPct = Math.round(totalPct / ASSETS.length);
+document.getElementById("total-pct").textContent = overallPct + "%";
+document.getElementById("total-fill").style.width = overallPct + "%";
+</script>
+
+</body>
+</html>

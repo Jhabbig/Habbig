@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create account — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>.auth-error:empty { display: none; }</style>
+</head>
+<body class="auth-body">
+  <div class="auth-wrap">
+    <a href="/" class="auth-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </a>
+
+    <div class="auth-card">
+      <div class="auth-title">Create your account</div>
+      <div class="auth-sub">No credit card required to sign up.</div>
+
+      <form class="auth-form" method="post" action="/signup">
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" required autocomplete="email" autofocus>
+
+        <label for="password">Password</label>
+        <input id="password" type="password" name="password" required autocomplete="new-password" minlength="8">
+        <div class="auth-hint">At least 8 characters. Use a password manager.</div>
+
+        <button type="submit" class="auth-submit">Create account →</button>
+      </form>
+
+      <div class="auth-error">{{ error }}</div>
+
+      <div class="auth-footer">
+        Already have an account? <a href="/login">Sign in</a>
+      </div>
+    </div>
+
+    <div class="auth-reassure">
+      <strong>What happens next:</strong> you'll land on the dashboards hub
+      where you can preview every product. You only start paying when you
+      subscribe to a specific dashboard — monthly or annual, cancel any time.
+    </div>
+  </div>
+</body>
+</html>

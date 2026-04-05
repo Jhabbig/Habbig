@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — Signal Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        :root { --accent: #2D64F3; --accent-hover: #3B73FF; --accent-glow: rgba(45,100,243,0.15); --label: Polymarket; }
+        .kalshi-mode { --accent: #00d26a; --accent-hover: #00e676; --accent-glow: rgba(0,210,106,0.15); --label: Kalshi; }
+        .seg-ctrl { display: inline-flex; border-radius: 12px; padding: 3px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); width: 100%; }
+        .seg-btn { flex: 1; padding: 10px 0; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.25s; color: #6b7280; text-align: center; letter-spacing: 0.01em; }
+        .seg-btn.active { color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+        .seg-btn.poly-active { background: #2D64F3; }
+        .seg-btn.kalshi-active { background: #00d26a; color: #0d1117; }
+        .seg-btn:not(.active):hover { color: #9ca3af; }
+    </style>
+</head>
+<body class="bg-[#0d1117] min-h-screen flex items-center justify-center" id="login-body">
+<div class="w-full max-w-sm mx-auto px-6">
+
+    <!-- Branding -->
+    <div class="text-center mb-6">
+        <div class="inline-flex items-center gap-2 mb-3">
+            <div class="w-3 h-3 rounded-full" id="brand-dot" style="background:var(--accent)"></div>
+            <span class="text-xl font-semibold text-white tracking-tight" id="brand-name">Polymarket Signal</span>
+        </div>
+        <p class="text-sm text-gray-500">Prediction Intelligence Dashboard</p>
+    </div>
+
+    <!-- Login card -->
+    <div class="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-8">
+        <h2 class="text-lg font-medium text-gray-200 mb-6">Sign in</h2>
+
+        {% if msg %}<div class="mb-5 px-4 py-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm">{{ msg }}</div>{% endif %}
+        {% if error %}<div class="mb-5 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{{ error }}</div>{% endif %}
+
+        <form method="POST" action="/login" class="space-y-5" id="login-form">
+            <input type="hidden" name="start_platform" id="start-platform" value="polymarket">
+
+            <div>
+                <label for="username" class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="username" autofocus
+                    class="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-600 focus:outline-none transition-all"
+                    style="border-color: rgba(255,255,255,0.08)" placeholder="admin"
+                    onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-glow)'"
+                    onblur="this.style.borderColor='rgba(255,255,255,0.08)';this.style.boxShadow='none'">
+            </div>
+
+            <div>
+                <div class="flex justify-between items-center mb-2">
+                    <label for="password" class="block text-xs font-medium text-gray-400 uppercase tracking-wider">Password</label>
+                    <a href="/forgot-password" class="text-[10px] hover:opacity-80 transition-opacity" style="color:var(--accent)">Forgot password?</a>
+                </div>
+                <div class="relative">
+                    <input type="password" id="password" name="password" required autocomplete="current-password"
+                        class="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 pr-10 text-sm text-gray-200 placeholder-gray-600 focus:outline-none transition-all"
+                        style="border-color: rgba(255,255,255,0.08)" placeholder="••••••••"
+                        onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-glow)'"
+                        onblur="this.style.borderColor='rgba(255,255,255,0.08)';this.style.boxShadow='none'">
+                    <button type="button" onclick="togglePw()" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors" tabindex="-1">
+                        <svg id="eye-open" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <svg id="eye-closed" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Platform chooser -->
+            <div>
+                <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">Start on</label>
+                <div class="seg-ctrl" id="platform-chooser">
+                    <button type="button" class="seg-btn active poly-active" id="btn-poly" onclick="choosePlatform('polymarket')">Polymarket</button>
+                    <button type="button" class="seg-btn" id="btn-kalshi" onclick="choosePlatform('kalshi')">Kalshi</button>
+                </div>
+            </div>
+
+            <button type="submit" id="login-btn"
+                class="w-full text-white font-medium text-sm py-3 rounded-xl transition-all active:scale-[0.98] focus:outline-none"
+                style="background:var(--accent);"
+                onmouseenter="this.style.background='var(--accent-hover)'"
+                onmouseleave="this.style.background='var(--accent)'">
+                Sign in
+            </button>
+        </form>
+
+        <div class="mt-5 pt-5 border-t border-white/5 text-center">
+            <a href="/register" class="text-sm font-medium hover:opacity-80 transition-opacity" style="color:var(--accent)">Create an account</a>
+        </div>
+    </div>
+
+    <p class="text-center text-[11px] text-gray-600 mt-6">All data stays local on your machine.</p>
+</div>
+
+<script>
+function togglePw() {
+    const inp = document.getElementById('password');
+    const open = document.getElementById('eye-open');
+    const closed = document.getElementById('eye-closed');
+    if (inp.type === 'password') {
+        inp.type = 'text'; open.classList.add('hidden'); closed.classList.remove('hidden');
+    } else {
+        inp.type = 'password'; open.classList.remove('hidden'); closed.classList.add('hidden');
+    }
+}
+
+function choosePlatform(plat) {
+    const body = document.getElementById('login-body');
+    const dot = document.getElementById('brand-dot');
+    const name = document.getElementById('brand-name');
+    const polyBtn = document.getElementById('btn-poly');
+    const kalshiBtn = document.getElementById('btn-kalshi');
+    const hiddenInput = document.getElementById('start-platform');
+
+    hiddenInput.value = plat;
+
+    polyBtn.classList.remove('active', 'poly-active');
+    kalshiBtn.classList.remove('active', 'kalshi-active');
+
+    if (plat === 'kalshi') {
+        body.classList.add('kalshi-mode');
+        kalshiBtn.classList.add('active', 'kalshi-active');
+        name.textContent = 'Kalshi Signal';
+    } else {
+        body.classList.remove('kalshi-mode');
+        polyBtn.classList.add('active', 'poly-active');
+        name.textContent = 'Polymarket Signal';
+    }
+
+    // Force re-render of accent-colored elements
+    dot.style.background = 'var(--accent)';
+    document.getElementById('login-btn').style.background = 'var(--accent)';
+}
+</script>
+</body>
+</html>

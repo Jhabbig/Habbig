@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboards — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards" class="active">Dashboards</a>
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      <div class="gw-user-pill">{{ email }}</div>
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+
+  <main class="gw-main">
+    <div class="hub-hero">
+      <div class="hub-hero-eyebrow">Your dashboards</div>
+      <h1 class="gw-page-title">Pick where you want to go.</h1>
+      <p class="gw-page-sub">
+        Every card below is its own dashboard with its own subscription. Active
+        ones open in a new tab. Locked ones jump straight to billing.
+        <a href="/settings">Set a default</a> to skip this page next time.
+      </p>
+    </div>
+
+    <div class="dash-grid">
+      {{ dashboard_cards }}
+    </div>
+  </main>
+</body>
+</html>

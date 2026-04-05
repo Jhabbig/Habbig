@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoRain Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-0: #06080d; --bg-1: #0c1017; --bg-2: #141a26; --bg-3: #1c2536;
+            --border: #242f44; --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+            --blue: #3b82f6; --green: #10b981; --red: #ef4444; --amber: #f59e0b;
+            --cyan: #06b6d4; --purple: #8b5cf6;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-0); color: var(--text-1); min-height: 100vh; }
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 24px; height: 56px; background: var(--bg-1); border-bottom: 1px solid var(--border);
+        }
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        .logo { width: 30px; height: 30px; background: linear-gradient(135deg, var(--purple), var(--cyan)); border-radius: 8px; display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #fff; }
+        .topbar h1 { font-size: 15px; font-weight: 700; }
+        .topbar h1 span { color: var(--purple); }
+        .topbar a { color: var(--blue); font-size: 12px; text-decoration: none; }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+        .metric-card {
+            background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+        }
+        .metric-val { font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+        .metric-label { font-size: 12px; color: var(--text-3); }
+        .metric-card.blue .metric-val { color: var(--blue); }
+        .metric-card.green .metric-val { color: var(--green); }
+        .metric-card.amber .metric-val { color: var(--amber); }
+        .metric-card.purple .metric-val { color: var(--purple); }
+
+        .section { margin-bottom: 24px; }
+        .section-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+        .section-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; background: var(--blue); color: #fff; }
+
+        table { width: 100%; border-collapse: collapse; background: var(--bg-2); border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+        th { background: var(--bg-3); text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
+        td { padding: 10px 14px; font-size: 13px; border-top: 1px solid var(--border); }
+        tr:hover td { background: rgba(59,130,246,.04); }
+        .admin-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: rgba(139,92,246,.15); color: var(--purple); }
+        .user-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: rgba(59,130,246,.12); color: var(--blue); }
+
+        .activity-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 10px 14px; border-bottom: 1px solid var(--border);
+            font-size: 13px;
+        }
+        .activity-item:last-child { border-bottom: none; }
+        .activity-user { font-weight: 600; min-width: 80px; }
+        .activity-action {
+            font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
+            background: var(--bg-3); color: var(--text-2);
+        }
+        .activity-action.login { background: rgba(16,185,129,.12); color: var(--green); }
+        .activity-action.register { background: rgba(59,130,246,.12); color: var(--blue); }
+        .activity-action.update_settings { background: rgba(245,158,11,.12); color: var(--amber); }
+        .activity-time { color: var(--text-3); font-size: 11px; margin-left: auto; }
+
+        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+        @media (max-width: 768px) { .chart-row { grid-template-columns: 1fr; } }
+        .chart-card {
+            background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+        }
+        .chart-title { font-size: 13px; font-weight: 700; margin-bottom: 12px; }
+        .bar-chart { display: flex; flex-direction: column; gap: 4px; }
+        .bar-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+        .bar-label { min-width: 70px; color: var(--text-3); text-align: right; }
+        .bar-track { flex: 1; height: 16px; background: var(--bg-3); border-radius: 4px; overflow: hidden; }
+        .bar-fill { height: 100%; border-radius: 4px; background: var(--blue); transition: width .5s; }
+        .bar-val { min-width: 30px; font-weight: 600; }
+
+        .refresh-btn {
+            background: var(--bg-2); border: 1px solid var(--border); color: var(--text-2);
+            padding: 6px 14px; border-radius: 8px; font-size: 12px; font-family: inherit;
+            cursor: pointer;
+        }
+        .refresh-btn:hover { border-color: var(--blue); color: var(--blue); }
+        .loading { color: var(--text-3); text-align: center; padding: 40px; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="topbar-left">
+            <div class="logo">N</div>
+            <h1>NoRain <span>Admin</span></h1>
+        </div>
+        <div style="display:flex;gap:16px;align-items:center">
+            <button class="refresh-btn" onclick="loadAll()">Refresh</button>
+            <a href="/">Back to App</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Metrics -->
+        <div class="metrics" id="metrics">
+            <div class="metric-card blue"><div class="metric-val" id="m-users">--</div><div class="metric-label">Total Users</div></div>
+            <div class="metric-card green"><div class="metric-val" id="m-active24">--</div><div class="metric-label">Active (24h)</div></div>
+            <div class="metric-card amber"><div class="metric-val" id="m-active7d">--</div><div class="metric-label">Active (7d)</div></div>
+            <div class="metric-card purple"><div class="metric-val" id="m-signals">--</div><div class="metric-label">Total Signals Logged</div></div>
+        </div>
+
+        <!-- Charts -->
+        <div class="chart-row">
+            <div class="chart-card">
+                <div class="chart-title">Signups (last 30 days)</div>
+                <div class="bar-chart" id="signups-chart"></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-title">Activity (last 30 days)</div>
+                <div class="bar-chart" id="activity-chart"></div>
+            </div>
+        </div>
+
+        <!-- Users Table -->
+        <div class="section">
+            <div class="section-title">Users <span class="section-badge" id="user-count">0</span></div>
+            <table>
+                <thead>
+                    <tr><th>Username</th><th>Email</th><th>Role</th><th>Joined</th><th>Last Login</th><th>Logins</th><th>Theme</th></tr>
+                </thead>
+                <tbody id="users-body"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+            </table>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="section">
+            <div class="section-title">Recent Activity <span class="section-badge" id="activity-count">0</span></div>
+            <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;overflow:hidden" id="activity-list">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    async function loadAll() {
+        await Promise.all([loadMetrics(), loadUsers(), loadActivity()]);
+    }
+
+    async function loadMetrics() {
+        try {
+            const r = await fetch('/api/admin/metrics');
+            if (r.status === 403) { window.location.href = '/'; return; }
+            const j = await r.json();
+            document.getElementById('m-users').textContent = j.total_users;
+            document.getElementById('m-active24').textContent = j.active_24h;
+            document.getElementById('m-active7d').textContent = j.active_7d;
+            document.getElementById('m-signals').textContent = j.total_signals;
+
+            // Signups chart
+            const signups = (j.signups_by_day || []).reverse().slice(-14);
+            const maxS = Math.max(...signups.map(s => s.c), 1);
+            document.getElementById('signups-chart').innerHTML = signups.map(s =>
+                `<div class="bar-row"><span class="bar-label">${s.day.slice(5)}</span><div class="bar-track"><div class="bar-fill" style="width:${(s.c/maxS)*100}%;background:var(--blue)"></div></div><span class="bar-val">${s.c}</span></div>`
+            ).join('') || '<div style="color:var(--text-3);font-size:12px;padding:8px">No data yet</div>';
+
+            // Activity chart
+            const activity = (j.activity_by_day || []).reverse().slice(-14);
+            const maxA = Math.max(...activity.map(a => a.c), 1);
+            document.getElementById('activity-chart').innerHTML = activity.map(a =>
+                `<div class="bar-row"><span class="bar-label">${a.day.slice(5)}</span><div class="bar-track"><div class="bar-fill" style="width:${(a.c/maxA)*100}%;background:var(--green)"></div></div><span class="bar-val">${a.c}</span></div>`
+            ).join('') || '<div style="color:var(--text-3);font-size:12px;padding:8px">No data yet</div>';
+        } catch (e) { console.error('Metrics failed:', e); }
+    }
+
+    async function loadUsers() {
+        try {
+            const r = await fetch('/api/admin/users');
+            const j = await r.json();
+            const users = j.users || [];
+            document.getElementById('user-count').textContent = users.length;
+            document.getElementById('users-body').innerHTML = users.map(u => {
+                let settings = {};
+                try { settings = JSON.parse(u.settings || '{}'); } catch {}
+                const role = u.is_admin ? '<span class="admin-badge">Admin</span>' : '<span class="user-badge">User</span>';
+                return `<tr>
+                    <td><strong>${esc(u.username)}</strong></td>
+                    <td>${esc(u.email || '--')}</td>
+                    <td>${role}</td>
+                    <td>${u.created_at || '--'}</td>
+                    <td>${u.last_login || 'Never'}</td>
+                    <td>${u.login_count}</td>
+                    <td>${settings.theme || 'dark'}</td>
+                </tr>`;
+            }).join('') || '<tr><td colspan="7">No users</td></tr>';
+        } catch (e) { console.error('Users failed:', e); }
+    }
+
+    async function loadActivity() {
+        try {
+            const r = await fetch('/api/admin/activity?limit=50');
+            const j = await r.json();
+            const items = j.activity || [];
+            document.getElementById('activity-count').textContent = items.length;
+            document.getElementById('activity-list').innerHTML = items.map(a => {
+                const actionCls = a.action === 'login' ? 'login' : a.action === 'register' ? 'register' : a.action === 'update_settings' ? 'update_settings' : '';
+                return `<div class="activity-item">
+                    <span class="activity-user">${esc(a.username)}</span>
+                    <span class="activity-action ${actionCls}">${a.action}</span>
+                    ${a.detail ? `<span style="color:var(--text-3);font-size:11px">${esc(a.detail)}</span>` : ''}
+                    <span class="activity-time">${a.timestamp}</span>
+                </div>`;
+            }).join('') || '<div class="loading">No activity yet</div>';
+        } catch (e) { console.error('Activity failed:', e); }
+    }
+
+    function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    // Auth gate — check if user is admin, show login form if not
+    function showAdminLogin(msg) {
+        document.body.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:Inter,sans-serif;background:#06080d">
+            <div style="width:340px;padding:32px 28px;background:#141a26;border:1px solid #242f44;border-radius:20px;text-align:center">
+                <div style="width:48px;height:48px;background:linear-gradient(135deg,#8b5cf6,#06b6d4);border-radius:14px;display:grid;place-items:center;font-weight:800;font-size:20px;color:#fff;margin:0 auto 12px">N</div>
+                <div style="font-size:20px;font-weight:800;color:#f1f5f9;margin-bottom:4px">Admin Login</div>
+                <div style="font-size:12px;color:#64748b;margin-bottom:20px">${msg || 'Sign in with your admin credentials'}</div>
+                <input id="adm-user" placeholder="Username" style="width:100%;padding:12px 14px;margin-bottom:10px;background:#0c1017;border:1px solid #242f44;color:#f1f5f9;border-radius:10px;font-size:14px;font-family:inherit;outline:none">
+                <input id="adm-pass" type="password" placeholder="Password" style="width:100%;padding:12px 14px;margin-bottom:10px;background:#0c1017;border:1px solid #242f44;color:#f1f5f9;border-radius:10px;font-size:14px;font-family:inherit;outline:none">
+                <button onclick="adminLogin()" style="width:100%;padding:13px;background:#8b5cf6;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;margin-top:4px">Sign In</button>
+                <div id="adm-error" style="color:#ef4444;font-size:12px;margin-top:8px;min-height:16px"></div>
+                <a href="/" style="display:block;margin-top:14px;color:#3b82f6;font-size:12px;text-decoration:none">Back to NoRain</a>
+            </div>
+        </div>`;
+        document.getElementById('adm-pass').addEventListener('keydown', e => { if (e.key === 'Enter') adminLogin(); });
+    }
+
+    async function adminLogin() {
+        const username = document.getElementById('adm-user').value.trim();
+        const password = document.getElementById('adm-pass').value;
+        const errEl = document.getElementById('adm-error');
+        errEl.textContent = '';
+        if (!username || !password) { errEl.textContent = 'Username and password required'; return; }
+        try {
+            const r = await fetch('/api/auth/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const j = await r.json();
+            if (!r.ok) { errEl.textContent = j.error || 'Login failed'; return; }
+            if (!j.user.is_admin) { errEl.textContent = 'This account is not an admin'; return; }
+            // Reload the page now that we have the auth cookie
+            window.location.reload();
+        } catch { errEl.textContent = 'Connection error'; }
+    }
+
+    async function checkAdmin() {
+        try {
+            const r = await fetch('/api/auth/me');
+            const j = await r.json();
+            if (!j.user) {
+                showAdminLogin();
+                return;
+            }
+            if (!j.user.is_admin) {
+                showAdminLogin('Your account does not have admin access');
+                return;
+            }
+            // Authenticated as admin — load dashboard
+            loadAll();
+            setInterval(loadAll, 30000);
+        } catch {
+            showAdminLogin('Could not connect to server');
+        }
+    }
+    checkAdmin();
+    </script>
+</body>
+</html>

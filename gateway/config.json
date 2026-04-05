@@ -1,0 +1,78 @@
+{
+  "_comment": "Edit subdomain values to change how dashboards appear at *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running.",
+  "domain": "habbig.com",
+  "gateway_port": 7000,
+  "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
+  "dashboards": {
+    "crypto": {
+      "subdomain": "crypto",
+      "target": 8000,
+      "display_name": "Crypto Edge",
+      "description": "BTC & crypto signals, ensemble ML predictor",
+      "accent": "#f59e0b",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
+      "supports_websocket": true
+    },
+    "stock": {
+      "subdomain": "markets",
+      "target": 8050,
+      "display_name": "StockSignal",
+      "description": "Stock + Polymarket prediction bets",
+      "accent": "#10b981",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
+      "supports_websocket": false
+    },
+    "midterm": {
+      "subdomain": "midterm",
+      "target": 8051,
+      "display_name": "Midterm Predictor",
+      "description": "Election & polling aggregation across markets",
+      "accent": "#6366f1",
+      "monthly_cents": 1499,
+      "annual_cents": 14900,
+      "supports_websocket": false
+    },
+    "top_traders": {
+      "subdomain": "traders",
+      "target": 8052,
+      "display_name": "Top Traders",
+      "description": "Polymarket top-trader activity and leaderboard",
+      "accent": "#0ea5e9",
+      "monthly_cents": 1299,
+      "annual_cents": 12900,
+      "supports_websocket": false
+    },
+    "weather": {
+      "subdomain": "weather",
+      "target": 5050,
+      "display_name": "Polymarket Weather",
+      "description": "Weather market mispricings & rain forecasts",
+      "accent": "#3b82f6",
+      "monthly_cents": 799,
+      "annual_cents": 7900,
+      "supports_websocket": false
+    },
+    "sports": {
+      "subdomain": "sports",
+      "target": 8888,
+      "display_name": "Sharpe Sports",
+      "description": "Polymarket vs bookmaker odds arbitrage signals",
+      "accent": "#ef4444",
+      "monthly_cents": 1999,
+      "annual_cents": 19900,
+      "supports_websocket": true
+    },
+    "world": {
+      "subdomain": "world",
+      "target": 7050,
+      "display_name": "World State",
+      "description": "Global conflicts, headlines, geopolitical feed",
+      "accent": "#8b5cf6",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false
+    }
+  }
+}
