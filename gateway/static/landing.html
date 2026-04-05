@@ -16,10 +16,25 @@
     <nav class="landing-nav">
       <a href="#features">Dashboards</a>
       <a href="#pricing">Pricing</a>
-      <a href="/gate" class="landing-nav-signin">Sign in</a>
-      <a href="/gate" class="landing-nav-cta">Get started</a>
+      <a href="/gate" class="client-login-link">Client Login</a>
+      <button class="mobile-menu-toggle" onclick="document.getElementById('mobile-nav').classList.add('open')" aria-label="Open menu">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
     </nav>
   </header>
+
+  <!-- Mobile menu -->
+  <div id="mobile-nav" class="landing-nav-mobile-overlay" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="landing-nav-mobile-panel">
+      <button class="mobile-close-btn" onclick="document.getElementById('mobile-nav').classList.remove('open')" aria-label="Close menu">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+      <a href="#features" onclick="document.getElementById('mobile-nav').classList.remove('open')">Dashboards</a>
+      <a href="#pricing" onclick="document.getElementById('mobile-nav').classList.remove('open')">Pricing</a>
+      <a href="mailto:enquiries@habbig.com" onclick="document.getElementById('mobile-nav').classList.remove('open')">Enquire Now</a>
+      <a href="/gate" onclick="document.getElementById('mobile-nav').classList.remove('open')">Client Login</a>
+    </div>
+  </div>
 
   <section class="landing-hero">
     <div class="landing-hero-inner">
@@ -34,8 +49,7 @@
         ones that sharpen your edge. Ignore the rest.
       </p>
       <div class="landing-cta-row">
-        <a href="/gate" class="landing-primary-cta">Create your account →</a>
-        <a href="/gate" class="landing-secondary-cta">I already have one</a>
+        <a href="mailto:enquiries@habbig.com" class="enquire-cta">Enquire Now</a>
       </div>
       <div class="landing-trust">
         <div class="landing-trust-dot"></div>
@@ -66,8 +80,8 @@
     <div class="landing-pricing-grid">
       <div class="landing-pricing-card">
         <div class="landing-pricing-num">1</div>
-        <div class="landing-pricing-title">Create an account</div>
-        <div class="landing-pricing-desc">Email and password. No credit card to sign up. You'll see every dashboard the moment you're in.</div>
+        <div class="landing-pricing-title">Get in touch</div>
+        <div class="landing-pricing-desc">Send us an enquiry. We'll get back to you with access details and answer any questions about the dashboards.</div>
       </div>
       <div class="landing-pricing-card">
         <div class="landing-pricing-num">2</div>
@@ -83,10 +97,10 @@
   </section>
 
   <footer class="landing-footer">
-    <div>© Habbig · prediction market dashboards</div>
+    <div>&copy; Habbig &middot; prediction market dashboards</div>
     <div class="landing-footer-right">
-      <a href="/gate">Sign in</a>
-      <a href="/gate">Get started</a>
+      <a href="/gate">Client Login</a>
+      <a href="mailto:enquiries@habbig.com">Enquire Now</a>
     </div>
   </footer>
 </body>
