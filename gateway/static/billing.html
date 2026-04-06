@@ -5,6 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Billing — Habbig</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    .billing-plan-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }
+    .billing-plan-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .billing-plan-name { font-size: 18px; font-weight: 600; color: var(--text-primary); }
+    .billing-plan-badge { font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 16px; }
+    .billing-plan-badge-active { background: rgba(16, 185, 129, 0.10); color: #10b981; }
+    .billing-plan-badge-admin { background: var(--accent-light); color: var(--accent); }
+    .billing-plan-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+    .billing-plan-price { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+    .billing-plan-period { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+    .billing-upgrade-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+    .billing-upgrade-btn { padding: 10px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; text-decoration: none; transition: transform 0.1s, box-shadow 0.2s; display: inline-block; text-align: center; min-height: 44px; line-height: 24px; }
+    .billing-upgrade-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; }
+    .billing-upgrade-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+    .billing-upgrade-danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+    .billing-upgrade-btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); text-decoration: none; }
+
+    .billing-dashboards-title { font-size: 15px; font-weight: 600; color: var(--text-primary); margin: 32px 0 16px; }
+  </style>
 </head>
 <body>
   <header class="gw-header">
@@ -23,16 +42,13 @@
   </header>
 
   <main class="gw-main">
-    <h1 class="gw-page-title">Billing & subscriptions</h1>
-    <p class="gw-page-sub">
-      Each dashboard is priced independently. Monthly subscriptions renew every
-      30 days, annual every 365. Cancel any one without affecting the others.
-    </p>
+    <h1 class="gw-page-title">Billing &amp; subscriptions</h1>
+    <p class="gw-page-sub">Manage your plan and dashboard access.</p>
 
-    <div class="notice">
-      <strong>Placeholder checkout.</strong> Stripe isn't wired up yet — clicking
-      a button flips a flag so you can test gated access.
-    </div>
+    {{ raw_plan_card }}
+
+    <div class="billing-dashboards-title">Dashboard access</div>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">All dashboards are included with your subscription.</p>
 
     <div class="billing-list">
       {{ billing_rows }}

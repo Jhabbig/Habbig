@@ -547,24 +547,62 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
+
+    # Build current plan card
+    plan_card = ""
+    if is_admin_user:
+        plan_card = (
+            '<div class="billing-plan-card">'
+            '<div class="billing-plan-header"><div class="billing-plan-name">Admin Access</div>'
+            '<span class="billing-plan-badge billing-plan-badge-admin">Admin</span></div>'
+            '<div class="billing-plan-desc">You have full access to all dashboards as an admin.</div>'
+            '</div>'
+        )
+    elif subs:
+        # Show their active subscription info
+        active_subs = [s for s in subs.values() if s["status"] == "active"]
+        if active_subs:
+            plan_card = (
+                '<div class="billing-plan-card">'
+                '<div class="billing-plan-header"><div class="billing-plan-name">Active Subscription</div>'
+                '<span class="billing-plan-badge billing-plan-badge-active">Active</span></div>'
+                '<div class="billing-plan-desc">You have access to all dashboards included in your plan.</div>'
+                '<div class="billing-upgrade-row">'
+                '<a href="/pricing" class="billing-upgrade-btn billing-upgrade-outline">View Plans</a>'
+                '</div></div>'
+            )
+        else:
+            plan_card = (
+                '<div class="billing-plan-card">'
+                '<div class="billing-plan-header"><div class="billing-plan-name">No active plan</div></div>'
+                '<div class="billing-plan-desc">Subscribe to unlock all dashboards.</div>'
+                '<div class="billing-upgrade-row">'
+                '<a href="/pricing" class="billing-upgrade-btn billing-upgrade-primary">View Plans</a>'
+                '</div></div>'
+            )
+    else:
+        plan_card = (
+            '<div class="billing-plan-card">'
+            '<div class="billing-plan-header"><div class="billing-plan-name">No active plan</div></div>'
+            '<div class="billing-plan-desc">Subscribe to unlock all dashboards and get started with signal intelligence.</div>'
+            '<div class="billing-upgrade-row">'
+            '<a href="/pricing" class="billing-upgrade-btn billing-upgrade-primary">View Plans &amp; Subscribe</a>'
+            '</div></div>'
+        )
+
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
         is_active = is_admin_user or (s is not None and s["status"] == "active")
-        status_label = "Active (admin)" if (is_admin_user and not s) else "Active" if is_active else "—"
-        monthly_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
-        )
-        annual_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual ${cfg["annual_cents"]/100:.2f}</button>'
-        )
-        cancel_btn = (
-            f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>'
-            if is_active else ""
-        )
-        highlight = ' style="outline: 2px solid var(--accent); outline-offset: 2px;"' if dashboard == key else ""
+        if is_admin_user and not s:
+            status_html = '<span class="billing-plan-badge billing-plan-badge-admin">Admin</span>'
+        elif is_active:
+            status_html = '<span class="billing-plan-badge billing-plan-badge-active">Active</span>'
+        else:
+            status_html = '<span style="font-size:12px;color:var(--text-muted)">&mdash;</span>'
+
         rows_html.append(f"""
-        <div class="billing-row" data-key="{key}"{highlight}>
+        <div class="billing-row" data-key="{key}">
           <div class="billing-row-main">
             <div class="billing-row-accent" style="background:{cfg['accent']}"></div>
             <div>
@@ -572,14 +610,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
               <div class="billing-row-desc">{cfg['description']}</div>
             </div>
           </div>
-          <div class="billing-row-status">{status_label}</div>
-          <div class="billing-row-actions">
-            <form method="post" action="/billing">
-              {monthly_btn}
-              {annual_btn}
-              {cancel_btn}
-            </form>
-          </div>
+          <div class="billing-row-status">{status_html}</div>
         </div>
         """)
 
@@ -589,6 +620,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
+        raw_plan_card=plan_card,
     )
 
 
@@ -700,6 +732,45 @@ async def pricing_page(request: Request):
     if sub:
         return await proxy_request(request, "/pricing")
     return render_page("pricing")
+
+
+@app.get("/subscribe", response_class=HTMLResponse)
+async def subscribe_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/subscribe")
+    return render_page("subscribe")
+
+
+@app.post("/api/subscribe")
+async def api_subscribe(request: Request):
+    """Placeholder checkout: creates a subscription token on 'payment'.
+    Will be replaced with Stripe webhook once integrated."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/subscribe")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    email = (body.get("email") or "").strip().lower()
+    plan = body.get("plan", "")
+    interval = body.get("interval", "monthly")
+
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
+    if plan not in ("trader", "pro"):
+        return JSONResponse({"error": "Invalid plan"}, status_code=400)
+    if interval not in ("monthly", "annual"):
+        return JSONResponse({"error": "Invalid interval"}, status_code=400)
+
+    # Generate an unclaimed invite token for this subscription
+    note = f"Subscription: {plan.title()} ({interval}) — {email}"
+    new_token = db.create_invite_token(note)
+    log.info("Subscription checkout: %s plan=%s interval=%s token=%s", email, plan, interval, new_token)
+
+    return JSONResponse({"success": True, "token": new_token, "plan": plan, "interval": interval})
 
 
 @app.get("/enquire", response_class=HTMLResponse)

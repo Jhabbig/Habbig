@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Subscribe — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    .sub-page { min-height: 100vh; background: var(--bg); padding: 32px 24px 80px; }
+    .sub-container { max-width: 480px; margin: 0 auto; }
+    .sub-back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; font-weight: 500; text-decoration: none; min-height: 44px; margin-bottom: 32px; }
+    .sub-back:hover { color: var(--text-primary); text-decoration: none; }
+    .sub-back svg { width: 16px; height: 16px; }
+    .sub-title { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; letter-spacing: -0.02em; }
+    .sub-desc { font-size: 14px; color: var(--text-secondary); margin-bottom: 32px; line-height: 1.6; }
+    .sub-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; margin-bottom: 20px; }
+
+    /* Plan selector */
+    .sub-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+    .sub-plan { background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-sm); padding: 20px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; position: relative; }
+    .sub-plan:hover { border-color: var(--text-muted); }
+    .sub-plan.selected { border-color: var(--accent); box-shadow: 0 0 16px rgba(99, 102, 241, 0.1); }
+    .sub-plan-name { font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+    .sub-plan-price { font-size: 24px; font-weight: 700; color: var(--text-primary); }
+    .sub-plan-price span { font-size: 13px; font-weight: 400; color: var(--text-muted); }
+    .sub-plan-popular { position: absolute; top: -10px; right: 12px; background: var(--accent); color: white; font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 12px; }
+
+    /* Interval toggle */
+    .sub-interval { display: flex; background: var(--surface-hover); border-radius: var(--radius-sm); padding: 3px; margin-bottom: 24px; }
+    .sub-interval-btn { flex: 1; padding: 10px; text-align: center; font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer; border-radius: 8px; transition: all 0.2s; border: none; background: none; font-family: inherit; min-height: 44px; }
+    .sub-interval-btn.active { background: var(--accent); color: white; }
+
+    /* Form */
+    .sub-label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; margin-top: 16px; }
+    .sub-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: #1e2130; color: var(--text-primary); transition: border-color 0.15s; outline: none; }
+    .sub-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+
+    /* Summary */
+    .sub-summary { background: var(--surface-hover); border-radius: var(--radius-sm); padding: 16px; margin: 24px 0; }
+    .sub-summary-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-secondary); padding: 4px 0; }
+    .sub-summary-total { font-weight: 600; color: var(--text-primary); font-size: 15px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+
+    /* Submit */
+    .sub-submit { width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm); background: linear-gradient(135deg, var(--accent), #8b5cf6); color: white; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.1s, box-shadow 0.2s; min-height: 48px; margin-top: 8px; }
+    .sub-submit:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+
+    /* Token reveal */
+    .sub-token-page { display: none; }
+    .sub-token-page.visible { display: block; }
+    .sub-token-card { background: var(--surface); border: 2px solid var(--accent); border-radius: var(--radius); padding: 32px; text-align: center; }
+    .sub-token-icon { width: 64px; height: 64px; border-radius: 50%; background: var(--green-bg); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
+    .sub-token-icon svg { width: 32px; height: 32px; color: var(--green); }
+    .sub-token-heading { font-size: 22px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
+    .sub-token-sub { font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.6; }
+    .sub-token-warning { background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: var(--radius-sm); padding: 16px; margin-bottom: 24px; }
+    .sub-token-warning-title { font-size: 14px; font-weight: 700; color: #f59e0b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .sub-token-warning-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+    .sub-token-display { background: #1e2130; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px; margin-bottom: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 18px; color: var(--accent); letter-spacing: 0.04em; user-select: all; word-break: break-all; }
+    .sub-token-copy { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border-radius: var(--radius-sm); background: var(--accent); color: white; border: none; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 24px; min-height: 44px; }
+    .sub-token-next { display: block; color: var(--text-muted); font-size: 13px; text-decoration: none; margin-top: 16px; }
+    .sub-token-next:hover { color: var(--text-primary); text-decoration: none; }
+  </style>
+</head>
+<body>
+<div class="sub-page">
+  <div class="sub-container">
+
+    <a href="/pricing" class="sub-back">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      Back to Pricing
+    </a>
+
+    <!-- CHECKOUT FORM -->
+    <div id="checkout-form">
+      <h1 class="sub-title">Subscribe to Habbig</h1>
+      <p class="sub-desc">Select your plan and complete your purchase. You'll receive a unique access token immediately.</p>
+
+      <!-- Plan selector -->
+      <div class="sub-plans">
+        <div class="sub-plan selected" id="plan-trader" onclick="selectPlan('trader')">
+          <div class="sub-plan-name">Trader</div>
+          <div class="sub-plan-price" id="price-trader">&pound;49<span>/mo</span></div>
+        </div>
+        <div class="sub-plan" id="plan-pro" onclick="selectPlan('pro')" style="position:relative">
+          <div class="sub-plan-popular">Popular</div>
+          <div class="sub-plan-name">Pro</div>
+          <div class="sub-plan-price" id="price-pro">&pound;149<span>/mo</span></div>
+        </div>
+      </div>
+
+      <!-- Interval toggle -->
+      <div class="sub-interval">
+        <button class="sub-interval-btn active" id="btn-monthly" onclick="setInt('monthly')">Monthly</button>
+        <button class="sub-interval-btn" id="btn-annual" onclick="setInt('annual')">Annual</button>
+      </div>
+
+      <!-- Email -->
+      <form id="sub-form" onsubmit="return submitCheckout(event)">
+        <label class="sub-label" for="sub-email">Email address</label>
+        <input class="sub-input" type="email" id="sub-email" name="email" required placeholder="you@company.com" autocomplete="email">
+
+        <!-- Summary -->
+        <div class="sub-summary">
+          <div class="sub-summary-row"><span>Plan</span><span id="sum-plan">Trader</span></div>
+          <div class="sub-summary-row"><span>Billing</span><span id="sum-interval">Monthly</span></div>
+          <div class="sub-summary-row sub-summary-total"><span>Total</span><span id="sum-total">&pound;49/month</span></div>
+        </div>
+
+        <button type="submit" class="sub-submit" id="sub-btn">Complete Purchase</button>
+      </form>
+
+      <p style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:16px">Stripe checkout coming soon. This is a placeholder.</p>
+    </div>
+
+    <!-- TOKEN REVEAL -->
+    <div class="sub-token-page" id="token-page">
+      <div class="sub-token-card">
+        <div class="sub-token-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+        </div>
+        <div class="sub-token-heading">Payment successful!</div>
+        <div class="sub-token-sub">Your subscription is active. Here is your access token.</div>
+
+        <div class="sub-token-warning">
+          <div class="sub-token-warning-title">WRITE THIS DOWN AND DON'T LOSE IT</div>
+          <div class="sub-token-warning-text">This token is your key to access the platform. You will need it every time you log in. It cannot be recovered if lost. Save it somewhere safe now.</div>
+        </div>
+
+        <div class="sub-token-display" id="token-value">—</div>
+
+        <button class="sub-token-copy" onclick="copyToken()">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          <span id="copy-text">Copy Token</span>
+        </button>
+
+        <a href="/gate" class="sub-token-next">Continue to login &rarr;</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+var selectedPlan = 'trader';
+var selectedInterval = 'monthly';
+
+var prices = {
+  trader: { monthly: 49, annual: 399, monthly_label: '49', annual_label: '399' },
+  pro: { monthly: 149, annual: 1199, monthly_label: '149', annual_label: '1,199' }
+};
+
+// Read query params
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var plan = params.get('plan');
+  var interval = params.get('interval');
+  if (plan === 'pro') selectPlan('pro');
+  if (interval === 'annual') setInt('annual');
+})();
+
+function selectPlan(plan) {
+  selectedPlan = plan;
+  document.getElementById('plan-trader').classList.toggle('selected', plan === 'trader');
+  document.getElementById('plan-pro').classList.toggle('selected', plan === 'pro');
+  updateSummary();
+}
+
+function setInt(interval) {
+  selectedInterval = interval;
+  document.getElementById('btn-monthly').classList.toggle('active', interval === 'monthly');
+  document.getElementById('btn-annual').classList.toggle('active', interval === 'annual');
+
+  // Update price displays
+  var suffix = interval === 'annual' ? '/yr' : '/mo';
+  document.getElementById('price-trader').innerHTML = '&pound;' + prices.trader[interval + '_label'] + '<span>' + suffix + '</span>';
+  document.getElementById('price-pro').innerHTML = '&pound;' + prices.pro[interval + '_label'] + '<span>' + suffix + '</span>';
+  updateSummary();
+}
+
+function updateSummary() {
+  var p = prices[selectedPlan];
+  var label = selectedPlan === 'trader' ? 'Trader' : 'Pro';
+  var intLabel = selectedInterval === 'monthly' ? 'Monthly' : 'Annual';
+  var amount = p[selectedInterval + '_label'];
+  var period = selectedInterval === 'monthly' ? '/month' : '/year';
+
+  document.getElementById('sum-plan').textContent = label;
+  document.getElementById('sum-interval').textContent = intLabel;
+  document.getElementById('sum-total').innerHTML = '&pound;' + amount + period;
+}
+
+function submitCheckout(e) {
+  e.preventDefault();
+  var email = document.getElementById('sub-email').value.trim();
+  if (!email) return;
+
+  var btn = document.getElementById('sub-btn');
+  btn.disabled = true;
+  btn.textContent = 'Processing...';
+
+  fetch('/api/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email, plan: selectedPlan, interval: selectedInterval })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.token) {
+      document.getElementById('token-value').textContent = data.token;
+      document.getElementById('checkout-form').style.display = 'none';
+      document.getElementById('token-page').classList.add('visible');
+    } else {
+      alert(data.error || 'Something went wrong');
+      btn.disabled = false;
+      btn.textContent = 'Complete Purchase';
+    }
+  })
+  .catch(function() {
+    alert('Network error. Please try again.');
+    btn.disabled = false;
+    btn.textContent = 'Complete Purchase';
+  });
+}
+
+function copyToken() {
+  var val = document.getElementById('token-value').textContent;
+  navigator.clipboard.writeText(val).then(function() {
+    var el = document.getElementById('copy-text');
+    el.textContent = 'Copied!';
+    setTimeout(function() { el.textContent = 'Copy Token'; }, 2000);
+  });
+}
+</script>
+</body>
+</html>
