@@ -789,6 +789,7 @@ def _build_admin_context(new_token_str: str = "") -> dict:
         "raw_stat_cards": stat_cards,
         "raw_new_token_banner": new_token_banner,
         "raw_enquiry_rows": _build_enquiry_rows(),
+        "raw_revenue_content": _build_revenue_content(),
     }
 
 
@@ -818,6 +819,129 @@ def _build_enquiry_rows() -> str:
             f'<div class="admin-row-actions">{mark_btn}</div></div>'
         )
     return "".join(rows)
+
+
+def _build_revenue_content() -> str:
+    import datetime as _dt
+    stats = db.get_revenue_stats()
+    subs = db.list_all_subscriptions()
+    now = int(time.time())
+
+    # Calculate MRR and ARR from active subscriptions using config prices
+    mrr_cents = 0
+    for s in subs:
+        if s["status"] != "active":
+            continue
+        if s["expires_at"] and s["expires_at"] <= now:
+            continue
+        cfg = DASHBOARDS.get(s["dashboard_key"])
+        if not cfg:
+            continue
+        if s["plan"] == "monthly":
+            mrr_cents += cfg["monthly_cents"]
+        elif s["plan"] == "annual":
+            mrr_cents += cfg["annual_cents"] // 12
+
+    mrr = mrr_cents / 100
+    arr = mrr * 12
+
+    # Summary cards
+    out = (
+        f'<div class="stat-grid" style="margin-bottom:32px">'
+        f'<div class="stat-card"><div class="stat-label">Monthly Recurring Revenue</div>'
+        f'<div class="stat-value" style="color:var(--green)">${mrr:,.2f}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Annual Run Rate</div>'
+        f'<div class="stat-value" style="color:var(--green)">${arr:,.2f}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Active Subscriptions</div>'
+        f'<div class="stat-value">{stats["active"]}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Cancelled</div>'
+        f'<div class="stat-value" style="color:var(--red)">{stats["cancelled"]}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Expired</div>'
+        f'<div class="stat-value" style="color:var(--amber)">{stats["expired"]}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Total All Time</div>'
+        f'<div class="stat-value">{stats["total"]}</div></div>'
+        f'</div>'
+    )
+
+    # Per-dashboard breakdown
+    dashboard_rows = {}
+    for row in stats["per_dashboard"]:
+        key = row["dashboard_key"]
+        if key not in dashboard_rows:
+            dashboard_rows[key] = {"monthly": 0, "annual": 0}
+        dashboard_rows[key][row["plan"]] = row["cnt"]
+
+    if dashboard_rows:
+        out += (
+            '<div style="margin-bottom:24px">'
+            '<div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Revenue by Dashboard</div>'
+            '<div class="admin-list">'
+        )
+        for key, counts in dashboard_rows.items():
+            cfg = DASHBOARDS.get(key, {})
+            name = cfg.get("display_name", key)
+            accent = cfg.get("accent", "var(--accent)")
+            mo_price = cfg.get("monthly_cents", 0) / 100
+            yr_price = cfg.get("annual_cents", 0) / 100
+            mo_rev = counts["monthly"] * mo_price
+            yr_rev = counts["annual"] * (yr_price / 12)
+            dash_mrr = mo_rev + yr_rev
+            out += (
+                f'<div class="admin-row">'
+                f'<div class="admin-row-info">'
+                f'<div class="admin-row-main">'
+                f'<span style="width:8px;height:8px;border-radius:50%;background:{accent};flex-shrink:0"></span>'
+                f'<span style="font-weight:600">{html.escape(name)}</span>'
+                f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">${mo_price:.0f}/mo &middot; ${yr_price:.0f}/yr</span>'
+                f'</div>'
+                f'<div class="admin-row-meta">'
+                f'{counts["monthly"]} monthly &middot; {counts["annual"]} annual'
+                f'</div></div>'
+                f'<div style="text-align:right;margin-left:16px">'
+                f'<div style="font-size:18px;font-weight:700;color:var(--green)">${dash_mrr:,.2f}<span style="font-size:11px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
+                f'</div></div>'
+            )
+        out += '</div></div>'
+
+    # Recent subscription activity
+    if subs:
+        out += (
+            '<div>'
+            '<div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Recent Activity</div>'
+            '<div class="admin-list">'
+        )
+        for s in subs[:20]:
+            cfg = DASHBOARDS.get(s["dashboard_key"], {})
+            name = cfg.get("display_name", s["dashboard_key"])
+            accent = cfg.get("accent", "var(--accent)")
+            ts = _dt.datetime.fromtimestamp(s["started_at"]).strftime("%Y-%m-%d %H:%M")
+            status = s["status"]
+            is_expired = s["expires_at"] and s["expires_at"] <= now
+            if status == "active" and not is_expired:
+                status_badge = '<span class="badge" style="background:var(--green-bg);color:var(--green)">Active</span>'
+            elif status == "cancelled":
+                status_badge = '<span class="badge" style="background:var(--red-bg);color:var(--red)">Cancelled</span>'
+            else:
+                status_badge = '<span class="badge" style="background:var(--surface-hover);color:var(--amber)">Expired</span>'
+            plan_label = s["plan"].title()
+            user_label = html.escape(s["username"] or s["email"])
+            out += (
+                f'<div class="admin-row">'
+                f'<div class="admin-row-info">'
+                f'<div class="admin-row-main">'
+                f'<span style="width:6px;height:6px;border-radius:50%;background:{accent};flex-shrink:0"></span>'
+                f'<span style="font-weight:500">{html.escape(name)}</span>'
+                f'{status_badge}'
+                f'<span class="badge" style="background:var(--surface-hover);color:var(--text-muted)">{plan_label}</span>'
+                f'</div>'
+                f'<div class="admin-row-meta">{user_label} &middot; {ts}</div>'
+                f'</div></div>'
+            )
+        out += '</div></div>'
+    else:
+        out += '<div style="text-align:center;padding:48px 0;color:var(--text-muted)">No subscriptions yet.</div>'
+
+    return out
 
 
 @app.get("/admin", response_class=HTMLResponse)

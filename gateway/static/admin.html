@@ -56,6 +56,7 @@
       <button class="admin-tab active" onclick="switchTab('tokens')">Tokens</button>
       <button class="admin-tab" onclick="switchTab('users')">Users</button>
       <button class="admin-tab" onclick="switchTab('enquiries')">Enquiries</button>
+      <button class="admin-tab" onclick="switchTab('revenue')">Revenue</button>
       <button class="admin-tab" onclick="switchTab('stats')">Stats</button>
     </div>
 
@@ -92,6 +93,11 @@
       <div class="admin-list">
         {{ raw_enquiry_rows }}
       </div>
+    </div>
+
+    <!-- ======== REVENUE ======== -->
+    <div id="panel-revenue" class="admin-panel">
+      {{ raw_revenue_content }}
     </div>
 
     <!-- ======== STATS ======== -->

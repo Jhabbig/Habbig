@@ -361,6 +361,44 @@ def set_user_suspended(user_id: int, suspended: bool) -> None:
             c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
 
 
+def list_all_subscriptions() -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT s.*, u.email, u.username FROM subscriptions s "
+            "JOIN users u ON u.id = s.user_id "
+            "ORDER BY s.started_at DESC"
+        ).fetchall()
+
+
+def get_revenue_stats() -> dict:
+    """Return subscription counts and breakdown by dashboard and plan."""
+    now = int(time.time())
+    with conn() as c:
+        total = c.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
+        active = c.execute(
+            "SELECT COUNT(*) FROM subscriptions WHERE status = 'active' "
+            "AND (expires_at IS NULL OR expires_at > ?)", (now,)
+        ).fetchone()[0]
+        cancelled = c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'cancelled'").fetchone()[0]
+        expired = c.execute(
+            "SELECT COUNT(*) FROM subscriptions WHERE status = 'active' "
+            "AND expires_at IS NOT NULL AND expires_at <= ?", (now,)
+        ).fetchone()[0]
+        # Per-dashboard active counts
+        per_dashboard = c.execute(
+            "SELECT dashboard_key, plan, COUNT(*) as cnt FROM subscriptions "
+            "WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?) "
+            "GROUP BY dashboard_key, plan ORDER BY dashboard_key", (now,)
+        ).fetchall()
+        return {
+            "total": total,
+            "active": active,
+            "cancelled": cancelled,
+            "expired": expired,
+            "per_dashboard": per_dashboard,
+        }
+
+
 def create_enquiry(email: str, job_title: str, message: str) -> int:
     with conn() as c:
         cur = c.execute(
