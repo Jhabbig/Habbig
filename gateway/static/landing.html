@@ -15,7 +15,7 @@
     </div>
     <nav class="landing-nav">
       <a href="#features">Dashboards</a>
-      <a href="#pricing">Pricing</a>
+      <a href="/pricing">Pricing</a>
       <a href="/gate" class="client-login-link">Client Login</a>
       <button class="mobile-menu-toggle" onclick="document.getElementById('mobile-nav').classList.add('open')" aria-label="Open menu">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -30,7 +30,7 @@
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
       <a href="#features" onclick="document.getElementById('mobile-nav').classList.remove('open')">Dashboards</a>
-      <a href="#pricing" onclick="document.getElementById('mobile-nav').classList.remove('open')">Pricing</a>
+      <a href="/pricing" onclick="document.getElementById('mobile-nav').classList.remove('open')">Pricing</a>
       <a href="/enquire" onclick="document.getElementById('mobile-nav').classList.remove('open')">Enquire Now</a>
       <a href="/gate" onclick="document.getElementById('mobile-nav').classList.remove('open')">Client Login</a>
     </div>
@@ -74,25 +74,41 @@
 
   <section class="landing-section landing-section-dark" id="pricing">
     <div class="landing-section-head">
-      <div class="landing-eyebrow-sm">How billing works</div>
-      <h2 class="landing-section-title">Simple, per-dashboard pricing</h2>
+      <div class="landing-eyebrow-sm">Pricing</div>
+      <h2 class="landing-section-title">Level up your Polymarket trading today</h2>
     </div>
-    <div class="landing-pricing-grid">
-      <div class="landing-pricing-card">
-        <div class="landing-pricing-num">1</div>
-        <div class="landing-pricing-title">Get in touch</div>
-        <div class="landing-pricing-desc">Send us an enquiry. We'll get back to you with access details and answer any questions about the dashboards.</div>
+    <div class="landing-pricing-grid" style="grid-template-columns:repeat(3,1fr);gap:20px">
+      <!-- Trader -->
+      <div class="landing-pricing-card" style="display:flex;flex-direction:column">
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Trader</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For active traders getting started with signal intelligence</div>
+        <div style="font-size:36px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px"><span style="font-size:18px">&pound;</span>49<span style="font-size:14px;font-weight:400;color:var(--text-muted)">/mo</span></div>
+        <div style="height:1px;background:var(--border);margin:16px 0"></div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">30-day data window &middot; Top 10 markets &middot; Global credibility scores &middot; Best bets (top 5) &middot; Basic prediction feed</div>
+        <a href="/gate" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(99,102,241,0.08)'" onmouseleave="this.style.background='transparent'">Get Started</a>
       </div>
-      <div class="landing-pricing-card">
-        <div class="landing-pricing-num">2</div>
-        <div class="landing-pricing-title">Subscribe to what you want</div>
-        <div class="landing-pricing-desc">Pick monthly or annual per dashboard. Each one is billed and cancelled independently.</div>
+      <!-- Pro -->
+      <div class="landing-pricing-card" style="display:flex;flex-direction:column;border-color:var(--accent);box-shadow:0 0 20px rgba(99,102,241,0.08);position:relative">
+        <div style="position:absolute;top:-11px;right:16px;background:var(--accent);color:white;font-size:11px;font-weight:600;padding:4px 12px;border-radius:16px">Most Popular</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Pro</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For serious traders who want the full edge</div>
+        <div style="font-size:36px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px"><span style="font-size:18px">&pound;</span>149<span style="font-size:14px;font-weight:400;color:var(--text-muted)">/mo</span></div>
+        <div style="height:1px;background:var(--border);margin:16px 0"></div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">6-month data window &middot; Unlimited markets &middot; Full credibility breakdown &middot; Best bets (top 10) &middot; Source spectrum &middot; Push notifications &middot; Priority access</div>
+        <a href="/gate" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:white;background:linear-gradient(135deg,#6366f1,#8b5cf6);text-decoration:none;margin-top:20px;transition:transform 0.1s" onmouseenter="this.style.transform='translateY(-1px)'" onmouseleave="this.style.transform='none'">Get Started</a>
       </div>
-      <div class="landing-pricing-card">
-        <div class="landing-pricing-num">3</div>
-        <div class="landing-pricing-title">One login, every dashboard</div>
-        <div class="landing-pricing-desc">Single sign-on across every subdomain. Switch dashboards from the hub or set a default landing page.</div>
+      <!-- Enterprise -->
+      <div class="landing-pricing-card" style="display:flex;flex-direction:column">
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Enterprise</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For funds, institutions, and custom use cases</div>
+        <div style="font-size:24px;font-weight:700;margin-bottom:4px">Custom pricing</div>
+        <div style="height:1px;background:var(--border);margin:16px 0"></div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">Everything in Pro &middot; Full historical data &middot; API access &middot; Custom integrations &middot; Dedicated support</div>
+        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(99,102,241,0.08)'" onmouseleave="this.style.background='transparent'">Contact Us</a>
       </div>
+    </div>
+    <div style="text-align:center;margin-top:32px">
+      <a href="/pricing" style="font-size:14px;font-weight:500;color:var(--accent);text-decoration:none">See full feature comparison &rarr;</a>
     </div>
   </section>
 

@@ -694,6 +694,14 @@ async def profile_change_password(request: Request, current_password: str = Form
 # ── Enquiry page + API ───────────────────────────────────────────────────────
 
 
+@app.get("/pricing", response_class=HTMLResponse)
+async def pricing_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/pricing")
+    return render_page("pricing")
+
+
 @app.get("/enquire", response_class=HTMLResponse)
 async def enquire_page(request: Request):
     sub = get_subdomain(request)
