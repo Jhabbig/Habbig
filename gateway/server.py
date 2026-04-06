@@ -839,8 +839,8 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
 
         # Determine if caller can manage this user
         can_manage = False
-        if is_super and u["id"] != 1:
-            can_manage = True  # super admin can manage everyone except root
+        if is_super:
+            can_manage = True  # super admin can manage everyone
         elif caller_level == 1 and ulevel == 0:
             can_manage = True  # regular admin can only manage regular users
 
@@ -907,12 +907,10 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                     f'<select name="plan" {sel_style}><option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
                     f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button></form>'
                 )
-        elif u["id"] == 1:
-            actions = '<span style="font-size:12px;color:var(--text-muted)">Root super admin — protected</span>'
         else:
             actions = '<span style="font-size:12px;color:var(--text-muted)">Insufficient permissions</span>'
 
-        can_select = can_manage and u["id"] != 1
+        can_select = can_manage
         checkbox = f'<input type="checkbox" name="user_ids" value="{u["id"]}" class="user-check" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-right:12px">' if can_select else '<span style="width:18px;margin-right:12px;flex-shrink:0"></span>'
         user_rows.append(
             f'<div class="admin-row" style="align-items:flex-start">'
@@ -1138,8 +1136,6 @@ async def admin_revoke_token(request: Request, token_id: int = Form(0)):
 @app.post("/admin/users/{user_id}/promote")
 async def admin_promote(request: Request, user_id: int):
     _require_admin_user(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root admin")
     db.set_user_admin(user_id, True)
     return RedirectResponse("/admin", status_code=302)
 
@@ -1147,8 +1143,6 @@ async def admin_promote(request: Request, user_id: int):
 @app.post("/admin/users/{user_id}/demote")
 async def admin_demote(request: Request, user_id: int):
     _require_admin_user(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root admin")
     db.set_user_admin(user_id, False)
     return RedirectResponse("/admin", status_code=302)
 
@@ -1156,8 +1150,6 @@ async def admin_demote(request: Request, user_id: int):
 @app.post("/admin/users/{user_id}/suspend")
 async def admin_suspend(request: Request, user_id: int):
     _require_admin_user(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root admin")
     db.set_user_suspended(user_id, True)
     log.info("Admin suspended user id=%d", user_id)
     return RedirectResponse("/admin", status_code=302)
@@ -1166,8 +1158,6 @@ async def admin_suspend(request: Request, user_id: int):
 @app.post("/admin/users/{user_id}/unsuspend")
 async def admin_unsuspend(request: Request, user_id: int):
     _require_admin_user(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root admin")
     db.set_user_suspended(user_id, False)
     log.info("Admin unsuspended user id=%d", user_id)
     return RedirectResponse("/admin", status_code=302)
@@ -1182,15 +1172,13 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:
     """Check if admin can manage the target user based on role hierarchy."""
-    if target_user_id == 1:
-        return False
     target = db.get_user_by_id(target_user_id)
     if not target:
         return False
     target_level = target["is_admin"] or 0
     caller_level = admin.get("admin_level", 0)
     if caller_level >= 2:
-        return True  # super admin manages everyone except root
+        return True  # super admin manages everyone including other super admins
     if caller_level == 1 and target_level == 0:
         return True  # admin manages regular users only
     return False
@@ -1206,8 +1194,6 @@ def _require_super_admin(request: Request) -> dict:
 @app.post("/admin/users/{user_id}/role")
 async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
     admin = _require_super_admin(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root account")
     if level < 0 or level > 2:
         raise HTTPException(status_code=400, detail="Invalid role level")
     db.set_user_role(user_id, level)
