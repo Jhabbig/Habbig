@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Support Ticket — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    .sup-page { min-height: 100vh; background: var(--bg); padding: 32px 24px 64px; }
+    .sup-container { max-width: 520px; margin: 0 auto; }
+    .sup-back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; font-weight: 500; text-decoration: none; margin-bottom: 40px; min-height: 44px; }
+    .sup-back:hover { color: var(--text-primary); text-decoration: none; }
+    .sup-back svg { width: 16px; height: 16px; }
+    .sup-title { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; letter-spacing: -0.02em; }
+    .sup-desc { font-size: 14px; color: var(--text-secondary); margin-bottom: 32px; line-height: 1.6; }
+    .sup-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
+    .sup-label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
+    .sup-input, .sup-textarea, .sup-select { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: #1e2130; color: var(--text-primary); outline: none; transition: border-color 0.15s; }
+    .sup-input:focus, .sup-textarea:focus, .sup-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+    .sup-textarea { min-height: 140px; resize: vertical; line-height: 1.6; }
+    .sup-select { appearance: none; -webkit-appearance: none; cursor: pointer; }
+    .sup-field { margin-bottom: 20px; }
+    .sup-submit { width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm); background: linear-gradient(135deg, var(--accent), #8b5cf6); color: white; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.1s, box-shadow 0.2s; min-height: 48px; margin-top: 8px; }
+    .sup-submit:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .sup-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+    .sup-error { font-size: 12px; color: var(--red); margin-bottom: 12px; display: none; }
+    .sup-error.visible { display: block; }
+    .sup-success { display: none; text-align: center; padding: 48px 0; animation: fadeIn 0.4s ease-out; }
+    .sup-success.visible { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .sup-success-icon { width: 64px; height: 64px; border-radius: 50%; background: rgba(16, 185, 129, 0.10); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
+    .sup-success-icon svg { width: 32px; height: 32px; color: var(--green); }
+  </style>
+</head>
+<body>
+<div class="sup-page">
+  <div class="sup-container">
+    <a href="/" class="sup-back">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      Back
+    </a>
+
+    <h1 class="sup-title">Support Ticket</h1>
+    <p class="sup-desc">Describe your issue and we'll get back to you within 24-48 hours.</p>
+
+    <div class="sup-card">
+      <div class="sup-error" id="sup-error"></div>
+
+      <form id="sup-form" onsubmit="return submitSupport(event)">
+        <div class="sup-field">
+          <label class="sup-label" for="sup-email">Your email</label>
+          <input class="sup-input" type="email" id="sup-email" required placeholder="you@example.com" autocomplete="email" autofocus>
+        </div>
+        <div class="sup-field">
+          <label class="sup-label" for="sup-category">Category</label>
+          <select class="sup-select" id="sup-category">
+            <option value="Account Suspension">Account Suspension</option>
+            <option value="Billing Issue">Billing Issue</option>
+            <option value="Token Lost">Token Lost</option>
+            <option value="Bug Report">Bug Report</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="sup-field">
+          <label class="sup-label" for="sup-message">Describe your issue</label>
+          <textarea class="sup-textarea" id="sup-message" required placeholder="Please describe what happened, your username or email, and any relevant details..." minlength="10"></textarea>
+        </div>
+        <button type="submit" class="sup-submit" id="sup-btn">Submit Ticket</button>
+      </form>
+
+      <div class="sup-success" id="sup-success">
+        <div class="sup-success-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+        </div>
+        <h2 style="font-size:20px;font-weight:700;color:var(--text-primary);margin-bottom:8px">Ticket submitted</h2>
+        <p style="font-size:14px;color:var(--text-secondary);line-height:1.6">We've received your support ticket and will review it within 24-48 hours. You'll hear from us at the email you provided.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function submitSupport(e) {
+  e.preventDefault();
+  var email = document.getElementById('sup-email').value.trim();
+  var category = document.getElementById('sup-category').value;
+  var message = document.getElementById('sup-message').value.trim();
+  var errEl = document.getElementById('sup-error');
+  var btn = document.getElementById('sup-btn');
+
+  errEl.classList.remove('visible');
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+
+  fetch('/api/support-ticket', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email, message: '[' + category + '] ' + message })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.success) {
+      document.getElementById('sup-form').style.display = 'none';
+      document.getElementById('sup-success').classList.add('visible');
+    } else {
+      errEl.textContent = data.error || 'Something went wrong';
+      errEl.classList.add('visible');
+      btn.disabled = false;
+      btn.textContent = 'Submit Ticket';
+    }
+  })
+  .catch(function() {
+    errEl.textContent = 'Network error. Please try again.';
+    errEl.classList.add('visible');
+    btn.disabled = false;
+    btn.textContent = 'Submit Ticket';
+  });
+}
+</script>
+</body>
+</html>

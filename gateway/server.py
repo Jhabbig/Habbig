@@ -399,7 +399,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     if invite["claimed_by_user_id"] != user["id"]:
         return render_page("login", error="This token does not belong to that account.", invite_token=invite_token, email_hint=email_hint)
     if user["suspended"]:
-        return render_page("login", error="Error 226: This account has been suspended. No further action available.", invite_token=invite_token, email_hint=email_hint)
+        return RedirectResponse("/suspended", status_code=302)
     if not db.verify_password(password, user["password_hash"], user["password_salt"]):
         return render_page("login", error="Invalid password.", invite_token=invite_token, email_hint=email_hint)
     token = db.create_session(user["id"])
@@ -724,6 +724,33 @@ async def profile_change_password(request: Request, current_password: str = Form
 
 
 # ── Enquiry page + API ───────────────────────────────────────────────────────
+
+
+@app.get("/suspended", response_class=HTMLResponse)
+async def suspended_page(request: Request):
+    return render_page("suspended")
+
+
+@app.get("/support", response_class=HTMLResponse)
+async def support_page(request: Request):
+    return render_page("support")
+
+
+@app.post("/api/support-ticket")
+async def api_support_ticket(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+    email = (body.get("email") or "").strip().lower()
+    message = (body.get("message") or "").strip()
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
+    if len(message) < 10:
+        return JSONResponse({"error": "Please describe your issue (at least 10 characters)"}, status_code=400)
+    db.create_enquiry(email, "Support Ticket (Suspended)", message)
+    log.info("Support ticket from suspended user: %s", email)
+    return JSONResponse({"success": True})
 
 
 @app.get("/pricing", response_class=HTMLResponse)
