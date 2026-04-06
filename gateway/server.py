@@ -215,6 +215,7 @@ def current_user(request: Request) -> Optional[dict]:
         if session:
             return {
                 "user_id": session["user_id"],
+                "username": session["username"],
                 "email": session["email"],
                 "is_admin": session["is_admin"],
             }
@@ -228,6 +229,7 @@ def current_user(request: Request) -> Optional[dict]:
             return None
         return {
             "user_id": user_id,
+            "username": row["username"] if "username" in row.keys() else "dev",
             "email": row["email"],
             "is_admin": row["is_admin"],
             "_dev_bypass": True,
@@ -388,7 +390,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     if invite["claimed_by_user_id"] != user["id"]:
         return render_page("login", error="This token does not belong to that account.", invite_token=invite_token, email_hint=email_hint)
     if user["suspended"]:
-        return render_page("login", error="Account suspended. Contact admin.", invite_token=invite_token, email_hint=email_hint)
+        return render_page("login", error="Error 226: This account has been suspended. No further action available.", invite_token=invite_token, email_hint=email_hint)
     if not db.verify_password(password, user["password_hash"], user["password_salt"]):
         return render_page("login", error="Invalid password.", invite_token=invite_token, email_hint=email_hint)
     token = db.create_session(user["id"])
@@ -509,7 +511,7 @@ async def my_dashboards(request: Request):
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
         "dashboards",
-        email=user["email"],
+        email=user["email"], username=user.get("username", user["email"]),
         dashboard_cards="".join(cards_html),
         raw_admin_link=admin_link,
     )
@@ -572,7 +574,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
 
     return render_page(
         "billing",
-        email=user["email"],
+        email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
     )
 
@@ -605,6 +607,71 @@ async def billing_action(request: Request, action: str = Form(...)):
             db.cancel_subscription(user["user_id"], key)
 
     return RedirectResponse("/billing", status_code=302)
+
+
+# ── Profile page ────────────────────────────────────────────────────────────
+
+
+def _profile_context(user: dict, banner: str = "") -> dict:
+    import datetime as _dt
+    db_user = db.get_user_by_id(user["user_id"])
+    joined = _dt.datetime.fromtimestamp(db_user["created_at"]).strftime("%b %d, %Y") if db_user else "—"
+    role_badge = '<span class="profile-meta-item" style="background:var(--accent-light);color:var(--accent)">Admin</span>' if user.get("is_admin") else ""
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    avatar = user.get("username", "?")[0].upper()
+    return {
+        "username": user.get("username", user["email"]),
+        "email": user["email"],
+        "avatar_letter": avatar,
+        "joined": joined,
+        "raw_role_badge": role_badge,
+        "raw_admin_link": admin_link,
+        "raw_banner": banner,
+    }
+
+
+@app.get("/profile", response_class=HTMLResponse)
+async def profile_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/profile")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    return render_page("profile", **_profile_context(user))
+
+
+@app.post("/profile/password")
+async def profile_change_password(request: Request, current_password: str = Form(""), new_password: str = Form(""), confirm_password: str = Form("")):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/profile/password")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+
+    db_user = db.get_user_by_id(user["user_id"])
+    if not db_user:
+        return RedirectResponse("/gate", status_code=302)
+
+    err_banner = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
+    ok_banner = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
+
+    if not db.verify_password(current_password, db_user["password_hash"], db_user["password_salt"]):
+        return render_page("profile", **_profile_context(user, err_banner("Current password is incorrect.")))
+    if new_password != confirm_password:
+        return render_page("profile", **_profile_context(user, err_banner("New passwords don't match.")))
+    if len(new_password) < 12:
+        return render_page("profile", **_profile_context(user, err_banner("Password must be at least 12 characters.")))
+    if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
+        return render_page("profile", **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character.")))
+
+    pwd_hash, salt = db._hash_password(new_password)
+    with db.conn() as c:
+        c.execute("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", (pwd_hash, salt, user["user_id"]))
+
+    log.info("User %s changed their password", user.get("username", user["email"]))
+    return render_page("profile", **_profile_context(user, ok_banner("Password changed successfully.")))
 
 
 # ── Enquiry page + API ───────────────────────────────────────────────────────
@@ -730,7 +797,8 @@ def _build_admin_context(new_token_str: str = "") -> dict:
             f'<div class="admin-row-actions">{revoke_btn}</div></div>'
         )
 
-    # User rows HTML
+    # User rows HTML — with checkboxes for mass actions
+    import datetime as _dt
     user_rows = []
     for u in users:
         badges = ""
@@ -738,10 +806,11 @@ def _build_admin_context(new_token_str: str = "") -> dict:
             badges += '<span class="badge" style="background:var(--accent-light);color:var(--accent)">ADMIN</span> '
         if u["suspended"]:
             badges += '<span class="badge" style="background:var(--red-bg);color:var(--red)">SUSPENDED</span> '
-        import datetime as _dt
         joined = _dt.datetime.fromtimestamp(u["created_at"]).strftime("%Y-%m-%d")
+        uname = html.escape(u["username"] or u["email"].split("@")[0])
+        email_esc = html.escape(u["email"])
         actions = ""
-        if u["id"] != 1:  # Protect root admin
+        if u["id"] != 1:
             if not u["is_admin"]:
                 actions += f'<form method="post" action="/admin/users/{u["id"]}/promote" onsubmit="return confirm(\'Promote to admin?\')"><button class="btn btn-primary-outline" style="font-size:11px">Promote</button></form>'
             else:
@@ -752,11 +821,31 @@ def _build_admin_context(new_token_str: str = "") -> dict:
                 actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend"><button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
         else:
             actions = '<span style="font-size:12px;color:var(--text-muted)">Root admin</span>'
+        checkbox = f'<input type="checkbox" name="user_ids" value="{u["id"]}" class="user-check" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-right:12px">' if u["id"] != 1 else '<span style="width:18px;margin-right:12px;flex-shrink:0"></span>'
+        # Grant free subscription form
+        dash_opts = "".join(
+            f'<option value="{k}">{html.escape(cfg["display_name"])}</option>'
+            for k, cfg in DASHBOARDS.items()
+        )
+        grant_form = (
+            f'<form method="post" action="/admin/users/{u["id"]}/grant" style="display:flex;gap:6px;align-items:center;margin-top:10px" onclick="event.stopPropagation()">'
+            f'<select name="dashboard_key" style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);appearance:auto">'
+            f'{dash_opts}</select>'
+            f'<select name="plan" style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);appearance:auto">'
+            f'<option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
+            f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button>'
+            f'</form>'
+        )
         user_rows.append(
-            f'<div class="admin-row"><div class="admin-row-info">'
-            f'<div class="admin-row-main"><span style="font-weight:600">{html.escape(u["email"])}</span> {badges}</div>'
-            f'<div class="admin-row-meta">Joined {joined}</div></div>'
-            f'<div class="admin-row-actions">{actions}</div></div>'
+            f'<div class="admin-row" style="align-items:flex-start">'
+            f'{checkbox}'
+            f'<div class="admin-row-info" style="cursor:pointer" onclick="toggleUserDetail(this)">'
+            f'<div class="admin-row-main"><span style="font-weight:600">{uname}</span> {badges}</div>'
+            f'<div class="admin-row-meta">{email_esc} &middot; Joined {joined}</div>'
+            f'<div class="user-detail" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'
+            f'<div style="display:flex;gap:8px;flex-wrap:wrap">{actions}</div>'
+            f'{grant_form}'
+            f'</div></div></div>'
         )
 
     # Stats
@@ -948,7 +1037,7 @@ def _build_revenue_content() -> str:
 async def admin_page(request: Request):
     user = _require_admin_user(request)
     ctx = _build_admin_context()
-    return render_page("admin", email=user["email"], **ctx)
+    return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
 
 
 @app.post("/admin/tokens/generate")
@@ -957,7 +1046,7 @@ async def admin_generate_token(request: Request, note: str = Form("")):
     new_token = db.create_invite_token(note.strip())
     log.info("Admin %s generated invite token: %s", user["email"], new_token)
     ctx = _build_admin_context(new_token_str=new_token)
-    return render_page("admin", email=user["email"], **ctx)
+    return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
 
 
 @app.post("/admin/tokens/revoke")
@@ -1013,6 +1102,44 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
     return RedirectResponse("/admin", status_code=302)
 
 
+@app.post("/admin/users/{user_id}/grant")
+async def admin_grant_subscription(request: Request, user_id: int, dashboard_key: str = Form(""), plan: str = Form("monthly")):
+    admin = _require_admin_user(request)
+    if dashboard_key not in DASHBOARDS:
+        raise HTTPException(status_code=400, detail="Invalid dashboard")
+    duration = 30 if plan == "monthly" else 365
+    db.upsert_subscription(
+        user_id=user_id,
+        dashboard_key=dashboard_key,
+        plan=plan,
+        duration_days=duration,
+        source="admin_grant",
+    )
+    log.info("Admin %s granted %s (%s) to user id=%d", admin["email"], dashboard_key, plan, user_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/bulk")
+async def admin_bulk_users(request: Request):
+    admin = _require_admin_user(request)
+    form = await request.form()
+    action = form.get("bulk_action", "")
+    user_ids = [int(uid) for uid in form.getlist("user_ids") if uid.isdigit() and int(uid) != 1]
+    if not user_ids or not action:
+        return RedirectResponse("/admin", status_code=302)
+    for uid in user_ids:
+        if action == "promote":
+            db.set_user_admin(uid, True)
+        elif action == "demote":
+            db.set_user_admin(uid, False)
+        elif action == "suspend":
+            db.set_user_suspended(uid, True)
+        elif action == "unsuspend":
+            db.set_user_suspended(uid, False)
+    log.info("Admin %s bulk %s %d users: %s", admin["email"], action, len(user_ids), user_ids)
+    return RedirectResponse("/admin", status_code=302)
+
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 
@@ -1053,7 +1180,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
 
     return render_page(
         "settings",
-        email=user["email"],
+        email=user["email"], username=user.get("username", user["email"]),
         raw_options="".join(option_html),
         raw_saved_banner=saved_banner,
     )

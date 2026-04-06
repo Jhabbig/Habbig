@@ -47,7 +47,7 @@
     <nav class="gw-nav">
       <a href="/dashboards">Dashboards</a>
       <a href="/settings">Settings</a>
-      <span class="gw-user-pill">{{ email }}</span>
+      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
     </nav>
   </header>
 
@@ -83,9 +83,29 @@
 
     <!-- ======== USERS ======== -->
     <div id="panel-users" class="admin-panel">
-      <div class="admin-list">
-        {{ raw_user_rows }}
+      <!-- Mass action bar -->
+      <div id="bulk-bar" style="display:none;margin-bottom:16px;padding:12px 18px;background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius-sm);align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-size:13px;color:var(--text-primary);font-weight:500" id="bulk-count">0 selected</span>
+        <div style="display:flex;gap:8px;margin-left:auto">
+          <button type="submit" form="bulk-form" name="bulk_action" value="promote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Promote selected users to admin?')">Promote</button>
+          <button type="submit" form="bulk-form" name="bulk_action" value="demote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Demote selected users?')">Demote</button>
+          <button type="submit" form="bulk-form" name="bulk_action" value="suspend" class="btn btn-danger" style="font-size:11px" onclick="return confirm('Suspend selected users?')">Suspend</button>
+          <button type="submit" form="bulk-form" name="bulk_action" value="unsuspend" class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)" onclick="return confirm('Unsuspend selected users?')">Unsuspend</button>
+        </div>
       </div>
+
+      <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
+        <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="select-all" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer"> Select all
+        </label>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:auto">Click a user to expand actions</span>
+      </div>
+
+      <form id="bulk-form" method="post" action="/admin/users/bulk">
+        <div class="admin-list">
+          {{ raw_user_rows }}
+        </div>
+      </form>
     </div>
 
     <!-- ======== ENQUIRIES ======== -->
@@ -128,6 +148,43 @@ function copyToken(el) {
   const text = el.closest('.new-token-banner').querySelector('.token-mono').textContent;
   navigator.clipboard.writeText(text).then(() => { el.textContent = 'Copied!'; setTimeout(() => el.textContent = 'Copy', 2000); });
 }
+
+// User detail expand
+function toggleUserDetail(el) {
+  var detail = el.querySelector('.user-detail');
+  if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+}
+
+// Bulk select
+(function() {
+  var selectAll = document.getElementById('select-all');
+  var bulkBar = document.getElementById('bulk-bar');
+  var bulkCount = document.getElementById('bulk-count');
+  if (!selectAll) return;
+
+  function updateBulkBar() {
+    var checks = document.querySelectorAll('.user-check');
+    var checked = document.querySelectorAll('.user-check:checked');
+    var n = checked.length;
+    if (n > 0) {
+      bulkBar.style.display = 'flex';
+      bulkCount.textContent = n + ' selected';
+    } else {
+      bulkBar.style.display = 'none';
+    }
+    selectAll.checked = checks.length > 0 && checked.length === checks.length;
+    selectAll.indeterminate = checked.length > 0 && checked.length < checks.length;
+  }
+
+  selectAll.addEventListener('change', function() {
+    document.querySelectorAll('.user-check').forEach(function(c) { c.checked = selectAll.checked; });
+    updateBulkBar();
+  });
+
+  document.addEventListener('change', function(e) {
+    if (e.target.classList.contains('user-check')) updateBulkBar();
+  });
+})();
 </script>
 </body>
 </html>

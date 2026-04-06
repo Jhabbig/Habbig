@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    .profile-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 24px;
+    }
+    .profile-section-title {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .profile-section-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      margin-bottom: 20px;
+    }
+    .profile-field { margin-bottom: 20px; }
+    .profile-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .profile-input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 14px;
+      background: var(--surface);
+      color: var(--text-primary);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .profile-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-light);
+    }
+    .profile-input-locked {
+      background: var(--surface-hover);
+      color: var(--text-muted);
+      cursor: not-allowed;
+      border-color: var(--border-light);
+    }
+    .profile-locked-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .profile-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .profile-avatar {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 20px;
+    }
+    .profile-meta {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    .profile-meta-item {
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 4px 12px;
+      background: var(--surface-hover);
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+    .notice { margin-bottom: 20px; }
+    .notice-success { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+    .notice-error { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+    .notice:empty { display: none; }
+  </style>
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <div class="gw-brand-logo">H</div>
+      <span>Habbig</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards">Dashboards</a>
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      {{ raw_admin_link }}
+      <a href="/profile" class="gw-user-pill active" style="text-decoration:none">{{ username }}</a>
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+
+  <main class="gw-main gw-main-narrow">
+    <div class="profile-avatar">{{ avatar_letter }}</div>
+    <h1 class="gw-page-title">{{ username }}</h1>
+    <div class="profile-meta">
+      <span class="profile-meta-item">{{ email }}</span>
+      {{ raw_role_badge }}
+      <span class="profile-meta-item">Joined {{ joined }}</span>
+    </div>
+
+    {{ raw_banner }}
+
+    <!-- Account info (read-only) -->
+    <div class="profile-card">
+      <div class="profile-section-title">Account</div>
+      <div class="profile-section-desc">Your username is permanent and cannot be changed.</div>
+
+      <div class="profile-field">
+        <label class="profile-label">Username</label>
+        <input class="profile-input profile-input-locked" type="text" value="{{ username }}" readonly>
+        <div class="profile-locked-hint">Locked — usernames cannot be changed</div>
+      </div>
+
+      <div class="profile-field">
+        <label class="profile-label">Email</label>
+        <input class="profile-input profile-input-locked" type="email" value="{{ email }}" readonly>
+        <div class="profile-locked-hint">Contact admin to change your email</div>
+      </div>
+    </div>
+
+    <!-- Change password -->
+    <div class="profile-card">
+      <div class="profile-section-title">Change Password</div>
+      <div class="profile-section-desc">Enter your current password and choose a new one.</div>
+
+      <form method="post" action="/profile/password">
+        <div class="profile-field">
+          <label class="profile-label" for="current_password">Current Password</label>
+          <input class="profile-input" type="password" id="current_password" name="current_password" required autocomplete="current-password">
+        </div>
+        <div class="profile-field">
+          <label class="profile-label" for="new_password">New Password</label>
+          <input class="profile-input" type="password" id="new_password" name="new_password" required autocomplete="new-password" minlength="12">
+          <div class="profile-locked-hint">12+ characters. Uppercase, lowercase, number, and special character.</div>
+        </div>
+        <div class="profile-field">
+          <label class="profile-label" for="confirm_password">Confirm New Password</label>
+          <input class="profile-input" type="password" id="confirm_password" name="confirm_password" required autocomplete="new-password">
+        </div>
+        <div class="profile-actions">
+          <button type="submit" class="btn btn-primary" style="padding:12px 24px;font-size:14px;background:linear-gradient(135deg,var(--accent),var(--accent-2));border:none">Change Password</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Danger zone -->
+    <div class="profile-card" style="border-color:rgba(239,68,68,0.2)">
+      <div class="profile-section-title" style="color:var(--red)">Sessions</div>
+      <div class="profile-section-desc">Sign out of this device. Other sessions stay active.</div>
+      <a href="/logout" class="btn btn-danger" style="display:inline-block;padding:10px 20px;font-size:13px;text-decoration:none">Sign out</a>
+    </div>
+  </main>
+</body>
+</html>
