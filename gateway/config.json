@@ -14,16 +14,6 @@
       "annual_cents": 9900,
       "supports_websocket": true
     },
-    "stock": {
-      "subdomain": "markets",
-      "target": 8050,
-      "display_name": "StockSignal",
-      "description": "Stock + Polymarket prediction bets",
-      "accent": "#10b981",
-      "monthly_cents": 999,
-      "annual_cents": 9900,
-      "supports_websocket": false
-    },
     "midterm": {
       "subdomain": "midterm",
       "target": 8051,

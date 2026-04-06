@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account - Habbig</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    body { background: #0a0a0a; color: #e8e8e8; font-family: 'Inter', -apple-system, sans-serif; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+    .acct-wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px 80px; }
+    .acct-header { margin-bottom: 40px; }
+    .acct-title { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 4px; }
+    .acct-subtitle { font-size: 14px; color: #666; }
+
+    .acct-section { margin-bottom: 36px; }
+    .acct-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #555; margin-bottom: 16px; }
+
+    .acct-card { background: #141414; border: 1px solid #1e1e1e; border-radius: 12px; overflow: hidden; }
+    .acct-row { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #1e1e1e; }
+    .acct-row:last-child { border-bottom: none; }
+    .acct-row-label { font-size: 13px; color: #777; font-weight: 500; }
+    .acct-row-value { font-size: 13px; font-weight: 500; color: #ddd; }
+    .acct-row-value.admin { color: #c58af9; }
+
+    .sub-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #1e1e1e; }
+    .sub-row:last-child { border-bottom: none; }
+    .sub-info { display: flex; align-items: center; gap: 10px; }
+    .sub-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .sub-name { font-size: 13px; font-weight: 500; }
+    .sub-meta { font-size: 12px; color: #555; }
+    .sub-badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 4px; }
+    .sub-active { background: rgba(129,201,149,0.1); color: #81c995; }
+    .sub-expired { background: rgba(242,139,130,0.1); color: #f28b82; }
+    .sub-none { text-align: center; padding: 32px 20px; color: #444; font-size: 13px; }
+    .sub-none a { color: #8ab4f8; text-decoration: none; font-weight: 500; }
+    .sub-none a:hover { text-decoration: underline; }
+
+    .connect-card { background: #141414; border: 1px solid #1e1e1e; border-radius: 12px; padding: 24px; }
+    .connect-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .connect-icon { width: 36px; height: 36px; border-radius: 8px; background: rgba(138,180,248,0.1); display: flex; align-items: center; justify-content: center; font-size: 18px; }
+    .connect-title { font-size: 14px; font-weight: 600; }
+    .connect-desc { font-size: 13px; color: #666; line-height: 1.6; margin-bottom: 16px; }
+    .connect-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #555; }
+    .connect-status-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .connect-status-dot.on { background: #81c995; }
+    .connect-status-dot.off { background: #555; }
+    .connect-btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; background: #1e1e1e; color: #ddd; border: 1px solid #2a2a2a; border-radius: 8px; font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-decoration: none; margin-top: 12px; }
+    .connect-btn:hover { background: #222; border-color: #444; }
+
+    .acct-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 32px; }
+    .acct-link { display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; background: transparent; color: #777; border: 1px solid #1e1e1e; border-radius: 8px; font-size: 13px; font-weight: 500; text-decoration: none; transition: color 0.15s, border-color 0.15s; }
+    .acct-link:hover { color: #ddd; border-color: #444; }
+
+    @media (max-width: 640px) {
+      .acct-wrap { padding: 32px 16px 64px; }
+      .acct-title { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="acct-wrap">
+    <div class="acct-header">
+      <div class="acct-title">Account</div>
+      <div class="acct-subtitle">{{ email }}</div>
+    </div>
+
+    <div class="acct-section">
+      <div class="acct-section-title">Profile</div>
+      <div class="acct-card">
+        <div class="acct-row">
+          <span class="acct-row-label">Email</span>
+          <span class="acct-row-value">{{ email }}</span>
+        </div>
+        <div class="acct-row">
+          <span class="acct-row-label">Member since</span>
+          <span class="acct-row-value">{{ member_since }}</span>
+        </div>
+        {{ raw_admin_row }}
+      </div>
+    </div>
+
+    <div class="acct-section">
+      <div class="acct-section-title">Subscriptions</div>
+      <div class="acct-card">
+        {{ raw_sub_rows }}
+      </div>
+    </div>
+
+    <div class="acct-section">
+      <div class="acct-section-title">Connected accounts</div>
+      <div class="connect-card">
+        <div class="connect-header">
+          <div class="connect-icon">P</div>
+          <div class="connect-title">Polymarket</div>
+        </div>
+        <div class="connect-desc">
+          Connect your Polymarket account to place bets directly from Habbig dashboards.
+          Markets on every dashboard link out to Polymarket where you can trade with your existing wallet.
+        </div>
+        <div class="connect-status">
+          <span class="connect-status-dot off"></span>
+          Not connected
+        </div>
+        <a href="https://polymarket.com" target="_blank" rel="noopener" class="connect-btn">
+          Open Polymarket &rarr;
+        </a>
+      </div>
+    </div>
+
+    <div class="acct-links">
+      <a href="/settings" class="acct-link">Settings</a>
+      <a href="/billing" class="acct-link">Billing</a>
+      <a href="/dashboards" class="acct-link">Dashboards</a>
+      <a href="/logout" class="acct-link" style="color:#f28b82;border-color:rgba(242,139,130,.2)">Sign out</a>
+    </div>
+  </div>
+</body>
+</html>

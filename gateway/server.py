@@ -1354,6 +1354,46 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
     return RedirectResponse("/settings?saved=1", status_code=302)
 
 
+# ── Switcher injection ────────────────────────────────────────────────────────
+
+
+def _switcher_snippet(dashboard_key: str, user_id: int) -> str:
+    """Build the <script> tags that configure and load the dashboard switcher."""
+    items = []
+    for k, c in DASHBOARDS.items():
+        if db.has_active_subscription(user_id, k):
+            items.append({
+                "key": k,
+                "subdomain": c["subdomain"],
+                "display_name": c["display_name"],
+                "accent": c["accent"],
+            })
+    cfg_json = json.dumps({"dashboards": items, "current": dashboard_key, "domain": DOMAIN})
+    return (
+        f'<script>window.__hbSwitcher={cfg_json};</script>'
+        f'<script src="/_gateway_static/switcher.js"></script>'
+    )
+
+
+def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int) -> bytes:
+    """Inject the switcher into HTML responses (before </body>)."""
+    if "text/html" not in (content_type or ""):
+        return content
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    snippet = _switcher_snippet(key, user_id)
+    # Case-insensitive replace; inject once before </body>
+    lower = text.lower()
+    idx = lower.rfind("</body>")
+    if idx != -1:
+        text = text[:idx] + snippet + text[idx:]
+    else:
+        text += snippet
+    return text.encode("utf-8")
+
+
 # ── Reverse proxy for dashboard subdomains ────────────────────────────────────
 
 
@@ -1438,8 +1478,21 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     resp_headers = {
         k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop
     }
+
+    # Inject dashboard switcher into HTML responses.
+    body = _inject_switcher(
+        upstream.content,
+        upstream.headers.get("content-type", ""),
+        key,
+        user["user_id"],
+    )
+    # Update Content-Length since injection may have changed the body size.
+    if body is not upstream.content:
+        resp_headers.pop("content-length", None)
+        resp_headers["content-length"] = str(len(body))
+
     return Response(
-        content=upstream.content,
+        content=body,
         status_code=upstream.status_code,
         headers=resp_headers,
     )
