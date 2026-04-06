@@ -263,8 +263,8 @@ def cancel_subscription(user_id: int, dashboard_key: str) -> None:
 
 
 def generate_invite_token() -> str:
-    """Generate a 32-character hex invite token."""
-    return secrets.token_hex(16).upper()
+    """Generate a 32-character URL-safe random invite token."""
+    return secrets.token_urlsafe(24)
 
 
 def create_invite_token(note: str = "") -> str:
@@ -279,20 +279,21 @@ def create_invite_token(note: str = "") -> str:
 
 
 def get_invite_token(token: str) -> Optional[sqlite3.Row]:
-    token = token.strip().upper()
+    token = token.strip()
     with conn() as c:
         return c.execute("SELECT * FROM invite_tokens WHERE token = ?", (token,)).fetchone()
 
 
 def claim_invite_token(token_str: str, user_id: int, email: str) -> None:
+    token_str = token_str.strip()
     with conn() as c:
         c.execute(
             "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, "
             "claimed_by_email = ?, claimed_at = ? WHERE token = ?",
-            (user_id, email, int(time.time()), token_str.strip().upper()),
+            (user_id, email, int(time.time()), token_str),
         )
         c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
-                   (token_str.strip().upper(), user_id))
+                   (token_str, user_id))
 
 
 def revoke_invite_token(token_id: int) -> None:

@@ -8,9 +8,8 @@
   <style>
     .auth-error:empty { display: none; }
     .token-input {
-      letter-spacing: 0.12em;
+      letter-spacing: 0.06em;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      text-transform: uppercase;
       text-align: center;
       font-size: 15px;
     }
@@ -44,7 +43,7 @@
       <form class="auth-form" method="post" action="/gate">
         <label for="token">Invite Token</label>
         <input id="token" type="text" name="token" required autofocus class="token-input"
-               placeholder="Paste your 32-character token">
+               placeholder="Paste your invite token">
 
         <button type="submit" class="auth-submit">Continue →</button>
       </form>

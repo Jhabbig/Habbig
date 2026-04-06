@@ -340,15 +340,15 @@ async def gate_submit(request: Request, token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/gate")
-    token = token.strip().upper()
+    token = token.strip()
     if not token:
         return render_page("gate", error="Please enter an invite token.")
     invite = db.get_invite_token(token)
     if not invite or invite["status"] == "revoked":
         return render_page("gate", error="Invalid or revoked token.")
     if invite["status"] == "claimed":
-        # Token already used — go to login with token pre-filled
-        return render_page("login", error="", invite_token=invite["token"])
+        email_hint = db.mask_email(invite["claimed_by_email"] or "")
+        return render_page("login", error="", invite_token=invite["token"], email_hint=email_hint)
     # Unclaimed — go to signup
     return render_page("signup", error="", invite_token=invite["token"])
 
@@ -363,27 +363,26 @@ async def login_page(request: Request):
 
 
 @app.post("/login")
-async def login_submit(request: Request, email: str = Form(...), password: str = Form(...), invite_token: str = Form("")):
+async def login_submit(request: Request, password: str = Form(...), invite_token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
 
-    # Validate invite token first
-    invite_token = invite_token.strip().upper()
+    # Validate invite token
+    invite_token = invite_token.strip()
     invite = db.get_invite_token(invite_token) if invite_token else None
     if not invite or invite["status"] != "claimed":
         return render_page("gate", error="Invalid or expired token. Please enter your invite token again.")
 
-    email = (email or "").lower().strip()
-    user = db.get_user_by_email(email) if email else None
-
-    # Verify the token belongs to this user
-    if user and invite["claimed_by_user_id"] != user["id"]:
-        return render_page("login", error="This token does not match that account.", invite_token=invite_token)
-    if user and user["suspended"]:
-        return render_page("login", error="Account suspended. Contact admin.", invite_token=invite_token)
-    if not user or not db.verify_password(password, user["password_hash"], user["password_salt"]):
-        return render_page("login", error="Invalid email or password.", invite_token=invite_token)
+    # Find the user linked to this token
+    user = db.get_user_by_id(invite["claimed_by_user_id"]) if invite["claimed_by_user_id"] else None
+    email_hint = db.mask_email(invite["claimed_by_email"] or "")
+    if not user:
+        return render_page("login", error="Account not found. Contact admin.", invite_token=invite_token, email_hint=email_hint)
+    if user["suspended"]:
+        return render_page("login", error="Account suspended. Contact admin.", invite_token=invite_token, email_hint=email_hint)
+    if not db.verify_password(password, user["password_hash"], user["password_salt"]):
+        return render_page("login", error="Invalid password.", invite_token=invite_token, email_hint=email_hint)
     token = db.create_session(user["id"])
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)
@@ -405,7 +404,7 @@ async def signup_submit(request: Request, email: str = Form(...), password: str 
     if sub:
         return await proxy_request(request, "/signup")
 
-    invite_token = invite_token.strip().upper()
+    invite_token = invite_token.strip()
     invite = db.get_invite_token(invite_token) if invite_token else None
     if not invite or invite["status"] != "unclaimed":
         return render_page("gate", error="Invalid or already used invite token. Please enter a valid token.")
@@ -413,10 +412,18 @@ async def signup_submit(request: Request, email: str = Form(...), password: str 
     email = (email or "").lower().strip()
     if not is_valid_email(email):
         return render_page("signup", error="Enter a valid email address.", invite_token=invite_token)
-    if len(password) < 8:
-        return render_page("signup", error="Password must be at least 8 characters.", invite_token=invite_token)
+    if len(password) < 12:
+        return render_page("signup", error="Password must be at least 12 characters.", invite_token=invite_token)
     if len(password) > 256:
         return render_page("signup", error="Password is too long.", invite_token=invite_token)
+    if not re.search(r"[A-Z]", password):
+        return render_page("signup", error="Password must contain at least one uppercase letter.", invite_token=invite_token)
+    if not re.search(r"[a-z]", password):
+        return render_page("signup", error="Password must contain at least one lowercase letter.", invite_token=invite_token)
+    if not re.search(r"[0-9]", password):
+        return render_page("signup", error="Password must contain at least one number.", invite_token=invite_token)
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return render_page("signup", error="Password must contain at least one special character.", invite_token=invite_token)
     if db.get_user_by_email(email):
         return render_page("signup", error="An account with that email already exists.", invite_token=invite_token)
     user_id = db.create_user(email, password)

@@ -15,6 +15,13 @@
       color: var(--text-muted);
       cursor: not-allowed;
     }
+    .email-hint {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
   </style>
 </head>
 <body class="auth-body">
@@ -26,17 +33,15 @@
 
     <div class="auth-card">
       <div class="auth-title">Welcome back</div>
-      <div class="auth-sub">Enter your token, email, and password to sign in.</div>
+      <div class="auth-sub">Enter your password to sign in.</div>
 
       <form class="auth-form" method="post" action="/login">
         <label for="invite_token">Invite Token</label>
         <input id="invite_token" type="text" name="invite_token" value="{{ invite_token }}" readonly class="token-display">
-
-        <label for="email">Email</label>
-        <input id="email" type="email" name="email" required autocomplete="email" autofocus>
+        <div class="email-hint">{{ email_hint }}</div>
 
         <label for="password">Password</label>
-        <input id="password" type="password" name="password" required autocomplete="current-password">
+        <input id="password" type="password" name="password" required autocomplete="current-password" autofocus>
 
         <button type="submit" class="auth-submit">Sign in</button>
       </form>
@@ -44,13 +49,12 @@
       <div class="auth-error">{{ error }}</div>
 
       <div class="auth-footer">
-        Don't have an account? <a href="/gate">Enter your invite token</a>
+        <a href="/gate">Use a different token</a>
       </div>
     </div>
 
     <div class="auth-reassure">
-      Your invite token and password are both required to sign in.
-      This provides an extra layer of security for your account.
+      Your invite token identifies your account. Only your password is needed to sign in.
     </div>
   </div>
 </body>

@@ -24,17 +24,15 @@
         <input id="email" type="email" name="email" required autocomplete="email" autofocus>
 
         <label for="password">Password</label>
-        <input id="password" type="password" name="password" required autocomplete="new-password" minlength="8">
-        <div class="auth-hint">At least 8 characters. Use a password manager.</div>
+        <input id="password" type="password" name="password" required autocomplete="new-password" minlength="12">
+        <div class="auth-hint">12+ characters. Must include uppercase, lowercase, number, and special character.</div>
 
         <button type="submit" class="auth-submit">Create account →</button>
       </form>
 
       <div class="auth-error">{{ error }}</div>
 
-      <div class="auth-footer">
-        Already have an account? <a href="/gate">Sign in with your token</a>
-      </div>
+      <div class="auth-footer"></div>
     </div>
 
     <div class="auth-reassure">
