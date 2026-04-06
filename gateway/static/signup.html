@@ -5,7 +5,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Create account — Habbig</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
-  <style>.auth-error:empty { display: none; }</style>
+  <style>
+    .auth-error:empty { display: none; }
+    .req-list { margin-top: 10px; display: none; }
+    .req-list.visible { display: block; }
+    .req-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 3px 0;
+      transition: color 0.15s;
+    }
+    .req-item.met { color: var(--green); }
+    .req-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .req-item.met .req-icon {
+      border-color: var(--green);
+      background: var(--green-bg);
+    }
+    .req-icon svg { width: 10px; height: 10px; opacity: 0; transition: opacity 0.15s; }
+    .req-item.met .req-icon svg { opacity: 1; }
+    .field-valid {
+      border-color: var(--green) !important;
+      box-shadow: 0 0 0 3px var(--green-bg) !important;
+    }
+    .field-invalid {
+      border-color: var(--red) !important;
+      box-shadow: 0 0 0 3px var(--red-bg) !important;
+    }
+    .field-hint {
+      font-size: 11px;
+      margin-top: 6px;
+      display: none;
+    }
+    .field-hint.visible { display: block; }
+    .field-hint.valid { color: var(--green); }
+    .field-hint.invalid { color: var(--red); }
+  </style>
 </head>
 <body class="auth-body">
   <div class="auth-wrap">
@@ -18,22 +65,51 @@
       <div class="auth-title">Create your account</div>
       <div class="auth-sub">No credit card required to sign up.</div>
 
-      <form class="auth-form" method="post" action="/signup">
+      <form class="auth-form" method="post" action="/signup" id="signup-form">
         <input type="hidden" name="invite_token" value="{{ invite_token }}">
 
-        <label for="username">Username</label>
-        <input id="username" type="text" name="username" required autocomplete="username" autofocus
-               placeholder="3–20 characters, letters, numbers, underscores" minlength="3" maxlength="20">
+        <div>
+          <label for="username">Username</label>
+          <input id="username" type="text" name="username" required autocomplete="username" autofocus
+                 placeholder="3–20 characters, letters, numbers, underscores" minlength="3" maxlength="20">
+          <div class="field-hint" id="username-hint"></div>
+        </div>
 
-        <label for="email">Email</label>
-        <input id="email" type="email" name="email" required autocomplete="email"
-               placeholder="you@company.com">
+        <div>
+          <label for="email">Email</label>
+          <input id="email" type="email" name="email" required autocomplete="email"
+                 placeholder="you@company.com">
+          <div class="field-hint" id="email-hint"></div>
+        </div>
 
-        <label for="password">Password</label>
-        <input id="password" type="password" name="password" required autocomplete="new-password" minlength="12">
-        <div class="auth-hint">12+ characters. Must include uppercase, lowercase, number, and special character.</div>
+        <div>
+          <label for="password">Password</label>
+          <input id="password" type="password" name="password" required autocomplete="new-password" minlength="12">
+          <div class="req-list" id="pw-reqs">
+            <div class="req-item" id="req-length">
+              <span class="req-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></span>
+              At least 12 characters
+            </div>
+            <div class="req-item" id="req-upper">
+              <span class="req-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></span>
+              One uppercase letter
+            </div>
+            <div class="req-item" id="req-lower">
+              <span class="req-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></span>
+              One lowercase letter
+            </div>
+            <div class="req-item" id="req-number">
+              <span class="req-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></span>
+              One number
+            </div>
+            <div class="req-item" id="req-special">
+              <span class="req-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></span>
+              One special character
+            </div>
+          </div>
+        </div>
 
-        <button type="submit" class="auth-submit">Create account</button>
+        <button type="submit" class="auth-submit" id="submit-btn">Create account</button>
       </form>
 
       <div class="auth-error">{{ error }}</div>
@@ -47,5 +123,122 @@
       subscribe to a specific dashboard — monthly or annual, cancel any time.
     </div>
   </div>
+
+<script>
+(function() {
+  var pw = document.getElementById('password');
+  var reqs = document.getElementById('pw-reqs');
+  var emailInput = document.getElementById('email');
+  var emailHint = document.getElementById('email-hint');
+  var usernameInput = document.getElementById('username');
+  var usernameHint = document.getElementById('username-hint');
+  var EMAIL_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+  var USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/;
+
+  function setReq(id, met) {
+    var el = document.getElementById(id);
+    if (met) el.classList.add('met');
+    else el.classList.remove('met');
+  }
+
+  // Password: show checklist on focus, update on input
+  pw.addEventListener('focus', function() { reqs.classList.add('visible'); });
+  pw.addEventListener('input', function() {
+    var v = this.value;
+    setReq('req-length', v.length >= 12);
+    setReq('req-upper', /[A-Z]/.test(v));
+    setReq('req-lower', /[a-z]/.test(v));
+    setReq('req-number', /[0-9]/.test(v));
+    setReq('req-special', /[^A-Za-z0-9]/.test(v));
+
+    // Update field border
+    var allMet = v.length >= 12 && /[A-Z]/.test(v) && /[a-z]/.test(v) && /[0-9]/.test(v) && /[^A-Za-z0-9]/.test(v);
+    this.classList.remove('field-valid', 'field-invalid');
+    if (v.length > 0 && allMet) this.classList.add('field-valid');
+  });
+  pw.addEventListener('blur', function() {
+    var v = this.value;
+    if (v.length > 0) {
+      var allMet = v.length >= 12 && /[A-Z]/.test(v) && /[a-z]/.test(v) && /[0-9]/.test(v) && /[^A-Za-z0-9]/.test(v);
+      this.classList.remove('field-valid', 'field-invalid');
+      if (allMet) this.classList.add('field-valid');
+      else this.classList.add('field-invalid');
+    }
+  });
+
+  // Email: validate on blur
+  emailInput.addEventListener('blur', function() {
+    var v = this.value.trim();
+    emailHint.classList.remove('visible', 'valid', 'invalid');
+    this.classList.remove('field-valid', 'field-invalid');
+    if (!v) return;
+    if (EMAIL_RE.test(v)) {
+      this.classList.add('field-valid');
+      emailHint.textContent = 'Valid email';
+      emailHint.classList.add('visible', 'valid');
+    } else {
+      this.classList.add('field-invalid');
+      emailHint.textContent = 'Please enter a valid email address';
+      emailHint.classList.add('visible', 'invalid');
+    }
+  });
+  emailInput.addEventListener('focus', function() {
+    this.classList.remove('field-valid', 'field-invalid');
+    emailHint.classList.remove('visible');
+  });
+
+  // Username: validate on blur
+  usernameInput.addEventListener('blur', function() {
+    var v = this.value.trim();
+    usernameHint.classList.remove('visible', 'valid', 'invalid');
+    this.classList.remove('field-valid', 'field-invalid');
+    if (!v) return;
+    if (USERNAME_RE.test(v)) {
+      this.classList.add('field-valid');
+      usernameHint.textContent = 'Looks good (' + v.length + '/20)';
+      usernameHint.classList.add('visible', 'valid');
+    } else {
+      this.classList.add('field-invalid');
+      if (v.length < 3) usernameHint.textContent = 'Too short — minimum 3 characters';
+      else if (v.length > 20) usernameHint.textContent = 'Too long — maximum 20 characters';
+      else usernameHint.textContent = 'Only letters, numbers, and underscores allowed';
+      usernameHint.classList.add('visible', 'invalid');
+    }
+  });
+  usernameInput.addEventListener('focus', function() {
+    this.classList.remove('field-valid', 'field-invalid');
+    usernameHint.classList.remove('visible');
+  });
+
+  // Prevent submit if client-side checks fail
+  document.getElementById('signup-form').addEventListener('submit', function(e) {
+    var v = pw.value;
+    var allMet = v.length >= 12 && /[A-Z]/.test(v) && /[a-z]/.test(v) && /[0-9]/.test(v) && /[^A-Za-z0-9]/.test(v);
+    if (!allMet) {
+      e.preventDefault();
+      reqs.classList.add('visible');
+      pw.classList.add('field-invalid');
+      pw.focus();
+      return;
+    }
+    var em = emailInput.value.trim();
+    if (!EMAIL_RE.test(em)) {
+      e.preventDefault();
+      emailInput.classList.add('field-invalid');
+      emailHint.textContent = 'Please enter a valid email address';
+      emailHint.classList.add('visible', 'invalid');
+      emailInput.focus();
+      return;
+    }
+    var un = usernameInput.value.trim();
+    if (!USERNAME_RE.test(un)) {
+      e.preventDefault();
+      usernameInput.classList.add('field-invalid');
+      usernameInput.focus();
+      return;
+    }
+  });
+})();
+</script>
 </body>
 </html>
