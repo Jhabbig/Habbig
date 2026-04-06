@@ -114,6 +114,11 @@
 
     <!-- ======== ENQUIRIES ======== -->
     <div id="panel-enquiries" class="admin-panel">
+      <div class="filter-bar" style="margin-bottom:16px">
+        <button class="filter-btn active" onclick="filterEnquiries('all',this)">All</button>
+        <button class="filter-btn" onclick="filterEnquiries('enquiry',this)">Enquiries</button>
+        <button class="filter-btn" onclick="filterEnquiries('ticket',this)">Support Tickets</button>
+      </div>
       <div class="admin-list">
         {{ raw_enquiry_rows }}
       </div>
@@ -151,6 +156,16 @@ function filterTokens(status, btn) {
 function copyToken(el) {
   const text = el.closest('.new-token-banner').querySelector('.token-mono').textContent;
   navigator.clipboard.writeText(text).then(() => { el.textContent = 'Copied!'; setTimeout(() => el.textContent = 'Copy', 2000); });
+}
+
+// Enquiry filter
+function filterEnquiries(type, btn) {
+  btn.parentElement.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  document.querySelectorAll('.enquiry-row').forEach(function(row) {
+    if (type === 'all' || row.dataset.type === type) row.style.display = '';
+    else row.style.display = 'none';
+  });
 }
 
 // User detail expand

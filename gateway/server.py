@@ -1067,12 +1067,19 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
 def _build_enquiry_rows() -> str:
     enquiries = db.list_enquiries()
     if not enquiries:
-        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No enquiries yet.</div></div></div>'
+        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No enquiries or tickets yet.</div></div></div>'
     import datetime as _dt
     rows = []
     for e in enquiries:
+        job = e["job_title"] or ""
+        is_ticket = job.startswith("Support Ticket") or e["message"].startswith("[")
+        row_type = "ticket" if is_ticket else "enquiry"
+        type_badge_color = "var(--amber)" if is_ticket else "var(--accent)"
+        type_badge_bg = "rgba(245,158,11,0.10)" if is_ticket else "var(--accent-light)"
+        type_label = "Support Ticket" if is_ticket else "Enquiry"
+
         read_badge = "" if e["read"] else '<span class="badge" style="background:var(--accent-light);color:var(--accent)">NEW</span> '
-        ts = _dt.datetime.fromtimestamp(e["created_at"]).strftime("%Y-%m-%d %H:%M")
+        ts = _dt.datetime.utcfromtimestamp(e["created_at"]).strftime("%Y-%m-%d %H:%M UTC")
         mark_btn = ""
         if not e["read"]:
             mark_btn = (
@@ -1080,10 +1087,11 @@ def _build_enquiry_rows() -> str:
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Mark Read</button></form>'
             )
         rows.append(
-            f'<div class="admin-row">'
+            f'<div class="admin-row enquiry-row" data-type="{row_type}">'
             f'<div class="admin-row-info">'
             f'<div class="admin-row-main">{read_badge}<span style="font-weight:600">{html.escape(e["email"])}</span>'
-            f' <span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">{html.escape(e["job_title"])}</span></div>'
+            f' <span class="badge" style="background:{type_badge_bg};color:{type_badge_color}">{type_label}</span>'
+            f' <span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">{html.escape(job)}</span></div>'
             f'<div style="font-size:13px;color:var(--text-secondary);margin:8px 0;line-height:1.5">{html.escape(e["message"][:300])}</div>'
             f'<div class="admin-row-meta">{ts}</div>'
             f'</div>'
