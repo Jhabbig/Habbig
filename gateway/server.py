@@ -677,6 +677,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
 
     user = db.get_user_by_email_or_username(identifier)
     if not user:
+        log.warning("Failed login: account not found for identifier=%s ip=%s", identifier, request.client.host if request.client else "unknown")
         return _render_login_error("Account not found.")
 
     # If token provided (gate flow), enforce token-to-user binding
@@ -690,12 +691,70 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     if user["suspended"]:
         return _render_login_error("This account has been suspended.")
     if not db.verify_password(password, user["password_hash"], user["password_salt"]):
+        log.warning("Failed login: wrong password for user=%s ip=%s", user["username"] or user["email"], request.client.host if request.client else "unknown")
         return _render_login_error("Invalid password.")
 
     token = db.create_session(user["id"])
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)
     return response
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/forgot-password")
+    return render_page("forgot-password", error="", success="")
+
+
+@app.post("/forgot-password")
+async def forgot_password_submit(request: Request, invite_token: str = Form(""), email: str = Form(""), new_password: str = Form(""), confirm_password: str = Form("")):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/forgot-password")
+
+    invite_token = invite_token.strip()
+    email = email.strip().lower()
+
+    # Validate token exists and is claimed
+    invite = db.get_invite_token(invite_token) if invite_token else None
+    if not invite or invite["status"] != "claimed":
+        return render_page("forgot-password", error="Invalid or unclaimed token.", success="")
+
+    # Verify email matches the token's linked account
+    if invite["claimed_by_email"] != email:
+        log.warning("Password reset: email mismatch for token. Provided: %s", email)
+        return render_page("forgot-password", error="Email does not match the account linked to this token.", success="")
+
+    # Find the user
+    user = db.get_user_by_id(invite["claimed_by_user_id"])
+    if not user:
+        return render_page("forgot-password", error="Account not found.", success="")
+    if user["suspended"]:
+        return RedirectResponse("/suspended", status_code=302)
+
+    # Validate passwords match
+    if new_password != confirm_password:
+        return render_page("forgot-password", error="Passwords don't match.", success="")
+
+    # Validate password strength
+    if len(new_password) < 12:
+        return render_page("forgot-password", error="Password must be at least 12 characters.", success="")
+    if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
+        return render_page("forgot-password", error="Password must include uppercase, lowercase, number, and special character.", success="")
+
+    # Update password
+    pwd_hash, salt = db._hash_password(new_password)
+    with db.conn() as c:
+        c.execute("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", (pwd_hash, salt, user["id"]))
+
+    # Kill all existing sessions for this user
+    with db.conn() as c:
+        c.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+
+    log.info("Password reset for user %s (id=%d) via token", user["username"] or user["email"], user["id"])
+    return render_page("forgot-password", error="", success="Password reset successfully. All sessions have been logged out. You can now sign in with your new password.")
 
 
 @app.get("/signup", response_class=HTMLResponse)
@@ -745,7 +804,8 @@ async def signup_submit(request: Request, username: str = Form(""), email: str =
     if db.get_user_by_email(email):
         return render_page("signup", error="An account with that email already exists.", invite_token=invite_token, email=email)
     user_id = db.create_user(email, password, username=username)
-    db.claim_invite_token(invite_token, user_id, email)
+    if not db.claim_invite_token(invite_token, user_id, email):
+        return render_page("gate", error="This token was just claimed by someone else. Please use a different token.")
     token = db.create_session(user_id)
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)
@@ -1479,6 +1539,11 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             f'<div class="admin-row-main"><span style="font-weight:600">{uname}</span> {badges}</div>'
             f'<div class="admin-row-meta">{email_esc} &middot; Joined {joined}</div>'
             f'<div class="user-detail" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'
+            f'<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:10px;background:var(--surface-hover);border-radius:var(--radius-xs)">'
+            f'<strong>Username:</strong> {uname} &middot; '
+            f'<strong>Email:</strong> {email_esc} &middot; '
+            f'<strong>Hash:</strong> <code style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg)">...{html.escape(u["password_hash"][-8:])}</code>'
+            f'</div>'
             f'<div style="display:flex;gap:8px;flex-wrap:wrap">{actions}</div>'
             f'{detail_extra}'
             f'</div></div></div>'
@@ -1717,17 +1782,21 @@ async def admin_demote(request: Request, user_id: int):
 
 @app.post("/admin/users/{user_id}/suspend")
 async def admin_suspend(request: Request, user_id: int):
-    _require_admin_user(request)
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, True)
-    log.info("Admin suspended user id=%d", user_id)
+    log.info("Admin %s suspended user id=%d", admin.get("email"), user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/unsuspend")
 async def admin_unsuspend(request: Request, user_id: int):
-    _require_admin_user(request)
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, False)
-    log.info("Admin unsuspended user id=%d", user_id)
+    log.info("Admin %s unsuspended user id=%d", admin.get("email"), user_id)
     return RedirectResponse("/admin", status_code=302)
 
 

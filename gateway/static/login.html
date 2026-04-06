@@ -53,7 +53,10 @@
         <input id="identifier" type="text" name="identifier" required autocomplete="username" autofocus
                placeholder="Enter your username or email">
 
-        <label for="password">Password</label>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <label for="password">Password</label>
+          <a href="/forgot-password" style="font-size:12px;color:var(--accent);text-decoration:none">Forgot password?</a>
+        </div>
         <input id="password" type="password" name="password" required autocomplete="current-password">
 
         <button type="submit" class="auth-submit">Sign in</button>

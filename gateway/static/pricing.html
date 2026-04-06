@@ -305,7 +305,7 @@ function updatePrices() {
   var interval = isAnnual ? 'annual' : 'monthly';
   document.querySelectorAll('.plan-cta').forEach(function(el) {
     var plan = el.dataset.plan;
-    if (plan) el.href = '/gate';
+    if (plan) el.href = '/subscribe?plan=' + plan + '&interval=' + interval;
   });
 }
 

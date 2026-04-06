@@ -334,16 +334,21 @@ def get_invite_token(token: str) -> Optional[sqlite3.Row]:
         return c.execute("SELECT * FROM invite_tokens WHERE token = ?", (token,)).fetchone()
 
 
-def claim_invite_token(token_str: str, user_id: int, email: str) -> None:
+def claim_invite_token(token_str: str, user_id: int, email: str) -> bool:
+    """Atomically claim a token. Returns True if claimed, False if already claimed (race condition)."""
     token_str = token_str.strip()
     with conn() as c:
-        c.execute(
+        # Atomic: only update if still unclaimed (prevents race condition)
+        cur = c.execute(
             "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, "
-            "claimed_by_email = ?, claimed_at = ? WHERE token = ?",
+            "claimed_by_email = ?, claimed_at = ? WHERE token = ? AND status = 'unclaimed'",
             (user_id, email, int(time.time()), token_str),
         )
+        if cur.rowcount == 0:
+            return False  # Token was already claimed by another request
         c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
                    (token_str, user_id))
+        return True
 
 
 def revoke_invite_token(token_id: int) -> None:
