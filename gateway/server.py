@@ -347,8 +347,8 @@ async def gate_submit(request: Request, token: str = Form("")):
     if not invite or invite["status"] == "revoked":
         return render_page("gate", error="Invalid or revoked token.")
     if invite["status"] == "claimed":
-        email_hint = db.mask_email(invite["claimed_by_email"] or "")
-        return render_page("login", error="", email_hint=f"Account: {email_hint}", invite_token=invite["token"])
+        # Token already used — go to login with token pre-filled
+        return render_page("login", error="", invite_token=invite["token"])
     # Unclaimed — go to signup
     return render_page("signup", error="", invite_token=invite["token"])
 
@@ -358,7 +358,8 @@ async def login_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
-    return render_page("login", error="", email_hint="One login, every dashboard.", invite_token="")
+    # Must come through gate with a token
+    return RedirectResponse("/gate", status_code=302)
 
 
 @app.post("/login")
@@ -366,12 +367,23 @@ async def login_submit(request: Request, email: str = Form(...), password: str =
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
+
+    # Validate invite token first
+    invite_token = invite_token.strip().upper()
+    invite = db.get_invite_token(invite_token) if invite_token else None
+    if not invite or invite["status"] != "claimed":
+        return render_page("gate", error="Invalid or expired token. Please enter your invite token again.")
+
     email = (email or "").lower().strip()
     user = db.get_user_by_email(email) if email else None
+
+    # Verify the token belongs to this user
+    if user and invite["claimed_by_user_id"] != user["id"]:
+        return render_page("login", error="This token does not match that account.", invite_token=invite_token)
     if user and user["suspended"]:
-        return render_page("login", error="Account suspended. Contact admin.", email_hint="", invite_token=invite_token)
+        return render_page("login", error="Account suspended. Contact admin.", invite_token=invite_token)
     if not user or not db.verify_password(password, user["password_hash"], user["password_salt"]):
-        return render_page("login", error="Invalid email or password.", email_hint="", invite_token=invite_token)
+        return render_page("login", error="Invalid email or password.", invite_token=invite_token)
     token = db.create_session(user["id"])
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)

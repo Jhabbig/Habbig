@@ -5,7 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sign in — Habbig</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
-  <style>.auth-error:empty { display: none; }</style>
+  <style>
+    .auth-error:empty { display: none; }
+    .token-display {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      background: var(--surface-hover);
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+  </style>
 </head>
 <body class="auth-body">
   <div class="auth-wrap">
@@ -16,10 +26,12 @@
 
     <div class="auth-card">
       <div class="auth-title">Welcome back</div>
-      <div class="auth-sub">{{ email_hint }}</div>
+      <div class="auth-sub">Enter your token, email, and password to sign in.</div>
 
       <form class="auth-form" method="post" action="/login">
-        <input type="hidden" name="invite_token" value="{{ invite_token }}">
+        <label for="invite_token">Invite Token</label>
+        <input id="invite_token" type="text" name="invite_token" value="{{ invite_token }}" readonly class="token-display">
+
         <label for="email">Email</label>
         <input id="email" type="email" name="email" required autocomplete="email" autofocus>
 
@@ -32,14 +44,13 @@
       <div class="auth-error">{{ error }}</div>
 
       <div class="auth-footer">
-        <a href="/gate">Use a different token</a>
+        Don't have an account? <a href="/gate">Enter your invite token</a>
       </div>
     </div>
 
     <div class="auth-reassure">
-      Signing in gives you access to every dashboard you've subscribed to — no
-      re-authenticating as you move across <code>crypto.habbig.com</code>,
-      <code>sports.habbig.com</code> and the rest.
+      Your invite token and password are both required to sign in.
+      This provides an extra layer of security for your account.
     </div>
   </div>
 </body>
