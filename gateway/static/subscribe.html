@@ -106,10 +106,12 @@
           <div class="sub-summary-row sub-summary-total"><span>Total</span><span id="sum-total">&pound;49/month</span></div>
         </div>
 
+        <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:var(--radius-sm);padding:12px 14px;margin:16px 0 8px;font-size:12px;color:#f59e0b;line-height:1.5">
+          <strong>Double-check your email address.</strong> Your access token will be sent to this email. If it's wrong, you won't receive your login credentials.
+        </div>
+
         <button type="submit" class="sub-submit" id="sub-btn">Complete Purchase</button>
       </form>
-
-      <p style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:16px">Stripe checkout coming soon. This is a placeholder.</p>
     </div>
 
     <!-- TOKEN REVEAL -->
@@ -123,7 +125,7 @@
 
         <div class="sub-token-warning">
           <div class="sub-token-warning-title">WRITE THIS DOWN AND DON'T LOSE IT</div>
-          <div class="sub-token-warning-text">This token is your key to access the platform. You will need it every time you log in. It cannot be recovered if lost. Save it somewhere safe now.</div>
+          <div class="sub-token-warning-text">This is your access token. You need it every time you log in. It <strong>cannot be recovered</strong> if lost. Copy it now and store it somewhere safe. A copy has also been sent to your email — make sure you entered your email correctly, otherwise you will not receive it.</div>
         </div>
 
         <div class="sub-token-display" id="token-value">—</div>
