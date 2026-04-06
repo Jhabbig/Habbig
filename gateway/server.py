@@ -542,10 +542,11 @@ async def my_dashboards(request: Request):
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
+    any_active_sub = any(s["status"] == "active" for s in subs.values())
     local_mode = is_local_host(request)
     cards_html = []
     for key, cfg in DASHBOARDS.items():
-        has_sub = _is_sub_active(subs.get(key), is_admin_user)
+        has_sub = _is_sub_active(subs.get(key), is_admin_user) or any_active_sub
         active_badge = (
             '<span class="badge badge-active">Active</span>' if has_sub
             else '<span class="badge badge-locked">Locked</span>'
@@ -603,6 +604,8 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
+    active_subs = [s for s in subs.values() if s["status"] == "active"]
+    has_active = is_admin_user or bool(active_subs)
 
     # Build current plan card
     now = int(time.time())
@@ -616,7 +619,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
             '<div class="billing-plan-desc">You have full access to all dashboards as an admin.</div>'
             '</div>'
         )
-    elif active_subs:
+    elif has_active:
         plan_card = (
             '<div class="billing-plan-card">'
             '<div class="billing-plan-header"><div class="billing-plan-name">Active Subscription</div>'
@@ -625,56 +628,43 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
             '</div>'
         )
     else:
+        # No active subscription — show inline plan picker (no token/email needed, they're logged in)
         plan_card = (
             '<div class="billing-plan-card">'
             '<div class="billing-plan-header"><div class="billing-plan-name">No active plan</div></div>'
-            '<div class="billing-plan-desc">Choose a plan below to unlock your dashboards.</div>'
-            '<div class="billing-upgrade-row">'
-            '<form method="post" action="/billing" style="display:flex;gap:12px;flex-wrap:wrap">'
+            '<div class="billing-plan-desc">Choose a plan to unlock all dashboards.</div>'
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px">'
+            '<div style="background:var(--surface-hover);border:1px solid var(--border);border-radius:var(--radius-sm);padding:20px;text-align:center">'
+            '<div style="font-size:16px;font-weight:600;margin-bottom:4px">Trader</div>'
+            '<div style="font-size:24px;font-weight:700;margin-bottom:4px">&pound;49<span style="font-size:13px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
+            '<form method="post" action="/billing/subscribe" style="margin-top:12px">'
+            '<input type="hidden" name="plan" value="trader"><input type="hidden" name="interval" value="monthly">'
+            '<button type="submit" style="width:100%;cursor:pointer;border:1px solid var(--accent);background:transparent;color:var(--accent);padding:10px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;font-family:inherit">Subscribe</button>'
+            '</form></div>'
+            '<div style="background:var(--surface-hover);border:2px solid var(--accent);border-radius:var(--radius-sm);padding:20px;text-align:center;box-shadow:0 0 16px rgba(99,102,241,0.08)">'
+            '<div style="font-size:16px;font-weight:600;margin-bottom:4px">Pro</div>'
+            '<div style="font-size:24px;font-weight:700;margin-bottom:4px">&pound;149<span style="font-size:13px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
+            '<form method="post" action="/billing/subscribe" style="margin-top:12px">'
+            '<input type="hidden" name="plan" value="pro"><input type="hidden" name="interval" value="monthly">'
+            '<button type="submit" style="width:100%;cursor:pointer;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;border:none;padding:10px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;font-family:inherit">Subscribe</button>'
+            '</form></div>'
+            '</div></div>'
         )
-        # Add subscribe buttons for each dashboard directly on the plan card
-        for key, cfg in DASHBOARDS.items():
-            plan_card += (
-                f'<button type="submit" name="action" value="sub:{key}:monthly" '
-                f'class="billing-upgrade-btn billing-upgrade-primary" '
-                f'style="--accent:{cfg["accent"]}">{cfg["display_name"]} &mdash; ${cfg["monthly_cents"]/100:.0f}/mo</button>'
-            )
-        plan_card += '</form></div></div>'
 
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
-        is_active = _is_sub_active(s, is_admin_user)
-        if is_admin_user and not s:
+        is_active = _is_sub_active(s, is_admin_user) or has_active
+        if is_admin_user:
             status_html = '<span class="billing-plan-badge billing-plan-badge-admin">Admin</span>'
-        elif is_active:
+        elif has_active:
             status_html = '<span class="billing-plan-badge billing-plan-badge-active">Active</span>'
         elif s and s["status"] == "active" and s["expires_at"] and s["expires_at"] <= now:
             status_html = '<span style="font-size:12px;font-weight:600;color:var(--amber)">Expired</span>'
         elif s and s["status"] == "cancelled":
             status_html = '<span style="font-size:12px;font-weight:600;color:var(--red)">Cancelled</span>'
         else:
-            status_html = '<span style="font-size:12px;color:var(--text-muted)">Not subscribed</span>'
-
-        # Show subscribe/renew buttons for inactive dashboards
-        action_html = ""
-        if not is_active and not is_admin_user:
-            action_html = (
-                f'<form method="post" action="/billing" style="display:flex;gap:8px">'
-                f'<button type="submit" name="action" value="sub:{key}:monthly" '
-                f'class="billing-upgrade-btn billing-upgrade-primary" style="font-size:11px;padding:6px 14px;min-height:auto">'
-                f'${cfg["monthly_cents"]/100:.0f}/mo</button>'
-                f'<button type="submit" name="action" value="sub:{key}:annual" '
-                f'class="billing-upgrade-btn billing-upgrade-outline" style="font-size:11px;padding:6px 14px;min-height:auto">'
-                f'${cfg["annual_cents"]/100:.0f}/yr</button></form>'
-            )
-        elif is_active and not is_admin_user:
-            action_html = (
-                f'<form method="post" action="/billing">'
-                f'<button type="submit" name="action" value="cancel:{key}" '
-                f'class="billing-upgrade-btn billing-upgrade-danger" style="font-size:11px;padding:6px 14px;min-height:auto">'
-                f'Cancel</button></form>'
-            )
+            status_html = '<span style="font-size:12px;color:var(--text-muted)">Locked</span>'
 
         rows_html.append(f"""
         <div class="billing-row" data-key="{key}">
@@ -726,6 +716,28 @@ async def billing_action(request: Request, action: str = Form(...)):
         if key in DASHBOARDS:
             db.cancel_subscription(user["user_id"], key)
 
+    return RedirectResponse("/billing", status_code=302)
+
+
+@app.post("/billing/subscribe")
+async def billing_subscribe(request: Request, plan: str = Form(""), interval: str = Form("monthly")):
+    """Subscribe the logged-in user directly — no token or email needed."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    if plan not in ("trader", "pro"):
+        return RedirectResponse("/billing", status_code=302)
+    # Subscribe to ALL dashboards
+    duration = 30 if interval == "monthly" else 365
+    for key in DASHBOARDS:
+        db.upsert_subscription(
+            user_id=user["user_id"],
+            dashboard_key=key,
+            plan=f"{plan}_{interval}",
+            duration_days=duration,
+            source=f"billing_{plan}",
+        )
+    log.info("User %s subscribed to %s (%s) — all dashboards unlocked", user.get("username", user["email"]), plan, interval)
     return RedirectResponse("/billing", status_code=302)
 
 

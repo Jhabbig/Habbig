@@ -98,11 +98,17 @@
         </div>
       </div>
 
-      <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
-        <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px">
-          <input type="checkbox" id="select-all" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer"> Select all
-        </label>
-        <span style="font-size:12px;color:var(--text-muted);margin-left:auto">Click a user to expand actions</span>
+      <div style="margin-bottom:12px">
+        <input type="text" id="user-search" placeholder="Search users by name or email..." oninput="searchUsers(this.value)"
+          style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:var(--surface);color:var(--text-primary);outline:none;margin-bottom:12px"
+          onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-light)'"
+          onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="select-all" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer"> Select all
+          </label>
+          <span style="font-size:12px;color:var(--text-muted);margin-left:auto">Click a user to expand actions</span>
+        </div>
       </div>
 
       <form id="bulk-form" method="post" action="/admin/users/bulk">
@@ -165,6 +171,15 @@ function filterEnquiries(type, btn) {
   document.querySelectorAll('.enquiry-row').forEach(function(row) {
     if (type === 'all' || row.dataset.type === type) row.style.display = '';
     else row.style.display = 'none';
+  });
+}
+
+// User search
+function searchUsers(query) {
+  query = query.toLowerCase();
+  document.querySelectorAll('#bulk-form .admin-row').forEach(function(row) {
+    var text = row.textContent.toLowerCase();
+    row.style.display = (!query || text.indexOf(query) !== -1) ? '' : 'none';
   });
 }
 
