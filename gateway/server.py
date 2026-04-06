@@ -872,17 +872,16 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             else:
                 actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend"><button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
 
-            # Change email (super admin only)
-            if is_super:
-                detail_extra += (
-                    f'<form method="post" action="/admin/users/{u["id"]}/email" onclick="event.stopPropagation()" '
-                    f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
-                    f'<input name="new_email" type="email" placeholder="New email" {sel_style} style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);flex:1">'
-                    f'<button class="btn btn-primary-outline" style="font-size:11px">Change Email</button></form>'
-                )
+            # Change email (admin+)
+            detail_extra += (
+                f'<form method="post" action="/admin/users/{u["id"]}/email" onclick="event.stopPropagation()" '
+                f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                f'<input name="new_email" type="email" placeholder="New email" {sel_style} style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);flex:1">'
+                f'<button class="btn btn-primary-outline" style="font-size:11px">Change Email</button></form>'
+            )
 
-            # Revoke token (super admin only)
-            if is_super and u.get("invite_token_id"):
+            # Revoke token (admin+)
+            if u.get("invite_token_id"):
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/revoke-token" onclick="event.stopPropagation()" '
                     f'onsubmit="return confirm(\'Revoke token for {uname}? They will not be able to log in.\')"'
@@ -890,13 +889,12 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                     f'<button class="btn btn-danger" style="font-size:11px">Revoke Invite Token</button></form>'
                 )
 
-            # Generate new token for user (super admin only)
-            if is_super:
-                detail_extra += (
-                    f'<form method="post" action="/admin/users/{u["id"]}/new-token" onclick="event.stopPropagation()" '
-                    f'onsubmit="return confirm(\'Generate a new invite token for {uname}?\')" style="margin-top:8px">'
-                    f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
-                )
+            # Generate new token for user (admin+)
+            detail_extra += (
+                f'<form method="post" action="/admin/users/{u["id"]}/new-token" onclick="event.stopPropagation()" '
+                f'onsubmit="return confirm(\'Generate a new invite token for {uname}?\')" style="margin-top:8px">'
+                f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
+            )
 
             # Grant subscription (super admin only)
             if is_super:
@@ -1180,6 +1178,22 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
     return RedirectResponse("/admin", status_code=302)
 
 
+def _can_manage_user(admin: dict, target_user_id: int) -> bool:
+    """Check if admin can manage the target user based on role hierarchy."""
+    if target_user_id == 1:
+        return False
+    target = db.get_user_by_id(target_user_id)
+    if not target:
+        return False
+    target_level = target["is_admin"] or 0
+    caller_level = admin.get("admin_level", 0)
+    if caller_level >= 2:
+        return True  # super admin manages everyone except root
+    if caller_level == 1 and target_level == 0:
+        return True  # admin manages regular users only
+    return False
+
+
 def _require_super_admin(request: Request) -> dict:
     user = _require_admin_user(request)
     if user.get("admin_level", 0) < 2:
@@ -1201,9 +1215,9 @@ async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
 
 @app.post("/admin/users/{user_id}/email")
 async def admin_change_email(request: Request, user_id: int, new_email: str = Form("")):
-    admin = _require_super_admin(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root account")
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     new_email = new_email.strip().lower()
     if not new_email or not EMAIL_RE.match(new_email):
         raise HTTPException(status_code=400, detail="Invalid email")
@@ -1218,9 +1232,9 @@ async def admin_change_email(request: Request, user_id: int, new_email: str = Fo
 
 @app.post("/admin/users/{user_id}/revoke-token")
 async def admin_revoke_user_token(request: Request, user_id: int):
-    admin = _require_super_admin(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root account")
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     user = db.get_user_by_id(user_id)
     if user and user["invite_token_id"]:
         db.revoke_invite_token(user["invite_token_id"])
@@ -1230,9 +1244,9 @@ async def admin_revoke_user_token(request: Request, user_id: int):
 
 @app.post("/admin/users/{user_id}/new-token")
 async def admin_new_token_for_user(request: Request, user_id: int):
-    admin = _require_super_admin(request)
-    if user_id == 1:
-        raise HTTPException(status_code=403, detail="Cannot modify root account")
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     user = db.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
