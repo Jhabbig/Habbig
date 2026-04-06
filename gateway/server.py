@@ -883,7 +883,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             )
 
             # Revoke token (admin+)
-            if u.get("invite_token_id"):
+            if u["invite_token_id"]:
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/revoke-token" onclick="event.stopPropagation()" '
                     f'onsubmit="return confirm(\'Revoke token for {uname}? They will not be able to log in.\')"'
