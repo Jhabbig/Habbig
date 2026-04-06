@@ -485,10 +485,11 @@ async def my_dashboards(request: Request):
         return RedirectResponse("/gate", status_code=302)
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    is_admin_user = bool(user.get("is_admin"))
     local_mode = is_local_host(request)
     cards_html = []
     for key, cfg in DASHBOARDS.items():
-        has_sub = key in subs and subs[key]["status"] == "active"
+        has_sub = is_admin_user or (key in subs and subs[key]["status"] == "active")
         active_badge = (
             '<span class="badge badge-active">Active</span>' if has_sub
             else '<span class="badge badge-locked">Locked</span>'
@@ -545,11 +546,12 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         dashboard = None
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    is_admin_user = bool(user.get("is_admin"))
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
-        is_active = s is not None and s["status"] == "active"
-        status_label = "Active" if is_active else "—"
+        is_active = is_admin_user or (s is not None and s["status"] == "active")
+        status_label = "Active (admin)" if (is_admin_user and not s) else "Active" if is_active else "—"
         monthly_btn = (
             f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
         )
