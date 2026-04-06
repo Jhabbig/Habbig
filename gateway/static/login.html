@@ -33,15 +33,19 @@
 
     <div class="auth-card">
       <div class="auth-title">Welcome back</div>
-      <div class="auth-sub">Enter your password to sign in.</div>
+      <div class="auth-sub">Sign in with your token, username or email, and password.</div>
 
       <form class="auth-form" method="post" action="/login">
         <label for="invite_token">Invite Token</label>
         <input id="invite_token" type="text" name="invite_token" value="{{ invite_token }}" readonly class="token-display">
         <div class="email-hint">{{ email_hint }}</div>
 
+        <label for="identifier">Username or Email</label>
+        <input id="identifier" type="text" name="identifier" required autocomplete="username" autofocus
+               placeholder="Enter your username or email">
+
         <label for="password">Password</label>
-        <input id="password" type="password" name="password" required autocomplete="current-password" autofocus>
+        <input id="password" type="password" name="password" required autocomplete="current-password">
 
         <button type="submit" class="auth-submit">Sign in</button>
       </form>
@@ -54,7 +58,7 @@
     </div>
 
     <div class="auth-reassure">
-      Your invite token identifies your account. Only your password is needed to sign in.
+      Your invite token is tied to your account. You need your token, your username or email, and your password to sign in.
     </div>
   </div>
 </body>

@@ -188,7 +188,7 @@ def ensure_dev_user() -> int:
     if existing:
         user_id = existing["id"]
     else:
-        user_id = db.create_user(DEV_USER_EMAIL, DEV_USER_PASSWORD, is_admin=True)
+        user_id = db.create_user(DEV_USER_EMAIL, DEV_USER_PASSWORD, username="dev", is_admin=True)
     # Auto-subscribe to every dashboard so the dashboards page shows full access.
     for key in DASHBOARDS.keys():
         if not db.has_active_subscription(user_id, key):
@@ -363,7 +363,7 @@ async def login_page(request: Request):
 
 
 @app.post("/login")
-async def login_submit(request: Request, password: str = Form(...), invite_token: str = Form("")):
+async def login_submit(request: Request, identifier: str = Form(""), password: str = Form(...), invite_token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
@@ -374,11 +374,19 @@ async def login_submit(request: Request, password: str = Form(...), invite_token
     if not invite or invite["status"] != "claimed":
         return render_page("gate", error="Invalid or expired token. Please enter your invite token again.")
 
-    # Find the user linked to this token
-    user = db.get_user_by_id(invite["claimed_by_user_id"]) if invite["claimed_by_user_id"] else None
     email_hint = db.mask_email(invite["claimed_by_email"] or "")
+
+    # Look up user by email or username
+    identifier = identifier.strip()
+    if not identifier:
+        return render_page("login", error="Please enter your username or email.", invite_token=invite_token, email_hint=email_hint)
+    user = db.get_user_by_email_or_username(identifier)
+
     if not user:
-        return render_page("login", error="Account not found. Contact admin.", invite_token=invite_token, email_hint=email_hint)
+        return render_page("login", error="Account not found.", invite_token=invite_token, email_hint=email_hint)
+    # Token A can only log into User A — enforce token-to-user binding
+    if invite["claimed_by_user_id"] != user["id"]:
+        return render_page("login", error="This token does not belong to that account.", invite_token=invite_token, email_hint=email_hint)
     if user["suspended"]:
         return render_page("login", error="Account suspended. Contact admin.", invite_token=invite_token, email_hint=email_hint)
     if not db.verify_password(password, user["password_hash"], user["password_salt"]):
@@ -398,8 +406,11 @@ async def signup_page(request: Request):
     return RedirectResponse("/gate", status_code=302)
 
 
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
+
+
 @app.post("/signup")
-async def signup_submit(request: Request, email: str = Form(...), password: str = Form(...), invite_token: str = Form("")):
+async def signup_submit(request: Request, username: str = Form(""), email: str = Form(...), password: str = Form(...), invite_token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
@@ -408,6 +419,12 @@ async def signup_submit(request: Request, email: str = Form(...), password: str 
     invite = db.get_invite_token(invite_token) if invite_token else None
     if not invite or invite["status"] != "unclaimed":
         return render_page("gate", error="Invalid or already used invite token. Please enter a valid token.")
+
+    username = username.strip()
+    if not username or not USERNAME_RE.match(username):
+        return render_page("signup", error="Username must be 3\u201320 characters: letters, numbers, underscores only.", invite_token=invite_token)
+    if db.get_user_by_username(username):
+        return render_page("signup", error="That username is already taken.", invite_token=invite_token)
 
     email = (email or "").lower().strip()
     if not is_valid_email(email):
@@ -426,7 +443,7 @@ async def signup_submit(request: Request, email: str = Form(...), password: str 
         return render_page("signup", error="Password must contain at least one special character.", invite_token=invite_token)
     if db.get_user_by_email(email):
         return render_page("signup", error="An account with that email already exists.", invite_token=invite_token)
-    user_id = db.create_user(email, password)
+    user_id = db.create_user(email, password, username=username)
     db.claim_invite_token(invite_token, user_id, email)
     token = db.create_session(user_id)
     response = RedirectResponse("/dashboards", status_code=302)

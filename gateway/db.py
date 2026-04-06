@@ -16,6 +16,7 @@ DB_PATH = Path(__file__).parent / "auth.db"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    username          TEXT UNIQUE NOT NULL,
     email             TEXT UNIQUE NOT NULL,
     password_hash     TEXT NOT NULL,
     password_salt     TEXT NOT NULL,
@@ -100,6 +101,12 @@ def init_db() -> None:
             c.execute("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
         if "invite_token_id" not in existing_cols:
             c.execute("ALTER TABLE users ADD COLUMN invite_token_id INTEGER REFERENCES invite_tokens(id)")
+        if "username" not in existing_cols:
+            c.execute("ALTER TABLE users ADD COLUMN username TEXT")
+            # Backfill: set username to email local part for existing users
+            for row in c.execute("SELECT id, email FROM users WHERE username IS NULL").fetchall():
+                uname = row[1].split("@")[0] if row[1] else f"user{row[0]}"
+                c.execute("UPDATE users SET username = ? WHERE id = ?", (uname, row[0]))
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────
@@ -121,14 +128,17 @@ def verify_password(password: str, stored_hash: str, salt: str) -> bool:
 # ── User operations ───────────────────────────────────────────────────────────
 
 
-def create_user(email: str, password: str, is_admin: bool = False) -> int:
+def create_user(email: str, password: str, username: str = "", is_admin: bool = False) -> int:
     email = email.lower().strip()
+    username = username.strip()
+    if not username:
+        username = email.split("@")[0]
     pwd_hash, salt = _hash_password(password)
     with conn() as c:
         cur = c.execute(
-            "INSERT INTO users (email, password_hash, password_salt, created_at, is_admin) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (email, pwd_hash, salt, int(time.time()), 1 if is_admin else 0),
+            "INSERT INTO users (username, email, password_hash, password_salt, created_at, is_admin) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (username, email, pwd_hash, salt, int(time.time()), 1 if is_admin else 0),
         )
         return cur.lastrowid
 
@@ -139,6 +149,21 @@ def get_user_by_email(email: str) -> Optional[sqlite3.Row]:
             "SELECT * FROM users WHERE email = ?", (email.lower().strip(),)
         ).fetchone()
     return row
+
+
+def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM users WHERE username = ?", (username.strip(),)
+        ).fetchone()
+
+
+def get_user_by_email_or_username(identifier: str) -> Optional[sqlite3.Row]:
+    """Look up a user by email or username."""
+    identifier = identifier.strip()
+    if "@" in identifier:
+        return get_user_by_email(identifier)
+    return get_user_by_username(identifier)
 
 
 def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
@@ -184,7 +209,7 @@ def get_session(token: str) -> Optional[sqlite3.Row]:
         return None
     with conn() as c:
         row = c.execute(
-            "SELECT s.*, u.email, u.is_admin FROM sessions s "
+            "SELECT s.*, u.username, u.email, u.is_admin FROM sessions s "
             "JOIN users u ON u.id = s.user_id "
             "WHERE s.token = ? AND s.expires_at > ?",
             (token, int(time.time())),

@@ -20,14 +20,20 @@
 
       <form class="auth-form" method="post" action="/signup">
         <input type="hidden" name="invite_token" value="{{ invite_token }}">
+
+        <label for="username">Username</label>
+        <input id="username" type="text" name="username" required autocomplete="username" autofocus
+               placeholder="3–20 characters, letters, numbers, underscores" minlength="3" maxlength="20">
+
         <label for="email">Email</label>
-        <input id="email" type="email" name="email" required autocomplete="email" autofocus>
+        <input id="email" type="email" name="email" required autocomplete="email"
+               placeholder="you@company.com">
 
         <label for="password">Password</label>
         <input id="password" type="password" name="password" required autocomplete="new-password" minlength="12">
         <div class="auth-hint">12+ characters. Must include uppercase, lowercase, number, and special character.</div>
 
-        <button type="submit" class="auth-submit">Create account →</button>
+        <button type="submit" class="auth-submit">Create account</button>
       </form>
 
       <div class="auth-error">{{ error }}</div>
