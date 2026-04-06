@@ -59,6 +59,15 @@ CREATE TABLE IF NOT EXISTS invite_tokens (
     claimed_at      INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS enquiries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    email           TEXT NOT NULL,
+    job_title       TEXT NOT NULL,
+    message         TEXT NOT NULL,
+    created_at      INTEGER NOT NULL,
+    read            INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_invite_token ON invite_tokens(token);
@@ -325,6 +334,31 @@ def set_user_suspended(user_id: int, suspended: bool) -> None:
         if suspended:
             # Kill all sessions for this user
             c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
+
+def create_enquiry(email: str, job_title: str, message: str) -> int:
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO enquiries (email, job_title, message, created_at) VALUES (?, ?, ?, ?)",
+            (email.strip(), job_title.strip(), message.strip(), int(time.time())),
+        )
+        return cur.lastrowid
+
+
+def list_enquiries() -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute("SELECT * FROM enquiries ORDER BY created_at DESC").fetchall()
+
+
+def mark_enquiry_read(enquiry_id: int) -> None:
+    with conn() as c:
+        c.execute("UPDATE enquiries SET read = 1 WHERE id = ?", (enquiry_id,))
+
+
+def count_unread_enquiries() -> int:
+    with conn() as c:
+        row = c.execute("SELECT COUNT(*) FROM enquiries WHERE read = 0").fetchone()
+        return row[0] if row else 0
 
 
 def mask_email(email: str) -> str:

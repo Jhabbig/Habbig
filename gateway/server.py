@@ -590,6 +590,77 @@ async def billing_action(request: Request, action: str = Form(...)):
     return RedirectResponse("/billing", status_code=302)
 
 
+# ── Enquiry page + API ───────────────────────────────────────────────────────
+
+
+@app.get("/enquire", response_class=HTMLResponse)
+async def enquire_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/enquire")
+    return render_page("enquire")
+
+
+@app.post("/api/enquire")
+async def api_enquire(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/enquire")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    email = (body.get("email") or "").strip().lower()
+    job_title = (body.get("job_title") or "").strip()
+    message = (body.get("message") or "").strip()
+
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
+    if not job_title:
+        return JSONResponse({"error": "Please select your role"}, status_code=400)
+    if len(message) < 20:
+        return JSONResponse({"error": "Please write at least 20 characters"}, status_code=400)
+    if len(message) > 500:
+        return JSONResponse({"error": "Message is too long (500 characters max)"}, status_code=400)
+
+    db.create_enquiry(email, job_title, message)
+    log.info("New enquiry from %s (%s)", email, job_title)
+
+    # Optional: send email notification if ENQUIRY_EMAIL is set
+    enquiry_email = os.environ.get("ENQUIRY_EMAIL")
+    if enquiry_email:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            smtp_host = os.environ.get("SMTP_HOST", "localhost")
+            smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+            smtp_user = os.environ.get("SMTP_USER", "")
+            smtp_pass = os.environ.get("SMTP_PASS", "")
+
+            body_text = (
+                f"New enquiry from the Habbig landing page.\n\n"
+                f"Email: {email}\n"
+                f"Role: {job_title}\n\n"
+                f"Message:\n{message}\n"
+            )
+            msg = MIMEText(body_text)
+            msg["Subject"] = "New Enquiry \u2014 Habbig"
+            msg["From"] = smtp_user or enquiry_email
+            msg["To"] = enquiry_email
+
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                if smtp_user and smtp_pass:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                server.sendmail(msg["From"], [enquiry_email], msg.as_string())
+            log.info("Enquiry notification email sent to %s", enquiry_email)
+        except Exception as exc:
+            log.error("Failed to send enquiry email: %s", exc)
+
+    return JSONResponse({"success": True})
+
+
 # ── Admin panel ──────────────────────────────────────────────────────────────
 
 
@@ -700,7 +771,36 @@ def _build_admin_context(new_token_str: str = "") -> dict:
         "raw_user_rows": "".join(user_rows),
         "raw_stat_cards": stat_cards,
         "raw_new_token_banner": new_token_banner,
+        "raw_enquiry_rows": _build_enquiry_rows(),
     }
+
+
+def _build_enquiry_rows() -> str:
+    enquiries = db.list_enquiries()
+    if not enquiries:
+        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No enquiries yet.</div></div></div>'
+    import datetime as _dt
+    rows = []
+    for e in enquiries:
+        read_badge = "" if e["read"] else '<span class="badge" style="background:var(--accent-light);color:var(--accent)">NEW</span> '
+        ts = _dt.datetime.fromtimestamp(e["created_at"]).strftime("%Y-%m-%d %H:%M")
+        mark_btn = ""
+        if not e["read"]:
+            mark_btn = (
+                f'<form method="post" action="/admin/enquiries/{e["id"]}/read">'
+                f'<button class="btn btn-primary-outline" style="font-size:11px">Mark Read</button></form>'
+            )
+        rows.append(
+            f'<div class="admin-row">'
+            f'<div class="admin-row-info">'
+            f'<div class="admin-row-main">{read_badge}<span style="font-weight:600">{html.escape(e["email"])}</span>'
+            f' <span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">{html.escape(e["job_title"])}</span></div>'
+            f'<div style="font-size:13px;color:var(--text-secondary);margin:8px 0;line-height:1.5">{html.escape(e["message"][:300])}</div>'
+            f'<div class="admin-row-meta">{ts}</div>'
+            f'</div>'
+            f'<div class="admin-row-actions">{mark_btn}</div></div>'
+        )
+    return "".join(rows)
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -762,6 +862,13 @@ async def admin_unsuspend(request: Request, user_id: int):
         raise HTTPException(status_code=403, detail="Cannot modify root admin")
     db.set_user_suspended(user_id, False)
     log.info("Admin unsuspended user id=%d", user_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/enquiries/{enquiry_id}/read")
+async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
+    _require_admin_user(request)
+    db.mark_enquiry_read(enquiry_id)
     return RedirectResponse("/admin", status_code=302)
 
 

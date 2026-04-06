@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Request Access — Habbig</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    .enq-page {
+      min-height: 100vh;
+      background: var(--bg);
+      padding: 32px 24px 64px;
+    }
+    .enq-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      margin-bottom: 40px;
+      transition: color 0.15s;
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .enq-back:hover { color: var(--text-primary); text-decoration: none; }
+    .enq-back svg { width: 16px; height: 16px; }
+    .enq-container {
+      max-width: 560px;
+      margin: 0 auto;
+    }
+    .enq-header { margin-bottom: 40px; }
+    .enq-title {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+    .enq-subtitle {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .enq-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 16px;
+      padding: 6px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+    }
+    .enq-meta svg { width: 14px; height: 14px; }
+
+    /* Form */
+    .enq-form { display: flex; flex-direction: column; gap: 28px; }
+    .enq-field { position: relative; }
+    .enq-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .enq-input, .enq-select, .enq-textarea {
+      width: 100%;
+      padding: 14px 16px;
+      min-height: 48px;
+      background: #1e2130;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--text-primary);
+      transition: border-color 0.15s, box-shadow 0.15s;
+      outline: none;
+    }
+    .enq-input::placeholder, .enq-textarea::placeholder { color: var(--text-muted); }
+    .enq-input:focus, .enq-select:focus, .enq-textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-light);
+    }
+    .enq-input.field-error, .enq-select.field-error, .enq-textarea.field-error {
+      border-color: var(--red);
+      box-shadow: 0 0 0 3px var(--red-bg);
+    }
+
+    /* Select styling */
+    .enq-select-wrap { position: relative; }
+    .enq-select {
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+      padding-right: 44px;
+    }
+    .enq-select option { background: #1e2130; color: var(--text-primary); }
+    .enq-select-chevron {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--text-muted);
+    }
+    .enq-select-chevron svg { width: 16px; height: 16px; }
+
+    /* Textarea */
+    .enq-textarea {
+      min-height: 140px;
+      resize: vertical;
+      line-height: 1.6;
+    }
+    .enq-char-count {
+      position: absolute;
+      bottom: 12px;
+      right: 14px;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+      transition: color 0.15s;
+    }
+    .enq-char-count.warn { color: var(--accent); }
+    .enq-char-count.limit { color: var(--red); }
+
+    /* Inline errors */
+    .enq-error {
+      font-size: 12px;
+      color: var(--red);
+      margin-top: 6px;
+      display: none;
+    }
+    .enq-error.visible { display: block; }
+
+    /* API error banner */
+    .enq-api-error {
+      padding: 12px 16px;
+      background: var(--red-bg);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      border-radius: var(--radius-sm);
+      color: var(--red);
+      font-size: 13px;
+      line-height: 1.5;
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .enq-api-error.visible { display: flex; }
+    .enq-api-error-close {
+      background: none;
+      border: none;
+      color: var(--red);
+      cursor: pointer;
+      padding: 0;
+      margin-left: auto;
+      flex-shrink: 0;
+      min-width: 24px;
+      min-height: 24px;
+    }
+
+    /* Submit button */
+    .enq-submit {
+      width: 100%;
+      padding: 14px 24px;
+      min-height: 48px;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: white;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.2s, opacity 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .enq-submit:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    .enq-submit:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .enq-spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Success state */
+    .enq-success {
+      display: none;
+      text-align: center;
+      padding: 60px 0;
+      animation: fadeIn 0.4s ease-out;
+    }
+    .enq-success.visible { display: block; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .enq-success-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: var(--green-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+    }
+    .enq-success-icon svg { width: 36px; height: 36px; color: var(--green); }
+    .enq-success-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+    .enq-success-body {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+    .enq-success-back {
+      color: var(--text-muted);
+      font-size: 13px;
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    .enq-success-back:hover { color: var(--text-primary); text-decoration: none; }
+
+    @media (max-width: 640px) {
+      .enq-title { font-size: 26px; }
+      .enq-page { padding: 20px 16px 48px; }
+    }
+  </style>
+</head>
+<body>
+<div class="enq-page">
+  <div class="enq-container">
+
+    <a href="/" class="enq-back">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      Back
+    </a>
+
+    <div class="enq-header">
+      <h1 class="enq-title">Request Access</h1>
+      <p class="enq-subtitle">Tell us a bit about yourself and why you're interested. We'll be in touch within 1–2 business days.</p>
+      <div class="enq-meta">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        3 fields · takes 1 minute
+      </div>
+    </div>
+
+    <!-- Form -->
+    <form id="enquiry-form" class="enq-form" novalidate>
+
+      <!-- Email -->
+      <div class="enq-field">
+        <label class="enq-label" for="enq-email">Work Email</label>
+        <input class="enq-input" type="email" id="enq-email" name="email"
+               placeholder="you@company.com" autocomplete="email" autofocus>
+        <div class="enq-error" id="err-email">Please enter a valid email address</div>
+      </div>
+
+      <!-- Role -->
+      <div class="enq-field">
+        <label class="enq-label" for="enq-role">Your Role</label>
+        <div class="enq-select-wrap">
+          <select class="enq-select" id="enq-role" name="job_title">
+            <option value="" disabled selected>Select your role...</option>
+            <option value="Trader / Investor">Trader / Investor</option>
+            <option value="Quantitative Analyst">Quantitative Analyst</option>
+            <option value="Fund Manager">Fund Manager</option>
+            <option value="Financial Analyst">Financial Analyst</option>
+            <option value="Data Scientist">Data Scientist</option>
+            <option value="Software Engineer">Software Engineer</option>
+            <option value="Researcher / Academic">Researcher / Academic</option>
+            <option value="Journalist / Media">Journalist / Media</option>
+            <option value="Other">Other</option>
+          </select>
+          <div class="enq-select-chevron">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+        </div>
+        <div class="enq-error" id="err-role">Please select your role</div>
+      </div>
+
+      <!-- Message -->
+      <div class="enq-field">
+        <label class="enq-label" for="enq-message">Why are you interested?</label>
+        <textarea class="enq-textarea" id="enq-message" name="message" maxlength="500"
+                  placeholder="Tell us about your use case, what you're trying to solve, or how you found us..."></textarea>
+        <div class="enq-char-count" id="char-count">0 / 500</div>
+        <div class="enq-error" id="err-message">Please write at least 20 characters</div>
+      </div>
+
+      <!-- API error banner -->
+      <div class="enq-api-error" id="api-error">
+        <span id="api-error-text">Something went wrong. Please try again or email us directly at enquiries@habbig.com.</span>
+        <button type="button" class="enq-api-error-close" onclick="document.getElementById('api-error').classList.remove('visible')" aria-label="Dismiss">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Submit -->
+      <button type="submit" class="enq-submit" id="enq-submit">
+        <span id="submit-text">Send Enquiry</span>
+      </button>
+
+    </form>
+
+    <!-- Success state -->
+    <div class="enq-success" id="enq-success">
+      <div class="enq-success-icon">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+      </div>
+      <div class="enq-success-title">Thanks for reaching out.</div>
+      <div class="enq-success-body">
+        We've received your enquiry and will be in touch within 1–2 business days. Keep an eye on your inbox.
+      </div>
+      <a href="/" class="enq-success-back">
+        <svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+        Back to home
+      </a>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function() {
+  const form = document.getElementById('enquiry-form');
+  const emailInput = document.getElementById('enq-email');
+  const roleSelect = document.getElementById('enq-role');
+  const messageInput = document.getElementById('enq-message');
+  const charCount = document.getElementById('char-count');
+  const submitBtn = document.getElementById('enq-submit');
+  const submitText = document.getElementById('submit-text');
+  const apiError = document.getElementById('api-error');
+  const successPanel = document.getElementById('enq-success');
+  const EMAIL_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+
+  // Character counter
+  messageInput.addEventListener('input', function() {
+    const len = this.value.length;
+    charCount.textContent = len + ' / 500';
+    charCount.classList.remove('warn', 'limit');
+    if (len >= 500) charCount.classList.add('limit');
+    else if (len >= 400) charCount.classList.add('warn');
+  });
+
+  // Clear error on focus
+  function clearError(input, errorId) {
+    input.addEventListener('focus', function() {
+      this.classList.remove('field-error');
+      document.getElementById(errorId).classList.remove('visible');
+    });
+  }
+  clearError(emailInput, 'err-email');
+  clearError(roleSelect, 'err-role');
+  clearError(messageInput, 'err-message');
+
+  function showError(input, errorId) {
+    input.classList.add('field-error');
+    document.getElementById(errorId).classList.add('visible');
+  }
+
+  // Validate on blur
+  emailInput.addEventListener('blur', function() {
+    if (this.value && !EMAIL_RE.test(this.value.trim())) showError(this, 'err-email');
+  });
+  roleSelect.addEventListener('blur', function() {
+    if (this.value === '' && this.dataset.touched) showError(this, 'err-role');
+  });
+  roleSelect.addEventListener('change', function() {
+    this.dataset.touched = '1';
+    this.classList.remove('field-error');
+    document.getElementById('err-role').classList.remove('visible');
+  });
+  messageInput.addEventListener('blur', function() {
+    if (this.value && this.value.trim().length < 20) showError(this, 'err-message');
+  });
+
+  // Submit
+  form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    apiError.classList.remove('visible');
+    let valid = true;
+
+    const email = emailInput.value.trim();
+    const role = roleSelect.value;
+    const message = messageInput.value.trim();
+
+    // Validate
+    if (!email || !EMAIL_RE.test(email)) { showError(emailInput, 'err-email'); valid = false; }
+    if (!role) { showError(roleSelect, 'err-role'); valid = false; }
+    if (!message || message.length < 20) { showError(messageInput, 'err-message'); valid = false; }
+
+    if (!valid) return;
+
+    // Loading state
+    submitBtn.disabled = true;
+    submitText.innerHTML = '<div class="enq-spinner"></div> Sending...';
+
+    try {
+      const resp = await fetch('/api/enquire', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, job_title: role, message }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || 'Server error');
+      }
+      // Success
+      form.style.display = 'none';
+      successPanel.classList.add('visible');
+    } catch (err) {
+      apiError.classList.add('visible');
+      submitBtn.disabled = false;
+      submitText.textContent = 'Send Enquiry';
+    }
+  });
+})();
+</script>
+</body>
+</html>
