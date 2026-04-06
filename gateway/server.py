@@ -213,11 +213,14 @@ def current_user(request: Request) -> Optional[dict]:
     if token:
         session = db.get_session(token)
         if session:
+            admin_level = session["is_admin"] or 0
             return {
                 "user_id": session["user_id"],
                 "username": session["username"],
                 "email": session["email"],
-                "is_admin": session["is_admin"],
+                "is_admin": bool(admin_level),
+                "is_super_admin": admin_level >= 2,
+                "admin_level": admin_level,
             }
     # Dev bypass: if this is a localhost request, return a synthetic "logged in"
     # dict for the dev user so the UI is usable without a real signup flow.
@@ -227,11 +230,14 @@ def current_user(request: Request) -> Optional[dict]:
         if not row:
             # Extremely rare race (user deleted mid-request). Fail closed.
             return None
+        admin_level = row["is_admin"] or 0
         return {
             "user_id": user_id,
             "username": row["username"] if "username" in row.keys() else "dev",
             "email": row["email"],
-            "is_admin": row["is_admin"],
+            "is_admin": bool(admin_level),
+            "is_super_admin": admin_level >= 2,
+            "admin_level": admin_level,
             "_dev_bypass": True,
         }
     return None
@@ -271,6 +277,9 @@ def render_page(name: str, **context) -> HTMLResponse:
     """
     path = STATIC_DIR / f"{name}.html"
     page = path.read_text()
+    # Auto-fill empty raw_admin_link if not provided (prevents {{ raw_admin_link }} showing)
+    if "raw_admin_link" not in context:
+        context["raw_admin_link"] = ""
     raw_keys = {"dashboard_cards", "billing_rows"}
     for key, value in context.items():
         placeholder = "{{ " + key + " }}"
@@ -572,10 +581,12 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         </div>
         """)
 
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
         "billing",
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
+        raw_admin_link=admin_link,
     )
 
 
@@ -615,8 +626,12 @@ async def billing_action(request: Request, action: str = Form(...)):
 def _profile_context(user: dict, banner: str = "") -> dict:
     import datetime as _dt
     db_user = db.get_user_by_id(user["user_id"])
-    joined = _dt.datetime.fromtimestamp(db_user["created_at"]).strftime("%b %d, %Y") if db_user else "—"
-    role_badge = '<span class="profile-meta-item" style="background:var(--accent-light);color:var(--accent)">Admin</span>' if user.get("is_admin") else ""
+    joined = _dt.datetime.utcfromtimestamp(db_user["created_at"]).strftime("%b %d, %Y UTC") if db_user else "—"
+    role_badge = ""
+    if user.get("is_super_admin"):
+        role_badge = '<span class="profile-meta-item" style="background:rgba(245,158,11,0.12);color:var(--amber)">Super Admin</span>'
+    elif user.get("is_admin"):
+        role_badge = '<span class="profile-meta-item" style="background:var(--accent-light);color:var(--accent)">Admin</span>'
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     avatar = user.get("username", "?")[0].upper()
     return {
@@ -756,7 +771,7 @@ def _require_admin_user(request: Request) -> dict:
     return user
 
 
-def _build_admin_context(new_token_str: str = "") -> dict:
+def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict:
     """Build the template context for the admin page."""
     tokens = db.list_invite_tokens()
     users = db.list_all_users()
@@ -797,45 +812,108 @@ def _build_admin_context(new_token_str: str = "") -> dict:
             f'<div class="admin-row-actions">{revoke_btn}</div></div>'
         )
 
-    # User rows HTML — with checkboxes for mass actions
+    # User rows HTML — with checkboxes and full management
     import datetime as _dt
+    is_super = caller_level >= 2
     user_rows = []
+    dash_opts = "".join(
+        f'<option value="{k}">{html.escape(cfg["display_name"])}</option>'
+        for k, cfg in DASHBOARDS.items()
+    )
+    sel_style = 'style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);appearance:auto"'
+
     for u in users:
+        ulevel = u["is_admin"] or 0
         badges = ""
-        if u["is_admin"]:
+        if ulevel >= 2:
+            badges += '<span class="badge" style="background:rgba(245,158,11,0.12);color:var(--amber)">SUPER ADMIN</span> '
+        elif ulevel == 1:
             badges += '<span class="badge" style="background:var(--accent-light);color:var(--accent)">ADMIN</span> '
         if u["suspended"]:
             badges += '<span class="badge" style="background:var(--red-bg);color:var(--red)">SUSPENDED</span> '
-        joined = _dt.datetime.fromtimestamp(u["created_at"]).strftime("%Y-%m-%d")
+        joined = _dt.datetime.utcfromtimestamp(u["created_at"]).strftime("%Y-%m-%d %H:%M UTC")
         uname = html.escape(u["username"] or u["email"].split("@")[0])
         email_esc = html.escape(u["email"])
+
+        # Determine if caller can manage this user
+        can_manage = False
+        if is_super and u["id"] != 1:
+            can_manage = True  # super admin can manage everyone except root
+        elif caller_level == 1 and ulevel == 0:
+            can_manage = True  # regular admin can only manage regular users
+
         actions = ""
-        if u["id"] != 1:
-            if not u["is_admin"]:
-                actions += f'<form method="post" action="/admin/users/{u["id"]}/promote" onsubmit="return confirm(\'Promote to admin?\')"><button class="btn btn-primary-outline" style="font-size:11px">Promote</button></form>'
+        detail_extra = ""
+
+        if can_manage:
+            # Role management
+            if is_super:
+                role_opts = (
+                    f'<option value="0" {"selected" if ulevel == 0 else ""}>User</option>'
+                    f'<option value="1" {"selected" if ulevel == 1 else ""}>Admin</option>'
+                    f'<option value="2" {"selected" if ulevel == 2 else ""}>Super Admin</option>'
+                )
+                actions += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/role" onclick="event.stopPropagation()" '
+                    f'onsubmit="return confirm(\'Change role for {uname}?\')" style="display:flex;gap:6px;align-items:center">'
+                    f'<select name="level" {sel_style}>{role_opts}</select>'
+                    f'<button class="btn btn-primary-outline" style="font-size:11px">Set Role</button></form>'
+                )
             else:
-                actions += f'<form method="post" action="/admin/users/{u["id"]}/demote" onsubmit="return confirm(\'Demote to user?\')"><button class="btn btn-danger" style="font-size:11px">Demote</button></form>'
+                # Regular admin: promote/demote regular users only
+                if ulevel == 0:
+                    actions += f'<form method="post" action="/admin/users/{u["id"]}/promote" onsubmit="return confirm(\'Promote {uname} to admin?\')"><button class="btn btn-primary-outline" style="font-size:11px">Promote to Admin</button></form>'
+                elif ulevel == 1:
+                    actions += f'<form method="post" action="/admin/users/{u["id"]}/demote" onsubmit="return confirm(\'Demote {uname}?\')"><button class="btn btn-danger" style="font-size:11px">Demote to User</button></form>'
+
+            # Suspend/unsuspend
             if not u["suspended"]:
-                actions += f'<form method="post" action="/admin/users/{u["id"]}/suspend" onsubmit="return confirm(\'Suspend this user?\')"><button class="btn btn-danger" style="font-size:11px">Suspend</button></form>'
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/suspend" onsubmit="return confirm(\'Suspend {uname}?\')"><button class="btn btn-danger" style="font-size:11px">Suspend</button></form>'
             else:
                 actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend"><button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
+
+            # Change email (super admin only)
+            if is_super:
+                detail_extra += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/email" onclick="event.stopPropagation()" '
+                    f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                    f'<input name="new_email" type="email" placeholder="New email" {sel_style} style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);flex:1">'
+                    f'<button class="btn btn-primary-outline" style="font-size:11px">Change Email</button></form>'
+                )
+
+            # Revoke token (super admin only)
+            if is_super and u.get("invite_token_id"):
+                detail_extra += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/revoke-token" onclick="event.stopPropagation()" '
+                    f'onsubmit="return confirm(\'Revoke token for {uname}? They will not be able to log in.\')"'
+                    f' style="margin-top:8px">'
+                    f'<button class="btn btn-danger" style="font-size:11px">Revoke Invite Token</button></form>'
+                )
+
+            # Generate new token for user (super admin only)
+            if is_super:
+                detail_extra += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/new-token" onclick="event.stopPropagation()" '
+                    f'onsubmit="return confirm(\'Generate a new invite token for {uname}?\')" style="margin-top:8px">'
+                    f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
+                )
+
+            # Grant subscription (super admin only)
+            if is_super:
+                detail_extra += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/grant" onclick="event.stopPropagation()" '
+                    f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                    f'<select name="dashboard_key" {sel_style}>{dash_opts}</select>'
+                    f'<select name="plan" {sel_style}><option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
+                    f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button></form>'
+                )
+        elif u["id"] == 1:
+            actions = '<span style="font-size:12px;color:var(--text-muted)">Root super admin — protected</span>'
         else:
-            actions = '<span style="font-size:12px;color:var(--text-muted)">Root admin</span>'
-        checkbox = f'<input type="checkbox" name="user_ids" value="{u["id"]}" class="user-check" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-right:12px">' if u["id"] != 1 else '<span style="width:18px;margin-right:12px;flex-shrink:0"></span>'
-        # Grant free subscription form
-        dash_opts = "".join(
-            f'<option value="{k}">{html.escape(cfg["display_name"])}</option>'
-            for k, cfg in DASHBOARDS.items()
-        )
-        grant_form = (
-            f'<form method="post" action="/admin/users/{u["id"]}/grant" style="display:flex;gap:6px;align-items:center;margin-top:10px" onclick="event.stopPropagation()">'
-            f'<select name="dashboard_key" style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);appearance:auto">'
-            f'{dash_opts}</select>'
-            f'<select name="plan" style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);appearance:auto">'
-            f'<option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
-            f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button>'
-            f'</form>'
-        )
+            actions = '<span style="font-size:12px;color:var(--text-muted)">Insufficient permissions</span>'
+
+        can_select = can_manage and u["id"] != 1
+        checkbox = f'<input type="checkbox" name="user_ids" value="{u["id"]}" class="user-check" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-right:12px">' if can_select else '<span style="width:18px;margin-right:12px;flex-shrink:0"></span>'
         user_rows.append(
             f'<div class="admin-row" style="align-items:flex-start">'
             f'{checkbox}'
@@ -844,7 +922,7 @@ def _build_admin_context(new_token_str: str = "") -> dict:
             f'<div class="admin-row-meta">{email_esc} &middot; Joined {joined}</div>'
             f'<div class="user-detail" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'
             f'<div style="display:flex;gap:8px;flex-wrap:wrap">{actions}</div>'
-            f'{grant_form}'
+            f'{detail_extra}'
             f'</div></div></div>'
         )
 
@@ -1036,7 +1114,7 @@ def _build_revenue_content() -> str:
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     user = _require_admin_user(request)
-    ctx = _build_admin_context()
+    ctx = _build_admin_context(caller_level=user.get("admin_level", 1))
     return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
 
 
@@ -1045,7 +1123,7 @@ async def admin_generate_token(request: Request, note: str = Form("")):
     user = _require_admin_user(request)
     new_token = db.create_invite_token(note.strip())
     log.info("Admin %s generated invite token: %s", user["email"], new_token)
-    ctx = _build_admin_context(new_token_str=new_token)
+    ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1))
     return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
 
 
@@ -1102,9 +1180,73 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
     return RedirectResponse("/admin", status_code=302)
 
 
+def _require_super_admin(request: Request) -> dict:
+    user = _require_admin_user(request)
+    if user.get("admin_level", 0) < 2:
+        raise HTTPException(status_code=403, detail="Super admin access required")
+    return user
+
+
+@app.post("/admin/users/{user_id}/role")
+async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
+    admin = _require_super_admin(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root account")
+    if level < 0 or level > 2:
+        raise HTTPException(status_code=400, detail="Invalid role level")
+    db.set_user_role(user_id, level)
+    log.info("Super admin %s set user %d role to %d", admin["email"], user_id, level)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/email")
+async def admin_change_email(request: Request, user_id: int, new_email: str = Form("")):
+    admin = _require_super_admin(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root account")
+    new_email = new_email.strip().lower()
+    if not new_email or not EMAIL_RE.match(new_email):
+        raise HTTPException(status_code=400, detail="Invalid email")
+    existing = db.get_user_by_email(new_email)
+    if existing and existing["id"] != user_id:
+        raise HTTPException(status_code=400, detail="Email already in use")
+    with db.conn() as c:
+        c.execute("UPDATE users SET email = ? WHERE id = ?", (new_email, user_id))
+    log.info("Super admin %s changed email for user %d to %s", admin["email"], user_id, new_email)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/revoke-token")
+async def admin_revoke_user_token(request: Request, user_id: int):
+    admin = _require_super_admin(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root account")
+    user = db.get_user_by_id(user_id)
+    if user and user["invite_token_id"]:
+        db.revoke_invite_token(user["invite_token_id"])
+    log.info("Super admin %s revoked token for user %d", admin["email"], user_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/new-token")
+async def admin_new_token_for_user(request: Request, user_id: int):
+    admin = _require_super_admin(request)
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="Cannot modify root account")
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_token = db.create_invite_token(f"Replacement token for {user['username'] or user['email']}")
+    db.claim_invite_token(new_token, user_id, user["email"])
+    with db.conn() as c:
+        c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?", (new_token, user_id))
+    log.info("Super admin %s generated new token %s for user %d", admin["email"], new_token, user_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
 @app.post("/admin/users/{user_id}/grant")
 async def admin_grant_subscription(request: Request, user_id: int, dashboard_key: str = Form(""), plan: str = Form("monthly")):
-    admin = _require_admin_user(request)
+    admin = _require_super_admin(request)
     if dashboard_key not in DASHBOARDS:
         raise HTTPException(status_code=400, detail="Invalid dashboard")
     duration = 30 if plan == "monthly" else 365
@@ -1115,7 +1257,7 @@ async def admin_grant_subscription(request: Request, user_id: int, dashboard_key
         duration_days=duration,
         source="admin_grant",
     )
-    log.info("Admin %s granted %s (%s) to user id=%d", admin["email"], dashboard_key, plan, user_id)
+    log.info("Super admin %s granted %s (%s) to user id=%d", admin["email"], dashboard_key, plan, user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1178,11 +1320,13 @@ async def settings_page(request: Request, saved: Optional[str] = None):
             '</div>'
         )
 
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
         "settings",
         email=user["email"], username=user.get("username", user["email"]),
         raw_options="".join(option_html),
         raw_saved_banner=saved_banner,
+        raw_admin_link=admin_link,
     )
 
 

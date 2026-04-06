@@ -128,17 +128,18 @@ def verify_password(password: str, stored_hash: str, salt: str) -> bool:
 # ── User operations ───────────────────────────────────────────────────────────
 
 
-def create_user(email: str, password: str, username: str = "", is_admin: bool = False) -> int:
+def create_user(email: str, password: str, username: str = "", is_admin: bool = False, admin_level: int = 0) -> int:
     email = email.lower().strip()
     username = username.strip()
     if not username:
         username = email.split("@")[0]
+    level = admin_level if admin_level else (1 if is_admin else 0)
     pwd_hash, salt = _hash_password(password)
     with conn() as c:
         cur = c.execute(
             "INSERT INTO users (username, email, password_hash, password_salt, created_at, is_admin) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (username, email, pwd_hash, salt, int(time.time()), 1 if is_admin else 0),
+            (username, email, pwd_hash, salt, int(time.time()), level),
         )
         return cur.lastrowid
 
@@ -348,9 +349,15 @@ def list_all_users() -> list[sqlite3.Row]:
         return c.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
 
 
-def set_user_admin(user_id: int, is_admin: bool) -> None:
+def set_user_role(user_id: int, level: int) -> None:
+    """Set user role: 0=user, 1=admin, 2=super_admin."""
     with conn() as c:
-        c.execute("UPDATE users SET is_admin = ? WHERE id = ?", (1 if is_admin else 0, user_id))
+        c.execute("UPDATE users SET is_admin = ? WHERE id = ?", (level, user_id))
+
+
+def set_user_admin(user_id: int, is_admin: bool) -> None:
+    """Legacy helper — promotes to admin (1) or demotes to user (0)."""
+    set_user_role(user_id, 1 if is_admin else 0)
 
 
 def set_user_suspended(user_id: int, suspended: bool) -> None:
