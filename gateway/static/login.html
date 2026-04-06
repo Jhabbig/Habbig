@@ -7,6 +7,16 @@
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
   <style>
     .auth-error:empty { display: none; }
+    .auth-success:empty { display: none; }
+    .auth-success {
+      background: var(--green-bg);
+      color: var(--green);
+      border: 1px solid var(--green);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
     .token-display {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
@@ -49,7 +59,12 @@
         <button type="submit" class="auth-submit">Sign in</button>
       </form>
 
+      {{ raw_success }}
       <div class="auth-error">{{ error }}</div>
+
+      <div style="text-align:center;margin-top:12px">
+        <a href="/forgot-password" style="font-size:13px;color:var(--text-muted);text-decoration:none">Forgot your password?</a>
+      </div>
 
       <div class="auth-footer">
         {{ raw_footer_link }}

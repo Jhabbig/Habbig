@@ -55,6 +55,136 @@ DASHBOARDS: dict = CONFIG["dashboards"]
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
 
+# Rich preview content for each dashboard's /preview/<key> product page.
+DASHBOARD_PREVIEWS = {
+    "sports": {
+        "tagline": "Find the edge the bookmakers miss. Compare Polymarket odds against every major sportsbook in real time and surface arbitrage opportunities before they vanish.",
+        "features": [
+            {"icon": "\u26a1", "title": "Live Odds Comparison", "desc": "Side-by-side Polymarket vs. DraftKings, FanDuel, and Pinnacle odds updated every 30 seconds."},
+            {"icon": "\U0001f4ca", "title": "Arbitrage Scanner", "desc": "Automated detection of guaranteed-profit spreads across platforms with position sizing."},
+            {"icon": "\U0001f514", "title": "Line Movement Alerts", "desc": "Push notifications when odds shift beyond configurable thresholds on tracked markets."},
+            {"icon": "\U0001f9e0", "title": "Sharpe Ratio Signals", "desc": "Risk-adjusted scoring for every market so you know which bets have the best expected value."},
+            {"icon": "\U0001f3af", "title": "Historical Accuracy", "desc": "Track record visualization showing past signal performance across sports categories."},
+            {"icon": "\U0001f4b0", "title": "P&L Tracker", "desc": "Portfolio-level performance tracking for positions entered through the dashboard's signals."},
+        ],
+        "includes": [
+            "Real-time odds from 5+ sportsbooks",
+            "Arbitrage and mispricing alerts",
+            "Full historical signal backtest data",
+            "Customizable watchlists and filters",
+            "30-second auto-refresh across all panels",
+            "WebSocket live feed for instant updates",
+            "Exportable CSV reports",
+            "Priority access to new sports markets",
+        ],
+    },
+    "weather": {
+        "tagline": "Beat the weather markets with better data. Combine forecast models with market prices to spot mispricings on rain, temperature, and storm events.",
+        "features": [
+            {"icon": "\U0001f327\ufe0f", "title": "Forecast vs. Market", "desc": "Multi-model weather forecasts overlaid with current Polymarket prices to highlight divergence."},
+            {"icon": "\U0001f4c8", "title": "Mispricing Heatmap", "desc": "Visual grid showing which weather markets are furthest from model consensus fair value."},
+            {"icon": "\U0001f30e", "title": "City-Level Coverage", "desc": "Granular data for every city with an active weather market on Polymarket."},
+            {"icon": "\u2705", "title": "Accuracy Leaderboard", "desc": "Track which forecast models and which markets have the best historical calibration."},
+            {"icon": "\u23f0", "title": "Settlement Countdown", "desc": "Timers and probability curves that update as resolution deadlines approach."},
+            {"icon": "\U0001f4ca", "title": "Ensemble Model View", "desc": "Aggregated probability from GFS, ECMWF, and other models weighted by recent accuracy."},
+        ],
+        "includes": [
+            "Ensemble forecasts from 4+ weather models",
+            "Automatic mispricing detection",
+            "City-by-city market breakdown",
+            "Accuracy tracking for all active markets",
+            "Historical resolution data and calibration curves",
+            "Daily email digest of top opportunities",
+            "Mobile-friendly responsive layout",
+            "All data updated every 15 minutes",
+        ],
+    },
+    "world": {
+        "tagline": "Geopolitics in real time. Track conflicts, elections, and global headlines alongside prediction market sentiment so you always see the full picture.",
+        "features": [
+            {"icon": "\U0001f30d", "title": "Global Conflict Tracker", "desc": "Live map and timeline of active conflicts, escalations, and diplomatic developments."},
+            {"icon": "\U0001f4f0", "title": "Headline Aggregator", "desc": "Curated feed of world news from 30+ sources, ranked by market relevance and impact."},
+            {"icon": "\U0001f4ca", "title": "Sentiment Analysis", "desc": "NLP-powered sentiment scores for key geopolitical topics, updated hourly."},
+            {"icon": "\U0001f5f3\ufe0f", "title": "Election Monitor", "desc": "Track global elections and referendums with polling data cross-referenced against market odds."},
+            {"icon": "\U0001f6a8", "title": "Escalation Alerts", "desc": "Get notified when a tracked situation escalates or when market prices move sharply."},
+            {"icon": "\U0001f4c5", "title": "Event Timeline", "desc": "Chronological view of past events and their market impact for pattern recognition."},
+        ],
+        "includes": [
+            "News aggregation from 30+ global sources",
+            "Conflict and crisis tracking dashboard",
+            "Sentiment analysis on major geopolitical themes",
+            "Election polling aggregation",
+            "Customizable alert thresholds",
+            "Historical event-to-market-move analysis",
+            "Weekly geopolitical briefing summary",
+            "Data updated every 30 minutes",
+        ],
+    },
+    "crypto": {
+        "tagline": "Quantitative crypto signals powered by ensemble machine learning. Cut through the noise with data-driven BTC and altcoin predictions.",
+        "features": [
+            {"icon": "\U0001f916", "title": "Ensemble ML Predictor", "desc": "Six independent models vote on direction and magnitude, giving you a confidence-weighted signal."},
+            {"icon": "\U0001f4c9", "title": "Market Sentiment Index", "desc": "Aggregated fear/greed score from on-chain data, social media, and funding rates."},
+            {"icon": "\U0001f50d", "title": "Whale Activity Monitor", "desc": "Track large wallet movements and exchange inflows/outflows that precede price action."},
+            {"icon": "\u26a1", "title": "Real-Time Signals", "desc": "WebSocket-powered price feeds and model updates so you never miss a regime change."},
+            {"icon": "\U0001f4ca", "title": "Backtest Dashboard", "desc": "Full transparency into model performance with walk-forward backtests over 3+ years."},
+            {"icon": "\U0001f6e1\ufe0f", "title": "Risk Management", "desc": "Position sizing guidance and drawdown alerts based on current volatility regime."},
+        ],
+        "includes": [
+            "Ensemble ML signals for BTC, ETH, and top altcoins",
+            "Real-time WebSocket price and signal feed",
+            "On-chain analytics and whale alerts",
+            "Sentiment aggregation across social and on-chain data",
+            "3+ year backtest with walk-forward validation",
+            "Configurable risk and position-size calculator",
+            "Model confidence breakdowns per prediction",
+            "Data refreshed every 60 seconds",
+        ],
+    },
+    "midterm": {
+        "tagline": "Multi-source election intelligence. Aggregate polls, prediction markets, and expert forecasts into one unified view of every competitive race.",
+        "features": [
+            {"icon": "\U0001f5f3\ufe0f", "title": "Polling Aggregation", "desc": "Weighted average of major polls with recency and quality adjustments, updated daily."},
+            {"icon": "\U0001f4ca", "title": "Multi-Market Comparison", "desc": "Side-by-side odds from Polymarket, Kalshi, PredictIt, and Metaculus for every race."},
+            {"icon": "\U0001f50e", "title": "Race-Level Deep Dives", "desc": "Detailed breakdowns for every Senate, House, and Governor race with demographic overlays."},
+            {"icon": "\U0001f4c8", "title": "Swing-o-Meter", "desc": "Real-time visualization of how races have shifted over time with key event annotations."},
+            {"icon": "\U0001f9e9", "title": "Scenario Builder", "desc": "Model different turnout and polling-error scenarios to see how the overall map changes."},
+            {"icon": "\U0001f4e2", "title": "Breaking News Impact", "desc": "Track how major news events ripple through polls and markets within hours."},
+        ],
+        "includes": [
+            "Aggregated polling from 15+ pollsters",
+            "Odds comparison across 4 prediction platforms",
+            "Race-by-race probability estimates",
+            "Historical accuracy benchmarks",
+            "Interactive scenario modeling tool",
+            "Daily shift summaries and email alerts",
+            "Demographic overlay data per race",
+            "Updated every 6 hours (hourly near election day)",
+        ],
+    },
+    "top_traders": {
+        "tagline": "Follow the smart money. Track the highest-performing Polymarket traders, see what they are buying, and reverse-engineer their strategies.",
+        "features": [
+            {"icon": "\U0001f3c6", "title": "Performance Leaderboard", "desc": "Ranked list of top traders by ROI, volume, and win rate, filterable by time period."},
+            {"icon": "\U0001f50d", "title": "Whale Tracker", "desc": "Real-time alerts when top wallets enter or exit large positions on any market."},
+            {"icon": "\U0001f4bc", "title": "Portfolio X-Ray", "desc": "See the full position breakdown of any tracked trader, including entry prices and P&L."},
+            {"icon": "\U0001f4c8", "title": "Strategy Classification", "desc": "Algorithmic tagging of trader behavior patterns: momentum, contrarian, event-driven, etc."},
+            {"icon": "\U0001f465", "title": "Consensus Heatmap", "desc": "Visual grid showing which markets have the most top-trader agreement in one direction."},
+            {"icon": "\U0001f4e5", "title": "Copy-Trade Signals", "desc": "Optional alerts when a configurable number of top traders converge on the same market."},
+        ],
+        "includes": [
+            "Tracking 200+ top Polymarket wallets",
+            "Real-time position change alerts",
+            "Trader P&L and performance history",
+            "Strategy style classification per trader",
+            "Consensus and divergence signals",
+            "Customizable watchlists for specific wallets",
+            "Filterable by market category and time window",
+            "Data refreshed every 5 minutes",
+        ],
+    },
+}
+
 # Production flag: set PRODUCTION=1 on the deployed server. Disables the
 # localhost dev bypass and flips the session cookie to secure=True.
 IS_PRODUCTION: bool = os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
@@ -134,6 +264,101 @@ async def _shutdown():
 # Static files for apex pages (CSS, JS, images).
 if STATIC_DIR.exists():
     app.mount("/_gateway_static", StaticFiles(directory=str(STATIC_DIR)), name="gateway_static")
+
+
+# ── Security headers middleware ──────────────────────────────────────────────
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from collections import defaultdict
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "1; mode=block",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+if IS_PRODUCTION:
+    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    "connect-src 'self' https:",
+    "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+])
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        for header, value in SECURITY_HEADERS.items():
+            response.headers[header] = value
+        response.headers["Content-Security-Policy"] = CSP
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+# ── Rate limiting ────────────────────────────────────────────────────────────
+
+_rate_store: dict[str, list[float]] = defaultdict(list)
+_RATE_WINDOW = 300
+_RATE_MAX_LOGIN = 10
+_RATE_MAX_SIGNUP = 5
+_RATE_MAX_FORGOT = 3
+_rate_last_cleanup = 0.0
+
+
+def _rate_cleanup():
+    global _rate_last_cleanup
+    now = time.time()
+    if now - _rate_last_cleanup < 60:
+        return
+    _rate_last_cleanup = now
+    cutoff = now - _RATE_WINDOW
+    stale = [k for k, v in _rate_store.items() if not v or v[-1] < cutoff]
+    for k in stale:
+        del _rate_store[k]
+
+
+def _is_rate_limited(ip: str, endpoint: str, limit: int) -> bool:
+    _rate_cleanup()
+    now = time.time()
+    key = f"{ip}:{endpoint}"
+    timestamps = _rate_store[key]
+    cutoff = now - _RATE_WINDOW
+    while timestamps and timestamps[0] < cutoff:
+        timestamps.pop(0)
+    if len(timestamps) >= limit:
+        return True
+    timestamps.append(now)
+    return False
+
+
+def _get_client_ip(request: Request) -> str:
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+RATE_LIMITED_RESPONSE = HTMLResponse(
+    "<h1>Too many requests</h1>"
+    "<p>You've made too many attempts. Please wait a few minutes and try again.</p>",
+    status_code=429,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -267,6 +492,20 @@ def clear_session_cookie(response: Response, request: Request) -> None:
     response.delete_cookie(**kwargs)
 
 
+def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
+    """Check if a subscription is truly active (status + not expired)."""
+    if is_admin:
+        return True
+    if sub_row is None:
+        return False
+    if sub_row["status"] != "active":
+        return False
+    expires_at = sub_row["expires_at"]
+    if expires_at is not None and expires_at <= int(time.time()):
+        return False
+    return True
+
+
 def render_page(name: str, **context) -> HTMLResponse:
     """Tiny templating: load static/<name>.html and do {{ key }} substitution.
 
@@ -288,20 +527,6 @@ def render_page(name: str, **context) -> HTMLResponse:
         else:
             page = page.replace(placeholder, html.escape(str(value)))
     return HTMLResponse(page)
-
-
-def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
-    """Check if a subscription is truly active (status + not expired)."""
-    if is_admin:
-        return True
-    if sub_row is None:
-        return False
-    if sub_row["status"] != "active":
-        return False
-    expires_at = sub_row["expires_at"]
-    if expires_at is not None and expires_at <= int(time.time()):
-        return False
-    return True
 
 
 # ── Apex routes (login / signup / my dashboards / billing) ────────────────────
@@ -373,16 +598,11 @@ async def gate_submit(request: Request, token: str = Form("")):
         return render_page("gate", error="Invalid or revoked token.")
     if invite["status"] == "claimed":
         email_hint = db.mask_email(invite["claimed_by_email"] or "")
-        token_section = (
-            f'<input type="hidden" name="invite_token" value="{html.escape(invite["token"])}">'
-            f'<label for="invite_token_display">Invite Token</label>'
-            f'<input id="invite_token_display" type="text" value="{html.escape(invite["token"])}" readonly class="token-display">'
-            f'<div class="email-hint">{html.escape(email_hint)}</div>'
-        )
         return render_page(
             "login", error="",
-            raw_token_section=token_section,
+            raw_token_section=_login_token_section(invite["token"], email_hint),
             raw_footer_link='<a href="/gate">Use a different token</a>',
+            raw_success="",
         )
     # Unclaimed — go to signup, pre-fill email if token has a target_email
     target_email = ""
@@ -391,6 +611,18 @@ async def gate_submit(request: Request, token: str = Form("")):
     except (IndexError, KeyError):
         pass
     return render_page("signup", error="", invite_token=invite["token"], email=target_email)
+
+
+def _login_token_section(invite_token: str, email_hint: str) -> str:
+    """Build the token section HTML for the login page (or empty for standalone login)."""
+    if not invite_token:
+        return ""
+    return (
+        f'<input type="hidden" name="invite_token" value="{html.escape(invite_token)}">'
+        f'<label for="invite_token_display">Invite Token</label>'
+        f'<input id="invite_token_display" type="text" value="{html.escape(invite_token)}" readonly class="token-display">'
+        f'<div class="email-hint">{html.escape(email_hint)}</div>'
+    )
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -405,6 +637,7 @@ async def login_page(request: Request):
         "login", error="",
         raw_token_section="",
         raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
+        raw_success="",
     )
 
 
@@ -414,28 +647,29 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     if sub:
         return await proxy_request(request, "/login")
 
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "login", _RATE_MAX_LOGIN):
+        return RATE_LIMITED_RESPONSE
+
     invite_token = invite_token.strip()
     identifier = identifier.strip()
 
     def _render_login_error(msg: str):
+        """Re-render login page with error, preserving mode (token vs standalone)."""
         if invite_token:
             invite = db.get_invite_token(invite_token)
             email_hint = db.mask_email(invite["claimed_by_email"] or "") if invite else ""
-            token_section = (
-                f'<input type="hidden" name="invite_token" value="{html.escape(invite_token)}">'
-                f'<label for="invite_token_display">Invite Token</label>'
-                f'<input id="invite_token_display" type="text" value="{html.escape(invite_token)}" readonly class="token-display">'
-                f'<div class="email-hint">{html.escape(email_hint)}</div>'
-            )
             return render_page(
                 "login", error=msg,
-                raw_token_section=token_section,
+                raw_token_section=_login_token_section(invite_token, email_hint),
                 raw_footer_link='<a href="/gate">Use a different token</a>',
+                raw_success="",
             )
         return render_page(
             "login", error=msg,
             raw_token_section="",
             raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
+            raw_success="",
         )
 
     if not identifier:
@@ -454,7 +688,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
             return _render_login_error("This token does not belong to that account.")
 
     if user["suspended"]:
-        return RedirectResponse("/suspended", status_code=302)
+        return _render_login_error("This account has been suspended.")
     if not db.verify_password(password, user["password_hash"], user["password_salt"]):
         return _render_login_error("Invalid password.")
 
@@ -560,7 +794,7 @@ async def my_dashboards(request: Request):
                 open_url = f"https://{cfg['subdomain']}.{DOMAIN}"
             cta = f'<a class="card-cta cta-open" href="{open_url}" target="_blank">Open →</a>'
         else:
-            cta = f'<a class="card-cta cta-sub" href="/billing?dashboard={key}">Subscribe</a>'
+            cta = f'<a class="card-cta cta-sub" href="/preview/{key}">Learn More</a>'
 
         cards_html.append(f"""
         <div class="dash-card" style="--accent: {cfg['accent']}">
@@ -604,70 +838,34 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
-    active_subs = [s for s in subs.values() if s["status"] == "active"]
-    has_active = is_admin_user or bool(active_subs)
-
-    # Build current plan card
     now = int(time.time())
-    active_subs = [s for s in subs.values() if _is_sub_active(s)]
-    plan_card = ""
-    if is_admin_user:
-        plan_card = (
-            '<div class="billing-plan-card">'
-            '<div class="billing-plan-header"><div class="billing-plan-name">Admin Access</div>'
-            '<span class="billing-plan-badge billing-plan-badge-admin">Admin</span></div>'
-            '<div class="billing-plan-desc">You have full access to all dashboards as an admin.</div>'
-            '</div>'
-        )
-    elif has_active:
-        plan_card = (
-            '<div class="billing-plan-card">'
-            '<div class="billing-plan-header"><div class="billing-plan-name">Active Subscription</div>'
-            '<span class="billing-plan-badge billing-plan-badge-active">Active</span></div>'
-            '<div class="billing-plan-desc">You have access to all dashboards included in your plan.</div>'
-            '</div>'
-        )
-    else:
-        # No active subscription — show inline plan picker (no token/email needed, they're logged in)
-        plan_card = (
-            '<div class="billing-plan-card">'
-            '<div class="billing-plan-header"><div class="billing-plan-name">No active plan</div></div>'
-            '<div class="billing-plan-desc">Choose a plan to unlock all dashboards.</div>'
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px">'
-            '<div style="background:var(--surface-hover);border:1px solid var(--border);border-radius:var(--radius-sm);padding:20px;text-align:center">'
-            '<div style="font-size:16px;font-weight:600;margin-bottom:4px">Trader</div>'
-            '<div style="font-size:24px;font-weight:700;margin-bottom:4px">&pound;49<span style="font-size:13px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
-            '<form method="post" action="/billing/subscribe" style="margin-top:12px">'
-            '<input type="hidden" name="plan" value="trader"><input type="hidden" name="interval" value="monthly">'
-            '<button type="submit" style="width:100%;cursor:pointer;border:1px solid var(--accent);background:transparent;color:var(--accent);padding:10px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;font-family:inherit">Subscribe</button>'
-            '</form></div>'
-            '<div style="background:var(--surface-hover);border:2px solid var(--accent);border-radius:var(--radius-sm);padding:20px;text-align:center;box-shadow:0 0 16px rgba(99,102,241,0.08)">'
-            '<div style="font-size:16px;font-weight:600;margin-bottom:4px">Pro</div>'
-            '<div style="font-size:24px;font-weight:700;margin-bottom:4px">&pound;149<span style="font-size:13px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
-            '<form method="post" action="/billing/subscribe" style="margin-top:12px">'
-            '<input type="hidden" name="plan" value="pro"><input type="hidden" name="interval" value="monthly">'
-            '<button type="submit" style="width:100%;cursor:pointer;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;border:none;padding:10px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;font-family:inherit">Subscribe</button>'
-            '</form></div>'
-            '</div></div>'
-        )
-
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
-        is_active = _is_sub_active(s, is_admin_user) or has_active
-        if is_admin_user:
-            status_html = '<span class="billing-plan-badge billing-plan-badge-admin">Admin</span>'
-        elif has_active:
-            status_html = '<span class="billing-plan-badge billing-plan-badge-active">Active</span>'
+        is_active = _is_sub_active(s, is_admin_user)
+        if is_admin_user and not s:
+            status_label = '<span style="color:var(--green)">Active (admin)</span>'
+        elif is_active:
+            status_label = '<span style="color:var(--green)">Active</span>'
         elif s and s["status"] == "active" and s["expires_at"] and s["expires_at"] <= now:
-            status_html = '<span style="font-size:12px;font-weight:600;color:var(--amber)">Expired</span>'
+            status_label = '<span style="color:var(--amber)">Expired — renew below</span>'
         elif s and s["status"] == "cancelled":
-            status_html = '<span style="font-size:12px;font-weight:600;color:var(--red)">Cancelled</span>'
+            status_label = '<span style="color:var(--red)">Cancelled</span>'
         else:
-            status_html = '<span style="font-size:12px;color:var(--text-muted)">Locked</span>'
-
+            status_label = '<span style="color:var(--text-muted)">Not subscribed</span>'
+        monthly_btn = (
+            f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
+        )
+        annual_btn = (
+            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual ${cfg["annual_cents"]/100:.2f}</button>'
+        )
+        cancel_btn = (
+            f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>'
+            if is_active and not is_admin_user else ""
+        )
+        highlight = ' style="outline: 2px solid var(--accent); outline-offset: 2px;"' if dashboard == key else ""
         rows_html.append(f"""
-        <div class="billing-row" data-key="{key}">
+        <div class="billing-row" data-key="{key}"{highlight}>
           <div class="billing-row-main">
             <div class="billing-row-accent" style="background:{cfg['accent']}"></div>
             <div>
@@ -675,7 +873,14 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
               <div class="billing-row-desc">{cfg['description']}</div>
             </div>
           </div>
-          <div class="billing-row-status" style="display:flex;align-items:center;gap:12px">{status_html}{action_html}</div>
+          <div class="billing-row-status">{status_label}</div>
+          <div class="billing-row-actions">
+            <form method="post" action="/billing">
+              {monthly_btn}
+              {annual_btn}
+              {cancel_btn}
+            </form>
+          </div>
         </div>
         """)
 
@@ -685,7 +890,6 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
-        raw_plan_card=plan_card,
     )
 
 
@@ -741,13 +945,88 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
     return RedirectResponse("/billing", status_code=302)
 
 
+# ── Preview / product page ─────────────────────────────────────────────────
+
+
+@app.get("/preview/{dashboard_key}", response_class=HTMLResponse)
+async def preview_page(request: Request, dashboard_key: str):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, f"/preview/{dashboard_key}")
+
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+
+    if dashboard_key not in DASHBOARDS:
+        return RedirectResponse("/dashboards", status_code=302)
+
+    cfg = DASHBOARDS[dashboard_key]
+    preview = DASHBOARD_PREVIEWS.get(dashboard_key, {})
+
+    # If the user already has an active subscription, redirect to the dashboard.
+    is_admin_user = bool(user.get("is_admin"))
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    if _is_sub_active(subs.get(dashboard_key), is_admin_user):
+        return RedirectResponse("/dashboards", status_code=302)
+
+    # Build feature cards HTML
+    features_html_parts = []
+    for feat in preview.get("features", []):
+        features_html_parts.append(
+            f'<div class="preview-feature-card">'
+            f'<div class="preview-feature-icon">{feat["icon"]}</div>'
+            f'<div class="preview-feature-title">{html.escape(feat["title"])}</div>'
+            f'<div class="preview-feature-desc">{html.escape(feat["desc"])}</div>'
+            f'</div>'
+        )
+
+    # Build includes list HTML
+    check_svg = (
+        '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24">'
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>'
+        '</svg>'
+    )
+    includes_html_parts = []
+    for item in preview.get("includes", []):
+        includes_html_parts.append(
+            f'<li class="preview-includes-item">'
+            f'<span class="preview-includes-check">{check_svg}</span>'
+            f'{html.escape(item)}'
+            f'</li>'
+        )
+
+    monthly_price = f"${cfg['monthly_cents'] / 100:.2f}"
+    annual_price = f"${cfg['annual_cents'] / 100:.2f}"
+    # Calculate annual savings percentage vs paying monthly for 12 months
+    monthly_total = cfg["monthly_cents"] * 12
+    savings_pct = round((1 - cfg["annual_cents"] / monthly_total) * 100) if monthly_total > 0 else 0
+
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+
+    return render_page(
+        "preview",
+        dashboard_name=cfg["display_name"],
+        dashboard_key=dashboard_key,
+        tagline=preview.get("tagline", cfg["description"]),
+        monthly_price=monthly_price,
+        annual_price=annual_price,
+        annual_savings=str(savings_pct),
+        accent=cfg["accent"],
+        username=user.get("username", user["email"]),
+        raw_features_html="".join(features_html_parts),
+        raw_includes_html="".join(includes_html_parts),
+        raw_admin_link=admin_link,
+    )
+
+
 # ── Profile page ────────────────────────────────────────────────────────────
 
 
 def _profile_context(user: dict, banner: str = "") -> dict:
     import datetime as _dt
     db_user = db.get_user_by_id(user["user_id"])
-    joined = _dt.datetime.utcfromtimestamp(db_user["created_at"]).strftime("%b %d, %Y UTC") if db_user else "—"
+    joined = _dt.datetime.fromtimestamp(db_user["created_at"], tz=_dt.timezone.utc).strftime("%b %d, %Y UTC") if db_user else "—"
     role_badge = ""
     if user.get("is_super_admin"):
         role_badge = '<span class="profile-meta-item" style="background:rgba(245,158,11,0.12);color:var(--amber)">Super Admin</span>'
@@ -810,81 +1089,169 @@ async def profile_change_password(request: Request, current_password: str = Form
     return render_page("profile", **_profile_context(user, ok_banner("Password changed successfully.")))
 
 
+# ── Password reset ─────────────────────────────────────────────────────────
+
+
+def _validate_password(password: str) -> Optional[str]:
+    """Return an error message if the password is invalid, else None."""
+    if len(password) < 12:
+        return "Password must be at least 12 characters."
+    if len(password) > 256:
+        return "Password is too long."
+    if not re.search(r"[A-Z]", password):
+        return "Password must contain at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return "Password must contain at least one lowercase letter."
+    if not re.search(r"[0-9]", password):
+        return "Password must contain at least one number."
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return "Password must contain at least one special character."
+    return None
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/forgot-password")
+    return render_page("forgot-password", error="", raw_success="")
+
+
+@app.post("/forgot-password")
+async def forgot_password_submit(request: Request, email: str = Form("")):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/forgot-password")
+
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "forgot", _RATE_MAX_FORGOT):
+        return RATE_LIMITED_RESPONSE
+
+    email = email.lower().strip()
+
+    # Always show success — don't reveal whether the email exists.
+    success_msg = (
+        '<div class="auth-success">If an account with that email exists, '
+        'we\'ve sent a password reset link. Check your inbox.</div>'
+    )
+
+    if not email or not is_valid_email(email):
+        return render_page("forgot-password", error="Please enter a valid email address.", raw_success="")
+
+    user = db.get_user_by_email(email)
+    if user:
+        reset_token = db.create_password_reset(user["id"])
+        # Determine the reset link based on the current request host.
+        host = request.headers.get("host", DOMAIN)
+        scheme = "https" if IS_PRODUCTION else request.url.scheme
+        reset_link = f"{scheme}://{host}/reset-password?token={reset_token}"
+        log.info("Password reset requested for %s", email)
+
+        # Send email if SMTP is configured
+        smtp_user = os.environ.get("SMTP_USER", "")
+        smtp_pass = os.environ.get("SMTP_PASS", "")
+        if smtp_user and smtp_pass:
+            try:
+                import smtplib
+                from email.mime.text import MIMEText
+
+                smtp_host = os.environ.get("SMTP_HOST", "localhost")
+                smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+
+                body_text = (
+                    f"Hi,\n\n"
+                    f"A password reset was requested for your Habbig account.\n\n"
+                    f"Click the link below to set a new password:\n"
+                    f"{reset_link}\n\n"
+                    f"This link expires in 1 hour.\n\n"
+                    f"If you did not request this, you can safely ignore this email.\n"
+                )
+                msg = MIMEText(body_text)
+                msg["Subject"] = "Password Reset \u2014 Habbig"
+                msg["From"] = smtp_user
+                msg["To"] = email
+
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                    server.sendmail(smtp_user, [email], msg.as_string())
+                log.info("Password reset email sent to %s", email)
+            except Exception as exc:
+                log.error("Failed to send password reset email: %s", exc)
+        else:
+            # No SMTP configured — log the link so the admin can relay it.
+            log.info("SMTP not configured. Reset link for %s: %s", email, reset_link)
+
+    return render_page("forgot-password", error="", raw_success=success_msg)
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(request: Request, token: str = ""):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/reset-password")
+
+    token = token.strip()
+    reset = db.get_password_reset(token) if token else None
+    if not reset:
+        return render_page(
+            "forgot-password",
+            error="This reset link is invalid or has expired. Please request a new one.",
+            raw_success="",
+        )
+    return render_page("reset-password", token=token, error="", raw_success="")
+
+
+@app.post("/reset-password")
+async def reset_password_submit(
+    request: Request,
+    token: str = Form(""),
+    new_password: str = Form(""),
+    confirm_password: str = Form(""),
+):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/reset-password")
+
+    token = token.strip()
+    reset = db.get_password_reset(token) if token else None
+    if not reset:
+        return render_page(
+            "forgot-password",
+            error="This reset link is invalid or has expired. Please request a new one.",
+            raw_success="",
+        )
+
+    if new_password != confirm_password:
+        return render_page("reset-password", token=token, error="Passwords don't match.", raw_success="")
+
+    pwd_err = _validate_password(new_password)
+    if pwd_err:
+        return render_page("reset-password", token=token, error=pwd_err, raw_success="")
+
+    # Update the user's password.
+    pwd_hash, salt = db._hash_password(new_password)
+    with db.conn() as c:
+        c.execute(
+            "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
+            (pwd_hash, salt, reset["user_id"]),
+        )
+    db.use_password_reset(token)
+
+    user = db.get_user_by_id(reset["user_id"])
+    log.info("Password reset completed for user %s", user["email"] if user else reset["user_id"])
+
+    # Redirect to login with a success indicator.
+    return render_page(
+        "login",
+        error="",
+        raw_token_section="",
+        raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
+        raw_success='<div class="auth-success">Password reset successfully. You can now sign in.</div>',
+    )
+
+
 # ── Enquiry page + API ───────────────────────────────────────────────────────
-
-
-@app.get("/suspended", response_class=HTMLResponse)
-async def suspended_page(request: Request):
-    return render_page("suspended")
-
-
-@app.get("/support", response_class=HTMLResponse)
-async def support_page(request: Request):
-    return render_page("support")
-
-
-@app.post("/api/support-ticket")
-async def api_support_ticket(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "Invalid request body"}, status_code=400)
-    email = (body.get("email") or "").strip().lower()
-    message = (body.get("message") or "").strip()
-    if not email or not EMAIL_RE.match(email):
-        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
-    if len(message) < 10:
-        return JSONResponse({"error": "Please describe your issue (at least 10 characters)"}, status_code=400)
-    db.create_enquiry(email, "Support Ticket (Suspended)", message)
-    log.info("Support ticket from suspended user: %s", email)
-    return JSONResponse({"success": True})
-
-
-@app.get("/pricing", response_class=HTMLResponse)
-async def pricing_page(request: Request):
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/pricing")
-    return render_page("pricing")
-
-
-@app.get("/subscribe", response_class=HTMLResponse)
-async def subscribe_page(request: Request):
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/subscribe")
-    return render_page("subscribe")
-
-
-@app.post("/api/subscribe")
-async def api_subscribe(request: Request):
-    """Placeholder checkout: creates a subscription token on 'payment'.
-    Will be replaced with Stripe webhook once integrated."""
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/api/subscribe")
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "Invalid request body"}, status_code=400)
-
-    email = (body.get("email") or "").strip().lower()
-    plan = body.get("plan", "")
-    interval = body.get("interval", "monthly")
-
-    if not email or not EMAIL_RE.match(email):
-        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
-    if plan not in ("trader", "pro"):
-        return JSONResponse({"error": "Invalid plan"}, status_code=400)
-    if interval not in ("monthly", "annual"):
-        return JSONResponse({"error": "Invalid interval"}, status_code=400)
-
-    # Generate an unclaimed invite token for this subscription
-    note = f"Subscription: {plan.title()} ({interval}) — {email}"
-    new_token = db.create_invite_token(note, target_email=email)
-    log.info("Subscription checkout: %s plan=%s interval=%s token=%s", email, plan, interval, new_token)
-
-    return JSONResponse({"success": True, "token": new_token, "plan": plan, "interval": interval})
 
 
 @app.get("/enquire", response_class=HTMLResponse)
@@ -988,9 +1355,9 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
         if t["note"]:
             meta_parts.append(html.escape(t["note"]))
         import datetime as _dt
-        meta_parts.append(_dt.datetime.fromtimestamp(t["created_at"]).strftime("%Y-%m-%d %H:%M"))
+        meta_parts.append(_dt.datetime.fromtimestamp(t["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M"))
         if t["claimed_at"]:
-            meta_parts.append(f'Claimed {_dt.datetime.fromtimestamp(t["claimed_at"]).strftime("%Y-%m-%d")}')
+            meta_parts.append(f'Claimed {_dt.datetime.fromtimestamp(t["claimed_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d")}')
         meta = " &middot; ".join(meta_parts)
         revoke_btn = ""
         if status == "unclaimed":
@@ -1026,7 +1393,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             badges += '<span class="badge" style="background:var(--accent-light);color:var(--accent)">ADMIN</span> '
         if u["suspended"]:
             badges += '<span class="badge" style="background:var(--red-bg);color:var(--red)">SUSPENDED</span> '
-        joined = _dt.datetime.utcfromtimestamp(u["created_at"]).strftime("%Y-%m-%d %H:%M UTC")
+        joined = _dt.datetime.fromtimestamp(u["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         uname = html.escape(u["username"] or u["email"].split("@")[0])
         email_esc = html.escape(u["email"])
 
@@ -1154,35 +1521,31 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
 def _build_enquiry_rows() -> str:
     enquiries = db.list_enquiries()
     if not enquiries:
-        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No enquiries or tickets yet.</div></div></div>'
+        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No enquiries yet.</div></div></div>'
     import datetime as _dt
     rows = []
     for e in enquiries:
-        job = e["job_title"] or ""
-        is_ticket = job.startswith("Support Ticket") or e["message"].startswith("[")
-        row_type = "ticket" if is_ticket else "enquiry"
-        type_badge_color = "var(--amber)" if is_ticket else "var(--accent)"
-        type_badge_bg = "rgba(245,158,11,0.10)" if is_ticket else "var(--accent-light)"
-        type_label = "Support Ticket" if is_ticket else "Enquiry"
-
         read_badge = "" if e["read"] else '<span class="badge" style="background:var(--accent-light);color:var(--accent)">NEW</span> '
-        ts = _dt.datetime.utcfromtimestamp(e["created_at"]).strftime("%Y-%m-%d %H:%M UTC")
+        ts = _dt.datetime.fromtimestamp(e["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
         mark_btn = ""
         if not e["read"]:
             mark_btn = (
                 f'<form method="post" action="/admin/enquiries/{e["id"]}/read">'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Mark Read</button></form>'
             )
+        create_token_btn = (
+            f'<form method="post" action="/admin/enquiries/{e["id"]}/create-token">'
+            f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Create Token</button></form>'
+        )
         rows.append(
-            f'<div class="admin-row enquiry-row" data-type="{row_type}">'
+            f'<div class="admin-row">'
             f'<div class="admin-row-info">'
             f'<div class="admin-row-main">{read_badge}<span style="font-weight:600">{html.escape(e["email"])}</span>'
-            f' <span class="badge" style="background:{type_badge_bg};color:{type_badge_color}">{type_label}</span>'
-            f' <span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">{html.escape(job)}</span></div>'
+            f' <span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">{html.escape(e["job_title"])}</span></div>'
             f'<div style="font-size:13px;color:var(--text-secondary);margin:8px 0;line-height:1.5">{html.escape(e["message"][:300])}</div>'
             f'<div class="admin-row-meta">{ts}</div>'
             f'</div>'
-            f'<div class="admin-row-actions">{mark_btn}</div></div>'
+            f'<div class="admin-row-actions" style="display:flex;gap:6px">{create_token_btn}{mark_btn}</div></div>'
         )
     return "".join(rows)
 
@@ -1280,7 +1643,7 @@ def _build_revenue_content() -> str:
             cfg = DASHBOARDS.get(s["dashboard_key"], {})
             name = cfg.get("display_name", s["dashboard_key"])
             accent = cfg.get("accent", "var(--accent)")
-            ts = _dt.datetime.fromtimestamp(s["started_at"]).strftime("%Y-%m-%d %H:%M")
+            ts = _dt.datetime.fromtimestamp(s["started_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
             status = s["status"]
             is_expired = s["expires_at"] and s["expires_at"] <= now
             if status == "active" and not is_expired:
@@ -1318,10 +1681,10 @@ async def admin_page(request: Request):
 
 
 @app.post("/admin/tokens/generate")
-async def admin_generate_token(request: Request, note: str = Form("")):
+async def admin_generate_token(request: Request, note: str = Form(""), target_email: str = Form("")):
     user = _require_admin_user(request)
-    new_token = db.create_invite_token(note.strip())
-    log.info("Admin %s generated invite token: %s", user["email"], new_token)
+    new_token = db.create_invite_token(note.strip(), target_email=target_email.strip())
+    log.info("Admin %s generated invite token: %s (target: %s)", user["email"], new_token, target_email.strip() or "none")
     ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1))
     return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
 
@@ -1336,14 +1699,18 @@ async def admin_revoke_token(request: Request, token_id: int = Form(0)):
 
 @app.post("/admin/users/{user_id}/promote")
 async def admin_promote(request: Request, user_id: int):
-    _require_admin_user(request)
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_admin(user_id, True)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/demote")
 async def admin_demote(request: Request, user_id: int):
-    _require_admin_user(request)
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_admin(user_id, False)
     return RedirectResponse("/admin", status_code=302)
 
@@ -1369,6 +1736,23 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
     _require_admin_user(request)
     db.mark_enquiry_read(enquiry_id)
     return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/enquiries/{enquiry_id}/create-token")
+async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
+    admin = _require_admin_user(request)
+    enquiry = db.get_enquiry_by_id(enquiry_id)
+    if not enquiry:
+        raise HTTPException(status_code=404, detail="Enquiry not found")
+    email = enquiry["email"]
+    new_token = db.create_invite_token(
+        note=f"From enquiry: {email}",
+        target_email=email,
+    )
+    db.mark_enquiry_read(enquiry_id)
+    log.info("Admin %s created token %s for enquiry %d (%s)", admin["email"], new_token, enquiry_id, email)
+    ctx = _build_admin_context(new_token_str=new_token, caller_level=admin.get("admin_level", 1))
+    return render_page("admin", email=admin["email"], username=admin.get("username", admin["email"]), **ctx)
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:
@@ -1473,6 +1857,8 @@ async def admin_bulk_users(request: Request):
     if not user_ids or not action:
         return RedirectResponse("/admin", status_code=302)
     for uid in user_ids:
+        if not _can_manage_user(admin, uid):
+            continue
         if action == "promote":
             db.set_user_admin(uid, True)
         elif action == "demote":
@@ -1504,9 +1890,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
 
     option_html = ['<option value="">Always show the dashboards hub</option>']
     for key, cfg in DASHBOARDS.items():
-        has_access = is_admin or (
-            key in subs and subs[key]["status"] == "active"
-        )
+        has_access = _is_sub_active(subs.get(key), is_admin)
         if not has_access:
             continue
         selected = " selected" if key == current_pref else ""
@@ -1569,10 +1953,19 @@ def _switcher_snippet(dashboard_key: str, user_id: int) -> str:
                 "display_name": c["display_name"],
                 "accent": c["accent"],
             })
-    cfg_json = json.dumps({"dashboards": items, "current": dashboard_key, "domain": DOMAIN})
+    # Get username for the header bar
+    user_row = db.get_user_by_id(user_id)
+    username = user_row["username"] if user_row and "username" in user_row.keys() else ""
+    cfg_json = json.dumps({
+        "dashboards": items,
+        "current": dashboard_key,
+        "domain": DOMAIN,
+        "username": username,
+    })
     return (
         f'<script>window.__hbSwitcher={cfg_json};</script>'
         f'<script src="/_gateway_static/switcher.js"></script>'
+        f'<script src="/_gateway_static/trade.js"></script>'
     )
 
 
@@ -1732,13 +2125,18 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
         await ws.close(code=1008, reason="Unknown subdomain")
         return
 
-    # Auth check via cookie.
+    # Auth check via cookie (with dev-bypass for localhost).
     token = ws.cookies.get(COOKIE_NAME)
     session = db.get_session(token) if token else None
-    if not session:
+    user_id = session["user_id"] if session else None
+    if not user_id and not IS_PRODUCTION:
+        ws_host = ws.headers.get("host", "").split(":")[0].lower()
+        if ws_host in ("localhost", "127.0.0.1") or ws_host.endswith(".localhost"):
+            user_id = ensure_dev_user()
+    if not user_id:
         await ws.close(code=1008, reason="Not authenticated")
         return
-    if not db.has_active_subscription(session["user_id"], key):
+    if not db.has_active_subscription(user_id, key):
         await ws.close(code=1008, reason="No active subscription")
         return
 

@@ -69,10 +69,21 @@ CREATE TABLE IF NOT EXISTS enquiries (
     read            INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS password_resets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    token       TEXT UNIQUE NOT NULL,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    used        INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_invite_token ON invite_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_invite_status ON invite_tokens(status);
+CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token);
 """
 
 
@@ -448,3 +459,51 @@ def mask_email(email: str) -> str:
     if len(local) <= 2:
         return f"{local[0]}***@{domain}"
     return f"{local[:2]}***@{domain}"
+
+
+# ── Password reset operations ────────────────────────────────────────────────
+
+RESET_TTL = 60 * 60  # 1 hour
+
+
+def create_password_reset(user_id: int) -> str:
+    """Create a password reset token (expires in 1 hour). Returns the token."""
+    token = secrets.token_urlsafe(36)
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            "INSERT INTO password_resets (user_id, token, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, token, now, now + RESET_TTL),
+        )
+    return token
+
+
+def get_password_reset(token: str) -> Optional[sqlite3.Row]:
+    """Get a valid (not expired, not used) password reset record."""
+    if not token:
+        return None
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM password_resets "
+            "WHERE token = ? AND used = 0 AND expires_at > ?",
+            (token, int(time.time())),
+        ).fetchone()
+
+
+def use_password_reset(token: str) -> None:
+    """Mark a reset token as used."""
+    with conn() as c:
+        c.execute(
+            "UPDATE password_resets SET used = 1 WHERE token = ?", (token,)
+        )
+
+
+def purge_expired_resets() -> int:
+    """Delete expired or used reset tokens."""
+    with conn() as c:
+        cur = c.execute(
+            "DELETE FROM password_resets WHERE expires_at <= ? OR used = 1",
+            (int(time.time()),),
+        )
+        return cur.rowcount
