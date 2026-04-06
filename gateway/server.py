@@ -290,6 +290,20 @@ def render_page(name: str, **context) -> HTMLResponse:
     return HTMLResponse(page)
 
 
+def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
+    """Check if a subscription is truly active (status + not expired)."""
+    if is_admin:
+        return True
+    if sub_row is None:
+        return False
+    if sub_row["status"] != "active":
+        return False
+    expires_at = sub_row["expires_at"]
+    if expires_at is not None and expires_at <= int(time.time()):
+        return False
+    return True
+
+
 # ── Apex routes (login / signup / my dashboards / billing) ────────────────────
 
 
@@ -359,9 +373,24 @@ async def gate_submit(request: Request, token: str = Form("")):
         return render_page("gate", error="Invalid or revoked token.")
     if invite["status"] == "claimed":
         email_hint = db.mask_email(invite["claimed_by_email"] or "")
-        return render_page("login", error="", invite_token=invite["token"], email_hint=email_hint)
-    # Unclaimed — go to signup
-    return render_page("signup", error="", invite_token=invite["token"])
+        token_section = (
+            f'<input type="hidden" name="invite_token" value="{html.escape(invite["token"])}">'
+            f'<label for="invite_token_display">Invite Token</label>'
+            f'<input id="invite_token_display" type="text" value="{html.escape(invite["token"])}" readonly class="token-display">'
+            f'<div class="email-hint">{html.escape(email_hint)}</div>'
+        )
+        return render_page(
+            "login", error="",
+            raw_token_section=token_section,
+            raw_footer_link='<a href="/gate">Use a different token</a>',
+        )
+    # Unclaimed — go to signup, pre-fill email if token has a target_email
+    target_email = ""
+    try:
+        target_email = invite["target_email"] or ""
+    except (IndexError, KeyError):
+        pass
+    return render_page("signup", error="", invite_token=invite["token"], email=target_email)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -369,8 +398,14 @@ async def login_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
-    # Must come through gate with a token
-    return RedirectResponse("/gate", status_code=302)
+    user = current_user(request)
+    if user:
+        return RedirectResponse("/dashboards", status_code=302)
+    return render_page(
+        "login", error="",
+        raw_token_section="",
+        raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
+    )
 
 
 @app.post("/login")
@@ -379,29 +414,50 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     if sub:
         return await proxy_request(request, "/login")
 
-    # Validate invite token
     invite_token = invite_token.strip()
-    invite = db.get_invite_token(invite_token) if invite_token else None
-    if not invite or invite["status"] != "claimed":
-        return render_page("gate", error="Invalid or expired token. Please enter your invite token again.")
-
-    email_hint = db.mask_email(invite["claimed_by_email"] or "")
-
-    # Look up user by email or username
     identifier = identifier.strip()
-    if not identifier:
-        return render_page("login", error="Please enter your username or email.", invite_token=invite_token, email_hint=email_hint)
-    user = db.get_user_by_email_or_username(identifier)
 
+    def _render_login_error(msg: str):
+        if invite_token:
+            invite = db.get_invite_token(invite_token)
+            email_hint = db.mask_email(invite["claimed_by_email"] or "") if invite else ""
+            token_section = (
+                f'<input type="hidden" name="invite_token" value="{html.escape(invite_token)}">'
+                f'<label for="invite_token_display">Invite Token</label>'
+                f'<input id="invite_token_display" type="text" value="{html.escape(invite_token)}" readonly class="token-display">'
+                f'<div class="email-hint">{html.escape(email_hint)}</div>'
+            )
+            return render_page(
+                "login", error=msg,
+                raw_token_section=token_section,
+                raw_footer_link='<a href="/gate">Use a different token</a>',
+            )
+        return render_page(
+            "login", error=msg,
+            raw_token_section="",
+            raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
+        )
+
+    if not identifier:
+        return _render_login_error("Please enter your username or email.")
+
+    user = db.get_user_by_email_or_username(identifier)
     if not user:
-        return render_page("login", error="Account not found.", invite_token=invite_token, email_hint=email_hint)
-    # Token A can only log into User A — enforce token-to-user binding
-    if invite["claimed_by_user_id"] != user["id"]:
-        return render_page("login", error="This token does not belong to that account.", invite_token=invite_token, email_hint=email_hint)
+        return _render_login_error("Account not found.")
+
+    # If token provided (gate flow), enforce token-to-user binding
+    if invite_token:
+        invite = db.get_invite_token(invite_token)
+        if not invite or invite["status"] != "claimed":
+            return render_page("gate", error="Invalid or expired token. Please enter your invite token again.")
+        if invite["claimed_by_user_id"] != user["id"]:
+            return _render_login_error("This token does not belong to that account.")
+
     if user["suspended"]:
         return RedirectResponse("/suspended", status_code=302)
     if not db.verify_password(password, user["password_hash"], user["password_salt"]):
-        return render_page("login", error="Invalid password.", invite_token=invite_token, email_hint=email_hint)
+        return _render_login_error("Invalid password.")
+
     token = db.create_session(user["id"])
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)
@@ -432,28 +488,28 @@ async def signup_submit(request: Request, username: str = Form(""), email: str =
         return render_page("gate", error="Invalid or already used invite token. Please enter a valid token.")
 
     username = username.strip()
-    if not username or not USERNAME_RE.match(username):
-        return render_page("signup", error="Username must be 3\u201320 characters: letters, numbers, underscores only.", invite_token=invite_token)
-    if db.get_user_by_username(username):
-        return render_page("signup", error="That username is already taken.", invite_token=invite_token)
-
     email = (email or "").lower().strip()
+
+    if not username or not USERNAME_RE.match(username):
+        return render_page("signup", error="Username must be 3\u201320 characters: letters, numbers, underscores only.", invite_token=invite_token, email=email)
+    if db.get_user_by_username(username):
+        return render_page("signup", error="That username is already taken.", invite_token=invite_token, email=email)
     if not is_valid_email(email):
-        return render_page("signup", error="Enter a valid email address.", invite_token=invite_token)
+        return render_page("signup", error="Enter a valid email address.", invite_token=invite_token, email=email)
     if len(password) < 12:
-        return render_page("signup", error="Password must be at least 12 characters.", invite_token=invite_token)
+        return render_page("signup", error="Password must be at least 12 characters.", invite_token=invite_token, email=email)
     if len(password) > 256:
-        return render_page("signup", error="Password is too long.", invite_token=invite_token)
+        return render_page("signup", error="Password is too long.", invite_token=invite_token, email=email)
     if not re.search(r"[A-Z]", password):
-        return render_page("signup", error="Password must contain at least one uppercase letter.", invite_token=invite_token)
+        return render_page("signup", error="Password must contain at least one uppercase letter.", invite_token=invite_token, email=email)
     if not re.search(r"[a-z]", password):
-        return render_page("signup", error="Password must contain at least one lowercase letter.", invite_token=invite_token)
+        return render_page("signup", error="Password must contain at least one lowercase letter.", invite_token=invite_token, email=email)
     if not re.search(r"[0-9]", password):
-        return render_page("signup", error="Password must contain at least one number.", invite_token=invite_token)
+        return render_page("signup", error="Password must contain at least one number.", invite_token=invite_token, email=email)
     if not re.search(r"[^A-Za-z0-9]", password):
-        return render_page("signup", error="Password must contain at least one special character.", invite_token=invite_token)
+        return render_page("signup", error="Password must contain at least one special character.", invite_token=invite_token, email=email)
     if db.get_user_by_email(email):
-        return render_page("signup", error="An account with that email already exists.", invite_token=invite_token)
+        return render_page("signup", error="An account with that email already exists.", invite_token=invite_token, email=email)
     user_id = db.create_user(email, password, username=username)
     db.claim_invite_token(invite_token, user_id, email)
     token = db.create_session(user_id)
@@ -489,7 +545,7 @@ async def my_dashboards(request: Request):
     local_mode = is_local_host(request)
     cards_html = []
     for key, cfg in DASHBOARDS.items():
-        has_sub = is_admin_user or (key in subs and subs[key]["status"] == "active")
+        has_sub = _is_sub_active(subs.get(key), is_admin_user)
         active_badge = (
             '<span class="badge badge-active">Active</span>' if has_sub
             else '<span class="badge badge-locked">Locked</span>'
@@ -549,6 +605,8 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
     is_admin_user = bool(user.get("is_admin"))
 
     # Build current plan card
+    now = int(time.time())
+    active_subs = [s for s in subs.values() if _is_sub_active(s)]
     plan_card = ""
     if is_admin_user:
         plan_card = (
@@ -558,48 +616,65 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
             '<div class="billing-plan-desc">You have full access to all dashboards as an admin.</div>'
             '</div>'
         )
-    elif subs:
-        # Show their active subscription info
-        active_subs = [s for s in subs.values() if s["status"] == "active"]
-        if active_subs:
-            plan_card = (
-                '<div class="billing-plan-card">'
-                '<div class="billing-plan-header"><div class="billing-plan-name">Active Subscription</div>'
-                '<span class="billing-plan-badge billing-plan-badge-active">Active</span></div>'
-                '<div class="billing-plan-desc">You have access to all dashboards included in your plan.</div>'
-                '<div class="billing-upgrade-row">'
-                '<a href="/pricing" class="billing-upgrade-btn billing-upgrade-outline">View Plans</a>'
-                '</div></div>'
-            )
-        else:
-            plan_card = (
-                '<div class="billing-plan-card">'
-                '<div class="billing-plan-header"><div class="billing-plan-name">No active plan</div></div>'
-                '<div class="billing-plan-desc">Subscribe to unlock all dashboards.</div>'
-                '<div class="billing-upgrade-row">'
-                '<a href="/pricing" class="billing-upgrade-btn billing-upgrade-primary">View Plans</a>'
-                '</div></div>'
-            )
+    elif active_subs:
+        plan_card = (
+            '<div class="billing-plan-card">'
+            '<div class="billing-plan-header"><div class="billing-plan-name">Active Subscription</div>'
+            '<span class="billing-plan-badge billing-plan-badge-active">Active</span></div>'
+            '<div class="billing-plan-desc">You have access to all dashboards included in your plan.</div>'
+            '</div>'
+        )
     else:
         plan_card = (
             '<div class="billing-plan-card">'
             '<div class="billing-plan-header"><div class="billing-plan-name">No active plan</div></div>'
-            '<div class="billing-plan-desc">Subscribe to unlock all dashboards and get started with signal intelligence.</div>'
+            '<div class="billing-plan-desc">Choose a plan below to unlock your dashboards.</div>'
             '<div class="billing-upgrade-row">'
-            '<a href="/pricing" class="billing-upgrade-btn billing-upgrade-primary">View Plans &amp; Subscribe</a>'
-            '</div></div>'
+            '<form method="post" action="/billing" style="display:flex;gap:12px;flex-wrap:wrap">'
         )
+        # Add subscribe buttons for each dashboard directly on the plan card
+        for key, cfg in DASHBOARDS.items():
+            plan_card += (
+                f'<button type="submit" name="action" value="sub:{key}:monthly" '
+                f'class="billing-upgrade-btn billing-upgrade-primary" '
+                f'style="--accent:{cfg["accent"]}">{cfg["display_name"]} &mdash; ${cfg["monthly_cents"]/100:.0f}/mo</button>'
+            )
+        plan_card += '</form></div></div>'
 
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
-        is_active = is_admin_user or (s is not None and s["status"] == "active")
+        is_active = _is_sub_active(s, is_admin_user)
         if is_admin_user and not s:
             status_html = '<span class="billing-plan-badge billing-plan-badge-admin">Admin</span>'
         elif is_active:
             status_html = '<span class="billing-plan-badge billing-plan-badge-active">Active</span>'
+        elif s and s["status"] == "active" and s["expires_at"] and s["expires_at"] <= now:
+            status_html = '<span style="font-size:12px;font-weight:600;color:var(--amber)">Expired</span>'
+        elif s and s["status"] == "cancelled":
+            status_html = '<span style="font-size:12px;font-weight:600;color:var(--red)">Cancelled</span>'
         else:
-            status_html = '<span style="font-size:12px;color:var(--text-muted)">&mdash;</span>'
+            status_html = '<span style="font-size:12px;color:var(--text-muted)">Not subscribed</span>'
+
+        # Show subscribe/renew buttons for inactive dashboards
+        action_html = ""
+        if not is_active and not is_admin_user:
+            action_html = (
+                f'<form method="post" action="/billing" style="display:flex;gap:8px">'
+                f'<button type="submit" name="action" value="sub:{key}:monthly" '
+                f'class="billing-upgrade-btn billing-upgrade-primary" style="font-size:11px;padding:6px 14px;min-height:auto">'
+                f'${cfg["monthly_cents"]/100:.0f}/mo</button>'
+                f'<button type="submit" name="action" value="sub:{key}:annual" '
+                f'class="billing-upgrade-btn billing-upgrade-outline" style="font-size:11px;padding:6px 14px;min-height:auto">'
+                f'${cfg["annual_cents"]/100:.0f}/yr</button></form>'
+            )
+        elif is_active and not is_admin_user:
+            action_html = (
+                f'<form method="post" action="/billing">'
+                f'<button type="submit" name="action" value="cancel:{key}" '
+                f'class="billing-upgrade-btn billing-upgrade-danger" style="font-size:11px;padding:6px 14px;min-height:auto">'
+                f'Cancel</button></form>'
+            )
 
         rows_html.append(f"""
         <div class="billing-row" data-key="{key}">
@@ -610,7 +685,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
               <div class="billing-row-desc">{cfg['description']}</div>
             </div>
           </div>
-          <div class="billing-row-status">{status_html}</div>
+          <div class="billing-row-status" style="display:flex;align-items:center;gap:12px">{status_html}{action_html}</div>
         </div>
         """)
 
@@ -794,7 +869,7 @@ async def api_subscribe(request: Request):
 
     # Generate an unclaimed invite token for this subscription
     note = f"Subscription: {plan.title()} ({interval}) — {email}"
-    new_token = db.create_invite_token(note)
+    new_token = db.create_invite_token(note, target_email=email)
     log.info("Subscription checkout: %s plan=%s interval=%s token=%s", email, plan, interval, new_token)
 
     return JSONResponse({"success": True, "token": new_token, "plan": plan, "interval": interval})

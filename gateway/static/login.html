@@ -22,6 +22,7 @@
       color: var(--accent);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
+    .email-hint:empty { display: none; }
   </style>
 </head>
 <body class="auth-body">
@@ -33,12 +34,10 @@
 
     <div class="auth-card">
       <div class="auth-title">Welcome back</div>
-      <div class="auth-sub">Sign in with your token, username or email, and password.</div>
+      <div class="auth-sub">Sign in to access your dashboards.</div>
 
       <form class="auth-form" method="post" action="/login">
-        <label for="invite_token">Invite Token</label>
-        <input id="invite_token" type="text" name="invite_token" value="{{ invite_token }}" readonly class="token-display">
-        <div class="email-hint">{{ email_hint }}</div>
+        {{ raw_token_section }}
 
         <label for="identifier">Username or Email</label>
         <input id="identifier" type="text" name="identifier" required autocomplete="username" autofocus
@@ -53,12 +52,12 @@
       <div class="auth-error">{{ error }}</div>
 
       <div class="auth-footer">
-        <a href="/gate">Use a different token</a>
+        {{ raw_footer_link }}
       </div>
     </div>
 
     <div class="auth-reassure">
-      Your invite token is tied to your account. You need your token, your username or email, and your password to sign in.
+      Need an account? Contact the admin for an invite token, then use it at the <a href="/gate">gate</a>.
     </div>
   </div>
 </body>

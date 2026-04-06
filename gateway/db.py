@@ -101,6 +101,10 @@ def init_db() -> None:
             c.execute("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
         if "invite_token_id" not in existing_cols:
             c.execute("ALTER TABLE users ADD COLUMN invite_token_id INTEGER REFERENCES invite_tokens(id)")
+        # invite_tokens migrations
+        invite_cols = {row["name"] for row in c.execute("PRAGMA table_info(invite_tokens)")}
+        if "target_email" not in invite_cols:
+            c.execute("ALTER TABLE invite_tokens ADD COLUMN target_email TEXT")
         if "username" not in existing_cols:
             c.execute("ALTER TABLE users ADD COLUMN username TEXT")
             # Backfill: set username to email local part for existing users
@@ -302,13 +306,13 @@ def generate_invite_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-def create_invite_token(note: str = "") -> str:
+def create_invite_token(note: str = "", target_email: str = "") -> str:
     """Create a new unclaimed invite token. Returns the token string."""
     token = generate_invite_token()
     with conn() as c:
         c.execute(
-            "INSERT INTO invite_tokens (token, status, note, created_at) VALUES (?, 'unclaimed', ?, ?)",
-            (token, note, int(time.time())),
+            "INSERT INTO invite_tokens (token, status, note, target_email, created_at) VALUES (?, 'unclaimed', ?, ?, ?)",
+            (token, note, target_email.strip() or None, int(time.time())),
         )
     return token
 
@@ -418,6 +422,11 @@ def create_enquiry(email: str, job_title: str, message: str) -> int:
 def list_enquiries() -> list[sqlite3.Row]:
     with conn() as c:
         return c.execute("SELECT * FROM enquiries ORDER BY created_at DESC").fetchall()
+
+
+def get_enquiry_by_id(enquiry_id: int) -> Optional[sqlite3.Row]:
+    with conn() as c:
+        return c.execute("SELECT * FROM enquiries WHERE id = ?", (enquiry_id,)).fetchone()
 
 
 def mark_enquiry_read(enquiry_id: int) -> None:

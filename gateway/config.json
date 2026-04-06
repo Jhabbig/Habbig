@@ -4,6 +4,36 @@
   "gateway_port": 7000,
   "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
   "dashboards": {
+    "sports": {
+      "subdomain": "sports",
+      "target": 8888,
+      "display_name": "Sharpe Sports",
+      "description": "Polymarket vs bookmaker odds arbitrage signals",
+      "accent": "#ef4444",
+      "monthly_cents": 1999,
+      "annual_cents": 19900,
+      "supports_websocket": true
+    },
+    "weather": {
+      "subdomain": "weather",
+      "target": 5050,
+      "display_name": "Polymarket Weather",
+      "description": "Weather market mispricings & rain forecasts",
+      "accent": "#3b82f6",
+      "monthly_cents": 799,
+      "annual_cents": 7900,
+      "supports_websocket": false
+    },
+    "world": {
+      "subdomain": "world",
+      "target": 7050,
+      "display_name": "World State",
+      "description": "Global conflicts, headlines, geopolitical feed",
+      "accent": "#8b5cf6",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false
+    },
     "crypto": {
       "subdomain": "crypto",
       "target": 8000,
@@ -32,36 +62,6 @@
       "accent": "#0ea5e9",
       "monthly_cents": 1299,
       "annual_cents": 12900,
-      "supports_websocket": false
-    },
-    "weather": {
-      "subdomain": "weather",
-      "target": 5050,
-      "display_name": "Polymarket Weather",
-      "description": "Weather market mispricings & rain forecasts",
-      "accent": "#3b82f6",
-      "monthly_cents": 799,
-      "annual_cents": 7900,
-      "supports_websocket": false
-    },
-    "sports": {
-      "subdomain": "sports",
-      "target": 8888,
-      "display_name": "Sharpe Sports",
-      "description": "Polymarket vs bookmaker odds arbitrage signals",
-      "accent": "#ef4444",
-      "monthly_cents": 1999,
-      "annual_cents": 19900,
-      "supports_websocket": true
-    },
-    "world": {
-      "subdomain": "world",
-      "target": 7050,
-      "display_name": "World State",
-      "description": "Global conflicts, headlines, geopolitical feed",
-      "accent": "#8b5cf6",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
       "supports_websocket": false
     }
   }
