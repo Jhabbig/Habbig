@@ -58,9 +58,7 @@ async def security_middleware(request: Request, call_next):
         stale = [k for k, v in _request_counts.items() if not v or now - v[-1] > RATE_WINDOW]
         for k in stale:
             del _request_counts[k]
-        stale_l = [k for k, v in _login_attempts.items() if not v or now - v[-1] > LOGIN_WINDOW]
-        for k in stale_l:
-            del _login_attempts[k]
+        # _login_attempts pruning removed -- login rate limiting is handled by gateway
     reqs = _request_counts.get(ip, [])
     reqs = [t for t in reqs if now - t < RATE_WINDOW]
     if len(reqs) >= RATE_LIMIT and ip not in ("127.0.0.1", "::1"):
@@ -98,9 +96,12 @@ def _get_session_user(request: Request) -> dict | None:
             }
 
     # Localhost bypass for trading bots running on the same machine.
-    client_host = request.client.host if request.client else ""
-    if client_host in ("127.0.0.1", "::1", "localhost"):
-        return {"id": "00000000-0000-0000-0000-000000000000", "email": "localhost", "tier": "admin", "display_name": "System"}
+    # Disabled in production to prevent X-Forwarded-For spoofing attacks.
+    _is_prod = os.environ.get("PRODUCTION", "").strip() == "1"
+    if not _is_prod:
+        client_host = request.client.host if request.client else ""
+        if client_host in ("127.0.0.1", "::1", "localhost"):
+            return {"id": "00000000-0000-0000-0000-000000000000", "email": "localhost", "tier": "admin", "display_name": "System"}
     return None
 
 
@@ -133,6 +134,7 @@ BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
 # ─── Startup: load cached data + train models ────────────────────────
 @app.on_event("startup")
 async def startup():
+    db.init_db()
     # Start background tasks immediately so dashboards work
     asyncio.create_task(price_updater())
     asyncio.create_task(window_refresher())
@@ -510,9 +512,9 @@ async def suspicious_trade_monitor():
                                 except:
                                     pass
 
-                # Keep set bounded
+                # Keep set bounded -- clear entirely since set is unordered
                 if len(seen_trade_keys) > 5000:
-                    seen_trade_keys = set(list(seen_trade_keys)[-2000:])
+                    seen_trade_keys.clear()
 
                 print(f"  [SUS] Scan complete: {len(result['suspicious_trades'])} flagged trades")
         except Exception as e:
@@ -534,7 +536,7 @@ def serialize_asset(ticker):
     preds_out = []
     for p in (st["predictions"] or []):
         preds_out.append({
-            "window_start": p["window_start"].isoformat(),
+            "window_start": p["window_start"].isoformat() if hasattr(p["window_start"], "isoformat") else str(p["window_start"]),
             "pred_direction": p["pred_direction"],
             "pred_end_delta": p["pred_end_delta"],
             "pred_prob_positive": p["pred_prob_positive"],
@@ -699,46 +701,208 @@ async def root(request: Request):
     }
   }
 
-  // WebSocket for live data
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + window.location.host + '/ws');
-  ws.onmessage = function(e) {
-    const msg = JSON.parse(e.data);
-    if (msg.type === 'price_update') {
-      for (const [ticker, d] of Object.entries(msg.data)) {
-        const el = document.getElementById('live-price-' + ticker);
-        if (el) el.textContent = '$' + d.price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
-      }
-      const ts = document.getElementById('last-update');
+  // ── Incremental DOM update helpers ──
+
+  function renderPredCard(p) {
+    var isCur = p.is_current;
+    var border = isCur ? 'var(--green)' : 'var(--border)';
+    var label = isCur ? 'UPCOMING' : 'COMPLETED';
+    var labelColor = isCur ? 'var(--green)' : 'var(--muted)';
+    var dirClass = p.pred_direction === 'positive' ? 'positive' : 'negative';
+    var prob = p.pred_prob_positive;
+    var probStr = prob >= 0.5 ? (prob * 100).toFixed(0) + '%' : ((1 - prob) * 100).toFixed(0) + '%';
+    var conf = (p.confidence * 100).toFixed(0) + '%';
+    var delta = (p.pred_end_delta >= 0 ? '+' : '') + p.pred_end_delta.toFixed(2);
+    var timeStr = p.window_start ? p.window_start.replace(/T/, ' ').substring(11, 16) : '\\u2014';
+
+    var actualStr = '';
+    if (p.actual_end_delta !== null && p.actual_end_delta !== undefined) {
+      var ac = p.actual_end_delta;
+      var acClass = ac >= 0 ? 'positive' : 'negative';
+      var acStr = (ac >= 0 ? '+' : '') + ac.toFixed(2);
+      actualStr = '<div class="detail">Actual: <span class="' + acClass + '">$' + acStr + '</span></div>';
+    }
+
+    return '<div class="pred-card" style="border-color:' + border + ';">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+        '<span style="font-size:1.1em;font-weight:700;">' + timeStr + ' UTC</span>' +
+        '<span style="font-size:0.7em;color:' + labelColor + ';font-weight:600;letter-spacing:0.05em;">' + label + '</span>' +
+      '</div>' +
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;">' +
+        '<div><span class="mini-label">Direction</span><br><span class="value-sm ' + dirClass + '">' + p.pred_direction.toUpperCase() + '</span></div>' +
+        '<div><span class="mini-label">Delta</span><br><span class="value-sm">$' + delta + '</span></div>' +
+        '<div><span class="mini-label">Prob</span><br><span class="value-sm">' + probStr + '</span></div>' +
+        '<div><span class="mini-label">Confidence</span><br><span class="value-sm">' + conf + '</span></div>' +
+      '</div>' +
+      actualStr +
+    '</div>';
+  }
+
+  function updatePredictions(ticker, predictions) {
+    var grid = document.getElementById('pred-grid-' + ticker);
+    if (!grid || !predictions) return;
+    if (predictions.length === 0) {
+      grid.innerHTML = '<div class="pred-card" style="border-color:var(--yellow);"><div style="padding:12px;text-align:center;color:var(--yellow);font-weight:600;">Models training on GPU... predictions will appear shortly.</div></div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < predictions.length; i++) {
+      html += renderPredCard(predictions[i]);
+    }
+    grid.innerHTML = html;
+  }
+
+  function updateWindowRows(ticker, windows) {
+    // Update the window table if the details element is open
+    var tab = document.getElementById('tab-' + ticker);
+    if (!tab) return;
+    var tbody = tab.querySelector('details tbody');
+    if (!tbody) return;
+    // Only update if details is open (user is viewing)
+    var details = tab.querySelector('details');
+    if (!details || !details.open) return;
+
+    var html = '';
+    for (var i = 0; i < windows.length; i++) {
+      var w = windows[i];
+      var ec = w.end_delta >= 0 ? 'positive' : 'negative';
+      var crossS = w.last_cross_sec ? (w.last_cross_sec.toFixed(0) + 's\\u2192' + (w.last_cross_direction || '').substring(0, 3)) : '\\u2014';
+      var rsiClass = w.rsi > 70 ? 'negative' : (w.rsi < 30 ? 'positive' : '');
+      var startStr = w.start ? w.start.substring(5, 16).replace('T', ' ') : '';
+      html += '<tr>' +
+        '<td>' + startStr + '</td>' +
+        '<td>$' + w.baseline.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + '</td>' +
+        '<td class="' + ec + '">$' + (w.end_delta >= 0 ? '+' : '') + w.end_delta.toFixed(2) + '</td>' +
+        '<td class="positive">$+' + w.max_positive.toFixed(2) + '</td>' +
+        '<td class="negative">$' + w.max_negative.toFixed(2) + '</td>' +
+        '<td>$' + (w.avg_pos_magnitude >= 0 ? '+' : '') + w.avg_pos_magnitude.toFixed(2) + ' / $' + w.avg_neg_magnitude.toFixed(2) + '</td>' +
+        '<td>' + crossS + '</td>' +
+        '<td class="' + rsiClass + '">' + w.rsi.toFixed(0) + '</td>' +
+        '<td>' + w.crossings + '</td>' +
+      '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  function applyAssetUpdate(ticker, data) {
+    // Update live price
+    var priceEl = document.getElementById('live-price-' + ticker);
+    if (priceEl && data.price) {
+      priceEl.textContent = '$' + data.price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+    // Update predictions
+    if (data.predictions) {
+      updatePredictions(ticker, data.predictions);
+    }
+    // Update recent window rows
+    if (data.recent_windows) {
+      updateWindowRows(ticker, data.recent_windows);
+    }
+    // Update timestamp
+    var ts = document.getElementById('last-update');
+    if (ts) ts.textContent = 'Live \\u2022 ' + new Date().toLocaleTimeString();
+  }
+
+  // ── WebSocket with auto-reconnect (no page reload) ──
+
+  var wsReconnectDelay = 1000;
+  var wsMaxDelay = 30000;
+
+  function connectWS() {
+    var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var ws = new WebSocket(proto + '//' + window.location.host + '/ws');
+
+    ws.onopen = function() {
+      wsReconnectDelay = 1000;  // reset on successful connect
+      var ts = document.getElementById('last-update');
       if (ts) ts.textContent = 'Live \\u2022 ' + new Date().toLocaleTimeString();
-    }
-    if (msg.type === 'window_update') {
-      // Full refresh on new window
-      setTimeout(() => location.reload(), 500);
-    }
-    if (msg.type === 'alert') {
-      // High-confidence signal alert
-      const a = msg.data;
-      notify('CryptoEdge Alert: ' + a.ticker,
-             a.direction.toUpperCase() + ' signal (' + a.confidence + '% confidence) | Delta: $' + a.delta,
-             'signal-' + a.ticker);
-      // Also show in-page toast
-      showToast(a.ticker + ': ' + a.direction.toUpperCase() + ' (' + a.confidence + '% conf)');
-    }
-  };
-  ws.onclose = function() { setTimeout(() => location.reload(), 5000); };
-  setInterval(() => location.reload(), 60000);
+    };
+
+    ws.onmessage = function(e) {
+      var msg = JSON.parse(e.data);
+
+      if (msg.type === 'price_update') {
+        for (var ticker in msg.data) {
+          var d = msg.data[ticker];
+          var el = document.getElementById('live-price-' + ticker);
+          if (el) el.textContent = '$' + d.price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+        }
+        var ts = document.getElementById('last-update');
+        if (ts) ts.textContent = 'Live \\u2022 ' + new Date().toLocaleTimeString();
+      }
+
+      if (msg.type === 'window_update') {
+        // Incremental update: apply new data to DOM without page reload
+        if (msg.ticker && msg.data) {
+          applyAssetUpdate(msg.ticker, msg.data);
+          showToast(msg.ticker + ': new window data received');
+        }
+      }
+
+      if (msg.type === 'init') {
+        // Apply initial state from WS connection
+        if (msg.data) {
+          for (var t in msg.data) {
+            applyAssetUpdate(t, msg.data[t]);
+          }
+        }
+      }
+
+      if (msg.type === 'alert') {
+        var a = msg.data;
+        notify('CryptoEdge Alert: ' + a.ticker,
+               a.direction.toUpperCase() + ' signal (' + a.confidence + '% confidence) | Delta: $' + a.delta,
+               'signal-' + a.ticker);
+        showToast(a.ticker + ': ' + a.direction.toUpperCase() + ' (' + a.confidence + '% conf)');
+      }
+    };
+
+    ws.onclose = function() {
+      // Reconnect with exponential backoff instead of full page reload
+      var ts = document.getElementById('last-update');
+      if (ts) ts.textContent = 'Reconnecting...';
+      setTimeout(function() {
+        connectWS();
+      }, wsReconnectDelay);
+      wsReconnectDelay = Math.min(wsReconnectDelay * 2, wsMaxDelay);
+    };
+
+    ws.onerror = function() {
+      ws.close();
+    };
+  }
+
+  connectWS();
+
+  // ── Periodic data refresh via fetch (no page reload) ──
+
+  setInterval(function() {
+    fetch('/api/state', { credentials: 'same-origin' })
+      .then(function(r) {
+        if (!r.ok) return null;
+        return r.json();
+      })
+      .then(function(data) {
+        if (!data) return;
+        for (var ticker in data) {
+          applyAssetUpdate(ticker, data[ticker]);
+        }
+      })
+      .catch(function() {
+        // Silently ignore fetch errors; WS is the primary channel
+      });
+  }, 60000);
 
   // In-page toast notifications
   function showToast(msg) {
-    const toast = document.createElement('div');
+    var toast = document.createElement('div');
     toast.style.cssText = 'position:fixed;top:16px;right:16px;background:#1c2333;border:1px solid #58a6ff;' +
       'color:#e6edf3;padding:12px 20px;border-radius:8px;font-size:0.9em;z-index:9999;animation:fadeIn 0.3s;' +
       'box-shadow:0 4px 12px rgba(0,0,0,0.4);max-width:400px;';
     toast.textContent = '\\u26A1 ' + msg;
     document.body.appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.5s'; }, 4000);
-    setTimeout(() => toast.remove(), 4500);
+    setTimeout(function() { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.5s'; }, 4000);
+    setTimeout(function() { toast.remove(); }, 4500);
   }
 })();
 </script>
@@ -806,6 +970,14 @@ def _get_bot_signals():
             })
         signals[ticker] = signal
     return signals
+
+
+@app.get("/api/state")
+async def api_state(request: Request):
+    """Return current asset state for incremental dashboard refresh (no page reload)."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return {ticker: serialize_asset(ticker) for ticker in asset_state}
 
 
 @app.get("/_internal/bot/signals")

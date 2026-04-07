@@ -1299,9 +1299,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Fetch news asynchronously (may take a few seconds from RSS feeds)
   loadNews();
   loadPolymarket();
-  // Refresh news every 5 minutes, polymarket every 3 minutes
-  setInterval(loadNews, 5 * 60 * 1000);
-  setInterval(loadPolymarket, 3 * 60 * 1000);
+  // Refresh news every 90 seconds, polymarket every 60 seconds (aligned with server cache TTLs)
+  setInterval(loadNews, 90 * 1000);
+  setInterval(loadPolymarket, 60 * 1000);
 });
 
 async function loadData() {

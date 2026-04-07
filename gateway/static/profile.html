@@ -169,6 +169,80 @@
       </form>
     </div>
 
+    <!-- Trading API Keys -->
+    <div class="profile-card" id="trading">
+      <div class="profile-section-title" style="display:flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        Trading Credentials
+      </div>
+      <div class="profile-section-desc">Connect your Polymarket wallet and Kalshi account to trade directly from any dashboard. Credentials are encrypted at rest.</div>
+
+      {{ raw_trading_banner }}
+
+      <!-- Polymarket -->
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:20px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#8b5cf6"></span>
+            <span style="font-weight:600;font-size:14px">Polymarket</span>
+          </div>
+          {{ raw_poly_status }}
+        </div>
+        <form method="post" action="/profile/trading/polymarket" style="display:flex;flex-direction:column;gap:12px">
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">Private Key (Ethereum wallet)</label>
+            <input class="profile-input" type="password" name="private_key" placeholder="0x..." autocomplete="off">
+          </div>
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">API Key <span style="color:var(--text-muted);font-weight:400">(optional — auto-derived if blank)</span></label>
+            <input class="profile-input" type="password" name="api_key" placeholder="CLOB API key" autocomplete="off">
+          </div>
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">API Secret <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+            <input class="profile-input" type="password" name="api_secret" placeholder="CLOB API secret" autocomplete="off">
+          </div>
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">API Passphrase <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+            <input class="profile-input" type="password" name="api_passphrase" placeholder="CLOB API passphrase" autocomplete="off">
+          </div>
+          <div class="profile-actions" style="justify-content:flex-start;gap:8px">
+            <button type="submit" class="btn btn-primary" style="padding:10px 20px;font-size:13px;background:linear-gradient(135deg,#8b5cf6,#6366f1);border:none">Save Polymarket Keys</button>
+            {{ raw_poly_delete }}
+          </div>
+        </form>
+      </div>
+
+      <!-- Kalshi -->
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3b82f6"></span>
+            <span style="font-weight:600;font-size:14px">Kalshi</span>
+          </div>
+          {{ raw_kalshi_status }}
+        </div>
+        <form method="post" action="/profile/trading/kalshi" style="display:flex;flex-direction:column;gap:12px">
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">API Key</label>
+            <input class="profile-input" type="password" name="api_key" placeholder="Kalshi API key" autocomplete="off">
+          </div>
+          <div style="text-align:center;font-size:12px;color:var(--text-muted);padding:4px 0">— or use email & password —</div>
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">Kalshi Email</label>
+            <input class="profile-input" type="email" name="email" placeholder="your@email.com" autocomplete="off">
+          </div>
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">Kalshi Password</label>
+            <input class="profile-input" type="password" name="password" placeholder="Kalshi password" autocomplete="off">
+          </div>
+          <div class="profile-actions" style="justify-content:flex-start;gap:8px">
+            <button type="submit" class="btn btn-primary" style="padding:10px 20px;font-size:13px;background:linear-gradient(135deg,#3b82f6,#2563eb);border:none">Save Kalshi Keys</button>
+            {{ raw_kalshi_delete }}
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- Danger zone -->
     <div class="profile-card" style="border-color:rgba(239,68,68,0.2)">
       <div class="profile-section-title" style="color:var(--red)">Sessions</div>

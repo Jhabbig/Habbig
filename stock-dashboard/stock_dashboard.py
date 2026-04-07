@@ -9,6 +9,7 @@ Run: python3 stock_dashboard.py [--port 8050]
 """
 
 import json
+import time
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -20,12 +21,19 @@ DASHBOARD_PORT = 8050
 
 
 def load_state():
-    if not TRADE_LOG.exists():
-        return None
-    try:
-        return json.loads(TRADE_LOG.read_text())
-    except Exception:
-        return None
+    """Load bot state from JSON, retrying once on decode error (race condition)."""
+    for attempt in range(2):
+        if not TRADE_LOG.exists():
+            return None
+        try:
+            return json.loads(TRADE_LOG.read_text())
+        except json.JSONDecodeError:
+            if attempt == 0:
+                time.sleep(0.1)  # brief wait for atomic rename to complete
+                continue
+            return None
+        except Exception:
+            return None
 
 
 def get_recent_logs(n=50):

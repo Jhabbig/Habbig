@@ -19,7 +19,7 @@ HTML_PATH = Path(__file__).parent / "index.html"
 
 # ── News Feed (RSS aggregation) ───────────────────────────────────────────────
 NEWS_CACHE = {"data": [], "fetched_at": 0.0}
-NEWS_CACHE_TTL = 300  # 5 minutes
+NEWS_CACHE_TTL = 90  # 90 seconds
 
 NEWS_FEEDS = [
     {"name": "BBC World", "url": "http://feeds.bbci.co.uk/news/world/rss.xml"},
@@ -94,7 +94,7 @@ def fetch_news():
 
 # ── Polymarket (prediction markets) ──────────────────────────────────────────
 POLYMARKET_CACHE = {"data": [], "fetched_at": 0.0}
-POLYMARKET_CACHE_TTL = 180  # 3 minutes
+POLYMARKET_CACHE_TTL = 60  # 60 seconds
 
 # Keywords for "politically/geopolitically relevant" filtering when category is missing
 POLY_POL_KEYWORDS = [

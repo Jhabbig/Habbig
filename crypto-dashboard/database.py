@@ -344,5 +344,5 @@ def cleanup_sessions():
     pass
 
 
-# Initialize on import
-init_db()
+# Initialize lazily -- init_db() is called by server.py at startup.
+# Calling it at import time crashes if env vars are not set.

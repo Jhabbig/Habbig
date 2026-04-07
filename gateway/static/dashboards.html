@@ -30,12 +30,146 @@
         Every card below is its own dashboard with its own subscription. Active
         ones open in a new tab. Locked ones jump straight to billing.
         <a href="/settings">Set a default</a> to skip this page next time.
+        <button class="tour-restart-btn" onclick="startTour()">Take the tour</button>
       </p>
     </div>
+
+    {{ raw_sub_summary }}
 
     <div class="dash-grid">
       {{ dashboard_cards }}
     </div>
   </main>
+
+  <!-- ── Onboarding Tour Overlay ─────────────────────────────────── -->
+  <div class="tour-overlay" id="tourOverlay">
+    <div class="tour-modal">
+      <button class="tour-close" onclick="closeTour()" aria-label="Close tour">&times;</button>
+
+      <div class="tour-progress">
+        <div class="tour-progress-bar" id="tourProgressBar"></div>
+      </div>
+
+      <!-- Step 1: Welcome -->
+      <div class="tour-step tour-step-welcome" data-step="1">
+        <div class="tour-welcome-logo">H</div>
+        <h2 class="tour-welcome-title">Welcome to Habbig</h2>
+        <p class="tour-welcome-sub">
+          Your prediction market edge, six dashboards deep. Each dashboard
+          covers a different market &mdash; sports, weather, crypto, elections,
+          geopolitics, and top traders &mdash; with its own data pipeline,
+          signals, and subscription.
+        </p>
+        <div class="tour-welcome-highlights">
+          <div class="tour-welcome-item">
+            <div class="tour-welcome-icon">1</div>
+            <div>
+              <strong>Pick your edge</strong>
+              <span>Subscribe to individual dashboards or grab a bundle.</span>
+            </div>
+          </div>
+          <div class="tour-welcome-item">
+            <div class="tour-welcome-icon">2</div>
+            <div>
+              <strong>Real-time signals</strong>
+              <span>Every dashboard runs live data pipelines &mdash; no stale numbers.</span>
+            </div>
+          </div>
+          <div class="tour-welcome-item">
+            <div class="tour-welcome-icon">3</div>
+            <div>
+              <strong>Cancel any time</strong>
+              <span>Monthly or annual, no lock-in. Manage everything from Billing.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard steps (injected by server) -->
+      {{ raw_tour_steps }}
+
+      <!-- Final step -->
+      <div class="tour-step tour-step-finish" data-step="{{ tour_total_steps }}">
+        <div class="tour-finish-icon">&#10003;</div>
+        <h2 class="tour-welcome-title">You're all set</h2>
+        <p class="tour-welcome-sub">
+          Pick any dashboard to learn more, or head to
+          <a href="/billing">Billing</a> to subscribe. You can replay this
+          tour any time from the link above the dashboard grid.
+        </p>
+        <div class="tour-finish-tips">
+          <div class="tour-finish-tip">
+            <strong>Bundles save money</strong>
+            <span>The Trader and Pro plans give you all dashboards at a discount.</span>
+          </div>
+          <div class="tour-finish-tip">
+            <strong>Set a default</strong>
+            <span>Go to <a href="/settings">Settings</a> to skip this page and jump straight to your favourite dashboard.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <div class="tour-nav">
+        <button class="tour-nav-btn tour-nav-prev" id="tourPrev" onclick="tourPrev()">Back</button>
+        <div class="tour-dots" id="tourDots"></div>
+        <button class="tour-nav-btn tour-nav-next" id="tourNext" onclick="tourNext()">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    var TOTAL = {{ tour_total_steps }};
+    var current = 1;
+    var overlay = document.getElementById('tourOverlay');
+
+    function show(step) {
+      current = step;
+      var steps = overlay.querySelectorAll('.tour-step');
+      steps.forEach(function(el) {
+        el.classList.toggle('active', parseInt(el.dataset.step) === step);
+      });
+      // Progress bar
+      document.getElementById('tourProgressBar').style.width =
+        ((step / TOTAL) * 100) + '%';
+      // Prev/Next labels
+      document.getElementById('tourPrev').style.visibility = step === 1 ? 'hidden' : 'visible';
+      var nextBtn = document.getElementById('tourNext');
+      nextBtn.textContent = step === TOTAL ? 'Get started' : 'Next';
+      // Dots
+      var dotsHtml = '';
+      for (var i = 1; i <= TOTAL; i++) {
+        dotsHtml += '<span class="tour-dot-pip' + (i === step ? ' active' : '') + '" onclick="tourGo(' + i + ')"></span>';
+      }
+      document.getElementById('tourDots').innerHTML = dotsHtml;
+    }
+
+    window.tourGo = function(step) { show(step); };
+    window.tourNext = function() {
+      if (current >= TOTAL) { closeTour(); return; }
+      show(current + 1);
+    };
+    window.tourPrev = function() {
+      if (current <= 1) return;
+      show(current - 1);
+    };
+    window.closeTour = function() {
+      overlay.classList.remove('open');
+      document.body.style.overflow = '';
+      localStorage.setItem('habbig_onboarded', '1');
+    };
+    window.startTour = function() {
+      overlay.classList.add('open');
+      document.body.style.overflow = 'hidden';
+      show(1);
+    };
+
+    // Auto-show on first visit
+    if (!localStorage.getItem('habbig_onboarded')) {
+      startTour();
+    }
+  })();
+  </script>
 </body>
 </html>

@@ -318,14 +318,24 @@ def analyze_windows(data):
 
 
 def compute_summary(windows):
+    if not windows:
+        return {
+            "total_windows": 0, "avg_last_cross_sec": None, "median_last_cross_sec": None,
+            "windows_with_cross": 0, "windows_that_went_negative": 0,
+            "windows_that_went_positive": 0, "windows_ended_positive": 0,
+            "windows_ended_negative": 0, "avg_max_positive": 0, "avg_max_negative": 0,
+            "avg_pos_magnitude": 0, "avg_neg_magnitude": 0, "avg_end_delta": 0,
+            "avg_rsi": 50, "avg_crossings": 0,
+        }
     crosses = [w["last_cross_sec"] for w in windows if w["last_cross_sec"] is not None]
     wn = sum(1 for w in windows if w["max_negative"] < 0)
     wp = sum(1 for w in windows if w["max_positive"] > 0)
     ep = sum(1 for w in windows if w["end_delta"] > 0)
     en = sum(1 for w in windows if w["end_delta"] < 0)
+    n = len(windows)
 
     return {
-        "total_windows": len(windows),
+        "total_windows": n,
         "avg_last_cross_sec": sum(crosses) / len(crosses) if crosses else None,
         "median_last_cross_sec": sorted(crosses)[len(crosses) // 2] if crosses else None,
         "windows_with_cross": len(crosses),
@@ -333,13 +343,13 @@ def compute_summary(windows):
         "windows_that_went_positive": wp,
         "windows_ended_positive": ep,
         "windows_ended_negative": en,
-        "avg_max_positive": sum(w["max_positive"] for w in windows) / len(windows),
-        "avg_max_negative": sum(w["max_negative"] for w in windows) / len(windows),
-        "avg_pos_magnitude": sum(w["avg_pos_magnitude"] for w in windows) / len(windows),
-        "avg_neg_magnitude": sum(w["avg_neg_magnitude"] for w in windows) / len(windows),
-        "avg_end_delta": sum(w["end_delta"] for w in windows) / len(windows),
-        "avg_rsi": sum(w["rsi"] for w in windows) / len(windows),
-        "avg_crossings": sum(w["crossings"] for w in windows) / len(windows),
+        "avg_max_positive": sum(w["max_positive"] for w in windows) / n,
+        "avg_max_negative": sum(w["max_negative"] for w in windows) / n,
+        "avg_pos_magnitude": sum(w["avg_pos_magnitude"] for w in windows) / n,
+        "avg_neg_magnitude": sum(w["avg_neg_magnitude"] for w in windows) / n,
+        "avg_end_delta": sum(w["end_delta"] for w in windows) / n,
+        "avg_rsi": sum(w["rsi"] for w in windows) / n,
+        "avg_crossings": sum(w["crossings"] for w in windows) / n,
     }
 
 
@@ -1507,9 +1517,9 @@ def generate_dashboard(all_results, suspicious_data=None):
             </div>
           </div>
 
-          <div class="pred-section">
+          <div class="pred-section" id="pred-section-{ticker}">
             <h3 style="margin-bottom:12px;font-size:1em;color:var(--blue);">Predictions — Last 3 + Current</h3>
-            <div class="pred-grid">{pred_cards}</div>
+            <div class="pred-grid" id="pred-grid-{ticker}">{pred_cards}</div>
           </div>
 
           {_render_model_panel(res)}

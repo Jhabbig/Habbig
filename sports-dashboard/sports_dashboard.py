@@ -1293,8 +1293,10 @@ async def trigger_rescan():
     _scan_event.set()
 
 
-_poly_cache: list[dict] = []
-_poly_cache_time: float = 0
+_poly_cache: dict[str, list[dict]] = {}   # keyed by sport
+_poly_cache_time: dict[str, float] = {}   # keyed by sport
+
+_data_lock = asyncio.Lock()  # guards atomic swaps of dashboard_data
 
 
 def _build_esports_comparisons(poly_markets: list[dict]) -> list[dict]:
@@ -1479,12 +1481,13 @@ async def data_updater():
 
             # Always fetch Polymarket (used for both sports and esports)
             import time as _time
-            if _time.time() - _poly_cache_time > 120 or not _poly_cache:
+            cache_age = _time.time() - _poly_cache_time.get(sport, 0)
+            if cache_age > 120 or sport not in _poly_cache:
                 poly_raw = await asyncio.to_thread(fetch_polymarket_sports)
-                _poly_cache = poly_raw
-                _poly_cache_time = _time.time()
+                _poly_cache[sport] = poly_raw
+                _poly_cache_time[sport] = _time.time()
             else:
-                poly_raw = _poly_cache
+                poly_raw = _poly_cache[sport]
 
             if is_esport:
                 # Esports: Polymarket-only (no bookmaker odds API)
@@ -1565,7 +1568,7 @@ async def data_updater():
             except Exception as snap_err:
                 print(f"Snapshot save error: {snap_err}", flush=True)
 
-            # Atomic-ish update of all fields
+            # Build complete update in a local dict, then swap atomically
             update = {
                 "comparisons": comparisons,
                 "signals": signals,
@@ -1580,7 +1583,10 @@ async def data_updater():
                 "active_sport": sport,
                 "is_esport": is_esport,
             }
-            dashboard_data.update(update)
+            async with _data_lock:
+                # Only apply if sport hasn't changed while we built the update
+                if dashboard_data["active_sport"] == sport:
+                    dashboard_data.update(update)
 
             # Save signals to file (deduplicated)
             if signals:
@@ -1595,7 +1601,8 @@ async def data_updater():
                   flush=True)
 
         except Exception as e:
-            dashboard_data["error"] = str(e)
+            async with _data_lock:
+                dashboard_data["error"] = str(e)
             print(f"Update error: {e}", flush=True)
 
         # Wait for poll interval OR immediate rescan trigger
@@ -1851,15 +1858,12 @@ async def set_sport(sport_key: str, request: Request):
     if not get_current_user(request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     if sport_key in SPORTS:
-        dashboard_data.update({
-            "active_sport": sport_key,
-            "comparisons": [],
-            "signals": [],
-            "odds_events_count": 0,
-            "poly_markets_count": 0,
-            "matched_count": 0,
-            "error": None,
-        })
+        async with _data_lock:
+            dashboard_data["active_sport"] = sport_key
+            # Don't clear comparisons/signals here — the updater will
+            # build fresh data in a local variable and swap it in
+            # atomically, so other users never see an empty state.
+            dashboard_data["error"] = None
         await broadcast_update()
         await trigger_rescan()  # immediate rescan instead of waiting 5min
         return JSONResponse({"status": "ok", "sport": sport_key})

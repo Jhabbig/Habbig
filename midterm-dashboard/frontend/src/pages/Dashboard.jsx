@@ -206,18 +206,24 @@ export default function Dashboard() {
   const [pollsLoading, setPollsLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
-      api.overview().catch(() => null),
-      api.divergence().catch(() => []),
-      api.races().catch(() => []),
-    ]).then(([ov, div, rc]) => {
-      setOverview(ov)
-      setDivergences(Array.isArray(div) ? div.slice(0, 8) : (div?.divergences || []).slice(0, 8))
-      setRaces(Array.isArray(rc) ? rc : (rc?.races || []))
-    }).finally(() => setLoading(false))
+    function fetchAll() {
+      Promise.all([
+        api.overview().catch(() => null),
+        api.divergence().catch(() => []),
+        api.races().catch(() => []),
+      ]).then(([ov, div, rc]) => {
+        setOverview(ov)
+        setDivergences(Array.isArray(div) ? div.slice(0, 8) : (div?.divergences || []).slice(0, 8))
+        setRaces(Array.isArray(rc) ? rc : (rc?.races || []))
+      }).finally(() => setLoading(false))
 
-    api.recentPolls().then(data => setPolls(data?.polls || []))
-      .catch(() => {}).finally(() => setPollsLoading(false))
+      api.recentPolls().then(data => setPolls(data?.polls || []))
+        .catch(() => {}).finally(() => setPollsLoading(false))
+    }
+
+    fetchAll()
+    const interval = setInterval(fetchAll, 60 * 1000) // refresh every 60s
+    return () => clearInterval(interval)
   }, [])
 
   return (

@@ -12,7 +12,9 @@
       "accent": "#ef4444",
       "monthly_cents": 1999,
       "annual_cents": 19900,
-      "supports_websocket": true
+      "supports_websocket": true,
+      "stripe_price_monthly": "price_1TJXuZQq4pCmZ517QOsgoeAg",
+      "stripe_price_annual": "price_1TJXuaQq4pCmZ517TerWA5ET"
     },
     "weather": {
       "subdomain": "weather",
@@ -22,7 +24,9 @@
       "accent": "#3b82f6",
       "monthly_cents": 799,
       "annual_cents": 7900,
-      "supports_websocket": false
+      "supports_websocket": false,
+      "stripe_price_monthly": "price_1TJXubQq4pCmZ517I3rB06z3",
+      "stripe_price_annual": "price_1TJXucQq4pCmZ517bEimvNuD"
     },
     "world": {
       "subdomain": "world",
@@ -32,7 +36,9 @@
       "accent": "#8b5cf6",
       "monthly_cents": 599,
       "annual_cents": 5900,
-      "supports_websocket": false
+      "supports_websocket": false,
+      "stripe_price_monthly": "price_1TJXudQq4pCmZ517r5kGGPg8",
+      "stripe_price_annual": "price_1TJXueQq4pCmZ517BA5k30Tc"
     },
     "crypto": {
       "subdomain": "crypto",
@@ -42,7 +48,9 @@
       "accent": "#f59e0b",
       "monthly_cents": 999,
       "annual_cents": 9900,
-      "supports_websocket": true
+      "supports_websocket": true,
+      "stripe_price_monthly": "price_1TJXufQq4pCmZ517hcTl3rsK",
+      "stripe_price_annual": "price_1TJXugQq4pCmZ517oI08QMkS"
     },
     "midterm": {
       "subdomain": "midterm",
@@ -52,7 +60,9 @@
       "accent": "#6366f1",
       "monthly_cents": 1499,
       "annual_cents": 14900,
-      "supports_websocket": false
+      "supports_websocket": false,
+      "stripe_price_monthly": "price_1TJXuhQq4pCmZ517HHLDcXuE",
+      "stripe_price_annual": "price_1TJXuiQq4pCmZ517fq4wS21C"
     },
     "top_traders": {
       "subdomain": "traders",
@@ -62,7 +72,9 @@
       "accent": "#0ea5e9",
       "monthly_cents": 1299,
       "annual_cents": 12900,
-      "supports_websocket": false
+      "supports_websocket": false,
+      "stripe_price_monthly": "price_1TJXujQq4pCmZ517lvI0RcLS",
+      "stripe_price_annual": "price_1TJXukQq4pCmZ517ma0Q8iMP"
     }
   }
 }

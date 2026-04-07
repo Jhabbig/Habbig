@@ -848,7 +848,7 @@ function initApp() {
     if (appInited) return;
     appInited = true;
     load();
-    setInterval(load, 300000);
+    setInterval(load, 240000);  // 4 min — slightly under the 5 min backend cache TTL
     initPullToRefresh();
     maybeShowOnboarding();
 

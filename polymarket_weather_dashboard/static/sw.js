@@ -1,4 +1,4 @@
-const CACHE_NAME = 'weatheredge-v2';
+const CACHE_NAME = 'weatheredge-v3';
 const STATIC_ASSETS = [
   '/manifest.json',
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
@@ -13,7 +13,7 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
-// Activate — clean old caches
+// Activate — clean old caches (busts anything older than current CACHE_NAME)
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -23,11 +23,11 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch — network-first for API, cache-first for static
+// Fetch — network-only for API, network-first for everything else
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // API calls: network only (always fresh data)
+  // API calls: network only, never cache
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(event.request));
     return;
@@ -41,19 +41,20 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Static assets: cache first, then network
+  // Static assets: stale-while-revalidate — serve cached copy immediately
+  // but fetch a fresh copy in the background for next time
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(response => {
-        // Cache successful responses
-        if (response.status === 200) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-        }
-        return response;
-      });
-    }).catch(() => {
+    caches.open(CACHE_NAME).then(cache =>
+      cache.match(event.request).then(cached => {
+        const networkFetch = fetch(event.request).then(response => {
+          if (response.status === 200) {
+            cache.put(event.request, response.clone());
+          }
+          return response;
+        });
+        return cached || networkFetch;
+      })
+    ).catch(() => {
       // Offline fallback for the main page
       if (event.request.mode === 'navigate') {
         return caches.match('/');

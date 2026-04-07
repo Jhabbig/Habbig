@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS profiles (
     suspended   INTEGER NOT NULL DEFAULT 0,
     default_dashboard TEXT,
     invite_token_id BIGINT,
-    stripe_customer_id TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username);
@@ -483,6 +482,43 @@ CREATE INDEX IF NOT EXISTS idx_weather_snap_market_ts ON weather_price_snapshots
 
 
 -- ============================================================================
+-- TRADING: API Credentials (encrypted) & Order History
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS trading_credentials (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    platform    TEXT NOT NULL,  -- 'polymarket' or 'kalshi'
+    cred_data   TEXT NOT NULL,  -- Fernet-encrypted JSON blob
+    created_at  BIGINT NOT NULL,
+    updated_at  BIGINT NOT NULL,
+    UNIQUE(user_id, platform)
+);
+CREATE INDEX IF NOT EXISTS idx_trading_creds_user ON trading_credentials(user_id);
+
+CREATE TABLE IF NOT EXISTS trading_orders (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    platform        TEXT NOT NULL,
+    market_slug     TEXT NOT NULL,
+    market_question TEXT,
+    side            TEXT NOT NULL,     -- 'yes' or 'no'
+    action          TEXT NOT NULL,     -- 'buy' or 'sell'
+    amount          REAL NOT NULL,
+    price           REAL NOT NULL,
+    shares          REAL,
+    order_id        TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    fill_price      REAL,
+    error           TEXT,
+    created_at      BIGINT NOT NULL,
+    resolved_at     BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_trading_orders_user ON trading_orders(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_trading_orders_status ON trading_orders(status);
+
+
+-- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
 
@@ -531,3 +567,10 @@ CREATE POLICY midterm_wl_self ON midterm_user_watchlists FOR ALL USING (auth.uid
 
 ALTER TABLE midterm_alert_settings ENABLE ROW LEVEL SECURITY;
 CREATE POLICY midterm_as_self ON midterm_alert_settings FOR ALL USING (auth.uid() = user_id);
+
+ALTER TABLE trading_credentials ENABLE ROW LEVEL SECURITY;
+CREATE POLICY trading_creds_service ON trading_credentials FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE trading_orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY trading_orders_self ON trading_orders FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY trading_orders_service ON trading_orders FOR ALL USING (true) WITH CHECK (true);

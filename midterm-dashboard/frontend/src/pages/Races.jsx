@@ -23,9 +23,10 @@ function topProb(market) {
   return sorted[0]
 }
 
-function SourceColumn({ source, market }) {
+function SourceColumn({ source, market, raceTitle, allSources }) {
   const style = SOURCE_STYLES[source] || { bg: 'bg-stone-100', text: 'text-stone-700', bar: '#78716c', label: source }
   const top = market ? topProb(market) : null
+  const tradeable = source === 'polymarket' || source === 'kalshi'
   return (
     <div className="flex-1 min-w-0 border border-stone-100 rounded-lg p-3 bg-stone-50/50">
       <div className="flex items-center justify-between mb-2">
@@ -41,6 +42,30 @@ function SourceColumn({ source, market }) {
           <div className="w-full bg-stone-100 rounded-full h-1.5">
             <div className="h-1.5 rounded-full" style={{ width: `${Math.max((top.probability || 0) * 100, 1)}%`, backgroundColor: style.bar }} />
           </div>
+          {tradeable && (
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const poly = allSources?.polymarket
+                const kalshi = allSources?.kalshi
+                window.hbTrade?.({
+                  slug: poly?.slug || market?.slug || '',
+                  kalshi_ticker: kalshi?.source_id || market?.source_id || '',
+                  token_id: poly?.outcomes?.[0]?.token_id || market?.outcomes?.[0]?.token_id || '',
+                  token_id_no: poly?.outcomes?.[1]?.token_id || market?.outcomes?.[1]?.token_id || '',
+                  source,
+                  question: raceTitle || '',
+                  price: top.probability || 0.5,
+                  volume: market?.volume || 0,
+                })
+              }}
+              className="mt-2 w-full text-[10px] font-semibold py-1.5 rounded-md transition-all hover:opacity-80"
+              style={{ backgroundColor: style.bar + '15', color: style.bar, border: `1px solid ${style.bar}30` }}
+            >
+              Trade on {style.label}
+            </button>
+          )}
         </>
       ) : (
         <div className="text-xs text-stone-300 italic py-2">no data</div>
@@ -216,10 +241,10 @@ export default function Races() {
 
                 {/* Per-source probability columns, side-by-side */}
                 <div className="flex items-stretch gap-2 mb-3">
-                  <SourceColumn source="polymarket" market={g.sources.polymarket} />
+                  <SourceColumn source="polymarket" market={g.sources.polymarket} raceTitle={g.title} allSources={g.sources} />
                   <DeltaBadge polymarket={g.sources.polymarket} kalshi={g.sources.kalshi} />
-                  <SourceColumn source="kalshi" market={g.sources.kalshi} />
-                  {g.sources.predictit && <SourceColumn source="predictit" market={g.sources.predictit} />}
+                  <SourceColumn source="kalshi" market={g.sources.kalshi} raceTitle={g.title} allSources={g.sources} />
+                  {g.sources.predictit && <SourceColumn source="predictit" market={g.sources.predictit} raceTitle={g.title} allSources={g.sources} />}
                 </div>
 
                 {/* Historical pattern */}

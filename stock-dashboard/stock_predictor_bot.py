@@ -16,6 +16,8 @@ Run: python3 stock_predictor_bot.py [--reset] [--once]
 """
 
 import json
+import os
+import tempfile
 import time
 import math
 import argparse
@@ -143,8 +145,22 @@ def save_state(state):
         "last_date": state.last_date,
         "trades": state.trades[-500:],
     }
-    with open(TRADE_LOG, "w") as f:
-        json.dump(data, f, indent=2)
+    # Atomic write: write to temp file then rename, so readers never see
+    # a partially-written file.
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=TRADE_LOG.parent, suffix=".tmp", prefix="stock_trades_"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, TRADE_LOG)
+    except BaseException:
+        # Clean up temp file on any failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def load_state():

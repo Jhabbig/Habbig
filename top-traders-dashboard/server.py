@@ -25,7 +25,7 @@ PORT = 8052
 LB_API = "https://lb-api.polymarket.com"
 DATA_API = "https://data-api.polymarket.com"
 ALLOWED_WINDOWS = {"all", "1d", "7d", "30d"}
-CACHE_TTL_SECONDS = 30
+CACHE_TTL_SECONDS = 20  # shorter than the 30s frontend poll to avoid serving stale data
 HTTP_TIMEOUT = 15.0
 
 HERE = Path(__file__).parent

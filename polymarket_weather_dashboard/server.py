@@ -19,7 +19,12 @@ from scipy.stats import norm
 from supabase import create_client, Client
 
 app = Flask(__name__, static_folder="static")
-app.secret_key = os.environ.get("FLASK_SECRET", "norain-secret-key-change-in-prod")
+_flask_secret = os.environ.get("FLASK_SECRET")
+if not _flask_secret:
+    import secrets as _sec
+    _flask_secret = _sec.token_urlsafe(32)
+    logger.warning("FLASK_SECRET not set — using random key (sessions won't persist across restarts)")
+app.secret_key = _flask_secret
 
 # Gzip compression — cuts 3.5MB market JSON to ~500KB over the wire
 try:
@@ -55,6 +60,16 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+
+# Prevent browsers/service workers from caching API responses
+@app.after_request
+def _api_no_cache(response):
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 # ─── Database (Supabase) ─────────────────────────────────────────────────────
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -77,14 +92,13 @@ def _get_client() -> Client:
 
 
 def init_db() -> None:
-    """Verify Supabase connection is working. Called on startup."""
-    client = _get_client()
+    """Verify Supabase connection is working. Non-fatal on failure."""
     try:
+        client = _get_client()
         client.table("weather_signals_log").select("id").limit(0).execute()
         logger.info("Supabase connection OK")
     except Exception as e:
-        logger.error("Supabase connection failed: %s", e)
-        raise
+        logger.warning("Supabase connection failed (will retry on first use): %s", e)
 
 
 DEFAULT_USER_SETTINGS = {
@@ -180,7 +194,7 @@ init_db()
 # ─── Cache ─────────────────────────────────────────────────────────────────────
 
 _cache: dict = {}
-CACHE_TTL = 300
+CACHE_TTL = 300  # 5 minutes — frontend polls every 4 min to stay ahead
 
 
 def cache_get(key: str):
@@ -1938,7 +1952,10 @@ def _snapshot_loop():
 
 if __name__ == "__main__":
     import threading
-    t = threading.Thread(target=_snapshot_loop, daemon=True)
-    t.start()
-    logger.info("Price snapshot background thread started (every 30 min)")
-    app.run(host="0.0.0.0", port=5050, debug=True)
+    _debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    # Only start background thread in the reloader child (or when reloader is off)
+    if not _debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        t = threading.Thread(target=_snapshot_loop, daemon=True)
+        t.start()
+        logger.info("Price snapshot background thread started (every 30 min)")
+    app.run(host="0.0.0.0", port=5050, debug=_debug)

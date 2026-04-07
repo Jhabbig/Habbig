@@ -69,8 +69,16 @@ else:
     )
 
 BUNDLE_PLANS = {
-    "trader": {"monthly_cents": 4900, "annual_cents": 39900, "name": "Habbig Trader"},
-    "pro": {"monthly_cents": 14900, "annual_cents": 119900, "name": "Habbig Pro"},
+    "trader": {
+        "monthly_cents": 4900, "annual_cents": 39900, "name": "Habbig Trader",
+        "stripe_price_monthly": "price_1TJXulQq4pCmZ5172Svy34cn",
+        "stripe_price_annual": "price_1TJXulQq4pCmZ517VPw60dds",
+    },
+    "pro": {
+        "monthly_cents": 14900, "annual_cents": 119900, "name": "Habbig Pro",
+        "stripe_price_monthly": "price_1TJXumQq4pCmZ517nHAuSv3b",
+        "stripe_price_annual": "price_1TJXunQq4pCmZ517pIJRjiDp",
+    },
 }
 
 # Rich preview content for each dashboard's /preview/<key> product page.
@@ -511,12 +519,11 @@ def clear_session_cookie(response: Response, request: Request) -> None:
 
 
 def _get_or_create_stripe_customer(user_id: str, email: str) -> str:
-    """Get existing Stripe customer ID from the profile, or create a new one."""
-    existing = db.get_stripe_customer_id(user_id)
-    if existing:
-        return existing
+    """Find an existing Stripe customer by email, or create a new one."""
+    existing = stripe.Customer.list(email=email, limit=1)
+    if existing.data:
+        return existing.data[0].id
     customer = stripe.Customer.create(email=email, metadata={"user_id": user_id})
-    db.set_stripe_customer_id(user_id, customer.id)
     return customer.id
 
 
@@ -735,58 +742,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     return response
 
 
-@app.get("/forgot-password", response_class=HTMLResponse)
-async def forgot_password_page(request: Request):
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/forgot-password")
-    return render_page("forgot-password", error="", success="")
-
-
-@app.post("/forgot-password")
-async def forgot_password_submit(request: Request, invite_token: str = Form(""), email: str = Form(""), new_password: str = Form(""), confirm_password: str = Form("")):
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/forgot-password")
-
-    invite_token = invite_token.strip()
-    email = email.strip().lower()
-
-    # Validate token exists and is claimed
-    invite = db.get_invite_token(invite_token) if invite_token else None
-    if not invite or invite["status"] != "claimed":
-        return render_page("forgot-password", error="Invalid or unclaimed token.", success="")
-
-    # Verify email matches the token's linked account
-    if invite["claimed_by_email"] != email:
-        log.warning("Password reset: email mismatch for token. Provided: %s", email)
-        return render_page("forgot-password", error="Email does not match the account linked to this token.", success="")
-
-    # Find the user
-    user = db.get_user_by_id(invite["claimed_by_user_id"])
-    if not user:
-        return render_page("forgot-password", error="Account not found.", success="")
-    if user["suspended"]:
-        return RedirectResponse("/suspended", status_code=302)
-
-    # Validate passwords match
-    if new_password != confirm_password:
-        return render_page("forgot-password", error="Passwords don't match.", success="")
-
-    # Validate password strength
-    if len(new_password) < 12:
-        return render_page("forgot-password", error="Password must be at least 12 characters.", success="")
-    if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
-        return render_page("forgot-password", error="Password must include uppercase, lowercase, number, and special character.", success="")
-
-    # Update password via Supabase Auth
-    db.update_user_password(user["id"], new_password)
-
-    # Kill all existing sessions for this user
-    db.delete_user_sessions(user["id"])
-
-    log.info("Password reset for user %s (id=%s) via token", user["username"] or user["email"], user["id"])
-    return render_page("forgot-password", error="", success="Password reset successfully. All sessions have been logged out. You can now sign in with your new password.")
+# Old forgot-password handlers removed -- using email-based reset flow below (see /forgot-password)
 
 
 @app.get("/signup", response_class=HTMLResponse)
@@ -870,6 +826,52 @@ async def my_dashboards(request: Request):
     is_admin_user = bool(user.get("is_admin"))
     any_active_sub = any(s["status"] == "active" for s in subs.values())
     local_mode = is_local_host(request)
+
+    # ── Build subscription summary ──────────────────────────────────
+    active_subs = []
+    total_monthly = 0
+    for key, cfg in DASHBOARDS.items():
+        if _is_sub_active(subs.get(key), is_admin_user) or any_active_sub:
+            sub_record = subs.get(key, {})
+            plan = sub_record.get("plan", "")
+            if "annual" in plan:
+                price_label = f"${cfg['annual_cents']/100:.2f}/yr"
+                total_monthly += cfg["annual_cents"] / 12
+            else:
+                price_label = f"${cfg['monthly_cents']/100:.2f}/mo"
+                total_monthly += cfg["monthly_cents"]
+            active_subs.append({"name": cfg["display_name"], "accent": cfg["accent"], "price": price_label})
+
+    if active_subs:
+        pills = "".join(
+            f'<span class="summary-pill" style="--accent:{s["accent"]}">'
+            f'<span class="summary-pill-dot" style="background:{s["accent"]}"></span>'
+            f'{html.escape(s["name"])} <span class="summary-pill-price">{s["price"]}</span>'
+            f'</span>'
+            for s in active_subs
+        )
+        summary_html = (
+            f'<div class="sub-summary">'
+            f'<div class="sub-summary-head">'
+            f'<div class="sub-summary-label">Your active plan</div>'
+            f'<div class="sub-summary-total">${total_monthly/100:.2f}<span>/mo equiv.</span></div>'
+            f'</div>'
+            f'<div class="sub-summary-pills">{pills}</div>'
+            f'<a class="sub-summary-link" href="/billing">Manage billing &rarr;</a>'
+            f'</div>'
+        )
+    else:
+        summary_html = (
+            '<div class="sub-summary sub-summary-empty">'
+            '<div class="sub-summary-head">'
+            '<div class="sub-summary-label">No active subscriptions</div>'
+            '</div>'
+            '<p class="sub-summary-hint">Pick a dashboard below to see what it offers, or '
+            '<a href="/pricing">view bundle plans</a> to save.</p>'
+            '</div>'
+        )
+
+    # ── Build dashboard cards with feature highlights ───────────────
     cards_html = []
     for key, cfg in DASHBOARDS.items():
         has_sub = _is_sub_active(subs.get(key), is_admin_user) or any_active_sub
@@ -878,8 +880,6 @@ async def my_dashboards(request: Request):
             else '<span class="badge badge-locked">Locked</span>'
         )
         if has_sub:
-            # Local dev: link directly to the dashboard's own port so click-through
-            # works without DNS/Cloudflare. Production: use the configured subdomain.
             if local_mode:
                 open_url = f"http://localhost:{cfg['target']}"
             else:
@@ -887,6 +887,20 @@ async def my_dashboards(request: Request):
             cta = f'<a class="card-cta cta-open" href="{open_url}" target="_blank">Open →</a>'
         else:
             cta = f'<a class="card-cta cta-sub" href="/preview/{key}">Learn More</a>'
+
+        # Top 3 features as highlights
+        preview = DASHBOARD_PREVIEWS.get(key, {})
+        features = preview.get("features", [])[:3]
+        highlights_html = ""
+        if features:
+            items = "".join(
+                f'<li class="dash-highlight-item">'
+                f'<span class="dash-highlight-icon">{f["icon"]}</span>'
+                f'{html.escape(f["title"])}'
+                f'</li>'
+                for f in features
+            )
+            highlights_html = f'<ul class="dash-highlights">{items}</ul>'
 
         cards_html.append(f"""
         <div class="dash-card" style="--accent: {cfg['accent']}">
@@ -896,10 +910,47 @@ async def my_dashboards(request: Request):
           </div>
           <div class="dash-card-title">{cfg['display_name']}</div>
           <div class="dash-card-desc">{cfg['description']}</div>
+          {highlights_html}
           <div class="dash-card-price">${cfg['monthly_cents']/100:.2f}/mo · ${cfg['annual_cents']/100:.2f}/yr</div>
           <div class="dash-card-foot">{cta}</div>
         </div>
         """)
+
+    # ── Build onboarding tour steps ─────────────────────────────────
+    tour_steps_html = []
+    for i, (key, cfg) in enumerate(DASHBOARDS.items()):
+        preview = DASHBOARD_PREVIEWS.get(key, {})
+        tagline = html.escape(preview.get("tagline", cfg["description"]))
+        features = preview.get("features", [])[:4]
+        feat_html = "".join(
+            f'<div class="tour-feat">'
+            f'<span class="tour-feat-icon">{f["icon"]}</span>'
+            f'<div><strong>{html.escape(f["title"])}</strong><br>'
+            f'<span class="tour-feat-desc">{html.escape(f["desc"])}</span></div>'
+            f'</div>'
+            for f in features
+        )
+        includes = preview.get("includes", [])[:4]
+        inc_html = "".join(f'<li>{html.escape(item)}</li>' for item in includes)
+        price_mo = f"${cfg['monthly_cents']/100:.2f}"
+        price_yr = f"${cfg['annual_cents']/100:.2f}"
+
+        tour_steps_html.append(
+            f'<div class="tour-step" data-step="{i + 2}">'
+            f'<div class="tour-step-accent" style="background:{cfg["accent"]}"></div>'
+            f'<h2 class="tour-step-title">'
+            f'<span class="tour-dot" style="background:{cfg["accent"]}"></span>'
+            f'{html.escape(cfg["display_name"])}'
+            f'</h2>'
+            f'<p class="tour-step-tagline">{tagline}</p>'
+            f'<div class="tour-feats">{feat_html}</div>'
+            f'<div class="tour-includes"><h4>Included</h4><ul>{inc_html}</ul></div>'
+            f'<div class="tour-price">{price_mo}/mo or {price_yr}/yr</div>'
+            f'</div>'
+        )
+
+    total_steps = len(DASHBOARDS) + 2  # welcome + each dashboard + finish
+    tour_html = "".join(tour_steps_html)
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
@@ -907,6 +958,9 @@ async def my_dashboards(request: Request):
         email=user["email"], username=user.get("username", user["email"]),
         dashboard_cards="".join(cards_html),
         raw_admin_link=admin_link,
+        raw_sub_summary=summary_html,
+        raw_tour_steps=tour_html,
+        tour_total_steps=str(total_steps),
     )
 
 
@@ -1024,23 +1078,19 @@ async def billing_action(request: Request, action: str = Form(...)):
 
             # Create Stripe Checkout Session
             cfg = DASHBOARDS[key]
-            price_cents = cfg["monthly_cents"] if plan == "monthly" else cfg["annual_cents"]
-            stripe_interval = "month" if plan == "monthly" else "year"
+            price_key = "stripe_price_monthly" if plan == "monthly" else "stripe_price_annual"
+            stripe_price_id = cfg.get(price_key)
+            if not stripe_price_id:
+                log.error("No Stripe price ID configured for %s %s", key, plan)
+                return RedirectResponse("/billing", status_code=302)
+
             customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
             base = _stripe_base_url(request)
 
             session = stripe.checkout.Session.create(
                 customer=customer_id,
                 mode="subscription",
-                line_items=[{
-                    "price_data": {
-                        "currency": "usd",
-                        "product_data": {"name": cfg["display_name"]},
-                        "unit_amount": price_cents,
-                        "recurring": {"interval": stripe_interval},
-                    },
-                    "quantity": 1,
-                }],
+                line_items=[{"price": stripe_price_id, "quantity": 1}],
                 metadata={
                     "user_id": str(user["user_id"]),
                     "dashboard_key": key,
@@ -1095,23 +1145,19 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
 
     # Create Stripe Checkout Session for the bundle
     bundle = BUNDLE_PLANS[plan]
-    price_cents = bundle["monthly_cents"] if interval == "monthly" else bundle["annual_cents"]
-    stripe_interval = "month" if interval == "monthly" else "year"
+    price_key = "stripe_price_monthly" if interval == "monthly" else "stripe_price_annual"
+    stripe_price_id = bundle.get(price_key)
+    if not stripe_price_id:
+        log.error("No Stripe price ID configured for bundle %s %s", plan, interval)
+        return RedirectResponse("/billing", status_code=302)
+
     customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
     base = _stripe_base_url(request)
 
     session = stripe.checkout.Session.create(
         customer=customer_id,
         mode="subscription",
-        line_items=[{
-            "price_data": {
-                "currency": "usd",
-                "product_data": {"name": bundle["name"]},
-                "unit_amount": price_cents,
-                "recurring": {"interval": stripe_interval},
-            },
-            "quantity": 1,
-        }],
+        line_items=[{"price": stripe_price_id, "quantity": 1}],
         metadata={
             "user_id": str(user["user_id"]),
             "plan_type": plan,
@@ -1312,6 +1358,22 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         role_badge = '<span class="profile-meta-item" style="background:var(--accent-light);color:var(--accent)">Admin</span>'
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     avatar = user.get("username", "?")[0].upper()
+
+    # Trading credentials status
+    cred_status = db.has_trading_credentials(user["user_id"])
+    connected = '<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:rgba(16,185,129,0.12);color:#10b981;font-weight:600">Connected</span>'
+    not_connected = '<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:rgba(255,255,255,0.04);color:var(--text-muted);font-weight:500">Not connected</span>'
+    poly_delete = (
+        '<a href="/profile/trading/polymarket/delete" onclick="return confirm(\'Remove Polymarket credentials?\')" '
+        'style="padding:10px 20px;font-size:13px;color:var(--red);text-decoration:none;border:1px solid rgba(239,68,68,0.3);border-radius:var(--radius-sm)">'
+        'Remove</a>'
+    ) if cred_status["polymarket"] else ""
+    kalshi_delete = (
+        '<a href="/profile/trading/kalshi/delete" onclick="return confirm(\'Remove Kalshi credentials?\')" '
+        'style="padding:10px 20px;font-size:13px;color:var(--red);text-decoration:none;border:1px solid rgba(239,68,68,0.3);border-radius:var(--radius-sm)">'
+        'Remove</a>'
+    ) if cred_status["kalshi"] else ""
+
     return {
         "username": user.get("username", user["email"]),
         "email": user["email"],
@@ -1320,6 +1382,11 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         "raw_role_badge": role_badge,
         "raw_admin_link": admin_link,
         "raw_banner": banner,
+        "raw_trading_banner": "",
+        "raw_poly_status": connected if cred_status["polymarket"] else not_connected,
+        "raw_kalshi_status": connected if cred_status["kalshi"] else not_connected,
+        "raw_poly_delete": poly_delete,
+        "raw_kalshi_delete": kalshi_delete,
     }
 
 
@@ -1363,6 +1430,72 @@ async def profile_change_password(request: Request, current_password: str = Form
 
     log.info("User %s changed their password", user.get("username", user["email"]))
     return render_page("profile", **_profile_context(user, ok_banner("Password changed successfully.")))
+
+
+# ── Trading credential management (profile forms) ────────────────────────
+
+
+@app.post("/profile/trading/{platform}")
+async def profile_save_trading_creds(
+    request: Request, platform: str,
+    private_key: str = Form(""), api_key: str = Form(""),
+    api_secret: str = Form(""), api_passphrase: str = Form(""),
+    email: str = Form(""), password: str = Form(""),
+):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, f"/profile/trading/{platform}")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    if platform not in ("polymarket", "kalshi"):
+        return RedirectResponse("/profile#trading", status_code=302)
+
+    t_err = lambda msg: (
+        f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);'
+        f'font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
+    )
+    t_ok = lambda msg: (
+        f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);'
+        f'font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
+    )
+
+    if platform == "polymarket":
+        pk = private_key.strip()
+        if not pk:
+            ctx = _profile_context(user)
+            ctx["raw_trading_banner"] = t_err("Polymarket private key is required.")
+            return render_page("profile", **ctx)
+        creds = {"private_key": pk, "api_key": api_key.strip(), "api_secret": api_secret.strip(), "api_passphrase": api_passphrase.strip()}
+    else:
+        ak = api_key.strip()
+        em = email.strip()
+        pw = password.strip()
+        if not ak and not (em and pw):
+            ctx = _profile_context(user)
+            ctx["raw_trading_banner"] = t_err("Kalshi API key or email + password required.")
+            return render_page("profile", **ctx)
+        creds = {"api_key": ak, "email": em, "password": pw}
+
+    db.save_trading_credentials(user["user_id"], platform, creds)
+    log.info("User %s saved %s trading credentials via profile", user.get("username", user["email"]), platform)
+    ctx = _profile_context(user)
+    ctx["raw_trading_banner"] = t_ok(f"{'Polymarket' if platform == 'polymarket' else 'Kalshi'} credentials saved and encrypted.")
+    return render_page("profile", **ctx)
+
+
+@app.get("/profile/trading/{platform}/delete")
+async def profile_delete_trading_creds(request: Request, platform: str):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, f"/profile/trading/{platform}/delete")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    if platform in ("polymarket", "kalshi"):
+        db.delete_trading_credentials(user["user_id"], platform)
+        log.info("User %s deleted %s trading credentials", user.get("username", user["email"]), platform)
+    return RedirectResponse("/profile#trading", status_code=302)
 
 
 # ── Password reset ─────────────────────────────────────────────────────────
@@ -2235,6 +2368,281 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
     return RedirectResponse("/settings?saved=1", status_code=302)
 
 
+# ── Trading API ──────────────────────────────────────────────────────────────
+# JSON endpoints under /api/trading/* — used by trade.js from any subdomain.
+# Because all subdomain traffic goes through the gateway proxy, requests to
+# /api/trading/* on any subdomain are caught here before the catch-all.
+
+
+_RATE_MAX_TRADE = 20  # max trades per 5-minute window
+
+
+def _trading_user(request: Request) -> Optional[dict]:
+    """Authenticate trading API requests. Returns user dict or None."""
+    return current_user(request)
+
+
+@app.get("/api/trading/credentials")
+async def trading_credentials_status(request: Request):
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    status = db.has_trading_credentials(user["user_id"])
+    return JSONResponse({"polymarket": status["polymarket"], "kalshi": status["kalshi"]})
+
+
+@app.post("/api/trading/credentials/{platform}")
+async def trading_save_credentials(request: Request, platform: str):
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if platform not in ("polymarket", "kalshi"):
+        return JSONResponse({"error": "Invalid platform"}, status_code=400)
+
+    body = await request.json()
+
+    if platform == "polymarket":
+        private_key = body.get("private_key", "").strip()
+        api_key = body.get("api_key", "").strip()
+        api_secret = body.get("api_secret", "").strip()
+        api_passphrase = body.get("api_passphrase", "").strip()
+        if not private_key:
+            return JSONResponse({"error": "Private key is required"}, status_code=400)
+        creds = {
+            "private_key": private_key,
+            "api_key": api_key,
+            "api_secret": api_secret,
+            "api_passphrase": api_passphrase,
+        }
+    else:  # kalshi
+        email = body.get("email", "").strip()
+        password = body.get("password", "").strip()
+        api_key = body.get("api_key", "").strip()
+        if not api_key and not (email and password):
+            return JSONResponse({"error": "API key or email+password required"}, status_code=400)
+        creds = {"email": email, "password": password, "api_key": api_key}
+
+    db.save_trading_credentials(user["user_id"], platform, creds)
+    log.info("User %s saved %s trading credentials", user.get("username", user["email"]), platform)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/trading/credentials/{platform}")
+async def trading_delete_credentials(request: Request, platform: str):
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if platform not in ("polymarket", "kalshi"):
+        return JSONResponse({"error": "Invalid platform"}, status_code=400)
+    db.delete_trading_credentials(user["user_id"], platform)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/trading/place")
+async def trading_place_order(request: Request):
+    """Place a trade on Polymarket or Kalshi."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "trade", _RATE_MAX_TRADE):
+        return JSONResponse({"error": "Too many trade requests. Slow down."}, status_code=429)
+
+    body = await request.json()
+    platform = body.get("platform", "").lower()
+    slug = body.get("slug", "").strip()
+    token_id = body.get("token_id", "").strip()
+    side = body.get("side", "").lower()
+    action = body.get("action", "buy").lower()
+    amount = float(body.get("amount", 0))
+    price = float(body.get("price", 0))
+    question = body.get("question", "")
+
+    if platform not in ("polymarket", "kalshi"):
+        return JSONResponse({"error": "Invalid platform"}, status_code=400)
+    if side not in ("yes", "no"):
+        return JSONResponse({"error": "Side must be 'yes' or 'no'"}, status_code=400)
+    if action not in ("buy", "sell"):
+        return JSONResponse({"error": "Action must be 'buy' or 'sell'"}, status_code=400)
+    if amount <= 0 or amount > 10000:
+        return JSONResponse({"error": "Amount must be $0.01-$10,000"}, status_code=400)
+    if price <= 0 or price >= 1:
+        return JSONResponse({"error": "Price must be between 0 and 1"}, status_code=400)
+
+    creds = db.get_trading_credentials(user["user_id"], platform)
+    if not creds:
+        return JSONResponse({"error": f"No {platform} credentials configured. Add them in your profile."}, status_code=400)
+
+    # Log the order
+    order_id = db.create_trading_order(
+        user_id=user["user_id"], platform=platform, market_slug=slug,
+        market_question=question, side=side, action=action,
+        amount=amount, price=price,
+    )
+
+    try:
+        if platform == "polymarket":
+            result = await _execute_polymarket_trade(creds, token_id, side, action, amount, price)
+        else:
+            result = await _execute_kalshi_trade(creds, slug, side, action, amount, price)
+
+        db.update_trading_order(order_id,
+            status=result.get("status", "error"),
+            order_id=result.get("order_id", ""),
+            fill_price=result.get("fill_price"),
+            shares=result.get("shares"),
+            error=result.get("error"),
+            resolved_at=int(time.time()) if result.get("status") == "filled" else None,
+        )
+        log.info(
+            "Trade %s: user=%s platform=%s side=%s amount=$%.2f status=%s",
+            order_id, user.get("username"), platform, side, amount, result.get("status"),
+        )
+        return JSONResponse({"ok": True, "order_id": order_id, **result})
+
+    except Exception as e:
+        log.exception("Trade execution error for order %s: %s", order_id, e)
+        db.update_trading_order(order_id, status="error", error=str(e))
+        return JSONResponse({"error": f"Trade failed: {str(e)}"}, status_code=500)
+
+
+async def _execute_polymarket_trade(
+    creds: dict, token_id: str, side: str, action: str, amount: float, price: float
+) -> dict:
+    """Execute a trade on Polymarket via py-clob-client."""
+    private_key = creds.get("private_key", "")
+    api_key = creds.get("api_key", "")
+    api_secret = creds.get("api_secret", "")
+    api_passphrase = creds.get("api_passphrase", "")
+
+    if not private_key:
+        return {"status": "error", "error": "Missing private key"}
+
+    try:
+        from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import OrderArgs, OrderType, ApiCreds
+
+        client = ClobClient(
+            host="https://clob.polymarket.com",
+            key=private_key,
+            chain_id=137,
+        )
+        if api_key and api_secret and api_passphrase:
+            client.set_api_creds(ApiCreds(
+                api_key=api_key,
+                api_secret=api_secret,
+                api_passphrase=api_passphrase,
+            ))
+        else:
+            client.set_api_creds(client.create_or_derive_api_creds())
+
+        if not token_id:
+            return {"status": "error", "error": "token_id required for Polymarket trades"}
+
+        shares = amount / price
+        buy_or_sell = "BUY" if action == "buy" else "SELL"
+
+        order_args = OrderArgs(
+            price=round(price, 2),
+            size=round(shares, 2),
+            side=buy_or_sell,
+            token_id=token_id,
+        )
+
+        resp = client.create_and_post_order(order_args, OrderType.GTC)
+        if resp and resp.get("success"):
+            return {
+                "status": "submitted",
+                "order_id": resp.get("orderID", ""),
+                "fill_price": price,
+                "shares": round(shares, 2),
+            }
+
+        error = resp.get("errorMsg", "Order rejected") if resp else "No response"
+        return {"status": "error", "error": error}
+
+    except ImportError:
+        return {"status": "error", "error": "py-clob-client not installed on server"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+async def _execute_kalshi_trade(
+    creds: dict, ticker: str, side: str, action: str, amount: float, price: float
+) -> dict:
+    """Execute a trade on Kalshi via their REST API."""
+    api_key = creds.get("api_key", "")
+    email = creds.get("email", "")
+    password = creds.get("password", "")
+
+    kalshi_base = "https://api.elections.kalshi.com/trade-api/v2"
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=15) as client:
+            # Authenticate
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            else:
+                login_resp = await client.post(
+                    f"{kalshi_base}/login",
+                    json={"email": email, "password": password},
+                    headers=headers,
+                )
+                if login_resp.status_code != 200:
+                    return {"status": "error", "error": "Kalshi login failed"}
+                token = login_resp.json().get("token", "")
+                headers["Authorization"] = f"Bearer {token}"
+
+            # Convert price to cents (Kalshi uses cents 1-99)
+            price_cents = max(1, min(99, int(round(price * 100))))
+            contracts = max(1, int(amount / (price_cents / 100)))
+
+            order_body = {
+                "ticker": ticker,
+                "action": action,
+                "side": side,
+                "type": "limit",
+                "count": contracts,
+                "yes_price" if side == "yes" else "no_price": price_cents,
+            }
+
+            resp = await client.post(
+                f"{kalshi_base}/portfolio/orders",
+                json=order_body,
+                headers=headers,
+            )
+
+            if resp.status_code in (200, 201):
+                data = resp.json().get("order", resp.json())
+                return {
+                    "status": data.get("status", "submitted"),
+                    "order_id": data.get("order_id", ""),
+                    "fill_price": price,
+                    "shares": contracts,
+                }
+
+            error_data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            return {
+                "status": "error",
+                "error": error_data.get("message", error_data.get("error", f"HTTP {resp.status_code}")),
+            }
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.get("/api/trading/orders")
+async def trading_orders(request: Request):
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    orders = db.get_recent_orders(user["user_id"], limit=30)
+    return JSONResponse({"orders": [dict(o) for o in orders]})
+
+
 # ── Switcher injection ────────────────────────────────────────────────────────
 
 
@@ -2395,6 +2803,13 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     if body is not upstream.content:
         resp_headers.pop("content-length", None)
         resp_headers["content-length"] = str(len(body))
+
+    # Prevent browsers from caching proxied API responses so dashboards
+    # always show fresh data instead of stale upstream cache headers.
+    content_type = upstream.headers.get("content-type", "")
+    if "application/json" in content_type or path.startswith("/api"):
+        resp_headers["cache-control"] = "no-store, no-cache, must-revalidate"
+        resp_headers["pragma"] = "no-cache"
 
     return Response(
         content=body,

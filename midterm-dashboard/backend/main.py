@@ -539,6 +539,8 @@ async def data_race_detail(race_key: str):
                 "title": m.get("title"),
                 "volume": m.get("volume", 0),
                 "liquidity": m.get("liquidity", 0),
+                "slug": m.get("slug", ""),
+                "source_id": m.get("source_id", ""),
             }
             for s, m in matched.items()
         },

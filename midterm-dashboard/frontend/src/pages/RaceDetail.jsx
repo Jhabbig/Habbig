@@ -151,6 +151,8 @@ export default function RaceDetail() {
             const outcomes = data.outcomes || []
             const maxProb = Math.max(...outcomes.map(o => o.probability || 0), 0.01)
             const color = sourceColors[source] || '#78716c'
+            const tradeable = source === 'polymarket' || source === 'kalshi'
+            const topOutcome = outcomes.length > 0 ? outcomes.reduce((a, b) => ((b.probability || 0) > (a.probability || 0) ? b : a), outcomes[0]) : null
 
             return (
               <div key={source} className="bg-stone-50 rounded-lg p-4">
@@ -159,9 +161,33 @@ export default function RaceDetail() {
                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }}></div>
                     {sourceLabels[source] || source}
                   </div>
-                  {data.volume > 0 && (
-                    <span className="text-[10px] text-stone-400">${(data.volume / 1000).toFixed(0)}k vol</span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {data.volume > 0 && (
+                      <span className="text-[10px] text-stone-400">${(data.volume / 1000).toFixed(0)}k vol</span>
+                    )}
+                    {tradeable && (
+                      <button
+                        onClick={() => {
+                          const polyData = race.by_source?.polymarket
+                          const kalshiData = race.by_source?.kalshi
+                          window.hbTrade?.({
+                            slug: polyData?.slug || data.slug || '',
+                            kalshi_ticker: kalshiData?.source_id || '',
+                            token_id: polyData?.outcomes?.[0]?.token_id || '',
+                            token_id_no: polyData?.outcomes?.[1]?.token_id || '',
+                            source: source,
+                            question: race.title || race.event_title || '',
+                            price: topOutcome?.probability || 0.5,
+                            volume: data.volume || 0,
+                          })
+                        }}
+                        className="text-[10px] font-semibold px-2.5 py-1 rounded-md transition-all hover:scale-105"
+                        style={{ backgroundColor: color + '18', color: color, border: `1px solid ${color}40` }}
+                      >
+                        Trade
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {data.title && data.title !== race.title && (
                   <p className="text-[10px] text-stone-400 mb-2 italic">{data.title}</p>

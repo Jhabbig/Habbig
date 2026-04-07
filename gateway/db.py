@@ -11,14 +11,17 @@ Required environment variables:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
 import time
 from typing import Optional
 
+from cryptography.fernet import Fernet
 from supabase import create_client, Client
 
 log = logging.getLogger("gateway.db")
@@ -523,18 +526,6 @@ def count_unread_enquiries() -> int:
     return result.count if result.count is not None else 0
 
 
-def get_stripe_customer_id(user_id: str) -> Optional[str]:
-    client = _get_client()
-    result = client.table("profiles").select("stripe_customer_id").eq("id", user_id).limit(1).execute()
-    if result.data:
-        return result.data[0].get("stripe_customer_id")
-    return None
-
-
-def set_stripe_customer_id(user_id: str, customer_id: str) -> None:
-    client = _get_client()
-    client.table("profiles").update({"stripe_customer_id": customer_id}).eq("id", user_id).execute()
-
 
 def cancel_subscription_by_stripe_id(stripe_sub_id: str) -> None:
     """Cancel all subscriptions with the given Stripe subscription ID."""
@@ -601,3 +592,123 @@ def purge_expired_resets() -> int:
         f"expires_at.lte.{now},used.eq.1"
     ).execute()
     return len(result.data) if result.data else 0
+
+
+# ── Encryption for trading credentials ──────────────────────────────────────
+
+_TRADING_KEY_ENV = "TRADING_ENCRYPTION_KEY"
+_fernet: Optional[Fernet] = None
+
+
+def _get_fernet() -> Fernet:
+    """Return a Fernet instance, deriving the key from env var.
+
+    TRADING_ENCRYPTION_KEY should be a Fernet key (base64url-encoded 32 bytes).
+    Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    """
+    global _fernet
+    if _fernet is None:
+        key = os.environ.get(_TRADING_KEY_ENV, "")
+        if not key:
+            # Auto-generate a key for dev mode (NOT persistent across restarts)
+            key = Fernet.generate_key().decode()
+            log.warning(
+                "%s not set — using ephemeral key. "
+                "Trading credentials will NOT survive restart. "
+                "Set this env var in production.",
+                _TRADING_KEY_ENV,
+            )
+        _fernet = Fernet(key.encode() if isinstance(key, str) else key)
+    return _fernet
+
+
+def _encrypt(plaintext: str) -> str:
+    return _get_fernet().encrypt(plaintext.encode()).decode()
+
+
+def _decrypt(ciphertext: str) -> str:
+    return _get_fernet().decrypt(ciphertext.encode()).decode()
+
+
+# ── Trading credential operations ────────────────────────────────────────────
+
+
+def save_trading_credentials(user_id: str, platform: str, creds: dict) -> None:
+    """Encrypt and store trading credentials for a platform."""
+    now = int(time.time())
+    encrypted = _encrypt(json.dumps(creds))
+    client = _get_client()
+    client.table("trading_credentials").upsert({
+        "user_id": user_id,
+        "platform": platform,
+        "cred_data": encrypted,
+        "created_at": now,
+        "updated_at": now,
+    }, on_conflict="user_id,platform").execute()
+
+
+def get_trading_credentials(user_id: str, platform: str) -> Optional[dict]:
+    """Retrieve and decrypt trading credentials. Returns None if not configured."""
+    client = _get_client()
+    result = client.table("trading_credentials").select("cred_data").eq(
+        "user_id", user_id
+    ).eq("platform", platform).limit(1).execute()
+    if not result.data:
+        return None
+    try:
+        return json.loads(_decrypt(result.data[0]["cred_data"]))
+    except Exception as e:
+        log.error("Failed to decrypt trading credentials for user %s, platform %s: %s", user_id, platform, e)
+        return None
+
+
+def has_trading_credentials(user_id: str) -> dict[str, bool]:
+    """Return which platforms have credentials configured."""
+    client = _get_client()
+    result = client.table("trading_credentials").select("platform").eq("user_id", user_id).execute()
+    platforms = {r["platform"] for r in result.data}
+    return {"polymarket": "polymarket" in platforms, "kalshi": "kalshi" in platforms}
+
+
+def delete_trading_credentials(user_id: str, platform: str) -> None:
+    client = _get_client()
+    client.table("trading_credentials").delete().eq("user_id", user_id).eq("platform", platform).execute()
+
+
+# ── Trading order operations ─────────────────────────────────────────────────
+
+
+def create_trading_order(
+    user_id: str, platform: str, market_slug: str, market_question: str,
+    side: str, action: str, amount: float, price: float,
+) -> int:
+    """Create a pending order record. Returns the order ID."""
+    now = int(time.time())
+    client = _get_client()
+    result = client.table("trading_orders").insert({
+        "user_id": user_id,
+        "platform": platform,
+        "market_slug": market_slug,
+        "market_question": market_question,
+        "side": side,
+        "action": action,
+        "amount": amount,
+        "price": price,
+        "status": "pending",
+        "created_at": now,
+    }).execute()
+    return result.data[0]["id"] if result.data else 0
+
+
+def update_trading_order(order_id: int, **fields) -> None:
+    """Update an order with fill/error info."""
+    client = _get_client()
+    client.table("trading_orders").update(fields).eq("id", order_id).execute()
+
+
+def get_recent_orders(user_id: str, limit: int = 20) -> list[Row]:
+    client = _get_client()
+    result = client.table("trading_orders").select("*").eq(
+        "user_id", user_id
+    ).order("created_at", desc=True).limit(limit).execute()
+    return _rows(result.data)
