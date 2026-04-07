@@ -737,9 +737,16 @@ def resolve_pending_bets(state):
             if len(hist) < 2:
                 continue
 
-            # Find the bet date in history
+            # Find the bet date in history.
+            # Normalize yfinance timestamps to ET dates so they match bet_date
+            # (which is also in ET). yfinance may return UTC or exchange-tz timestamps
+            # depending on the version.
             for i in range(1, len(hist)):
-                hist_date = hist.index[i].strftime("%Y-%m-%d")
+                idx_ts = hist.index[i]
+                if idx_ts.tzinfo is not None:
+                    hist_date = idx_ts.astimezone(_et).strftime("%Y-%m-%d")
+                else:
+                    hist_date = idx_ts.strftime("%Y-%m-%d")
                 if hist_date == bet_date:
                     prev_close = float(hist["Close"].iloc[i - 1])
                     actual_close = float(hist["Close"].iloc[i])
