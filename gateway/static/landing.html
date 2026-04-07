@@ -3,148 +3,72 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Habbig — prediction market dashboards, built for edge</title>
-  <meta name="description" content="A suite of dashboards that decode Polymarket, crypto, stocks, sports, weather, and geopolitics. Pick the signals you want. Pay only for what you use.">
+  <title>Habbig</title>
+  <meta name="description" content="Something is coming.">
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-primary, #0a0b14);
+      color: var(--text-primary, #e2e4ea);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .teaser {
+      text-align: center;
+      padding: 32px;
+    }
+    .teaser-logo {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 700;
+      color: white;
+      margin: 0 auto 40px;
+    }
+    .teaser h1 {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin: 0 0 16px;
+      color: var(--text-primary, #e2e4ea);
+    }
+    .teaser p {
+      font-size: 16px;
+      color: var(--text-muted, #5a5e72);
+      margin: 0 0 40px;
+    }
+    .teaser-login {
+      display: inline-block;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--accent, #6366f1);
+      text-decoration: none;
+      border: 1px solid var(--accent, #6366f1);
+      padding: 10px 24px;
+      border-radius: 8px;
+      transition: background 0.15s;
+    }
+    .teaser-login:hover {
+      background: rgba(99, 102, 241, 0.08);
+    }
+  </style>
 </head>
 <body class="landing-body">
-  <header class="landing-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
-    </div>
-    <nav class="landing-nav">
-      <a href="#features">Dashboards</a>
-      <a href="/pricing">Pricing</a>
-      <a href="/gate" class="client-login-link">Sign In</a>
-      <button class="mobile-menu-toggle" onclick="document.getElementById('mobile-nav').classList.add('open')" aria-label="Open menu">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-      </button>
-    </nav>
-  </header>
-
-  <!-- Mobile menu -->
-  <div id="mobile-nav" class="landing-nav-mobile-overlay" onclick="if(event.target===this)this.classList.remove('open')">
-    <div class="landing-nav-mobile-panel">
-      <button class="mobile-close-btn" onclick="document.getElementById('mobile-nav').classList.remove('open')" aria-label="Close menu">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
-      <a href="#features" onclick="document.getElementById('mobile-nav').classList.remove('open')">Dashboards</a>
-      <a href="/pricing" onclick="document.getElementById('mobile-nav').classList.remove('open')">Pricing</a>
-      <a href="/gate" onclick="document.getElementById('mobile-nav').classList.remove('open')">Sign In</a>
-    </div>
+  <div class="teaser">
+    <div class="teaser-logo">H</div>
+    <h1>Something is coming.</h1>
+    <p>Stay tuned.</p>
+    <a href="/gate" class="teaser-login">Client Login</a>
   </div>
-
-  <section class="landing-hero">
-    <div class="landing-hero-inner">
-      <div class="landing-eyebrow">{{ dashboard_count }} dashboards · one login · cancel anytime</div>
-      <h1 class="landing-headline">
-        The signals<br>
-        <span class="landing-gradient">markets don't show you.</span>
-      </h1>
-      <p class="landing-sub">
-        Habbig turns raw Polymarket, crypto, stock, weather and geopolitical data
-        into focused dashboards you actually want to look at. Subscribe to the
-        ones that sharpen your edge. Ignore the rest.
-      </p>
-      <div class="landing-cta-row">
-        <a href="/pricing" class="landing-primary-cta">Get Started</a>
-        <a href="/gate" class="landing-secondary-cta">Log In</a>
-      </div>
-      <div class="landing-trust">
-        <div class="landing-trust-dot"></div>
-        No free tier gimmicks. No ads. No data reselling.
-      </div>
-    </div>
-  </section>
-
-  <section class="landing-section" id="features">
-    <div class="landing-section-head">
-      <div class="landing-eyebrow-sm">What's inside</div>
-      <h2 class="landing-section-title">Pick and mix dashboards</h2>
-      <p class="landing-section-sub">
-        Every card is a separate subscription. Start with one, add more when
-        you want them, cancel individually.
-      </p>
-    </div>
-    <div class="landing-dash-grid">
-      {{ dashboard_cards }}
-    </div>
-  </section>
-
-  <section class="landing-section landing-section-dark" id="pricing">
-    <div class="landing-section-head">
-      <div class="landing-eyebrow-sm">Pricing</div>
-      <h2 class="landing-section-title">Level up your Polymarket trading today</h2>
-    </div>
-    <div class="landing-pricing-grid" style="grid-template-columns:repeat(3,1fr);gap:20px">
-      <!-- Trader -->
-      <div class="landing-pricing-card" style="display:flex;flex-direction:column">
-        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Trader</div>
-        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For active traders getting started with signal intelligence</div>
-        <div style="font-size:36px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px"><span style="font-size:18px">&pound;</span>49<span style="font-size:14px;font-weight:400;color:var(--text-muted)">/mo</span></div>
-        <div style="height:1px;background:var(--border);margin:16px 0"></div>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">30-day data window &middot; Top 10 markets &middot; Global credibility scores &middot; Best bets (top 5) &middot; Basic prediction feed</div>
-        <a href="/subscribe?plan=trader" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(99,102,241,0.08)'" onmouseleave="this.style.background='transparent'">Get Started</a>
-      </div>
-      <!-- Pro -->
-      <div class="landing-pricing-card" style="display:flex;flex-direction:column;border-color:var(--accent);box-shadow:0 0 20px rgba(99,102,241,0.08);position:relative">
-        <div style="position:absolute;top:-11px;right:16px;background:var(--accent);color:white;font-size:11px;font-weight:600;padding:4px 12px;border-radius:16px">Most Popular</div>
-        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Pro</div>
-        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For serious traders who want the full edge</div>
-        <div style="font-size:36px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px"><span style="font-size:18px">&pound;</span>149<span style="font-size:14px;font-weight:400;color:var(--text-muted)">/mo</span></div>
-        <div style="height:1px;background:var(--border);margin:16px 0"></div>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">6-month data window &middot; Unlimited markets &middot; Full credibility breakdown &middot; Best bets (top 10) &middot; Source spectrum &middot; Push notifications &middot; Priority access</div>
-        <a href="/subscribe?plan=pro" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:white;background:linear-gradient(135deg,#6366f1,#8b5cf6);text-decoration:none;margin-top:20px;transition:transform 0.1s" onmouseenter="this.style.transform='translateY(-1px)'" onmouseleave="this.style.transform='none'">Get Started</a>
-      </div>
-      <!-- Enterprise -->
-      <div class="landing-pricing-card" style="display:flex;flex-direction:column">
-        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Enterprise</div>
-        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For funds, institutions, and custom use cases</div>
-        <div style="font-size:24px;font-weight:700;margin-bottom:4px">Custom pricing</div>
-        <div style="height:1px;background:var(--border);margin:16px 0"></div>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">Everything in Pro &middot; Full historical data &middot; API access &middot; Custom integrations &middot; Dedicated support</div>
-        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(99,102,241,0.08)'" onmouseleave="this.style.background='transparent'">Contact Us</a>
-      </div>
-    </div>
-    <div style="text-align:center;margin-top:32px">
-      <a href="/pricing" style="font-size:14px;font-weight:500;color:var(--accent);text-decoration:none">See full feature comparison &rarr;</a>
-    </div>
-  </section>
-
-  <footer style="max-width:1200px;margin:0 auto;padding:60px 32px 40px;border-top:1px solid var(--border)">
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:32px;margin-bottom:40px">
-      <div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px"><div class="gw-brand-logo" style="width:28px;height:28px;font-size:12px">H</div><span style="font-weight:600;font-size:15px">Habbig</span></div>
-        <p style="font-size:12px;color:var(--text-muted);line-height:1.6">Prediction market dashboards, built for edge.</p>
-      </div>
-      <div>
-        <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px">Product</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <a href="#features" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Dashboards</a>
-          <a href="/pricing" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Pricing</a>
-          <a href="/enquire" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Enquire</a>
-        </div>
-      </div>
-      <div>
-        <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px">Account</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <a href="/gate" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Sign In</a>
-          <a href="/subscribe" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Subscribe</a>
-          <a href="/support" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Support</a>
-        </div>
-      </div>
-      <div>
-        <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px">Legal</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <a href="/impressum" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Impressum</a>
-        </div>
-      </div>
-    </div>
-    <div style="border-top:1px solid var(--border);padding-top:20px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:12px;color:var(--text-muted)">&copy; Habbig. All rights reserved.</span>
-      <a href="/support" style="font-size:12px;color:var(--text-muted);text-decoration:none">Support</a>
-    </div>
-  </footer>
 </body>
 </html>

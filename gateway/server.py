@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
@@ -263,10 +264,27 @@ db.init_db()
 HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
 
+_cleanup_task: Optional[asyncio.Task] = None
+
+
+async def _periodic_cleanup():
+    """Purge expired sessions and password resets every 10 minutes."""
+    while True:
+        await asyncio.sleep(600)
+        try:
+            sessions_purged = db.purge_expired_sessions()
+            resets_purged = db.purge_expired_resets()
+            if sessions_purged or resets_purged:
+                log.info("Cleanup: purged %d expired sessions, %d expired resets", sessions_purged, resets_purged)
+        except Exception as e:
+            log.warning("Cleanup error: %s", e)
+
+
 @app.on_event("startup")
 async def _startup():
-    global HTTP_CLIENT
+    global HTTP_CLIENT, _cleanup_task
     HTTP_CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
+    _cleanup_task = asyncio.create_task(_periodic_cleanup())
     mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
     log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
     log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
@@ -283,6 +301,8 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    if _cleanup_task:
+        _cleanup_task.cancel()
     if HTTP_CLIENT:
         await HTTP_CLIENT.aclose()
 
@@ -294,21 +314,24 @@ if STATIC_DIR.exists():
 
 # ── Security headers middleware ──────────────────────────────────────────────
 
-from starlette.middleware.base import BaseHTTPMiddleware
 from collections import defaultdict
 
-SECURITY_HEADERS = {
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "X-XSS-Protection": "1; mode=block",
-    "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
-    "Cross-Origin-Opener-Policy": "same-origin",
-}
-if IS_PRODUCTION:
-    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+# ── Security headers (raw ASGI middleware — faster than BaseHTTPMiddleware) ──
 
-CSP = "; ".join([
+_SECURITY_HEADERS_RAW: list[tuple[bytes, bytes]] = [
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"x-xss-protection", b"1; mode=block"),
+    (b"referrer-policy", b"strict-origin-when-cross-origin"),
+    (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=()"),
+    (b"cross-origin-opener-policy", b"same-origin"),
+]
+if IS_PRODUCTION:
+    _SECURITY_HEADERS_RAW.append(
+        (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
+    )
+
+_CSP_VALUE = "; ".join([
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
@@ -319,16 +342,29 @@ CSP = "; ".join([
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self' https://checkout.stripe.com",
-])
+]).encode()
+_SECURITY_HEADERS_RAW.append((b"content-security-policy", _CSP_VALUE))
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        for header, value in SECURITY_HEADERS.items():
-            response.headers[header] = value
-        response.headers["Content-Security-Policy"] = CSP
-        return response
+class SecurityHeadersMiddleware:
+    """Pure ASGI middleware — avoids the overhead of Starlette's BaseHTTPMiddleware."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.extend(_SECURITY_HEADERS_RAW)
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -336,7 +372,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # ── Rate limiting ────────────────────────────────────────────────────────────
 
-_rate_store: dict[str, list[float]] = defaultdict(list)
+_rate_store: dict[str, deque] = defaultdict(deque)
 _RATE_WINDOW = 300
 _RATE_MAX_LOGIN = 10
 _RATE_MAX_SIGNUP = 5
@@ -363,7 +399,7 @@ def _is_rate_limited(ip: str, endpoint: str, limit: int) -> bool:
     timestamps = _rate_store[key]
     cutoff = now - _RATE_WINDOW
     while timestamps and timestamps[0] < cutoff:
-        timestamps.pop(0)
+        timestamps.popleft()
     if len(timestamps) >= limit:
         return True
     timestamps.append(now)
@@ -453,6 +489,47 @@ def ensure_dev_user() -> int:
     return user_id
 
 
+# ── Session cache ──────────────────────────────────────────────────────────────
+# Avoids a DB round-trip on every proxied request.  Entries expire after 60 s
+# so permission changes (suspend, role update) propagate within a minute.
+
+_SESSION_CACHE: dict[str, tuple[float, dict]] = {}
+_SESSION_CACHE_TTL = 60  # seconds
+_SESSION_CACHE_MAX = 500
+
+
+def _get_cached_session(token: str) -> Optional[dict]:
+    """Look up a session token, returning a cached result when possible."""
+    now = time.time()
+    entry = _SESSION_CACHE.get(token)
+    if entry and now - entry[0] < _SESSION_CACHE_TTL:
+        return entry[1]
+    session = db.get_session(token)
+    if not session:
+        _SESSION_CACHE.pop(token, None)
+        return None
+    admin_level = session["is_admin"] or 0
+    result = {
+        "user_id": session["user_id"],
+        "username": session["username"],
+        "email": session["email"],
+        "is_admin": bool(admin_level),
+        "is_super_admin": admin_level >= 2,
+        "admin_level": admin_level,
+    }
+    # Evict oldest entries if cache is full
+    if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX:
+        oldest_key = min(_SESSION_CACHE, key=lambda k: _SESSION_CACHE[k][0])
+        del _SESSION_CACHE[oldest_key]
+    _SESSION_CACHE[token] = (now, result)
+    return result
+
+
+def invalidate_session_cache(token: str) -> None:
+    """Remove a token from the session cache (call on logout/suspend)."""
+    _SESSION_CACHE.pop(token, None)
+
+
 def current_user(request: Request) -> Optional[dict]:
     """Return a dict describing the current session user, or None.
 
@@ -462,17 +539,9 @@ def current_user(request: Request) -> Optional[dict]:
     """
     token = request.cookies.get(COOKIE_NAME)
     if token:
-        session = db.get_session(token)
-        if session:
-            admin_level = session["is_admin"] or 0
-            return {
-                "user_id": session["user_id"],
-                "username": session["username"],
-                "email": session["email"],
-                "is_admin": bool(admin_level),
-                "is_super_admin": admin_level >= 2,
-                "admin_level": admin_level,
-            }
+        cached = _get_cached_session(token)
+        if cached:
+            return cached
     # Dev bypass: if this is a localhost request, return a synthetic "logged in"
     # dict for the dev user so the UI is usable without a real signup flow.
     if is_local_host(request):
@@ -808,6 +877,7 @@ async def logout(request: Request):
     token = request.cookies.get(COOKIE_NAME)
     if token:
         db.delete_session(token)
+        invalidate_session_cache(token)
     response = RedirectResponse("/gate", status_code=302)
     clear_session_cookie(response, request)
     return response
@@ -832,8 +902,8 @@ async def my_dashboards(request: Request):
     total_monthly = 0
     for key, cfg in DASHBOARDS.items():
         if _is_sub_active(subs.get(key), is_admin_user) or any_active_sub:
-            sub_record = subs.get(key, {})
-            plan = sub_record.get("plan", "")
+            sub_record = subs.get(key)
+            plan = sub_record["plan"] if sub_record else ""
             if "annual" in plan:
                 price_label = f"${cfg['annual_cents']/100:.2f}/yr"
                 total_monthly += cfg["annual_cents"] / 12
@@ -2915,9 +2985,15 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
 
 if __name__ == "__main__":
     import uvicorn
+    # Use multiple workers in production to utilise all CPU cores.
+    # SQLite WAL mode supports concurrent readers across processes.
+    # Cap at 4 — diminishing returns beyond that for a reverse proxy
+    # with a lightweight SQLite backend.
+    workers = min(os.cpu_count() or 1, 4) if IS_PRODUCTION else 1
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
         port=GATEWAY_PORT,
         log_level="info",
+        workers=workers,
     )

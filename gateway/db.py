@@ -9,6 +9,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -126,16 +127,41 @@ CREATE INDEX IF NOT EXISTS idx_trading_orders_user ON trading_orders(user_id);
 """
 
 
-@contextmanager
-def conn():
-    c = sqlite3.connect(DB_PATH)
+def _configure_connection(c: sqlite3.Connection) -> None:
+    """Apply performance pragmas to a fresh connection."""
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys = ON")
+    c.execute("PRAGMA journal_mode = WAL")
+    c.execute("PRAGMA synchronous = NORMAL")
+    c.execute("PRAGMA cache_size = -8000")  # 8 MB page cache
+    c.execute("PRAGMA busy_timeout = 5000")  # wait up to 5 s on lock
+
+
+# Thread-local connection pool: one persistent connection per thread instead
+# of opening and closing on every query.  Eliminates ~3-5 connect/close cycles
+# per proxied request.
+_local = threading.local()
+
+
+def _get_conn() -> sqlite3.Connection:
+    """Return the thread-local SQLite connection, creating it if needed."""
+    c = getattr(_local, "conn", None)
+    if c is None:
+        c = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _configure_connection(c)
+        _local.conn = c
+    return c
+
+
+@contextmanager
+def conn():
+    c = _get_conn()
     try:
         yield c
         c.commit()
-    finally:
-        c.close()
+    except Exception:
+        c.rollback()
+        raise
 
 
 def init_db() -> None:
@@ -344,17 +370,15 @@ def list_subscriptions(user_id: int) -> list[sqlite3.Row]:
 def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
     now = int(time.time())
     with conn() as c:
-        # Admins bypass subscription checks for all dashboards.
-        admin_row = c.execute(
-            "SELECT is_admin FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-        if admin_row and admin_row[0]:
-            return True
+        # Single query: admin bypass OR active subscription.
         row = c.execute(
-            "SELECT id FROM subscriptions "
+            "SELECT 1 FROM users WHERE id = ? AND is_admin > 0 "
+            "UNION ALL "
+            "SELECT 1 FROM subscriptions "
             "WHERE user_id = ? AND dashboard_key = ? AND status = 'active' "
-            "AND (expires_at IS NULL OR expires_at > ?)",
-            (user_id, dashboard_key, now),
+            "AND (expires_at IS NULL OR expires_at > ?) "
+            "LIMIT 1",
+            (user_id, user_id, dashboard_key, now),
         ).fetchone()
     return row is not None
 
