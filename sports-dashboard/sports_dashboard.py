@@ -130,20 +130,25 @@ _db_lock = threading.Lock()
 
 @contextmanager
 def _get_db():
-    """Yield a sqlite3 connection with WAL mode and row-factory."""
-    with _db_lock:
-        conn = sqlite3.connect(str(_DB_PATH), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
+    """Yield a sqlite3 connection with WAL mode and row-factory.
+
+    WAL mode allows concurrent readers, so we only hold the lock during
+    writes (commit/rollback), not for the entire connection lifetime.
+    """
+    conn = sqlite3.connect(str(_DB_PATH), timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        with _db_lock:
             conn.commit()
-        except Exception:
+    except Exception:
+        with _db_lock:
             conn.rollback()
-            raise
-        finally:
-            conn.close()
+        raise
+    finally:
+        conn.close()
 
 
 def _init_db():

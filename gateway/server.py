@@ -1812,10 +1812,13 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
                 msg["From"] = smtp_user
                 msg["To"] = email
 
-                with smtplib.SMTP(smtp_host, smtp_port) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                    server.sendmail(smtp_user, [email], msg.as_string())
+                def _send():
+                    with smtplib.SMTP(smtp_host, smtp_port) as server:
+                        server.starttls()
+                        server.login(smtp_user, smtp_pass)
+                        server.sendmail(smtp_user, [email], msg.as_string())
+
+                await asyncio.to_thread(_send)
                 log.info("Password reset email sent to %s", email)
             except Exception as exc:
                 log.error("Failed to send password reset email: %s", exc)
@@ -1948,11 +1951,18 @@ async def api_enquire(request: Request):
             msg["From"] = smtp_user or enquiry_email
             msg["To"] = enquiry_email
 
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                if smtp_user and smtp_pass:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                server.sendmail(msg["From"], [enquiry_email], msg.as_string())
+            _from = msg["From"]
+            _to = enquiry_email
+            _msg_str = msg.as_string()
+
+            def _send_enquiry():
+                with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                    if smtp_user and smtp_pass:
+                        srv.starttls()
+                        srv.login(smtp_user, smtp_pass)
+                    srv.sendmail(_from, [_to], _msg_str)
+
+            await asyncio.to_thread(_send_enquiry)
             log.info("Enquiry notification email sent to %s", enquiry_email)
         except Exception as exc:
             log.error("Failed to send enquiry email: %s", exc)
@@ -2802,7 +2812,7 @@ async def _execute_polymarket_trade(
             token_id=token_id,
         )
 
-        resp = client.create_and_post_order(order_args, OrderType.GTC)
+        resp = await asyncio.to_thread(client.create_and_post_order, order_args, OrderType.GTC)
         if resp and resp.get("success"):
             return {
                 "status": "submitted",

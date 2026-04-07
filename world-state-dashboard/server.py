@@ -40,7 +40,11 @@ def _strip_html(text: str) -> str:
 
 def _parse_date(pub_date: str):
     try:
-        return parsedate_to_datetime(pub_date)
+        dt = parsedate_to_datetime(pub_date)
+        # Ensure timezone-aware for consistent sorting
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except Exception:
         return datetime.min.replace(tzinfo=timezone.utc)
 

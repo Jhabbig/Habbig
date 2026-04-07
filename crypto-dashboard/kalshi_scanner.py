@@ -37,6 +37,16 @@ def _get(endpoint, params=None):
     return None
 
 
+def _cleanup_old_cache_files(prefix: str, keep: int = 3):
+    """Remove old cache files, keeping only the most recent *keep*."""
+    files = sorted(CACHE_DIR.glob(f"{prefix}_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for f in files[keep:]:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
 def fetch_markets(limit=200, status="open"):
     """Fetch active Kalshi markets."""
     CACHE_DIR.mkdir(exist_ok=True)
@@ -115,6 +125,7 @@ def fetch_markets(limit=200, status="open"):
     # Cache
     with open(cache_file, "w") as f:
         json.dump(processed, f)
+    _cleanup_old_cache_files("kalshi_markets")
 
     return processed
 
@@ -169,6 +180,7 @@ def fetch_events(limit=100, status="open"):
 
     with open(cache_file, "w") as f:
         json.dump(events, f)
+    _cleanup_old_cache_files("kalshi_events")
 
     print(f"  [Kalshi] Fetched {len(events)} events")
     return events

@@ -151,20 +151,26 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 @contextmanager
 def _get_conn():
-    """Yield a SQLite connection with WAL mode and row_factory."""
-    with _db_lock:
-        conn = sqlite3.connect(str(DB_PATH), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
+    """Yield a SQLite connection with WAL mode and row_factory.
+
+    WAL mode supports concurrent readers, so the lock is only held during
+    writes (commit/rollback) to avoid blocking read-heavy web requests
+    behind the snapshot thread.
+    """
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        with _db_lock:
             conn.commit()
-        except Exception:
+    except Exception:
+        with _db_lock:
             conn.rollback()
-            raise
-        finally:
-            conn.close()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db() -> None:

@@ -1692,11 +1692,12 @@ function buildNewsRows() {
   if (badge) badge.textContent = data.news.length;
 
   return data.news.map(n => {
-    const safeTitle = (n.title || '').replace(/"/g, '&quot;');
-    const safeDesc = (n.description || '').replace(/"/g, '&quot;');
-    return `<a class="news-row" href="${n.link}" target="_blank" rel="noopener noreferrer">
+    const safeTitle = escapeHtml(n.title);
+    const safeDesc = escapeHtml(n.description);
+    const safeLink = escapeHtml(n.link);
+    return `<a class="news-row" href="${safeLink}" target="_blank" rel="noopener noreferrer">
       <div class="news-meta">
-        <span class="news-source">${n.source}</span>
+        <span class="news-source">${escapeHtml(n.source)}</span>
         <span class="news-time">${formatNewsTime(n.pub_date)}</span>
       </div>
       <div class="news-title">${safeTitle}</div>
@@ -1736,7 +1737,7 @@ function buildPolyRows() {
     const endStr = formatEndDate(m.end_date);
     const outcomeClass = (m.top_outcome || '').toLowerCase() === 'no' ? 'no' : '';
     const url = m.slug ? `https://polymarket.com/event/${m.slug}` : 'https://polymarket.com';
-    const safeQ = (m.question || '').replace(/"/g, '&quot;');
+    const safeQ = escapeHtml(m.question);
     return `<a class="poly-row" href="${url}" target="_blank" rel="noopener noreferrer">
       <div class="poly-gauge">
         <svg class="poly-gauge-svg" viewBox="0 0 48 48">
@@ -1757,6 +1758,11 @@ function buildPolyRows() {
       <span class="poly-outcome ${outcomeClass}">${m.top_outcome || 'Yes'}</span>
     </a>`;
   }).join('');
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function formatVolume(v) {

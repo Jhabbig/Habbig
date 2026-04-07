@@ -228,11 +228,11 @@ async def login_page(request: Request, error: str = "", msg: str = ""):
 
 @app.post("/login")
 async def login_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), password: str = Form(""), start_platform: str = Form("polymarket")):
-    # Record attempt FIRST, then check rate limit (prevents off-by-one)
     client_ip = request.client.host if request.client else "unknown"
-    _login_attempts[client_ip].append(time.time())
     if _check_rate_limit(client_ip):
         return templates.TemplateResponse("login.html", {"request": request, "error": "Too many login attempts. Try again in 5 minutes."})
+    # Record attempt AFTER the check so the limit is exact
+    _login_attempts[client_ip].append(time.time())
 
     result = await session.exec(select(User).where(User.username == username))
     user = result.first()
@@ -244,13 +244,6 @@ async def login_submit(request: Request, session: AsyncSession = Depends(get_ses
             user.preferred_platform = start_platform
         session.add(user)
         await session.commit()
-        # Successful login — remove the recorded attempt
-        if client_ip in _login_attempts:
-            attempts = _login_attempts[client_ip]
-            if attempts:
-                attempts.pop()
-            if not attempts:
-                del _login_attempts[client_ip]
         token = _make_session_token()
         _active_sessions[token] = (username, time.time())
         resp = RedirectResponse("/", status_code=302)

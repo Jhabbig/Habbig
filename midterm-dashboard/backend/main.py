@@ -90,8 +90,10 @@ async def require_auth(request: Request) -> dict:
     subscription. Trust is proved by a shared-secret header
     (``X-Gateway-Secret``).
     """
+    import hmac
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
-    if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
+    _provided = request.headers.get("x-gateway-secret", "")
+    if _sso_secret and hmac.compare_digest(_provided, _sso_secret):
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
         gw_tier = request.headers.get("x-gateway-user-tier", "free")
@@ -134,17 +136,16 @@ def _check_rate_limit(ip: str, tier: str) -> bool:
     cutoff = now - window
     state.rate_limit_store[ip] = [t for t in state.rate_limit_store[ip] if t > cutoff]
 
-    # Check rate limit BEFORE recording this request
-    if len(state.rate_limit_store[ip]) >= limit:
+    # Clean up empty keys to prevent unbounded memory growth from blocked IPs
+    if not state.rate_limit_store[ip]:
+        del state.rate_limit_store[ip]
+        # After cleanup the list is empty, so this request is within limits —
+        # fall through to the append below.
+    elif len(state.rate_limit_store[ip]) >= limit:
         return False
 
     # Only record the timestamp if the request is allowed
     state.rate_limit_store[ip].append(now)
-
-    # Remove empty keys to prevent unbounded memory growth
-    if not state.rate_limit_store[ip]:
-        del state.rate_limit_store[ip]
-
     return True
 
 
@@ -364,8 +365,10 @@ async def security_headers_middleware(request: Request, call_next):
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     # Only trust the tier header if the gateway secret is valid
+    import hmac
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
-    if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
+    _provided = request.headers.get("x-gateway-secret", "")
+    if _sso_secret and hmac.compare_digest(_provided, _sso_secret):
         tier = request.headers.get("x-gateway-user-tier", "free")
     else:
         tier = "free"

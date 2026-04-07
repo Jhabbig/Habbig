@@ -291,7 +291,8 @@ async def price_updater():
                                         await client_ws.send_text(ws_msg)
                                     except:
                                         dead.add(client_ws)
-                                connected_ws -= dead
+                                for d in dead:
+                                    connected_ws.discard(d)
                                 pending_update = {}
                                 last_push = now
 
@@ -419,7 +420,8 @@ async def window_refresher():
                             await ws.send_text(msg)
                         except:
                             dead.add(ws)
-                    connected_ws -= dead
+                    for d in dead:
+                        connected_ws.discard(d)
 
                 # Push high-confidence signal alerts (browser + email)
                 if preds:
@@ -651,20 +653,16 @@ async def root(request: Request):
             "chart_24h": chart_24h,
             "chart_7d": chart_7d,
         }
-    # Suspicious trades: premium only
+    # Suspicious trades: premium only — use the background monitor's cache
+    # instead of re-running the scanner on every page load.
     sus_data = None
-    if _is_premium(request):
-        try:
-            from suspicious_trades import run_scanner
-            sus_data = await asyncio.to_thread(run_scanner)
-            if sus_data and sus_data.get("suspicious_trades"):
-                # Show trades with meaningful potential profit or high suspicion score
-                sus_data["suspicious_trades"] = [
-                    t for t in sus_data["suspicious_trades"]
-                    if t.get("potential_profit", 0) >= 1000 or t.get("score", 0) >= 40
-                ]
-        except:
-            sus_data = None
+    if _is_premium(request) and last_sus_scan:
+        sus_data = dict(last_sus_scan)
+        if sus_data.get("suspicious_trades"):
+            sus_data["suspicious_trades"] = [
+                t for t in sus_data["suspicious_trades"]
+                if t.get("potential_profit", 0) >= 1000 or t.get("score", 0) >= 40
+            ]
     html = generate_dashboard(all_results, suspicious_data=sus_data)
 
     # Inject nav bar with user info
