@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 import statistics
 import time
 from datetime import datetime, timezone, timedelta
@@ -20,7 +21,9 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
-from supabase import create_client, Client
+import sqlite3
+import threading
+from contextlib import contextmanager
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -117,47 +120,157 @@ SPORT_CATEGORIES = {
 ESPORTS_KEYS = {k for k in SPORTS if k.startswith("esports_")}
 
 # ---------------------------------------------------------------------------
-# Supabase Database
+# SQLite Database
 # ---------------------------------------------------------------------------
 log = logging.getLogger("sports_dashboard")
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-
-_supabase_client: Optional[Client] = None
+_DB_PATH = Path(__file__).parent / "data.db"
+_db_lock = threading.Lock()
 
 
-def _get_sb() -> Client:
-    """Get or create the Supabase client (service role, bypasses RLS)."""
-    global _supabase_client
-    if _supabase_client is None:
-        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-            raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set. "
-                "Create a project at https://supabase.com and set these env vars."
-            )
-        _supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    return _supabase_client
+@contextmanager
+def _get_db():
+    """Yield a sqlite3 connection with WAL mode and row-factory."""
+    with _db_lock:
+        conn = sqlite3.connect(str(_DB_PATH), timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def _init_db():
+    """Create all tables if they don't exist."""
+    with _get_db() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                email TEXT,
+                username TEXT,
+                is_admin INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS sports_user_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                detail TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS sports_user_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT UNIQUE NOT NULL,
+                default_sport TEXT DEFAULT 'basketball_nba',
+                divergence_threshold REAL DEFAULT 5.0,
+                notifications_enabled INTEGER DEFAULT 1,
+                theme TEXT DEFAULT 'dark'
+            );
+            CREATE TABLE IF NOT EXISTS sports_edge_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sport TEXT,
+                home_team TEXT,
+                away_team TEXT,
+                outcome TEXT,
+                sharp_prob REAL,
+                poly_prob REAL,
+                divergence REAL,
+                kelly_pct REAL,
+                confidence_score REAL,
+                resolved INTEGER DEFAULT 0,
+                resolution TEXT DEFAULT '',
+                detected_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS sports_market_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sport TEXT,
+                event_name TEXT,
+                outcome TEXT,
+                book_prob REAL,
+                poly_prob REAL,
+                kalshi_prob REAL,
+                divergence REAL,
+                poly_volume REAL,
+                kalshi_volume REAL,
+                snapshot_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS sports_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                market_name TEXT NOT NULL,
+                outcome TEXT DEFAULT '',
+                entry_price REAL NOT NULL,
+                amount REAL NOT NULL,
+                exit_price REAL,
+                pnl REAL,
+                status TEXT DEFAULT 'open',
+                resolved_at TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS sports_watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                market_key TEXT NOT NULL,
+                home_team TEXT DEFAULT '',
+                away_team TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(user_id, market_key)
+            );
+            CREATE TABLE IF NOT EXISTS sports_user_layout (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT UNIQUE NOT NULL,
+                visible_widgets TEXT DEFAULT '["stats","top_opps","hero","events"]',
+                visible_data_points TEXT DEFAULT '[]',
+                card_expanded_default INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS sports_historical_markets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sport TEXT,
+                event_title TEXT,
+                market_question TEXT,
+                outcome TEXT,
+                final_price REAL,
+                volume REAL,
+                start_date TEXT,
+                end_date TEXT,
+                resolution TEXT,
+                source TEXT,
+                slug TEXT,
+                UNIQUE(source, slug, outcome)
+            );
+        """)
+
+
+_init_db()
 
 
 def log_activity(user_id: str, action: str, detail: str = ""):
     """Log a user activity event to sports_user_activity."""
     try:
-        _get_sb().table("sports_user_activity").insert({
-            "user_id": user_id,
-            "action": action,
-            "detail": detail,
-        }).execute()
+        with _get_db() as conn:
+            conn.execute(
+                "INSERT INTO sports_user_activity (user_id, action, detail) VALUES (?, ?, ?)",
+                (user_id, action, detail),
+            )
     except Exception:
         pass
 
 
 def get_user_settings(user_id: str) -> dict:
-    """Fetch sports-specific settings for a user from Supabase."""
+    """Fetch sports-specific settings for a user from SQLite."""
     try:
-        result = _get_sb().table("sports_user_settings").select("*").eq("user_id", user_id).limit(1).execute()
-        if result.data:
-            return result.data[0]
+        with _get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM sports_user_settings WHERE user_id = ? LIMIT 1", (user_id,)
+            ).fetchone()
+            if row:
+                return dict(row)
     except Exception:
         pass
     return {"user_id": user_id, "default_sport": "basketball_nba", "divergence_threshold": 5.0, "notifications_enabled": 1, "theme": "dark"}
@@ -174,25 +287,28 @@ def get_current_user(request: Request) -> dict | None:
     verifying the user's session and subscription. Trust is proved by a
     shared-secret header (``X-Gateway-Secret``).
 
-    User IDs are now UUID strings from Supabase Auth. The gateway handles
-    all authentication; this dashboard just trusts the forwarded headers.
+    User IDs are now UUID strings from the gateway auth system. The gateway
+    handles all authentication; this dashboard just trusts the forwarded headers.
     """
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
     if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
         if gw_id and gw_email:
-            # Look up profile from Supabase for admin status etc.
+            # Look up profile from local SQLite for admin status etc.
             try:
-                result = _get_sb().table("profiles").select("*").eq("id", gw_id).limit(1).execute()
-                if result.data:
-                    profile = result.data[0]
-                    return {
-                        "id": profile["id"],
-                        "email": profile.get("email", gw_email),
-                        "username": profile.get("username", gw_email.split("@")[0]),
-                        "is_admin": profile.get("is_admin", 0),
-                    }
+                with _get_db() as conn:
+                    row = conn.execute(
+                        "SELECT * FROM profiles WHERE id = ? LIMIT 1", (gw_id,)
+                    ).fetchone()
+                    if row:
+                        profile = dict(row)
+                        return {
+                            "id": profile["id"],
+                            "email": profile.get("email", gw_email),
+                            "username": profile.get("username", gw_email.split("@")[0]),
+                            "is_admin": profile.get("is_admin", 0),
+                        }
             except Exception:
                 pass
             # Fallback: gateway vouched for them, synthesize minimal record
@@ -214,13 +330,21 @@ def get_current_user(request: Request) -> dict | None:
 app = FastAPI(title="Sports Betting Dashboard")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://192.168.178.160:8888", "http://localhost:8888", "https://*.trycloudflare.com"],
+    allow_origins=["http://192.168.178.160:8888", "http://localhost:8888"],
+    allow_origin_regex=r"https://.*\.trycloudflare\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # In-memory state
+# NOTE: dashboard_data holds data for a single sport at a time (the
+# "active_sport"). When multiple users are connected and one switches
+# the sport, the data_updater re-fetches for the new sport and all
+# clients see that sport's data. The /api/data and /api/sports
+# endpoints accept an optional ?sport= query parameter so clients can
+# detect when the server-side data doesn't match their selected sport
+# (e.g. another user switched it) and display a loading state.
 dashboard_data = {
     "comparisons": [],
     "signals": [],
@@ -488,11 +612,18 @@ SPORT_POLY_FILTERS = {
 }
 
 
-_http_session = requests.Session()
+def _make_http_session() -> requests.Session:
+    """Create a new requests.Session for thread-safe HTTP calls.
+
+    Each background thread should call this to get its own session rather
+    than sharing a global one (requests.Session is not thread-safe).
+    """
+    return requests.Session()
 
 
 def fetch_polymarket_sports() -> list[dict]:
     """Fetch sports events from Polymarket Gamma API."""
+    session = _make_http_session()
     all_events = []
     for offset in range(0, 500, 100):
         url = f"{GAMMA_API_HOST}/events"
@@ -504,7 +635,7 @@ def fetch_polymarket_sports() -> list[dict]:
             "tag": "sports",
         }
         try:
-            resp = _http_session.get(url, params=params, timeout=30)
+            resp = session.get(url, params=params, timeout=30)
             resp.raise_for_status()
             events = resp.json()
         except Exception:
@@ -610,6 +741,7 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
     if not series_list:
         return []
 
+    session = _make_http_session()
     all_markets: list[dict] = []
     for series in series_list:
         cursor = None
@@ -618,7 +750,7 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
             if cursor:
                 params["cursor"] = cursor
             try:
-                resp = _http_session.get(f"{KALSHI_API_HOST}/markets", params=params, timeout=30)
+                resp = session.get(f"{KALSHI_API_HOST}/markets", params=params, timeout=30)
                 resp.raise_for_status()
                 body = resp.json()
             except Exception as e:
@@ -1232,57 +1364,52 @@ def compare_outrights(outright_odds: dict, poly_markets: list[dict]) -> list[dic
 
 def _save_edge_history(sport: str, comparisons: list[dict]):
     """Save edge signals to sports_edge_history table, deduplicating within 24h."""
-    sb = _get_sb()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    for comp in comparisons:
-        for oc in comp.get("outcomes", []):
-            if oc.get("abs_divergence", 0) < 1:
-                continue  # Only track meaningful edges
-            home = comp.get("home_team", "")
-            outcome = oc.get("outcome", "")
-            # Check for duplicate within 24h
-            existing = sb.table("sports_edge_history").select("id").eq(
-                "sport", sport
-            ).eq("home_team", home).eq("outcome", outcome).gte(
-                "detected_at", cutoff
-            ).limit(1).execute()
-            if existing.data:
-                continue
-            sb.table("sports_edge_history").insert({
-                "sport": sport,
-                "home_team": home,
-                "away_team": comp.get("away_team", ""),
-                "outcome": outcome,
-                "sharp_prob": oc.get("sharp_prob"),
-                "poly_prob": oc.get("poly_prob"),
-                "divergence": oc.get("divergence"),
-                "kelly_pct": oc.get("kelly_pct"),
-                "confidence_score": comp.get("confidence_score"),
-            }).execute()
+    with _get_db() as conn:
+        for comp in comparisons:
+            for oc in comp.get("outcomes", []):
+                if oc.get("abs_divergence", 0) < 1:
+                    continue  # Only track meaningful edges
+                home = comp.get("home_team", "")
+                outcome = oc.get("outcome", "")
+                # Check for duplicate within 24h
+                existing = conn.execute(
+                    "SELECT id FROM sports_edge_history WHERE sport = ? AND home_team = ? AND outcome = ? AND detected_at >= ? LIMIT 1",
+                    (sport, home, outcome, cutoff),
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute(
+                    "INSERT INTO sports_edge_history (sport, home_team, away_team, outcome, sharp_prob, poly_prob, divergence, kelly_pct, confidence_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (sport, home, comp.get("away_team", ""), outcome,
+                     oc.get("sharp_prob"), oc.get("poly_prob"), oc.get("divergence"),
+                     oc.get("kelly_pct"), comp.get("confidence_score")),
+                )
 
 
 def _save_market_snapshots(sport: str, comparisons: list[dict]):
     """Save a snapshot of current market data for historical tracking."""
-    sb = _get_sb()
     rows = []
     for comp in comparisons:
         event_name = comp.get("home_team", "") + (" vs " + comp.get("away_team", "") if comp.get("away_team") else "")
         for oc in comp.get("outcomes", []):
-            rows.append({
-                "sport": sport,
-                "event_name": event_name,
-                "outcome": oc.get("outcome", ""),
-                "book_prob": oc.get("sharp_prob"),
-                "poly_prob": oc.get("poly_prob"),
-                "kalshi_prob": oc.get("kalshi_prob"),
-                "divergence": oc.get("divergence"),
-                "poly_volume": comp.get("poly_volume"),
-                "kalshi_volume": comp.get("kalshi_volume"),
-            })
+            rows.append((
+                sport,
+                event_name,
+                oc.get("outcome", ""),
+                oc.get("sharp_prob"),
+                oc.get("poly_prob"),
+                oc.get("kalshi_prob"),
+                oc.get("divergence"),
+                comp.get("poly_volume"),
+                comp.get("kalshi_volume"),
+            ))
     if rows:
-        # Insert in batches of 100 to avoid payload limits
-        for i in range(0, len(rows), 100):
-            sb.table("sports_market_snapshots").insert(rows[i:i+100]).execute()
+        with _get_db() as conn:
+            conn.executemany(
+                "INSERT INTO sports_market_snapshots (sport, event_name, outcome, book_prob, poly_prob, kalshi_prob, divergence, poly_volume, kalshi_volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
 
 
 _scan_event = asyncio.Event()  # set to trigger immediate re-scan
@@ -1558,13 +1685,13 @@ async def data_updater():
 
             # Save edges to edge_history (deduplicate within 24h)
             try:
-                _save_edge_history(sport, comparisons)
+                await asyncio.to_thread(_save_edge_history, sport, comparisons)
             except Exception as eh_err:
                 print(f"Edge history save error: {eh_err}", flush=True)
 
             # Save market snapshots for historical data (pro feature)
             try:
-                _save_market_snapshots(sport, comparisons)
+                await asyncio.to_thread(_save_market_snapshots, sport, comparisons)
             except Exception as snap_err:
                 print(f"Snapshot save error: {snap_err}", flush=True)
 
@@ -1620,7 +1747,7 @@ async def broadcast_update():
         return
     msg = json.dumps({"type": "update", "data": dashboard_data}, default=str)
     dead = set()
-    for ws in connected_ws:
+    for ws in list(connected_ws):
         try:
             await ws.send_text(msg)
         except Exception:
@@ -1660,7 +1787,22 @@ def save_signals(signals: list[dict]):
     if new_signals:
         existing.extend(new_signals)
         existing = existing[-500:]
-        SIGNALS_FILE.write_text(json.dumps(existing, indent=2, default=str))
+        # Atomic write: temp file + os.replace to avoid partial writes
+        fd, tmp = tempfile.mkstemp(dir=str(SIGNALS_FILE.parent))
+        closed = False
+        try:
+            os.write(fd, json.dumps(existing, indent=2, default=str).encode())
+            os.close(fd)
+            closed = True
+            os.replace(tmp, str(SIGNALS_FILE))
+        except BaseException:
+            if not closed:
+                os.close(fd)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -1671,7 +1813,12 @@ def save_signals(signals: list[dict]):
 async def startup():
     asyncio.create_task(data_updater())
     # Backfill historical markets in background thread (non-blocking)
-    asyncio.get_event_loop().run_in_executor(None, backfill_historical_markets)
+    async def _backfill_wrapper():
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, backfill_historical_markets)
+        except Exception as e:
+            print(f"Backfill error: {e}", flush=True)
+    asyncio.create_task(_backfill_wrapper())
     print(f"Sports Dashboard started. Polling {dashboard_data['active_sport']} every {POLL_INTERVAL}s")
     if not ODDS_API_KEY:
         print("WARNING: ODDS_API_KEY not set — bookmaker odds will be unavailable")
@@ -1681,7 +1828,7 @@ async def startup():
 # Auth pages & endpoints
 # ---------------------------------------------------------------------------
 # Auth is handled by the gateway. These endpoints redirect to it or return
-# user info from the gateway-forwarded headers + Supabase profiles.
+# user info from the gateway-forwarded headers + local profiles.
 
 @app.get("/login")
 async def login_page():
@@ -1714,16 +1861,23 @@ async def update_settings(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
     body = await request.json()
-    sb = _get_sb()
 
     # Upsert settings into sports_user_settings
-    sb.table("sports_user_settings").upsert({
-        "user_id": user["id"],
-        "default_sport": body.get("default_sport", "basketball_nba"),
-        "divergence_threshold": float(body.get("divergence_threshold", 5.0)),
-        "notifications_enabled": int(body.get("notifications_enabled", 1)),
-        "theme": body.get("theme", "dark"),
-    }, on_conflict="user_id").execute()
+    with _get_db() as conn:
+        conn.execute(
+            """INSERT INTO sports_user_settings (user_id, default_sport, divergence_threshold, notifications_enabled, theme)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   default_sport = excluded.default_sport,
+                   divergence_threshold = excluded.divergence_threshold,
+                   notifications_enabled = excluded.notifications_enabled,
+                   theme = excluded.theme""",
+            (user["id"],
+             body.get("default_sport", "basketball_nba"),
+             float(body.get("divergence_threshold", 5.0)),
+             int(body.get("notifications_enabled", 1)),
+             body.get("theme", "dark")),
+        )
     return JSONResponse({"status": "ok"})
 
 
@@ -1764,8 +1918,9 @@ async def admin_users_api(request: Request):
     if not user.get("is_admin"):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
 
-    sb = _get_sb()
-    profiles = sb.table("profiles").select("*").order("created_at", desc=True).execute().data
+    with _get_db() as conn:
+        rows = conn.execute("SELECT * FROM profiles ORDER BY created_at DESC").fetchall()
+        profiles = [dict(r) for r in rows]
     return JSONResponse({"users": profiles, "total": len(profiles)})
 
 
@@ -1777,28 +1932,24 @@ async def admin_stats(request: Request):
     if not user.get("is_admin"):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
 
-    sb = _get_sb()
+    with _get_db() as conn:
+        # Profiles (users are managed by gateway, we just read them)
+        rows = conn.execute("SELECT * FROM profiles ORDER BY created_at DESC").fetchall()
+        profiles = [dict(r) for r in rows]
+        total_users = len(profiles)
 
-    # Profiles (users are managed by gateway, we just read them)
-    profiles = sb.table("profiles").select("*").order("created_at", desc=True).execute().data
-    total_users = len(profiles)
+        # Recent sports activity
+        act_rows = conn.execute(
+            "SELECT action, detail, created_at, user_id FROM sports_user_activity ORDER BY created_at DESC LIMIT 50"
+        ).fetchall()
+        activity = [dict(r) for r in act_rows]
 
-    # Recent sports activity
-    activity_result = sb.table("sports_user_activity").select(
-        "action, detail, created_at, user_id"
-    ).order("created_at", desc=True).limit(50).execute()
-    activity = activity_result.data
-
-    # Edge performance stats
-    edge_total_r = sb.table("sports_edge_history").select("id", count="exact").execute()
-    edge_total = edge_total_r.count or 0
-    edge_resolved_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolved", 1).execute()
-    edge_resolved = edge_resolved_r.count or 0
-    edge_correct_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "correct").execute()
-    edge_correct = edge_correct_r.count or 0
-    edge_incorrect_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "incorrect").execute()
-    edge_incorrect = edge_incorrect_r.count or 0
-    edge_win_rate = round(edge_correct / edge_resolved * 100, 1) if edge_resolved > 0 else 0.0
+        # Edge performance stats
+        edge_total = conn.execute("SELECT COUNT(*) FROM sports_edge_history").fetchone()[0]
+        edge_resolved = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolved = 1").fetchone()[0]
+        edge_correct = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'correct'").fetchone()[0]
+        edge_incorrect = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'incorrect'").fetchone()[0]
+        edge_win_rate = round(edge_correct / edge_resolved * 100, 1) if edge_resolved > 0 else 0.0
 
     return JSONResponse({
         "users": profiles,
@@ -1834,6 +1985,17 @@ async def api_data(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     # Subscription/tier gating is handled by the gateway before the request
     # reaches this dashboard. If the user is here, they have access.
+    #
+    # Optional ?sport= param: if the client passes this, and the server's
+    # current data is for a different sport, return a 202 with a hint so
+    # the client knows it needs to wait for the data_updater to catch up.
+    requested_sport = request.query_params.get("sport")
+    if requested_sport and requested_sport != dashboard_data.get("active_sport"):
+        return JSONResponse(
+            {"status": "switching", "active_sport": dashboard_data.get("active_sport"),
+             "requested_sport": requested_sport},
+            status_code=202,
+        )
     return JSONResponse(dashboard_data)
 
 
@@ -1841,15 +2003,19 @@ async def api_data(request: Request):
 async def api_sports(request: Request):
     if not get_current_user(request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    # Return sports grouped by category for two-tier nav
+    # Return sports grouped by category for two-tier nav.
+    # Accept optional ?sport= param so clients can request a specific
+    # sport as "active" (mirrors their local selection, not the global).
     categories = []
     for cat_name, keys in SPORT_CATEGORIES.items():
         items = [{"key": k, "title": SPORTS[k]} for k in keys if k in SPORTS]
         categories.append({"name": cat_name, "sports": items})
+    requested_sport = request.query_params.get("sport")
+    active = requested_sport if (requested_sport and requested_sport in SPORTS) else dashboard_data["active_sport"]
     return JSONResponse({
         "categories": categories,
         "sports": SPORTS,
-        "active": dashboard_data["active_sport"],
+        "active": active,
     })
 
 
@@ -1926,15 +2092,12 @@ async def create_trade(request: Request):
     amount = float(body.get("amount", 0))
     if not market_name or entry_price <= 0 or amount <= 0:
         return JSONResponse({"error": "market_name, entry_price > 0, and amount > 0 required"}, status_code=400)
-    sb = _get_sb()
-    result = sb.table("sports_trades").insert({
-        "user_id": user["id"],
-        "market_name": market_name,
-        "outcome": outcome,
-        "entry_price": entry_price,
-        "amount": amount,
-    }).execute()
-    trade_id = result.data[0]["id"] if result.data else 0
+    with _get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO sports_trades (user_id, market_name, outcome, entry_price, amount) VALUES (?, ?, ?, ?, ?)",
+            (user["id"], market_name, outcome, entry_price, amount),
+        )
+        trade_id = cur.lastrowid
     log_activity(user["id"], "create_trade", f"Trade #{trade_id}: {market_name}")
     return JSONResponse({"status": "ok", "trade_id": trade_id})
 
@@ -1944,11 +2107,12 @@ async def list_trades(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    sb = _get_sb()
-    result = sb.table("sports_trades").select("*").eq(
-        "user_id", user["id"]
-    ).order("created_at", desc=True).execute()
-    return JSONResponse({"trades": result.data})
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_trades WHERE user_id = ? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    return JSONResponse({"trades": [dict(r) for r in rows]})
 
 
 @app.post("/api/trades/{trade_id}/resolve")
@@ -1960,18 +2124,20 @@ async def resolve_trade(trade_id: int, request: Request):
     exit_price = float(body.get("exit_price", 0))
     if exit_price <= 0:
         return JSONResponse({"error": "exit_price > 0 required"}, status_code=400)
-    sb = _get_sb()
-    result = sb.table("sports_trades").select("*").eq("id", trade_id).eq("user_id", user["id"]).limit(1).execute()
-    if not result.data:
-        return JSONResponse({"error": "Trade not found"}, status_code=404)
-    trade = result.data[0]
-    pnl = round((exit_price - trade["entry_price"]) * trade["amount"], 2)
-    sb.table("sports_trades").update({
-        "status": "closed",
-        "exit_price": exit_price,
-        "pnl": pnl,
-        "resolved_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", trade_id).execute()
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM sports_trades WHERE id = ? AND user_id = ? LIMIT 1",
+            (trade_id, user["id"]),
+        ).fetchone()
+        if not row:
+            return JSONResponse({"error": "Trade not found"}, status_code=404)
+        trade = dict(row)
+        # amount is dollars invested, entry_price is cents; shares = amount / (entry_price/100)
+        pnl = round((exit_price - trade["entry_price"]) * trade["amount"] / trade["entry_price"], 2)
+        conn.execute(
+            "UPDATE sports_trades SET status = 'closed', exit_price = ?, pnl = ?, resolved_at = ? WHERE id = ?",
+            (exit_price, pnl, datetime.now(timezone.utc).isoformat(), trade_id),
+        )
     log_activity(user["id"], "resolve_trade", f"Trade #{trade_id}: PnL={pnl}")
     return JSONResponse({"status": "ok", "pnl": pnl})
 
@@ -1981,15 +2147,17 @@ async def trade_stats(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    sb = _get_sb()
-    result = sb.table("sports_trades").select("*").eq("user_id", user["id"]).execute()
-    trades = result.data
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_trades WHERE user_id = ?", (user["id"],)
+        ).fetchall()
+    trades = [dict(r) for r in rows]
     closed = [t for t in trades if t["status"] == "closed"]
     open_trades = [t for t in trades if t["status"] == "open"]
     total_pnl = round(sum(t.get("pnl") or 0 for t in closed), 2)
     wins = sum(1 for t in closed if (t.get("pnl") or 0) > 0)
     win_rate = round(wins / len(closed) * 100, 1) if closed else 0.0
-    total_invested = sum(t["entry_price"] * t["amount"] for t in closed) if closed else 0
+    total_invested = sum(t["amount"] for t in closed) if closed else 0
     roi = round(total_pnl / total_invested * 100, 2) if total_invested > 0 else 0.0
     return JSONResponse({
         "total_pnl": total_pnl,
@@ -2015,20 +2183,19 @@ async def add_watchlist(request: Request):
     away_team = body.get("away_team", "")
     if not market_key:
         return JSONResponse({"error": "market_key required"}, status_code=400)
-    sb = _get_sb()
-    # Check for existing entry (UNIQUE constraint on user_id, market_key)
-    existing = sb.table("sports_watchlist").select("id").eq(
-        "user_id", user["id"]
-    ).eq("market_key", market_key).limit(1).execute()
-    if existing.data:
-        return JSONResponse({"error": "Already in watchlist"}, status_code=409)
-    result = sb.table("sports_watchlist").insert({
-        "user_id": user["id"],
-        "market_key": market_key,
-        "home_team": home_team,
-        "away_team": away_team,
-    }).execute()
-    item_id = result.data[0]["id"] if result.data else 0
+    with _get_db() as conn:
+        # Check for existing entry (UNIQUE constraint on user_id, market_key)
+        existing = conn.execute(
+            "SELECT id FROM sports_watchlist WHERE user_id = ? AND market_key = ? LIMIT 1",
+            (user["id"], market_key),
+        ).fetchone()
+        if existing:
+            return JSONResponse({"error": "Already in watchlist"}, status_code=409)
+        cur = conn.execute(
+            "INSERT INTO sports_watchlist (user_id, market_key, home_team, away_team) VALUES (?, ?, ?, ?)",
+            (user["id"], market_key, home_team, away_team),
+        )
+        item_id = cur.lastrowid
     return JSONResponse({"status": "ok", "id": item_id})
 
 
@@ -2037,8 +2204,11 @@ async def remove_watchlist(item_id: int, request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    sb = _get_sb()
-    sb.table("sports_watchlist").delete().eq("id", item_id).eq("user_id", user["id"]).execute()
+    with _get_db() as conn:
+        conn.execute(
+            "DELETE FROM sports_watchlist WHERE id = ? AND user_id = ?",
+            (item_id, user["id"]),
+        )
     return JSONResponse({"status": "ok"})
 
 
@@ -2047,11 +2217,12 @@ async def list_watchlist(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    sb = _get_sb()
-    result = sb.table("sports_watchlist").select("*").eq(
-        "user_id", user["id"]
-    ).order("created_at", desc=True).execute()
-    return JSONResponse({"watchlist": result.data})
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_watchlist WHERE user_id = ? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    return JSONResponse({"watchlist": [dict(r) for r in rows]})
 
 
 # ---------------------------------------------------------------------------
@@ -2063,14 +2234,15 @@ async def get_layout(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    sb = _get_sb()
-    result = sb.table("sports_user_layout").select("*").eq("user_id", user["id"]).limit(1).execute()
-    if result.data:
-        r = result.data[0]
-        # visible_widgets and visible_data_points are stored as JSONB in Supabase,
-        # so they come back as lists already (no json.loads needed)
-        widgets = r.get("visible_widgets", ["stats", "top_opps", "hero", "events"])
-        data_points = r.get("visible_data_points", [])
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM sports_user_layout WHERE user_id = ? LIMIT 1", (user["id"],)
+        ).fetchone()
+    if row:
+        r = dict(row)
+        # visible_widgets and visible_data_points are stored as JSON text in SQLite
+        widgets = r.get("visible_widgets", '["stats","top_opps","hero","events"]')
+        data_points = r.get("visible_data_points", "[]")
         if isinstance(widgets, str):
             widgets = json.loads(widgets)
         if isinstance(data_points, str):
@@ -2097,13 +2269,16 @@ async def save_layout(request: Request):
     visible_widgets = body.get("visible_widgets", ["stats", "top_opps", "hero", "events"])
     visible_data_points = body.get("visible_data_points", [])
     card_expanded_default = int(body.get("card_expanded_default", False))
-    sb = _get_sb()
-    sb.table("sports_user_layout").upsert({
-        "user_id": user["id"],
-        "visible_widgets": visible_widgets,
-        "visible_data_points": visible_data_points,
-        "card_expanded_default": card_expanded_default,
-    }, on_conflict="user_id").execute()
+    with _get_db() as conn:
+        conn.execute(
+            """INSERT INTO sports_user_layout (user_id, visible_widgets, visible_data_points, card_expanded_default)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   visible_widgets = excluded.visible_widgets,
+                   visible_data_points = excluded.visible_data_points,
+                   card_expanded_default = excluded.card_expanded_default""",
+            (user["id"], json.dumps(visible_widgets), json.dumps(visible_data_points), card_expanded_default),
+        )
     return JSONResponse({"status": "ok"})
 
 
@@ -2147,17 +2322,18 @@ def _classify_sport(title: str) -> str | None:
 
 def backfill_historical_markets():
     """Fetch resolved Polymarket sports events from the past year and store them."""
-    sb = _get_sb()
+    session = _make_http_session()
     # Fetch existing slugs to deduplicate
-    existing_result = sb.table("sports_historical_markets").select("slug").eq("source", "polymarket").execute()
-    existing_slugs = set(r["slug"] for r in existing_result.data if r.get("slug"))
+    with _get_db() as conn:
+        rows = conn.execute("SELECT slug FROM sports_historical_markets WHERE source = 'polymarket'").fetchall()
+        existing_slugs = set(r["slug"] for r in rows if r["slug"])
 
     # Fetch closed/resolved sports events from Gamma API
     offset = 0
     inserted = 0
     for _ in range(20):  # max 20 pages
         try:
-            resp = _http_session.get(
+            resp = session.get(
                 f"{GAMMA_API_HOST}/events",
                 params={
                     "active": "false",
@@ -2195,8 +2371,12 @@ def backfill_historical_markets():
                     outcome = mkt.get("groupItemTitle", question)
                 final_price = None
                 try:
-                    final_price = float(mkt.get("outcomePrices", "0").strip("[]").split(",")[0])
-                except (ValueError, IndexError):
+                    op = mkt.get("outcomePrices", "0")
+                    if isinstance(op, list):
+                        final_price = float(op[0]) if op else None
+                    else:
+                        final_price = float(str(op).strip("[]").split(",")[0])
+                except (ValueError, IndexError, TypeError):
                     pass
                 volume = 0
                 try:
@@ -2222,9 +2402,21 @@ def backfill_historical_markets():
         if batch:
             try:
                 # upsert to handle the UNIQUE(source, slug, outcome) constraint
-                sb.table("sports_historical_markets").upsert(
-                    batch, on_conflict="source,slug,outcome"
-                ).execute()
+                with _get_db() as conn:
+                    for row in batch:
+                        conn.execute(
+                            """INSERT INTO sports_historical_markets
+                               (sport, event_title, market_question, outcome, final_price, volume, start_date, end_date, resolution, source, slug)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               ON CONFLICT(source, slug, outcome) DO UPDATE SET
+                                   final_price = excluded.final_price,
+                                   volume = excluded.volume,
+                                   resolution = excluded.resolution""",
+                            (row["sport"], row["event_title"], row["market_question"],
+                             row["outcome"], row["final_price"], row["volume"],
+                             row["start_date"], row["end_date"], row["resolution"],
+                             row["source"], row["slug"]),
+                        )
                 inserted += len(batch)
             except Exception as e:
                 print(f"Backfill insert error: {e}", flush=True)
@@ -2243,26 +2435,42 @@ async def api_history(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
     sport = request.query_params.get("sport", "")
-    limit = min(int(request.query_params.get("limit", "100")), 500)
-
-    sb = _get_sb()
+    try:
+        limit = min(int(request.query_params.get("limit", "100")), 500)
+    except (ValueError, TypeError):
+        limit = 100
 
     # Recent snapshots (last 7 days)
     cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    snap_query = sb.table("sports_market_snapshots").select("*").gte("snapshot_at", cutoff_7d)
-    if sport:
-        snap_query = snap_query.eq("sport", sport)
-    snapshots = snap_query.order("snapshot_at", desc=True).limit(limit).execute()
+    with _get_db() as conn:
+        if sport:
+            snap_rows = conn.execute(
+                "SELECT * FROM sports_market_snapshots WHERE snapshot_at >= ? AND sport = ? ORDER BY snapshot_at DESC LIMIT ?",
+                (cutoff_7d, sport, limit),
+            ).fetchall()
+        else:
+            snap_rows = conn.execute(
+                "SELECT * FROM sports_market_snapshots WHERE snapshot_at >= ? ORDER BY snapshot_at DESC LIMIT ?",
+                (cutoff_7d, limit),
+            ).fetchall()
+        snapshots = [dict(r) for r in snap_rows]
 
-    # Resolved historical markets
-    hist_query = sb.table("sports_historical_markets").select("*")
-    if sport:
-        hist_query = hist_query.eq("sport", sport)
-    historical = hist_query.order("end_date", desc=True).limit(limit).execute()
+        # Resolved historical markets
+        if sport:
+            hist_rows = conn.execute(
+                "SELECT * FROM sports_historical_markets WHERE sport = ? ORDER BY end_date DESC LIMIT ?",
+                (sport, limit),
+            ).fetchall()
+        else:
+            hist_rows = conn.execute(
+                "SELECT * FROM sports_historical_markets ORDER BY end_date DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        historical = [dict(r) for r in hist_rows]
 
     return JSONResponse({
-        "snapshots": snapshots.data,
-        "historical": historical.data,
+        "snapshots": snapshots,
+        "historical": historical,
     })
 
 
@@ -2273,11 +2481,12 @@ async def api_market_history(event_name: str, request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
-    sb = _get_sb()
-    result = sb.table("sports_market_snapshots").select("*").eq(
-        "event_name", event_name
-    ).order("snapshot_at").limit(1000).execute()
-    return JSONResponse({"event": event_name, "series": result.data})
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_market_snapshots WHERE event_name = ? ORDER BY snapshot_at LIMIT 1000",
+            (event_name,),
+        ).fetchall()
+    return JSONResponse({"event": event_name, "series": [dict(r) for r in rows]})
 
 
 # ---------------------------------------------------------------------------
@@ -2289,9 +2498,11 @@ async def edge_history(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    sb = _get_sb()
-    result = sb.table("sports_edge_history").select("*").order("detected_at", desc=True).limit(100).execute()
-    return JSONResponse({"edges": result.data})
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_edge_history ORDER BY detected_at DESC LIMIT 100"
+        ).fetchall()
+    return JSONResponse({"edges": [dict(r) for r in rows]})
 
 
 @app.get("/api/edge-stats")
@@ -2299,15 +2510,11 @@ async def edge_stats(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    sb = _get_sb()
-    total_r = sb.table("sports_edge_history").select("id", count="exact").execute()
-    total = total_r.count or 0
-    correct_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "correct").execute()
-    correct = correct_r.count or 0
-    incorrect_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "incorrect").execute()
-    incorrect = incorrect_r.count or 0
-    pending_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolved", 0).execute()
-    pending = pending_r.count or 0
+    with _get_db() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM sports_edge_history").fetchone()[0]
+        correct = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'correct'").fetchone()[0]
+        incorrect = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'incorrect'").fetchone()[0]
+        pending = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolved = 0").fetchone()[0]
     resolved = correct + incorrect
     win_rate = round(correct / resolved * 100, 1) if resolved > 0 else 0.0
     return JSONResponse({

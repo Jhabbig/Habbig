@@ -475,18 +475,20 @@ class StockMLModel:
             print(f"  [{self.ticker_yf}] Training Stacking Ensemble (XGB+RF+GB → LogReg)...")
             try:
                 self.stacking_model = StackingEnsemble()
+                # Pass raw (unscaled) features — StackingEnsemble has its own scaler
                 self.stacking_model.fit(
-                    X_train_scaled, y_train,
-                    X_val=X_val_scaled, y_val=y_val,
+                    X_train, y_train,
+                    X_val=X_val, y_val=y_val,
                     sample_weight=sample_weights,
                 )
 
                 # Get ensemble predictions
-                ensemble_proba = self.stacking_model.predict_proba(X_val_scaled)
+                # Pass raw (unscaled) features — StackingEnsemble has its own scaler
+                ensemble_proba = self.stacking_model.predict_proba(X_val)
                 ensemble_pred = (ensemble_proba >= 0.5).astype(int)
                 self.val_accuracy = accuracy_score(y_val, ensemble_pred)
 
-                train_proba = self.stacking_model.predict_proba(X_train_scaled)
+                train_proba = self.stacking_model.predict_proba(X_train)
                 self.train_accuracy = accuracy_score(y_train, (train_proba >= 0.5).astype(int))
 
                 print(f"  [{self.ticker_yf}] Stacking Ensemble accuracy:")
@@ -701,7 +703,8 @@ class StockMLModel:
 
         # Get prediction from stacking or simple ensemble
         if self.stacking_model is not None:
-            raw_proba = self.stacking_model.predict_proba(X_today_scaled)
+            # Pass raw (unscaled) features — StackingEnsemble has its own scaler
+            raw_proba = self.stacking_model.predict_proba(X_today)
             # Handle both scalar and array output
             if hasattr(raw_proba, '__len__'):
                 ensemble_proba = float(raw_proba.ravel()[0])

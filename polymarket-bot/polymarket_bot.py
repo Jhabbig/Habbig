@@ -104,7 +104,7 @@ def load_state():
             if isinstance(state.pending, dict) and "slug" in state.pending:
                 old = state.pending
                 state.pending = {"btc": old}
-        except:
+        except Exception:
             pass
     return state
 
@@ -128,7 +128,10 @@ def get_next_market(coin):
                 data = resp.json()
                 if data:
                     ev = data[0]
-                    market = ev.get("markets", [{}])[0]
+                    markets = ev.get("markets", [])
+                    if not markets:
+                        continue
+                    market = markets[0]
                     prices = json.loads(market.get("outcomePrices", "[0.5, 0.5]"))
                     tokens = json.loads(market.get("clobTokenIds", "[]")) if market.get("clobTokenIds") else []
 
@@ -152,7 +155,7 @@ def get_next_market(coin):
                         "down_token_id": tokens[1] if len(tokens) > 1 else "",
                         "seconds_until_start": seconds_until_start,
                     }
-        except:
+        except Exception:
             continue
 
     return None
@@ -172,7 +175,7 @@ def get_binance_klines(symbol, interval="1m", limit=30):
                 "low": float(k[3]), "close": float(k[4]), "volume": float(k[5]),
                 "taker_buy_vol": float(k[9]),
             } for k in resp.json()]
-    except:
+    except Exception:
         pass
     return []
 
@@ -191,7 +194,7 @@ def get_clob_book(token_id):
             asks = sorted(book.get("asks", []),
                           key=lambda x: float(x["price"]))
             return {"bids": bids, "asks": asks}
-    except:
+    except Exception:
         pass
     return {"bids": [], "asks": []}
 
@@ -374,7 +377,7 @@ def get_order_book_imbalance(coin):
             total = total_bids + total_asks
             if total > 0:
                 return (total_bids - total_asks) / total
-    except:
+    except Exception:
         pass
     return 0.0
 
@@ -398,7 +401,10 @@ def get_btc_lead_signal(coin):
             mom_1m = (closes[-1] - closes[-2]) / closes[-2] * 100
             _btc_lead_cache = {"time": now, "mom_3m": mom_3m, "mom_1m": mom_1m}
             return (mom_3m, mom_1m)
-    except:
+        else:
+            # Not enough candles — cache the zero result to avoid repeated stale lookups
+            _btc_lead_cache = {"time": now, "mom_3m": 0.0, "mom_1m": 0.0}
+    except Exception:
         pass
     return (0.0, 0.0)
 
@@ -440,7 +446,7 @@ def get_pattern_prediction(coin):
         k = min(15, len(scored))
         ups = sum(1 for _, up in scored[:k] if up)
         return (ups / k - 0.5) * 0.08
-    except:
+    except Exception:
         return 0.0
 
 
@@ -451,7 +457,7 @@ def get_dashboard_signals(coin):
         resp = requests.get(f"{LOCAL_API}/_internal/bot/signals", timeout=5)
         if resp.ok:
             return resp.json().get(ticker_map.get(coin, ""), {})
-    except:
+    except Exception:
         pass
     return {}
 
@@ -649,6 +655,7 @@ def resolve_pending(state, coin):
                 else:
                     if now > end_dt + timedelta(minutes=5):
                         log(f"[{coin.upper()}] Market {slug} didn't resolve, skipping")
+                        state.balance += pending["amount"]
                         del state.pending[coin]
                         save_state(state)
                     return
@@ -729,13 +736,14 @@ def main():
                 resolve_pending(state, coin)
 
             # 2. For each coin, look for trading opportunities
+            committed_this_cycle = 0.0
             for coin in COINS:
                 # Skip if we already have a pending bet for this coin
                 if coin in state.pending:
                     continue
 
-                # Check balance
-                if state.balance < BET_AMOUNT:
+                # Check balance accounting for bets already placed this cycle
+                if (state.balance - committed_this_cycle) < BET_AMOUNT:
                     continue
 
                 # Find next market
@@ -786,6 +794,7 @@ def main():
                     "levels_hit": levels_hit,
                 }
                 state.balance -= actual_cost
+                committed_this_cycle += actual_cost
                 save_state(state)
 
                 if rt_signals:

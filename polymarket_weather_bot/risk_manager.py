@@ -99,7 +99,6 @@ class RiskManager:
     def reset_daily(self) -> None:
         self.daily_pnl = 0.0
         self.trades_today = 0
-        self.open_positions.clear()
 
     def is_halted(self) -> bool:
         return self.daily_pnl <= -self.config.DAILY_LOSS_LIMIT

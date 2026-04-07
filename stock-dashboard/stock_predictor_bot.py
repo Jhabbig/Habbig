@@ -25,6 +25,7 @@ import requests
 import warnings
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 warnings.filterwarnings("ignore")
 
@@ -377,7 +378,7 @@ def day_of_week_bias(closes):
     """Historical day-of-week return tendency using actual calendar days."""
     from zoneinfo import ZoneInfo
     _et = ZoneInfo("US/Eastern")
-    today_dow = datetime.now(_et).weekday()
+    today_dow = min(datetime.now(_et).weekday(), 4)  # Clamp weekends to Friday
     if len(closes) < 60:
         return 0.0
 
@@ -684,17 +685,43 @@ def evaluate_bet(ticker, prediction, confidence, market_info, state):
 def resolve_pending_bets(state):
     """Check if any pending bets can be resolved using yesterday's data."""
     resolved = []
+    expired = []
+    _et = ZoneInfo("America/New_York")
+    today = datetime.now(_et).strftime("%Y-%m-%d")
     for ticker, bet in list(state.pending.items()):
         bet_date = bet.get("date", "")
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         if bet_date >= today:
             continue  # Not yet resolvable
 
+        # Expire bets older than 30 days that couldn't be resolved
+        try:
+            bet_dt = datetime.strptime(bet_date, "%Y-%m-%d")
+            today_dt = datetime.strptime(today, "%Y-%m-%d")
+            if (today_dt - bet_dt).days > 30:
+                state.losses += 1
+                state.total_trades += 1
+                state.total_pnl -= bet["bet_size"]
+                trade_record = {
+                    **bet,
+                    "actual": "expired",
+                    "won": False,
+                    "pnl": round(-bet["bet_size"], 2),
+                    "balance_after": round(state.balance, 2),
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                }
+                state.trades.append(trade_record)
+                expired.append(ticker)
+                log(f"  ⏰ EXPIRED {ticker.upper()}: bet from {bet_date} "
+                    f"older than 30 days | -${bet['bet_size']:.2f}")
+                continue
+        except (ValueError, KeyError):
+            pass
+
         ticker_yf = STOCKS.get(ticker, {}).get("yf", ticker.upper())
         try:
             stock = yf.Ticker(ticker_yf)
-            hist = stock.history(period="5d", interval="1d")
+            hist = stock.history(period="1mo", interval="1d")
             if len(hist) < 2:
                 continue
 
@@ -708,14 +735,16 @@ def resolve_pending_bets(state):
 
                     won = actual_direction == bet["direction"]
                     if won:
-                        payout = bet["bet_size"] * (1 / bet["market_prob"] - 1)
-                        state.balance += payout
+                        # Net profit = full_payout - stake = stake * (1/market_prob - 1)
+                        net_profit = bet["bet_size"] * (1 / bet["market_prob"] - 1)
+                        # Stake was deducted at placement; return stake + net profit
+                        state.balance += bet["bet_size"] + net_profit
                         state.wins += 1
-                        state.total_pnl += payout
+                        state.total_pnl += net_profit
                         log(f"  ✓ WON {ticker.upper()}: bet {bet['direction']}, "
-                            f"actual {actual_direction} | +${payout:.2f}")
+                            f"actual {actual_direction} | +${net_profit:.2f}")
                     else:
-                        state.balance -= bet["bet_size"]
+                        # Stake was already deducted at placement; no further deduction
                         state.losses += 1
                         state.total_pnl -= bet["bet_size"]
                         log(f"  ✗ LOST {ticker.upper()}: bet {bet['direction']}, "
@@ -728,7 +757,7 @@ def resolve_pending_bets(state):
                         **bet,
                         "actual": actual_direction,
                         "won": won,
-                        "pnl": round(payout if won else -bet["bet_size"], 2),
+                        "pnl": round(net_profit if won else -bet["bet_size"], 2),
                         "balance_after": round(state.balance, 2),
                         "resolved_at": datetime.now(timezone.utc).isoformat(),
                     }
@@ -738,15 +767,16 @@ def resolve_pending_bets(state):
         except Exception as ex:
             log(f"Error resolving {ticker}: {ex}")
 
-    for t in resolved:
+    for t in resolved + expired:
         del state.pending[t]
 
 
 # ─── Main Loop ───────────────────────────────────────────────────────
 def run_cycle(state):
     """Run one prediction cycle."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    now_et = datetime.now(timezone(timedelta(hours=-4)))
+    _et = ZoneInfo("America/New_York")
+    today = datetime.now(_et).strftime("%Y-%m-%d")
+    now_et = datetime.now(_et)
 
     print()
     log("=" * 60)
@@ -879,7 +909,7 @@ def run_cycle(state):
         if SMART_BETTING:
             try:
                 daily_pnl = sum(t.get("pnl", 0) for t in state.trades[-20:]
-                               if t.get("date") == today)
+                               if (t.get("resolved_at") or "")[:10] == today)
                 pending_list = [
                     {"ticker": t, **v} for t, v in state.pending.items()
                 ]
@@ -933,6 +963,8 @@ def run_cycle(state):
             log(f"    → BET ${bet['bet_size']:.0f} on {bet['direction'].upper()} "
                 f"(edge={bet['edge']:+.1%}, kelly={bet.get('kelly', 0):.1%}{concordance_str})")
 
+            # Deduct stake from balance at placement time
+            state.balance -= bet["bet_size"]
             state.pending[ticker] = {
                 "date": today,
                 "direction": bet["direction"],
@@ -1007,7 +1039,7 @@ def main():
     # Main loop: run at market-relevant times
     while True:
         try:
-            now_et = datetime.now(timezone(timedelta(hours=-4)))
+            now_et = datetime.now(ZoneInfo("America/New_York"))
             hour = now_et.hour
             weekday = now_et.weekday()  # 0=Monday, 6=Sunday
 

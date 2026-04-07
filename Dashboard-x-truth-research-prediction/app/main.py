@@ -202,7 +202,7 @@ def require_auth(request: Request) -> str:
     if token and token in _active_sessions:
         username, _ts = _active_sessions[token]
         return username
-    return ""
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 @app.middleware("http")
@@ -228,8 +228,9 @@ async def login_page(request: Request, error: str = "", msg: str = ""):
 
 @app.post("/login")
 async def login_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), password: str = Form(""), start_platform: str = Form("polymarket")):
-    # Rate limiting
+    # Record attempt FIRST, then check rate limit (prevents off-by-one)
     client_ip = request.client.host if request.client else "unknown"
+    _login_attempts[client_ip].append(time.time())
     if _check_rate_limit(client_ip):
         return templates.TemplateResponse("login.html", {"request": request, "error": "Too many login attempts. Try again in 5 minutes."})
 
@@ -243,13 +244,19 @@ async def login_submit(request: Request, session: AsyncSession = Depends(get_ses
             user.preferred_platform = start_platform
         session.add(user)
         await session.commit()
+        # Successful login — remove the recorded attempt
+        if client_ip in _login_attempts:
+            attempts = _login_attempts[client_ip]
+            if attempts:
+                attempts.pop()
+            if not attempts:
+                del _login_attempts[client_ip]
         token = _make_session_token()
         _active_sessions[token] = (username, time.time())
         resp = RedirectResponse("/", status_code=302)
-        resp.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400 * 7, secure=False)
+        is_secure = request.url.scheme == "https"
+        resp.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400 * 7, secure=is_secure)
         return resp
-    # Record failed attempt
-    _login_attempts[client_ip].append(time.time())
     return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid username or password"})
 
 
@@ -328,7 +335,6 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
             existing = await session.exec(select(User).where(User.username == new_username))
             if existing.first():
                 return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username already taken", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
-            old_username = db_user.username
             db_user.username = new_username
 
         db_user.email = email
@@ -344,11 +350,18 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
 
         resp = templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Profile updated", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
         if new_username and new_username != user.username:
-            # Update session for new username
-            token = request.cookies.get("session")
-            if token and token in _active_sessions:
-                _, ts = _active_sessions[token]
-                _active_sessions[token] = (new_username, ts)
+            # Update current session for new username and invalidate all others
+            current_token = request.cookies.get("session")
+            old_username = user.username
+            # Remove all sessions for the old username except the current one
+            stale = [t for t, (uname, _) in _active_sessions.items()
+                     if uname == old_username and t != current_token]
+            for t in stale:
+                del _active_sessions[t]
+            # Update the current session to the new username
+            if current_token and current_token in _active_sessions:
+                _, ts = _active_sessions[current_token]
+                _active_sessions[current_token] = (new_username, ts)
         return resp
 
 
@@ -667,4 +680,4 @@ async def health(session: AsyncSession = Depends(get_session)):
     mk = datetime.now(timezone.utc).strftime("%Y-%m")
     qr = (await session.exec(select(MonthlyQuota).where(MonthlyQuota.platform == "twitter", MonthlyQuota.year_month == mk))).first()
     tu = qr.tweets_read if qr else 0
-    return JSONResponse({"status": "ok", "last_run": _last_run_stats.get("run_at"), "predictions_total": pt, "sources_total": st, "accuracy_unlocked_count": uc, "twitter_quota_remaining": settings["TWITTER_MONTHLY_QUOTA"] - tu})
+    return JSONResponse({"status": "ok", "last_run": _last_run_stats.get("run_at"), "predictions_total": pt, "sources_total": st, "accuracy_unlocked_count": uc, "twitter_quota_remaining": settings.get("TWITTER_MONTHLY_QUOTA", 500) - tu})

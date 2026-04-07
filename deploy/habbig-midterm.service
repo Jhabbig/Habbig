@@ -1,0 +1,15 @@
+[Unit]
+Description=Habbig Midterm Dashboard (port 8051)
+After=network.target
+
+[Service]
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/midterm-dashboard/backend
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python main.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+[Install]
+WantedBy=multi-user.target

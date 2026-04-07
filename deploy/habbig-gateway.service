@@ -1,0 +1,22 @@
+[Unit]
+Description=Habbig Gateway (port 7000)
+After=network.target
+Wants=habbig-crypto.service habbig-weather.service habbig-sports.service habbig-world.service habbig-midterm.service habbig-traders.service habbig-stock.service
+
+[Service]
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/gateway
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+Restart=always
+RestartSec=5
+Environment=PRODUCTION=1
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/julianhabbig/Polymarket/gateway
+
+[Install]
+WantedBy=multi-user.target

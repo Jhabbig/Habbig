@@ -1,99 +1,210 @@
-"""Supabase database layer for the Midterm Elections Dashboard.
+"""SQLite database layer for the Midterm Elections Dashboard.
 
-Replaces the previous SQLite/aiosqlite implementation. Uses the Supabase
-Python client for Postgres storage. All methods are now synchronous (the
-Supabase client makes HTTP calls which are inherently async-safe from
-FastAPI's perspective when called from async endpoints via threadpool).
+Uses sqlite3 with WAL mode, a threading lock, and a contextmanager for
+connections.  The DB file lives at ``data.db`` in the backend directory.
 
 User auth (users, sessions) is NO LONGER handled here -- the gateway
-manages that. User profiles live in the shared ``profiles`` table.
+manages that.  User profiles live in the shared ``profiles`` table.
 User IDs are UUID strings, not integers.
-
-Required environment variables:
-    SUPABASE_URL            - Your Supabase project URL
-    SUPABASE_SERVICE_KEY    - Service role key (server-side, bypasses RLS)
 """
 
 import json
 import logging
 import os
+import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Optional
-
-from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Supabase client
+# DB path
 # ---------------------------------------------------------------------------
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+_DB_DIR = Path(__file__).resolve().parent
+DB_PATH = _DB_DIR / "data.db"
 
-_client: Optional[Client] = None
+_lock = threading.Lock()
 
 
-def _get_client() -> Client:
-    global _client
-    if _client is None:
-        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-            raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set. "
-                "Create a project at https://supabase.com and set these env vars."
-            )
-        _client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    return _client
+@contextmanager
+def _get_conn():
+    """Yield a sqlite3 connection with WAL mode and row_factory set."""
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
-# Table names (all prefixed with midterm_)
+# Schema
 # ---------------------------------------------------------------------------
 
-T_MARKETS = "midterm_markets"
-T_PRICE_HISTORY = "midterm_price_history"
-T_POLLING_DATA = "midterm_polling_data"
-T_POLLING_AVERAGES = "midterm_polling_averages"
-T_DIVERGENCE = "midterm_divergence_snapshots"
-T_WATCHLISTS = "midterm_user_watchlists"
-T_ALERT_SETTINGS = "midterm_alert_settings"
-T_ALERT_HISTORY = "midterm_alert_history"
-T_AUDIT_LOG = "midterm_audit_log"
-T_PROFILES = "profiles"
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS midterm_markets (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,
+    source_id       TEXT NOT NULL,
+    event_id        TEXT,
+    title           TEXT NOT NULL,
+    event_title     TEXT,
+    slug            TEXT,
+    race_type       TEXT,
+    state           TEXT,
+    outcomes        TEXT,           -- JSON array stored as TEXT
+    volume          REAL DEFAULT 0,
+    liquidity       REAL DEFAULT 0,
+    active          INTEGER DEFAULT 1,
+    closed          INTEGER DEFAULT 0,
+    end_date        TEXT,
+    last_updated    TEXT,
+    UNIQUE(source, source_id)
+);
+
+CREATE TABLE IF NOT EXISTS midterm_price_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    market_id   INTEGER NOT NULL,
+    source      TEXT NOT NULL,
+    timestamp   TEXT NOT NULL,
+    prices      TEXT,               -- JSON object stored as TEXT
+    volume      REAL
+);
+
+CREATE TABLE IF NOT EXISTS midterm_polling_data (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_type   TEXT NOT NULL DEFAULT '',
+    state       TEXT NOT NULL DEFAULT '',
+    candidate   TEXT NOT NULL DEFAULT '',
+    party       TEXT,
+    percentage  REAL,
+    pollster    TEXT NOT NULL DEFAULT '',
+    sample_size INTEGER,
+    population  TEXT,
+    start_date  TEXT,
+    end_date    TEXT NOT NULL DEFAULT '',
+    race_id     TEXT,
+    source      TEXT DEFAULT '538',
+    UNIQUE(poll_type, state, candidate, pollster, end_date)
+);
+
+CREATE TABLE IF NOT EXISTS midterm_polling_averages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_type   TEXT,
+    state       TEXT,
+    candidate   TEXT,
+    party       TEXT,
+    avg_pct     REAL,
+    updated_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS midterm_divergence_snapshots (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_key            TEXT,
+    state               TEXT,
+    race_type           TEXT,
+    polymarket_prob     REAL,
+    kalshi_prob         REAL,
+    predictit_prob      REAL,
+    polling_avg         REAL,
+    max_divergence      REAL,
+    divergence_details  TEXT,       -- JSON object stored as TEXT
+    snapshot_time       TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS midterm_user_watchlists (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    race_key    TEXT NOT NULL,
+    created_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(user_id, race_key)
+);
+
+CREATE TABLE IF NOT EXISTS midterm_alert_settings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    race_key    TEXT NOT NULL,
+    alert_type  TEXT NOT NULL DEFAULT 'divergence',
+    threshold   REAL DEFAULT 5.0,
+    enabled     INTEGER DEFAULT 1,
+    UNIQUE(user_id, race_key, alert_type)
+);
+
+CREATE TABLE IF NOT EXISTS midterm_alert_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT,
+    race_key    TEXT,
+    alert_type  TEXT,
+    message     TEXT,
+    created_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS midterm_audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT,
+    action      TEXT NOT NULL DEFAULT '',
+    details     TEXT,
+    ip_address  TEXT,
+    created_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS profiles (
+    id              TEXT PRIMARY KEY,
+    email           TEXT,
+    display_name    TEXT,
+    tier            TEXT,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_login      TEXT
+);
+"""
+
+
+def _init_db():
+    """Create all tables if they don't exist."""
+    with _get_conn() as conn:
+        conn.executescript(_SCHEMA)
+
+
+def _row_to_dict(row: sqlite3.Row) -> dict:
+    """Convert a sqlite3.Row to a plain dict."""
+    return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Database class
+# ---------------------------------------------------------------------------
 
 
 class Database:
-    """Supabase-backed database for the midterm dashboard.
+    """SQLite-backed database for the midterm dashboard.
 
-    Keeps the same public API as the old SQLite version so callers
-    (main.py, background tasks) require minimal changes.
+    Keeps the same public API as the previous version so callers
+    (main.py, background tasks) require no changes.
     """
 
     def __init__(self):
-        self._client: Optional[Client] = None
+        pass
 
     def connect(self):
-        """Initialize the Supabase client and verify connectivity."""
-        self._client = _get_client()
-        # Quick health check
-        try:
-            self._client.table(T_MARKETS).select("id").limit(0).execute()
-            logger.info("Supabase connection OK")
-        except Exception as e:
-            logger.error("Supabase connection failed: %s", e)
-            raise
+        """Create the database file and initialize all tables."""
+        _init_db()
+        logger.info("SQLite database initialized at %s", DB_PATH)
 
     def close(self):
-        """No-op for Supabase (HTTP client, no persistent connection)."""
+        """No-op -- connections are opened and closed per-operation."""
         pass
 
     # === Helper =============================================================
-
-    @property
-    def sb(self) -> Client:
-        if self._client is None:
-            self._client = _get_client()
-        return self._client
 
     @staticmethod
     def _parse_outcomes(row: dict) -> dict:
@@ -101,36 +212,61 @@ class Database:
         if row and "outcomes" in row:
             o = row["outcomes"]
             if isinstance(o, str):
-                row["outcomes"] = json.loads(o)
+                try:
+                    row["outcomes"] = json.loads(o)
+                except (json.JSONDecodeError, TypeError):
+                    pass
         return row
 
     # === Market Data ========================================================
 
     def upsert_market(self, market: dict):
         outcomes = market.get("outcomes", [])
-        if isinstance(outcomes, str):
-            outcomes = json.loads(outcomes)
+        if isinstance(outcomes, (list, dict)):
+            outcomes = json.dumps(outcomes)
 
-        row = {
-            "source": market["source"],
-            "source_id": market["source_id"],
-            "event_id": market.get("event_id"),
-            "title": market["title"],
-            "event_title": market.get("event_title"),
-            "slug": market.get("slug"),
-            "race_type": market.get("race_type"),
-            "state": market.get("state"),
-            "outcomes": outcomes,
-            "volume": market.get("volume", 0),
-            "liquidity": market.get("liquidity", 0),
-            "active": 1 if market.get("active") else 0,
-            "closed": 1 if market.get("closed") else 0,
-            "end_date": market.get("end_date"),
-            "last_updated": market.get("last_updated"),
-        }
-        self.sb.table(T_MARKETS).upsert(
-            row, on_conflict="source,source_id"
-        ).execute()
+        row = (
+            market["source"],
+            market["source_id"],
+            market.get("event_id"),
+            market["title"],
+            market.get("event_title"),
+            market.get("slug"),
+            market.get("race_type"),
+            market.get("state"),
+            outcomes,
+            market.get("volume", 0),
+            market.get("liquidity", 0),
+            1 if market.get("active") else 0,
+            1 if market.get("closed") else 0,
+            market.get("end_date"),
+            market.get("last_updated"),
+        )
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_markets
+                        (source, source_id, event_id, title, event_title, slug,
+                         race_type, state, outcomes, volume, liquidity, active,
+                         closed, end_date, last_updated)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(source, source_id) DO UPDATE SET
+                         event_id=excluded.event_id,
+                         title=excluded.title,
+                         event_title=excluded.event_title,
+                         slug=excluded.slug,
+                         race_type=excluded.race_type,
+                         state=excluded.state,
+                         outcomes=excluded.outcomes,
+                         volume=excluded.volume,
+                         liquidity=excluded.liquidity,
+                         active=excluded.active,
+                         closed=excluded.closed,
+                         end_date=excluded.end_date,
+                         last_updated=excluded.last_updated
+                    """,
+                    row,
+                )
 
     def upsert_markets_batch(self, markets: list[dict]):
         for market in markets:
@@ -145,99 +281,142 @@ class Database:
         search: str = None,
         min_volume: float = None,
     ) -> list[dict]:
-        q = self.sb.table(T_MARKETS).select("*")
-        if source:
-            q = q.eq("source", source)
-        if race_type:
-            q = q.eq("race_type", race_type)
-        if state:
-            q = q.eq("state", state)
-        if active_only:
-            q = q.eq("active", 1).or_("closed.is.null,closed.eq.0")
-        if search:
-            pattern = f"%{search}%"
-            q = q.or_(f"title.ilike.{pattern},event_title.ilike.{pattern}")
-        if min_volume is not None:
-            q = q.gte("volume", min_volume)
-        q = q.order("volume", desc=True)
+        clauses = []
+        params = []
 
-        resp = q.execute()
-        return [self._parse_outcomes(r) for r in (resp.data or [])]
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if race_type:
+            clauses.append("race_type = ?")
+            params.append(race_type)
+        if state:
+            clauses.append("state = ?")
+            params.append(state)
+        if active_only:
+            clauses.append("active = 1 AND (closed IS NULL OR closed = 0)")
+        if search:
+            # Sanitize: strip PostgREST special characters and SQL wildcards
+            sanitized = search
+            for ch in ("(", ")", ",", ".", ":", "!", "&", "|", "%", "_"):
+                sanitized = sanitized.replace(ch, "")
+            sanitized = sanitized.strip()
+            clauses.append("(title LIKE ? OR event_title LIKE ?)")
+            pattern = f"%{sanitized}%"
+            params.extend([pattern, pattern])
+        if min_volume is not None:
+            clauses.append("volume >= ?")
+            params.append(min_volume)
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT * FROM midterm_markets{where} ORDER BY volume DESC"
+
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._parse_outcomes(_row_to_dict(r)) for r in rows]
 
     def get_all_markets(self, active_only: bool = True) -> list[dict]:
-        q = self.sb.table(T_MARKETS).select("*")
+        clauses = []
         if active_only:
-            q = q.eq("active", 1)
-        q = q.order("volume", desc=True)
-        resp = q.execute()
-        return [self._parse_outcomes(r) for r in (resp.data or [])]
+            clauses.append("active = 1 AND (closed IS NULL OR closed = 0)")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT * FROM midterm_markets{where} ORDER BY volume DESC"
+
+        with _get_conn() as conn:
+            rows = conn.execute(sql).fetchall()
+        return [self._parse_outcomes(_row_to_dict(r)) for r in rows]
 
     # === Price History ======================================================
 
     def record_price_snapshot(
         self, market_id: int, source: str, prices: dict, volume: float = None
     ):
-        row = {
-            "market_id": market_id,
-            "source": source,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "prices": prices,
-            "volume": volume,
-        }
-        self.sb.table(T_PRICE_HISTORY).insert(row).execute()
+        ts = datetime.now(timezone.utc).isoformat()
+        prices_json = json.dumps(prices) if isinstance(prices, (dict, list)) else prices
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_price_history
+                        (market_id, source, timestamp, prices, volume)
+                       VALUES (?,?,?,?,?)""",
+                    (market_id, source, ts, prices_json, volume),
+                )
 
     def get_price_history(self, market_id: int, days: int = 30) -> list[dict]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        resp = (
-            self.sb.table(T_PRICE_HISTORY)
-            .select("*")
-            .eq("market_id", market_id)
-            .gte("timestamp", cutoff)
-            .order("timestamp")
-            .execute()
-        )
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM midterm_price_history
+                   WHERE market_id = ? AND timestamp >= ?
+                   ORDER BY timestamp""",
+                (market_id, cutoff),
+            ).fetchall()
+
         results = []
-        for row in resp.data or []:
-            if isinstance(row.get("prices"), str):
-                row["prices"] = json.loads(row["prices"])
-            results.append(row)
+        for row in rows:
+            d = _row_to_dict(row)
+            if isinstance(d.get("prices"), str):
+                try:
+                    d["prices"] = json.loads(d["prices"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(d)
         return results
 
     # === Divergence =========================================================
 
     def record_divergence(self, race_key: str, state: str, race_type: str, data: dict):
         details = data.get("details", {})
-        row = {
-            "race_key": race_key,
-            "state": state,
-            "race_type": race_type,
-            "polymarket_prob": data.get("polymarket"),
-            "kalshi_prob": data.get("kalshi"),
-            "predictit_prob": data.get("predictit"),
-            "polling_avg": data.get("polling"),
-            "max_divergence": data.get("max_divergence"),
-            "divergence_details": details,
-        }
-        self.sb.table(T_DIVERGENCE).insert(row).execute()
+        details_json = json.dumps(details) if isinstance(details, (dict, list)) else details
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_divergence_snapshots
+                        (race_key, state, race_type, polymarket_prob, kalshi_prob,
+                         predictit_prob, polling_avg, max_divergence, divergence_details)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        race_key,
+                        state,
+                        race_type,
+                        data.get("polymarket"),
+                        data.get("kalshi"),
+                        data.get("predictit"),
+                        data.get("polling"),
+                        data.get("max_divergence"),
+                        details_json,
+                    ),
+                )
 
     def get_divergence_history(
         self, race_key: str = None, days: int = 30
     ) -> list[dict]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-        q = self.sb.table(T_DIVERGENCE).select("*").gte("snapshot_time", cutoff)
         if race_key:
-            q = q.eq("race_key", race_key).order("snapshot_time")
+            sql = """SELECT * FROM midterm_divergence_snapshots
+                     WHERE snapshot_time >= ? AND race_key = ?
+                     ORDER BY snapshot_time"""
+            params = (cutoff, race_key)
         else:
-            q = q.order("max_divergence", desc=True)
+            sql = """SELECT * FROM midterm_divergence_snapshots
+                     WHERE snapshot_time >= ?
+                     ORDER BY max_divergence DESC"""
+            params = (cutoff,)
 
-        resp = q.execute()
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
         results = []
-        for row in resp.data or []:
-            dd = row.get("divergence_details")
+        for row in rows:
+            d = _row_to_dict(row)
+            dd = d.get("divergence_details")
             if isinstance(dd, str):
-                row["divergence_details"] = json.loads(dd)
-            results.append(row)
+                try:
+                    d["divergence_details"] = json.loads(dd)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(d)
         return results
 
     # === Polling Data =======================================================
@@ -245,92 +424,108 @@ class Database:
     def store_polls_batch(self, polls: list[dict]):
         rows = []
         for p in polls:
-            rows.append({
-                "poll_type": p.get("poll_type"),
-                "state": p.get("state"),
-                "candidate": p.get("candidate"),
-                "party": p.get("party"),
-                "percentage": p.get("percentage"),
-                "pollster": p.get("pollster"),
-                "sample_size": p.get("sample_size"),
-                "population": p.get("population"),
-                "start_date": p.get("start_date"),
-                "end_date": p.get("end_date"),
-                "race_id": p.get("race_id"),
-                "source": p.get("source", "538"),
-            })
+            rows.append((
+                p.get("poll_type") or "",
+                p.get("state") or "",
+                p.get("candidate") or "",
+                p.get("party"),
+                p.get("percentage"),
+                p.get("pollster") or "",
+                p.get("sample_size"),
+                p.get("population"),
+                p.get("start_date"),
+                p.get("end_date") or "",
+                p.get("race_id"),
+                p.get("source", "538"),
+            ))
         if rows:
-            # Use upsert with ignore duplicates behavior -- Supabase doesn't
-            # have INSERT OR IGNORE natively, so we insert and handle errors
-            # gracefully.  For polling data without a unique constraint in the
-            # Supabase schema, a plain insert works.
-            self.sb.table(T_POLLING_DATA).insert(rows).execute()
+            with _lock:
+                with _get_conn() as conn:
+                    conn.executemany(
+                        """INSERT OR IGNORE INTO midterm_polling_data
+                            (poll_type, state, candidate, party, percentage,
+                             pollster, sample_size, population, start_date,
+                             end_date, race_id, source)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        rows,
+                    )
 
     def get_polls(self, state: str = None, poll_type: str = None) -> list[dict]:
-        q = self.sb.table(T_POLLING_DATA).select("*")
+        clauses = []
+        params = []
         if state:
-            q = q.eq("state", state)
+            clauses.append("state = ?")
+            params.append(state)
         if poll_type:
-            q = q.eq("poll_type", poll_type)
-        q = q.order("end_date", desc=True).limit(500)
-        resp = q.execute()
-        return resp.data or []
+            clauses.append("poll_type = ?")
+            params.append(poll_type)
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT * FROM midterm_polling_data{where} ORDER BY end_date DESC LIMIT 500"
+
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     def get_recent_polls(self, limit: int = 50) -> list[dict]:
-        resp = (
-            self.sb.table(T_POLLING_DATA)
-            .select("*")
-            .order("end_date", desc=True)
-            .order("id", desc=True)
-            .limit(min(limit, 200))
-            .execute()
-        )
-        return resp.data or []
+        cap = min(limit, 200)
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM midterm_polling_data ORDER BY end_date DESC, id DESC LIMIT ?",
+                (cap,),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     # === User Watchlists ====================================================
 
     def get_watchlist(self, user_id: str) -> list[dict]:
-        resp = (
-            self.sb.table(T_WATCHLISTS)
-            .select("race_key, created_at")
-            .eq("user_id", user_id)
-            .execute()
-        )
-        return resp.data or []
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT race_key, created_at FROM midterm_user_watchlists WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     def add_to_watchlist(self, user_id: str, race_key: str):
-        self.sb.table(T_WATCHLISTS).upsert(
-            {"user_id": user_id, "race_key": race_key},
-            on_conflict="user_id,race_key",
-        ).execute()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_user_watchlists (user_id, race_key)
+                       VALUES (?,?)
+                       ON CONFLICT(user_id, race_key) DO NOTHING""",
+                    (user_id, race_key),
+                )
 
     def remove_from_watchlist(self, user_id: str, race_key: str):
-        self.sb.table(T_WATCHLISTS).delete().eq(
-            "user_id", user_id
-        ).eq("race_key", race_key).execute()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    "DELETE FROM midterm_user_watchlists WHERE user_id = ? AND race_key = ?",
+                    (user_id, race_key),
+                )
 
     # === Alert Settings =====================================================
 
     def get_alerts(self, user_id: str) -> list[dict]:
-        resp = (
-            self.sb.table(T_ALERT_SETTINGS)
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("enabled", 1)
-            .execute()
-        )
-        return resp.data or []
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM midterm_alert_settings WHERE user_id = ? AND enabled = 1",
+                (user_id,),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
-    def upsert_alert(self, user_id: str, race_key: str, threshold: float = 5.0):
-        self.sb.table(T_ALERT_SETTINGS).upsert(
-            {
-                "user_id": user_id,
-                "race_key": race_key,
-                "threshold": threshold,
-                "enabled": 1,
-            },
-            on_conflict="user_id,race_key,alert_type",
-        ).execute()
+    def upsert_alert(self, user_id: str, race_key: str, threshold: float = 5.0, alert_type: str = "divergence"):
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_alert_settings
+                        (user_id, race_key, alert_type, threshold, enabled)
+                       VALUES (?,?,?,?,1)
+                       ON CONFLICT(user_id, race_key, alert_type) DO UPDATE SET
+                         threshold=excluded.threshold,
+                         enabled=excluded.enabled""",
+                    (user_id, race_key, alert_type, threshold),
+                )
 
     # === Audit Log ==========================================================
 
@@ -341,66 +536,56 @@ class Database:
         details: str = None,
         ip: str = None,
     ):
-        row = {
-            "action": action,
-            "details": details,
-            "ip_address": ip,
-        }
-        if user_id:
-            row["user_id"] = user_id
-        self.sb.table(T_AUDIT_LOG).insert(row).execute()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_audit_log (user_id, action, details, ip_address)
+                       VALUES (?,?,?,?)""",
+                    (user_id, action, details, ip),
+                )
 
     def get_audit_log(self, user_id: str = None, limit: int = 100) -> list[dict]:
-        q = self.sb.table(T_AUDIT_LOG).select("*")
         if user_id:
-            q = q.eq("user_id", user_id)
-        q = q.order("created_at", desc=True).limit(limit)
-        resp = q.execute()
-        return resp.data or []
+            sql = "SELECT * FROM midterm_audit_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?"
+            params = (user_id, limit)
+        else:
+            sql = "SELECT * FROM midterm_audit_log ORDER BY created_at DESC LIMIT ?"
+            params = (limit,)
+
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     # === Admin Analytics ====================================================
-    # NOTE: User-related admin stats (users_by_tier, total_users, subscriptions,
-    # new_users, active_sessions, daily_signups, growth, churn) are now in the
-    # gateway admin panel since user management moved there.  The midterm admin
-    # endpoints only report data-layer stats.
 
     def get_admin_stats(self) -> dict:
         stats = {}
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM midterm_markets WHERE active = 1"
+            ).fetchone()
+            stats["active_markets"] = row["cnt"] if row else 0
 
-        # Active markets
-        resp = (
-            self.sb.table(T_MARKETS)
-            .select("id", count="exact")
-            .eq("active", 1)
-            .execute()
-        )
-        stats["active_markets"] = resp.count or 0
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM midterm_price_history"
+            ).fetchone()
+            stats["price_snapshots"] = row["cnt"] if row else 0
 
-        # Price snapshots
-        resp = (
-            self.sb.table(T_PRICE_HISTORY)
-            .select("id", count="exact")
-            .execute()
-        )
-        stats["price_snapshots"] = resp.count or 0
-
-        # Divergence snapshots
-        resp = (
-            self.sb.table(T_DIVERGENCE)
-            .select("id", count="exact")
-            .execute()
-        )
-        stats["divergence_snapshots"] = resp.count or 0
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM midterm_divergence_snapshots"
+            ).fetchone()
+            stats["divergence_snapshots"] = row["cnt"] if row else 0
 
         return stats
 
     def get_all_users(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """Fetch user profiles from the shared profiles table."""
-        resp = (
-            self.sb.table(T_PROFILES)
-            .select("id, email, display_name, tier, created_at, last_login")
-            .order("created_at", desc=True)
-            .range(offset, offset + limit - 1)
-            .execute()
-        )
-        return resp.data or []
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, email, display_name, tier, created_at, last_login
+                   FROM profiles
+                   ORDER BY created_at DESC
+                   LIMIT ? OFFSET ?""",
+                (limit, offset),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]

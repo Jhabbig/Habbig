@@ -1,0 +1,15 @@
+[Unit]
+Description=Habbig Sports Dashboard (port 8888)
+After=network.target
+
+[Service]
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/sports-dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python sports_dashboard.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+[Install]
+WantedBy=multi-user.target

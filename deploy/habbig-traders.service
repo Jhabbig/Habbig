@@ -1,0 +1,15 @@
+[Unit]
+Description=Habbig Top Traders Dashboard (port 8052)
+After=network.target
+
+[Service]
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/top-traders-dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+[Install]
+WantedBy=multi-user.target

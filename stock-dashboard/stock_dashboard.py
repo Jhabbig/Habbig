@@ -8,11 +8,13 @@ Minimal, spacious, soft rounded cards, Inter font, subtle animations.
 Run: python3 stock_dashboard.py [--port 8050]
 """
 
+import html
 import json
 import time
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 TRADE_LOG = Path(__file__).parent / "stock_trades.json"
@@ -108,6 +110,7 @@ def build_html():
         dir_color = "#22c55e" if is_up else "#ef4444"
         dir_icon = "&#8593;" if is_up else "&#8595;"
         dir_label = "Bullish" if is_up else "Bearish"
+        ticker_safe = html.escape(ticker.upper())
         conf_pct = conf * 100
 
         # Confidence ring: SVG donut
@@ -133,7 +136,7 @@ def build_html():
         prediction_cards += f"""
         <div class="pred-card">
             <div class="pred-header">
-                <div class="pred-ticker">{ticker.upper()}</div>
+                <div class="pred-ticker">{ticker_safe}</div>
                 <div class="pred-direction" style="color:{dir_color}">{dir_icon} {dir_label}</div>
             </div>
             <div class="pred-body">
@@ -184,17 +187,21 @@ def build_html():
         pnl_sign = "+" if pnl_val >= 0 else ""
         is_up = t.get("direction") == "up"
         actual_up = t.get("actual") == "up"
+        t_ticker = html.escape(t.get('ticker', '?').upper())
+        t_direction = html.escape(t.get('direction', '?').upper())
+        t_actual = html.escape(t.get('actual', '?').upper())
+        t_date = html.escape(str(t.get('date', 'N/A')))
 
         trade_rows += f"""
         <tr class="trade-row {result_class}">
-            <td><span class="trade-ticker">{t.get('ticker', '?').upper()}</span></td>
-            <td><span class="dir-badge {'up' if is_up else 'down'}">{t.get('direction', '?').upper()}</span></td>
-            <td><span class="dir-badge {'up' if actual_up else 'down'}">{t.get('actual', '?').upper()}</span></td>
+            <td><span class="trade-ticker">{t_ticker}</span></td>
+            <td><span class="dir-badge {'up' if is_up else 'down'}">{t_direction}</span></td>
+            <td><span class="dir-badge {'up' if actual_up else 'down'}">{t_actual}</span></td>
             <td><span class="result-badge {result_class}">{result_icon}</span></td>
             <td>{t.get('confidence', 0):.0%}</td>
             <td class="{'profit-text' if pnl_val >= 0 else 'loss-text'}">{pnl_sign}${abs(pnl_val):.2f}</td>
             <td>${t.get('balance_after', 0):,.2f}</td>
-            <td class="date-cell">{t.get('date', 'N/A')}</td>
+            <td class="date-cell">{t_date}</td>
         </tr>"""
 
     if not trade_rows:
@@ -207,10 +214,11 @@ def build_html():
         wr = (st["wins"] / total * 100) if total > 0 else 0
         pnl_c = "profit-text" if st["pnl"] >= 0 else "loss-text"
         bar_width = min(wr, 100)
+        tk_safe = html.escape(tk)
         ticker_perf_cards += f"""
         <div class="ticker-perf">
             <div class="tp-header">
-                <span class="tp-name">{tk}</span>
+                <span class="tp-name">{tk_safe}</span>
                 <span class="tp-pnl {pnl_c}">{"+" if st["pnl"] >= 0 else ""}${st["pnl"]:.2f}</span>
             </div>
             <div class="tp-bar-bg"><div class="tp-bar" style="width:{bar_width}%"></div></div>
@@ -237,14 +245,13 @@ def build_html():
             css = "log-loss"
         elif "sleeping" in line.lower() or "market closed" in line.lower():
             css = "log-sleep"
-        log_entries += f'<div class="log-entry {css}">{line}</div>'
+        log_entries += f'<div class="log-entry {css}">{html.escape(line)}</div>'
 
     # Current time
     now_utc = datetime.now(timezone.utc)
-    et_offset = timedelta(hours=-4)
-    now_et = now_utc + et_offset
+    now_et = datetime.now(ZoneInfo("America/New_York"))
 
-    html = f"""<!DOCTYPE html>
+    page_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -890,7 +897,7 @@ tbody tr:hover {{ background: var(--surface-hover); }}
 
 </body>
 </html>"""
-    return html
+    return page_html
 
 
 def build_svg_chart(balances):

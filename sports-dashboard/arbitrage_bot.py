@@ -135,7 +135,7 @@ def fetch_polymarket_markets(search_term: str = "") -> list[dict]:
     seen = set()
     unique = []
     for m in all_markets:
-        cid = m.get("condition_id", m.get("id", id(m)))
+        cid = m.get("condition_id", m.get("id", hash(json.dumps(m, sort_keys=True, default=str))))
         if cid not in seen:
             seen.add(cid)
             unique.append(m)

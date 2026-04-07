@@ -27,10 +27,19 @@ import os
 import re
 import secrets
 import time
-from collections import deque
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
+
+# Load .env.production before any config reads
+_env_file = Path(__file__).parent / ".env.production"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ[_k.strip()] = _v.strip()
 
 import httpx
 import stripe
@@ -40,6 +49,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
+from cache import cache
+from sse import event_stream, active_connection_count
+from poller import Poller
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -71,12 +83,12 @@ else:
 
 BUNDLE_PLANS = {
     "trader": {
-        "monthly_cents": 4900, "annual_cents": 39900, "name": "Habbig Trader",
+        "monthly_cents": 4900, "annual_cents": 39900, "name": "betyc Trader",
         "stripe_price_monthly": "price_1TJXulQq4pCmZ5172Svy34cn",
         "stripe_price_annual": "price_1TJXulQq4pCmZ517VPw60dds",
     },
     "pro": {
-        "monthly_cents": 14900, "annual_cents": 119900, "name": "Habbig Pro",
+        "monthly_cents": 14900, "annual_cents": 119900, "name": "betyc Pro",
         "stripe_price_monthly": "price_1TJXumQq4pCmZ517nHAuSv3b",
         "stripe_price_annual": "price_1TJXunQq4pCmZ517pIJRjiDp",
     },
@@ -263,8 +275,39 @@ db.init_db()
 # Persistent httpx client for upstream proxying (connection pooling).
 HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
-
+_poller: Optional[Poller] = None
 _cleanup_task: Optional[asyncio.Task] = None
+_health_task: Optional[asyncio.Task] = None
+
+# ── Upstream health checking / circuit breaker ────────────────────────────────
+# Pings each dashboard every 15 s.  If a backend is marked unhealthy, proxy_request
+# returns 503 immediately instead of waiting for the 30 s connect timeout.
+
+_HEALTH_CHECK_INTERVAL = 15  # seconds
+_HEALTH_CHECK_TIMEOUT = 3.0  # seconds per probe
+_upstream_health: dict[str, bool] = {}  # dashboard_key → healthy?
+
+
+async def _health_check_loop():
+    """Periodically probe each upstream dashboard."""
+    probe_client = httpx.AsyncClient(timeout=httpx.Timeout(_HEALTH_CHECK_TIMEOUT))
+    try:
+        while True:
+            for key, cfg in DASHBOARDS.items():
+                port = cfg["target"]
+                try:
+                    resp = await probe_client.get(f"http://127.0.0.1:{port}/")
+                    _upstream_health[key] = resp.status_code < 500
+                except Exception:
+                    _upstream_health[key] = False
+            await asyncio.sleep(_HEALTH_CHECK_INTERVAL)
+    finally:
+        await probe_client.aclose()
+
+
+def is_upstream_healthy(dashboard_key: str) -> bool:
+    """Return whether a backend is considered healthy (default True if unknown)."""
+    return _upstream_health.get(dashboard_key, True)
 
 
 async def _periodic_cleanup():
@@ -282,9 +325,26 @@ async def _periodic_cleanup():
 
 @app.on_event("startup")
 async def _startup():
-    global HTTP_CLIENT, _cleanup_task
-    HTTP_CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
+    global HTTP_CLIENT, _cleanup_task, _health_task, _poller
+    HTTP_CLIENT = httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, connect=5.0),
+        limits=httpx.Limits(
+            max_connections=50,
+            max_keepalive_connections=20,
+            keepalive_expiry=30.0,
+        ),
+    )
     _cleanup_task = asyncio.create_task(_periodic_cleanup())
+    _health_task = asyncio.create_task(_health_check_loop())
+
+    # Redis cache + background poller
+    if cache.connect():
+        _poller = Poller(DASHBOARDS)
+        await _poller.start()
+        log.info("Redis cache + background poller active")
+    else:
+        log.warning("Running without Redis — no caching or SSE")
+
     mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
     log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
     log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
@@ -301,20 +361,36 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    if _poller:
+        await _poller.stop()
+    if _health_task:
+        _health_task.cancel()
     if _cleanup_task:
         _cleanup_task.cancel()
     if HTTP_CLIENT:
         await HTTP_CLIENT.aclose()
 
 
-# Static files for apex pages (CSS, JS, images).
+# Static files for apex pages (CSS, JS, images) — with browser cache headers.
+_STATIC_CACHE_HEADER = (b"cache-control", b"public, max-age=86400, stale-while-revalidate=3600")
+
+
+class CachedStaticFiles(StaticFiles):
+    """StaticFiles subclass that adds Cache-Control headers to every response."""
+
+    async def __call__(self, scope, receive, send):
+        async def send_with_cache(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append(_STATIC_CACHE_HEADER)
+                message = {**message, "headers": headers}
+            await send(message)
+        await super().__call__(scope, receive, send_with_cache)
+
+
 if STATIC_DIR.exists():
-    app.mount("/_gateway_static", StaticFiles(directory=str(STATIC_DIR)), name="gateway_static")
+    app.mount("/_gateway_static", CachedStaticFiles(directory=str(STATIC_DIR)), name="gateway_static")
 
-
-# ── Security headers middleware ──────────────────────────────────────────────
-
-from collections import defaultdict
 
 # ── Security headers (raw ASGI middleware — faster than BaseHTTPMiddleware) ──
 
@@ -368,6 +444,10 @@ class SecurityHeadersMiddleware:
 
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+# GZip compression — compresses HTML/JSON/CSS responses > 500 bytes.
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 # ── Rate limiting ────────────────────────────────────────────────────────────
@@ -526,8 +606,54 @@ def _get_cached_session(token: str) -> Optional[dict]:
 
 
 def invalidate_session_cache(token: str) -> None:
-    """Remove a token from the session cache (call on logout/suspend)."""
+    """Remove a token from the session cache (call on logout)."""
     _SESSION_CACHE.pop(token, None)
+
+
+def flush_session_cache() -> None:
+    """Clear the entire session cache (call on suspend/password reset)."""
+    _SESSION_CACHE.clear()
+
+
+# ── Subscription cache ────────────────────────────────────────────────────────
+# Caches has_active_subscription results per (user_id, dashboard_key).
+# TTL is 120 s — subscriptions change far less often than sessions.
+
+_SUB_CACHE: dict[tuple[int, str], tuple[float, bool]] = {}
+_SUB_CACHE_TTL = 120  # seconds
+_SUB_CACHE_MAX = 1000
+
+
+def cached_has_subscription(user_id: int, dashboard_key: str) -> bool:
+    """Cached wrapper around db.has_active_subscription."""
+    now = time.time()
+    cache_key = (user_id, dashboard_key)
+    entry = _SUB_CACHE.get(cache_key)
+    if entry and now - entry[0] < _SUB_CACHE_TTL:
+        return entry[1]
+    result = db.has_active_subscription(user_id, dashboard_key)
+    if len(_SUB_CACHE) >= _SUB_CACHE_MAX:
+        oldest = min(_SUB_CACHE, key=lambda k: _SUB_CACHE[k][0])
+        del _SUB_CACHE[oldest]
+    _SUB_CACHE[cache_key] = (now, result)
+    return result
+
+
+def cached_active_dashboard_keys(user_id: int) -> list[str]:
+    """Return list of dashboard keys the user has active access to (cached)."""
+    return [k for k in DASHBOARDS if cached_has_subscription(user_id, k)]
+
+
+def invalidate_sub_cache_for_user(user_id: int) -> None:
+    """Remove all subscription cache entries for a user."""
+    stale = [k for k in _SUB_CACHE if k[0] == user_id]
+    for k in stale:
+        del _SUB_CACHE[k]
+
+
+def flush_sub_cache() -> None:
+    """Clear the entire subscription cache."""
+    _SUB_CACHE.clear()
 
 
 def current_user(request: Request) -> Optional[dict]:
@@ -650,21 +776,10 @@ async def apex_root(request: Request):
         # Subdomain request — delegate to the proxy handler below.
         return await proxy_request(request, "/")
 
-    user = current_user(request)
-    if not user:
-        # Logged-out visitors see the marketing / onboarding landing page so
-        # they understand what the product is before we ask for an email.
-        return _render_landing()
-
-    # Logged-in: honor the user's configured default dashboard if they have
-    # an active subscription for it. Otherwise fall through to the hub.
-    pref = db.get_default_dashboard(user["user_id"])
-    if pref and pref in DASHBOARDS and db.has_active_subscription(user["user_id"], pref):
-        return RedirectResponse(
-            f"https://{DOMAIN}/" if False else f"https://{DASHBOARDS[pref]['subdomain']}.{DOMAIN}/",
-            status_code=302,
-        )
-    return RedirectResponse("/dashboards", status_code=302)
+    # "Coming soon" teaser — always show the landing page at apex,
+    # regardless of login status.  Logged-in users reach their
+    # dashboards via /dashboards in the nav.
+    return _render_landing()
 
 
 def _render_landing() -> HTMLResponse:
@@ -708,20 +823,9 @@ async def gate_submit(request: Request, token: str = Form("")):
     if not invite or invite["status"] == "revoked":
         return render_page("gate", error="Invalid or revoked token.")
     if invite["status"] == "claimed":
-        email_hint = db.mask_email(invite["claimed_by_email"] or "")
-        return render_page(
-            "login", error="",
-            raw_token_section=_login_token_section(invite["token"], email_hint),
-            raw_footer_link='<a href="/gate">Use a different token</a>',
-            raw_success="",
-        )
-    # Unclaimed — go to signup, pre-fill email if token has a target_email
-    target_email = ""
-    try:
-        target_email = invite["target_email"] or ""
-    except (IndexError, KeyError):
-        pass
-    return render_page("signup", error="", invite_token=invite["token"], email=target_email)
+        return RedirectResponse(f"/login?{urlencode({'token': invite['token']})}", status_code=303)
+    # Unclaimed — PRG redirect to the signup page with token in URL
+    return RedirectResponse(f"/signup?{urlencode({'token': invite['token']})}", status_code=303)
 
 
 def _login_token_section(invite_token: str, email_hint: str) -> str:
@@ -737,17 +841,29 @@ def _login_token_section(invite_token: str, email_hint: str) -> str:
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
+async def login_page(request: Request, token: str = ""):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
     user = current_user(request)
-    if user:
+    if user and not user.get("_dev_bypass"):
+        # Real logged-in user → skip to dashboards (but not for dev bypass,
+        # so auth pages remain testable on localhost)
         return RedirectResponse("/dashboards", status_code=302)
+    # If a claimed invite token is provided (from /gate redirect), show token section
+    token = token.strip()
+    token_section = ""
+    footer_link = '<a href="/gate">Have an invite token? Use it here</a>'
+    if token:
+        invite = db.get_invite_token(token)
+        if invite and invite["status"] == "claimed":
+            email_hint = db.mask_email(invite["claimed_by_email"] or "")
+            token_section = _login_token_section(invite["token"], email_hint)
+            footer_link = '<a href="/gate">Use a different token</a>'
     return render_page(
         "login", error="",
-        raw_token_section="",
-        raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
+        raw_token_section=token_section,
+        raw_footer_link=footer_link,
         raw_success="",
     )
 
@@ -815,12 +931,23 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
 
 
 @app.get("/signup", response_class=HTMLResponse)
-async def signup_page(request: Request):
+async def signup_page(request: Request, token: str = ""):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
-    # Direct access without a token — redirect to gate
-    return RedirectResponse("/gate", status_code=302)
+    token = token.strip()
+    if not token:
+        return RedirectResponse("/gate", status_code=302)
+    invite = db.get_invite_token(token)
+    if not invite or invite["status"] != "unclaimed":
+        return RedirectResponse("/gate", status_code=302)
+    # Valid unclaimed token — render the signup form
+    target_email = ""
+    try:
+        target_email = invite["target_email"] or ""
+    except (IndexError, KeyError):
+        pass
+    return render_page("signup", error="", invite_token=invite["token"], email=target_email)
 
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
@@ -862,6 +989,7 @@ async def signup_submit(request: Request, username: str = Form(""), email: str =
         return render_page("signup", error="An account with that email already exists.", invite_token=invite_token, email=email)
     user_id = db.create_user(email, password, username=username)
     if not db.claim_invite_token(invite_token, user_id, email):
+        db.delete_user(user_id)
         return render_page("gate", error="This token was just claimed by someone else. Please use a different token.")
     token = db.create_session(user_id)
     response = RedirectResponse("/dashboards", status_code=302)
@@ -894,14 +1022,13 @@ async def my_dashboards(request: Request):
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
-    any_active_sub = any(s["status"] == "active" for s in subs.values())
     local_mode = is_local_host(request)
 
     # ── Build subscription summary ──────────────────────────────────
     active_subs = []
     total_monthly = 0
     for key, cfg in DASHBOARDS.items():
-        if _is_sub_active(subs.get(key), is_admin_user) or any_active_sub:
+        if _is_sub_active(subs.get(key), is_admin_user):
             sub_record = subs.get(key)
             plan = sub_record["plan"] if sub_record else ""
             if "annual" in plan:
@@ -944,7 +1071,7 @@ async def my_dashboards(request: Request):
     # ── Build dashboard cards with feature highlights ───────────────
     cards_html = []
     for key, cfg in DASHBOARDS.items():
-        has_sub = _is_sub_active(subs.get(key), is_admin_user) or any_active_sub
+        has_sub = _is_sub_active(subs.get(key), is_admin_user)
         active_badge = (
             '<span class="badge badge-active">Active</span>' if has_sub
             else '<span class="badge badge-locked">Locked</span>'
@@ -1144,6 +1271,7 @@ async def billing_action(request: Request, action: str = Form(...)):
                     duration_days=duration,
                     source="placeholder",
                 )
+                flush_sub_cache()
                 return RedirectResponse("/billing", status_code=302)
 
             # Create Stripe Checkout Session
@@ -1186,6 +1314,7 @@ async def billing_action(request: Request, action: str = Form(...)):
                         except Exception:
                             log.warning("Stripe cancel failed for %s, cancelling locally", s["stripe_sub_id"])
             db.cancel_subscription(user["user_id"], key)
+            flush_sub_cache()
 
     return RedirectResponse("/billing", status_code=302)
 
@@ -1210,6 +1339,7 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
                 duration_days=duration,
                 source=f"billing_{plan}",
             )
+        flush_sub_cache()
         log.info("User %s subscribed to %s (%s) — placeholder mode", user.get("username", user["email"]), plan, interval)
         return RedirectResponse("/billing", status_code=302)
 
@@ -1268,10 +1398,15 @@ async def stripe_webhook(request: Request):
     # ── checkout.session.completed — subscription paid ─────────────────────
     if event_type == "checkout.session.completed":
         meta = data_obj.get("metadata", {}) if isinstance(data_obj, dict) else (data_obj.metadata or {})
-        user_id = meta.get("user_id")
-        if not user_id:
+        raw_user_id = meta.get("user_id")
+        if not raw_user_id:
             log.warning("Stripe webhook: checkout.session.completed without user_id in metadata")
             return JSONResponse({"status": "ignored"})
+        try:
+            user_id = int(raw_user_id)
+        except (ValueError, TypeError):
+            log.warning("Invalid user_id in Stripe metadata: %s", raw_user_id)
+            return JSONResponse({"ok": True})  # ack webhook, don't retry
 
         stripe_sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
 
@@ -1318,6 +1453,8 @@ async def stripe_webhook(request: Request):
         invoice_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
         log.warning("Stripe: payment failed for invoice %s", invoice_id)
 
+    # Flush subscription cache after any webhook-driven mutation.
+    flush_sub_cache()
     return JSONResponse({"status": "ok"})
 
 
@@ -1431,18 +1568,23 @@ def _profile_context(user: dict, banner: str = "") -> dict:
 
     # Trading credentials status
     cred_status = db.has_trading_credentials(user["user_id"])
-    connected = '<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:rgba(16,185,129,0.12);color:#10b981;font-weight:600">Connected</span>'
-    not_connected = '<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:rgba(255,255,255,0.04);color:var(--text-muted);font-weight:500">Not connected</span>'
+    connected = '<span class="setup-status on">Connected</span>'
+    not_connected = '<span class="setup-status off">Not connected</span>'
     poly_delete = (
-        '<a href="/profile/trading/polymarket/delete" onclick="return confirm(\'Remove Polymarket credentials?\')" '
-        'style="padding:10px 20px;font-size:13px;color:var(--red);text-decoration:none;border:1px solid rgba(239,68,68,0.3);border-radius:var(--radius-sm)">'
-        'Remove</a>'
+        '<a href="/profile/trading/polymarket/delete" onclick="return confirm(\'Disconnect Polymarket?\')" '
+        'class="setup-btn-remove">Disconnect</a>'
     ) if cred_status["polymarket"] else ""
     kalshi_delete = (
-        '<a href="/profile/trading/kalshi/delete" onclick="return confirm(\'Remove Kalshi credentials?\')" '
-        'style="padding:10px 20px;font-size:13px;color:var(--red);text-decoration:none;border:1px solid rgba(239,68,68,0.3);border-radius:var(--radius-sm)">'
-        'Remove</a>'
+        '<a href="/profile/trading/kalshi/delete" onclick="return confirm(\'Disconnect Kalshi?\')" '
+        'class="setup-btn-remove">Disconnect</a>'
     ) if cred_status["kalshi"] else ""
+
+    # Cards that aren't connected start open so the user sees the setup steps
+    poly_open = "" if cred_status["polymarket"] else "open"
+    kalshi_open = "" if cred_status["kalshi"] else "open"
+    # If both are connected, add the 'connected' border style
+    poly_connected = "connected" if cred_status["polymarket"] else ""
+    kalshi_connected = "connected" if cred_status["kalshi"] else ""
 
     return {
         "username": user.get("username", user["email"]),
@@ -1457,6 +1599,8 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         "raw_kalshi_status": connected if cred_status["kalshi"] else not_connected,
         "raw_poly_delete": poly_delete,
         "raw_kalshi_delete": kalshi_delete,
+        "poly_open_class": f"{poly_connected} {poly_open}".strip(),
+        "kalshi_open_class": f"{kalshi_connected} {kalshi_open}".strip(),
     }
 
 
@@ -1639,14 +1783,14 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
 
                 body_text = (
                     f"Hi,\n\n"
-                    f"A password reset was requested for your Habbig account.\n\n"
+                    f"A password reset was requested for your betyc account.\n\n"
                     f"Click the link below to set a new password:\n"
                     f"{reset_link}\n\n"
                     f"This link expires in 1 hour.\n\n"
                     f"If you did not request this, you can safely ignore this email.\n"
                 )
                 msg = MIMEText(body_text)
-                msg["Subject"] = "Password Reset \u2014 Habbig"
+                msg["Subject"] = "Password Reset \u2014 betyc"
                 msg["From"] = smtp_user
                 msg["To"] = email
 
@@ -1708,11 +1852,11 @@ async def reset_password_submit(
     if pwd_err:
         return render_page("reset-password", token=token, error=pwd_err, raw_success="")
 
-    # Update the user's password via Supabase Auth.
     db.update_user_password(reset["user_id"], new_password)
     db.use_password_reset(token)
     # Kill all existing sessions so a compromised session can't persist.
     db.delete_user_sessions(reset["user_id"])
+    flush_session_cache()
 
     user = db.get_user_by_id(reset["user_id"])
     log.info("Password reset completed for user %s", user["email"] if user else reset["user_id"])
@@ -1776,13 +1920,13 @@ async def api_enquire(request: Request):
             smtp_pass = os.environ.get("SMTP_PASS", "")
 
             body_text = (
-                f"New enquiry from the Habbig landing page.\n\n"
+                f"New enquiry from the betyc landing page.\n\n"
                 f"Email: {email}\n"
                 f"Role: {job_title}\n\n"
                 f"Message:\n{message}\n"
             )
             msg = MIMEText(body_text)
-            msg["Subject"] = "New Enquiry \u2014 Habbig"
+            msg["Subject"] = "New Enquiry \u2014 betyc"
             msg["From"] = smtp_user or enquiry_email
             msg["To"] = enquiry_email
 
@@ -2056,9 +2200,9 @@ def _build_revenue_content() -> str:
         cfg = DASHBOARDS.get(s["dashboard_key"])
         if not cfg:
             continue
-        if s["plan"] == "monthly":
+        if "monthly" in s["plan"]:
             mrr_cents += cfg["monthly_cents"]
-        elif s["plan"] == "annual":
+        elif "annual" in s["plan"]:
             mrr_cents += cfg["annual_cents"] // 12
 
     mrr = mrr_cents / 100
@@ -2188,7 +2332,7 @@ async def admin_revoke_token(request: Request, token_id: int = Form(0)):
 
 
 @app.post("/admin/users/{user_id}/promote")
-async def admin_promote(request: Request, user_id: str):
+async def admin_promote(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -2197,7 +2341,7 @@ async def admin_promote(request: Request, user_id: str):
 
 
 @app.post("/admin/users/{user_id}/demote")
-async def admin_demote(request: Request, user_id: str):
+async def admin_demote(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -2206,21 +2350,23 @@ async def admin_demote(request: Request, user_id: str):
 
 
 @app.post("/admin/users/{user_id}/suspend")
-async def admin_suspend(request: Request, user_id: str):
+async def admin_suspend(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, True)
+    flush_session_cache()
     log.info("Admin %s suspended user id=%s", admin.get("email"), user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/unsuspend")
-async def admin_unsuspend(request: Request, user_id: str):
+async def admin_unsuspend(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, False)
+    flush_session_cache()
     log.info("Admin %s unsuspended user id=%s", admin.get("email"), user_id)
     return RedirectResponse("/admin", status_code=302)
 
@@ -2249,7 +2395,7 @@ async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
     return render_page("admin", email=admin["email"], username=admin.get("username", admin["email"]), **ctx)
 
 
-def _can_manage_user(admin: dict, target_user_id: str) -> bool:
+def _can_manage_user(admin: dict, target_user_id: int) -> bool:
     """Check if admin can manage the target user based on role hierarchy."""
     target = db.get_user_by_id(target_user_id)
     if not target:
@@ -2271,7 +2417,7 @@ def _require_super_admin(request: Request) -> dict:
 
 
 @app.post("/admin/users/{user_id}/role")
-async def admin_set_role(request: Request, user_id: str, level: int = Form(0)):
+async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
     admin = _require_super_admin(request)
     if level < 0 or level > 2:
         raise HTTPException(status_code=400, detail="Invalid role level")
@@ -2281,7 +2427,7 @@ async def admin_set_role(request: Request, user_id: str, level: int = Form(0)):
 
 
 @app.post("/admin/users/{user_id}/email")
-async def admin_change_email(request: Request, user_id: str, new_email: str = Form("")):
+async def admin_change_email(request: Request, user_id: int, new_email: str = Form("")):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -2297,7 +2443,7 @@ async def admin_change_email(request: Request, user_id: str, new_email: str = Fo
 
 
 @app.post("/admin/users/{user_id}/revoke-token")
-async def admin_revoke_user_token(request: Request, user_id: str):
+async def admin_revoke_user_token(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -2309,7 +2455,7 @@ async def admin_revoke_user_token(request: Request, user_id: str):
 
 
 @app.post("/admin/users/{user_id}/new-token")
-async def admin_new_token_for_user(request: Request, user_id: str):
+async def admin_new_token_for_user(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -2324,7 +2470,7 @@ async def admin_new_token_for_user(request: Request, user_id: str):
 
 
 @app.post("/admin/users/{user_id}/grant")
-async def admin_grant_subscription(request: Request, user_id: str):
+async def admin_grant_subscription(request: Request, user_id: int):
     admin = _require_super_admin(request)
     form = await request.form()
     dashboard_keys = form.getlist("dashboard_keys")
@@ -2342,6 +2488,7 @@ async def admin_grant_subscription(request: Request, user_id: str):
             duration_days=duration,
             source="admin_grant",
         )
+    flush_sub_cache()
     granted = [dk for dk in dashboard_keys if dk in DASHBOARDS]
     log.info("Super admin %s granted %s (%s) to user id=%s", admin["email"], ", ".join(granted), plan, user_id)
     return RedirectResponse("/admin", status_code=302)
@@ -2366,6 +2513,8 @@ async def admin_bulk_users(request: Request):
             db.set_user_suspended(uid, True)
         elif action == "unsuspend":
             db.set_user_suspended(uid, False)
+    if action in ("suspend", "unsuspend", "promote", "demote"):
+        flush_session_cache()
     log.info("Admin %s bulk %s %d users: %s", admin["email"], action, len(user_ids), user_ids)
     return RedirectResponse("/admin", status_code=302)
 
@@ -2431,7 +2580,7 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
     if key is not None:
         if key not in DASHBOARDS:
             return RedirectResponse("/settings", status_code=302)
-        if not user.get("is_admin") and not db.has_active_subscription(user["user_id"], key):
+        if not user.get("is_admin") and not cached_has_subscription(user["user_id"], key):
             return RedirectResponse("/settings", status_code=302)
 
     db.set_default_dashboard(user["user_id"], key)
@@ -2559,11 +2708,10 @@ async def trading_place_order(request: Request):
 
         db.update_trading_order(order_id,
             status=result.get("status", "error"),
-            order_id=result.get("order_id", ""),
+            order_ext_id=result.get("order_id", ""),
             fill_price=result.get("fill_price"),
-            shares=result.get("shares"),
+            fill_amount=result.get("shares"),
             error=result.get("error"),
-            resolved_at=int(time.time()) if result.get("status") == "filled" else None,
         )
         log.info(
             "Trade %s: user=%s platform=%s side=%s amount=$%.2f status=%s",
@@ -2716,20 +2864,18 @@ async def trading_orders(request: Request):
 # ── Switcher injection ────────────────────────────────────────────────────────
 
 
-def _switcher_snippet(dashboard_key: str, user_id: str) -> str:
+def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "") -> str:
     """Build the <script> tags that configure and load the dashboard switcher."""
-    items = []
-    for k, c in DASHBOARDS.items():
-        if db.has_active_subscription(user_id, k):
-            items.append({
-                "key": k,
-                "subdomain": c["subdomain"],
-                "display_name": c["display_name"],
-                "accent": c["accent"],
-            })
-    # Get username for the header bar
-    user_row = db.get_user_by_id(user_id)
-    username = user_row["username"] if user_row and "username" in user_row.keys() else ""
+    active_keys = cached_active_dashboard_keys(user_id)
+    items = [
+        {
+            "key": k,
+            "subdomain": DASHBOARDS[k]["subdomain"],
+            "display_name": DASHBOARDS[k]["display_name"],
+            "accent": DASHBOARDS[k]["accent"],
+        }
+        for k in active_keys
+    ]
     cfg_json = json.dumps({
         "dashboards": items,
         "current": dashboard_key,
@@ -2743,7 +2889,27 @@ def _switcher_snippet(dashboard_key: str, user_id: str) -> str:
     )
 
 
-def _inject_switcher(content: bytes, content_type: str, key: str, user_id: str) -> bytes:
+# ── SSE script injection ───────────────────────────────────────────────────────
+
+_SSE_SCRIPT_TAG = '<script src="/_gateway_static/sse-client.js" defer></script>'
+
+
+def _inject_sse_client(content: bytes) -> bytes:
+    """Inject the SSE client script before </body> in HTML responses."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    lower = text.lower()
+    idx = lower.rfind("</body>")
+    if idx != -1:
+        text = text[:idx] + _SSE_SCRIPT_TAG + text[idx:]
+    else:
+        text += _SSE_SCRIPT_TAG
+    return text.encode("utf-8")
+
+
+def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, username: str = "") -> bytes:
     """Inject theme CSS (before </head>) and switcher+trade JS (before </body>)."""
     if "text/html" not in (content_type or ""):
         return content
@@ -2759,7 +2925,6 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: str) 
     if head_idx != -1:
         text = text[:head_idx] + css_tag + text[head_idx:]
     else:
-        # No </head> tag — try inserting after <head> or at top
         head_open = lower.find("<head")
         if head_open != -1:
             close = lower.find(">", head_open)
@@ -2767,9 +2932,8 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: str) 
                 text = text[:close + 1] + css_tag + text[close + 1:]
 
     # 2. Inject JS before </body>
-    snippet = _switcher_snippet(key, user_id)
-    lower = text.lower()
-    idx = lower.rfind("</body>")
+    snippet = _switcher_snippet(key, user_id, username)
+    idx = text.lower().rfind("</body>")
     if idx != -1:
         text = text[:idx] + snippet + text[idx:]
     else:
@@ -2796,19 +2960,43 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         return RedirectResponse(f"https://{DOMAIN}/gate", status_code=302)
 
     # 2. Require active subscription.
-    if not db.has_active_subscription(user["user_id"], key):
+    if not cached_has_subscription(user["user_id"], key):
         return RedirectResponse(
             f"https://{DOMAIN}/billing?dashboard={key}",
             status_code=302,
         )
 
-    # 3. Forward the request.
+    # 3. Fail fast if backend is known to be down (circuit breaker).
+    if not is_upstream_healthy(key):
+        return HTMLResponse(
+            f"<h1>{html.escape(dash_cfg['display_name'])} is temporarily unavailable</h1>"
+            f"<p>The backend is being checked every {_HEALTH_CHECK_INTERVAL}s and will recover automatically.</p>"
+            f'<p><a href="javascript:location.reload()">Retry</a></p>',
+            status_code=503,
+        )
+
+    # 4. Forward the request.
     target_port = dash_cfg["target"]
     path = forced_path if forced_path is not None else request.url.path
     query = request.url.query
     upstream_url = f"http://127.0.0.1:{target_port}{path}"
     if query:
         upstream_url += f"?{query}"
+
+    # Cache-first: serve GET /api/* and /data/* from Redis when available.
+    if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")):
+        cached = cache.get_api(key, path)
+        if cached:
+            cached_body, cached_ct = cached
+            return Response(
+                content=cached_body,
+                status_code=200,
+                headers={
+                    "content-type": cached_ct,
+                    "x-cache": "HIT",
+                    "cache-control": "no-store",
+                },
+            )
 
     # Strip hop-by-hop headers; also strip any client-supplied X-Gateway-*
     # headers so a malicious client can't forge upstream identity.
@@ -2868,6 +3056,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         upstream.headers.get("content-type", ""),
         key,
         user["user_id"],
+        username=user.get("username", ""),
     )
     # Update Content-Length since injection may have changed the body size.
     if body is not upstream.content:
@@ -2877,15 +3066,74 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     # Prevent browsers from caching proxied API responses so dashboards
     # always show fresh data instead of stale upstream cache headers.
     content_type = upstream.headers.get("content-type", "")
-    if "application/json" in content_type or path.startswith("/api"):
+    if "application/json" in content_type or path.startswith("/api") or path.startswith("/data"):
         resp_headers["cache-control"] = "no-store, no-cache, must-revalidate"
         resp_headers["pragma"] = "no-cache"
+        resp_headers["x-cache"] = "MISS"
+        # Write-through: cache this response for next time.
+        if request.method == "GET" and upstream.status_code == 200:
+            cache.set_api(key, path, upstream.content, content_type)
+
+    # Inject SSE client script into HTML responses for live updates.
+    if "text/html" in (content_type or ""):
+        body = _inject_sse_client(body)
+        resp_headers.pop("content-length", None)
+        resp_headers["content-length"] = str(len(body))
 
     return Response(
         content=body,
         status_code=upstream.status_code,
         headers=resp_headers,
     )
+
+
+# ── SSE stream endpoint ────────────────────────────────────────────────────────
+
+from starlette.responses import StreamingResponse
+
+
+@app.get("/api/stream")
+async def sse_stream(request: Request):
+    """Server-Sent Events stream for real-time dashboard updates."""
+    user = current_user(request)
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    raw = request.query_params.get("dashboards", "")
+    dashboards = [d.strip() for d in raw.split(",") if d.strip()]
+    if not dashboards:
+        return JSONResponse({"error": "No dashboards specified"}, status_code=400)
+
+    allowed = [
+        d for d in dashboards
+        if cached_has_subscription(user["user_id"], SUBDOMAIN_TO_KEY.get(d, d))
+        or user.get("is_admin")
+    ]
+    if not allowed:
+        return JSONResponse({"error": "No subscriptions for requested dashboards"}, status_code=403)
+
+    return StreamingResponse(
+        event_stream(allowed),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/cache/stats")
+async def cache_stats_endpoint(request: Request):
+    """Admin-only cache and poller stats."""
+    user = current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    return JSONResponse({
+        "cache": cache.stats(),
+        "poller": _poller.stats() if _poller else {"running": False},
+        "sse_connections": active_connection_count(),
+    })
 
 
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.
@@ -2903,10 +3151,12 @@ async def catch_all(request: Request, full_path: str):
 
 # ── WebSocket proxy ───────────────────────────────────────────────────────────
 
+_WS_MAX_MESSAGE_SIZE = 1 * 1024 * 1024  # 1 MB
+_WS_CONNECT_TIMEOUT = 5.0  # seconds
+
 
 @app.websocket("/{full_path:path}")
 async def websocket_proxy(ws: WebSocket, full_path: str):
-    # Extract subdomain from headers (WebSocket Request doesn't expose it the same way).
     host = ws.headers.get("host", "").split(":")[0].lower()
     sub = ""
     if host == DOMAIN:
@@ -2921,9 +3171,9 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
         await ws.close(code=1008, reason="Unknown subdomain")
         return
 
-    # Auth check via cookie (with dev-bypass for localhost).
+    # Auth check via cookie — use session cache instead of raw DB call.
     token = ws.cookies.get(COOKIE_NAME)
-    session = db.get_session(token) if token else None
+    session = _get_cached_session(token) if token else None
     user_id = session["user_id"] if session else None
     if not user_id and not IS_PRODUCTION:
         ws_host = ws.headers.get("host", "").split(":")[0].lower()
@@ -2932,13 +3182,18 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
     if not user_id:
         await ws.close(code=1008, reason="Not authenticated")
         return
-    if not db.has_active_subscription(user_id, key):
+    if not cached_has_subscription(user_id, key):
         await ws.close(code=1008, reason="No active subscription")
         return
 
     dash_cfg = DASHBOARDS[key]
     if not dash_cfg.get("supports_websocket"):
         await ws.close(code=1008, reason="Dashboard does not support WebSocket")
+        return
+
+    # Circuit breaker: fail fast if upstream is down.
+    if not is_upstream_healthy(key):
+        await ws.close(code=1011, reason="Backend temporarily unavailable")
         return
 
     target_port = dash_cfg["target"]
@@ -2950,11 +3205,26 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
     await ws.accept()
 
     try:
-        async with websockets.connect(upstream_url) as upstream_ws:
+        async with websockets.connect(
+            upstream_url,
+            close_timeout=10,
+            ping_interval=20,
+            ping_timeout=10,
+            max_size=_WS_MAX_MESSAGE_SIZE,
+            open_timeout=_WS_CONNECT_TIMEOUT,
+        ) as upstream_ws:
             async def client_to_upstream():
                 try:
                     while True:
-                        msg = await ws.receive_text()
+                        data = await ws.receive()
+                        if data["type"] == "websocket.disconnect":
+                            break
+                        msg = data.get("text") or data.get("bytes")
+                        if msg is None:
+                            continue
+                        if len(msg) > _WS_MAX_MESSAGE_SIZE:
+                            log.warning("WS message too large (%d bytes), dropping", len(msg))
+                            continue
                         await upstream_ws.send(msg)
                 except WebSocketDisconnect:
                     pass
@@ -2971,7 +3241,13 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
                 except Exception as ex:
                     log.warning("ws upstream→client error for %s: %s", upstream_url, ex)
 
-            await asyncio.gather(client_to_upstream(), upstream_to_client())
+            t1 = asyncio.create_task(client_to_upstream())
+            t2 = asyncio.create_task(upstream_to_client())
+            done, pending = await asyncio.wait([t1, t2], return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except asyncio.TimeoutError:
+        log.warning("WebSocket upstream connect timeout for %s", upstream_url)
     except Exception as e:
         log.warning("WebSocket proxy error for %s: %s", upstream_url, e)
     finally:

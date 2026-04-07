@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """World State Dashboard — FastAPI backend."""
 
+import asyncio
 import json
 import re
 import time
@@ -3565,12 +3566,14 @@ async def get_geopolitical():
 
 @app.get("/api/news")
 async def get_news():
-    return _json({"news": fetch_news()})
+    news = await asyncio.to_thread(fetch_news)
+    return _json({"news": news})
 
 
 @app.get("/api/polymarket")
 async def get_polymarket():
-    return _json({"markets": fetch_polymarket()})
+    markets = await asyncio.to_thread(fetch_polymarket)
+    return _json({"markets": markets})
 
 
 @app.get("/api/militias")
@@ -3583,7 +3586,7 @@ async def get_relations(country_code: str):
     code = country_code.upper()
     if code in COUNTRY_RELATIONS:
         return _json(COUNTRY_RELATIONS[code])
-    return _json({"error": "Country not found"})
+    return Response(content=json.dumps({"error": "Country not found"}), status_code=404, media_type="application/json")
 
 
 @app.get("/api/relations")
@@ -3596,7 +3599,7 @@ async def get_country(code: str):
     c = code.upper()
     if c in COUNTRY_PROFILES:
         return _json(COUNTRY_PROFILES[c])
-    return _json({"error": "Country profile not found"})
+    return Response(content=json.dumps({"error": "Country profile not found"}), status_code=404, media_type="application/json")
 
 
 @app.get("/api/profiles")

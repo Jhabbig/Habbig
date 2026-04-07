@@ -76,11 +76,19 @@ def fetch_markets(limit=200, status="open"):
     for m in all_markets:
         try:
             yes_price = m.get("yes_ask", 0) or m.get("last_price", 0) or 0
-            no_price = m.get("no_ask", 0) or ((100 - yes_price) if yes_price else 0)
+            # Normalize to cents: yes_ask is 0-100 cents, last_price can be 0-1 decimal
+            if 0 < yes_price <= 1:
+                yes_price = yes_price * 100  # convert decimal to cents
+
+            no_price = m.get("no_ask", 0)
+            if no_price and 0 < no_price <= 1:
+                no_price = no_price * 100  # convert decimal to cents
+            if not no_price:
+                no_price = (100 - yes_price) if yes_price else 0
 
             # Convert cents to probability
-            yes_prob = yes_price / 100 if yes_price > 1 else yes_price
-            no_prob = no_price / 100 if no_price > 1 else no_price
+            yes_prob = yes_price / 100
+            no_prob = no_price / 100
 
             processed.append({
                 "ticker": m.get("ticker", ""),
@@ -111,6 +119,19 @@ def fetch_markets(limit=200, status="open"):
     return processed
 
 
+def _normalize_kalshi_price(raw_price):
+    """Normalize a Kalshi price to a 0-1 probability.
+
+    Kalshi prices can arrive as cents (0-100) or decimals (0-1).
+    Returns a probability between 0 and 1.
+    """
+    if raw_price is None or raw_price == 0:
+        return 0.0
+    if 0 < raw_price <= 1:
+        return round(raw_price, 3)  # already decimal
+    return round(raw_price / 100, 3)  # cents to decimal
+
+
 def fetch_events(limit=100, status="open"):
     """Fetch Kalshi events (groups of markets)."""
     CACHE_DIR.mkdir(exist_ok=True)
@@ -139,7 +160,7 @@ def fetch_events(limit=100, status="open"):
             "markets": [{
                 "ticker": m.get("ticker", ""),
                 "title": m.get("title", ""),
-                "yes_price": (m.get("yes_ask", 0) or m.get("last_price", 0) or 0) / 100,
+                "yes_price": _normalize_kalshi_price(m.get("yes_ask", 0) or m.get("last_price", 0) or 0),
                 "volume": m.get("volume", 0) or 0,
             } for m in markets[:10]],
         })

@@ -129,17 +129,22 @@ def _check_rate_limit(ip: str, tier: str) -> bool:
 
     now = time.time()
     window = 60.0
-    timestamps = state.rate_limit_store[ip]
 
     # Prune entries older than the window
     cutoff = now - window
-    state.rate_limit_store[ip] = [t for t in timestamps if t > cutoff]
-    timestamps = state.rate_limit_store[ip]
+    state.rate_limit_store[ip] = [t for t in state.rate_limit_store[ip] if t > cutoff]
 
-    if len(timestamps) >= limit:
+    # Check rate limit BEFORE recording this request
+    if len(state.rate_limit_store[ip]) >= limit:
         return False
 
+    # Only record the timestamp if the request is allowed
     state.rate_limit_store[ip].append(now)
+
+    # Remove empty keys to prevent unbounded memory growth
+    if not state.rate_limit_store[ip]:
+        del state.rate_limit_store[ip]
+
     return True
 
 
@@ -182,9 +187,13 @@ async def data_refresh_loop():
             poly_data, kalshi_data, pi_data, poll_data, poly_world = results
 
             # Kalshi world uses cached data from the midterm fetch above
-            kalshi_world = await with_timeout(
-                state.kalshi.fetch_world_election_markets(), "Kalshi-World", seconds=30
-            )
+            try:
+                kalshi_world = await with_timeout(
+                    state.kalshi.fetch_world_election_markets(), "Kalshi-World", seconds=30
+                )
+            except Exception as e:
+                logger.error(f"Kalshi-World fetch error: {e}")
+                kalshi_world = e
 
             # Store midterm markets
             for label, data in [("Polymarket", poly_data), ("Kalshi", kalshi_data), ("PredictIt", pi_data)]:
@@ -354,8 +363,12 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    # Determine tier from gateway header (best-effort, default to free)
-    tier = request.headers.get("x-gateway-user-tier", "free")
+    # Only trust the tier header if the gateway secret is valid
+    _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
+    if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
+        tier = request.headers.get("x-gateway-user-tier", "free")
+    else:
+        tier = "free"
 
     ip = request.client.host if request.client else "unknown"
 
@@ -394,7 +407,10 @@ async def audit_sensitive_actions(request: Request, call_next):
 # These endpoints redirect to the gateway for those actions.
 
 @app.post("/auth/logout")
-async def auth_logout():
+async def auth_logout(request: Request):
+    accept = request.headers.get("accept", "")
+    if "application/json" in accept:
+        return JSONResponse({"status": "ok"})
     return RedirectResponse("https://habbig.com/logout", status_code=302)
 
 

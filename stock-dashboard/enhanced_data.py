@@ -211,7 +211,8 @@ def get_sector_peer_data(ticker: str) -> Dict[str, float]:
 
     Returns dict with keys: sector_1d_ret, sector_5d_ret, peer_avg_1d_ret
     """
-    cache_key = f"sector_peer_{ticker}"
+    ticker_upper = ticker.upper()
+    cache_key = f"sector_peer_{ticker_upper}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
@@ -219,7 +220,7 @@ def get_sector_peer_data(ticker: str) -> Dict[str, float]:
     defaults = {"sector_1d_ret": 0.0, "sector_5d_ret": 0.0, "peer_avg_1d_ret": 0.0}
 
     # --- Sector ETF --------------------------------------------------------
-    etf_sym = SECTOR_ETF_MAP.get(ticker, "SPY")  # fallback to SPY
+    etf_sym = SECTOR_ETF_MAP.get(ticker_upper, "SPY")  # fallback to SPY
     try:
         hist = _fetch_recent_history(etf_sym, period="1mo", interval="1d")
         if hist is not None and len(hist) >= 6:
@@ -239,7 +240,7 @@ def get_sector_peer_data(ticker: str) -> Dict[str, float]:
         pass
 
     # --- Peer average 1d return --------------------------------------------
-    peers = PEER_MAP.get(ticker, [])
+    peers = PEER_MAP.get(ticker_upper, [])
     peer_rets: List[float] = []
     for p in peers:
         try:
@@ -327,16 +328,16 @@ def get_options_signals(ticker_yf: str) -> Dict[str, float]:
         if calls is None or puts is None or calls.empty or puts.empty:
             return defaults
 
-        # Put/call volume ratio
-        total_call_vol = calls["volume"].sum()
-        total_put_vol = puts["volume"].sum()
-        if total_call_vol > 0:
+        # Put/call volume ratio (min_count=1 so all-NaN returns NaN, not 0)
+        total_call_vol = calls["volume"].sum(min_count=1)
+        total_put_vol = puts["volume"].sum(min_count=1)
+        if total_call_vol and total_call_vol > 0:
             defaults["pcr_volume"] = round(float(total_put_vol / total_call_vol), 4)
 
-        # Put/call open interest ratio
-        total_call_oi = calls["openInterest"].sum()
-        total_put_oi = puts["openInterest"].sum()
-        if total_call_oi > 0:
+        # Put/call open interest ratio (min_count=1 so all-NaN returns NaN, not 0)
+        total_call_oi = calls["openInterest"].sum(min_count=1)
+        total_put_oi = puts["openInterest"].sum(min_count=1)
+        if total_call_oi and total_call_oi > 0:
             defaults["pcr_oi"] = round(float(total_put_oi / total_call_oi), 4)
 
         # Average implied volatility of near-ATM options

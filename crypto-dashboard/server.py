@@ -14,6 +14,7 @@ import secrets
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from collections import defaultdict
+import html as html_mod
 
 import requests
 import numpy as np
@@ -285,7 +286,7 @@ async def price_updater():
                             if pending_update and connected_ws and now - last_push >= 1.0:
                                 ws_msg = json.dumps({"type": "price_update", "data": pending_update})
                                 dead = set()
-                                for client_ws in connected_ws:
+                                for client_ws in list(connected_ws):
                                     try:
                                         await client_ws.send_text(ws_msg)
                                     except:
@@ -349,9 +350,9 @@ async def window_refresher():
                     if ts not in existing_ts:
                         existing.append((ts, price))
                 existing.sort(key=lambda x: x[0])
-                # Keep bounded
+                # Keep bounded (slice assignment to mutate the original list in-place)
                 if len(existing) > 20000:
-                    existing = existing[-20000:]
+                    existing[:] = existing[-20000:]
 
                 # Re-analyze the recent data to get latest windows
                 new_windows = analyze_windows(existing)
@@ -364,13 +365,15 @@ async def window_refresher():
                     for w in new_windows:
                         if w["start"] > last_stored:
                             old_windows.append(w)
-                    # Keep bounded
+                    # Keep bounded (slice assignment to mutate the original list in-place)
                     if len(old_windows) > 1000:
-                        old_windows = old_windows[-1000:]
+                        old_windows[:] = old_windows[-1000:]
                 else:
                     old_windows = new_windows[-500:]
 
                 # Update predictions using the full window history
+                if ticker not in ensembles:
+                    continue
                 preds = ensembles[ticker].predict_current_and_recent(old_windows)
 
                 # Log predictions to DB for accuracy tracking
@@ -411,7 +414,7 @@ async def window_refresher():
                         "data": serialize_asset(ticker),
                     })
                     dead = set()
-                    for ws in connected_ws:
+                    for ws in list(connected_ws):
                         try:
                             await ws.send_text(msg)
                         except:
@@ -437,7 +440,7 @@ async def window_refresher():
                                         "time": datetime.now(timezone.utc).strftime("%H:%M UTC"),
                                     },
                                 })
-                                for ws in connected_ws:
+                                for ws in list(connected_ws):
                                     try:
                                         await ws.send_text(alert_msg)
                                     except:
@@ -506,7 +509,7 @@ async def suspicious_trade_monitor():
                                     "time": t.get("time_str", ""),
                                 },
                             })
-                            for ws in connected_ws:
+                            for ws in list(connected_ws):
                                 try:
                                     await ws.send_text(alert)
                                 except:
@@ -653,7 +656,7 @@ async def root(request: Request):
     if _is_premium(request):
         try:
             from suspicious_trades import run_scanner
-            sus_data = run_scanner()
+            sus_data = await asyncio.to_thread(run_scanner)
             if sus_data and sus_data.get("suspicious_trades"):
                 # Show trades with meaningful potential profit or high suspicion score
                 sus_data["suspicious_trades"] = [
@@ -1134,13 +1137,18 @@ async function refresh() {
     }
 
     // Log (newest first)
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.appendChild(document.createTextNode(s));
+      return d.innerHTML;
+    }
     const lines = (d.log || []).reverse();
     document.getElementById('log').innerHTML = lines.map(l => {
       let cls = 'log-line';
       if (l.includes('OPEN') || l.includes('WIN')) cls += ' trade';
       if (l.includes('LOSS')) cls += ' loss';
       if (l.includes('COOLDOWN') || l.includes('paused')) cls += ' warn';
-      return '<div class="'+cls+'">'+l+'</div>';
+      return '<div class="'+cls+'">'+escapeHtml(l)+'</div>';
     }).join('');
   } catch(e) {
     document.getElementById('status').textContent = 'Error: ' + e.message;
@@ -1289,13 +1297,18 @@ async function refresh() {
     } else {
       document.getElementById('trades').innerHTML = '<p class="empty">No trades yet. Bot is waiting for mispriced markets.</p>';
     }
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.appendChild(document.createTextNode(s));
+      return d.innerHTML;
+    }
     const lines = (d.log||[]).reverse();
     document.getElementById('log').innerHTML = lines.map(l => {
       let cls = 'log-line';
       if (l.includes('WIN')) cls += ' win';
       if (l.includes('LOSS')) cls += ' loss';
       if (l.includes('BET')) cls += ' bet';
-      return '<div class="'+cls+'">'+l+'</div>';
+      return '<div class="'+cls+'">'+escapeHtml(l)+'</div>';
     }).join('');
   } catch(e) {
     document.getElementById('status').textContent = 'Error: ' + e.message;
@@ -1452,27 +1465,27 @@ async def kalshi_dashboard(request: Request):
     for m in (data.get("trending") or [])[:25]:
         yes_cls = "positive" if m["yes_price"] >= 0.5 else "negative"
         trending_rows += f"""<tr>
-          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{m['title'][:70]}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(m['title'][:70])}</td>
           <td class="{yes_cls}" style="font-weight:700;">{m['yes_price']:.0%}</td>
           <td>{1-m['yes_price']:.0%}</td>
           <td>{m.get('volume_24h',0):,}</td>
           <td>{m.get('volume',0):,}</td>
-          <td style="color:var(--muted);font-size:0.75em;">{m.get('category','')}</td>
+          <td style="color:var(--muted);font-size:0.75em;">{html_mod.escape(m.get('category',''))}</td>
         </tr>"""
 
     close_rows = ""
     for m in (data.get("close_calls") or [])[:20]:
         close_rows += f"""<tr>
-          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{m['title'][:70]}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(m['title'][:70])}</td>
           <td style="font-weight:700;">{m['yes_price']:.0%}</td>
           <td>{1-m['yes_price']:.0%}</td>
           <td>{m.get('volume',0):,}</td>
-          <td style="color:var(--muted);font-size:0.75em;">{m.get('category','')}</td>
+          <td style="color:var(--muted);font-size:0.75em;">{html_mod.escape(m.get('category',''))}</td>
         </tr>"""
 
     cat_cards = ""
     for cat, info in list((data.get("categories") or {}).items())[:12]:
-        cat_cards += f'<div class="card"><div class="label">{cat}</div><div class="value">{info["count"]}</div><div class="detail">Vol: {info["total_volume"]:,}</div></div>'
+        cat_cards += f'<div class="card"><div class="label">{html_mod.escape(cat)}</div><div class="value">{info["count"]}</div><div class="detail">Vol: {info["total_volume"]:,}</div></div>'
 
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1570,8 +1583,8 @@ async def trade_page(request: Request):
         slug = t.get("market_id", "")
         poly_url = f"https://polymarket.com/event/{slug}" if slug else "#"
         sus_rows += f"""<tr>
-          <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;">{t['title'][:60]}</td>
-          <td>{t['outcome']}</td>
+          <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(t['title'][:60])}</td>
+          <td>{html_mod.escape(str(t['outcome']))}</td>
           <td style="font-weight:600;">{odds_str}</td>
           <td style="font-weight:700;">${t['usd_value']:,.0f}</td>
           <td class="negative" style="font-weight:700;">${pot_profit:,.0f}</td>
@@ -1587,7 +1600,7 @@ async def trade_page(request: Request):
         vol = m.get("volume_24h", 0)
         vol_str = f"${vol:,.0f}" if vol >= 1000 else f"${vol:.0f}"
         market_rows += f"""<tr>
-          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{m['question'][:70]}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(m['question'][:70])}</td>
           <td>{vol_str}</td>
           <td>${m.get('liquidity', 0):,.0f}</td>
           <td><a href="{poly_url}" target="_blank" style="color:var(--blue);text-decoration:none;font-size:0.85em;">Open →</a></td>

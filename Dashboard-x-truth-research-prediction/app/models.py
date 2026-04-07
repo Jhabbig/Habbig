@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -33,8 +33,8 @@ class User(SQLModel, table=True):
     truthsocial_access_token: str = ""
     preferred_platform: str = Field(default="polymarket")  # "polymarket" or "kalshi"
     preferred_theme: str = Field(default="dark")  # "dark" or "light"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class RawPost(SQLModel, table=True):
@@ -46,8 +46,8 @@ class RawPost(SQLModel, table=True):
     follower_count: int = 0
     verified: bool = False
     content: str = Field(default="", sa_column=Column(Text))
-    posted_at: datetime = Field(default_factory=datetime.utcnow)
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    posted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     engagement_json: str = Field(default="{}", sa_column=Column(Text))
 
     @property
@@ -77,7 +77,7 @@ class Prediction(SQLModel, table=True):
     category_credibility_at_time: Optional[float] = None
     risk_flag: bool = False
     risk_reasons_json: str = Field(default="[]", sa_column=Column(Text))
-    extracted_at: datetime = Field(default_factory=datetime.utcnow)
+    extracted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     resolved: bool = False
     resolved_correct: Optional[bool] = None
 
@@ -107,8 +107,8 @@ class Source(SQLModel, table=True):
     accuracy_unlocked: bool = False
     accuracy_global: Optional[float] = None
     decay_weighted_accuracy: Optional[float] = None
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def category_credibility(self) -> dict:
@@ -134,7 +134,7 @@ class SourcePredictionRecord(SQLModel, table=True):
     prediction_id: int = Field(foreign_key="prediction.id", index=True)
     market_slug: str = ""
     category: str = ""
-    predicted_at: datetime = Field(default_factory=datetime.utcnow)
+    predicted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     hours_remaining: float = 0.0
     resolved_correct: Optional[bool] = None
     decay_weight: float = 1.0
@@ -151,14 +151,14 @@ class MarketSnapshot(SQLModel, table=True):
     volume_usd: float = 0.0
     close_time: Optional[datetime] = None
     platform: str = Field(default="polymarket", index=True)  # "polymarket" or "kalshi"
-    snapshotted_at: datetime = Field(default_factory=datetime.utcnow)
+    snapshotted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ResolvedMarket(SQLModel, table=True):
     __tablename__ = "resolved_market"
     market_slug: str = Field(primary_key=True)
     outcome: str = ""
-    resolved_at: datetime = Field(default_factory=datetime.utcnow)
+    resolved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class MonthlyQuota(SQLModel, table=True):
@@ -167,14 +167,14 @@ class MonthlyQuota(SQLModel, table=True):
     platform: str = Field(index=True)
     year_month: str = ""
     tweets_read: int = 0
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class CredibilitySnapshot(SQLModel, table=True):
     __tablename__ = "credibility_snapshot"
     id: Optional[int] = Field(default=None, primary_key=True)
     handle: str = Field(foreign_key="source.handle", index=True)
-    snapshotted_at: datetime = Field(default_factory=datetime.utcnow)
+    snapshotted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     global_credibility: float = 0.0
     category_credibility_json: str = Field(default="{}", sa_column=Column(Text))
     accuracy_unlocked: bool = False

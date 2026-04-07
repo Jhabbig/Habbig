@@ -14,8 +14,6 @@
 #   7050 — World State Dashboard     (world-state-dashboard/server.py)
 #
 
-set -e
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -28,23 +26,31 @@ NC='\033[0m'
 
 ALL_PORTS="7000 8000 8050 8051 8052 5050 8888 7050"
 
-# Kill any existing dashboard processes on these ports
+# Kill dashboard processes — prefer PID files, fall back to port scan
 cleanup() {
     echo -e "${YELLOW}Stopping all dashboards...${NC}"
-    for PORT in $ALL_PORTS; do
-        PID=$(lsof -ti :$PORT 2>/dev/null || true)
-        if [ -n "$PID" ]; then
-            kill $PID 2>/dev/null || true
-            echo "  Stopped process on port $PORT (PID $PID)"
-        fi
-    done
+    local used_pids=false
     for PIDFILE in /tmp/dashboard_*.pid; do
         if [ -f "$PIDFILE" ]; then
+            used_pids=true
             PID=$(cat "$PIDFILE")
-            kill $PID 2>/dev/null || true
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                kill "$PID" 2>/dev/null || true
+                echo "  Stopped PID $PID (from $PIDFILE)"
+            fi
             rm -f "$PIDFILE"
         fi
     done
+    # Fall back to port-based killing only if no PID files were found
+    if [ "$used_pids" = false ]; then
+        for PORT in $ALL_PORTS; do
+            PID=$(lsof -ti :$PORT 2>/dev/null || true)
+            if [ -n "$PID" ]; then
+                kill $PID 2>/dev/null || true
+                echo "  Stopped process on port $PORT (PID $PID)"
+            fi
+        done
+    fi
     echo -e "${GREEN}All dashboards stopped.${NC}"
 }
 

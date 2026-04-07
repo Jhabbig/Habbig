@@ -949,21 +949,21 @@ class WindowNeuralNet:
 
         # Layer 3
         d_a3d = (d_z4 @ self.params["W4"].T)
-        d_a3 = d_a3d * cache["mask3"] / (1 - self.dropout_rate)
+        d_a3 = d_a3d * cache["mask3"]
         d_z3 = d_a3 * relu_deriv(cache["bn3"])
         grads["W3"] = cache["a2d"].T @ d_z3; grads["b3"] = xp.sum(d_z3, axis=0, keepdims=True)
         grads["bn3_g"] = xp.zeros_like(self.params["bn3_g"]); grads["bn3_b"] = xp.zeros_like(self.params["bn3_b"])
 
         # Layer 2
         d_a2d = (d_z3 @ self.params["W3"].T)
-        d_a2 = d_a2d * cache["mask2"] / (1 - self.dropout_rate)
+        d_a2 = d_a2d * cache["mask2"]
         d_z2 = d_a2 * relu_deriv(cache["bn2"])
         grads["W2"] = cache["a1d"].T @ d_z2; grads["b2"] = xp.sum(d_z2, axis=0, keepdims=True)
         grads["bn2_g"] = xp.zeros_like(self.params["bn2_g"]); grads["bn2_b"] = xp.zeros_like(self.params["bn2_b"])
 
         # Layer 1
         d_a1d = (d_z2 @ self.params["W2"].T)
-        d_a1 = d_a1d * cache["mask1"] / (1 - self.dropout_rate)
+        d_a1 = d_a1d * cache["mask1"]
         d_z1 = d_a1 * relu_deriv(cache["bn1"])
         grads["W1"] = cache["X"].T @ d_z1; grads["b1"] = xp.sum(d_z1, axis=0, keepdims=True)
         grads["bn1_g"] = xp.zeros_like(self.params["bn1_g"]); grads["bn1_b"] = xp.zeros_like(self.params["bn1_b"])
@@ -1220,15 +1220,15 @@ class EnsemblePredictor:
             "pred_end_delta": round(avg_delta, 2),
             "pred_direction": "positive" if avg_prob>=0.5 else "negative",
             "pred_prob_positive": round(avg_prob, 3),
-            "pred_max_up": preds[0]["pred_max_up"],
-            "pred_max_down": preds[0]["pred_max_down"],
-            "pred_cross_sec": preds[0]["pred_cross_sec"],
+            "pred_max_up": valid[0][1]["pred_max_up"],
+            "pred_max_down": valid[0][1]["pred_max_down"],
+            "pred_cross_sec": valid[0][1]["pred_cross_sec"],
             "confidence": round((agree-0.5)*2, 2),
-            "vol_regime": preds[0]["vol_regime"],
-            "momentum": preds[0]["momentum"],
-            "avg_rsi": preds[0]["avg_rsi"],
+            "vol_regime": valid[0][1]["vol_regime"],
+            "momentum": valid[0][1]["momentum"],
+            "avg_rsi": valid[0][1]["avg_rsi"],
             "ensemble_agreement": f"{sum(dirs)}/{len(dirs)}",
-            "individual_probs": [p["pred_prob_positive"] for p in preds],
+            "individual_probs": [p["pred_prob_positive"] for _, p in valid],
             "model_details": model_details,
         }
 

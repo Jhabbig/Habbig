@@ -320,7 +320,7 @@ class TradingBot:
                 score -= 5; reasons.append(f"Delta ${current_delta:.4f} still negative despite cross")
         else:
             if hist_avg_neg != 0 and current_delta < 0:
-                ratio = current_delta / abs(hist_avg_neg) if hist_avg_neg != 0 else 0
+                ratio = abs(current_delta) / abs(hist_avg_neg) if hist_avg_neg != 0 else 0
                 if ratio >= 0.5:
                     score += 15; reasons.append(f"Delta ${current_delta:.4f} = {ratio:.0%} of hist avg loss")
                 elif ratio >= 0.2:

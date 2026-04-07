@@ -1,0 +1,15 @@
+[Unit]
+Description=Habbig Weather Dashboard (port 5050)
+After=network.target
+
+[Service]
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/polymarket_weather_dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+[Install]
+WantedBy=multi-user.target

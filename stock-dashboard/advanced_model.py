@@ -22,7 +22,7 @@ from sklearn.ensemble import (
 )
 from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.isotonic import IsotonicRegression
@@ -296,12 +296,13 @@ class StackingEnsemble:
         """
         n = len(y_train)
         oof_preds = np.zeros((n, self._n_level0))
+        oof_mask = np.zeros(n, dtype=bool)  # Track which samples got OOF predictions
 
         # Scale features
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X_train)
 
-        kf = KFold(n_splits=self._oof_kfolds, shuffle=False)
+        kf = TimeSeriesSplit(n_splits=self._oof_kfolds)
 
         # For each level-0 model type, generate OOF predictions
         level0_templates = self._make_level0()
@@ -324,6 +325,7 @@ class StackingEnsemble:
                     oof_preds[val_idx, model_idx] = proba[:, 1]
                 else:
                     oof_preds[val_idx, model_idx] = proba
+                oof_mask[val_idx] = True
 
         # Re-train level-0 models on full training data (for inference)
         self.level0_models = self._make_level0()
@@ -333,7 +335,25 @@ class StackingEnsemble:
             except TypeError:
                 model.fit(X_scaled, y_train)
 
-        # Train meta-learner on OOF predictions
+        # Train meta-learner: prefer validation set if provided for better
+        # calibration; fall back to OOF predictions from training data.
+        if X_val is not None and y_val is not None and len(y_val) >= 10:
+            X_val_scaled = self.scaler.transform(X_val)
+            val_meta_input = np.zeros((len(X_val), self._n_level0))
+            for i, model in enumerate(self.level0_models):
+                proba = model.predict_proba(X_val_scaled)
+                if proba.ndim == 2:
+                    val_meta_input[:, i] = proba[:, 1]
+                else:
+                    val_meta_input[:, i] = proba
+            meta_X = val_meta_input
+            meta_y = y_val
+        else:
+            # Only use samples that received real OOF predictions (exclude
+            # early samples that were never in any validation fold).
+            meta_X = oof_preds[oof_mask]
+            meta_y = y_train[oof_mask]
+
         self.meta_model = LogisticRegression(
             C=1.0,
             penalty="l2",
@@ -341,7 +361,7 @@ class StackingEnsemble:
             max_iter=1000,
             random_state=42,
         )
-        self.meta_model.fit(oof_preds, y_train)
+        self.meta_model.fit(meta_X, meta_y)
         self._fitted = True
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:

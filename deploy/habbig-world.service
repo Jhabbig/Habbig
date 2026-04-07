@@ -1,0 +1,15 @@
+[Unit]
+Description=Habbig World State Dashboard (port 7050)
+After=network.target
+
+[Service]
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/world-state-dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 7050
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+[Install]
+WantedBy=multi-user.target

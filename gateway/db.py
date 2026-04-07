@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS trading_orders (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_subs_active ON subscriptions(user_id, dashboard_key, status);
 CREATE INDEX IF NOT EXISTS idx_invite_token ON invite_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_invite_status ON invite_tokens(status);
 CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token);
@@ -263,6 +264,13 @@ def get_user_by_email_or_username(identifier: str) -> Optional[sqlite3.Row]:
 def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
     with conn() as c:
         return c.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def delete_user(user_id: int) -> None:
+    """Delete a user by ID (used to clean up orphaned users on failed invite claim)."""
+    with conn() as c:
+        c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
 
 def set_default_dashboard(user_id: int, dashboard_key: Optional[str]) -> None:

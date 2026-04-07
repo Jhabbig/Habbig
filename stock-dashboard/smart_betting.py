@@ -482,15 +482,15 @@ class RiskManager:
             return False, f"Max concurrent bets reached ({self.max_concurrent_bets})"
 
         # Per-ticker exposure
-        ticker_exposure = sum(b.get("amount", 0) for b in pending_bets if b.get("ticker") == ticker)
+        ticker_exposure = sum(b.get("amount", b.get("bet_size", 0)) for b in pending_bets if b.get("ticker") == ticker)
         max_ticker = balance * self.max_per_ticker_exposure
         if ticker_exposure + bet_size > max_ticker:
             return False, f"Ticker exposure limit for {ticker} (${ticker_exposure + bet_size:.2f} > ${max_ticker:.2f})"
 
         # Directional exposure
         if pending_bets:
-            up_total = sum(b.get("amount", 0) for b in pending_bets if b.get("direction", "").lower() in ("up", "yes"))
-            down_total = sum(b.get("amount", 0) for b in pending_bets if b.get("direction", "").lower() in ("down", "no"))
+            up_total = sum(b.get("amount", b.get("bet_size", 0)) for b in pending_bets if b.get("direction", "").lower() in ("up", "yes"))
+            down_total = sum(b.get("amount", b.get("bet_size", 0)) for b in pending_bets if b.get("direction", "").lower() in ("down", "no"))
             total_exposure = up_total + down_total + bet_size
             if total_exposure > 0:
                 if direction.lower() in ("up", "yes"):

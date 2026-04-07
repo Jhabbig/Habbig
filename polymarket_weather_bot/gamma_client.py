@@ -11,7 +11,7 @@ from typing import Optional
 
 import aiohttp
 
-from city_stations import lookup_station, get_all_city_keywords
+from city_stations import lookup_station, get_all_city_keywords, CITY_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -180,14 +180,14 @@ def parse_temperature_from_title(title: str) -> dict:
 
 
 def parse_city_from_title(title: str) -> Optional[str]:
-    """Extract city name from a market title."""
+    """Extract city name from a market title using word boundary matching."""
     title_lower = title.lower()
     city_keywords = get_all_city_keywords()
     city_keywords.sort(key=len, reverse=True)
 
     for city in city_keywords:
-        if city in title_lower:
-            return city
+        if re.search(r'\b' + re.escape(city) + r'\b', title_lower):
+            return CITY_ALIASES.get(city, city)
     return None
 
 
@@ -205,9 +205,12 @@ def parse_date_from_title(title: str) -> Optional[datetime]:
     title_lower = title.lower()
 
     # Full/abbreviated month + day
+    # Use \b word boundaries to prevent matching "may" inside words like "dismay".
+    # For the abbreviation pattern, also use \b to keep short names like "mar"
+    # from matching inside "march" or "market".
     month_patterns = [
-        r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})',
-        r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})',
+        r'\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\b',
+        r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})\b',
     ]
     for pat in month_patterns:
         m = re.search(pat, title_lower)
