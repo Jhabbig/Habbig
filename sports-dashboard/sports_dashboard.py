@@ -8,22 +8,20 @@ Signals only — no trading logic.
 """
 
 import asyncio
-import hashlib
-import hmac
 import json
-import math
+import logging
 import os
-import secrets
-import sqlite3
 import statistics
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Optional
 
 import requests
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, Cookie
+from supabase import create_client, Client
+from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -119,283 +117,95 @@ SPORT_CATEGORIES = {
 ESPORTS_KEYS = {k for k in SPORTS if k.startswith("esports_")}
 
 # ---------------------------------------------------------------------------
-# Auth & Database
+# Supabase Database
 # ---------------------------------------------------------------------------
-DB_PATH = Path(__file__).parent / "sharpe.db"
-_secret_file = Path(__file__).parent / ".secret_key"
-if os.getenv("SECRET_KEY"):
-    SECRET_KEY = os.getenv("SECRET_KEY")
-elif _secret_file.exists():
-    SECRET_KEY = _secret_file.read_text().strip()
-else:
-    SECRET_KEY = secrets.token_hex(32)
-    _secret_file.write_text(SECRET_KEY)
-    _secret_file.chmod(0o600)
+log = logging.getLogger("sports_dashboard")
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+_supabase_client: Optional[Client] = None
 
 
-ADMIN_EMAILS = {"julianhabbig@gmail.com"}  # Add your email here
+def _get_sb() -> Client:
+    """Get or create the Supabase client (service role, bypasses RLS)."""
+    global _supabase_client
+    if _supabase_client is None:
+        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+            raise RuntimeError(
+                "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set. "
+                "Create a project at https://supabase.com and set these env vars."
+            )
+        _supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    return _supabase_client
 
 
-def init_db():
-    """Initialize SQLite database with users and settings tables."""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("""CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE NOT NULL,
-        username TEXT NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        last_login TEXT,
-        login_count INTEGER DEFAULT 0,
-        is_admin INTEGER DEFAULT 0
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS user_settings (
-        user_id INTEGER PRIMARY KEY REFERENCES users(id),
-        default_sport TEXT DEFAULT 'basketball_nba',
-        divergence_threshold REAL DEFAULT 5.0,
-        notifications_enabled INTEGER DEFAULT 1,
-        theme TEXT DEFAULT 'dark'
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS user_activity (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER REFERENCES users(id),
-        action TEXT NOT NULL,
-        detail TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    # Add new columns if they don't exist (migration-safe)
+def log_activity(user_id: str, action: str, detail: str = ""):
+    """Log a user activity event to sports_user_activity."""
     try:
-        conn.execute("ALTER TABLE users ADD COLUMN last_login TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN login_count INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN tier TEXT DEFAULT 'free'")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN tier_updated_at TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN referral_code TEXT UNIQUE")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
-    except sqlite3.OperationalError:
-        pass
-
-    # New tables
-    conn.execute("""CREATE TABLE IF NOT EXISTS edge_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sport TEXT,
-        home_team TEXT,
-        away_team TEXT,
-        outcome TEXT,
-        sharp_prob REAL,
-        poly_prob REAL,
-        divergence REAL,
-        kelly_pct REAL,
-        confidence_score REAL,
-        detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        resolved INTEGER DEFAULT 0,
-        resolution TEXT,
-        resolved_at TEXT
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS trades (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER REFERENCES users(id),
-        market_name TEXT,
-        outcome TEXT,
-        entry_price REAL,
-        amount REAL,
-        status TEXT DEFAULT 'open',
-        exit_price REAL,
-        pnl REAL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        resolved_at TEXT
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS watchlist (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER REFERENCES users(id),
-        market_key TEXT,
-        home_team TEXT,
-        away_team TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_id, market_key)
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS user_layout (
-        user_id INTEGER PRIMARY KEY REFERENCES users(id),
-        visible_widgets TEXT DEFAULT '["stats","top_opps","hero","events"]',
-        visible_data_points TEXT DEFAULT '["volume","spread","sharp_book","bookmakers","24h_change","match_confidence","kelly","edge","consensus","sharp_prob","poly_prob"]',
-        card_expanded_default INTEGER DEFAULT 0
-    )""")
-
-    # Market snapshots for historical data (pro feature)
-    conn.execute("""CREATE TABLE IF NOT EXISTS market_snapshots (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sport TEXT NOT NULL,
-        event_name TEXT NOT NULL,
-        outcome TEXT NOT NULL,
-        book_prob REAL,
-        poly_prob REAL,
-        kalshi_prob REAL,
-        divergence REAL,
-        poly_volume REAL,
-        kalshi_volume REAL,
-        snapshot_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_sport_time ON market_snapshots (sport, snapshot_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_event ON market_snapshots (event_name, snapshot_at)")
-
-    # Historical resolved markets (backfilled from Polymarket)
-    conn.execute("""CREATE TABLE IF NOT EXISTS historical_markets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sport TEXT,
-        event_title TEXT NOT NULL,
-        market_question TEXT,
-        outcome TEXT,
-        final_price REAL,
-        volume REAL,
-        start_date TEXT,
-        end_date TEXT,
-        resolution TEXT,
-        source TEXT DEFAULT 'polymarket',
-        slug TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(source, slug, outcome)
-    )""")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_historical_sport ON historical_markets (sport, end_date)")
-
-    # Set admin flag for admin emails
-    for email in ADMIN_EMAILS:
-        conn.execute("UPDATE users SET is_admin = 1 WHERE email = ?", (email,))
-    conn.commit()
-    conn.close()
-
-
-init_db()
-
-
-def log_activity(user_id: int, action: str, detail: str = ""):
-    """Log a user activity event."""
-    try:
-        conn = sqlite3.connect(str(DB_PATH))
-        conn.execute("INSERT INTO user_activity (user_id, action, detail) VALUES (?, ?, ?)",
-                     (user_id, action, detail))
-        conn.commit()
-        conn.close()
+        _get_sb().table("sports_user_activity").insert({
+            "user_id": user_id,
+            "action": action,
+            "detail": detail,
+        }).execute()
     except Exception:
         pass
 
 
-def hash_password(password: str, salt: str = None) -> tuple[str, str]:
-    """Hash password with salt using SHA-256."""
-    if salt is None:
-        salt = secrets.token_hex(16)
-    h = hashlib.sha256((salt + password).encode()).hexdigest()
-    return h, salt
-
-
-def verify_password(password: str, stored_hash: str, salt: str) -> bool:
-    h = hashlib.sha256((salt + password).encode()).hexdigest()
-    return hmac.compare_digest(h, stored_hash)
-
-
-def create_session_token(user_id: int) -> str:
-    """Create a signed session token."""
-    payload = f"{user_id}:{int(time.time())}"
-    sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()[:24]
-    return f"{payload}:{sig}"
-
-
-def verify_session_token(token: str) -> int | None:
-    """Verify session token and return user_id or None."""
-    if not token:
-        return None
+def get_user_settings(user_id: str) -> dict:
+    """Fetch sports-specific settings for a user from Supabase."""
     try:
-        parts = token.split(":")
-        if len(parts) != 3:
-            return None
-        user_id, ts, sig = parts
-        payload = f"{user_id}:{ts}"
-        expected_sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()[:24]
-        if not hmac.compare_digest(sig, expected_sig):
-            return None
-        # Sessions expire after 30 days
-        if int(time.time()) - int(ts) > 30 * 86400:
-            return None
-        return int(user_id)
+        result = _get_sb().table("sports_user_settings").select("*").eq("user_id", user_id).limit(1).execute()
+        if result.data:
+            return result.data[0]
     except Exception:
-        return None
+        pass
+    return {"user_id": user_id, "default_sport": "basketball_nba", "divergence_threshold": 5.0, "notifications_enabled": 1, "theme": "dark"}
 
 
-def get_user(user_id: int) -> dict | None:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def get_user_settings(user_id: int) -> dict:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
-    conn.close()
-    if row:
-        return dict(row)
-    return {"default_sport": "basketball_nba", "divergence_threshold": 5.0, "notifications_enabled": 1, "theme": "dark"}
+_BEHIND_GATEWAY = bool(os.environ.get("GATEWAY_SSO_SECRET"))
 
 
 def get_current_user(request: Request) -> dict | None:
-    """Extract current user from gateway SSO headers or session cookie.
+    """Extract current user from gateway SSO headers.
 
     When running behind the Habbig gateway, the upstream adds
     ``X-Gateway-User-Id`` and ``X-Gateway-User-Email`` headers after
     verifying the user's session and subscription. Trust is proved by a
-    shared-secret header (``X-Gateway-Secret``) because uvicorn's default
-    proxy_headers rewrites request.client.host from X-Forwarded-For and we
-    can't rely on peer-IP checks.
+    shared-secret header (``X-Gateway-Secret``).
+
+    User IDs are now UUID strings from Supabase Auth. The gateway handles
+    all authentication; this dashboard just trusts the forwarded headers.
     """
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
     if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
         if gw_id and gw_email:
+            # Look up profile from Supabase for admin status etc.
             try:
-                gw_user_id = int(gw_id)
-            except ValueError:
-                gw_user_id = None
-            if gw_user_id is not None:
-                existing = get_user(gw_user_id)
-                if existing:
-                    return existing
-                # No local row — synthesize a minimal user record so the
-                # handler can proceed. The gateway already vouched for them.
-                return {
-                    "id": gw_user_id,
-                    "email": gw_email,
-                    "username": gw_email.split("@")[0],
-                    "is_admin": 0,
-                    "_gateway_sso": True,
-                }
+                result = _get_sb().table("profiles").select("*").eq("id", gw_id).limit(1).execute()
+                if result.data:
+                    profile = result.data[0]
+                    return {
+                        "id": profile["id"],
+                        "email": profile.get("email", gw_email),
+                        "username": profile.get("username", gw_email.split("@")[0]),
+                        "is_admin": profile.get("is_admin", 0),
+                    }
+            except Exception:
+                pass
+            # Fallback: gateway vouched for them, synthesize minimal record
+            return {
+                "id": gw_id,
+                "email": gw_email,
+                "username": gw_email.split("@")[0],
+                "is_admin": 0,
+                "_gateway_sso": True,
+            }
 
-    token = request.cookies.get("sharpe_session")
-    if not token:
-        return None
-    user_id = verify_session_token(token)
-    if not user_id:
-        return None
-    return get_user(user_id)
+    # No gateway SSO -- not authenticated (auth handled by gateway)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1421,8 +1231,8 @@ def compare_outrights(outright_odds: dict, poly_markets: list[dict]) -> list[dic
 # ---------------------------------------------------------------------------
 
 def _save_edge_history(sport: str, comparisons: list[dict]):
-    """Save edge signals to edge_history table, deduplicating within 24h."""
-    conn = sqlite3.connect(str(DB_PATH))
+    """Save edge signals to sports_edge_history table, deduplicating within 24h."""
+    sb = _get_sb()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     for comp in comparisons:
         for oc in comp.get("outcomes", []):
@@ -1431,53 +1241,48 @@ def _save_edge_history(sport: str, comparisons: list[dict]):
             home = comp.get("home_team", "")
             outcome = oc.get("outcome", "")
             # Check for duplicate within 24h
-            existing = conn.execute(
-                "SELECT id FROM edge_history WHERE sport=? AND home_team=? AND outcome=? AND detected_at>?",
-                (sport, home, outcome, cutoff)
-            ).fetchone()
-            if existing:
+            existing = sb.table("sports_edge_history").select("id").eq(
+                "sport", sport
+            ).eq("home_team", home).eq("outcome", outcome).gte(
+                "detected_at", cutoff
+            ).limit(1).execute()
+            if existing.data:
                 continue
-            conn.execute(
-                """INSERT INTO edge_history (sport, home_team, away_team, outcome, sharp_prob, poly_prob,
-                   divergence, kelly_pct, confidence_score)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (sport, home, comp.get("away_team", ""), outcome,
-                 oc.get("sharp_prob"), oc.get("poly_prob"), oc.get("divergence"),
-                 oc.get("kelly_pct"), comp.get("confidence_score"))
-            )
-    conn.commit()
-    conn.close()
+            sb.table("sports_edge_history").insert({
+                "sport": sport,
+                "home_team": home,
+                "away_team": comp.get("away_team", ""),
+                "outcome": outcome,
+                "sharp_prob": oc.get("sharp_prob"),
+                "poly_prob": oc.get("poly_prob"),
+                "divergence": oc.get("divergence"),
+                "kelly_pct": oc.get("kelly_pct"),
+                "confidence_score": comp.get("confidence_score"),
+            }).execute()
 
 
 def _save_market_snapshots(sport: str, comparisons: list[dict]):
     """Save a snapshot of current market data for historical tracking."""
-    conn = sqlite3.connect(str(DB_PATH))
-    now = datetime.now(timezone.utc).isoformat()
+    sb = _get_sb()
     rows = []
     for comp in comparisons:
         event_name = comp.get("home_team", "") + (" vs " + comp.get("away_team", "") if comp.get("away_team") else "")
         for oc in comp.get("outcomes", []):
-            rows.append((
-                sport,
-                event_name,
-                oc.get("outcome", ""),
-                oc.get("sharp_prob"),
-                oc.get("poly_prob"),
-                oc.get("kalshi_prob"),
-                oc.get("divergence"),
-                comp.get("poly_volume"),
-                comp.get("kalshi_volume"),
-                now,
-            ))
+            rows.append({
+                "sport": sport,
+                "event_name": event_name,
+                "outcome": oc.get("outcome", ""),
+                "book_prob": oc.get("sharp_prob"),
+                "poly_prob": oc.get("poly_prob"),
+                "kalshi_prob": oc.get("kalshi_prob"),
+                "divergence": oc.get("divergence"),
+                "poly_volume": comp.get("poly_volume"),
+                "kalshi_volume": comp.get("kalshi_volume"),
+            })
     if rows:
-        conn.executemany(
-            """INSERT INTO market_snapshots
-               (sport, event_name, outcome, book_prob, poly_prob, kalshi_prob, divergence, poly_volume, kalshi_volume, snapshot_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            rows,
-        )
-        conn.commit()
-    conn.close()
+        # Insert in batches of 100 to avoid payload limits
+        for i in range(0, len(rows), 100):
+            sb.table("sports_market_snapshots").insert(rows[i:i+100]).execute()
 
 
 _scan_event = asyncio.Event()  # set to trigger immediate re-scan
@@ -1868,97 +1673,17 @@ async def startup():
 # ---------------------------------------------------------------------------
 # Auth pages & endpoints
 # ---------------------------------------------------------------------------
+# Auth is handled by the gateway. These endpoints redirect to it or return
+# user info from the gateway-forwarded headers + Supabase profiles.
 
-@app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    user = get_current_user(request)
-    if user:
-        return RedirectResponse("/", status_code=302)
-    return HTMLResponse(AUTH_HTML)
-
-
-@app.post("/api/register")
-async def register(request: Request):
-    body = await request.json()
-    email = (body.get("email") or "").strip().lower()
-    username = (body.get("username") or "").strip()
-    password = body.get("password") or ""
-
-    if not email or not username or len(password) < 6:
-        return JSONResponse({"error": "Email, username, and password (6+ chars) required"}, status_code=400)
-
-    ref_code_input = (body.get("ref") or "").strip()
-
-    pw_hash, salt = hash_password(password)
-    referral_code = secrets.token_hex(4)  # 8-char hex
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        is_admin = 1 if email in ADMIN_EMAILS else 0
-        # Look up referrer
-        referred_by = None
-        if ref_code_input:
-            ref_row = conn.execute("SELECT id FROM users WHERE referral_code = ?", (ref_code_input,)).fetchone()
-            if ref_row:
-                referred_by = ref_row[0]
-        conn.execute(
-            "INSERT INTO users (email, username, password_hash, last_login, login_count, is_admin, referral_code, referred_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)",
-            (email, username, f"{salt}:{pw_hash}", datetime.now(timezone.utc).isoformat(), is_admin, referral_code, referred_by))
-        user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        conn.execute("INSERT INTO user_settings (user_id) VALUES (?)", (user_id,))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
-        return JSONResponse({"error": "Email already registered"}, status_code=400)
-    conn.close()
-    log_activity(user_id, "register", f"New account: {email}")
-
-    token = create_session_token(user_id)
-    resp = JSONResponse({"status": "ok", "username": username})
-    resp.set_cookie("sharpe_session", token, max_age=30 * 86400, httponly=False, path="/")
-    return resp
-
-
-@app.post("/api/login")
-async def login(request: Request):
-    body = await request.json()
-    identifier = (body.get("email") or body.get("username") or "").strip()
-    password = body.get("password") or ""
-
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    # Try email first, then username
-    row = conn.execute("SELECT * FROM users WHERE email = ?", (identifier.lower(),)).fetchone()
-    if not row:
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (identifier,)).fetchone()
-    conn.close()
-
-    if not row:
-        return JSONResponse({"error": "Invalid username/email or password"}, status_code=401)
-
-    user = dict(row)
-    salt, stored_hash = user["password_hash"].split(":", 1)
-    if not verify_password(password, stored_hash, salt):
-        return JSONResponse({"error": "Invalid email or password"}, status_code=401)
-
-    # Update login stats
-    conn2 = sqlite3.connect(str(DB_PATH))
-    conn2.execute("UPDATE users SET last_login = ?, login_count = COALESCE(login_count, 0) + 1 WHERE id = ?",
-                  (datetime.now(timezone.utc).isoformat(), user["id"]))
-    conn2.commit()
-    conn2.close()
-    log_activity(user["id"], "login")
-
-    token = create_session_token(user["id"])
-    resp = JSONResponse({"status": "ok", "username": user["username"]})
-    resp.set_cookie("sharpe_session", token, max_age=30 * 86400, httponly=False, path="/")
-    return resp
+@app.get("/login")
+async def login_page():
+    return RedirectResponse("https://habbig.com/login", status_code=302)
 
 
 @app.get("/api/logout")
 async def logout():
-    resp = RedirectResponse("/login", status_code=302)
-    resp.delete_cookie("sharpe_session")
-    return resp
+    return RedirectResponse("https://habbig.com/logout", status_code=302)
 
 
 @app.get("/api/me")
@@ -1967,15 +1692,11 @@ async def get_me(request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     settings = get_user_settings(user["id"])
-    # Check admin status
-    conn = sqlite3.connect(str(DB_PATH))
-    is_admin = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user["id"],)).fetchone()
-    conn.close()
     return JSONResponse({
         "username": user["username"],
         "email": user["email"],
         "settings": settings,
-        "is_admin": bool(is_admin and is_admin[0]),
+        "is_admin": bool(user.get("is_admin")),
     })
 
 
@@ -1986,23 +1707,16 @@ async def update_settings(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
     body = await request.json()
-    conn = sqlite3.connect(str(DB_PATH))
+    sb = _get_sb()
 
-    # Upsert settings
-    conn.execute("""INSERT INTO user_settings (user_id, default_sport, divergence_threshold, notifications_enabled, theme)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        default_sport=excluded.default_sport,
-                        divergence_threshold=excluded.divergence_threshold,
-                        notifications_enabled=excluded.notifications_enabled,
-                        theme=excluded.theme""",
-                 (user["id"],
-                  body.get("default_sport", "basketball_nba"),
-                  float(body.get("divergence_threshold", 5.0)),
-                  int(body.get("notifications_enabled", 1)),
-                  body.get("theme", "dark")))
-    conn.commit()
-    conn.close()
+    # Upsert settings into sports_user_settings
+    sb.table("sports_user_settings").upsert({
+        "user_id": user["id"],
+        "default_sport": body.get("default_sport", "basketball_nba"),
+        "divergence_threshold": float(body.get("divergence_threshold", 5.0)),
+        "notifications_enabled": int(body.get("notifications_enabled", 1)),
+        "theme": body.get("theme", "dark"),
+    }, on_conflict="user_id").execute()
     return JSONResponse({"status": "ok"})
 
 
@@ -2019,13 +1733,8 @@ async def admin_page(request: Request):
     user = get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=302)
-    # Check admin
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user["id"],)).fetchone()
-    conn.close()
-    if not row or not row["is_admin"]:
-        return HTMLResponse("<h1>403 — Access Denied</h1>", status_code=403)
+    if not user.get("is_admin"):
+        return HTMLResponse("<h1>403 -- Access Denied</h1>", status_code=403)
     return HTMLResponse(ADMIN_HTML)
 
 
@@ -2034,39 +1743,23 @@ async def users_page(request: Request):
     user = get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=302)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user["id"],)).fetchone()
-    if not row or not row["is_admin"]:
-        conn.close()
-        return HTMLResponse("<h1>403 — Access Denied</h1>", status_code=403)
+    if not user.get("is_admin"):
+        return HTMLResponse("<h1>403 -- Access Denied</h1>", status_code=403)
     return HTMLResponse(USERS_HTML)
 
 
 @app.get("/api/admin/users")
 async def admin_users_api(request: Request):
-    """Quick JSON dump of all users — admin only."""
+    """Quick JSON dump of all users -- admin only."""
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user["id"],)).fetchone()
-    if not row or not row["is_admin"]:
-        conn.close()
+    if not user.get("is_admin"):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
 
-    users = []
-    for r in conn.execute("""
-        SELECT u.id, u.email, u.username, u.created_at, u.last_login, u.login_count,
-               u.is_admin, u.tier, u.referral_code, u.referred_by,
-               s.default_sport, s.divergence_threshold
-        FROM users u LEFT JOIN user_settings s ON u.id = s.user_id
-        ORDER BY u.created_at DESC
-    """).fetchall():
-        users.append(dict(r))
-    conn.close()
-    return JSONResponse({"users": users, "total": len(users)})
+    sb = _get_sb()
+    profiles = sb.table("profiles").select("*").order("created_at", desc=True).execute().data
+    return JSONResponse({"users": profiles, "total": len(profiles)})
 
 
 @app.get("/api/admin/stats")
@@ -2074,76 +1767,36 @@ async def admin_stats(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user["id"],)).fetchone()
-    if not row or not row["is_admin"]:
-        conn.close()
+    if not user.get("is_admin"):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
 
-    # All users
-    users = [dict(r) for r in conn.execute("""
-        SELECT u.id, u.email, u.username, u.created_at, u.last_login, u.login_count, u.is_admin,
-               u.tier, u.referral_code, s.default_sport, s.divergence_threshold
-        FROM users u LEFT JOIN user_settings s ON u.id = s.user_id
-        ORDER BY u.created_at DESC
-    """).fetchall()]
+    sb = _get_sb()
 
-    # Summary stats
-    total_users = len(users)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    one_week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-    one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
-    active_today = sum(1 for u in users if u.get("last_login") and u["last_login"][:10] == today)
-    active_week = sum(1 for u in users if u.get("last_login") and u["last_login"][:10] >= one_week_ago)
-    active_month = sum(1 for u in users if u.get("last_login") and u["last_login"][:10] >= one_month_ago)
-    total_logins = sum(u.get("login_count") or 0 for u in users)
+    # Profiles (users are managed by gateway, we just read them)
+    profiles = sb.table("profiles").select("*").order("created_at", desc=True).execute().data
+    total_users = len(profiles)
 
-    # Pro users and MRR
-    pro_users = sum(1 for u in users if (u.get("tier") or "free") == "pro")
-    mrr = round(pro_users * 24.99, 2)
-    conversion_rate = round((pro_users / total_users * 100), 2) if total_users > 0 else 0.0
-
-    # Recent activity
-    activity = [dict(r) for r in conn.execute("""
-        SELECT a.action, a.detail, a.created_at, u.username
-        FROM user_activity a JOIN users u ON a.user_id = u.id
-        ORDER BY a.created_at DESC LIMIT 50
-    """).fetchall()]
-
-    # Signups per day (last 30 days)
-    signups_by_day = [dict(r) for r in conn.execute("""
-        SELECT DATE(created_at) as day, COUNT(*) as count
-        FROM users
-        WHERE created_at >= DATE('now', '-30 days')
-        GROUP BY DATE(created_at)
-        ORDER BY day
-    """).fetchall()]
+    # Recent sports activity
+    activity_result = sb.table("sports_user_activity").select(
+        "action, detail, created_at, user_id"
+    ).order("created_at", desc=True).limit(50).execute()
+    activity = activity_result.data
 
     # Edge performance stats
-    edge_total = conn.execute("SELECT COUNT(*) FROM edge_history").fetchone()[0]
-    edge_resolved = conn.execute("SELECT COUNT(*) FROM edge_history WHERE resolved = 1").fetchone()[0]
-    edge_correct = conn.execute("SELECT COUNT(*) FROM edge_history WHERE resolution = 'correct'").fetchone()[0]
-    edge_incorrect = conn.execute("SELECT COUNT(*) FROM edge_history WHERE resolution = 'incorrect'").fetchone()[0]
+    edge_total_r = sb.table("sports_edge_history").select("id", count="exact").execute()
+    edge_total = edge_total_r.count or 0
+    edge_resolved_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolved", 1).execute()
+    edge_resolved = edge_resolved_r.count or 0
+    edge_correct_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "correct").execute()
+    edge_correct = edge_correct_r.count or 0
+    edge_incorrect_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "incorrect").execute()
+    edge_incorrect = edge_incorrect_r.count or 0
     edge_win_rate = round(edge_correct / edge_resolved * 100, 1) if edge_resolved > 0 else 0.0
 
-    conn.close()
-
     return JSONResponse({
-        "users": users,
+        "users": profiles,
         "total_users": total_users,
-        "active_today": active_today,
-        "active_week": active_week,
-        "active_month": active_month,
-        "dau": active_today,
-        "wau": active_week,
-        "mau": active_month,
-        "total_logins": total_logins,
-        "pro_users": pro_users,
-        "mrr": mrr,
-        "conversion_rate": conversion_rate,
         "activity": activity,
-        "signups_by_day": signups_by_day,
         "edge_performance": {
             "total_edges": edge_total,
             "resolved": edge_resolved,
@@ -2172,21 +1825,9 @@ async def api_data(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    tier = user.get("tier", "free") or "free"
-    if tier == "pro":
-        return JSONResponse(dashboard_data)
-    # Free tier: limit to 3 comparisons, strip bookmaker_breakdown
-    import copy
-    data = copy.deepcopy(dashboard_data)
-    limited = data.get("comparisons", [])[:3]
-    for comp in limited:
-        comp.pop("bookmaker_breakdown", None)
-    data["comparisons"] = limited
-    data["matched_count"] = len(limited)
-    # Also limit signals
-    limited_signals = [c for c in limited if c.get("has_signal")]
-    data["signals"] = limited_signals
-    return JSONResponse(data)
+    # Subscription/tier gating is handled by the gateway before the request
+    # reaches this dashboard. If the user is here, they have access.
+    return JSONResponse(dashboard_data)
 
 
 @app.get("/api/sports")
@@ -2246,37 +1887,23 @@ async def get_orderbook(token_id: str, request: Request):
 
 @app.post("/api/admin/set-tier")
 async def admin_set_tier(request: Request):
+    """Subscriptions are managed by the gateway. This is a no-op stub."""
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    is_admin = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user["id"],)).fetchone()
-    if not is_admin or not is_admin[0]:
-        conn.close()
+    if not user.get("is_admin"):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
-    body = await request.json()
-    target_user_id = body.get("user_id")
-    tier = body.get("tier", "free")
-    if tier not in ("free", "pro"):
-        conn.close()
-        return JSONResponse({"error": "Invalid tier"}, status_code=400)
-    conn.execute("UPDATE users SET tier = ?, tier_updated_at = ? WHERE id = ?",
-                 (tier, datetime.now(timezone.utc).isoformat(), target_user_id))
-    conn.commit()
-    conn.close()
-    log_activity(user["id"], "admin_set_tier", f"Set user {target_user_id} to {tier}")
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"error": "Subscriptions are managed by the gateway"}, status_code=400)
 
 
 @app.get("/api/subscription")
 async def get_subscription(request: Request):
+    """Subscriptions are managed by the gateway. Return basic info."""
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    return JSONResponse({
-        "tier": user.get("tier") or "free",
-        "tier_updated_at": user.get("tier_updated_at"),
-    })
+    # If the user reached this dashboard, the gateway already verified their subscription
+    return JSONResponse({"tier": "active", "managed_by": "gateway"})
 
 
 # ---------------------------------------------------------------------------
@@ -2295,12 +1922,15 @@ async def create_trade(request: Request):
     amount = float(body.get("amount", 0))
     if not market_name or entry_price <= 0 or amount <= 0:
         return JSONResponse({"error": "market_name, entry_price > 0, and amount > 0 required"}, status_code=400)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("INSERT INTO trades (user_id, market_name, outcome, entry_price, amount) VALUES (?, ?, ?, ?, ?)",
-                 (user["id"], market_name, outcome, entry_price, amount))
-    trade_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    conn.commit()
-    conn.close()
+    sb = _get_sb()
+    result = sb.table("sports_trades").insert({
+        "user_id": user["id"],
+        "market_name": market_name,
+        "outcome": outcome,
+        "entry_price": entry_price,
+        "amount": amount,
+    }).execute()
+    trade_id = result.data[0]["id"] if result.data else 0
     log_activity(user["id"], "create_trade", f"Trade #{trade_id}: {market_name}")
     return JSONResponse({"status": "ok", "trade_id": trade_id})
 
@@ -2310,11 +1940,11 @@ async def list_trades(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM trades WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()
-    conn.close()
-    return JSONResponse({"trades": [dict(r) for r in rows]})
+    sb = _get_sb()
+    result = sb.table("sports_trades").select("*").eq(
+        "user_id", user["id"]
+    ).order("created_at", desc=True).execute()
+    return JSONResponse({"trades": result.data})
 
 
 @app.post("/api/trades/{trade_id}/resolve")
@@ -2326,18 +1956,18 @@ async def resolve_trade(trade_id: int, request: Request):
     exit_price = float(body.get("exit_price", 0))
     if exit_price <= 0:
         return JSONResponse({"error": "exit_price > 0 required"}, status_code=400)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    trade = conn.execute("SELECT * FROM trades WHERE id = ? AND user_id = ?", (trade_id, user["id"])).fetchone()
-    if not trade:
-        conn.close()
+    sb = _get_sb()
+    result = sb.table("sports_trades").select("*").eq("id", trade_id).eq("user_id", user["id"]).limit(1).execute()
+    if not result.data:
         return JSONResponse({"error": "Trade not found"}, status_code=404)
-    trade = dict(trade)
+    trade = result.data[0]
     pnl = round((exit_price - trade["entry_price"]) * trade["amount"], 2)
-    conn.execute("UPDATE trades SET status = 'closed', exit_price = ?, pnl = ?, resolved_at = ? WHERE id = ?",
-                 (exit_price, pnl, datetime.now(timezone.utc).isoformat(), trade_id))
-    conn.commit()
-    conn.close()
+    sb.table("sports_trades").update({
+        "status": "closed",
+        "exit_price": exit_price,
+        "pnl": pnl,
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", trade_id).execute()
     log_activity(user["id"], "resolve_trade", f"Trade #{trade_id}: PnL={pnl}")
     return JSONResponse({"status": "ok", "pnl": pnl})
 
@@ -2347,11 +1977,9 @@ async def trade_stats(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM trades WHERE user_id = ?", (user["id"],)).fetchall()
-    conn.close()
-    trades = [dict(r) for r in rows]
+    sb = _get_sb()
+    result = sb.table("sports_trades").select("*").eq("user_id", user["id"]).execute()
+    trades = result.data
     closed = [t for t in trades if t["status"] == "closed"]
     open_trades = [t for t in trades if t["status"] == "open"]
     total_pnl = round(sum(t.get("pnl") or 0 for t in closed), 2)
@@ -2383,16 +2011,20 @@ async def add_watchlist(request: Request):
     away_team = body.get("away_team", "")
     if not market_key:
         return JSONResponse({"error": "market_key required"}, status_code=400)
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        conn.execute("INSERT INTO watchlist (user_id, market_key, home_team, away_team) VALUES (?, ?, ?, ?)",
-                     (user["id"], market_key, home_team, away_team))
-        item_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
+    sb = _get_sb()
+    # Check for existing entry (UNIQUE constraint on user_id, market_key)
+    existing = sb.table("sports_watchlist").select("id").eq(
+        "user_id", user["id"]
+    ).eq("market_key", market_key).limit(1).execute()
+    if existing.data:
         return JSONResponse({"error": "Already in watchlist"}, status_code=409)
-    conn.close()
+    result = sb.table("sports_watchlist").insert({
+        "user_id": user["id"],
+        "market_key": market_key,
+        "home_team": home_team,
+        "away_team": away_team,
+    }).execute()
+    item_id = result.data[0]["id"] if result.data else 0
     return JSONResponse({"status": "ok", "id": item_id})
 
 
@@ -2401,10 +2033,8 @@ async def remove_watchlist(item_id: int, request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("DELETE FROM watchlist WHERE id = ? AND user_id = ?", (item_id, user["id"]))
-    conn.commit()
-    conn.close()
+    sb = _get_sb()
+    sb.table("sports_watchlist").delete().eq("id", item_id).eq("user_id", user["id"]).execute()
     return JSONResponse({"status": "ok"})
 
 
@@ -2413,11 +2043,11 @@ async def list_watchlist(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM watchlist WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()
-    conn.close()
-    return JSONResponse({"watchlist": [dict(r) for r in rows]})
+    sb = _get_sb()
+    result = sb.table("sports_watchlist").select("*").eq(
+        "user_id", user["id"]
+    ).order("created_at", desc=True).execute()
+    return JSONResponse({"watchlist": result.data})
 
 
 # ---------------------------------------------------------------------------
@@ -2429,16 +2059,22 @@ async def get_layout(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM user_layout WHERE user_id = ?", (user["id"],)).fetchone()
-    conn.close()
-    if row:
-        r = dict(row)
+    sb = _get_sb()
+    result = sb.table("sports_user_layout").select("*").eq("user_id", user["id"]).limit(1).execute()
+    if result.data:
+        r = result.data[0]
+        # visible_widgets and visible_data_points are stored as JSONB in Supabase,
+        # so they come back as lists already (no json.loads needed)
+        widgets = r.get("visible_widgets", ["stats", "top_opps", "hero", "events"])
+        data_points = r.get("visible_data_points", [])
+        if isinstance(widgets, str):
+            widgets = json.loads(widgets)
+        if isinstance(data_points, str):
+            data_points = json.loads(data_points)
         return JSONResponse({
-            "visible_widgets": json.loads(r["visible_widgets"]),
-            "visible_data_points": json.loads(r["visible_data_points"]),
-            "card_expanded_default": bool(r["card_expanded_default"]),
+            "visible_widgets": widgets,
+            "visible_data_points": data_points,
+            "card_expanded_default": bool(r.get("card_expanded_default", 0)),
         })
     return JSONResponse({
         "visible_widgets": ["stats", "top_opps", "hero", "events"],
@@ -2454,19 +2090,16 @@ async def save_layout(request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     body = await request.json()
-    visible_widgets = json.dumps(body.get("visible_widgets", ["stats", "top_opps", "hero", "events"]))
-    visible_data_points = json.dumps(body.get("visible_data_points", []))
+    visible_widgets = body.get("visible_widgets", ["stats", "top_opps", "hero", "events"])
+    visible_data_points = body.get("visible_data_points", [])
     card_expanded_default = int(body.get("card_expanded_default", False))
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("""INSERT INTO user_layout (user_id, visible_widgets, visible_data_points, card_expanded_default)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        visible_widgets=excluded.visible_widgets,
-                        visible_data_points=excluded.visible_data_points,
-                        card_expanded_default=excluded.card_expanded_default""",
-                 (user["id"], visible_widgets, visible_data_points, card_expanded_default))
-    conn.commit()
-    conn.close()
+    sb = _get_sb()
+    sb.table("sports_user_layout").upsert({
+        "user_id": user["id"],
+        "visible_widgets": visible_widgets,
+        "visible_data_points": visible_data_points,
+        "card_expanded_default": card_expanded_default,
+    }, on_conflict="user_id").execute()
     return JSONResponse({"status": "ok"})
 
 
@@ -2510,10 +2143,10 @@ def _classify_sport(title: str) -> str | None:
 
 def backfill_historical_markets():
     """Fetch resolved Polymarket sports events from the past year and store them."""
-    conn = sqlite3.connect(str(DB_PATH))
-    existing_slugs = set(
-        r[0] for r in conn.execute("SELECT slug FROM historical_markets WHERE source='polymarket'").fetchall()
-    )
+    sb = _get_sb()
+    # Fetch existing slugs to deduplicate
+    existing_result = sb.table("sports_historical_markets").select("slug").eq("source", "polymarket").execute()
+    existing_slugs = set(r["slug"] for r in existing_result.data if r.get("slug"))
 
     # Fetch closed/resolved sports events from Gamma API
     offset = 0
@@ -2540,6 +2173,7 @@ def backfill_historical_markets():
         if not events:
             break
 
+        batch = []
         for ev in events:
             slug = ev.get("slug", "")
             title = ev.get("title", "")
@@ -2554,7 +2188,6 @@ def backfill_historical_markets():
                 question = mkt.get("question", title)
                 outcome = mkt.get("outcome", "")
                 if not outcome:
-                    # Derive from groupItemTitle or question
                     outcome = mkt.get("groupItemTitle", question)
                 final_price = None
                 try:
@@ -2567,94 +2200,80 @@ def backfill_historical_markets():
                 except (ValueError, TypeError):
                     pass
                 resolution = mkt.get("resolution", "")
-                try:
-                    conn.execute(
-                        """INSERT OR IGNORE INTO historical_markets
-                           (sport, event_title, market_question, outcome, final_price, volume,
-                            start_date, end_date, resolution, source, slug)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'polymarket', ?)""",
-                        (sport, title, question, outcome, final_price, volume,
-                         start_date, end_date, resolution, mkt_slug),
-                    )
-                    inserted += 1
-                    existing_slugs.add(mkt_slug)
-                except Exception:
-                    pass
+                batch.append({
+                    "sport": sport,
+                    "event_title": title,
+                    "market_question": question,
+                    "outcome": outcome,
+                    "final_price": final_price,
+                    "volume": volume,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "resolution": resolution,
+                    "source": "polymarket",
+                    "slug": mkt_slug,
+                })
+                existing_slugs.add(mkt_slug)
+
+        if batch:
+            try:
+                # upsert to handle the UNIQUE(source, slug, outcome) constraint
+                sb.table("sports_historical_markets").upsert(
+                    batch, on_conflict="source,slug,outcome"
+                ).execute()
+                inserted += len(batch)
+            except Exception as e:
+                print(f"Backfill insert error: {e}", flush=True)
 
         offset += 100
 
-    conn.commit()
-    conn.close()
     print(f"Backfill complete: {inserted} historical markets inserted", flush=True)
     return inserted
 
 
 @app.get("/api/history")
 async def api_history(request: Request):
-    """Return historical market data. Pro-only."""
+    """Return historical market data."""
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    tier = user.get("tier", "free") or "free"
-    if tier != "pro":
-        return JSONResponse({"error": "Pro subscription required", "upgrade": True}, status_code=403)
 
     sport = request.query_params.get("sport", "")
     limit = min(int(request.query_params.get("limit", "100")), 500)
 
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
+    sb = _get_sb()
 
     # Recent snapshots (last 7 days)
     cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    snap_query = sb.table("sports_market_snapshots").select("*").gte("snapshot_at", cutoff_7d)
     if sport:
-        snapshots = conn.execute(
-            "SELECT * FROM market_snapshots WHERE sport=? AND snapshot_at>? ORDER BY snapshot_at DESC LIMIT ?",
-            (sport, cutoff_7d, limit),
-        ).fetchall()
-    else:
-        snapshots = conn.execute(
-            "SELECT * FROM market_snapshots WHERE snapshot_at>? ORDER BY snapshot_at DESC LIMIT ?",
-            (cutoff_7d, limit),
-        ).fetchall()
+        snap_query = snap_query.eq("sport", sport)
+    snapshots = snap_query.order("snapshot_at", desc=True).limit(limit).execute()
 
     # Resolved historical markets
+    hist_query = sb.table("sports_historical_markets").select("*")
     if sport:
-        historical = conn.execute(
-            "SELECT * FROM historical_markets WHERE sport=? ORDER BY end_date DESC LIMIT ?",
-            (sport, limit),
-        ).fetchall()
-    else:
-        historical = conn.execute(
-            "SELECT * FROM historical_markets ORDER BY end_date DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        hist_query = hist_query.eq("sport", sport)
+    historical = hist_query.order("end_date", desc=True).limit(limit).execute()
 
-    conn.close()
     return JSONResponse({
-        "snapshots": [dict(r) for r in snapshots],
-        "historical": [dict(r) for r in historical],
+        "snapshots": snapshots.data,
+        "historical": historical.data,
     })
 
 
 @app.get("/api/market-history/{event_name:path}")
 async def api_market_history(event_name: str, request: Request):
-    """Return time-series snapshot data for a specific event. Pro-only."""
+    """Return time-series snapshot data for a specific event."""
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    tier = user.get("tier", "free") or "free"
-    if tier != "pro":
-        return JSONResponse({"error": "Pro subscription required", "upgrade": True}, status_code=403)
 
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT * FROM market_snapshots WHERE event_name=? ORDER BY snapshot_at ASC LIMIT 1000",
-        (event_name,),
-    ).fetchall()
-    conn.close()
-    return JSONResponse({"event": event_name, "series": [dict(r) for r in rows]})
+    sb = _get_sb()
+    result = sb.table("sports_market_snapshots").select("*").eq(
+        "event_name", event_name
+    ).order("snapshot_at").limit(1000).execute()
+    return JSONResponse({"event": event_name, "series": result.data})
 
 
 # ---------------------------------------------------------------------------
@@ -2666,11 +2285,9 @@ async def edge_history(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM edge_history ORDER BY detected_at DESC LIMIT 100").fetchall()
-    conn.close()
-    return JSONResponse({"edges": [dict(r) for r in rows]})
+    sb = _get_sb()
+    result = sb.table("sports_edge_history").select("*").order("detected_at", desc=True).limit(100).execute()
+    return JSONResponse({"edges": result.data})
 
 
 @app.get("/api/edge-stats")
@@ -2678,12 +2295,15 @@ async def edge_stats(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    total = conn.execute("SELECT COUNT(*) FROM edge_history").fetchone()[0]
-    correct = conn.execute("SELECT COUNT(*) FROM edge_history WHERE resolution = 'correct'").fetchone()[0]
-    incorrect = conn.execute("SELECT COUNT(*) FROM edge_history WHERE resolution = 'incorrect'").fetchone()[0]
-    pending = conn.execute("SELECT COUNT(*) FROM edge_history WHERE resolved = 0").fetchone()[0]
-    conn.close()
+    sb = _get_sb()
+    total_r = sb.table("sports_edge_history").select("id", count="exact").execute()
+    total = total_r.count or 0
+    correct_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "correct").execute()
+    correct = correct_r.count or 0
+    incorrect_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolution", "incorrect").execute()
+    incorrect = incorrect_r.count or 0
+    pending_r = sb.table("sports_edge_history").select("id", count="exact").eq("resolved", 0).execute()
+    pending = pending_r.count or 0
     resolved = correct + incorrect
     win_rate = round(correct / resolved * 100, 1) if resolved > 0 else 0.0
     return JSONResponse({
@@ -2701,36 +2321,21 @@ async def edge_stats(request: Request):
 
 @app.get("/api/referral")
 async def get_referral(request: Request):
+    """Referrals are managed by the gateway. Return stub info."""
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    conn = sqlite3.connect(str(DB_PATH))
-    # Get user's referral code
-    row = conn.execute("SELECT referral_code FROM users WHERE id = ?", (user["id"],)).fetchone()
-    referral_code = row[0] if row and row[0] else None
-    # If no code yet (legacy user), generate one
-    if not referral_code:
-        referral_code = secrets.token_hex(4)
-        conn.execute("UPDATE users SET referral_code = ? WHERE id = ?", (referral_code, user["id"]))
-        conn.commit()
-    # Count referred users
-    count = conn.execute("SELECT COUNT(*) FROM users WHERE referred_by = ?", (user["id"],)).fetchone()[0]
-    conn.close()
     return JSONResponse({
-        "referral_code": referral_code,
-        "referred_count": count,
+        "referral_code": None,
+        "referred_count": 0,
+        "managed_by": "gateway",
     })
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    # Check auth from cookie
-    token = ws.cookies.get("sharpe_session")
-    user_id = verify_session_token(token)
-    if not user_id:
-        await ws.accept()
-        await ws.close(code=4001, reason="Not authenticated")
-        return
+    # When behind the gateway, WS connections are already authenticated.
+    # Accept all connections since the gateway handles auth upstream.
     await ws.accept()
     connected_ws.add(ws)
     try:
@@ -2771,39 +2376,39 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #fafafa;
-    --surface: #ffffff;
-    --surface2: #f5f5f5;
-    --surface3: #efefef;
-    --border: #e5e5e5;
-    --border-light: #d4d4d4;
-    --text: #1a1a1a;
-    --text-secondary: #737373;
-    --muted: #a3a3a3;
-    --accent: #1a1a1a;
-    --accent-dim: rgba(26,26,26,0.06);
-    --green: #1a1a1a;
-    --green-dim: rgba(26,26,26,0.06);
-    --green-mid: rgba(26,26,26,0.12);
-    --red: #dc2626;
-    --red-dim: rgba(220,38,38,0.06);
-    --yellow: #a16207;
-    --yellow-dim: rgba(161,98,7,0.06);
-    --blue: #2563eb;
-    --blue-dim: rgba(37,99,235,0.06);
-    --purple: #7c3aed;
-    --purple-dim: rgba(124,58,237,0.06);
-    --orange: #c2410c;
-    --orange-dim: rgba(194,65,12,0.06);
-    --gold: #92400e;
-    --gold-dim: rgba(146,64,14,0.06);
-    --radius: 0px;
-    --radius-sm: 0px;
-    --radius-xs: 0px;
-    --shadow: none;
-    --shadow-sm: none;
-    --positive: #16a34a;
-    --negative: #dc2626;
+    --bg: #0c0d10;
+    --surface: #131417;
+    --surface2: #18191e;
+    --surface3: #1f2027;
+    --border: rgba(255,255,255,0.06);
+    --border-light: rgba(255,255,255,0.08);
+    --text: #ebebef;
+    --text-secondary: #8b8d98;
+    --muted: #5c5e6a;
+    --accent: #818cf8;
+    --accent-dim: rgba(99,102,241,0.10);
+    --green: #34d399;
+    --green-dim: rgba(52,211,153,0.08);
+    --green-mid: rgba(52,211,153,0.14);
+    --red: #f87171;
+    --red-dim: rgba(248,113,113,0.08);
+    --yellow: #fbbf24;
+    --yellow-dim: rgba(251,191,36,0.08);
+    --blue: #818cf8;
+    --blue-dim: rgba(99,102,241,0.08);
+    --purple: #a78bfa;
+    --purple-dim: rgba(167,139,250,0.08);
+    --orange: #fb923c;
+    --orange-dim: rgba(251,146,60,0.08);
+    --gold: #fbbf24;
+    --gold-dim: rgba(251,191,36,0.08);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-xs: 6px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.2);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.15);
+    --positive: #34d399;
+    --negative: #f87171;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -4259,36 +3864,10 @@ fetch('/api/data' + (activeSport ? '?sport=' + encodeURIComponent(activeSport) :
 </body>
 </html>"""
 
-# ---------------------------------------------------------------------------
-# Auth HTML (Login / Register)
-# ---------------------------------------------------------------------------
+# (Auth HTML removed — all auth handled by gateway via habbig.com/login)
 
-AUTH_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sharpe — Sign In</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: #fafafa;
-    color: #1a1a1a;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-  .auth-container {
-    width: 100%;
-    max-width: 380px;
-    padding: 20px;
-  }
+
+_REMOVED_AUTH_HTML = """removed
   .auth-logo {
     display: flex;
     align-items: center;
@@ -4301,27 +3880,29 @@ AUTH_HTML = """<!DOCTYPE html>
   }
   .auth-logo-icon {
     width: 32px; height: 32px;
-    background: #1a1a1a; color: #fafafa;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff;
     display: flex; align-items: center; justify-content: center;
     font-size: 15px; font-weight: 600;
+    border-radius: 8px;
   }
   .auth-tagline {
     text-align: center;
-    color: #a3a3a3;
+    color: #8b8d98;
     font-size: 13px;
     font-weight: 300;
     margin-bottom: 40px;
   }
   .auth-card {
-    background: #ffffff;
-    border: 1px solid #e5e5e5;
+    background: #131417;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
     padding: 32px;
   }
   .auth-tabs {
     display: flex;
     gap: 0;
     margin-bottom: 28px;
-    border-bottom: 1px solid #e5e5e5;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
   }
   .auth-tab {
     flex: 1;
@@ -4330,8 +3911,8 @@ AUTH_HTML = """<!DOCTYPE html>
     font-weight: 500;
     font-size: 12px;
     cursor: pointer;
-    color: #a3a3a3;
-    border-bottom: 1px solid transparent;
+    color: #5c5e6a;
+    border-bottom: 2px solid transparent;
     transition: all 0.15s;
     background: none;
     border-top: none; border-left: none; border-right: none;
@@ -4339,10 +3920,10 @@ AUTH_HTML = """<!DOCTYPE html>
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
-  .auth-tab:hover { color: #737373; }
+  .auth-tab:hover { color: #8b8d98; }
   .auth-tab.active {
-    color: #1a1a1a;
-    border-bottom-color: #1a1a1a;
+    color: #ebebef;
+    border-bottom-color: #6366f1;
   }
   .auth-form { display: none; }
   .auth-form.active { display: block; }
@@ -4353,49 +3934,51 @@ AUTH_HTML = """<!DOCTYPE html>
     display: block;
     font-size: 10px;
     font-weight: 500;
-    color: #a3a3a3;
+    color: #5c5e6a;
     margin-bottom: 8px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
   .form-group input {
     width: 100%;
-    padding: 10px 0;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid #e5e5e5;
-    color: #1a1a1a;
+    padding: 10px 14px;
+    background: #0c0d10;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    color: #ebebef;
     font-family: inherit;
     font-size: 14px;
-    font-weight: 300;
+    font-weight: 400;
     transition: border-color 0.15s;
   }
   .form-group input:focus {
     outline: none;
-    border-bottom-color: #1a1a1a;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.10);
   }
-  .form-group input::placeholder { color: #d4d4d4; }
+  .form-group input::placeholder { color: #5c5e6a; }
   .auth-btn {
     width: 100%;
     padding: 12px;
-    background: #1a1a1a;
-    color: #fafafa;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
     border: none;
+    border-radius: 8px;
     font-family: inherit;
-    font-size: 12px;
-    font-weight: 500;
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, transform 0.15s;
     margin-top: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.02em;
   }
-  .auth-btn:hover { opacity: 0.8; }
-  .auth-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .auth-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+  .auth-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
   .auth-error {
-    background: rgba(220,38,38,0.04);
-    border: 1px solid rgba(220,38,38,0.15);
-    color: #dc2626;
+    background: rgba(248,113,113,0.06);
+    border: 1px solid rgba(248,113,113,0.15);
+    border-radius: 8px;
+    color: #f87171;
     padding: 10px 14px;
     font-size: 12px;
     font-weight: 400;
@@ -4405,7 +3988,7 @@ AUTH_HTML = """<!DOCTYPE html>
   .auth-footer {
     text-align: center;
     margin-top: 28px;
-    color: #a3a3a3;
+    color: #5c5e6a;
     font-size: 11px;
     font-weight: 300;
   }

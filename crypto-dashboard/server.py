@@ -42,13 +42,25 @@ app.add_middleware(
 _request_counts: dict[str, list[float]] = {}
 RATE_LIMIT = 120  # requests per minute per IP
 RATE_WINDOW = 60
+_last_prune = 0.0
+_PRUNE_INTERVAL = 300  # prune stale IPs every 5 minutes
 
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    global _last_prune
     # Rate limiting per IP
     ip = request.client.host if request.client else "unknown"
     now = time.time()
+    # Prune departed IPs periodically
+    if now - _last_prune > _PRUNE_INTERVAL:
+        _last_prune = now
+        stale = [k for k, v in _request_counts.items() if not v or now - v[-1] > RATE_WINDOW]
+        for k in stale:
+            del _request_counts[k]
+        stale_l = [k for k, v in _login_attempts.items() if not v or now - v[-1] > LOGIN_WINDOW]
+        for k in stale_l:
+            del _login_attempts[k]
     reqs = _request_counts.get(ip, [])
     reqs = [t for t in reqs if now - t < RATE_WINDOW]
     if len(reqs) >= RATE_LIMIT and ip not in ("127.0.0.1", "::1"):
@@ -67,64 +79,28 @@ async def security_middleware(request: Request, call_next):
     return response
 
 # ─── Authentication ──────────────────────────────────────────────────
-SESSION_MAX_AGE = 86400 * 7  # 7 days
-
-# Rate limiting for login
-_login_attempts: dict[str, list[float]] = {}
-MAX_LOGIN_ATTEMPTS = 5
-LOGIN_WINDOW = 300  # 5 minutes
-
-
-AUTH_PASSWORD = os.environ.get("CRYPTOEDGE_PASSWORD", "cryptoedge2024")
+# Auth is handled by the gateway. These helpers extract user info from
+# gateway SSO headers or allow localhost bypass for trading bots.
 
 
 def _get_session_user(request: Request) -> dict | None:
-    """Get the authenticated user from session cookie, or None.
-
-    Trust order:
-      1. Gateway SSO via shared-secret header (``X-Gateway-Secret`` matches
-         the ``GATEWAY_SSO_SECRET`` env var). Peer-IP checks don't work here
-         because uvicorn's default proxy_headers rewrites request.client.host
-         from the X-Forwarded-For the gateway passes through.
-      2. Localhost bypass for trading bots running on the same machine.
-      3. Cookie-based session (direct access without gateway).
-    """
-    # 1. Gateway SSO — verify shared secret to prove the request came from
-    #    the local gateway process (the secret is never exposed to clients).
+    """Get the authenticated user from gateway SSO headers."""
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
     if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
         if gw_id and gw_email:
-            try:
-                return {
-                    "id": int(gw_id),
-                    "email": gw_email,
-                    "tier": "admin",
-                    "display_name": gw_email.split("@")[0],
-                }
-            except ValueError:
-                pass  # fall through to other auth paths
+            return {
+                "id": gw_id,
+                "email": gw_email,
+                "tier": "admin",
+                "display_name": gw_email.split("@")[0],
+            }
 
-    # 2. Localhost bypass for trading bots hitting the dashboard directly.
+    # Localhost bypass for trading bots running on the same machine.
     client_host = request.client.host if request.client else ""
     if client_host in ("127.0.0.1", "::1", "localhost"):
-        return {"id": 0, "email": "localhost", "tier": "admin", "display_name": "System"}
-    token = request.cookies.get("session")
-    if not token:
-        return None
-    # 3. Try DB-backed session first.
-    session = db.validate_session(token)
-    if session:
-        return {
-            "id": session["user_id"],
-            "email": session["email"],
-            "tier": session["tier"],
-            "display_name": session["display_name"],
-        }
-    # Fallback: simple password cookie
-    if token == AUTH_PASSWORD:
-        return {"id": 0, "email": "admin@cryptoedge.io", "tier": "admin", "display_name": "Admin"}
+        return {"id": "00000000-0000-0000-0000-000000000000", "email": "localhost", "tier": "admin", "display_name": "System"}
     return None
 
 
@@ -140,15 +116,6 @@ def _is_premium(request: Request) -> bool:
 async def require_auth(request: Request):
     if not _check_auth(request):
         raise HTTPException(status_code=401, detail="Not authenticated")
-
-
-def _rate_limit_login(ip: str) -> bool:
-    """Returns True if the IP is rate limited."""
-    now = time.time()
-    attempts = _login_attempts.get(ip, [])
-    attempts = [t for t in attempts if now - t < LOGIN_WINDOW]
-    _login_attempts[ip] = attempts
-    return len(attempts) >= MAX_LOGIN_ATTEMPTS
 
 
 # ─── In-memory state ─────────────────────────────────────────────────
@@ -396,7 +363,7 @@ async def window_refresher():
                         if w["start"] > last_stored:
                             old_windows.append(w)
                     # Keep bounded
-                    if len(old_windows) > 500:
+                    if len(old_windows) > 1000:
                         old_windows = old_windows[-1000:]
                 else:
                     old_windows = new_windows[-500:]
@@ -565,7 +532,7 @@ def serialize_asset(ticker):
     bt = st["backtest"]
 
     preds_out = []
-    for p in st["predictions"]:
+    for p in (st["predictions"] or []):
         preds_out.append({
             "window_start": p["window_start"].isoformat(),
             "pred_direction": p["pred_direction"],
@@ -606,111 +573,29 @@ def serialize_asset(ticker):
             "hc_count": bt["hc_count"],
             "mae": bt["mae"],
             "total": bt["total"],
-        },
+        } if bt else None,
         "predictions": preds_out,
         "recent_windows": recent_windows,
     }
 
 
-# ─── Auth Endpoints ──────────────────────────────────────────────────
-
-AUTH_STYLE = """<style>
-  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e;
-          --blue:#58a6ff; --green:#3fb950; --red:#f85149; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:var(--bg); color:var(--text); font-family:-apple-system,'Segoe UI',sans-serif;
-         display:flex; justify-content:center; align-items:center; min-height:100vh; }
-  .auth-box { background:var(--card); border:1px solid var(--border); border-radius:16px;
-               padding:40px; width:100%; max-width:420px; text-align:center; }
-  .auth-box h1 { font-size:1.6em; margin-bottom:6px; }
-  .auth-box .subtitle { color:var(--muted); font-size:0.85em; margin-bottom:28px; }
-  .auth-box input { width:100%; padding:12px 16px; border:1px solid var(--border); border-radius:8px;
-                     background:var(--bg); color:var(--text); font-size:1em; margin-bottom:12px;
-                     outline:none; transition:border-color 0.2s; }
-  .auth-box input:focus { border-color:var(--blue); }
-  .auth-box button { width:100%; padding:12px; background:var(--blue); color:#fff; border:none;
-                      border-radius:8px; font-size:1em; font-weight:600; cursor:pointer;
-                      transition:opacity 0.2s; margin-top:4px; }
-  .auth-box button:hover { opacity:0.85; }
-  .error { color:var(--red); font-size:0.85em; margin-bottom:12px; }
-  .switch { color:var(--muted); font-size:0.85em; margin-top:16px; }
-  .switch a { color:var(--blue); text-decoration:none; }
-  .legal { color:var(--muted); font-size:0.7em; margin-top:20px; line-height:1.5; }
-  .legal a { color:var(--blue); text-decoration:none; }
-</style>"""
-
-
-def _auth_page(error=""):
-    error_html = f'<div class="error">{error}</div>' if error else ''
-
-    return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Polymarket Bot — Login</title>{AUTH_STYLE}</head><body>
-<div class="auth-box">
-  <h1>Polymarket Bot</h1>
-  <p class="subtitle">Multi-Coin 5-Min Trading Dashboard</p>
-  {error_html}
-  <form method="POST" action="/login">
-    <input type="password" name="password" placeholder="Enter password" autofocus required>
-    <button type="submit">Sign In</button>
-  </form>
-</div>
-</body></html>"""
+# ─── Auth Redirects ──────────────────────────────────────────────────
+# All auth is handled by the gateway. These just redirect.
 
 
 @app.get("/login")
-async def login_page(request: Request):
-    if _check_auth(request):
-        return RedirectResponse("/", status_code=302)
-    return HTMLResponse(_auth_page())
-
-
-@app.post("/login")
-async def login_submit(request: Request, password: str = Form(...)):
-    if password == AUTH_PASSWORD:
-        resp = RedirectResponse("/", status_code=302)
-        resp.set_cookie("session", AUTH_PASSWORD, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax")
-        return resp
-    return HTMLResponse(_auth_page("Invalid password."), status_code=401)
+async def login_page():
+    return RedirectResponse("https://habbig.com/login", status_code=302)
 
 
 @app.get("/signup")
-async def signup_page(request: Request):
-    if _check_auth(request):
-        return RedirectResponse("/", status_code=302)
-    return HTMLResponse(_auth_page("signup"))
-
-
-@app.post("/signup")
-async def signup_submit(request: Request, email: str = Form(...), password: str = Form(...), display_name: str = Form("")):
-    ip = request.client.host if request.client else "unknown"
-    if _rate_limit_login(ip):
-        return HTMLResponse(_auth_page("signup", "Too many attempts. Try again later."), status_code=429)
-
-    if len(password) < 8:
-        return HTMLResponse(_auth_page("signup", "Password must be at least 8 characters."), status_code=400)
-    if not email or "@" not in email:
-        return HTMLResponse(_auth_page("signup", "Please enter a valid email."), status_code=400)
-
-    user_id = db.create_user(email, password, display_name=display_name, tier="free")
-    if not user_id:
-        return HTMLResponse(_auth_page("signup", "An account with this email already exists."), status_code=409)
-
-    # Auto-create default watchlist
-    db.create_watchlist(user_id, "Default", ["BTC", "ETH", "SOL", "DOGE", "XRP"])
-
-    token = db.create_session(user_id, ip=ip, user_agent=request.headers.get("user-agent", ""))
-    resp = RedirectResponse("/", status_code=302)
-    resp.set_cookie("session", token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=True)
-    return resp
+async def signup_page():
+    return RedirectResponse("https://habbig.com/signup", status_code=302)
 
 
 @app.get("/logout")
-async def logout(request: Request):
-    token = request.cookies.get("session")
-    if token:
-        db.delete_session(token)
-    resp = RedirectResponse("/login", status_code=302)
+async def logout():
+    resp = RedirectResponse("https://habbig.com/logout", status_code=302)
     resp.delete_cookie("session")
     return resp
 
@@ -721,7 +606,7 @@ async def logout(request: Request):
 async def root(request: Request):
     """Serve the live crypto dashboard."""
     if not _check_auth(request):
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("https://habbig.com/login", status_code=302)
     if not asset_state:
         return HTMLResponse("<h1>Loading... refresh in 30s</h1>")
     # Generate and serve the dashboard with live JS injected
@@ -967,7 +852,7 @@ async def get_bot_status(request: Request):
 async def bot_dashboard(request: Request):
     """Self-contained bot monitoring dashboard."""
     if not _check_auth(request):
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("https://habbig.com/login", status_code=302)
     html = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1134,7 +1019,7 @@ async def get_polybot_status(request: Request):
 @app.get("/polybot", response_class=HTMLResponse)
 async def polybot_dashboard(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("https://habbig.com/login", status_code=302)
     html = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1381,7 +1266,7 @@ async def dashboard_hub(request: Request):
 @app.get("/kalshi", response_class=HTMLResponse)
 async def kalshi_dashboard(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("https://habbig.com/login", status_code=302)
     user = _get_session_user(request)
 
     try:
@@ -1489,7 +1374,7 @@ async def kalshi_dashboard(request: Request):
 async def trade_page(request: Request):
     """Polymarket trading page — browse markets and follow/place trades."""
     if not _check_auth(request):
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("https://habbig.com/login", status_code=302)
     user = _get_session_user(request)
     is_premium = user and user["tier"] in ("premium", "admin")
 
@@ -1621,7 +1506,7 @@ async def trade_page(request: Request):
 @app.get("/accuracy", response_class=HTMLResponse)
 async def accuracy_page(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("https://habbig.com/login", status_code=302)
     user = _get_session_user(request)
 
     # Get accuracy stats for each ticker
@@ -1731,7 +1616,7 @@ async def accuracy_page(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("https://habbig.com/login", status_code=302)
     user = _get_session_user(request)
     watchlists = db.get_watchlists(user["id"])
     alert_prefs = db.get_alert_prefs(user["id"])

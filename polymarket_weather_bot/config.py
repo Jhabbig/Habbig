@@ -26,6 +26,10 @@ class Config:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     DB_PATH: str = os.getenv("DB_PATH", "trades.db")
 
-    # Derived
-    MAX_POSITION: float = BANKROLL * MAX_POSITION_PCT
-    DAILY_LOSS_LIMIT: float = BANKROLL * DAILY_LOSS_LIMIT_PCT
+    # Derived (computed in __init__ so env var overrides are applied)
+    MAX_POSITION: float = 0.0
+    DAILY_LOSS_LIMIT: float = 0.0
+
+    def __init__(self):
+        self.MAX_POSITION = self.BANKROLL * self.MAX_POSITION_PCT
+        self.DAILY_LOSS_LIMIT = self.BANKROLL * self.DAILY_LOSS_LIMIT_PCT

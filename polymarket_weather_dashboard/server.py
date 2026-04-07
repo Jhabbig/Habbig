@@ -4,21 +4,19 @@
 from __future__ import annotations
 
 import functools
-import hashlib
 import json
 import logging
 import os
 import re
-import secrets
-import sqlite3
 import statistics
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory, redirect, make_response
+from flask import Flask, jsonify, request, send_from_directory, make_response
 from scipy.stats import norm
+from supabase import create_client, Client
 
 app = Flask(__name__, static_folder="static")
 app.secret_key = os.environ.get("FLASK_SECRET", "norain-secret-key-change-in-prod")
@@ -57,129 +55,36 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ─── Database ─────────────────────────────────────────────────────────────────
+# ─── Database (Supabase) ─────────────────────────────────────────────────────
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.db")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+_supabase_client: Optional[Client] = None
 
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+def _get_client() -> Client:
+    """Return the Supabase client singleton, creating it on first call."""
+    global _supabase_client
+    if _supabase_client is None:
+        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+            raise RuntimeError(
+                "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set. "
+                "Create a project at https://supabase.com and set these env vars."
+            )
+        _supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    return _supabase_client
 
 
 def init_db() -> None:
-    conn = get_db()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS signals_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-            market_id TEXT NOT NULL,
-            question TEXT,
-            category TEXT,
-            yes_price REAL,
-            model_prob REAL,
-            edge REAL,
-            action TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS resolutions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            market_id TEXT NOT NULL,
-            resolved_at TEXT,
-            actual_outcome TEXT,
-            payout REAL
-        );
-
-        CREATE TABLE IF NOT EXISTS alert_settings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            edge_threshold REAL NOT NULL DEFAULT 0.08,
-            categories TEXT NOT NULL DEFAULT '[]',
-            push_enabled INTEGER NOT NULL DEFAULT 0,
-            email TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_signals_market ON signals_log(market_id);
-        CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals_log(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_resolutions_market ON resolutions(market_id);
-
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            email TEXT,
-            is_admin INTEGER NOT NULL DEFAULT 0,
-            settings TEXT NOT NULL DEFAULT '{}',
-            favorites TEXT NOT NULL DEFAULT '[]',
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            last_login TEXT,
-            login_count INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            expires_at TEXT NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS user_activity (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            detail TEXT,
-            timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS price_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-            market_id TEXT NOT NULL,
-            source TEXT NOT NULL DEFAULT 'polymarket',
-            question TEXT,
-            city TEXT,
-            target_date TEXT,
-            yes_price REAL,
-            model_prob REAL,
-            edge REAL,
-            volume REAL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_snapshots_market ON price_snapshots(market_id);
-        CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON price_snapshots(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_snapshots_city ON price_snapshots(city);
-
-        CREATE INDEX IF NOT EXISTS idx_snapshots_market_ts ON price_snapshots(market_id, timestamp);
-
-        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-        CREATE INDEX IF NOT EXISTS idx_activity_user ON user_activity(user_id);
-        CREATE INDEX IF NOT EXISTS idx_activity_ts ON user_activity(timestamp);
-    """)
-    # Seed default alert settings if empty
-    row = conn.execute("SELECT COUNT(*) as cnt FROM alert_settings").fetchone()
-    if row["cnt"] == 0:
-        conn.execute(
-            "INSERT INTO alert_settings (edge_threshold, categories, push_enabled) VALUES (0.08, '[]', 0)"
-        )
-    # Seed admin user if no users exist
-    user_count = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()["cnt"]
-    if user_count == 0:
-        admin_hash = hashlib.sha256(("admin" + "norain2024").encode()).hexdigest()
-        conn.execute(
-            "INSERT INTO users (username, password_hash, is_admin, settings) VALUES (?, ?, 1, ?)",
-            ("admin", admin_hash, json.dumps(DEFAULT_USER_SETTINGS)),
-        )
-    # Add is_premium column if missing (migration)
+    """Verify Supabase connection is working. Called on startup."""
+    client = _get_client()
     try:
-        conn.execute("SELECT is_premium FROM users LIMIT 1")
-    except Exception:
-        conn.execute("ALTER TABLE users ADD COLUMN is_premium INTEGER NOT NULL DEFAULT 0")
-    conn.commit()
-    conn.close()
+        client.table("weather_signals_log").select("id").limit(0).execute()
+        logger.info("Supabase connection OK")
+    except Exception as e:
+        logger.error("Supabase connection failed: %s", e)
+        raise
 
 
 DEFAULT_USER_SETTINGS = {
@@ -194,64 +99,46 @@ DEFAULT_USER_SETTINGS = {
     "watched_cities": [],
 }
 
-
-def _hash_pw(username: str, password: str) -> str:
-    return hashlib.sha256((username + password).encode()).hexdigest()
+_BEHIND_GATEWAY = bool(os.environ.get("GATEWAY_SSO_SECRET"))
 
 
 def _get_user_from_request() -> Optional[dict]:
-    """Extract authenticated user from request cookie, header or gateway SSO.
+    """Extract authenticated user from gateway SSO headers.
 
-    Trust order:
-      1. Habbig gateway headers (``X-Gateway-User-Id`` / ``X-Gateway-User-Email``)
-         when the request carries the shared secret ``X-Gateway-Secret``
-         matching ``GATEWAY_SSO_SECRET``. We don't use peer-IP checks because
-         Flask's request.remote_addr can be rewritten when ProxyFix is active
-         or the upstream passes X-Forwarded-For.
-      2. ``norain_token`` cookie or ``X-Auth-Token`` header (direct access).
+    The weather dashboard is served behind the gateway. When the request
+    carries the shared secret ``X-Gateway-Secret`` matching
+    ``GATEWAY_SSO_SECRET``, we trust the user_id from ``X-Gateway-User-Id``
+    directly as a UUID string. The gateway has already authenticated
+    and subscription-checked them.
     """
-    # 1. Gateway SSO — trust via shared-secret header.
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
     if _sso_secret and request.headers.get("X-Gateway-Secret") == _sso_secret:
         gw_id = request.headers.get("X-Gateway-User-Id")
         gw_email = request.headers.get("X-Gateway-User-Email")
-        if gw_id and gw_email:
+        if gw_id:
+            # Look up the profile from Supabase for admin status etc.
             try:
-                gw_user_id = int(gw_id)
-            except ValueError:
-                gw_user_id = None
-            if gw_user_id is not None:
-                conn = get_db()
-                row = conn.execute(
-                    "SELECT * FROM users WHERE id = ?", (gw_user_id,)
-                ).fetchone()
-                conn.close()
-                if row:
-                    return dict(row)
-                # No local row yet — return a synthetic admin-ish user so the
-                # request can proceed. The gateway has already authenticated
-                # and subscription-checked them.
-                return {
-                    "id": gw_user_id,
-                    "username": gw_email.split("@")[0],
-                    "email": gw_email,
-                    "is_admin": 0,
-                    "_gateway_sso": True,
-                }
-
-    # 2. Direct cookie/header access.
-    token = request.cookies.get("norain_token") or request.headers.get("X-Auth-Token")
-    if not token:
-        return None
-    conn = get_db()
-    row = conn.execute(
-        "SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id "
-        "WHERE s.token = ? AND s.expires_at > datetime('now')",
-        (token,),
-    ).fetchone()
-    conn.close()
-    if row:
-        return dict(row)
+                client = _get_client()
+                result = client.table("profiles").select("*").eq("id", gw_id).limit(1).execute()
+                if result.data:
+                    profile = result.data[0]
+                    return {
+                        "id": profile["id"],
+                        "username": profile.get("username", ""),
+                        "email": profile.get("email", gw_email or ""),
+                        "is_admin": profile.get("is_admin", 0),
+                        "_gateway_sso": True,
+                    }
+            except Exception:
+                pass
+            # No profile found -- return synthetic user; gateway already authed them
+            return {
+                "id": gw_id,
+                "username": (gw_email or "").split("@")[0],
+                "email": gw_email or "",
+                "is_admin": 0,
+                "_gateway_sso": True,
+            }
     return None
 
 
@@ -277,13 +164,13 @@ def require_admin(f):
     return wrapper
 
 
-def log_activity(user_id: int, action: str, detail: str = None):
+def log_activity(user_id: str, action: str, detail: str = None):
     try:
-        conn = get_db()
-        conn.execute("INSERT INTO user_activity (user_id, action, detail) VALUES (?, ?, ?)",
-                      (user_id, action, detail))
-        conn.commit()
-        conn.close()
+        client = _get_client()
+        row = {"user_id": user_id, "action": action}
+        if detail is not None:
+            row["detail"] = detail
+        client.table("weather_user_activity").insert(row).execute()
     except Exception:
         pass
 
@@ -317,10 +204,10 @@ STATION_MAP = {
     "miami":         (25.7959, -80.2870, "KMIA", "Miami International, FL"),
     "los angeles":   (33.9425, -118.4081, "KLAX", "LAX, CA"),
     "la":            (33.9425, -118.4081, "KLAX", "LAX, CA"),
-    "london":        (51.5053, -0.0553, "EGLL", "Heathrow Airport"),
-    "paris":         (49.0097, 2.5479, "LFPG", "Charles de Gaulle Airport"),
+    "london":        (51.5053, -0.0553, "EGLC", "London City Airport"),
+    "paris":         (48.7233, 2.3794, "LFPO", "Paris-Orly"),
     "tokyo":         (35.5533, 139.7811, "RJTT", "Haneda Airport"),
-    "seoul":         (37.4602, 126.4407, "RKSI", "Incheon International"),
+    "seoul":         (37.5586, 126.7906, "RKSS", "Gimpo International"),
     "sydney":        (-33.9461, 151.1772, "YSSY", "Sydney Airport"),
     "atlanta":       (33.6407, -84.4277, "KATL", "Hartsfield-Jackson, GA"),
     "austin":        (30.1945, -97.6699, "KAUS", "Austin-Bergstrom, TX"),
@@ -584,7 +471,7 @@ REJECT_KEYWORDS = [
 ]
 
 
-def _fetch_events_by_tag(tag_slug: str, seen_ids: set, all_markets: list) -> None:
+def _fetch_events_by_tag(tag_slug: str, seen_ids: set, all_markets: list, lock=None) -> None:
     """Fetch events for a single tag_slug, appending new markets to all_markets."""
     offset = 0
     for _ in range(10):
@@ -609,11 +496,19 @@ def _fetch_events_by_tag(tag_slug: str, seen_ids: set, all_markets: list) -> Non
                     mq = (m.get("question", "") or "").lower()
                     if any(k in mq for k in ["win the", "finish in", "score", "goal", "assist"]):
                         continue
-                    if mid and mid not in seen_ids:
-                        seen_ids.add(mid)
-                        m["_event_title"] = title
-                        m["_event_tags"] = [t.get("label", "") for t in tags if isinstance(t, dict)]
-                        all_markets.append(m)
+                    if lock:
+                        with lock:
+                            if mid and mid not in seen_ids:
+                                seen_ids.add(mid)
+                                m["_event_title"] = title
+                                m["_event_tags"] = [t.get("label", "") for t in tags if isinstance(t, dict)]
+                                all_markets.append(m)
+                    else:
+                        if mid and mid not in seen_ids:
+                            seen_ids.add(mid)
+                            m["_event_title"] = title
+                            m["_event_tags"] = [t.get("label", "") for t in tags if isinstance(t, dict)]
+                            all_markets.append(m)
             offset += 100
         except Exception as e:
             logger.error("Gamma tag_slug=%s error at offset %d: %s", tag_slug, offset, e)
@@ -628,12 +523,14 @@ def fetch_all_weather_markets() -> list[dict]:
 
     all_markets: list[dict] = []
     seen_ids: set[str] = set()
+    import threading as _th
+    _market_lock = _th.Lock()
 
     # Fetch via targeted tag_slug queries — much faster than paginating all events
     from concurrent.futures import ThreadPoolExecutor
     tag_slugs = ["temperature", "weather", "climate-change", "natural-disasters"]
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(_fetch_events_by_tag, slug, seen_ids, all_markets) for slug in tag_slugs]
+        futures = [pool.submit(_fetch_events_by_tag, slug, seen_ids, all_markets, _market_lock) for slug in tag_slugs]
         for f in futures:
             f.result()
 
@@ -834,13 +731,19 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str) -> Optiona
         return model_id, _fetch_ensemble_model(lat, lon, date_str, model_id)
 
     with ThreadPoolExecutor(max_workers=len(WEATHER_MODELS)) as pool:
-        for model_id, result in pool.map(lambda m: _fetch_one(m), WEATHER_MODELS.keys()):
-            if result:
-                info = WEATHER_MODELS[model_id]
-                result["model_name"] = info["name"]
-                result["org"] = info["org"]
-                result["is_resolution_model"] = (model_id == RESOLUTION_MODEL)
-                models_data[model_id] = result
+        futures = {pool.submit(_fetch_one, m): m for m in WEATHER_MODELS.keys()}
+        for future in futures:
+            try:
+                model_id, result = future.result()
+                if result:
+                    info = WEATHER_MODELS[model_id]
+                    result["model_name"] = info["name"]
+                    result["org"] = info["org"]
+                    result["is_resolution_model"] = (model_id == RESOLUTION_MODEL)
+                    models_data[model_id] = result
+            except Exception as e:
+                failed_model = futures[future]
+                logger.warning("Model %s forecast fetch failed: %s", failed_model, e)
 
     if not models_data:
         return None
@@ -906,16 +809,34 @@ def fetch_current_weather(lat: float, lon: float) -> Optional[dict]:
     return None
 
 
+def _c_to_f(c):
+    """Convert Celsius to Fahrenheit."""
+    return c * 9.0 / 5.0 + 32.0
+
+
 def compute_probability(forecast: dict, temp_info: dict) -> Optional[float]:
     mean = forecast["mean"]
     std = forecast["std"]
     if mean is None or std is None:
         return None
 
+    # Convert Celsius thresholds to Fahrenheit (forecasts are always in F)
+    is_celsius = temp_info.get("unit", "F").upper().startswith("C")
+
     threshold = temp_info.get("threshold")
     is_over = temp_info.get("is_over")
     lower = temp_info.get("temp_lower")
     upper = temp_info.get("temp_upper")
+
+    if is_celsius:
+        if threshold is not None:
+            threshold = _c_to_f(threshold)
+        if lower is not None:
+            lower = _c_to_f(lower)
+        if upper is not None:
+            upper = _c_to_f(upper)
+        # Also scale std for range comparison (°C std * 1.8 = °F std)
+        # No -- std is already in °F from the forecast. Only thresholds need conversion.
 
     if threshold is not None:
         if is_over:
@@ -957,16 +878,18 @@ def categorize_market(question: str, tags: list) -> str:
 def log_signal(market_id: str, question: str, category: str,
                yes_price: Optional[float], model_prob: Optional[float],
                edge: Optional[float], action: str = "auto") -> None:
-    """Insert a signal into the signals_log table."""
+    """Insert a signal into the weather_signals_log table."""
     try:
-        conn = get_db()
-        conn.execute(
-            "INSERT INTO signals_log (market_id, question, category, yes_price, model_prob, edge, action) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (market_id, question, category, yes_price, model_prob, edge, action),
-        )
-        conn.commit()
-        conn.close()
+        client = _get_client()
+        client.table("weather_signals_log").insert({
+            "market_id": market_id,
+            "question": question,
+            "category": category,
+            "yes_price": yes_price,
+            "model_prob": model_prob,
+            "edge": edge,
+            "action": action,
+        }).execute()
     except Exception as e:
         logger.warning("Failed to log signal: %s", e)
 
@@ -1180,9 +1103,15 @@ def api_forecasts():
 
     forecast_data: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=20) as pool:
-        for key, fc in pool.map(lambda a: _fetch_fc(a), forecast_needs.items()):
-            if fc:
-                forecast_data[key] = fc
+        futures = {pool.submit(_fetch_fc, item): item[0] for item in forecast_needs.items()}
+        for future in futures:
+            try:
+                key, fc = future.result()
+                if fc:
+                    forecast_data[key] = fc
+            except Exception as e:
+                failed_key = futures[future]
+                logger.warning("Forecast fetch failed for %s: %s", failed_key, e)
 
     # Build per-market enrichment: forecast + per-model probabilities
     market_enrichments = {}
@@ -1296,26 +1225,17 @@ def api_history():
     per_page = request.args.get("per_page", 50, type=int)
     category = request.args.get("category", None)
     per_page = min(per_page, 200)
-    offset = (page - 1) * per_page
+    sb_offset = (page - 1) * per_page
 
-    conn = get_db()
+    client = _get_client()
+    query = client.table("weather_signals_log").select("*", count="exact")
     if category:
-        rows = conn.execute(
-            "SELECT * FROM signals_log WHERE category = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-            (category, per_page, offset),
-        ).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) as cnt FROM signals_log WHERE category = ?", (category,)
-        ).fetchone()["cnt"]
-    else:
-        rows = conn.execute(
-            "SELECT * FROM signals_log ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-            (per_page, offset),
-        ).fetchall()
-        total = conn.execute("SELECT COUNT(*) as cnt FROM signals_log").fetchone()["cnt"]
-    conn.close()
+        query = query.eq("category", category)
+    query = query.order("timestamp", desc=True).range(sb_offset, sb_offset + per_page - 1)
+    result = query.execute()
 
-    signals = [dict(r) for r in rows]
+    signals = result.data or []
+    total = result.count or 0
     return jsonify({
         "signals": signals,
         "page": page,
@@ -1328,71 +1248,83 @@ def api_history():
 @app.route("/api/accuracy")
 def api_accuracy():
     """Compute accuracy stats: win rate, avg edge, by category."""
-    conn = get_db()
+    client = _get_client()
 
-    # Overall stats from signals that have matching resolutions
-    overall = conn.execute("""
-        SELECT
-            COUNT(*) as total_signals,
-            AVG(s.edge) as avg_edge,
-            AVG(ABS(s.edge)) as avg_abs_edge
-        FROM signals_log s
-    """).fetchone()
+    # Fetch all signals
+    all_signals = client.table("weather_signals_log").select("market_id, edge, category").execute().data or []
 
-    # Resolved signals with outcomes
-    resolved = conn.execute("""
-        SELECT
-            COUNT(*) as total_resolved,
-            SUM(CASE WHEN
-                (s.edge > 0 AND r.actual_outcome = 'YES') OR
-                (s.edge < 0 AND r.actual_outcome = 'NO')
-                THEN 1 ELSE 0 END) as wins,
-            AVG(r.payout) as avg_payout
-        FROM signals_log s
-        JOIN resolutions r ON s.market_id = r.market_id
-    """).fetchone()
+    # Fetch all resolutions
+    all_resolutions = client.table("weather_resolutions").select("market_id, actual_outcome, payout").execute().data or []
+    res_map = {}
+    for r in all_resolutions:
+        res_map[r["market_id"]] = r
 
-    total_resolved = resolved["total_resolved"] or 0
-    wins = resolved["wins"] or 0
+    # Overall stats
+    total_signals = len(all_signals)
+    edges = [s["edge"] for s in all_signals if s.get("edge") is not None]
+    avg_edge = round(statistics.mean(edges), 4) if edges else None
+    avg_abs_edge = round(statistics.mean([abs(e) for e in edges]), 4) if edges else None
+
+    # Resolved stats
+    total_resolved = 0
+    wins = 0
+    payouts = []
+    for s in all_signals:
+        r = res_map.get(s["market_id"])
+        if r and r.get("actual_outcome"):
+            total_resolved += 1
+            if r.get("payout") is not None:
+                payouts.append(r["payout"])
+            edge = s.get("edge") or 0
+            outcome = r["actual_outcome"]
+            if (edge > 0 and outcome == "YES") or (edge < 0 and outcome == "NO"):
+                wins += 1
+
     win_rate = round(wins / total_resolved, 4) if total_resolved > 0 else None
+    avg_payout = round(statistics.mean(payouts), 4) if payouts else None
 
     # By category
-    by_category = conn.execute("""
-        SELECT
-            s.category,
-            COUNT(*) as signal_count,
-            AVG(s.edge) as avg_edge,
-            AVG(ABS(s.edge)) as avg_abs_edge,
-            SUM(CASE WHEN r.actual_outcome IS NOT NULL THEN 1 ELSE 0 END) as resolved_count,
-            SUM(CASE WHEN
-                (s.edge > 0 AND r.actual_outcome = 'YES') OR
-                (s.edge < 0 AND r.actual_outcome = 'NO')
-                THEN 1 ELSE 0 END) as wins
-        FROM signals_log s
-        LEFT JOIN resolutions r ON s.market_id = r.market_id
-        GROUP BY s.category
-        ORDER BY signal_count DESC
-    """).fetchall()
-
-    conn.close()
+    cat_data = {}
+    for s in all_signals:
+        cat = s.get("category") or "other"
+        if cat not in cat_data:
+            cat_data[cat] = {"category": cat, "signal_count": 0, "edges": [],
+                             "resolved_count": 0, "wins": 0}
+        cat_data[cat]["signal_count"] += 1
+        if s.get("edge") is not None:
+            cat_data[cat]["edges"].append(s["edge"])
+        r = res_map.get(s["market_id"])
+        if r and r.get("actual_outcome"):
+            cat_data[cat]["resolved_count"] += 1
+            edge = s.get("edge") or 0
+            outcome = r["actual_outcome"]
+            if (edge > 0 and outcome == "YES") or (edge < 0 and outcome == "NO"):
+                cat_data[cat]["wins"] += 1
 
     categories = []
-    for row in by_category:
-        r = dict(row)
-        rc = r["resolved_count"] or 0
-        w = r["wins"] or 0
-        r["win_rate"] = round(w / rc, 4) if rc > 0 else None
-        categories.append(r)
+    for cat in sorted(cat_data.values(), key=lambda x: -x["signal_count"]):
+        e = cat["edges"]
+        rc = cat["resolved_count"]
+        w = cat["wins"]
+        categories.append({
+            "category": cat["category"],
+            "signal_count": cat["signal_count"],
+            "avg_edge": round(statistics.mean(e), 4) if e else None,
+            "avg_abs_edge": round(statistics.mean([abs(x) for x in e]), 4) if e else None,
+            "resolved_count": rc,
+            "wins": w,
+            "win_rate": round(w / rc, 4) if rc > 0 else None,
+        })
 
     return jsonify({
         "overall": {
-            "total_signals": overall["total_signals"] or 0,
-            "avg_edge": round(overall["avg_edge"], 4) if overall["avg_edge"] else None,
-            "avg_abs_edge": round(overall["avg_abs_edge"], 4) if overall["avg_abs_edge"] else None,
+            "total_signals": total_signals,
+            "avg_edge": avg_edge,
+            "avg_abs_edge": avg_abs_edge,
             "total_resolved": total_resolved,
             "wins": wins,
             "win_rate": win_rate,
-            "avg_payout": round(resolved["avg_payout"], 4) if resolved["avg_payout"] else None,
+            "avg_payout": avg_payout,
         },
         "by_category": categories,
     })
@@ -1412,31 +1344,30 @@ def snapshot_prices() -> int:
         fc_cached = cache_get("all_forecasts")
         forecasts = fc_cached.get("forecasts", {}) if fc_cached else {}
 
-        conn = get_db()
-        count = 0
+        client = _get_client()
+        rows_to_insert = []
         for m in markets:
             mid = m.get("id", "")
             if not mid:
                 continue
             enrich = forecasts.get(mid, {})
-            conn.execute(
-                "INSERT INTO price_snapshots (market_id, source, question, city, target_date, yes_price, model_prob, edge, volume) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    mid,
-                    m.get("source", "polymarket"),
-                    m.get("question", ""),
-                    m.get("city"),
-                    m.get("target_date"),
-                    m.get("yes_price"),
-                    enrich.get("model_prob") or m.get("model_prob"),
-                    enrich.get("edge") or m.get("edge"),
-                    float(m.get("volume") or 0),
-                ),
-            )
-            count += 1
-        conn.commit()
-        conn.close()
+            rows_to_insert.append({
+                "market_id": mid,
+                "source": m.get("source", "polymarket"),
+                "question": m.get("question", ""),
+                "city": m.get("city"),
+                "target_date": m.get("target_date"),
+                "yes_price": m.get("yes_price"),
+                "model_prob": enrich.get("model_prob") or m.get("model_prob"),
+                "edge": enrich.get("edge") or m.get("edge"),
+                "volume": float(m.get("volume") or 0),
+            })
+        # Insert in batches of 500 to avoid payload limits
+        count = 0
+        for i in range(0, len(rows_to_insert), 500):
+            batch = rows_to_insert[i:i + 500]
+            client.table("weather_price_snapshots").insert(batch).execute()
+            count += len(batch)
         logger.info("Snapshot: saved %d market prices", count)
         return count
     except Exception as e:
@@ -1471,7 +1402,7 @@ def fetch_kalshi_price_history(series_ticker: str, ticker: str, period: int = 14
 
 def backfill_price_history() -> dict:
     """Fetch and store historical markets from Polymarket (closed events) and Kalshi candlesticks."""
-    conn = get_db()
+    client = _get_client()
     poly_count = 0
     kalshi_count = 0
 
@@ -1479,6 +1410,7 @@ def backfill_price_history() -> dict:
     try:
         tag_slugs = ["temperature", "weather"]
         seen = set()
+        poly_rows = []
         for tag in tag_slugs:
             offset = 0
             while offset < 2000:
@@ -1507,17 +1439,25 @@ def backfill_price_history() -> dict:
                                 prices = []
                         yes_price = float(prices[0]) if prices else None
                         end_date = m.get("endDate", "")
-                        # Use endDate as the snapshot timestamp (resolution time)
                         ts = end_date if end_date else m.get("updatedAt", "")
                         if not ts:
                             continue
-                        conn.execute(
-                            "INSERT OR IGNORE INTO price_snapshots (timestamp, market_id, source, question, city, target_date, yes_price, volume) "
-                            "VALUES (?, ?, 'polymarket', ?, ?, ?, ?, ?)",
-                            (ts[:19].replace('T', ' '), mid, question, city, target_date, yes_price, float(m.get("volume") or 0)),
-                        )
-                        poly_count += 1
+                        poly_rows.append({
+                            "timestamp": ts,
+                            "market_id": mid,
+                            "source": "polymarket",
+                            "question": question,
+                            "city": city,
+                            "target_date": target_date,
+                            "yes_price": yes_price,
+                            "volume": float(m.get("volume") or 0),
+                        })
                 offset += 100
+        # Insert in batches
+        for i in range(0, len(poly_rows), 500):
+            batch = poly_rows[i:i + 500]
+            client.table("weather_price_snapshots").upsert(batch, on_conflict="market_id,timestamp").execute()
+            poly_count += len(batch)
     except Exception as e:
         logger.error("Polymarket backfill error: %s", e)
 
@@ -1531,34 +1471,40 @@ def backfill_price_history() -> dict:
                 ticker = m.get("kalshi_ticker")
                 if not ticker:
                     continue
-                existing = conn.execute(
-                    "SELECT COUNT(*) as c FROM price_snapshots WHERE market_id = ? AND timestamp < datetime('now', '-1 hour')",
-                    (m["id"],),
-                ).fetchone()["c"]
-                if existing > 3:
+                # Check how many existing snapshots we have for this market
+                existing = client.table("weather_price_snapshots") \
+                    .select("id", count="exact") \
+                    .eq("market_id", m["id"]) \
+                    .execute()
+                if (existing.count or 0) > 3:
                     continue
-                # Extract series ticker from the full ticker
                 series = re.match(r"([A-Z]+)", ticker)
                 series_ticker = series.group(1) if series else ""
                 history = fetch_kalshi_price_history(series_ticker, ticker, period=1440)
+                kalshi_rows = []
                 for h in history:
                     ts = h.get("timestamp")
                     price = h.get("price")
                     if ts is None or price is None:
                         continue
                     if isinstance(ts, (int, float)):
-                        ts = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                    conn.execute(
-                        "INSERT OR IGNORE INTO price_snapshots (timestamp, market_id, source, question, city, target_date, yes_price, volume) "
-                        "VALUES (?, ?, 'kalshi', ?, ?, ?, ?, 0)",
-                        (ts, m["id"], m.get("question", ""), m.get("city"), m.get("target_date"), price),
-                    )
-                    kalshi_count += 1
+                        ts = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                    kalshi_rows.append({
+                        "timestamp": ts,
+                        "market_id": m["id"],
+                        "source": "kalshi",
+                        "question": m.get("question", ""),
+                        "city": m.get("city"),
+                        "target_date": m.get("target_date"),
+                        "yes_price": price,
+                        "volume": 0,
+                    })
+                if kalshi_rows:
+                    client.table("weather_price_snapshots").insert(kalshi_rows).execute()
+                    kalshi_count += len(kalshi_rows)
     except Exception as e:
         logger.error("Kalshi backfill error: %s", e)
 
-    conn.commit()
-    conn.close()
     logger.info("Backfill complete: %d Polymarket closed markets, %d Kalshi candles", poly_count, kalshi_count)
     return {"polymarket": poly_count, "kalshi": kalshi_count}
 
@@ -1575,25 +1521,24 @@ def api_backfill_history():
 @app.route("/api/price_history/<market_id>")
 def api_price_history(market_id):
     """Return price history for a specific market. Daily by default, hourly requires premium."""
-    # Check granularity request
     granularity = request.args.get("granularity", "daily")  # daily or hourly
 
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT timestamp, yes_price, model_prob, edge, volume FROM price_snapshots "
-        "WHERE market_id = ? ORDER BY timestamp ASC",
-        (market_id,),
-    ).fetchall()
-    conn.close()
+    client = _get_client()
+    result = client.table("weather_price_snapshots") \
+        .select("timestamp, yes_price, model_prob, edge, volume") \
+        .eq("market_id", market_id) \
+        .order("timestamp", desc=False) \
+        .execute()
 
-    snapshots = [dict(r) for r in rows]
+    snapshots = result.data or []
 
     # For daily view: aggregate to one point per day
     if granularity == "daily" and snapshots:
         daily = {}
         for s in snapshots:
-            day = s["timestamp"][:10] if s["timestamp"] else None
-            if day and (day not in daily or s["timestamp"] > daily[day]["timestamp"]):
+            ts = s.get("timestamp") or ""
+            day = ts[:10] if ts else None
+            if day and (day not in daily or ts > daily[day]["timestamp"]):
                 daily[day] = s
         snapshots = sorted(daily.values(), key=lambda x: x["timestamp"])
 
@@ -1608,15 +1553,16 @@ def api_price_history(market_id):
 @app.route("/api/price_history_city/<city>")
 def api_price_history_city(city):
     """Return price history for all markets in a city, grouped by market_id."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT market_id, timestamp, yes_price, model_prob, edge, volume, question, source "
-        "FROM price_snapshots WHERE city = ? ORDER BY market_id, timestamp ASC",
-        (city.lower(),),
-    ).fetchall()
-    conn.close()
+    client = _get_client()
+    result = client.table("weather_price_snapshots") \
+        .select("market_id, timestamp, yes_price, model_prob, edge, volume, question, source") \
+        .eq("city", city.lower()) \
+        .order("market_id") \
+        .order("timestamp", desc=False) \
+        .execute()
+
     grouped = {}
-    for r in rows:
+    for r in (result.data or []):
         mid = r["market_id"]
         if mid not in grouped:
             grouped[mid] = {"market_id": mid, "question": r["question"], "source": r["source"], "snapshots": []}
@@ -1630,13 +1576,34 @@ def api_price_history_city(city):
 @app.route("/api/snapshot_stats")
 def api_snapshot_stats():
     """Return summary stats about stored price snapshots."""
-    conn = get_db()
-    total = conn.execute("SELECT COUNT(*) as c FROM price_snapshots").fetchone()["c"]
-    markets = conn.execute("SELECT COUNT(DISTINCT market_id) as c FROM price_snapshots").fetchone()["c"]
-    oldest = conn.execute("SELECT MIN(timestamp) as t FROM price_snapshots").fetchone()["t"]
-    newest = conn.execute("SELECT MAX(timestamp) as t FROM price_snapshots").fetchone()["t"]
-    conn.close()
-    return jsonify({"total_snapshots": total, "unique_markets": markets, "oldest": oldest, "newest": newest})
+    client = _get_client()
+    # Total count
+    total_result = client.table("weather_price_snapshots").select("id", count="exact").execute()
+    total = total_result.count or 0
+
+    # For unique markets count and oldest/newest, fetch minimal data
+    stats_result = client.table("weather_price_snapshots") \
+        .select("market_id, timestamp") \
+        .order("timestamp", desc=False) \
+        .limit(1) \
+        .execute()
+    oldest = stats_result.data[0]["timestamp"] if stats_result.data else None
+
+    newest_result = client.table("weather_price_snapshots") \
+        .select("timestamp") \
+        .order("timestamp", desc=True) \
+        .limit(1) \
+        .execute()
+    newest = newest_result.data[0]["timestamp"] if newest_result.data else None
+
+    # Unique markets -- use RPC or just approximate with a select
+    # Supabase doesn't support COUNT(DISTINCT) directly, so we use a workaround
+    markets_result = client.table("weather_price_snapshots") \
+        .select("market_id") \
+        .execute()
+    unique_markets = len(set(r["market_id"] for r in (markets_result.data or [])))
+
+    return jsonify({"total_snapshots": total, "unique_markets": unique_markets, "oldest": oldest, "newest": newest})
 
 
 @app.route("/api/log_signal", methods=["POST"])
@@ -1664,17 +1631,23 @@ def api_log_signal():
 @app.route("/api/alerts/settings", methods=["GET"])
 def api_alerts_settings_get():
     """Get current alert settings."""
-    conn = get_db()
-    row = conn.execute("SELECT * FROM alert_settings ORDER BY id DESC LIMIT 1").fetchone()
-    conn.close()
-    if not row:
+    user = _get_user_from_request()
+    client = _get_client()
+
+    query = client.table("weather_alert_settings").select("*")
+    if user:
+        query = query.eq("user_id", user["id"])
+    result = query.order("id", desc=True).limit(1).execute()
+
+    if not result.data:
         return jsonify({"settings": None})
-    settings = dict(row)
-    # Parse categories JSON
-    try:
-        settings["categories"] = json.loads(settings["categories"])
-    except (json.JSONDecodeError, TypeError):
-        settings["categories"] = []
+    settings = result.data[0]
+    # categories is already JSONB in Supabase (no need to json.loads)
+    if isinstance(settings.get("categories"), str):
+        try:
+            settings["categories"] = json.loads(settings["categories"])
+        except (json.JSONDecodeError, TypeError):
+            settings["categories"] = []
     return jsonify({"settings": settings})
 
 
@@ -1687,33 +1660,42 @@ def api_alerts_settings_post():
     push_enabled = 1 if data.get("push_enabled", False) else 0
     email = data.get("email", None)
 
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO alert_settings (edge_threshold, categories, push_enabled, email) "
-        "VALUES (?, ?, ?, ?)",
-        (edge_threshold, json.dumps(categories), push_enabled, email),
-    )
-    conn.commit()
-    conn.close()
+    user = _get_user_from_request()
+    client = _get_client()
+    row = {
+        "edge_threshold": edge_threshold,
+        "categories": categories,  # JSONB column accepts list directly
+        "push_enabled": push_enabled,
+        "email": email,
+    }
+    if user:
+        row["user_id"] = user["id"]
+    client.table("weather_alert_settings").insert(row).execute()
     return jsonify({"status": "ok"})
 
 
 @app.route("/api/alerts/active")
 def api_alerts_active():
     """Get current alerts that match user settings."""
-    conn = get_db()
-    settings_row = conn.execute("SELECT * FROM alert_settings ORDER BY id DESC LIMIT 1").fetchone()
-    conn.close()
+    user = _get_user_from_request()
+    client = _get_client()
 
-    if not settings_row:
+    query = client.table("weather_alert_settings").select("*")
+    if user:
+        query = query.eq("user_id", user["id"])
+    result = query.order("id", desc=True).limit(1).execute()
+
+    if not result.data:
         return jsonify({"alerts": [], "settings": None})
 
-    settings = dict(settings_row)
+    settings = result.data[0]
     edge_threshold = settings.get("edge_threshold", 0.08)
-    try:
-        filter_categories = json.loads(settings.get("categories", "[]"))
-    except (json.JSONDecodeError, TypeError):
-        filter_categories = []
+    filter_categories = settings.get("categories", [])
+    if isinstance(filter_categories, str):
+        try:
+            filter_categories = json.loads(filter_categories)
+        except (json.JSONDecodeError, TypeError):
+            filter_categories = []
 
     # Fetch current markets (uses cache)
     raw_markets = fetch_all_weather_markets()
@@ -1779,10 +1761,7 @@ def api_alerts_active():
 
     alerts.sort(key=lambda x: -abs(x["edge"]))
 
-    try:
-        filter_cats_parsed = json.loads(settings.get("categories", "[]"))
-    except (json.JSONDecodeError, TypeError):
-        filter_cats_parsed = []
+    filter_cats_parsed = filter_categories if isinstance(filter_categories, list) else []
 
     return jsonify({
         "alerts": alerts,
@@ -1797,83 +1776,10 @@ def api_alerts_active():
 
 # ─── Auth Endpoints ──────────────────────────────────────────────────────────
 
-@app.route("/api/auth/register", methods=["POST"])
-def api_register():
-    data = request.get_json(force=True, silent=True) or {}
-    username = (data.get("username") or "").strip().lower()
-    password = data.get("password") or ""
-    email = (data.get("email") or "").strip() or None
-    if not username or len(username) < 3:
-        return jsonify({"error": "Username must be at least 3 characters"}), 400
-    if not password or len(password) < 4:
-        return jsonify({"error": "Password must be at least 4 characters"}), 400
-    pw_hash = _hash_pw(username, password)
-    conn = get_db()
-    try:
-        conn.execute(
-            "INSERT INTO users (username, password_hash, email, settings) VALUES (?, ?, ?, ?)",
-            (username, pw_hash, email, json.dumps(DEFAULT_USER_SETTINGS)),
-        )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
-        return jsonify({"error": "Username already taken"}), 409
-    user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-    token = secrets.token_hex(32)
-    expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-    conn.execute("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-                 (token, user["id"], expires))
-    conn.execute("UPDATE users SET last_login = datetime('now'), login_count = login_count + 1 WHERE id = ?",
-                 (user["id"],))
-    conn.commit()
-    conn.close()
-    log_activity(user["id"], "register")
-    resp = make_response(jsonify({"status": "ok", "user": {"id": user["id"], "username": username, "is_admin": False, "is_premium": False}}))
-    resp.set_cookie("norain_token", token, max_age=30*86400, httponly=True, samesite="Lax")
-    return resp
-
-
-@app.route("/api/auth/login", methods=["POST"])
-def api_login():
-    data = request.get_json(force=True, silent=True) or {}
-    username = (data.get("username") or "").strip().lower()
-    password = data.get("password") or ""
-    pw_hash = _hash_pw(username, password)
-    conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE username = ? AND password_hash = ?",
-                        (username, pw_hash)).fetchone()
-    if not user:
-        conn.close()
-        return jsonify({"error": "Invalid username or password"}), 401
-    token = secrets.token_hex(32)
-    expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-    conn.execute("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-                 (token, user["id"], expires))
-    conn.execute("UPDATE users SET last_login = datetime('now'), login_count = login_count + 1 WHERE id = ?",
-                 (user["id"],))
-    conn.commit()
-    conn.close()
-    log_activity(user["id"], "login")
-    settings = json.loads(user["settings"] or "{}")
-    resp = make_response(jsonify({
-        "status": "ok",
-        "user": {"id": user["id"], "username": user["username"],
-                 "is_admin": bool(user["is_admin"]), "is_premium": bool(dict(user).get("is_premium", 0)), "settings": settings,
-                 "favorites": json.loads(user["favorites"] or "[]")},
-    }))
-    resp.set_cookie("norain_token", token, max_age=30*86400, httponly=True, samesite="Lax")
-    return resp
-
-
 @app.route("/api/auth/logout", methods=["POST"])
 def api_logout():
-    token = request.cookies.get("norain_token")
-    if token:
-        conn = get_db()
-        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-        conn.commit()
-        conn.close()
-    resp = make_response(jsonify({"status": "ok"}))
+    """Redirect to gateway logout."""
+    resp = make_response(jsonify({"status": "ok", "redirect": "https://habbig.com/logout"}))
     resp.delete_cookie("norain_token")
     return resp
 
@@ -1883,24 +1789,20 @@ def api_me():
     user = _get_user_from_request()
     if not user:
         return jsonify({"user": None}), 200
-    settings = json.loads(user["settings"] or "{}")
-    favorites = json.loads(user["favorites"] or "[]")
     return jsonify({
-        "user": {"id": user["id"], "username": user["username"],
-                 "is_admin": bool(user["is_admin"]), "is_premium": bool(dict(user).get("is_premium", 0)), "settings": settings,
-                 "favorites": favorites, "email": user.get("email")},
+        "user": {
+            "id": user["id"],
+            "username": user.get("username", ""),
+            "is_admin": bool(user.get("is_admin")),
+            "email": user.get("email"),
+        },
     })
 
 
 @app.route("/api/auth/settings", methods=["PUT"])
 @require_auth
 def api_user_settings():
-    data = request.get_json(force=True, silent=True) or {}
-    conn = get_db()
-    conn.execute("UPDATE users SET settings = ? WHERE id = ?",
-                 (json.dumps(data), request.user["id"]))
-    conn.commit()
-    conn.close()
+    """User settings -- log the activity. Settings are stored in gateway/profiles."""
     log_activity(request.user["id"], "update_settings")
     return jsonify({"status": "ok"})
 
@@ -1908,12 +1810,7 @@ def api_user_settings():
 @app.route("/api/auth/favorites", methods=["PUT"])
 @require_auth
 def api_user_favorites():
-    data = request.get_json(force=True, silent=True) or []
-    conn = get_db()
-    conn.execute("UPDATE users SET favorites = ? WHERE id = ?",
-                 (json.dumps(data), request.user["id"]))
-    conn.commit()
-    conn.close()
+    """Favorites -- log the activity. Stored client-side or in gateway."""
     return jsonify({"status": "ok"})
 
 
@@ -1928,58 +1825,103 @@ def admin_page():
 @app.route("/api/admin/users")
 @require_admin
 def api_admin_users():
-    conn = get_db()
-    users = conn.execute(
-        "SELECT id, username, email, is_admin, created_at, last_login, login_count, settings FROM users ORDER BY created_at DESC"
-    ).fetchall()
-    conn.close()
-    return jsonify({"users": [dict(u) for u in users]})
+    """List users from the profiles table (managed by gateway)."""
+    client = _get_client()
+    result = client.table("profiles") \
+        .select("id, username, email, is_admin, created_at") \
+        .order("created_at", desc=True) \
+        .execute()
+    return jsonify({"users": result.data or []})
 
 
 @app.route("/api/admin/metrics")
 @require_admin
 def api_admin_metrics():
-    conn = get_db()
-    total_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
-    active_24h = conn.execute(
-        "SELECT COUNT(DISTINCT user_id) as c FROM user_activity WHERE timestamp > datetime('now', '-1 day')"
-    ).fetchone()["c"]
-    active_7d = conn.execute(
-        "SELECT COUNT(DISTINCT user_id) as c FROM user_activity WHERE timestamp > datetime('now', '-7 days')"
-    ).fetchone()["c"]
-    total_signals = conn.execute("SELECT COUNT(*) as c FROM signals_log").fetchone()["c"]
-    signups_by_day = conn.execute(
-        "SELECT date(created_at) as day, COUNT(*) as c FROM users GROUP BY day ORDER BY day DESC LIMIT 30"
-    ).fetchall()
-    activity_by_day = conn.execute(
-        "SELECT date(timestamp) as day, COUNT(*) as c FROM user_activity GROUP BY day ORDER BY day DESC LIMIT 30"
-    ).fetchall()
-    popular_actions = conn.execute(
-        "SELECT action, COUNT(*) as c FROM user_activity GROUP BY action ORDER BY c DESC LIMIT 10"
-    ).fetchall()
-    conn.close()
+    client = _get_client()
+
+    # Total users from profiles
+    users_result = client.table("profiles").select("id", count="exact").execute()
+    total_users = users_result.count or 0
+
+    # Active users from weather_user_activity
+    now = datetime.now(timezone.utc)
+    day_ago = (now - timedelta(days=1)).isoformat()
+    week_ago = (now - timedelta(days=7)).isoformat()
+
+    activity_24h = client.table("weather_user_activity") \
+        .select("user_id") \
+        .gte("timestamp", day_ago) \
+        .execute()
+    active_24h = len(set(r["user_id"] for r in (activity_24h.data or [])))
+
+    activity_7d = client.table("weather_user_activity") \
+        .select("user_id") \
+        .gte("timestamp", week_ago) \
+        .execute()
+    active_7d = len(set(r["user_id"] for r in (activity_7d.data or [])))
+
+    # Total signals
+    signals_result = client.table("weather_signals_log").select("id", count="exact").execute()
+    total_signals = signals_result.count or 0
+
+    # Activity by day (last 30 entries)
+    recent_activity = client.table("weather_user_activity") \
+        .select("timestamp") \
+        .order("timestamp", desc=True) \
+        .limit(1000) \
+        .execute()
+    activity_by_day_map = {}
+    for r in (recent_activity.data or []):
+        day = (r.get("timestamp") or "")[:10]
+        if day:
+            activity_by_day_map[day] = activity_by_day_map.get(day, 0) + 1
+    activity_by_day = [{"day": d, "c": c} for d, c in sorted(activity_by_day_map.items(), reverse=True)[:30]]
+
+    # Popular actions
+    all_activity = client.table("weather_user_activity") \
+        .select("action") \
+        .execute()
+    action_counts = {}
+    for r in (all_activity.data or []):
+        a = r.get("action", "")
+        action_counts[a] = action_counts.get(a, 0) + 1
+    popular_actions = [{"action": a, "c": c} for a, c in sorted(action_counts.items(), key=lambda x: -x[1])[:10]]
+
     return jsonify({
         "total_users": total_users,
         "active_24h": active_24h,
         "active_7d": active_7d,
         "total_signals": total_signals,
-        "signups_by_day": [dict(r) for r in signups_by_day],
-        "activity_by_day": [dict(r) for r in activity_by_day],
-        "popular_actions": [dict(r) for r in popular_actions],
+        "signups_by_day": [],  # Signups tracked by gateway, not this dashboard
+        "activity_by_day": activity_by_day,
+        "popular_actions": popular_actions,
     })
 
 
 @app.route("/api/admin/activity")
 @require_admin
 def api_admin_activity():
-    limit = request.args.get("limit", 100, type=int)
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT a.*, u.username FROM user_activity a JOIN users u ON a.user_id = u.id "
-        "ORDER BY a.timestamp DESC LIMIT ?", (limit,)
-    ).fetchall()
-    conn.close()
-    return jsonify({"activity": [dict(r) for r in rows]})
+    lim = request.args.get("limit", 100, type=int)
+    client = _get_client()
+    result = client.table("weather_user_activity") \
+        .select("*") \
+        .order("timestamp", desc=True) \
+        .limit(lim) \
+        .execute()
+
+    # Enrich with usernames from profiles
+    activities = result.data or []
+    user_ids = list(set(r.get("user_id") for r in activities if r.get("user_id")))
+    username_map = {}
+    if user_ids:
+        profiles = client.table("profiles").select("id, username").in_("id", user_ids).execute()
+        for p in (profiles.data or []):
+            username_map[p["id"]] = p["username"]
+
+    for a in activities:
+        a["username"] = username_map.get(a.get("user_id"), "unknown")
+
+    return jsonify({"activity": activities})
 
 
 def _snapshot_loop():

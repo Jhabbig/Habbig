@@ -528,8 +528,10 @@ class StockMLModel:
             try:
                 closes = df["Close"].values.astype(float)
                 volumes = df["Volume"].values.astype(float)
+                highs = df["High"].values.astype(float) if "High" in df.columns else None
+                lows = df["Low"].values.astype(float) if "Low" in df.columns else None
                 self.regime_detector = RegimeDetector(lookback=60)
-                regime = self.regime_detector.detect(closes, volumes)
+                regime = self.regime_detector.detect(closes, volumes, highs=highs, lows=lows)
                 print(f"  [{self.ticker_yf}] Current regime: {regime.get('regime', '?')} "
                       f"(trend={regime.get('trend_strength', 0):.2f}, "
                       f"vol={regime.get('volatility_regime', '?')})")
@@ -778,7 +780,9 @@ class StockMLModel:
             try:
                 closes = df["Close"].values.astype(float)
                 volumes = df["Volume"].values.astype(float)
-                regime = self.regime_detector.detect(closes, volumes)
+                highs = df["High"].values.astype(float) if "High" in df.columns else None
+                lows = df["Low"].values.astype(float) if "Low" in df.columns else None
+                regime = self.regime_detector.detect(closes, volumes, highs=highs, lows=lows)
                 details["regime"] = regime.get("regime", "unknown")
                 details["volatility_regime"] = regime.get("volatility_regime", "normal")
                 # High volatility = lower confidence

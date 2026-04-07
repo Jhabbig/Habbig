@@ -544,7 +544,7 @@ class TradingBot:
             # 4. Break-even stop after 4 min if in profit
             if elapsed >= 240 and pnl_pct > 0.001:
                 # Move stop to break-even + tiny buffer
-                be_stop = pos.entry_price * (1 + 0.001 if pos.direction == "yes" else 1 - 0.001)
+                be_stop = pos.entry_price * 1.001 if pos.direction == "yes" else pos.entry_price * 0.999
                 if pos.direction == "yes" and be_stop > pos.trailing_stop_price:
                     pos.trailing_stop_price = be_stop
                 elif pos.direction == "no" and be_stop < pos.trailing_stop_price:

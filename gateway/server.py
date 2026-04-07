@@ -32,6 +32,7 @@ from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
+import stripe
 import websockets
 from fastapi import FastAPI, Request, Response, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -54,6 +55,23 @@ DASHBOARDS: dict = CONFIG["dashboards"]
 
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
+
+# ── Stripe config ──────────────────────────────────────────────────────────────
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
+else:
+    logging.getLogger("gateway").warning(
+        "STRIPE_SECRET_KEY not set — billing will use placeholder mode (no real payments)"
+    )
+
+BUNDLE_PLANS = {
+    "trader": {"monthly_cents": 4900, "annual_cents": 39900, "name": "Habbig Trader"},
+    "pro": {"monthly_cents": 14900, "annual_cents": 119900, "name": "Habbig Pro"},
+}
 
 # Rich preview content for each dashboard's /preview/<key> product page.
 DASHBOARD_PREVIEWS = {
@@ -292,7 +310,7 @@ CSP = "; ".join([
     "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
-    "form-action 'self'",
+    "form-action 'self' https://checkout.stripe.com",
 ])
 
 
@@ -430,7 +448,7 @@ def ensure_dev_user() -> int:
 def current_user(request: Request) -> Optional[dict]:
     """Return a dict describing the current session user, or None.
 
-    Always returns a plain dict (never a sqlite3.Row) so callers can use
+    Always returns a plain dict so callers can use
     ``.get()`` and ``["key"]`` uniformly. Keys:
         user_id, email, is_admin, _dev_bypass (optional)
     """
@@ -490,6 +508,23 @@ def clear_session_cookie(response: Response, request: Request) -> None:
     if domain:
         kwargs["domain"] = domain
     response.delete_cookie(**kwargs)
+
+
+def _get_or_create_stripe_customer(user_id: str, email: str) -> str:
+    """Get existing Stripe customer ID from the profile, or create a new one."""
+    existing = db.get_stripe_customer_id(user_id)
+    if existing:
+        return existing
+    customer = stripe.Customer.create(email=email, metadata={"user_id": user_id})
+    db.set_stripe_customer_id(user_id, customer.id)
+    return customer.id
+
+
+def _stripe_base_url(request: Request) -> str:
+    """Return the base URL for Stripe success/cancel redirects."""
+    if IS_PRODUCTION:
+        return f"https://{DOMAIN}"
+    return str(request.base_url).rstrip("/")
 
 
 def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
@@ -690,7 +725,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
 
     if user["suspended"]:
         return _render_login_error("This account has been suspended.")
-    if not db.verify_password(password, user["password_hash"], user["password_salt"]):
+    if not db.verify_user_password(user["email"], password):
         log.warning("Failed login: wrong password for user=%s ip=%s", user["username"] or user["email"], request.client.host if request.client else "unknown")
         return _render_login_error("Invalid password.")
 
@@ -744,16 +779,13 @@ async def forgot_password_submit(request: Request, invite_token: str = Form(""),
     if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
         return render_page("forgot-password", error="Password must include uppercase, lowercase, number, and special character.", success="")
 
-    # Update password
-    pwd_hash, salt = db._hash_password(new_password)
-    with db.conn() as c:
-        c.execute("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", (pwd_hash, salt, user["id"]))
+    # Update password via Supabase Auth
+    db.update_user_password(user["id"], new_password)
 
     # Kill all existing sessions for this user
-    with db.conn() as c:
-        c.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+    db.delete_user_sessions(user["id"])
 
-    log.info("Password reset for user %s (id=%d) via token", user["username"] or user["email"], user["id"])
+    log.info("Password reset for user %s (id=%s) via token", user["username"] or user["email"], user["id"])
     return render_page("forgot-password", error="", success="Password reset successfully. All sessions have been logged out. You can now sign in with your new password.")
 
 
@@ -879,7 +911,7 @@ async def my_dashboards(request: Request):
 
 
 @app.get("/billing", response_class=HTMLResponse)
-async def billing_page(request: Request, dashboard: Optional[str] = None):
+async def billing_page(request: Request, dashboard: Optional[str] = None, payment: Optional[str] = None):
     sub = get_subdomain(request)
     if sub:
         # Safely forward the validated dashboard key via urlencode to prevent
@@ -945,11 +977,21 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         """)
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    banner = ""
+    if payment == "success":
+        banner = (
+            '<div style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);'
+            'border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:20px;'
+            'color:#10b981;font-size:14px;font-weight:500">'
+            'Payment successful! Your subscription is now active.'
+            '</div>'
+        )
     return render_page(
         "billing",
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
+        raw_banner=banner,
     )
 
 
@@ -962,22 +1004,67 @@ async def billing_action(request: Request, action: str = Form(...)):
     if not user:
         return RedirectResponse("/gate", status_code=302)
 
-    # Placeholder checkout: no real payment. Stripe hook lives here later.
     parts = action.split(":")
+
+    # ── Subscribe to a single dashboard ────────────────────────────────────
     if parts[0] == "sub" and len(parts) == 3:
         _, key, plan = parts
         if key in DASHBOARDS and plan in ("monthly", "annual"):
-            duration = 30 if plan == "monthly" else 365
-            db.upsert_subscription(
-                user_id=user["user_id"],
-                dashboard_key=key,
-                plan=plan,
-                duration_days=duration,
-                source="placeholder",
+            if not STRIPE_SECRET_KEY:
+                # Dev/fallback: placeholder mode (no real payment)
+                duration = 30 if plan == "monthly" else 365
+                db.upsert_subscription(
+                    user_id=user["user_id"],
+                    dashboard_key=key,
+                    plan=plan,
+                    duration_days=duration,
+                    source="placeholder",
+                )
+                return RedirectResponse("/billing", status_code=302)
+
+            # Create Stripe Checkout Session
+            cfg = DASHBOARDS[key]
+            price_cents = cfg["monthly_cents"] if plan == "monthly" else cfg["annual_cents"]
+            stripe_interval = "month" if plan == "monthly" else "year"
+            customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+            base = _stripe_base_url(request)
+
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                mode="subscription",
+                line_items=[{
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {"name": cfg["display_name"]},
+                        "unit_amount": price_cents,
+                        "recurring": {"interval": stripe_interval},
+                    },
+                    "quantity": 1,
+                }],
+                metadata={
+                    "user_id": str(user["user_id"]),
+                    "dashboard_key": key,
+                    "plan": plan,
+                    "type": "dashboard",
+                },
+                success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
+                cancel_url=base + f"/billing?dashboard={key}",
             )
+            return RedirectResponse(session.url, status_code=303)
+
+    # ── Cancel a dashboard subscription ────────────────────────────────────
     elif parts[0] == "cancel" and len(parts) == 2:
         _, key = parts
         if key in DASHBOARDS:
+            # Cancel via Stripe API if a Stripe subscription exists
+            if STRIPE_SECRET_KEY:
+                subs = db.list_subscriptions(user["user_id"])
+                for s in subs:
+                    if s["dashboard_key"] == key and s.get("stripe_sub_id"):
+                        try:
+                            stripe.Subscription.cancel(s["stripe_sub_id"])
+                        except Exception:
+                            log.warning("Stripe cancel failed for %s, cancelling locally", s["stripe_sub_id"])
             db.cancel_subscription(user["user_id"], key)
 
     return RedirectResponse("/billing", status_code=302)
@@ -985,24 +1072,143 @@ async def billing_action(request: Request, action: str = Form(...)):
 
 @app.post("/billing/subscribe")
 async def billing_subscribe(request: Request, plan: str = Form(""), interval: str = Form("monthly")):
-    """Subscribe the logged-in user directly — no token or email needed."""
+    """Subscribe the logged-in user to a bundle plan (trader/pro)."""
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
     if plan not in ("trader", "pro"):
         return RedirectResponse("/billing", status_code=302)
-    # Subscribe to ALL dashboards
-    duration = 30 if interval == "monthly" else 365
-    for key in DASHBOARDS:
-        db.upsert_subscription(
-            user_id=user["user_id"],
-            dashboard_key=key,
-            plan=f"{plan}_{interval}",
-            duration_days=duration,
-            source=f"billing_{plan}",
-        )
-    log.info("User %s subscribed to %s (%s) — all dashboards unlocked", user.get("username", user["email"]), plan, interval)
-    return RedirectResponse("/billing", status_code=302)
+
+    if not STRIPE_SECRET_KEY:
+        # Dev/fallback: placeholder mode
+        duration = 30 if interval == "monthly" else 365
+        for key in DASHBOARDS:
+            db.upsert_subscription(
+                user_id=user["user_id"],
+                dashboard_key=key,
+                plan=f"{plan}_{interval}",
+                duration_days=duration,
+                source=f"billing_{plan}",
+            )
+        log.info("User %s subscribed to %s (%s) — placeholder mode", user.get("username", user["email"]), plan, interval)
+        return RedirectResponse("/billing", status_code=302)
+
+    # Create Stripe Checkout Session for the bundle
+    bundle = BUNDLE_PLANS[plan]
+    price_cents = bundle["monthly_cents"] if interval == "monthly" else bundle["annual_cents"]
+    stripe_interval = "month" if interval == "monthly" else "year"
+    customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+    base = _stripe_base_url(request)
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="subscription",
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": bundle["name"]},
+                "unit_amount": price_cents,
+                "recurring": {"interval": stripe_interval},
+            },
+            "quantity": 1,
+        }],
+        metadata={
+            "user_id": str(user["user_id"]),
+            "plan_type": plan,
+            "interval": interval,
+            "type": "bundle",
+        },
+        success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
+        cancel_url=base + "/billing",
+    )
+    return RedirectResponse(session.url, status_code=303)
+
+
+# ── Stripe webhook & success ──────────────────────────────────────────────
+
+
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Handle Stripe webhook events — activates/cancels subscriptions."""
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+
+    if STRIPE_WEBHOOK_SECRET:
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, STRIPE_WEBHOOK_SECRET
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid payload")
+        except stripe.error.SignatureVerificationError:
+            raise HTTPException(status_code=400, detail="Invalid signature")
+    else:
+        # No webhook secret configured — parse payload directly (dev only)
+        event = json.loads(payload)
+
+    event_type = event["type"] if isinstance(event, dict) else event.type
+    data_obj = event["data"]["object"] if isinstance(event, dict) else event.data.object
+
+    # ── checkout.session.completed — subscription paid ─────────────────────
+    if event_type == "checkout.session.completed":
+        meta = data_obj.get("metadata", {}) if isinstance(data_obj, dict) else (data_obj.metadata or {})
+        user_id = meta.get("user_id")
+        if not user_id:
+            log.warning("Stripe webhook: checkout.session.completed without user_id in metadata")
+            return JSONResponse({"status": "ignored"})
+
+        stripe_sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
+
+        if meta.get("type") == "dashboard":
+            # Per-dashboard subscription
+            dashboard_key = meta.get("dashboard_key")
+            plan = meta.get("plan", "monthly")
+            if dashboard_key and dashboard_key in DASHBOARDS:
+                duration = 30 if plan == "monthly" else 365
+                db.upsert_subscription(
+                    user_id=user_id,
+                    dashboard_key=dashboard_key,
+                    plan=plan,
+                    duration_days=duration,
+                    source="stripe",
+                    stripe_sub_id=stripe_sub_id,
+                )
+                log.info("Stripe: activated %s (%s) for user %s", dashboard_key, plan, user_id)
+
+        elif meta.get("type") == "bundle":
+            # Bundle plan — unlock all dashboards
+            plan_type = meta.get("plan_type", "trader")
+            interval = meta.get("interval", "monthly")
+            duration = 30 if interval == "monthly" else 365
+            for key in DASHBOARDS:
+                db.upsert_subscription(
+                    user_id=user_id,
+                    dashboard_key=key,
+                    plan=f"{plan_type}_{interval}",
+                    duration_days=duration,
+                    source="stripe",
+                    stripe_sub_id=stripe_sub_id,
+                )
+            log.info("Stripe: activated bundle %s (%s) for user %s", plan_type, interval, user_id)
+
+    # ── customer.subscription.deleted — subscription cancelled ─────────────
+    elif event_type == "customer.subscription.deleted":
+        stripe_sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+        db.cancel_subscription_by_stripe_id(stripe_sub_id)
+        log.info("Stripe: cancelled subscription %s", stripe_sub_id)
+
+    # ── invoice.payment_failed — payment issue ────────────────────────────
+    elif event_type == "invoice.payment_failed":
+        invoice_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+        log.warning("Stripe: payment failed for invoice %s", invoice_id)
+
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/stripe/success")
+async def stripe_success(request: Request, session_id: str = ""):
+    """Redirect back to billing with a success banner after Stripe checkout."""
+    return RedirectResponse("/billing?payment=success", status_code=302)
 
 
 # ── Preview / product page ─────────────────────────────────────────────────
@@ -1086,7 +1292,19 @@ async def preview_page(request: Request, dashboard_key: str):
 def _profile_context(user: dict, banner: str = "") -> dict:
     import datetime as _dt
     db_user = db.get_user_by_id(user["user_id"])
-    joined = _dt.datetime.fromtimestamp(db_user["created_at"], tz=_dt.timezone.utc).strftime("%b %d, %Y UTC") if db_user else "—"
+    if db_user:
+        ca = db_user["created_at"]
+        if isinstance(ca, (int, float)):
+            joined = _dt.datetime.fromtimestamp(ca, tz=_dt.timezone.utc).strftime("%b %d, %Y UTC")
+        elif isinstance(ca, str):
+            try:
+                joined = _dt.datetime.fromisoformat(ca.replace("Z", "+00:00")).strftime("%b %d, %Y UTC")
+            except ValueError:
+                joined = ca
+        else:
+            joined = str(ca)
+    else:
+        joined = "\u2014"
     role_badge = ""
     if user.get("is_super_admin"):
         role_badge = '<span class="profile-meta-item" style="background:rgba(245,158,11,0.12);color:var(--amber)">Super Admin</span>'
@@ -1132,7 +1350,7 @@ async def profile_change_password(request: Request, current_password: str = Form
     err_banner = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
     ok_banner = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
 
-    if not db.verify_password(current_password, db_user["password_hash"], db_user["password_salt"]):
+    if not db.verify_user_password(user["email"], current_password):
         return render_page("profile", **_profile_context(user, err_banner("Current password is incorrect.")))
     if new_password != confirm_password:
         return render_page("profile", **_profile_context(user, err_banner("New passwords don't match.")))
@@ -1141,9 +1359,7 @@ async def profile_change_password(request: Request, current_password: str = Form
     if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
         return render_page("profile", **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character.")))
 
-    pwd_hash, salt = db._hash_password(new_password)
-    with db.conn() as c:
-        c.execute("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", (pwd_hash, salt, user["user_id"]))
+    db.update_user_password(user["user_id"], new_password)
 
     log.info("User %s changed their password", user.get("username", user["email"]))
     return render_page("profile", **_profile_context(user, ok_banner("Password changed successfully.")))
@@ -1289,14 +1505,11 @@ async def reset_password_submit(
     if pwd_err:
         return render_page("reset-password", token=token, error=pwd_err, raw_success="")
 
-    # Update the user's password.
-    pwd_hash, salt = db._hash_password(new_password)
-    with db.conn() as c:
-        c.execute(
-            "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
-            (pwd_hash, salt, reset["user_id"]),
-        )
+    # Update the user's password via Supabase Auth.
+    db.update_user_password(reset["user_id"], new_password)
     db.use_password_reset(token)
+    # Kill all existing sessions so a compromised session can't persist.
+    db.delete_user_sessions(reset["user_id"])
 
     user = db.get_user_by_id(reset["user_id"])
     log.info("Password reset completed for user %s", user["email"] if user else reset["user_id"])
@@ -1520,12 +1733,22 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
 
             # Grant subscription (super admin only)
             if is_super:
+                dash_checks = "".join(
+                    f'<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);cursor:pointer">'
+                    f'<input type="checkbox" name="dashboard_keys" value="{k}" style="accent-color:var(--green);cursor:pointer">'
+                    f'{html.escape(cfg["display_name"])}</label>'
+                    for k, cfg in DASHBOARDS.items()
+                )
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/grant" onclick="event.stopPropagation()" '
-                    f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
-                    f'<select name="dashboard_key" {sel_style}>{dash_opts}</select>'
+                    f'style="margin-top:8px">'
+                    f'<div style="display:flex;flex-wrap:wrap;gap:8px 14px;margin-bottom:8px">{dash_checks}</div>'
+                    f'<div style="display:flex;gap:6px;align-items:center">'
+                    f'<button type="button" onclick="let c=this.closest(\'form\').querySelectorAll(\'input[type=checkbox]\');let all=Array.from(c).every(x=>x.checked);c.forEach(x=>x.checked=!all)" '
+                    f'class="btn btn-primary-outline" style="font-size:11px">Toggle All</button>'
                     f'<select name="plan" {sel_style}><option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
-                    f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button></form>'
+                    f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button>'
+                    f'</div></form>'
                 )
         else:
             actions = '<span style="font-size:12px;color:var(--text-muted)">Insufficient permissions</span>'
@@ -1541,8 +1764,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             f'<div class="user-detail" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'
             f'<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:10px;background:var(--surface-hover);border-radius:var(--radius-xs)">'
             f'<strong>Username:</strong> {uname} &middot; '
-            f'<strong>Email:</strong> {email_esc} &middot; '
-            f'<strong>Hash:</strong> <code style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg)">...{html.escape(u["password_hash"][-8:])}</code>'
+            f'<strong>Email:</strong> {email_esc}'
             f'</div>'
             f'<div style="display:flex;gap:8px;flex-wrap:wrap">{actions}</div>'
             f'{detail_extra}'
@@ -1763,7 +1985,7 @@ async def admin_revoke_token(request: Request, token_id: int = Form(0)):
 
 
 @app.post("/admin/users/{user_id}/promote")
-async def admin_promote(request: Request, user_id: int):
+async def admin_promote(request: Request, user_id: str):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -1772,7 +1994,7 @@ async def admin_promote(request: Request, user_id: int):
 
 
 @app.post("/admin/users/{user_id}/demote")
-async def admin_demote(request: Request, user_id: int):
+async def admin_demote(request: Request, user_id: str):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -1781,22 +2003,22 @@ async def admin_demote(request: Request, user_id: int):
 
 
 @app.post("/admin/users/{user_id}/suspend")
-async def admin_suspend(request: Request, user_id: int):
+async def admin_suspend(request: Request, user_id: str):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, True)
-    log.info("Admin %s suspended user id=%d", admin.get("email"), user_id)
+    log.info("Admin %s suspended user id=%s", admin.get("email"), user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/unsuspend")
-async def admin_unsuspend(request: Request, user_id: int):
+async def admin_unsuspend(request: Request, user_id: str):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, False)
-    log.info("Admin %s unsuspended user id=%d", admin.get("email"), user_id)
+    log.info("Admin %s unsuspended user id=%s", admin.get("email"), user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1824,7 +2046,7 @@ async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
     return render_page("admin", email=admin["email"], username=admin.get("username", admin["email"]), **ctx)
 
 
-def _can_manage_user(admin: dict, target_user_id: int) -> bool:
+def _can_manage_user(admin: dict, target_user_id: str) -> bool:
     """Check if admin can manage the target user based on role hierarchy."""
     target = db.get_user_by_id(target_user_id)
     if not target:
@@ -1846,17 +2068,17 @@ def _require_super_admin(request: Request) -> dict:
 
 
 @app.post("/admin/users/{user_id}/role")
-async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
+async def admin_set_role(request: Request, user_id: str, level: int = Form(0)):
     admin = _require_super_admin(request)
     if level < 0 or level > 2:
         raise HTTPException(status_code=400, detail="Invalid role level")
     db.set_user_role(user_id, level)
-    log.info("Super admin %s set user %d role to %d", admin["email"], user_id, level)
+    log.info("Super admin %s set user %s role to %d", admin["email"], user_id, level)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/email")
-async def admin_change_email(request: Request, user_id: int, new_email: str = Form("")):
+async def admin_change_email(request: Request, user_id: str, new_email: str = Form("")):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -1866,26 +2088,25 @@ async def admin_change_email(request: Request, user_id: int, new_email: str = Fo
     existing = db.get_user_by_email(new_email)
     if existing and existing["id"] != user_id:
         raise HTTPException(status_code=400, detail="Email already in use")
-    with db.conn() as c:
-        c.execute("UPDATE users SET email = ? WHERE id = ?", (new_email, user_id))
-    log.info("Super admin %s changed email for user %d to %s", admin["email"], user_id, new_email)
+    db.update_user_email(user_id, new_email)
+    log.info("Super admin %s changed email for user %s to %s", admin["email"], user_id, new_email)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/revoke-token")
-async def admin_revoke_user_token(request: Request, user_id: int):
+async def admin_revoke_user_token(request: Request, user_id: str):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     user = db.get_user_by_id(user_id)
     if user and user["invite_token_id"]:
         db.revoke_invite_token(user["invite_token_id"])
-    log.info("Super admin %s revoked token for user %d", admin["email"], user_id)
+    log.info("Super admin %s revoked token for user %s", admin["email"], user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/new-token")
-async def admin_new_token_for_user(request: Request, user_id: int):
+async def admin_new_token_for_user(request: Request, user_id: str):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -1894,26 +2115,32 @@ async def admin_new_token_for_user(request: Request, user_id: int):
         raise HTTPException(status_code=404, detail="User not found")
     new_token = db.create_invite_token(f"Replacement token for {user['username'] or user['email']}")
     db.claim_invite_token(new_token, user_id, user["email"])
-    with db.conn() as c:
-        c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?", (new_token, user_id))
-    log.info("Super admin %s generated new token %s for user %d", admin["email"], new_token, user_id)
+    db.link_invite_token_to_user(user_id, new_token)
+    log.info("Super admin %s generated new token %s for user %s", admin["email"], new_token, user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/grant")
-async def admin_grant_subscription(request: Request, user_id: int, dashboard_key: str = Form(""), plan: str = Form("monthly")):
+async def admin_grant_subscription(request: Request, user_id: str):
     admin = _require_super_admin(request)
-    if dashboard_key not in DASHBOARDS:
-        raise HTTPException(status_code=400, detail="Invalid dashboard")
+    form = await request.form()
+    dashboard_keys = form.getlist("dashboard_keys")
+    plan = form.get("plan", "monthly")
+    if not dashboard_keys:
+        raise HTTPException(status_code=400, detail="No dashboards selected")
     duration = 30 if plan == "monthly" else 365
-    db.upsert_subscription(
-        user_id=user_id,
-        dashboard_key=dashboard_key,
-        plan=plan,
-        duration_days=duration,
-        source="admin_grant",
-    )
-    log.info("Super admin %s granted %s (%s) to user id=%d", admin["email"], dashboard_key, plan, user_id)
+    for dk in dashboard_keys:
+        if dk not in DASHBOARDS:
+            continue
+        db.upsert_subscription(
+            user_id=user_id,
+            dashboard_key=dk,
+            plan=plan,
+            duration_days=duration,
+            source="admin_grant",
+        )
+    granted = [dk for dk in dashboard_keys if dk in DASHBOARDS]
+    log.info("Super admin %s granted %s (%s) to user id=%s", admin["email"], ", ".join(granted), plan, user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1922,7 +2149,7 @@ async def admin_bulk_users(request: Request):
     admin = _require_admin_user(request)
     form = await request.form()
     action = form.get("bulk_action", "")
-    user_ids = [int(uid) for uid in form.getlist("user_ids") if uid.isdigit() and int(uid) != 1]
+    user_ids = [uid for uid in form.getlist("user_ids") if uid]
     if not user_ids or not action:
         return RedirectResponse("/admin", status_code=302)
     for uid in user_ids:
@@ -2011,7 +2238,7 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
 # ── Switcher injection ────────────────────────────────────────────────────────
 
 
-def _switcher_snippet(dashboard_key: str, user_id: int) -> str:
+def _switcher_snippet(dashboard_key: str, user_id: str) -> str:
     """Build the <script> tags that configure and load the dashboard switcher."""
     items = []
     for k, c in DASHBOARDS.items():
@@ -2038,16 +2265,31 @@ def _switcher_snippet(dashboard_key: str, user_id: int) -> str:
     )
 
 
-def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int) -> bytes:
-    """Inject the switcher into HTML responses (before </body>)."""
+def _inject_switcher(content: bytes, content_type: str, key: str, user_id: str) -> bytes:
+    """Inject theme CSS (before </head>) and switcher+trade JS (before </body>)."""
     if "text/html" not in (content_type or ""):
         return content
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return content
+
+    # 1. Inject shared theme CSS before </head>
+    css_tag = '<link rel="stylesheet" href="/_gateway_static/habbig-theme.css">'
+    lower = text.lower()
+    head_idx = lower.rfind("</head>")
+    if head_idx != -1:
+        text = text[:head_idx] + css_tag + text[head_idx:]
+    else:
+        # No </head> tag — try inserting after <head> or at top
+        head_open = lower.find("<head")
+        if head_open != -1:
+            close = lower.find(">", head_open)
+            if close != -1:
+                text = text[:close + 1] + css_tag + text[close + 1:]
+
+    # 2. Inject JS before </body>
     snippet = _switcher_snippet(key, user_id)
-    # Case-insensitive replace; inject once before </body>
     lower = text.lower()
     idx = lower.rfind("</body>")
     if idx != -1:

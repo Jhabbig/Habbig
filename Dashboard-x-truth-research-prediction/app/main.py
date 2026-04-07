@@ -15,6 +15,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from cryptography.fernet import Fernet
+
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -33,6 +35,30 @@ ONE_YEAR_FROM_NOW = lambda: datetime.now(timezone.utc) + timedelta(days=365)
 _last_run_stats: dict = {}
 _SESSION_SECRET = secrets.token_hex(32)
 _CSRF_SECRET = secrets.token_hex(16)
+
+# ---------------------------------------------------------------------------
+# Fernet symmetric encryption for sensitive fields (e.g. truthsocial_password)
+# ---------------------------------------------------------------------------
+_ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY") or Fernet.generate_key().decode()
+_fernet = Fernet(_ENCRYPTION_KEY if isinstance(_ENCRYPTION_KEY, bytes) else _ENCRYPTION_KEY.encode())
+
+
+def _encrypt_field(value: str) -> str:
+    """Encrypt a string value. Returns empty string for empty input."""
+    if not value:
+        return ""
+    return _fernet.encrypt(value.encode()).decode()
+
+
+def _decrypt_field(value: str) -> str:
+    """Decrypt a Fernet-encrypted string. Returns original if decryption fails (legacy plaintext)."""
+    if not value:
+        return ""
+    try:
+        return _fernet.decrypt(value.encode()).decode()
+    except Exception:
+        # Legacy plaintext value — return as-is
+        return value
 
 # Rate limiting: track login attempts per IP
 _login_attempts: dict[str, list[float]] = collections.defaultdict(list)
@@ -115,21 +141,35 @@ def _check_rate_limit(ip: str) -> bool:
     attempts = _login_attempts[ip]
     # Clean old attempts
     _login_attempts[ip] = [t for t in attempts if now - t < _LOGIN_WINDOW_SECONDS]
+    # Remove empty key to prevent memory leak
+    if not _login_attempts[ip]:
+        del _login_attempts[ip]
+        return False
     return len(_login_attempts[ip]) >= _MAX_LOGIN_ATTEMPTS
 
 
-# Active sessions: token -> username
-_active_sessions: dict[str, str] = {}
+# Active sessions: token -> (username, created_timestamp)
+_active_sessions: dict[str, tuple[str, float]] = {}
+_SESSION_MAX_AGE = 86400 * 7  # 7 days, matches cookie max_age
+
+
+def _prune_expired_sessions() -> None:
+    """Remove sessions older than _SESSION_MAX_AGE."""
+    now = time.time()
+    expired = [t for t, (_, ts) in _active_sessions.items() if now - ts > _SESSION_MAX_AGE]
+    for t in expired:
+        del _active_sessions[t]
 
 
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
 async def _get_current_user_from_session(session: AsyncSession, request: Request) -> User | None:
+    _prune_expired_sessions()
     token = request.cookies.get("session")
     if not token or token not in _active_sessions:
         return None
-    username = _active_sessions[token]
+    username, _ts = _active_sessions[token]
     result = await session.exec(select(User).where(User.username == username))
     return result.first()
 
@@ -142,7 +182,8 @@ async def _get_current_user(request: Request) -> User | None:
 def require_auth(request: Request) -> str:
     token = request.cookies.get("session")
     if token and token in _active_sessions:
-        return _active_sessions[token]
+        username, _ts = _active_sessions[token]
+        return username
     return ""
 
 
@@ -185,7 +226,7 @@ async def login_submit(request: Request, session: AsyncSession = Depends(get_ses
         session.add(user)
         await session.commit()
         token = _make_session_token()
-        _active_sessions[token] = username
+        _active_sessions[token] = (username, time.time())
         resp = RedirectResponse("/", status_code=302)
         resp.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400 * 7, secure=False)
         return resp
@@ -245,7 +286,7 @@ async def profile_page(request: Request, session: AsyncSession = Depends(get_ses
         return RedirectResponse("/login", status_code=302)
     preferred_platform = getattr(user, "preferred_platform", None) or "polymarket"
     preferred_theme = getattr(user, "preferred_theme", None) or "dark"
-    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "msg": "", "error": "", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme})
+    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "msg": "", "error": "", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme, "ts_password_decrypted": _decrypt_field(user.truthsocial_password)})
 
 
 @app.post("/profile/update", response_class=HTMLResponse)
@@ -261,21 +302,21 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
 
         # Require password to save profile changes
         if not _verify_password(confirm_password, db_user.password_hash):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Enter your current password to save changes"})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Enter your current password to save changes", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
 
         if new_username and new_username != db_user.username:
             if len(new_username) < 3 or len(new_username) > 15:
-                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username must be 3\u201315 characters"})
+                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username must be 3\u201315 characters", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
             existing = await session.exec(select(User).where(User.username == new_username))
             if existing.first():
-                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username already taken"})
+                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username already taken", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
             old_username = db_user.username
             db_user.username = new_username
 
         db_user.email = email
         db_user.twitter_bearer_token = twitter_bearer_token
         db_user.truthsocial_username = truthsocial_username
-        db_user.truthsocial_password = truthsocial_password
+        db_user.truthsocial_password = _encrypt_field(truthsocial_password)
         db_user.truthsocial_access_token = truthsocial_access_token
         db_user.preferred_platform = preferred_platform
         db_user.preferred_theme = preferred_theme
@@ -283,12 +324,13 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
         session.add(db_user)
         await session.commit()
 
-        resp = templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Profile updated", "error": ""})
+        resp = templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Profile updated", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
         if new_username and new_username != user.username:
             # Update session for new username
             token = request.cookies.get("session")
             if token and token in _active_sessions:
-                _active_sessions[token] = new_username
+                _, ts = _active_sessions[token]
+                _active_sessions[token] = (new_username, ts)
         return resp
 
 
@@ -303,16 +345,16 @@ async def profile_password(request: Request, current_password: str = Form(""), n
         if not db_user:
             return RedirectResponse("/login", status_code=302)
         if not _verify_password(current_password, db_user.password_hash):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Current password is incorrect"})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Current password is incorrect", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
         if len(new_password) < 12 or not _re.search(r"[A-Z]", new_password) or not _re.search(r"[a-z]", new_password) or not _re.search(r"[0-9]", new_password):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Password must be 12+ chars with uppercase, lowercase, and a number"})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Password must be 12+ chars with uppercase, lowercase, and a number", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
         if new_password != new_password2:
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "New passwords don't match"})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "New passwords don't match", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
         db_user.password_hash = _hash_password(new_password)
         db_user.updated_at = datetime.now(timezone.utc)
         session.add(db_user)
         await session.commit()
-        return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Password changed", "error": ""})
+        return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Password changed", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
 
 
 # ---------------------------------------------------------------------------
@@ -603,7 +645,7 @@ async def refresh(_user: str = Depends(require_auth)):
 async def health(session: AsyncSession = Depends(get_session)):
     pt = (await session.exec(select(func.count()).select_from(Prediction))).first() or 0
     st = (await session.exec(select(func.count()).select_from(Source))).first() or 0
-    uc = (await session.exec(select(func.count()).where(Source.accuracy_unlocked == True))).first() or 0  # noqa: E712
+    uc = (await session.exec(select(func.count()).select_from(Source).where(Source.accuracy_unlocked == True))).first() or 0  # noqa: E712
     mk = datetime.now(timezone.utc).strftime("%Y-%m")
     qr = (await session.exec(select(MonthlyQuota).where(MonthlyQuota.platform == "twitter", MonthlyQuota.year_month == mk))).first()
     tu = qr.tweets_read if qr else 0

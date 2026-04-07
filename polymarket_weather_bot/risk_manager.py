@@ -87,12 +87,19 @@ class RiskManager:
         self.open_positions[condition_id] = self.open_positions.get(condition_id, 0.0) + amount
         self.trades_today += 1
 
-    def record_pnl(self, pnl: float) -> None:
+    def record_pnl(self, pnl: float, condition_id: str = None) -> None:
         self.daily_pnl += pnl
+        if condition_id and condition_id in self.open_positions:
+            del self.open_positions[condition_id]
+
+    def close_position(self, condition_id: str) -> None:
+        """Remove a position from the open positions tracker."""
+        self.open_positions.pop(condition_id, None)
 
     def reset_daily(self) -> None:
         self.daily_pnl = 0.0
         self.trades_today = 0
+        self.open_positions.clear()
 
     def is_halted(self) -> bool:
         return self.daily_pnl <= -self.config.DAILY_LOSS_LIMIT

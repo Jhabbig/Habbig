@@ -223,6 +223,7 @@ def find_stock_markets():
                     "condition_id": m.get("condition_id", ""),
                     "up_price": up_price,
                     "down_price": down_price,
+                    "market_prob": up_price,
                     "volume": float(m.get("volume", 0) or 0),
                 }
 
@@ -357,21 +358,32 @@ def compute_mean_reversion_signal(closes, period=20):
 
 
 def day_of_week_bias(closes):
-    """Historical day-of-week return tendency (simple)."""
-    # Monday=0, ..., Friday=4
-    today_dow = datetime.now().weekday()
+    """Historical day-of-week return tendency using actual calendar days."""
+    from zoneinfo import ZoneInfo
+    _et = ZoneInfo("US/Eastern")
+    today_dow = datetime.now(_et).weekday()
     if len(closes) < 60:
         return 0.0
 
-    # Calculate returns by day of week (approximate using 5-day cycle)
     returns = np.diff(closes) / closes[:-1]
     if len(returns) < 20:
         return 0.0
 
-    # Group by position in 5-day cycles
+    # Map each return to its actual trading day weekday by counting
+    # backwards from today. Each return[i] is for trading day (n - len + i).
+    # Trading days are Mon-Fri, so walk backwards to assign weekdays.
     dow_returns = []
-    for i in range(len(returns)):
-        if i % 5 == today_dow:
+    n = len(returns)
+    current_dow = today_dow
+    # returns[-1] is yesterday's return (day before today)
+    day_map = [0] * n
+    d = current_dow
+    for i in range(n - 1, -1, -1):
+        # Go back one trading day
+        d = (d - 1) % 5  # 0=Mon ... 4=Fri
+        day_map[i] = d
+    for i, dow in enumerate(day_map):
+        if dow == today_dow:
             dow_returns.append(returns[i])
 
     if not dow_returns:
@@ -741,11 +753,12 @@ def run_cycle(state):
 
     # Resolve any pending bets from previous days
     if state.pending:
-        log(f"Resolving {len(state.pending)} pending bet(s)...")
+        num_pending_before = len(state.pending)
+        log(f"Resolving {num_pending_before} pending bet(s)...")
         resolve_pending_bets(state)
         # Record resolved trades in performance tracker
         if perf_tracker and state.trades:
-            for t in state.trades[-len(state.pending) - 5:]:
+            for t in state.trades[-(num_pending_before + 5):]:
                 if t.get("resolved_at") and "recorded" not in t:
                     try:
                         perf_tracker.record_trade(
@@ -849,27 +862,45 @@ def run_cycle(state):
         bet = None
         if SMART_BETTING:
             try:
+                daily_pnl = sum(t.get("pnl", 0) for t in state.trades[-20:]
+                               if t.get("date") == today)
+                pending_list = [
+                    {"ticker": t, **v} for t, v in state.pending.items()
+                ]
+                state_dict = {
+                    "balance": state.balance, "total_trades": state.total_trades,
+                    "wins": state.wins, "losses": state.losses,
+                    "total_pnl": state.total_pnl, "peak_balance": state.peak_balance,
+                    "daily_bets": state.daily_bets,
+                    "pending_bets": pending_list,
+                    "daily_pnl": daily_pnl,
+                }
                 bet_result = evaluate_bet_enhanced(
-                    ticker, prediction, confidence, market_info, state,
+                    ticker, prediction, confidence, market_info, state_dict,
                     signals, state.trades[-50:])
-                if bet_result and bet_result.get("place_bet"):
+                if bet_result and bet_result.get("should_bet"):
+                    conc = bet_result.get("concordance", {})
+                    conc_score = conc.get("concordance_score", 0) if isinstance(conc, dict) else conc
                     bet = {
                         "ticker": ticker,
                         "direction": prediction,
                         "confidence": round(confidence, 4),
-                        "market_prob": bet_result.get("market_prob", 0.5),
+                        "market_prob": market_info.get("market_prob", 0.5),
                         "edge": bet_result.get("edge", 0),
                         "kelly": bet_result.get("kelly_fraction", 0),
                         "bet_size": bet_result.get("bet_size", 0),
-                        "concordance": bet_result.get("concordance_score", 0),
+                        "concordance": conc_score,
                     }
                     # Check risk manager
                     if risk_mgr:
                         daily_pnl = sum(t.get("pnl", 0) for t in state.trades[-20:]
                                        if t.get("date") == today)
+                        pending_list = [
+                            {"ticker": t, **v} for t, v in state.pending.items()
+                        ]
                         allowed, reason = risk_mgr.can_place_bet(
                             ticker, prediction, bet["bet_size"],
-                            state.balance, state.pending, daily_pnl)
+                            state.balance, pending_list, daily_pnl)
                         if not allowed:
                             log(f"    → BLOCKED by risk manager: {reason}")
                             bet = None

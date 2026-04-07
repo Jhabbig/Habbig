@@ -1,0 +1,5 @@
+flask>=3.0
+flask-compress>=1.15
+requests>=2.31
+scipy>=1.12
+supabase>=2.0

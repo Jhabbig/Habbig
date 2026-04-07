@@ -566,7 +566,7 @@ class RegimeDetector:
         adx = float(np.mean(dx[-period:]))
         return np.clip(adx, 0, 100)
 
-    def detect(self, closes: np.ndarray, volumes: np.ndarray) -> Dict:
+    def detect(self, closes: np.ndarray, volumes: np.ndarray, highs: np.ndarray = None, lows: np.ndarray = None) -> Dict:
         """
         Detect current market regime.
 
@@ -616,7 +616,9 @@ class RegimeDetector:
             volatility_regime = "normal"
 
         # --- ADX (trend strength) ---
-        adx = self._compute_adx(recent_closes, recent_closes, recent_closes)
+        recent_highs = np.asarray(highs, dtype=float)[-lb:] if highs is not None else recent_closes
+        recent_lows = np.asarray(lows, dtype=float)[-lb:] if lows is not None else recent_closes
+        adx = self._compute_adx(recent_highs, recent_lows, recent_closes)
         trend_strength = float(np.clip(adx / 50.0, 0, 1))
 
         # --- Momentum ---

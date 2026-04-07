@@ -19,7 +19,7 @@ STATION_MAP: dict = {
     "los angeles":   (33.9425, -118.4081, "KLAX", "LAX"),
     "la":            (33.9425, -118.4081, "KLAX", "LAX"),
     # International stations
-    "london":        (51.5053, 0.0553,   "EGLC", "London City Airport"),
+    "london":        (51.5053, -0.0553,  "EGLC", "London City Airport"),
     "paris":         (48.7233, 2.3794,   "LFPO", "Paris-Orly"),
     "tokyo":         (35.5533, 139.7811, "RJTT", "Haneda Airport"),
     "seoul":         (37.5586, 126.7906, "RKSS", "Gimpo International"),

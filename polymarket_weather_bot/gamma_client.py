@@ -99,7 +99,7 @@ async def fetch_weather_markets(session: aiohttp.ClientSession) -> list:
 
     # Also try direct market searches as backup
     for keyword in ["temperature", "highest temperature"]:
-        params = {"closed": "false", "active": "true", "limit": "100"}
+        params = {"closed": "false", "active": "true", "limit": "100", "tag_slug": keyword}
         try:
             async with session.get(f"{GAMMA_BASE_URL}/markets", params=params) as resp:
                 if resp.status == 200:

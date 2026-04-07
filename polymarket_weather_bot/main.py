@@ -152,7 +152,7 @@ async def main() -> None:
 
             await run_scan(config, risk_mgr, trading_client, store)
 
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Shutting down...")
             print_daily_report(store, config)
             break
@@ -162,11 +162,14 @@ async def main() -> None:
         logger.info("Next scan in %d minutes", config.RUN_INTERVAL_MINUTES)
         try:
             await asyncio.sleep(config.RUN_INTERVAL_MINUTES * 60)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Shutting down...")
             print_daily_report(store, config)
             break
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

@@ -76,7 +76,7 @@ def fetch_markets(limit=200, status="open"):
     for m in all_markets:
         try:
             yes_price = m.get("yes_ask", 0) or m.get("last_price", 0) or 0
-            no_price = m.get("no_ask", 0) or (100 - yes_price) if yes_price else 0
+            no_price = m.get("no_ask", 0) or ((100 - yes_price) if yes_price else 0)
 
             # Convert cents to probability
             yes_prob = yes_price / 100 if yes_price > 1 else yes_price

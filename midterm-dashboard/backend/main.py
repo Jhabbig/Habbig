@@ -1,22 +1,19 @@
 import asyncio
-import hashlib
 import json
 import logging
 import os
-import secrets
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 import aiohttp
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from database import Database
 from aggregators import (
@@ -40,12 +37,8 @@ logger = logging.getLogger("midterm-dashboard")
 # ---------------------------------------------------------------------------
 PORT = int(os.getenv("PORT", "8051"))
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
-SESSION_COOKIE = "midterm_session"
-SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 DATA_REFRESH_INTERVAL = 300  # 5 minutes
 DIVERGENCE_INTERVAL = 300  # 5 minutes
-SESSION_CLEANUP_INTERVAL = 3600  # 1 hour
 
 # Rate-limit thresholds (requests per minute)
 RATE_LIMITS = {"free": 60, "premium": 120, "admin": 0}  # 0 = unlimited
@@ -57,36 +50,10 @@ TIER_RANK = {"free": 0, "premium": 1, "admin": 2}
 # Pydantic request models
 # ---------------------------------------------------------------------------
 
-class RegisterBody(BaseModel):
-    email: EmailStr
-    password: str
-    display_name: Optional[str] = None
-
-
-class LoginBody(BaseModel):
-    email: EmailStr
-    password: str
-
-
 class AlertBody(BaseModel):
     race_key: str
     threshold: Optional[float] = None
     direction: Optional[str] = "any"  # "up", "down", "any"
-
-
-class TierUpdateBody(BaseModel):
-    tier: str
-
-
-class SettingsBody(BaseModel):
-    theme: Optional[str] = None  # "light" | "dark" | "system"
-    accentColor: Optional[str] = None  # hex color e.g. "#3b82f6"
-    contrast: Optional[str] = None  # "normal" | "high"
-    density: Optional[str] = None  # "comfortable" | "compact"
-    chartStyle: Optional[str] = None  # "line" | "area"
-    showPolling: Optional[bool] = None
-    showSources: Optional[list[str]] = None  # ["polymarket", "kalshi", "predictit", "polling"]
-    defaultDays: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -99,77 +66,45 @@ class AppState:
     kalshi: KalshiAggregator
     predictit: PredictItAggregator
     polling: PollingAggregator
-    background_tasks: list[asyncio.Task] = []
-    # In-memory rate-limit store: {ip: [timestamps]}
-    rate_limit_store: dict[str, list[float]] = defaultdict(list)
+
+    def __init__(self):
+        self.background_tasks: list[asyncio.Task] = []
+        # In-memory rate-limit store: {ip: [timestamps]}
+        self.rate_limit_store: dict[str, list[float]] = defaultdict(list)
 
 
 state = AppState()
 
 # ---------------------------------------------------------------------------
-# Password hashing (bcrypt-style via hashlib for zero extra deps)
-# ---------------------------------------------------------------------------
-
-def _hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
-    """Return (hash_hex, salt_hex)."""
-    if salt is None:
-        salt = secrets.token_hex(16)
-    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000)
-    return h.hex(), salt
-
-
-def _verify_password(password: str, stored_hash: str, salt: str) -> bool:
-    h, _ = _hash_password(password, salt)
-    return secrets.compare_digest(h, stored_hash)
-
-
-# ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
+# Auth is now handled by the gateway. The gateway forwards authenticated
+# requests with X-Gateway-Secret, X-Gateway-User-Id (UUID), and
+# X-Gateway-User-Email headers.
 
 async def require_auth(request: Request) -> dict:
     """Return the current user dict or raise 401.
 
-    When this dashboard runs behind the Habbig gateway, the upstream sets
-    ``X-Gateway-User-Id`` and ``X-Gateway-User-Email`` headers after verifying
-    the user's session + subscription. Trust is proved by a shared-secret
-    header (``X-Gateway-Secret``) because uvicorn's default proxy_headers
-    rewrites request.client.host from X-Forwarded-For, so peer-IP checks are
-    unreliable. If a matching local user row doesn't exist, we synthesize a
-    user dict on the fly so the rest of the handler works.
+    The gateway sets ``X-Gateway-User-Id`` (UUID string) and
+    ``X-Gateway-User-Email`` after verifying the user's session +
+    subscription. Trust is proved by a shared-secret header
+    (``X-Gateway-Secret``).
     """
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
     if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
+        gw_tier = request.headers.get("x-gateway-user-tier", "free")
+        gw_display = request.headers.get("x-gateway-user-display-name", "")
         if gw_id and gw_email:
-            try:
-                gw_user_id = int(gw_id)
-            except ValueError:
-                gw_user_id = None
-            if gw_user_id is not None:
-                existing = await state.db.get_user(gw_user_id)
-                if existing:
-                    return existing
-                # No local row for this gateway user — return a synthetic dict
-                # that downstream handlers can read without crashing.
-                return {
-                    "id": gw_user_id,
-                    "email": gw_email,
-                    "tier": "pro",
-                    "display_name": gw_email.split("@")[0],
-                }
+            return {
+                "id": gw_id,  # UUID string
+                "email": gw_email,
+                "tier": gw_tier,
+                "display_name": gw_display or gw_email.split("@")[0],
+            }
 
-    session_id = request.cookies.get(SESSION_COOKIE)
-    if not session_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    session = await state.db.validate_session(session_id)
-    if not session:
-        raise HTTPException(status_code=401, detail="Session expired or invalid")
-    user = await state.db.get_user(session["user_id"])
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 async def require_tier(request: Request, tier: str) -> dict:
@@ -212,9 +147,9 @@ def _check_rate_limit(ip: str, tier: str) -> bool:
 # Audit logging helper
 # ---------------------------------------------------------------------------
 
-async def _audit_log(action: str, user_id: Optional[int], ip: str, detail: str = ""):
+async def _audit_log(action: str, user_id: Optional[str], ip: str, detail: str = ""):
     try:
-        await state.db.log_action(user_id=user_id, action=action, details=detail, ip=ip)
+        state.db.log_action(user_id=user_id, action=action, details=detail, ip=ip)
     except Exception as e:
         logger.warning(f"Audit log write failed: {e}")
 
@@ -233,7 +168,7 @@ async def data_refresh_loop():
                     return await asyncio.wait_for(coro, timeout=seconds)
                 except asyncio.TimeoutError:
                     logger.warning(f"{name} fetch timed out after {seconds}s")
-                    return TimeoutError(f"{name} timed out")
+                    raise asyncio.TimeoutError(f"{name} timed out")
 
             # Fetch sources in parallel (except Kalshi world which reuses Kalshi's cache)
             results = await asyncio.gather(
@@ -254,7 +189,7 @@ async def data_refresh_loop():
             # Store midterm markets
             for label, data in [("Polymarket", poly_data), ("Kalshi", kalshi_data), ("PredictIt", pi_data)]:
                 if isinstance(data, list):
-                    await state.db.upsert_markets_batch(data)
+                    state.db.upsert_markets_batch(data)
                     logger.info(f"Stored {len(data)} {label} markets")
                 else:
                     logger.error(f"{label} fetch error: {data}")
@@ -265,7 +200,7 @@ async def data_refresh_loop():
                 for poll_type, polls in poll_data.items():
                     all_polls.extend(polls)
                 if all_polls:
-                    await state.db.store_polls_batch(all_polls)
+                    state.db.store_polls_batch(all_polls)
                 logger.info(f"Stored {len(all_polls)} polls")
             else:
                 logger.error(f"Polling fetch error: {poll_data}")
@@ -273,7 +208,7 @@ async def data_refresh_loop():
             # Store world election markets
             for label, data in [("Polymarket world", poly_world), ("Kalshi world", kalshi_world)]:
                 if isinstance(data, list):
-                    await state.db.upsert_markets_batch(data)
+                    state.db.upsert_markets_batch(data)
                     logger.info(f"Stored {len(data)} {label} markets")
                 else:
                     logger.error(f"{label} fetch error: {data}")
@@ -289,7 +224,7 @@ async def divergence_calculator():
     while True:
         try:
             logger.info("Computing divergence snapshots")
-            all_markets = await state.db.get_all_markets(active_only=True)
+            all_markets = state.db.get_all_markets(active_only=True)
 
             # Group markets by race_key (race_type + state)
             by_race: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
@@ -322,7 +257,7 @@ async def divergence_calculator():
                 race_type = parts[0] if parts else "other"
                 state_abbr = parts[1] if len(parts) > 1 else None
 
-                await state.db.record_divergence(
+                state.db.record_divergence(
                     race_key=race_key,
                     state=state_abbr,
                     race_type=race_type,
@@ -344,17 +279,6 @@ async def divergence_calculator():
         await asyncio.sleep(DIVERGENCE_INTERVAL)
 
 
-async def session_cleanup():
-    """Remove expired sessions every hour."""
-    while True:
-        try:
-            await state.db.cleanup_expired_sessions()
-            logger.info("Session cleanup completed")
-        except Exception as e:
-            logger.error(f"Session cleanup error: {e}", exc_info=True)
-        await asyncio.sleep(SESSION_CLEANUP_INTERVAL)
-
-
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -364,7 +288,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Initializing application")
     state.db = Database()
-    await state.db.connect()
+    state.db.connect()
 
     state.http_session = aiohttp.ClientSession()
 
@@ -377,7 +301,6 @@ async def lifespan(app: FastAPI):
     state.background_tasks = [
         asyncio.create_task(data_refresh_loop(), name="data_refresh"),
         asyncio.create_task(divergence_calculator(), name="divergence"),
-        asyncio.create_task(session_cleanup(), name="session_cleanup"),
     ]
 
     logger.info("Background tasks started")
@@ -390,7 +313,7 @@ async def lifespan(app: FastAPI):
     await asyncio.gather(*state.background_tasks, return_exceptions=True)
 
     await state.http_session.close()
-    await state.db.close()
+    state.db.close()
     logger.info("Shutdown complete")
 
 
@@ -431,16 +354,8 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    # Determine tier from session (best-effort, default to free)
-    tier = "free"
-    session_id = request.cookies.get(SESSION_COOKIE)
-    if session_id:
-        try:
-            session = await state.db.validate_session(session_id)
-            if session:
-                tier = session.get("tier", "free")
-        except Exception:
-            pass
+    # Determine tier from gateway header (best-effort, default to free)
+    tier = request.headers.get("x-gateway-user-tier", "free")
 
     ip = request.client.host if request.client else "unknown"
 
@@ -455,21 +370,13 @@ async def rate_limit_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def audit_sensitive_actions(request: Request, call_next):
-    """Log sensitive actions (auth, admin, premium) to the audit log."""
+    """Log sensitive actions (admin, premium) to the audit log."""
     response = await call_next(request)
 
     path = request.url.path
-    if path.startswith(("/auth/", "/admin/", "/premium/")):
+    if path.startswith(("/admin/", "/premium/")):
         ip = request.client.host if request.client else "unknown"
-        session_id = request.cookies.get(SESSION_COOKIE)
-        user_id = None
-        if session_id:
-            try:
-                session = await state.db.validate_session(session_id)
-                if session:
-                    user_id = session.get("user_id")
-            except Exception:
-                pass
+        user_id = request.headers.get("x-gateway-user-id")
         await _audit_log(
             action=f"{request.method} {path}",
             user_id=user_id,
@@ -483,76 +390,12 @@ async def audit_sensitive_actions(request: Request, call_next):
 # ===================================================================
 # AUTH ENDPOINTS
 # ===================================================================
-
-@app.post("/auth/register")
-async def auth_register(body: RegisterBody, request: Request, response: Response):
-    existing = await state.db.get_user_by_email(body.email)
-    if existing:
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    user_id = await state.db.create_user(body.email, body.password, body.display_name)
-    if not user_id:
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    # Auto-login after registration
-    ip = request.client.host if request.client else "unknown"
-    ua = request.headers.get("user-agent", "")
-    session_token = await state.db.create_session(user_id, ip=ip, user_agent=ua)
-    response.set_cookie(
-        SESSION_COOKIE,
-        session_token,
-        max_age=SESSION_MAX_AGE,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        domain=COOKIE_DOMAIN,
-    )
-
-    await _audit_log("register", user_id, ip, f"email={body.email}")
-
-    return {"ok": True, "user": {"id": user_id, "email": body.email, "display_name": body.display_name, "tier": "free"}}
-
-
-@app.post("/auth/login")
-async def auth_login(body: LoginBody, request: Request, response: Response):
-    user = await state.db.verify_login(body.email, body.password)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    ip = request.client.host if request.client else "unknown"
-    ua = request.headers.get("user-agent", "")
-    session_id = await state.db.create_session(user["id"], ip=ip, user_agent=ua)
-    response.set_cookie(
-        SESSION_COOKIE,
-        session_id,
-        max_age=SESSION_MAX_AGE,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        domain=COOKIE_DOMAIN,
-    )
-
-    ip = request.client.host if request.client else "unknown"
-    await _audit_log("login", user["id"], ip, f"email={body.email}")
-
-    return {
-        "ok": True,
-        "user": {
-            "id": user["id"],
-            "email": user["email"],
-            "display_name": user.get("display_name", ""),
-            "tier": user.get("tier", "free"),
-        },
-    }
-
+# Registration, login, and logout are handled by the gateway.
+# These endpoints redirect to the gateway for those actions.
 
 @app.post("/auth/logout")
-async def auth_logout(request: Request, response: Response):
-    session_id = request.cookies.get(SESSION_COOKIE)
-    if session_id:
-        await state.db.delete_session(session_id)
-    response.delete_cookie(SESSION_COOKIE, domain=COOKIE_DOMAIN)
-    return {"ok": True}
+async def auth_logout():
+    return RedirectResponse("https://habbig.com/logout", status_code=302)
 
 
 @app.get("/auth/me")
@@ -563,24 +406,7 @@ async def auth_me(request: Request):
         "email": user["email"],
         "display_name": user.get("display_name", ""),
         "tier": user.get("tier", "free"),
-        "created_at": user.get("created_at"),
-        "settings": json.loads(user.get("settings") or "{}"),
     }
-
-
-@app.get("/auth/settings")
-async def auth_get_settings(request: Request):
-    user = await require_auth(request)
-    return {"settings": json.loads(user.get("settings") or "{}")}
-
-
-@app.put("/auth/settings")
-async def auth_update_settings(body: SettingsBody, request: Request):
-    user = await require_auth(request)
-    # Only include keys that were explicitly provided (non-None)
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    merged = await state.db.update_user_settings(user["id"], updates)
-    return {"ok": True, "settings": merged}
 
 
 # ===================================================================
@@ -590,7 +416,7 @@ async def auth_update_settings(body: SettingsBody, request: Request):
 @app.get("/data/overview")
 async def data_overview():
     """Senate/House control probabilities from all sources."""
-    all_markets = await state.db.get_all_markets(active_only=True)
+    all_markets = state.db.get_all_markets(active_only=True)
 
     # Build control overview from "control" type markets
     senate_sources = {}
@@ -642,7 +468,7 @@ async def data_races(
     min_volume: Optional[float] = None,
 ):
     """List all tracked races with latest odds."""
-    markets = await state.db.get_markets(
+    markets = state.db.get_markets(
         race_type=race_type, state=state_abbr, source=source,
         search=search, min_volume=min_volume,
     )
@@ -666,7 +492,7 @@ async def data_race_detail(race_key: str):
     - "source_sourceId" e.g. "predictit_8156" — direct market lookup, then find siblings
     - legacy "race_type_STATE_sourceId" format
     """
-    all_markets = await state.db.get_all_markets(active_only=True)
+    all_markets = state.db.get_all_markets(active_only=True)
 
     # Step 1: find the target market(s)
     matched = {}
@@ -722,7 +548,7 @@ async def data_race_detail(race_key: str):
 @app.get("/data/history/{race_key}")
 async def data_history(race_key: str, days: int = 30):
     """Historical price/divergence data for a race."""
-    history = await state.db.get_divergence_history(race_key=race_key, days=days)
+    history = state.db.get_divergence_history(race_key=race_key, days=days)
     # Reformat for chart consumption
     chart_data = []
     for h in history:
@@ -742,7 +568,7 @@ async def data_history(race_key: str, days: int = 30):
 @app.get("/data/divergence")
 async def data_divergence():
     """Current divergence data across all sources."""
-    divergences = await state.db.get_divergence_history(days=1)
+    divergences = state.db.get_divergence_history(days=1)
     # Deduplicate by race_key, keeping latest
     latest = {}
     for d in divergences:
@@ -755,14 +581,14 @@ async def data_divergence():
 @app.get("/data/divergence/history/{race_key}")
 async def data_divergence_history(race_key: str, days: int = 30):
     """Divergence over time for a specific race."""
-    history = await state.db.get_divergence_history(race_key=race_key, days=days)
+    history = state.db.get_divergence_history(race_key=race_key, days=days)
     return {"race_key": race_key, "days": days, "history": history}
 
 
 @app.get("/data/sources")
 async def data_sources():
     """Data sources and their status."""
-    all_markets = await state.db.get_all_markets(active_only=True)
+    all_markets = state.db.get_all_markets(active_only=True)
     sources = defaultdict(lambda: {"market_count": 0, "status": "ok", "last_updated": None})
     for m in all_markets:
         s = m.get("source", "unknown")
@@ -776,11 +602,7 @@ async def data_sources():
 @app.get("/data/polling/recent")
 async def data_polling_recent(limit: int = 50):
     """Most recent polls across all races."""
-    async with state.db._db.execute(
-        "SELECT * FROM polling_data ORDER BY end_date DESC, id DESC LIMIT ?",
-        (min(limit, 200),)
-    ) as cursor:
-        polls = [dict(r) for r in await cursor.fetchall()]
+    polls = state.db.get_recent_polls(limit=limit)
     return {"polls": [
         {
             "pollster": p.get("pollster"),
@@ -809,7 +631,7 @@ async def data_polling(race_key: str):
     poll_type = parts[0] if parts else race_key
     state_abbr = parts[1] if len(parts) > 1 else None
 
-    polls = await state.db.get_polls(state=state_abbr, poll_type=poll_type)
+    polls = state.db.get_polls(state=state_abbr, poll_type=poll_type)
 
     results = []
     for p in polls:
@@ -862,7 +684,7 @@ async def data_world_elections(
     min_volume: Optional[float] = None,
 ):
     """World leader election markets from prediction platforms."""
-    markets = await state.db.get_markets(
+    markets = state.db.get_markets(
         race_type="world", state=country, source=source,
         search=search, min_volume=min_volume,
     )
@@ -879,55 +701,35 @@ async def data_world_elections(
 @app.get("/premium/alerts")
 async def premium_alerts(request: Request):
     user = await require_tier(request, "premium")
-    # Alert settings are stored in alert_settings table
-    async with state.db._db.execute(
-        "SELECT * FROM alert_settings WHERE user_id = ? AND enabled = 1", (user["id"],)
-    ) as cursor:
-        alerts = [dict(r) for r in await cursor.fetchall()]
+    alerts = state.db.get_alerts(user["id"])
     return {"alerts": alerts}
 
 
 @app.post("/premium/alerts")
 async def premium_create_alert(body: AlertBody, request: Request):
     user = await require_tier(request, "premium")
-    await state.db._db.execute(
-        """INSERT OR REPLACE INTO alert_settings (user_id, race_key, threshold, enabled)
-           VALUES (?, ?, ?, 1)""",
-        (user["id"], body.race_key, body.threshold or 5.0)
-    )
-    await state.db._db.commit()
+    state.db.upsert_alert(user["id"], body.race_key, body.threshold or 5.0)
     return {"ok": True, "race_key": body.race_key}
 
 
 @app.get("/premium/watchlist")
 async def premium_watchlist(request: Request):
     user = await require_tier(request, "premium")
-    async with state.db._db.execute(
-        "SELECT race_key, created_at FROM user_watchlists WHERE user_id = ?", (user["id"],)
-    ) as cursor:
-        watchlist = [dict(r) for r in await cursor.fetchall()]
+    watchlist = state.db.get_watchlist(user["id"])
     return {"watchlist": watchlist}
 
 
 @app.post("/premium/watchlist/{race_key}")
 async def premium_watchlist_add(race_key: str, request: Request):
     user = await require_tier(request, "premium")
-    await state.db._db.execute(
-        "INSERT OR IGNORE INTO user_watchlists (user_id, race_key) VALUES (?, ?)",
-        (user["id"], race_key)
-    )
-    await state.db._db.commit()
+    state.db.add_to_watchlist(user["id"], race_key)
     return {"ok": True, "race_key": race_key}
 
 
 @app.delete("/premium/watchlist/{race_key}")
 async def premium_watchlist_remove(race_key: str, request: Request):
     user = await require_tier(request, "premium")
-    await state.db._db.execute(
-        "DELETE FROM user_watchlists WHERE user_id = ? AND race_key = ?",
-        (user["id"], race_key)
-    )
-    await state.db._db.commit()
+    state.db.remove_from_watchlist(user["id"], race_key)
     return {"ok": True, "race_key": race_key}
 
 
@@ -935,7 +737,7 @@ async def premium_watchlist_remove(race_key: str, request: Request):
 async def premium_detailed_comparison(race_key: str, request: Request):
     """Deep comparison with orderbook data."""
     user = await require_tier(request, "premium")
-    all_markets = await state.db.get_all_markets(active_only=True)
+    all_markets = state.db.get_all_markets(active_only=True)
     matched = {}
     for m in all_markets:
         partial = f"{m.get('race_type', 'other')}_{m.get('state', 'US')}"
@@ -990,64 +792,28 @@ async def premium_campaign_finance(state_abbr: str, request: Request):
 @app.get("/admin/stats")
 async def admin_stats(request: Request):
     await require_tier(request, "admin")
-    stats = await state.db.get_admin_stats()
+    stats = state.db.get_admin_stats()
     return stats
 
 
 @app.get("/admin/users")
 async def admin_users(request: Request, limit: int = 100, offset: int = 0):
     await require_tier(request, "admin")
-    users = await state.db.get_all_users(limit=limit, offset=offset)
+    users = state.db.get_all_users(limit=limit, offset=offset)
     return {"users": users}
-
-
-@app.get("/admin/user/{user_id}")
-async def admin_user_detail(user_id: int, request: Request):
-    await require_tier(request, "admin")
-    user = await state.db.get_user(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.pop("password_hash", None)
-    user.pop("salt", None)
-    return user
-
-
-@app.put("/admin/user/{user_id}/tier")
-async def admin_update_tier(user_id: int, body: TierUpdateBody, request: Request):
-    admin_user = await require_tier(request, "admin")
-    if body.tier not in TIER_RANK:
-        raise HTTPException(status_code=400, detail=f"Invalid tier: {body.tier}")
-    await state.db.update_user_tier(user_id, body.tier)
-    ip = request.client.host if request.client else "unknown"
-    await _audit_log("tier_change", admin_user["id"], ip, f"target_user={user_id} new_tier={body.tier}")
-    return {"ok": True, "user_id": user_id, "tier": body.tier}
-
-
-@app.get("/admin/growth")
-async def admin_growth(request: Request, days: int = 90):
-    await require_tier(request, "admin")
-    data = await state.db.get_user_growth(days=days)
-    return {"days": days, "growth": data}
-
-
-@app.get("/admin/churn")
-async def admin_churn(request: Request):
-    await require_tier(request, "admin")
-    data = await state.db.get_churn_data()
-    return data
 
 
 @app.get("/admin/audit-log")
 async def admin_audit_log(request: Request, limit: int = 100):
     await require_tier(request, "admin")
-    entries = await state.db.get_audit_log(limit=limit)
+    entries = state.db.get_audit_log(limit=limit)
     return {"logs": entries}
 
 
 @app.get("/admin/data-status")
 async def admin_data_status(request: Request):
     await require_tier(request, "admin")
-    all_markets = await state.db.get_all_markets(active_only=True)
+    all_markets = state.db.get_all_markets(active_only=True)
     sources = defaultdict(lambda: {"market_count": 0, "status": "ok", "last_updated": None})
     for m in all_markets:
         s = m.get("source", "unknown")

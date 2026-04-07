@@ -8,9 +8,9 @@
 /* CSS Custom Properties                                               */
 /* ------------------------------------------------------------------ */
 :root {
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-light: #eff6ff;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-light: rgba(99, 102, 241, 0.08);
 }
 
 /* ------------------------------------------------------------------ */
@@ -70,22 +70,22 @@
 }
 
 [data-theme="dark"] body {
-  background-color: #0c0a09;
-  color: #e7e5e4;
+  background-color: #0c0d10;
+  color: #ebebef;
 }
 
 /* Backgrounds */
 [data-theme="dark"] .bg-white {
-  background-color: #1c1917 !important;
+  background-color: #131417 !important;
 }
 [data-theme="dark"] .bg-stone-50 {
-  background-color: #0c0a09 !important;
+  background-color: #0c0d10 !important;
 }
 [data-theme="dark"] .bg-stone-100 {
-  background-color: #292524 !important;
+  background-color: #18191e !important;
 }
 [data-theme="dark"] .bg-stone-200 {
-  background-color: #44403c !important;
+  background-color: #1f2027 !important;
 }
 [data-theme="dark"] .hover\:bg-stone-50:hover {
   background-color: #292524 !important;
@@ -96,22 +96,22 @@
 
 /* Borders */
 [data-theme="dark"] .border-stone-50 {
-  border-color: #1c1917 !important;
+  border-color: rgba(255,255,255,0.04) !important;
 }
 [data-theme="dark"] .border-stone-100 {
-  border-color: #292524 !important;
+  border-color: rgba(255,255,255,0.06) !important;
 }
 [data-theme="dark"] .border-stone-200 {
-  border-color: #44403c !important;
+  border-color: rgba(255,255,255,0.08) !important;
 }
 [data-theme="dark"] .border-stone-200\/60 {
-  border-color: rgba(68, 64, 60, 0.6) !important;
+  border-color: rgba(255,255,255,0.05) !important;
 }
 [data-theme="dark"] .divide-stone-50 > :not([hidden]) ~ :not([hidden]) {
-  border-color: #1c1917 !important;
+  border-color: rgba(255,255,255,0.04) !important;
 }
 [data-theme="dark"] .divide-stone-100 > :not([hidden]) ~ :not([hidden]) {
-  border-color: #292524 !important;
+  border-color: rgba(255,255,255,0.06) !important;
 }
 
 /* Text */

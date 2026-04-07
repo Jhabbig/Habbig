@@ -1,0 +1,337 @@
+/*  ================================================================
+    Habbig Unified Theme — injected by the gateway into all dashboards
+    Design language: Mubi × Notion × Wispr
+    ================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── Design Tokens ──────────────────────────────────────────────── */
+
+:root {
+  --hb-bg:             #0c0d10;
+  --hb-bg-elevated:    #131417;
+  --hb-surface:        #18191e;
+  --hb-surface-hover:  #1f2027;
+  --hb-surface-active: #26272e;
+  --hb-border:         rgba(255, 255, 255, 0.06);
+  --hb-border-subtle:  rgba(255, 255, 255, 0.04);
+  --hb-text:           #ebebef;
+  --hb-text-secondary: #8b8d98;
+  --hb-text-muted:     #5c5e6a;
+  --hb-accent:         #6366f1;
+  --hb-accent-hover:   #818cf8;
+  --hb-accent-soft:    rgba(99, 102, 241, 0.10);
+  --hb-accent-2:       #8b5cf6;
+  --hb-green:          #34d399;
+  --hb-green-soft:     rgba(52, 211, 153, 0.10);
+  --hb-red:            #f87171;
+  --hb-red-soft:       rgba(248, 113, 113, 0.10);
+  --hb-amber:          #fbbf24;
+  --hb-amber-soft:     rgba(251, 191, 36, 0.10);
+  --hb-blue:           #60a5fa;
+  --hb-blue-soft:      rgba(96, 165, 250, 0.10);
+  --hb-radius:         12px;
+  --hb-radius-sm:      8px;
+  --hb-radius-xs:      6px;
+  --hb-shadow:         0 1px 3px rgba(0,0,0,0.3), 0 4px 16px rgba(0,0,0,0.2);
+  --hb-shadow-lg:      0 4px 12px rgba(0,0,0,0.3), 0 12px 40px rgba(0,0,0,0.25);
+  --hb-transition:     0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --hb-font:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ── Base Reset ─────────────────────────────────────────────────── */
+
+html, body {
+  font-family: var(--hb-font) !important;
+  background: var(--hb-bg) !important;
+  color: var(--hb-text) !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
+}
+
+/* ── Typography ─────────────────────────────────────────────────── */
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--hb-font) !important;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  color: var(--hb-text);
+}
+
+h1 { font-size: 1.75rem; font-weight: 700; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.1rem; }
+
+p { color: var(--hb-text-secondary); }
+
+/* ── Links ──────────────────────────────────────────────────────── */
+
+a {
+  color: var(--hb-accent-hover);
+  text-decoration: none;
+  transition: color var(--hb-transition);
+}
+a:hover { color: var(--hb-text); }
+
+/* ── Scrollbars (webkit) ────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.07);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+/* ── Buttons ────────────────────────────────────────────────────── */
+
+button, .btn, [type="submit"], [type="button"] {
+  font-family: var(--hb-font) !important;
+  font-weight: 500;
+  border-radius: var(--hb-radius-sm) !important;
+  transition: all var(--hb-transition) !important;
+  cursor: pointer;
+  letter-spacing: -0.005em;
+  border: none;
+}
+
+/* Primary buttons - gradient accent */
+button[type="submit"],
+.btn-primary,
+button.primary {
+  background: linear-gradient(135deg, var(--hb-accent), var(--hb-accent-2)) !important;
+  color: #fff !important;
+  border: none !important;
+  padding: 10px 20px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+button[type="submit"]:hover,
+.btn-primary:hover,
+button.primary:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+}
+
+/* Ghost/secondary buttons */
+button:not([type="submit"]):not(.primary):not(.btn-primary) {
+  background: var(--hb-surface) !important;
+  color: var(--hb-text-secondary) !important;
+  border: 1px solid var(--hb-border) !important;
+}
+button:not([type="submit"]):not(.primary):not(.btn-primary):hover {
+  background: var(--hb-surface-hover) !important;
+  color: var(--hb-text) !important;
+  border-color: rgba(255,255,255,0.1) !important;
+}
+
+/* ── Inputs ─────────────────────────────────────────────────────── */
+
+input, textarea, select {
+  font-family: var(--hb-font) !important;
+  background: var(--hb-bg) !important;
+  color: var(--hb-text) !important;
+  border: 1px solid var(--hb-border) !important;
+  border-radius: var(--hb-radius-sm) !important;
+  padding: 10px 14px !important;
+  font-size: 0.875rem;
+  transition: border-color var(--hb-transition), box-shadow var(--hb-transition);
+  outline: none !important;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--hb-accent) !important;
+  box-shadow: 0 0 0 3px var(--hb-accent-soft) !important;
+}
+input::placeholder, textarea::placeholder {
+  color: var(--hb-text-muted) !important;
+}
+
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%235c5e6a' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 12px center !important;
+  padding-right: 32px !important;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────── */
+
+.card,
+[class*="card"],
+[class*="panel"],
+[class*="section"],
+[class*="widget"] {
+  border-radius: var(--hb-radius) !important;
+  border: 1px solid var(--hb-border) !important;
+  transition: border-color var(--hb-transition), box-shadow var(--hb-transition);
+}
+
+/* ── Tables ─────────────────────────────────────────────────────── */
+
+table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  width: 100%;
+  font-size: 0.8125rem;
+}
+
+th {
+  font-family: var(--hb-font) !important;
+  font-weight: 500 !important;
+  font-size: 0.7rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--hb-text-muted) !important;
+  background: var(--hb-bg-elevated) !important;
+  padding: 10px 14px !important;
+  text-align: left;
+  border-bottom: 1px solid var(--hb-border) !important;
+}
+
+td {
+  padding: 10px 14px !important;
+  border-bottom: 1px solid var(--hb-border-subtle) !important;
+  color: var(--hb-text-secondary);
+  font-size: 0.8125rem;
+}
+
+tr:hover td {
+  background: var(--hb-surface) !important;
+}
+
+/* ── Status Indicators ──────────────────────────────────────────── */
+
+.status-dot,
+[class*="status-dot"],
+[class*="live-dot"] {
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 50% !important;
+  display: inline-block;
+}
+
+/* ── Badges / Pills ─────────────────────────────────────────────── */
+
+[class*="badge"],
+[class*="pill"],
+[class*="tag"],
+[class*="chip"] {
+  font-family: var(--hb-font) !important;
+  font-size: 0.6875rem !important;
+  font-weight: 500 !important;
+  padding: 3px 10px !important;
+  border-radius: 100px !important;
+  letter-spacing: 0.02em;
+  border: none !important;
+}
+
+/* ── Modals / Overlays ──────────────────────────────────────────── */
+
+[class*="modal"],
+[class*="overlay"],
+[class*="popup"] {
+  border-radius: var(--hb-radius) !important;
+  border: 1px solid var(--hb-border) !important;
+  box-shadow: var(--hb-shadow-lg) !important;
+}
+
+/* ── Positive / Negative Colors ─────────────────────────────────── */
+
+[class*="positive"],
+[class*="bullish"],
+[class*="profit"],
+[class*="agree"],
+[class*="yes-"] {
+  color: var(--hb-green) !important;
+}
+
+[class*="negative"],
+[class*="bearish"],
+[class*="loss"],
+[class*="disagree"],
+[class*="no-"] {
+  color: var(--hb-red) !important;
+}
+
+/* ── Separator / Divider ────────────────────────────────────────── */
+
+hr {
+  border: none !important;
+  border-top: 1px solid var(--hb-border) !important;
+  margin: 20px 0;
+}
+
+/* ── Code / Monospace ───────────────────────────────────────────── */
+
+code, pre, [class*="mono"], .address, .wallet {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace !important;
+  font-size: 0.8125rem;
+}
+
+/* ── Tooltips ───────────────────────────────────────────────────── */
+
+[class*="tooltip"] {
+  background: var(--hb-surface) !important;
+  color: var(--hb-text) !important;
+  border: 1px solid var(--hb-border) !important;
+  border-radius: var(--hb-radius-xs) !important;
+  font-size: 0.75rem !important;
+  box-shadow: var(--hb-shadow) !important;
+}
+
+/* ── Specific Dashboard Overrides ───────────────────────────────── */
+
+/* Hide internal auth screens when behind gateway */
+#auth-screen,
+.auth-container,
+.auth-modal,
+.login-overlay,
+#login-section {
+  display: none !important;
+}
+
+/* ── Smooth Animations ──────────────────────────────────────────── */
+
+@keyframes hb-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes hb-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Live status dots pulse */
+[class*="live"],
+[class*="status-live"] {
+  animation: hb-pulse 2s ease-in-out infinite;
+}
+
+/* ── Empty / Loading States ─────────────────────────────────────── */
+
+[class*="loading"],
+[class*="spinner"] {
+  color: var(--hb-text-muted);
+}
+
+/* ── Selection ──────────────────────────────────────────────────── */
+
+::selection {
+  background: var(--hb-accent-soft);
+  color: var(--hb-text);
+}
+
+/* ── Focus Visible (a11y) ───────────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid var(--hb-accent) !important;
+  outline-offset: 2px;
+}

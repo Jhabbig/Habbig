@@ -297,8 +297,13 @@ def get_realtime_signals(coin):
     ema_26 = compute_ema(closes_1m, 26) if len(closes_1m) >= 26 else ema_12
 
     macd_line = ema_12 - ema_26
-    macd_signal = compute_ema(closes_1m[-9:], 9) - compute_ema(
-        closes_1m[-26:] if len(closes_1m) >= 26 else closes_1m, 26)
+    # Build a series of MACD values for signal line calculation
+    _macd_series = []
+    for i in range(min(26, len(closes_1m)), len(closes_1m) + 1):
+        _e12 = compute_ema(closes_1m[:i], 12)
+        _e26 = compute_ema(closes_1m[:i], 26)
+        _macd_series.append(_e12 - _e26)
+    macd_signal = compute_ema(_macd_series, 9) if _macd_series else 0
     macd_hist = macd_line - macd_signal
 
     avg_vol = sum(volumes_1m[:-1]) / max(len(volumes_1m) - 1, 1)
@@ -759,6 +764,9 @@ def main():
                 else:
                     # Fallback to Gamma prices if CLOB unavailable
                     buy_price = market["up_price"] if side == "up" else market["down_price"]
+                    if buy_price <= 0:
+                        log(f"[{coin.upper()}] Skipping trade: buy_price is {buy_price}")
+                        continue
                     shares = BET_AMOUNT / buy_price
                     actual_cost = BET_AMOUNT
                     slippage = 0

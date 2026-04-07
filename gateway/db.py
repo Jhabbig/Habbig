@@ -1,130 +1,86 @@
-"""SQLite layer for the gateway — users, sessions, subscriptions."""
+"""Supabase layer for the gateway — users, sessions, subscriptions.
+
+Replaces the previous SQLite implementation. Uses Supabase for Postgres
+storage and keeps the same function signatures so server.py requires
+minimal changes.
+
+Required environment variables:
+    SUPABASE_URL            - Your Supabase project URL
+    SUPABASE_SERVICE_KEY    - Service role key (server-side, bypasses RLS)
+"""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
+import os
 import secrets
-import sqlite3
 import time
-from contextlib import contextmanager
-from pathlib import Path
 from typing import Optional
 
-DB_PATH = Path(__file__).parent / "auth.db"
+from supabase import create_client, Client
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    username          TEXT UNIQUE NOT NULL,
-    email             TEXT UNIQUE NOT NULL,
-    password_hash     TEXT NOT NULL,
-    password_salt     TEXT NOT NULL,
-    created_at        INTEGER NOT NULL,
-    is_admin          INTEGER NOT NULL DEFAULT 0,
-    suspended         INTEGER NOT NULL DEFAULT 0,
-    default_dashboard TEXT,
-    invite_token_id   INTEGER REFERENCES invite_tokens(id)
-);
+log = logging.getLogger("gateway.db")
 
-CREATE TABLE IF NOT EXISTS sessions (
-    token       TEXT PRIMARY KEY,
-    user_id     INTEGER NOT NULL,
-    created_at  INTEGER NOT NULL,
-    expires_at  INTEGER NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+# ── Supabase client ─────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS subscriptions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id         INTEGER NOT NULL,
-    dashboard_key   TEXT NOT NULL,
-    plan            TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'active',
-    started_at      INTEGER NOT NULL,
-    expires_at      INTEGER,
-    stripe_sub_id   TEXT,
-    source          TEXT NOT NULL DEFAULT 'placeholder',
-    UNIQUE(user_id, dashboard_key),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
-CREATE TABLE IF NOT EXISTS invite_tokens (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    token           TEXT UNIQUE NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'unclaimed',
-    claimed_by_user_id INTEGER REFERENCES users(id),
-    claimed_by_email TEXT,
-    note            TEXT DEFAULT '',
-    created_at      INTEGER NOT NULL,
-    claimed_at      INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS enquiries (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    email           TEXT NOT NULL,
-    job_title       TEXT NOT NULL,
-    message         TEXT NOT NULL,
-    created_at      INTEGER NOT NULL,
-    read            INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS password_resets (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL,
-    token       TEXT UNIQUE NOT NULL,
-    created_at  INTEGER NOT NULL,
-    expires_at  INTEGER NOT NULL,
-    used        INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id);
-CREATE INDEX IF NOT EXISTS idx_invite_token ON invite_tokens(token);
-CREATE INDEX IF NOT EXISTS idx_invite_status ON invite_tokens(status);
-CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token);
-"""
+_client: Optional[Client] = None
 
 
-@contextmanager
-def conn():
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield c
-        c.commit()
-    finally:
-        c.close()
+def _get_client() -> Client:
+    global _client
+    if _client is None:
+        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+            raise RuntimeError(
+                "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set. "
+                "Create a project at https://supabase.com and set these env vars."
+            )
+        _client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    return _client
 
 
 def init_db() -> None:
-    with conn() as c:
-        c.executescript(SCHEMA)
-        # Lightweight migrations: add columns that were introduced after the
-        # original schema shipped. SQLite doesn't support IF NOT EXISTS on
-        # ALTER TABLE, so we probe PRAGMA table_info and only add when missing.
-        existing_cols = {row["name"] for row in c.execute("PRAGMA table_info(users)")}
-        if "default_dashboard" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN default_dashboard TEXT")
-        if "suspended" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
-        if "invite_token_id" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN invite_token_id INTEGER REFERENCES invite_tokens(id)")
-        # invite_tokens migrations
-        invite_cols = {row["name"] for row in c.execute("PRAGMA table_info(invite_tokens)")}
-        if "target_email" not in invite_cols:
-            c.execute("ALTER TABLE invite_tokens ADD COLUMN target_email TEXT")
-        if "username" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN username TEXT")
-            # Backfill: set username to email local part for existing users
-            for row in c.execute("SELECT id, email FROM users WHERE username IS NULL").fetchall():
-                uname = row[1].split("@")[0] if row[1] else f"user{row[0]}"
-                c.execute("UPDATE users SET username = ? WHERE id = ?", (uname, row[0]))
+    """Verify Supabase connection is working. Called on startup."""
+    client = _get_client()
+    # Quick health check — fetch zero rows from profiles
+    try:
+        client.table("profiles").select("id").limit(0).execute()
+        log.info("Supabase connection OK")
+    except Exception as e:
+        log.error("Supabase connection failed: %s", e)
+        raise
 
 
-# ── Password hashing ──────────────────────────────────────────────────────────
+# ── Helper to convert Supabase row to dict ──────────────────────────────────
+
+class Row(dict):
+    """Dict subclass that supports both dict['key'] and dict.key access,
+    mimicking sqlite3.Row interface for backward compatibility."""
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(key)
+
+    def keys(self):
+        return super().keys()
+
+
+def _row(data: Optional[dict]) -> Optional[Row]:
+    if data is None:
+        return None
+    return Row(data)
+
+
+def _rows(data: list[dict]) -> list[Row]:
+    return [Row(d) for d in data]
+
+
+# ── Password hashing ────────────────────────────────────────────────────────
 # Using PBKDF2-HMAC-SHA256 (stdlib, no external deps). 200k iterations.
 
 
@@ -136,45 +92,85 @@ def _hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]
 
 
 def verify_password(password: str, stored_hash: str, salt: str) -> bool:
+    """Legacy: verify password against a stored PBKDF2 hash (for migration only)."""
     candidate, _ = _hash_password(password, salt)
     return hmac.compare_digest(candidate, stored_hash)
 
 
-# ── User operations ───────────────────────────────────────────────────────────
+def verify_user_password(email: str, password: str) -> bool:
+    """Verify a user's password via Supabase Auth sign-in attempt.
+
+    Uses a throwaway client to avoid corrupting the main service-role
+    client's auth state (sign_in_with_password swaps the postgrest
+    Authorization header from service-role to user JWT).
+    """
+    try:
+        temp_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        result = temp_client.auth.sign_in_with_password({"email": email, "password": password})
+        return result.user is not None
+    except Exception:
+        return False
 
 
-def create_user(email: str, password: str, username: str = "", is_admin: bool = False, admin_level: int = 0) -> int:
+def link_invite_token_to_user(user_id: str, token_str: str) -> None:
+    """Set the invite_token_id on a user's profile from a token string."""
+    client = _get_client()
+    token_row = client.table("invite_tokens").select("id").eq("token", token_str).limit(1).execute()
+    if token_row.data:
+        client.table("profiles").update({
+            "invite_token_id": token_row.data[0]["id"]
+        }).eq("id", user_id).execute()
+
+
+# ── User operations ─────────────────────────────────────────────────────────
+
+
+def create_user(email: str, password: str, username: str = "", is_admin: bool = False, admin_level: int = 0) -> str:
+    """Create a user via Supabase Auth + profiles table. Returns the user UUID string."""
     email = email.lower().strip()
     username = username.strip()
     if not username:
         username = email.split("@")[0]
     level = admin_level if admin_level else (1 if is_admin else 0)
-    pwd_hash, salt = _hash_password(password)
-    with conn() as c:
-        cur = c.execute(
-            "INSERT INTO users (username, email, password_hash, password_salt, created_at, is_admin) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (username, email, pwd_hash, salt, int(time.time()), level),
-        )
-        return cur.lastrowid
+
+    client = _get_client()
+
+    # Create user in Supabase Auth
+    auth_response = client.auth.admin.create_user({
+        "email": email,
+        "password": password,
+        "email_confirm": True,  # Auto-confirm since we handle invite tokens
+        "user_metadata": {"username": username},
+    })
+
+    user_id = auth_response.user.id
+
+    # The trigger creates a basic profile; update it with admin level
+    if level > 0:
+        client.table("profiles").update({
+            "is_admin": level,
+        }).eq("id", user_id).execute()
+
+    return user_id
 
 
-def get_user_by_email(email: str) -> Optional[sqlite3.Row]:
-    with conn() as c:
-        row = c.execute(
-            "SELECT * FROM users WHERE email = ?", (email.lower().strip(),)
-        ).fetchone()
-    return row
+def get_user_by_email(email: str) -> Optional[Row]:
+    client = _get_client()
+    result = client.table("profiles").select("*").eq("email", email.lower().strip()).limit(1).execute()
+    if result.data:
+        return _row(result.data[0])
+    return None
 
 
-def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
-    with conn() as c:
-        return c.execute(
-            "SELECT * FROM users WHERE username = ?", (username.strip(),)
-        ).fetchone()
+def get_user_by_username(username: str) -> Optional[Row]:
+    client = _get_client()
+    result = client.table("profiles").select("*").eq("username", username.strip()).limit(1).execute()
+    if result.data:
+        return _row(result.data[0])
+    return None
 
 
-def get_user_by_email_or_username(identifier: str) -> Optional[sqlite3.Row]:
+def get_user_by_email_or_username(identifier: str) -> Optional[Row]:
     """Look up a user by email or username."""
     identifier = identifier.strip()
     if "@" in identifier:
@@ -182,98 +178,128 @@ def get_user_by_email_or_username(identifier: str) -> Optional[sqlite3.Row]:
     return get_user_by_username(identifier)
 
 
-def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
-    with conn() as c:
-        return c.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+def get_user_by_id(user_id: str) -> Optional[Row]:
+    client = _get_client()
+    result = client.table("profiles").select("*").eq("id", user_id).limit(1).execute()
+    if result.data:
+        return _row(result.data[0])
+    return None
 
 
-def set_default_dashboard(user_id: int, dashboard_key: Optional[str]) -> None:
+def set_default_dashboard(user_id: str, dashboard_key: Optional[str]) -> None:
     """Store the user's preferred landing dashboard (or clear it with None)."""
-    with conn() as c:
-        c.execute(
-            "UPDATE users SET default_dashboard = ? WHERE id = ?",
-            (dashboard_key, user_id),
-        )
+    client = _get_client()
+    client.table("profiles").update({"default_dashboard": dashboard_key}).eq("id", user_id).execute()
 
 
-def get_default_dashboard(user_id: int) -> Optional[str]:
-    with conn() as c:
-        row = c.execute(
-            "SELECT default_dashboard FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-    return row["default_dashboard"] if row else None
+def get_default_dashboard(user_id: str) -> Optional[str]:
+    client = _get_client()
+    result = client.table("profiles").select("default_dashboard").eq("id", user_id).limit(1).execute()
+    if result.data:
+        return result.data[0].get("default_dashboard")
+    return None
 
 
-# ── Session operations ────────────────────────────────────────────────────────
+def update_user_password(user_id: str, new_password: str) -> None:
+    """Update a user's password via Supabase Auth admin API."""
+    client = _get_client()
+    client.auth.admin.update_user_by_id(user_id, {"password": new_password})
+
+
+# ── Session operations ───────────────────────────────────────────────────────
 
 SESSION_TTL = 30 * 24 * 60 * 60  # 30 days
 
 
-def create_session(user_id: int) -> str:
+def create_session(user_id: str) -> str:
     token = secrets.token_urlsafe(48)
     now = int(time.time())
-    with conn() as c:
-        c.execute(
-            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token, user_id, now, now + SESSION_TTL),
-        )
+    client = _get_client()
+    client.table("sessions").insert({
+        "token": token,
+        "user_id": user_id,
+        "created_at": now,
+        "expires_at": now + SESSION_TTL,
+    }).execute()
     return token
 
 
-def get_session(token: str) -> Optional[sqlite3.Row]:
+def get_session(token: str) -> Optional[Row]:
     if not token:
         return None
-    with conn() as c:
-        row = c.execute(
-            "SELECT s.*, u.username, u.email, u.is_admin FROM sessions s "
-            "JOIN users u ON u.id = s.user_id "
-            "WHERE s.token = ? AND s.expires_at > ?",
-            (token, int(time.time())),
-        ).fetchone()
-    return row
+    client = _get_client()
+    now = int(time.time())
+    # Join sessions with profiles
+    result = client.table("sessions").select(
+        "*, profiles!inner(username, email, is_admin)"
+    ).eq("token", token).gt("expires_at", now).limit(1).execute()
+    if not result.data:
+        return None
+    row = result.data[0]
+    profile = row.get("profiles", {})
+    return _row({
+        "token": row["token"],
+        "user_id": row["user_id"],
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+        "username": profile.get("username", ""),
+        "email": profile.get("email", ""),
+        "is_admin": profile.get("is_admin", 0),
+    })
 
 
 def delete_session(token: str) -> None:
-    with conn() as c:
-        c.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    client = _get_client()
+    client.table("sessions").delete().eq("token", token).execute()
+
+
+def delete_user_sessions(user_id: str) -> None:
+    """Delete all sessions for a user (used on password reset, suspension)."""
+    client = _get_client()
+    client.table("sessions").delete().eq("user_id", user_id).execute()
 
 
 def purge_expired_sessions() -> int:
-    with conn() as c:
-        cur = c.execute("DELETE FROM sessions WHERE expires_at <= ?", (int(time.time()),))
-        return cur.rowcount
-
-
-# ── Subscription operations ───────────────────────────────────────────────────
-
-
-def list_subscriptions(user_id: int) -> list[sqlite3.Row]:
-    with conn() as c:
-        return c.execute(
-            "SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)
-        ).fetchall()
-
-
-def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
+    client = _get_client()
     now = int(time.time())
-    with conn() as c:
-        # Admins bypass subscription checks for all dashboards.
-        admin_row = c.execute(
-            "SELECT is_admin FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-        if admin_row and admin_row[0]:
-            return True
-        row = c.execute(
-            "SELECT id FROM subscriptions "
-            "WHERE user_id = ? AND dashboard_key = ? AND status = 'active' "
-            "AND (expires_at IS NULL OR expires_at > ?)",
-            (user_id, dashboard_key, now),
-        ).fetchone()
-    return row is not None
+    result = client.table("sessions").delete().lte("expires_at", now).execute()
+    return len(result.data) if result.data else 0
+
+
+# ── Subscription operations ─────────────────────────────────────────────────
+
+
+def list_subscriptions(user_id: str) -> list[Row]:
+    client = _get_client()
+    result = client.table("subscriptions").select("*").eq("user_id", user_id).execute()
+    return _rows(result.data)
+
+
+def has_active_subscription(user_id: str, dashboard_key: str) -> bool:
+    now = int(time.time())
+    client = _get_client()
+
+    # Admins bypass subscription checks
+    profile = client.table("profiles").select("is_admin").eq("id", user_id).limit(1).execute()
+    if profile.data and profile.data[0].get("is_admin"):
+        return True
+
+    result = client.table("subscriptions").select("id, expires_at").eq(
+        "user_id", user_id
+    ).eq("dashboard_key", dashboard_key).eq("status", "active").limit(1).execute()
+
+    if not result.data:
+        return False
+
+    row = result.data[0]
+    expires_at = row.get("expires_at")
+    if expires_at is not None and expires_at <= now:
+        return False
+    return True
 
 
 def upsert_subscription(
-    user_id: int,
+    user_id: str,
     dashboard_key: str,
     plan: str,
     duration_days: Optional[int] = None,
@@ -282,34 +308,27 @@ def upsert_subscription(
 ) -> None:
     now = int(time.time())
     expires_at = now + duration_days * 86400 if duration_days else None
-    with conn() as c:
-        c.execute(
-            """
-            INSERT INTO subscriptions
-                (user_id, dashboard_key, plan, status, started_at, expires_at, stripe_sub_id, source)
-            VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
-            ON CONFLICT(user_id, dashboard_key) DO UPDATE SET
-                plan        = excluded.plan,
-                status      = 'active',
-                started_at  = excluded.started_at,
-                expires_at  = excluded.expires_at,
-                stripe_sub_id = excluded.stripe_sub_id,
-                source      = excluded.source
-            """,
-            (user_id, dashboard_key, plan, now, expires_at, stripe_sub_id, source),
-        )
+    client = _get_client()
+    client.table("subscriptions").upsert({
+        "user_id": user_id,
+        "dashboard_key": dashboard_key,
+        "plan": plan,
+        "status": "active",
+        "started_at": now,
+        "expires_at": expires_at,
+        "stripe_sub_id": stripe_sub_id,
+        "source": source,
+    }, on_conflict="user_id,dashboard_key").execute()
 
 
-def cancel_subscription(user_id: int, dashboard_key: str) -> None:
-    with conn() as c:
-        c.execute(
-            "UPDATE subscriptions SET status = 'cancelled' "
-            "WHERE user_id = ? AND dashboard_key = ?",
-            (user_id, dashboard_key),
-        )
+def cancel_subscription(user_id: str, dashboard_key: str) -> None:
+    client = _get_client()
+    client.table("subscriptions").update(
+        {"status": "cancelled"}
+    ).eq("user_id", user_id).eq("dashboard_key", dashboard_key).execute()
 
 
-# ── Invite token operations ──────────────────────────────────────────────────
+# ── Invite token operations ─────────────────────────────────────────────────
 
 
 def generate_invite_token() -> str:
@@ -320,140 +339,209 @@ def generate_invite_token() -> str:
 def create_invite_token(note: str = "", target_email: str = "") -> str:
     """Create a new unclaimed invite token. Returns the token string."""
     token = generate_invite_token()
-    with conn() as c:
-        c.execute(
-            "INSERT INTO invite_tokens (token, status, note, target_email, created_at) VALUES (?, 'unclaimed', ?, ?, ?)",
-            (token, note, target_email.strip() or None, int(time.time())),
-        )
+    client = _get_client()
+    client.table("invite_tokens").insert({
+        "token": token,
+        "status": "unclaimed",
+        "note": note,
+        "target_email": target_email.strip() or None,
+        "created_at": int(time.time()),
+    }).execute()
     return token
 
 
-def get_invite_token(token: str) -> Optional[sqlite3.Row]:
+def get_invite_token(token: str) -> Optional[Row]:
     token = token.strip()
-    with conn() as c:
-        return c.execute("SELECT * FROM invite_tokens WHERE token = ?", (token,)).fetchone()
+    client = _get_client()
+    result = client.table("invite_tokens").select("*").eq("token", token).limit(1).execute()
+    if result.data:
+        return _row(result.data[0])
+    return None
 
 
-def claim_invite_token(token_str: str, user_id: int, email: str) -> bool:
-    """Atomically claim a token. Returns True if claimed, False if already claimed (race condition)."""
+def claim_invite_token(token_str: str, user_id: str, email: str) -> bool:
+    """Atomically claim a token. Returns True if claimed, False if already claimed."""
     token_str = token_str.strip()
-    with conn() as c:
-        # Atomic: only update if still unclaimed (prevents race condition)
-        cur = c.execute(
-            "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, "
-            "claimed_by_email = ?, claimed_at = ? WHERE token = ? AND status = 'unclaimed'",
-            (user_id, email, int(time.time()), token_str),
-        )
-        if cur.rowcount == 0:
-            return False  # Token was already claimed by another request
-        c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
-                   (token_str, user_id))
-        return True
+    client = _get_client()
+
+    # Only update if still unclaimed (atomic check)
+    result = client.table("invite_tokens").update({
+        "status": "claimed",
+        "claimed_by_user_id": user_id,
+        "claimed_by_email": email,
+        "claimed_at": int(time.time()),
+    }).eq("token", token_str).eq("status", "unclaimed").execute()
+
+    if not result.data:
+        return False
+
+    # Link token to user profile
+    token_row = client.table("invite_tokens").select("id").eq("token", token_str).limit(1).execute()
+    if token_row.data:
+        client.table("profiles").update({
+            "invite_token_id": token_row.data[0]["id"]
+        }).eq("id", user_id).execute()
+
+    return True
 
 
 def revoke_invite_token(token_id: int) -> None:
-    with conn() as c:
-        c.execute("UPDATE invite_tokens SET status = 'revoked' WHERE id = ? AND status = 'unclaimed'", (token_id,))
+    client = _get_client()
+    client.table("invite_tokens").update(
+        {"status": "revoked"}
+    ).eq("id", token_id).eq("status", "unclaimed").execute()
 
 
-def list_invite_tokens() -> list[sqlite3.Row]:
-    with conn() as c:
-        return c.execute("SELECT * FROM invite_tokens ORDER BY created_at DESC").fetchall()
+def list_invite_tokens() -> list[Row]:
+    client = _get_client()
+    result = client.table("invite_tokens").select("*").order("created_at", desc=True).execute()
+    return _rows(result.data)
 
 
-# ── User management (admin) ─────────────────────────────────────────────────
+# ── User management (admin) ────────────────────────────────────────────────
 
 
-def list_all_users() -> list[sqlite3.Row]:
-    with conn() as c:
-        return c.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+def list_all_users() -> list[Row]:
+    client = _get_client()
+    result = client.table("profiles").select("*").order("created_at").execute()
+    return _rows(result.data)
 
 
-def set_user_role(user_id: int, level: int) -> None:
+def set_user_role(user_id: str, level: int) -> None:
     """Set user role: 0=user, 1=admin, 2=super_admin."""
-    with conn() as c:
-        c.execute("UPDATE users SET is_admin = ? WHERE id = ?", (level, user_id))
+    client = _get_client()
+    client.table("profiles").update({"is_admin": level}).eq("id", user_id).execute()
 
 
-def set_user_admin(user_id: int, is_admin: bool) -> None:
+def set_user_admin(user_id: str, is_admin: bool) -> None:
     """Legacy helper — promotes to admin (1) or demotes to user (0)."""
     set_user_role(user_id, 1 if is_admin else 0)
 
 
-def set_user_suspended(user_id: int, suspended: bool) -> None:
-    with conn() as c:
-        c.execute("UPDATE users SET suspended = ? WHERE id = ?", (1 if suspended else 0, user_id))
-        if suspended:
-            # Kill all sessions for this user
-            c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+def set_user_suspended(user_id: str, suspended: bool) -> None:
+    client = _get_client()
+    client.table("profiles").update(
+        {"suspended": 1 if suspended else 0}
+    ).eq("id", user_id).execute()
+    if suspended:
+        delete_user_sessions(user_id)
 
 
-def list_all_subscriptions() -> list[sqlite3.Row]:
-    with conn() as c:
-        return c.execute(
-            "SELECT s.*, u.email, u.username FROM subscriptions s "
-            "JOIN users u ON u.id = s.user_id "
-            "ORDER BY s.started_at DESC"
-        ).fetchall()
+def update_user_email(user_id: str, new_email: str) -> None:
+    """Update user email in both Supabase Auth and profiles."""
+    client = _get_client()
+    client.auth.admin.update_user_by_id(user_id, {"email": new_email})
+    client.table("profiles").update({"email": new_email}).eq("id", user_id).execute()
+
+
+def list_all_subscriptions() -> list[Row]:
+    client = _get_client()
+    result = client.table("subscriptions").select(
+        "*, profiles!inner(email, username)"
+    ).order("started_at", desc=True).execute()
+    rows = []
+    for r in result.data:
+        profile = r.pop("profiles", {})
+        r["email"] = profile.get("email", "")
+        r["username"] = profile.get("username", "")
+        rows.append(Row(r))
+    return rows
 
 
 def get_revenue_stats() -> dict:
     """Return subscription counts and breakdown by dashboard and plan."""
     now = int(time.time())
-    with conn() as c:
-        total = c.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
-        active = c.execute(
-            "SELECT COUNT(*) FROM subscriptions WHERE status = 'active' "
-            "AND (expires_at IS NULL OR expires_at > ?)", (now,)
-        ).fetchone()[0]
-        cancelled = c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'cancelled'").fetchone()[0]
-        expired = c.execute(
-            "SELECT COUNT(*) FROM subscriptions WHERE status = 'active' "
-            "AND expires_at IS NOT NULL AND expires_at <= ?", (now,)
-        ).fetchone()[0]
-        # Per-dashboard active counts
-        per_dashboard = c.execute(
-            "SELECT dashboard_key, plan, COUNT(*) as cnt FROM subscriptions "
-            "WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?) "
-            "GROUP BY dashboard_key, plan ORDER BY dashboard_key", (now,)
-        ).fetchall()
-        return {
-            "total": total,
-            "active": active,
-            "cancelled": cancelled,
-            "expired": expired,
-            "per_dashboard": per_dashboard,
-        }
+    client = _get_client()
+
+    all_subs = client.table("subscriptions").select("*").execute().data
+
+    total = len(all_subs)
+    active = sum(
+        1 for s in all_subs
+        if s["status"] == "active" and (s["expires_at"] is None or s["expires_at"] > now)
+    )
+    cancelled = sum(1 for s in all_subs if s["status"] == "cancelled")
+    expired = sum(
+        1 for s in all_subs
+        if s["status"] == "active" and s["expires_at"] is not None and s["expires_at"] <= now
+    )
+
+    # Per-dashboard active counts
+    per_dashboard_map: dict[tuple[str, str], int] = {}
+    for s in all_subs:
+        if s["status"] == "active" and (s["expires_at"] is None or s["expires_at"] > now):
+            key = (s["dashboard_key"], s["plan"])
+            per_dashboard_map[key] = per_dashboard_map.get(key, 0) + 1
+
+    per_dashboard = [
+        Row({"dashboard_key": k[0], "plan": k[1], "cnt": v})
+        for k, v in sorted(per_dashboard_map.items())
+    ]
+
+    return {
+        "total": total,
+        "active": active,
+        "cancelled": cancelled,
+        "expired": expired,
+        "per_dashboard": per_dashboard,
+    }
 
 
 def create_enquiry(email: str, job_title: str, message: str) -> int:
-    with conn() as c:
-        cur = c.execute(
-            "INSERT INTO enquiries (email, job_title, message, created_at) VALUES (?, ?, ?, ?)",
-            (email.strip(), job_title.strip(), message.strip(), int(time.time())),
-        )
-        return cur.lastrowid
+    client = _get_client()
+    result = client.table("enquiries").insert({
+        "email": email.strip(),
+        "job_title": job_title.strip(),
+        "message": message.strip(),
+        "created_at": int(time.time()),
+    }).execute()
+    return result.data[0]["id"] if result.data else 0
 
 
-def list_enquiries() -> list[sqlite3.Row]:
-    with conn() as c:
-        return c.execute("SELECT * FROM enquiries ORDER BY created_at DESC").fetchall()
+def list_enquiries() -> list[Row]:
+    client = _get_client()
+    result = client.table("enquiries").select("*").order("created_at", desc=True).execute()
+    return _rows(result.data)
 
 
-def get_enquiry_by_id(enquiry_id: int) -> Optional[sqlite3.Row]:
-    with conn() as c:
-        return c.execute("SELECT * FROM enquiries WHERE id = ?", (enquiry_id,)).fetchone()
+def get_enquiry_by_id(enquiry_id: int) -> Optional[Row]:
+    client = _get_client()
+    result = client.table("enquiries").select("*").eq("id", enquiry_id).limit(1).execute()
+    if result.data:
+        return _row(result.data[0])
+    return None
 
 
 def mark_enquiry_read(enquiry_id: int) -> None:
-    with conn() as c:
-        c.execute("UPDATE enquiries SET read = 1 WHERE id = ?", (enquiry_id,))
+    client = _get_client()
+    client.table("enquiries").update({"read": 1}).eq("id", enquiry_id).execute()
 
 
 def count_unread_enquiries() -> int:
-    with conn() as c:
-        row = c.execute("SELECT COUNT(*) FROM enquiries WHERE read = 0").fetchone()
-        return row[0] if row else 0
+    client = _get_client()
+    result = client.table("enquiries").select("id", count="exact").eq("read", 0).execute()
+    return result.count if result.count is not None else 0
+
+
+def get_stripe_customer_id(user_id: str) -> Optional[str]:
+    client = _get_client()
+    result = client.table("profiles").select("stripe_customer_id").eq("id", user_id).limit(1).execute()
+    if result.data:
+        return result.data[0].get("stripe_customer_id")
+    return None
+
+
+def set_stripe_customer_id(user_id: str, customer_id: str) -> None:
+    client = _get_client()
+    client.table("profiles").update({"stripe_customer_id": customer_id}).eq("id", user_id).execute()
+
+
+def cancel_subscription_by_stripe_id(stripe_sub_id: str) -> None:
+    """Cancel all subscriptions with the given Stripe subscription ID."""
+    client = _get_client()
+    client.table("subscriptions").update(
+        {"status": "cancelled"}
+    ).eq("stripe_sub_id", stripe_sub_id).execute()
 
 
 def mask_email(email: str) -> str:
@@ -466,49 +554,50 @@ def mask_email(email: str) -> str:
     return f"{local[:2]}***@{domain}"
 
 
-# ── Password reset operations ────────────────────────────────────────────────
+# ── Password reset operations ──────────────────────────────────────────────
 
 RESET_TTL = 60 * 60  # 1 hour
 
 
-def create_password_reset(user_id: int) -> str:
+def create_password_reset(user_id: str) -> str:
     """Create a password reset token (expires in 1 hour). Returns the token."""
     token = secrets.token_urlsafe(36)
     now = int(time.time())
-    with conn() as c:
-        c.execute(
-            "INSERT INTO password_resets (user_id, token, created_at, expires_at) "
-            "VALUES (?, ?, ?, ?)",
-            (user_id, token, now, now + RESET_TTL),
-        )
+    client = _get_client()
+    client.table("password_resets").insert({
+        "user_id": user_id,
+        "token": token,
+        "created_at": now,
+        "expires_at": now + RESET_TTL,
+    }).execute()
     return token
 
 
-def get_password_reset(token: str) -> Optional[sqlite3.Row]:
+def get_password_reset(token: str) -> Optional[Row]:
     """Get a valid (not expired, not used) password reset record."""
     if not token:
         return None
-    with conn() as c:
-        return c.execute(
-            "SELECT * FROM password_resets "
-            "WHERE token = ? AND used = 0 AND expires_at > ?",
-            (token, int(time.time())),
-        ).fetchone()
+    now = int(time.time())
+    client = _get_client()
+    result = client.table("password_resets").select("*").eq(
+        "token", token
+    ).eq("used", 0).gt("expires_at", now).limit(1).execute()
+    if result.data:
+        return _row(result.data[0])
+    return None
 
 
 def use_password_reset(token: str) -> None:
     """Mark a reset token as used."""
-    with conn() as c:
-        c.execute(
-            "UPDATE password_resets SET used = 1 WHERE token = ?", (token,)
-        )
+    client = _get_client()
+    client.table("password_resets").update({"used": 1}).eq("token", token).execute()
 
 
 def purge_expired_resets() -> int:
     """Delete expired or used reset tokens."""
-    with conn() as c:
-        cur = c.execute(
-            "DELETE FROM password_resets WHERE expires_at <= ? OR used = 1",
-            (int(time.time()),),
-        )
-        return cur.rowcount
+    now = int(time.time())
+    client = _get_client()
+    result = client.table("password_resets").delete().or_(
+        f"expires_at.lte.{now},used.eq.1"
+    ).execute()
+    return len(result.data) if result.data else 0

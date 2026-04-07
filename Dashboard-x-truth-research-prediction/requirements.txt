@@ -8,6 +8,7 @@ tweepy==4.14.0
 Mastodon.py==1.8.1
 pyyaml==6.0.2
 python-dotenv==1.0.1
+cryptography>=42.0.0
 python-multipart==0.0.9
 aiosqlite==0.20.0
 greenlet>=3.0.0

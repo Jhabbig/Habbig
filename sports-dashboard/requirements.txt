@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+requests
+python-dotenv
+rapidfuzz
+supabase>=2.0
