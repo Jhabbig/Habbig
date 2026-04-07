@@ -77,11 +77,11 @@ def fetch_markets(limit=200, status="open"):
         try:
             yes_price = m.get("yes_ask", 0) or m.get("last_price", 0) or 0
             # Normalize to cents: yes_ask is 0-100 cents, last_price can be 0-1 decimal
-            if 0 < yes_price <= 1:
+            if 0 < yes_price < 1:
                 yes_price = yes_price * 100  # convert decimal to cents
 
             no_price = m.get("no_ask", 0)
-            if no_price and 0 < no_price <= 1:
+            if no_price and 0 < no_price < 1:
                 no_price = no_price * 100  # convert decimal to cents
             if not no_price:
                 no_price = (100 - yes_price) if yes_price else 0
@@ -127,7 +127,7 @@ def _normalize_kalshi_price(raw_price):
     """
     if raw_price is None or raw_price == 0:
         return 0.0
-    if 0 < raw_price <= 1:
+    if 0 < raw_price < 1:
         return round(raw_price, 3)  # already decimal
     return round(raw_price / 100, 3)  # cents to decimal
 

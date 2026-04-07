@@ -71,7 +71,8 @@ def build_html():
 
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
     drawdown = ((peak - balance) / peak * 100) if peak > 0 else 0
-    pnl_pct = (pnl / 10000) * 100
+    starting_balance = state.get("starting_balance", 10000)
+    pnl_pct = (pnl / starting_balance) * 100 if starting_balance else 0
 
     # Determine bot status from logs
     bot_status = "Offline"

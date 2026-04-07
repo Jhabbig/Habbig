@@ -10,11 +10,12 @@ Strategy: REACTIVE, not predictive.
   3. Exit based on time targets, trailing stops, and take-profit
 
 Safety:
-  - Hard daily loss limit (3%)
-  - Per-trade stop loss (1.5% of position)
-  - Max drawdown circuit breaker (8%)
-  - Max position size (5% of balance, hard cap 10%)
-  - Max 3 simultaneous positions
+  - Daily loss limit (currently disabled — set MAX_DAILY_LOSS_PCT < 1.0 to enable)
+  - Per-trade stop loss (0.4%)
+  - Max drawdown circuit breaker (currently disabled — set MAX_DRAWDOWN_PCT < 1.0 to enable)
+  - Max position size (15% of balance, hard cap 25%)
+  - Max 5 simultaneous positions
+  - Per-trade balance check (prevents negative balance)
   - Cooldown after consecutive losses
   - No trading in VOLATILE conditions
 
@@ -451,6 +452,8 @@ class TradingBot:
 
         amount = self.size_position(score)
         if amount < MIN_TRADE_SIZE:
+            return
+        if self.state.balance < amount:
             return
 
         # Set trailing stop based on direction

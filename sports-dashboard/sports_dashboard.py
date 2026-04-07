@@ -1608,13 +1608,13 @@ async def data_updater():
 
             # Always fetch Polymarket (used for both sports and esports)
             import time as _time
-            cache_age = _time.time() - _poly_cache_time.get(sport, 0)
-            if cache_age > 120 or sport not in _poly_cache:
+            cache_age = _time.time() - _poly_cache_time.get("_global", 0)
+            if cache_age > 120 or "_global" not in _poly_cache:
                 poly_raw = await asyncio.to_thread(fetch_polymarket_sports)
-                _poly_cache[sport] = poly_raw
-                _poly_cache_time[sport] = _time.time()
+                _poly_cache["_global"] = poly_raw
+                _poly_cache_time["_global"] = _time.time()
             else:
-                poly_raw = _poly_cache[sport]
+                poly_raw = _poly_cache["_global"]
 
             if is_esport:
                 # Esports: Polymarket-only (no bookmaker odds API)

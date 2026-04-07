@@ -1565,7 +1565,7 @@ def generate_dashboard(all_results, suspicious_data=None):
             <div class="card">
               <div class="label">Ended +/- <i class="info-tip" data-tip="How many 5-min windows ended with a higher price vs lower price. Shows the overall bullish/bearish bias.">?</i></div>
               <div class="value">{s["windows_ended_positive"]:,} / {s["windows_ended_negative"]:,}</div>
-              <div class="detail">{s["windows_ended_positive"]/s["total_windows"]*100:.1f}% positive</div>
+              <div class="detail">{s["windows_ended_positive"]/max(s["total_windows"],1)*100:.1f}% positive</div>
             </div>
             <div class="card">
               <div class="label">Avg RSI / Crossings <i class="info-tip" data-tip="RSI: momentum indicator (>70 overbought, <30 oversold). Crossings: how many times price crosses the opening price per window (more = choppier).">?</i></div>

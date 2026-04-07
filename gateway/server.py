@@ -803,6 +803,13 @@ def _render_landing() -> HTMLResponse:
     )
 
 
+@app.get("/dummy", response_class=HTMLResponse)
+async def dummy_page():
+    """Staging preview — no auth required."""
+    path = STATIC_DIR / "dummy" / "index.html"
+    return HTMLResponse(path.read_text())
+
+
 @app.get("/gate", response_class=HTMLResponse)
 async def gate_page(request: Request):
     sub = get_subdomain(request)
@@ -1308,7 +1315,7 @@ async def billing_action(request: Request, action: str = Form(...)):
             if STRIPE_SECRET_KEY:
                 subs = db.list_subscriptions(user["user_id"])
                 for s in subs:
-                    if s["dashboard_key"] == key and s.get("stripe_sub_id"):
+                    if s["dashboard_key"] == key and s["stripe_sub_id"]:
                         try:
                             stripe.Subscription.cancel(s["stripe_sub_id"])
                         except Exception:
@@ -1389,6 +1396,9 @@ async def stripe_webhook(request: Request):
         except stripe.error.SignatureVerificationError:
             raise HTTPException(status_code=400, detail="Invalid signature")
     else:
+        if IS_PRODUCTION:
+            log.error("Stripe webhook received but STRIPE_WEBHOOK_SECRET is not set — rejecting")
+            raise HTTPException(status_code=500, detail="Webhook secret not configured")
         # No webhook secret configured — parse payload directly (dev only)
         event = json.loads(payload)
 
@@ -1571,12 +1581,14 @@ def _profile_context(user: dict, banner: str = "") -> dict:
     connected = '<span class="setup-status on">Connected</span>'
     not_connected = '<span class="setup-status off">Not connected</span>'
     poly_delete = (
-        '<a href="/profile/trading/polymarket/delete" onclick="return confirm(\'Disconnect Polymarket?\')" '
-        'class="setup-btn-remove">Disconnect</a>'
+        '<form method="post" action="/profile/trading/polymarket/delete" style="display:inline" '
+        'onsubmit="return confirm(\'Disconnect Polymarket?\')"><button type="submit" '
+        'class="setup-btn-remove">Disconnect</button></form>'
     ) if cred_status["polymarket"] else ""
     kalshi_delete = (
-        '<a href="/profile/trading/kalshi/delete" onclick="return confirm(\'Disconnect Kalshi?\')" '
-        'class="setup-btn-remove">Disconnect</a>'
+        '<form method="post" action="/profile/trading/kalshi/delete" style="display:inline" '
+        'onsubmit="return confirm(\'Disconnect Kalshi?\')"><button type="submit" '
+        'class="setup-btn-remove">Disconnect</button></form>'
     ) if cred_status["kalshi"] else ""
 
     # Cards that aren't connected start open so the user sees the setup steps
@@ -1641,9 +1653,15 @@ async def profile_change_password(request: Request, current_password: str = Form
         return render_page("profile", **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character.")))
 
     db.update_user_password(user["user_id"], new_password)
-
-    log.info("User %s changed their password", user.get("username", user["email"]))
-    return render_page("profile", **_profile_context(user, ok_banner("Password changed successfully.")))
+    # Invalidate all other sessions so a compromised session can't persist
+    db.delete_user_sessions(user["user_id"])
+    flush_session_cache()
+    # Re-create a session for the current user so they stay logged in
+    new_token = db.create_session(user["user_id"])
+    log.info("User %s changed their password, all sessions invalidated", user.get("username", user["email"]))
+    resp = render_page("profile", **_profile_context(user, ok_banner("Password changed successfully. All other sessions have been signed out.")))
+    set_session_cookie(resp, new_token, request)
+    return resp
 
 
 # ── Trading credential management (profile forms) ────────────────────────
@@ -1698,7 +1716,7 @@ async def profile_save_trading_creds(
     return render_page("profile", **ctx)
 
 
-@app.get("/profile/trading/{platform}/delete")
+@app.post("/profile/trading/{platform}/delete")
 async def profile_delete_trading_creds(request: Request, platform: str):
     sub = get_subdomain(request)
     if sub:
@@ -2232,7 +2250,11 @@ def _build_revenue_content() -> str:
         key = row["dashboard_key"]
         if key not in dashboard_rows:
             dashboard_rows[key] = {"monthly": 0, "annual": 0}
-        dashboard_rows[key][row["plan"]] = row["cnt"]
+        plan = row["plan"]
+        if "monthly" in plan:
+            dashboard_rows[key]["monthly"] += row["cnt"]
+        elif "annual" in plan:
+            dashboard_rows[key]["annual"] += row["cnt"]
 
     if dashboard_rows:
         out += (
@@ -2499,9 +2521,15 @@ async def admin_bulk_users(request: Request):
     admin = _require_admin_user(request)
     form = await request.form()
     action = form.get("bulk_action", "")
-    user_ids = [uid for uid in form.getlist("user_ids") if uid]
-    if not user_ids or not action:
+    user_ids_raw = [uid for uid in form.getlist("user_ids") if uid]
+    if not user_ids_raw or not action:
         return RedirectResponse("/admin", status_code=302)
+    user_ids = []
+    for raw in user_ids_raw:
+        try:
+            user_ids.append(int(raw))
+        except (ValueError, TypeError):
+            continue
     for uid in user_ids:
         if not _can_manage_user(admin, uid):
             continue
@@ -2668,14 +2696,20 @@ async def trading_place_order(request: Request):
     if _is_rate_limited(ip, "trade", _RATE_MAX_TRADE):
         return JSONResponse({"error": "Too many trade requests. Slow down."}, status_code=429)
 
-    body = await request.json()
-    platform = body.get("platform", "").lower()
-    slug = body.get("slug", "").strip()
-    token_id = body.get("token_id", "").strip()
-    side = body.get("side", "").lower()
-    action = body.get("action", "buy").lower()
-    amount = float(body.get("amount", 0))
-    price = float(body.get("price", 0))
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    platform = str(body.get("platform", "")).lower()
+    slug = str(body.get("slug", "")).strip()
+    token_id = str(body.get("token_id", "")).strip()
+    side = str(body.get("side", "")).lower()
+    action = str(body.get("action", "buy")).lower()
+    try:
+        amount = float(body.get("amount", 0))
+        price = float(body.get("price", 0))
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "Amount and price must be numbers"}, status_code=400)
     question = body.get("question", "")
 
     if platform not in ("polymarket", "kalshi"):

@@ -358,9 +358,20 @@ def save_signals(signals: list[dict]):
             existing = []
 
     existing.extend(signals)
+    existing = existing[-500:]  # cap to prevent unbounded growth
 
-    with open(SIGNALS_FILE, "w") as f:
-        json.dump(existing, f, indent=2)
+    import tempfile
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(SIGNALS_FILE) or ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(existing, f, indent=2)
+        os.replace(tmp, SIGNALS_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
     if signals:
         console.print(f"[dim]Saved {len(signals)} signals to {SIGNALS_FILE}[/dim]")
