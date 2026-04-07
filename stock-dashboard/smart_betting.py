@@ -515,7 +515,7 @@ class RiskManager:
 # ---------------------------------------------------------------------------
 
 def evaluate_bet_enhanced(ticker, prediction, confidence, market_info, state,
-                          signals, recent_trades):
+                          signals, recent_trades, perf_tracker=None):
     """
     Master function that uses all components to decide whether and how much to bet.
 
@@ -580,8 +580,8 @@ def evaluate_bet_enhanced(ticker, prediction, confidence, market_info, state,
             result["reason"] = f"Edge too small ({edge:.3f} < threshold {threshold:.3f})"
             return result
 
-        # 3. Performance tracker - skip bad tickers
-        tracker = PerformanceTracker()
+        # 3. Performance tracker - skip bad tickers (reuse caller's instance if provided)
+        tracker = perf_tracker or PerformanceTracker()
         if tracker.should_skip_ticker(ticker):
             result["reason"] = f"Ticker {ticker} has poor historical performance"
             return result

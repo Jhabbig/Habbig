@@ -942,7 +942,7 @@ def run_cycle(state):
                 }
                 bet_result = evaluate_bet_enhanced(
                     ticker, prediction, confidence, market_info, state_dict,
-                    signals, state.trades[-50:])
+                    signals, state.trades[-50:], perf_tracker=perf_tracker)
                 if bet_result and bet_result.get("should_bet"):
                     conc = bet_result.get("concordance", {})
                     conc_score = conc.get("concordance_score", 0) if isinstance(conc, dict) else conc
