@@ -374,8 +374,13 @@ def compute_mean_reversion_signal(closes, period=20):
     return (closes[-1] - sma) / std
 
 
-def day_of_week_bias(closes):
-    """Historical day-of-week return tendency using actual calendar days."""
+def day_of_week_bias(closes, dates=None):
+    """Historical day-of-week return tendency using actual calendar days.
+
+    If *dates* (a DatetimeIndex from yfinance) is provided, use the real
+    weekdays.  Otherwise fall back to backward estimation (less accurate
+    around market holidays).
+    """
     from zoneinfo import ZoneInfo
     _et = ZoneInfo("US/Eastern")
     today_dow = min(datetime.now(_et).weekday(), 4)  # Clamp weekends to Friday
@@ -386,22 +391,29 @@ def day_of_week_bias(closes):
     if len(returns) < 20:
         return 0.0
 
-    # Map each return to its actual trading day weekday by counting
-    # backwards from today. Each return[i] is for trading day (n - len + i).
-    # Trading days are Mon-Fri, so walk backwards to assign weekdays.
-    dow_returns = []
-    n = len(returns)
-    current_dow = today_dow
-    # returns[-1] is yesterday's return (day before today)
-    day_map = [0] * n
-    d = current_dow
-    for i in range(n - 1, -1, -1):
-        # Go back one trading day
-        d = (d - 1) % 5  # 0=Mon ... 4=Fri
-        day_map[i] = d
-    for i, dow in enumerate(day_map):
-        if dow == today_dow:
-            dow_returns.append(returns[i])
+    # Use actual dates when available (avoids holiday mis-mapping)
+    if dates is not None and len(dates) >= len(returns) + 1:
+        # returns[i] corresponds to dates[i+1] (the day the return was realised)
+        dow_returns = []
+        for i, ret in enumerate(returns):
+            try:
+                dow = dates[i + 1].weekday()
+            except Exception:
+                continue
+            if dow == today_dow:
+                dow_returns.append(ret)
+    else:
+        # Fallback: estimate weekdays by walking backwards
+        dow_returns = []
+        n = len(returns)
+        day_map = [0] * n
+        d = today_dow
+        for i in range(n - 1, -1, -1):
+            d = (d - 1) % 5
+            day_map[i] = d
+        for i, dow in enumerate(day_map):
+            if dow == today_dow:
+                dow_returns.append(returns[i])
 
     if not dow_returns:
         return 0.0
@@ -553,7 +565,7 @@ def predict_direction(ticker, ticker_yf, spy_data=None):
         scores.append(("zscore_mild_low", 0.1, 0.8))
 
     # 8. Day-of-week bias
-    dow_bias = day_of_week_bias(closes)
+    dow_bias = day_of_week_bias(closes, dates=df.index)
     signals["dow_bias"] = round(dow_bias * 100, 3)
     if abs(dow_bias) > 0.001:
         scores.append(("dow_bias", np.sign(dow_bias) * 0.05, 0.5))
