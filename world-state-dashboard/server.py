@@ -6,7 +6,10 @@ import json
 import re
 import time
 import urllib.request
-import xml.etree.ElementTree as ET
+try:
+    from defusedxml.ElementTree import fromstring as _xml_fromstring
+except ImportError:
+    from xml.etree.ElementTree import fromstring as _xml_fromstring
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -63,7 +66,7 @@ def fetch_news():
             )
             with urllib.request.urlopen(req, timeout=6) as resp:
                 xml_data = resp.read()
-            root = ET.fromstring(xml_data)
+            root = _xml_fromstring(xml_data)
 
             # Handle both RSS 2.0 and RDF/Atom-ish feeds
             items = root.findall(".//item")
@@ -3537,6 +3540,341 @@ NUCLEAR_ARSENALS = [
 ]
 
 
+# ═══════════════ GEOPOLITICAL INDICES (per country) ═══════════════
+# Sources: Economist Intelligence Unit, Transparency Intl, RSF, UNDP, SIPRI, World Bank
+# Scores: democracy_index (0-10), corruption_cpi (0-100), press_freedom (0=best,100=worst),
+#         hdi (0-1), military_spend_pct (% of GDP), gdp_growth (%), fragile_state (0-120, high=worse)
+COUNTRY_INDICES = {
+    # ── Major powers ──
+    "US": {"democracy_index": 7.85, "corruption_cpi": 69, "press_freedom": 26.7, "hdi": 0.927, "military_spend_pct": 3.4, "gdp_growth": 2.5, "fragile_state": 38.2},
+    "CN": {"democracy_index": 1.94, "corruption_cpi": 42, "press_freedom": 83.5, "hdi": 0.788, "military_spend_pct": 1.7, "gdp_growth": 5.0, "fragile_state": 68.7},
+    "RU": {"democracy_index": 2.22, "corruption_cpi": 26, "press_freedom": 76.1, "hdi": 0.822, "military_spend_pct": 5.9, "gdp_growth": 3.6, "fragile_state": 72.5},
+    "GB": {"democracy_index": 8.54, "corruption_cpi": 71, "press_freedom": 23.1, "hdi": 0.929, "military_spend_pct": 2.3, "gdp_growth": 0.7, "fragile_state": 30.5},
+    "FR": {"democracy_index": 8.07, "corruption_cpi": 72, "press_freedom": 21.4, "hdi": 0.903, "military_spend_pct": 2.1, "gdp_growth": 1.1, "fragile_state": 30.2},
+    "DE": {"democracy_index": 8.80, "corruption_cpi": 78, "press_freedom": 17.2, "hdi": 0.942, "military_spend_pct": 1.6, "gdp_growth": -0.2, "fragile_state": 25.3},
+    "JP": {"democracy_index": 8.33, "corruption_cpi": 73, "press_freedom": 32.4, "hdi": 0.920, "military_spend_pct": 1.2, "gdp_growth": 1.9, "fragile_state": 28.0},
+    "IN": {"democracy_index": 7.18, "corruption_cpi": 39, "press_freedom": 53.6, "hdi": 0.644, "military_spend_pct": 2.4, "gdp_growth": 7.8, "fragile_state": 70.2},
+    # ── Europe ──
+    "IT": {"democracy_index": 7.69, "corruption_cpi": 56, "press_freedom": 26.4, "hdi": 0.895, "military_spend_pct": 1.5, "gdp_growth": 0.9, "fragile_state": 33.5},
+    "ES": {"democracy_index": 8.07, "corruption_cpi": 60, "press_freedom": 20.6, "hdi": 0.905, "military_spend_pct": 1.3, "gdp_growth": 2.5, "fragile_state": 30.0},
+    "PL": {"democracy_index": 7.04, "corruption_cpi": 54, "press_freedom": 28.4, "hdi": 0.876, "military_spend_pct": 4.0, "gdp_growth": 3.5, "fragile_state": 32.5},
+    "NL": {"democracy_index": 9.00, "corruption_cpi": 79, "press_freedom": 10.8, "hdi": 0.941, "military_spend_pct": 1.8, "gdp_growth": 0.6, "fragile_state": 22.0},
+    "SE": {"democracy_index": 9.39, "corruption_cpi": 83, "press_freedom": 11.2, "hdi": 0.947, "military_spend_pct": 2.2, "gdp_growth": -0.1, "fragile_state": 18.5},
+    "NO": {"democracy_index": 9.81, "corruption_cpi": 84, "press_freedom": 7.3, "hdi": 0.961, "military_spend_pct": 2.0, "gdp_growth": 0.5, "fragile_state": 17.0},
+    "DK": {"democracy_index": 9.28, "corruption_cpi": 90, "press_freedom": 8.6, "hdi": 0.948, "military_spend_pct": 2.4, "gdp_growth": 1.8, "fragile_state": 18.0},
+    "FI": {"democracy_index": 9.30, "corruption_cpi": 87, "press_freedom": 5.2, "hdi": 0.940, "military_spend_pct": 2.4, "gdp_growth": -1.0, "fragile_state": 16.5},
+    "CH": {"democracy_index": 9.14, "corruption_cpi": 82, "press_freedom": 12.0, "hdi": 0.962, "military_spend_pct": 0.8, "gdp_growth": 0.7, "fragile_state": 15.0},
+    "AT": {"democracy_index": 8.41, "corruption_cpi": 71, "press_freedom": 17.5, "hdi": 0.916, "military_spend_pct": 0.8, "gdp_growth": -0.7, "fragile_state": 22.5},
+    "BE": {"democracy_index": 7.64, "corruption_cpi": 73, "press_freedom": 14.8, "hdi": 0.931, "military_spend_pct": 1.3, "gdp_growth": 1.3, "fragile_state": 25.0},
+    "IE": {"democracy_index": 9.19, "corruption_cpi": 77, "press_freedom": 13.0, "hdi": 0.945, "military_spend_pct": 0.2, "gdp_growth": -3.2, "fragile_state": 19.5},
+    "PT": {"democracy_index": 8.03, "corruption_cpi": 61, "press_freedom": 14.6, "hdi": 0.866, "military_spend_pct": 1.5, "gdp_growth": 2.3, "fragile_state": 28.0},
+    "GR": {"democracy_index": 7.97, "corruption_cpi": 49, "press_freedom": 36.3, "hdi": 0.887, "military_spend_pct": 3.0, "gdp_growth": 2.0, "fragile_state": 38.5},
+    "CZ": {"democracy_index": 7.97, "corruption_cpi": 57, "press_freedom": 18.1, "hdi": 0.889, "military_spend_pct": 2.1, "gdp_growth": -0.4, "fragile_state": 28.0},
+    "HU": {"democracy_index": 6.64, "corruption_cpi": 42, "press_freedom": 37.8, "hdi": 0.849, "military_spend_pct": 2.4, "gdp_growth": -0.9, "fragile_state": 45.5},
+    "RO": {"democracy_index": 6.45, "corruption_cpi": 46, "press_freedom": 28.2, "hdi": 0.821, "military_spend_pct": 2.4, "gdp_growth": 2.1, "fragile_state": 42.0},
+    "UA": {"democracy_index": 5.42, "corruption_cpi": 36, "press_freedom": 40.6, "hdi": 0.773, "military_spend_pct": 37.0, "gdp_growth": 5.3, "fragile_state": 78.5},
+    "RS": {"democracy_index": 6.36, "corruption_cpi": 36, "press_freedom": 36.2, "hdi": 0.802, "military_spend_pct": 2.4, "gdp_growth": 2.5, "fragile_state": 55.0},
+    "BY": {"democracy_index": 2.41, "corruption_cpi": 39, "press_freedom": 79.2, "hdi": 0.808, "military_spend_pct": 1.3, "gdp_growth": 3.9, "fragile_state": 68.0},
+    # ── Americas ──
+    "CA": {"democracy_index": 9.22, "corruption_cpi": 76, "press_freedom": 15.2, "hdi": 0.935, "military_spend_pct": 1.4, "gdp_growth": 1.1, "fragile_state": 22.0},
+    "BR": {"democracy_index": 6.68, "corruption_cpi": 36, "press_freedom": 27.5, "hdi": 0.760, "military_spend_pct": 1.1, "gdp_growth": 2.9, "fragile_state": 56.0},
+    "MX": {"democracy_index": 5.87, "corruption_cpi": 31, "press_freedom": 56.4, "hdi": 0.781, "military_spend_pct": 0.6, "gdp_growth": 3.2, "fragile_state": 62.5},
+    "AR": {"democracy_index": 6.84, "corruption_cpi": 37, "press_freedom": 24.1, "hdi": 0.842, "military_spend_pct": 0.5, "gdp_growth": -1.6, "fragile_state": 44.0},
+    "CL": {"democracy_index": 8.22, "corruption_cpi": 66, "press_freedom": 17.8, "hdi": 0.855, "military_spend_pct": 2.0, "gdp_growth": 0.2, "fragile_state": 34.0},
+    "CO": {"democracy_index": 7.04, "corruption_cpi": 39, "press_freedom": 33.7, "hdi": 0.758, "military_spend_pct": 3.1, "gdp_growth": 0.6, "fragile_state": 62.0},
+    "VE": {"democracy_index": 2.28, "corruption_cpi": 13, "press_freedom": 55.2, "hdi": 0.691, "military_spend_pct": 0.5, "gdp_growth": 4.0, "fragile_state": 82.5},
+    "CU": {"democracy_index": 2.84, "corruption_cpi": 42, "press_freedom": 71.2, "hdi": 0.764, "military_spend_pct": 2.9, "gdp_growth": 1.8, "fragile_state": 55.0},
+    # ── Middle East ──
+    "IL": {"democracy_index": 7.84, "corruption_cpi": 62, "press_freedom": 32.4, "hdi": 0.919, "military_spend_pct": 5.3, "gdp_growth": 2.0, "fragile_state": 55.5},
+    "IR": {"democracy_index": 1.96, "corruption_cpi": 24, "press_freedom": 78.5, "hdi": 0.774, "military_spend_pct": 2.4, "gdp_growth": 5.4, "fragile_state": 75.5},
+    "SA": {"democracy_index": 2.08, "corruption_cpi": 52, "press_freedom": 67.2, "hdi": 0.875, "military_spend_pct": 7.1, "gdp_growth": -0.8, "fragile_state": 60.0},
+    "AE": {"democracy_index": 2.76, "corruption_cpi": 68, "press_freedom": 51.4, "hdi": 0.911, "military_spend_pct": 4.4, "gdp_growth": 3.1, "fragile_state": 40.0},
+    "TR": {"democracy_index": 4.35, "corruption_cpi": 34, "press_freedom": 54.7, "hdi": 0.838, "military_spend_pct": 1.6, "gdp_growth": 4.5, "fragile_state": 65.5},
+    "EG": {"democracy_index": 2.93, "corruption_cpi": 30, "press_freedom": 56.8, "hdi": 0.731, "military_spend_pct": 1.2, "gdp_growth": 3.8, "fragile_state": 72.0},
+    "IQ": {"democracy_index": 3.62, "corruption_cpi": 23, "press_freedom": 52.6, "hdi": 0.686, "military_spend_pct": 2.5, "gdp_growth": -2.3, "fragile_state": 85.5},
+    "SY": {"democracy_index": 1.43, "corruption_cpi": 13, "press_freedom": 68.4, "hdi": 0.577, "military_spend_pct": 2.0, "gdp_growth": 3.0, "fragile_state": 102.0},
+    "YE": {"democracy_index": 1.95, "corruption_cpi": 16, "press_freedom": 72.5, "hdi": 0.455, "military_spend_pct": 4.0, "gdp_growth": -2.0, "fragile_state": 108.5},
+    "PS": {"democracy_index": 3.86, "corruption_cpi": 24, "press_freedom": 45.2, "hdi": 0.716, "military_spend_pct": 0.0, "gdp_growth": -10.0, "fragile_state": 90.5},
+    # ── Asia ──
+    "KR": {"democracy_index": 8.09, "corruption_cpi": 63, "press_freedom": 28.5, "hdi": 0.929, "military_spend_pct": 2.8, "gdp_growth": 1.4, "fragile_state": 32.0},
+    "KP": {"democracy_index": 1.08, "corruption_cpi": 17, "press_freedom": 87.2, "hdi": 0.733, "military_spend_pct": 24.0, "gdp_growth": 1.0, "fragile_state": 88.5},
+    "TW": {"democracy_index": 8.99, "corruption_cpi": 67, "press_freedom": 14.8, "hdi": 0.926, "military_spend_pct": 2.5, "gdp_growth": 1.3, "fragile_state": 28.0},
+    "PK": {"democracy_index": 4.31, "corruption_cpi": 29, "press_freedom": 52.0, "hdi": 0.544, "military_spend_pct": 3.7, "gdp_growth": -0.2, "fragile_state": 90.0},
+    "BD": {"democracy_index": 5.99, "corruption_cpi": 24, "press_freedom": 53.6, "hdi": 0.670, "military_spend_pct": 1.3, "gdp_growth": 5.8, "fragile_state": 80.5},
+    "TH": {"democracy_index": 6.35, "corruption_cpi": 35, "press_freedom": 42.5, "hdi": 0.800, "military_spend_pct": 1.3, "gdp_growth": 1.9, "fragile_state": 60.0},
+    "VN": {"democracy_index": 2.73, "corruption_cpi": 41, "press_freedom": 78.0, "hdi": 0.726, "military_spend_pct": 2.3, "gdp_growth": 5.0, "fragile_state": 55.0},
+    "PH": {"democracy_index": 6.73, "corruption_cpi": 34, "press_freedom": 44.0, "hdi": 0.710, "military_spend_pct": 1.1, "gdp_growth": 5.6, "fragile_state": 65.5},
+    "ID": {"democracy_index": 6.71, "corruption_cpi": 34, "press_freedom": 38.5, "hdi": 0.713, "military_spend_pct": 0.8, "gdp_growth": 5.1, "fragile_state": 62.0},
+    "MY": {"democracy_index": 7.30, "corruption_cpi": 50, "press_freedom": 38.2, "hdi": 0.803, "military_spend_pct": 1.0, "gdp_growth": 3.7, "fragile_state": 48.0},
+    "SG": {"democracy_index": 6.02, "corruption_cpi": 83, "press_freedom": 48.2, "hdi": 0.939, "military_spend_pct": 3.0, "gdp_growth": 1.1, "fragile_state": 26.0},
+    "MM": {"democracy_index": 1.74, "corruption_cpi": 20, "press_freedom": 74.5, "hdi": 0.585, "military_spend_pct": 3.0, "gdp_growth": 1.0, "fragile_state": 96.5},
+    "AF": {"democracy_index": 0.32, "corruption_cpi": 20, "press_freedom": 62.4, "hdi": 0.462, "military_spend_pct": 3.3, "gdp_growth": 3.0, "fragile_state": 106.0},
+    "KZ": {"democracy_index": 2.82, "corruption_cpi": 39, "press_freedom": 55.2, "hdi": 0.811, "military_spend_pct": 0.7, "gdp_growth": 5.1, "fragile_state": 55.0},
+    "MN": {"democracy_index": 6.48, "corruption_cpi": 33, "press_freedom": 22.0, "hdi": 0.741, "military_spend_pct": 0.6, "gdp_growth": 7.0, "fragile_state": 55.5},
+    # ── Africa ──
+    "ZA": {"democracy_index": 7.05, "corruption_cpi": 43, "press_freedom": 20.0, "hdi": 0.713, "military_spend_pct": 0.7, "gdp_growth": 0.7, "fragile_state": 62.5},
+    "NG": {"democracy_index": 4.29, "corruption_cpi": 25, "press_freedom": 45.8, "hdi": 0.539, "military_spend_pct": 0.7, "gdp_growth": 2.9, "fragile_state": 88.0},
+    "KE": {"democracy_index": 5.31, "corruption_cpi": 31, "press_freedom": 35.2, "hdi": 0.575, "military_spend_pct": 1.2, "gdp_growth": 5.6, "fragile_state": 78.5},
+    "ET": {"democracy_index": 3.27, "corruption_cpi": 37, "press_freedom": 45.0, "hdi": 0.492, "military_spend_pct": 0.7, "gdp_growth": 7.2, "fragile_state": 92.5},
+    "GH": {"democracy_index": 6.64, "corruption_cpi": 43, "press_freedom": 23.5, "hdi": 0.602, "military_spend_pct": 0.4, "gdp_growth": 3.1, "fragile_state": 62.0},
+    "DZ": {"democracy_index": 3.66, "corruption_cpi": 33, "press_freedom": 58.5, "hdi": 0.745, "military_spend_pct": 9.8, "gdp_growth": 4.1, "fragile_state": 68.0},
+    "MA": {"democracy_index": 5.04, "corruption_cpi": 38, "press_freedom": 52.1, "hdi": 0.683, "military_spend_pct": 4.0, "gdp_growth": 3.4, "fragile_state": 58.5},
+    "SD": {"democracy_index": 2.47, "corruption_cpi": 20, "press_freedom": 64.5, "hdi": 0.516, "military_spend_pct": 1.1, "gdp_growth": -12.0, "fragile_state": 106.5},
+    "CD": {"democracy_index": 1.81, "corruption_cpi": 20, "press_freedom": 52.0, "hdi": 0.479, "military_spend_pct": 0.7, "gdp_growth": 6.2, "fragile_state": 108.0},
+    "SS": {"democracy_index": 1.41, "corruption_cpi": 13, "press_freedom": 66.0, "hdi": 0.385, "military_spend_pct": 2.3, "gdp_growth": -0.3, "fragile_state": 110.0},
+    "RW": {"democracy_index": 3.16, "corruption_cpi": 53, "press_freedom": 58.4, "hdi": 0.548, "military_spend_pct": 1.4, "gdp_growth": 8.2, "fragile_state": 70.0},
+    # ── Oceania ──
+    "AU": {"democracy_index": 8.71, "corruption_cpi": 75, "press_freedom": 16.2, "hdi": 0.946, "military_spend_pct": 2.0, "gdp_growth": 2.0, "fragile_state": 22.0},
+    "NZ": {"democracy_index": 9.61, "corruption_cpi": 85, "press_freedom": 8.5, "hdi": 0.931, "military_spend_pct": 1.5, "gdp_growth": 0.6, "fragile_state": 18.0},
+}
+
+
+# ═══════════════ ALLIANCE BLOCS ═══════════════
+ALLIANCE_BLOCS = [
+    {
+        "name": "NATO", "founded": 1949, "members": 32,
+        "member_codes": ["US","CA","GB","FR","DE","IT","ES","PL","NL","BE","TR","NO","DK","PT","GR","CZ","HU","BG","RO","SK","HR","SI","LT","LV","EE","AL","MK","ME","IS","LU","FI","SE"],
+        "combined_gdp": "$42.2T", "combined_military": "3.3M active",
+        "combined_nukes": 5649, "purpose": "Collective defense (Article 5)",
+        "trend": "expanding", "trend_detail": "Finland (2023) & Sweden (2024) joined. 23+ members at 2% GDP defense target.",
+        "hq": "Brussels",
+    },
+    {
+        "name": "BRICS", "founded": 2009, "members": 10,
+        "member_codes": ["BR","RU","IN","CN","ZA","EG","ET","IR","AE","ID"],
+        "combined_gdp": "$32.1T", "combined_military": "5.5M active",
+        "combined_nukes": 6342, "purpose": "Multipolar economic cooperation; alternative to Western-led order",
+        "trend": "rapidly expanding", "trend_detail": "5 new members joined Jan 2024. 30+ countries expressed interest. New Development Bank as IMF alternative.",
+        "hq": "Rotating presidency",
+    },
+    {
+        "name": "EU", "founded": 1993, "members": 27,
+        "member_codes": ["DE","FR","IT","ES","PL","NL","BE","AT","SE","DK","FI","IE","PT","GR","CZ","HU","RO","BG","SK","HR","SI","LT","LV","EE","MT","CY","LU"],
+        "combined_gdp": "$18.4T", "combined_military": "1.3M active",
+        "combined_nukes": 515, "purpose": "Political & economic union; single market",
+        "trend": "consolidating", "trend_detail": "Ukraine, Moldova, Georgia candidate status. Post-Brexit adjustment. Green Deal & defense autonomy push.",
+        "hq": "Brussels/Strasbourg",
+    },
+    {
+        "name": "SCO", "founded": 2001, "members": 10,
+        "member_codes": ["CN","RU","IN","PK","KZ","UZ","KG","TJ","IR","BY"],
+        "combined_gdp": "$24.8T", "combined_military": "4.2M active",
+        "combined_nukes": 6132, "purpose": "Security & economic cooperation; counter-terrorism",
+        "trend": "expanding", "trend_detail": "Belarus joined 2024. 16 dialogue partners. Growing defense cooperation exercises.",
+        "hq": "Beijing",
+    },
+    {
+        "name": "African Union", "founded": 2002, "members": 55,
+        "member_codes": ["EG","NG","ZA","KE","ET","DZ","MA","GH","SN","RW","TZ","UG","CM","CI","AO","MZ","SD","CD","TN","LY"],
+        "combined_gdp": "$2.97T", "combined_military": "2.1M active",
+        "combined_nukes": 0, "purpose": "Continental unity; peace & development",
+        "trend": "reforming", "trend_detail": "Agenda 2063. AfCFTA largest free trade area by members. G20 seat gained 2023.",
+        "hq": "Addis Ababa",
+    },
+    {
+        "name": "ASEAN", "founded": 1967, "members": 10,
+        "member_codes": ["ID","TH","VN","PH","MY","SG","MM","KH","LA","BN"],
+        "combined_gdp": "$3.66T", "combined_military": "2.7M active",
+        "combined_nukes": 0, "purpose": "Regional stability & economic integration; centrality principle",
+        "trend": "stable", "trend_detail": "Timor-Leste accession in progress. RCEP launched. Struggling with Myanmar crisis & South China Sea.",
+        "hq": "Jakarta",
+    },
+    {
+        "name": "AUKUS", "founded": 2021, "members": 3,
+        "member_codes": ["AU","GB","US"],
+        "combined_gdp": "$32.5T", "combined_military": "1.7M active",
+        "combined_nukes": 5269, "purpose": "Indo-Pacific security; nuclear submarine tech transfer",
+        "trend": "deepening", "trend_detail": "Pillar I: SSN-AUKUS submarines. Pillar II: AI, quantum, hypersonics. Japan/Canada/NZ potential Pillar II.",
+        "hq": "No fixed HQ",
+    },
+    {
+        "name": "Quad", "founded": 2007, "members": 4,
+        "member_codes": ["US","JP","AU","IN"],
+        "combined_gdp": "$39.8T", "combined_military": "3.1M active",
+        "combined_nukes": 5216, "purpose": "Free & open Indo-Pacific; counter-China coordination",
+        "trend": "maturing", "trend_detail": "Annual summits since 2021. Vaccine diplomacy, maritime awareness, supply chain initiatives.",
+        "hq": "No fixed HQ",
+    },
+    {
+        "name": "Five Eyes", "founded": 1941, "members": 5,
+        "member_codes": ["US","GB","CA","AU","NZ"],
+        "combined_gdp": "$33.8T", "combined_military": "1.8M active",
+        "combined_nukes": 5269, "purpose": "Signals intelligence alliance",
+        "trend": "stable", "trend_detail": "World's oldest intelligence-sharing alliance. Expanded to cyber, counter-terrorism, technology.",
+        "hq": "No fixed HQ (rotating)",
+    },
+    {
+        "name": "G7", "founded": 1975, "members": 7,
+        "member_codes": ["US","GB","FR","DE","IT","JP","CA"],
+        "combined_gdp": "$46.3T", "combined_military": "2.5M active",
+        "combined_nukes": 5649, "purpose": "Advanced economy coordination; rules-based order",
+        "trend": "refocusing", "trend_detail": "Ukraine support coordination. China de-risking strategy. AI governance. Shrinking share of global GDP (29%).",
+        "hq": "Rotating presidency",
+    },
+    {
+        "name": "G20", "founded": 1999, "members": 20,
+        "member_codes": ["US","CN","JP","DE","GB","IN","FR","IT","BR","CA","KR","AU","MX","ID","SA","TR","AR","ZA","RU","EU"],
+        "combined_gdp": "$91.8T", "combined_military": "12M active",
+        "combined_nukes": 12300, "purpose": "Global economic governance; 85% of world GDP",
+        "trend": "fractured", "trend_detail": "AU added as permanent member. Divisions over Ukraine/Gaza. Debt relief stalled. Reform calls growing.",
+        "hq": "Rotating presidency",
+    },
+    {
+        "name": "GCC", "founded": 1981, "members": 6,
+        "member_codes": ["SA","AE","QA","BH","KW","OM"],
+        "combined_gdp": "$2.1T", "combined_military": "460K active",
+        "combined_nukes": 0, "purpose": "Gulf cooperation; economic & security integration",
+        "trend": "diversifying", "trend_detail": "Vision 2030 & post-oil transitions. Diplomatic normalization with Israel (Abraham Accords). De-dollarization discussions.",
+        "hq": "Riyadh",
+    },
+    {
+        "name": "CSTO", "founded": 2002, "members": 6,
+        "member_codes": ["RU","BY","KZ","KG","TJ","AM"],
+        "combined_gdp": "$2.4T", "combined_military": "1.4M active",
+        "combined_nukes": 5580, "purpose": "Russian-led collective security",
+        "trend": "weakening", "trend_detail": "Armenia frozen participation 2024. Kazakhstan distancing. Credibility questioned after Nagorno-Karabakh.",
+        "hq": "Moscow",
+    },
+]
+
+
+# ═══════════════ GLOBAL TRENDS ═══════════════
+# Yearly data points for key geopolitical indicators
+GLOBAL_TRENDS = {
+    "democracy": {
+        "title": "Global Democracy", "unit": "countries",
+        "description": "Number of full democracies (EIU Democracy Index ≥8.0)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [20, 19, 19, 20, 22, 23, 21, 24, 24, 23, 22],
+        "trend": "declining", "color": "#22d3ee",
+    },
+    "autocracies": {
+        "title": "Authoritarian Regimes", "unit": "countries",
+        "description": "Number of authoritarian regimes (EIU <4.0)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [51, 51, 52, 52, 54, 57, 59, 59, 59, 60, 61],
+        "trend": "rising", "color": "#dc2626",
+    },
+    "armed_conflicts": {
+        "title": "Armed Conflicts", "unit": "active",
+        "description": "State-based armed conflicts globally (UCDP)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [52, 53, 49, 52, 54, 56, 54, 55, 59, 56, 55],
+        "trend": "elevated", "color": "#ea580c",
+    },
+    "battle_deaths": {
+        "title": "Battle Deaths", "unit": "thousands/yr",
+        "description": "Estimated annual battle-related deaths (UCDP/PRIO)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [97, 87, 69, 54, 48, 42, 48, 84, 122, 105, 90],
+        "trend": "elevated", "color": "#dc2626",
+    },
+    "displaced_persons": {
+        "title": "Forcibly Displaced", "unit": "million",
+        "description": "Refugees + IDPs + asylum seekers globally (UNHCR)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [65, 66, 69, 71, 80, 82, 89, 100, 110, 117, 120],
+        "trend": "rising", "color": "#f97316",
+    },
+    "military_spending": {
+        "title": "Global Mil. Spending", "unit": "$T/yr",
+        "description": "Total worldwide military expenditure (SIPRI)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [1.68, 1.69, 1.73, 1.79, 1.85, 1.92, 1.99, 2.11, 2.24, 2.44, 2.60],
+        "trend": "rising", "color": "#ef4444",
+    },
+    "nuclear_warheads": {
+        "title": "Nuclear Warheads", "unit": "total stockpile",
+        "description": "Estimated global nuclear warhead inventory (FAS/SIPRI)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [15395, 15350, 14935, 14465, 13890, 13400, 13150, 12705, 12512, 12121, 12100],
+        "trend": "declining but modernizing", "color": "#a855f7",
+    },
+    "global_trade": {
+        "title": "Global Trade Vol.", "unit": "$T/yr",
+        "description": "World merchandise trade (WTO)",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [16.5, 16.0, 17.7, 19.5, 19.0, 17.6, 22.3, 25.3, 24.0, 25.0, 25.8],
+        "trend": "recovering", "color": "#16a34a",
+    },
+    "press_freedom": {
+        "title": "Press Freedom", "unit": "# countries bad/v.bad",
+        "description": "Countries rated 'difficult' or worse by RSF",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [52, 54, 56, 58, 59, 62, 64, 67, 70, 72, 73],
+        "trend": "worsening", "color": "#ca8a04",
+    },
+    "sanctions_regimes": {
+        "title": "Active Sanctions", "unit": "country programs",
+        "description": "Major US/EU/UN sanctions programs active",
+        "years": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025],
+        "values": [18, 20, 22, 26, 28, 29, 30, 38, 40, 42, 44],
+        "trend": "rising sharply", "color": "#f97316",
+    },
+}
+
+
+# ═══════════════ DEMOCRACY TRACKER ═══════════════
+# Classification of all 167 EIU-scored countries (2024 data)
+DEMOCRACY_TRACKER = {
+    "full_democracies": {
+        "count": 22, "label": "Full Democracies", "color": "#16a34a",
+        "description": "Score 8.0-10.0: strong institutions, free press, independent judiciary",
+        "examples": ["NO", "NZ", "FI", "SE", "DK", "IE", "CH", "NL", "TW", "CA", "AU", "DE", "GB"],
+        "population_pct": 5.7,
+    },
+    "flawed_democracies": {
+        "count": 54, "label": "Flawed Democracies", "color": "#65a30d",
+        "description": "Score 6.0-7.99: elections fair but governance/media issues",
+        "examples": ["US", "FR", "IT", "JP", "BR", "IN", "ZA", "MX", "KR", "CO", "PL", "AR", "PH"],
+        "population_pct": 39.4,
+    },
+    "hybrid_regimes": {
+        "count": 30, "label": "Hybrid Regimes", "color": "#ca8a04",
+        "description": "Score 4.0-5.99: elections irregular; weak rule of law",
+        "examples": ["UA", "TH", "BD", "KE", "PK", "TR", "NG", "MA", "HN", "GT"],
+        "population_pct": 15.2,
+    },
+    "authoritarian": {
+        "count": 61, "label": "Authoritarian", "color": "#dc2626",
+        "description": "Score <4.0: political pluralism absent; repression",
+        "examples": ["CN", "RU", "IR", "SA", "EG", "VN", "KP", "AF", "SY", "MM", "BY", "VE", "CU", "SD"],
+        "population_pct": 39.7,
+    },
+}
+
+
+# ═══════════════ ECONOMIC POWER COMPARISON ═══════════════
+ECONOMIC_POWER = {
+    "gdp_ranking": [
+        {"code": "US", "name": "United States", "gdp_t": 27.4, "gdp_growth": 2.5, "debt_gdp": 123, "trade_balance": -773},
+        {"code": "CN", "name": "China", "gdp_t": 18.5, "gdp_growth": 5.0, "debt_gdp": 83, "trade_balance": 823},
+        {"code": "DE", "name": "Germany", "gdp_t": 4.5, "gdp_growth": -0.2, "debt_gdp": 64, "trade_balance": 223},
+        {"code": "JP", "name": "Japan", "gdp_t": 4.2, "gdp_growth": 1.9, "debt_gdp": 255, "trade_balance": -46},
+        {"code": "IN", "name": "India", "gdp_t": 3.9, "gdp_growth": 7.8, "debt_gdp": 81, "trade_balance": -243},
+        {"code": "GB", "name": "United Kingdom", "gdp_t": 3.5, "gdp_growth": 0.7, "debt_gdp": 101, "trade_balance": -198},
+        {"code": "FR", "name": "France", "gdp_t": 3.1, "gdp_growth": 1.1, "debt_gdp": 111, "trade_balance": -99},
+        {"code": "IT", "name": "Italy", "gdp_t": 2.3, "gdp_growth": 0.9, "debt_gdp": 140, "trade_balance": 35},
+        {"code": "BR", "name": "Brazil", "gdp_t": 2.2, "gdp_growth": 2.9, "debt_gdp": 87, "trade_balance": 61},
+        {"code": "CA", "name": "Canada", "gdp_t": 2.1, "gdp_growth": 1.1, "debt_gdp": 107, "trade_balance": -18},
+        {"code": "RU", "name": "Russia", "gdp_t": 2.0, "gdp_growth": 3.6, "debt_gdp": 22, "trade_balance": 140},
+        {"code": "KR", "name": "South Korea", "gdp_t": 1.7, "gdp_growth": 1.4, "debt_gdp": 54, "trade_balance": 44},
+        {"code": "AU", "name": "Australia", "gdp_t": 1.7, "gdp_growth": 2.0, "debt_gdp": 44, "trade_balance": 65},
+        {"code": "MX", "name": "Mexico", "gdp_t": 1.8, "gdp_growth": 3.2, "debt_gdp": 53, "trade_balance": -5},
+        {"code": "ES", "name": "Spain", "gdp_t": 1.6, "gdp_growth": 2.5, "debt_gdp": 108, "trade_balance": -38},
+    ],
+    "share_shift": {
+        "title": "Global GDP Share Shift",
+        "data": {
+            "2000": {"G7": 65, "BRICS": 8, "Rest": 27},
+            "2010": {"G7": 51, "BRICS": 18, "Rest": 31},
+            "2020": {"G7": 44, "BRICS": 25, "Rest": 31},
+            "2025": {"G7": 29, "BRICS": 36, "Rest": 35},
+        },
+    },
+}
+
+
 # ── API Routes ────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -3611,6 +3949,17 @@ async def get_profiles():
     return _json({"countries": list(COUNTRY_PROFILES.keys()), "data": COUNTRY_PROFILES})
 
 
+@app.get("/api/trends")
+async def get_trends():
+    return _json({
+        "trends": GLOBAL_TRENDS,
+        "democracy": DEMOCRACY_TRACKER,
+        "blocs": ALLIANCE_BLOCS,
+        "economic": ECONOMIC_POWER,
+        "indices": COUNTRY_INDICES,
+    })
+
+
 @app.get("/api/all")
 async def get_all():
     return _json({
@@ -3622,6 +3971,11 @@ async def get_all():
         "militias": MILITIAS,
         "relations": COUNTRY_RELATIONS,
         "profiles": COUNTRY_PROFILES,
+        "trends": GLOBAL_TRENDS,
+        "democracy": DEMOCRACY_TRACKER,
+        "blocs": ALLIANCE_BLOCS,
+        "economic": ECONOMIC_POWER,
+        "indices": COUNTRY_INDICES,
         "threat_level": "ELEVATED",
         "threat_note": "Multiple active high-intensity conflicts. Elevated nuclear rhetoric. Global trade disruptions.",
     })
@@ -3629,4 +3983,4 @@ async def get_all():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7050)
+    uvicorn.run(app, host="0.0.0.0", port=8070)

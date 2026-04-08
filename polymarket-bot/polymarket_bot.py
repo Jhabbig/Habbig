@@ -12,6 +12,7 @@ Run: python3 polymarket_bot.py [--reset]
 """
 
 import json
+import os
 import time
 import requests
 import argparse
@@ -82,8 +83,10 @@ def save_state(state):
         "pending": state.pending,
         "trades": state.trades[-500:],
     }
-    with open(TRADE_LOG, "w") as f:
+    tmp = TRADE_LOG + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp, TRADE_LOG)
 
 
 def load_state():
@@ -133,6 +136,8 @@ def get_next_market(coin):
                         continue
                     market = markets[0]
                     prices = json.loads(market.get("outcomePrices", "[0.5, 0.5]"))
+                    if len(prices) < 2:
+                        continue
                     tokens = json.loads(market.get("clobTokenIds", "[]")) if market.get("clobTokenIds") else []
 
                     end_dt = datetime.fromisoformat(ev["endDate"].replace("Z", "+00:00"))
@@ -174,7 +179,7 @@ def get_binance_klines(symbol, interval="1m", limit=30):
                 "open_time": k[0], "open": float(k[1]), "high": float(k[2]),
                 "low": float(k[3]), "close": float(k[4]), "volume": float(k[5]),
                 "taker_buy_vol": float(k[9]),
-            } for k in resp.json()]
+            } for k in resp.json() if len(k) >= 10]
     except Exception:
         pass
     return []
@@ -315,11 +320,11 @@ def get_realtime_signals(coin):
     recent_candle = candles_1m[-1]
     taker_buy_ratio = recent_candle["taker_buy_vol"] / recent_candle["volume"] if recent_candle["volume"] > 0 else 0.5
 
-    momentum_5 = (closes_1m[-1] - closes_1m[-6]) / closes_1m[-6] * 100 if len(closes_1m) >= 6 else 0
-    momentum_1 = (closes_1m[-1] - closes_1m[-2]) / closes_1m[-2] * 100 if len(closes_1m) >= 2 else 0
+    momentum_5 = (closes_1m[-1] - closes_1m[-6]) / closes_1m[-6] * 100 if len(closes_1m) >= 6 and closes_1m[-6] != 0 else 0
+    momentum_1 = (closes_1m[-1] - closes_1m[-2]) / closes_1m[-2] * 100 if len(closes_1m) >= 2 and closes_1m[-2] != 0 else 0
 
     sma_20 = sum(closes_1m[-20:]) / min(len(closes_1m), 20)
-    price_vs_sma = (current_price - sma_20) / sma_20 * 100
+    price_vs_sma = (current_price - sma_20) / sma_20 * 100 if sma_20 != 0 else 0
 
     consecutive_up = consecutive_down = 0
     for i in range(len(closes_1m) - 1, 0, -1):
@@ -397,8 +402,8 @@ def get_btc_lead_signal(coin):
         candles = get_binance_klines("BTCUSDT", "1m", 5)
         if candles and len(candles) >= 4:
             closes = [c["close"] for c in candles]
-            mom_3m = (closes[-1] - closes[-4]) / closes[-4] * 100
-            mom_1m = (closes[-1] - closes[-2]) / closes[-2] * 100
+            mom_3m = (closes[-1] - closes[-4]) / closes[-4] * 100 if closes[-4] != 0 else 0
+            mom_1m = (closes[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] != 0 else 0
             _btc_lead_cache = {"time": now, "mom_3m": mom_3m, "mom_1m": mom_1m}
             return (mom_3m, mom_1m)
         else:
@@ -420,7 +425,7 @@ def get_pattern_prediction(coin):
         def make_features(sl):
             closes = [c["close"] for c in sl]
             volumes = [c["volume"] for c in sl]
-            mom = (closes[-1] - closes[0]) / closes[0] * 100
+            mom = (closes[-1] - closes[0]) / closes[0] * 100 if closes[0] != 0 else 0
             rsi = compute_rsi(closes, min(14, len(closes) - 1))
             avg_vol = sum(volumes[:-1]) / max(len(volumes) - 1, 1)
             vol_trend = volumes[-1] / avg_vol if avg_vol > 0 else 1.0
@@ -645,6 +650,8 @@ def resolve_pending(state, coin):
             if data:
                 market = data[0].get("markets", [{}])[0]
                 prices = json.loads(market.get("outcomePrices", "[0.5, 0.5]"))
+                if len(prices) < 2:
+                    return
                 up_final = float(prices[0])
                 down_final = float(prices[1])
 
