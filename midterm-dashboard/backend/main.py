@@ -290,6 +290,82 @@ async def divergence_calculator():
         await asyncio.sleep(DIVERGENCE_INTERVAL)
 
 
+def _seed_district_profiles():
+    """Load static state profiles into the DB on startup."""
+    from district_profiles import get_all_profiles
+    profiles = get_all_profiles()
+    existing = state.db.get_profiled_states()
+    count = 0
+    for abbr, profile in profiles.items():
+        if abbr not in existing:
+            state.db.upsert_district_profile(
+                state=abbr,
+                name=profile.get("name", abbr),
+                profile_data=profile,
+                auto_generated=False,
+            )
+            count += 1
+        else:
+            # Update existing profiles with latest static data
+            state.db.upsert_district_profile(
+                state=abbr,
+                name=profile.get("name", abbr),
+                profile_data=profile,
+                auto_generated=False,
+            )
+    logger.info(f"Seeded {count} new district profiles, updated {len(profiles) - count} existing")
+
+
+async def district_profile_updater():
+    """Background task: scan active races for states without profiles and generate them."""
+    PROFILE_CHECK_INTERVAL = 3600  # 1 hour
+    while True:
+        try:
+            from district_profiles import get_profile, generate_basic_profile
+
+            all_markets = state.db.get_all_markets(active_only=True)
+            existing = state.db.get_profiled_states()
+
+            # Collect all states from active races
+            race_states: set[str] = set()
+            for m in all_markets:
+                st = m.get("state")
+                if st and st != "US" and len(st) <= 3:
+                    race_states.add(st.upper())
+
+            new_count = 0
+            for st in race_states:
+                if st in existing:
+                    continue
+
+                # Try static data first, fall back to auto-generated template
+                profile = get_profile(st)
+                if profile:
+                    state.db.upsert_district_profile(
+                        state=st,
+                        name=profile.get("name", st),
+                        profile_data=profile,
+                        auto_generated=False,
+                    )
+                else:
+                    placeholder = generate_basic_profile(st)
+                    state.db.upsert_district_profile(
+                        state=st,
+                        name=placeholder.get("name", st),
+                        profile_data=placeholder,
+                        auto_generated=True,
+                    )
+                new_count += 1
+
+            if new_count:
+                logger.info(f"District profile updater: created {new_count} new profiles")
+
+        except Exception as e:
+            logger.error(f"District profile updater error: {e}", exc_info=True)
+
+        await asyncio.sleep(PROFILE_CHECK_INTERVAL)
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -308,10 +384,14 @@ async def lifespan(app: FastAPI):
     state.predictit = PredictItAggregator(session=state.http_session)
     state.polling = PollingAggregator(session=state.http_session)
 
+    # Seed district profiles from static data on startup
+    _seed_district_profiles()
+
     # Start background tasks
     state.background_tasks = [
         asyncio.create_task(data_refresh_loop(), name="data_refresh"),
         asyncio.create_task(divergence_calculator(), name="divergence"),
+        asyncio.create_task(district_profile_updater(), name="district_profiles"),
     ]
 
     logger.info("Background tasks started")
@@ -882,6 +962,57 @@ async def data_race_contexts():
     """All race contexts."""
     from race_context import get_all_contexts
     return {"contexts": get_all_contexts()}
+
+
+@app.get("/data/district-profile/{state_abbr}")
+async def data_district_profile(state_abbr: str):
+    """Comprehensive state/district profile: demographics, economy, infrastructure,
+    political history, geography, education, and key facts.
+
+    Used by RaceDetail and Historical pages to provide background context for a race's location.
+    """
+    profile = state.db.get_district_profile(state_abbr)
+    if profile:
+        return {
+            "state": profile["state"],
+            "name": profile["name"],
+            "auto_generated": bool(profile.get("auto_generated")),
+            "updated_at": profile.get("updated_at"),
+            **profile["profile_data"],
+        }
+
+    # Fallback: check static data directly
+    from district_profiles import get_profile, generate_basic_profile
+    static = get_profile(state_abbr)
+    if static:
+        # Store it for next time
+        state.db.upsert_district_profile(
+            state=state_abbr,
+            name=static.get("name", state_abbr),
+            profile_data=static,
+            auto_generated=False,
+        )
+        return {"state": state_abbr.upper(), "name": static.get("name", state_abbr), **static}
+
+    return {"state": state_abbr.upper(), "found": False}
+
+
+@app.get("/data/district-profiles")
+async def data_district_profiles():
+    """List all available district/state profiles (metadata only, not full data)."""
+    profiles = state.db.get_all_district_profiles()
+    return {
+        "profiles": [
+            {
+                "state": p["state"],
+                "name": p["name"],
+                "auto_generated": bool(p.get("auto_generated")),
+                "updated_at": p.get("updated_at"),
+                "has_population": bool(p.get("profile_data", {}).get("population", {}).get("total")),
+            }
+            for p in profiles
+        ]
+    }
 
 
 @app.get("/data/world-elections")

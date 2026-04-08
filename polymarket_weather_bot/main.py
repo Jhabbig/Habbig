@@ -35,7 +35,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        RotatingFileHandler("weather_bot.log", maxBytes=10*1024*1024, backupCount=5),
+        RotatingFileHandler(Path(__file__).parent / "weather_bot.log", maxBytes=10*1024*1024, backupCount=5),
     ],
 )
 logger = logging.getLogger("main")
@@ -70,11 +70,11 @@ async def run_scan(
         max_horizon = now + timedelta(hours=config.MAX_FORECAST_HOURS)
         filtered_markets = []
         for m in markets:
+            if not m.target_date and not m.end_date:
+                continue  # Skip markets with no date — can't forecast them
             if m.target_date and m.target_date <= max_horizon:
                 filtered_markets.append(m)
             elif m.end_date and m.end_date <= max_horizon:
-                filtered_markets.append(m)
-            elif m.target_date is None and m.end_date is None:
                 filtered_markets.append(m)
 
         # Filter: minimum liquidity

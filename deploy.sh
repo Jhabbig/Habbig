@@ -101,10 +101,12 @@ done
 echo -e "${CYAN}[1/3] Snapshotting current server state...${NC}"
 
 snapshot_msg="${message:-pre-deploy}"
+# Escape single quotes in message to prevent shell injection
+escaped_msg="${snapshot_msg//\'/\'\\\'\'}"
 if [[ -n "$site" ]]; then
-    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save $site -m '$snapshot_msg'"
+    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save $site -m '${escaped_msg}'"
 else
-    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save -m '$snapshot_msg'"
+    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save -m '${escaped_msg}'"
 fi
 
 # ── Step 2: Sync files ──────────────────────────

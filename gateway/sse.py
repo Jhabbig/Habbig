@@ -42,17 +42,16 @@ async def event_stream(
         heartbeat_interval: Seconds between keep-alive pings.
     """
     global _active_connections
-    _active_connections += 1
 
     pubsub = cache.pubsub()
     if pubsub is None:
         # Redis unavailable — send an error event then close.
         yield _format_sse("error", {"msg": "Real-time updates unavailable (Redis offline)"})
-        _active_connections -= 1
         return
 
     channels = [f"dashboard:{d}" for d in dashboards]
     try:
+        _active_connections += 1
         pubsub.subscribe(*channels)
         log.debug("SSE client subscribed to %s", channels)
 

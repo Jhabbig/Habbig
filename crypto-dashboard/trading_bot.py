@@ -207,7 +207,7 @@ class TradingBot:
             resp = requests.get(f"{API_BASE}/api/prices", timeout=5)
             if resp.ok:
                 return resp.json()
-        except:
+        except Exception:
             pass
         return {}
 

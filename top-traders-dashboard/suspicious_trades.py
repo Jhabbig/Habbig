@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Polymarket Suspicious Trades Scanner
-Scans recent Polymarket trades for unusually large or anomalous bets,
-calculates potential profit, investigates wallets, and outputs data for the dashboard.
+Polymarket Suspicious / Insider Trades Scanner
 
-Key insight: A $1,000 bet at 5% odds (20:1) = $20,000 potential profit.
-That's way more suspicious than a $10,000 bet at 50% odds (2:1) = $10,000 potential profit.
-We rank by POTENTIAL PROFIT, not just trade size.
+Detects potential insider trading on Polymarket using multiple signals:
+  1. Potential profit (large payout at long odds)
+  2. Timing before market resolution (bets placed right before close)
+  3. Volume spikes in normally quiet markets
+  4. First-trade wallets (brand new wallet makes a large directional bet)
+  5. Coordinated wallets (multiple wallets betting same direction in a short window)
+  6. Statistical outliers (z-score vs market baseline)
+  7. New account + long-shot combo patterns
 """
 
 import requests
@@ -34,6 +37,11 @@ ZSCORE_THRESHOLD = 3.0          # standard deviations above market mean
 MIN_TRADES_FOR_STATS = 20      # need this many trades to compute stats
 SCAN_HOURS = 72                # how far back to scan
 MAX_TRADES_PER_FETCH = 1000    # per API call
+
+# Insider-specific thresholds
+CLOSE_TO_RESOLUTION_HOURS = 48  # bets placed within 48h of market close
+VOLUME_SPIKE_ZSCORE = 2.5       # hourly volume spike threshold
+COORDINATION_MIN_WALLETS = 3    # minimum wallets to flag as coordinated
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -143,12 +151,7 @@ def fetch_recent_trades(hours=SCAN_HOURS, max_total=50000):
         batch_added = 0
         hit_cutoff = False
         for t in data:
-            ts = t.get("timestamp", 0)
-            if isinstance(ts, str):
-                try:
-                    ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                except (ValueError, TypeError, AttributeError):
-                    ts = 0
+            ts = _parse_ts(t.get("timestamp", 0))
             if ts > 0 and ts < cutoff_ts:
                 hit_cutoff = True
                 break
@@ -167,8 +170,20 @@ def fetch_recent_trades(hours=SCAN_HOURS, max_total=50000):
     return all_trades
 
 
+def _parse_ts(ts_raw) -> int:
+    """Parse a timestamp from trade data into unix seconds."""
+    if isinstance(ts_raw, (int, float)) and ts_raw > 0:
+        return int(ts_raw)
+    if isinstance(ts_raw, str):
+        try:
+            return int(datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp())
+        except (ValueError, TypeError, AttributeError):
+            pass
+    return 0
+
+
 def compute_market_stats(trades):
-    """Compute per-market trade statistics."""
+    """Compute per-market trade statistics + insider-detection metadata."""
     market_trades = defaultdict(list)
     for t in trades:
         key = t.get("conditionId") or t.get("slug", "unknown")
@@ -176,20 +191,55 @@ def compute_market_stats(trades):
         price = float(t.get("price", 0) or 0)
         usd_value = size * price if price > 0 else size
         potential_profit = calc_potential_profit(usd_value, price)
+        ts = _parse_ts(t.get("timestamp", 0))
         market_trades[key].append({
             "size": size,
             "usd_value": usd_value,
             "price": price,
             "potential_profit": potential_profit,
+            "timestamp": ts,
+            "wallet": t.get("proxyWallet", t.get("maker_address", "")),
+            "side": t.get("side", ""),
+            "outcome": t.get("outcome", ""),
             "trade": t,
         })
 
+    now_ts = int(datetime.now(timezone.utc).timestamp())
     stats = {}
     for market_id, mtrades in market_trades.items():
         sizes = [t["usd_value"] for t in mtrades]
         profits = [t["potential_profit"] for t in mtrades]
+        timestamps = [t["timestamp"] for t in mtrades if t["timestamp"] > 0]
+
         if len(sizes) < MIN_TRADES_FOR_STATS:
             continue
+
+        # Volume-per-hour buckets for spike detection (last 72h)
+        hourly_volume = defaultdict(float)
+        for t in mtrades:
+            if t["timestamp"] > 0:
+                hour_bucket = t["timestamp"] // 3600
+                hourly_volume[hour_bucket] += t["usd_value"]
+        hourly_vols = list(hourly_volume.values()) if hourly_volume else [0]
+        vol_mean = np.mean(hourly_vols)
+        vol_std = np.std(hourly_vols) if len(hourly_vols) > 1 else 0
+
+        # Recent volume (last 6h) vs baseline
+        cutoff_6h = now_ts - 6 * 3600
+        recent_vol = sum(t["usd_value"] for t in mtrades if t["timestamp"] >= cutoff_6h)
+        recent_count = sum(1 for t in mtrades if t["timestamp"] >= cutoff_6h)
+
+        # Wallet clustering: wallets trading same direction in last 6h
+        recent_directional = defaultdict(lambda: defaultdict(set))
+        for t in mtrades:
+            if t["timestamp"] >= cutoff_6h and t["wallet"]:
+                direction = f'{t["outcome"]}_{t["side"]}'
+                recent_directional[direction]["wallets"].add(t["wallet"])
+
+        max_coordinated = 0
+        for direction, info in recent_directional.items():
+            max_coordinated = max(max_coordinated, len(info["wallets"]))
+
         stats[market_id] = {
             "count": len(sizes),
             "mean": np.mean(sizes),
@@ -202,13 +252,50 @@ def compute_market_stats(trades):
             "max_profit": np.max(profits),
             "total_volume": sum(sizes),
             "trades": mtrades,
+            # Insider-detection fields
+            "hourly_vol_mean": vol_mean,
+            "hourly_vol_std": vol_std,
+            "recent_6h_volume": recent_vol,
+            "recent_6h_count": recent_count,
+            "max_coordinated_wallets": max_coordinated,
         }
     return stats
 
 
-def find_suspicious_trades(trades, market_stats):
-    """Flag trades by POTENTIAL PROFIT, statistical outlier status, and odds context."""
+def _build_wallet_trade_counts(trades):
+    """Count total trades per wallet to identify first-time / low-activity wallets."""
+    counts = defaultdict(int)
+    for t in trades:
+        w = t.get("proxyWallet", t.get("maker_address", ""))
+        if w:
+            counts[w] += 1
+    return counts
+
+
+def _build_market_end_dates(markets):
+    """Map conditionId → end date timestamp for resolution-proximity detection."""
+    end_dates = {}
+    for m in markets:
+        cid = m.get("condition_id", "")
+        end_str = m.get("end_date", "")
+        if cid and end_str:
+            try:
+                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                end_dates[cid] = int(end_dt.timestamp())
+            except (ValueError, TypeError):
+                pass
+    return end_dates
+
+
+def find_suspicious_trades(trades, market_stats, markets=None):
+    """Flag trades using insider-focused signals: timing, coordination,
+    wallet age, volume spikes, and profit potential."""
     suspicious = []
+
+    # Pre-compute indices for insider detection
+    wallet_counts = _build_wallet_trade_counts(trades)
+    market_end_dates = _build_market_end_dates(markets or [])
+    now_ts = int(datetime.now(timezone.utc).timestamp())
 
     for t in trades:
         size = float(t.get("size", 0) or 0)
@@ -228,20 +315,15 @@ def find_suspicious_trades(trades, market_stats):
         title = t.get("title", t.get("slug", "Unknown Market"))
         outcome = t.get("outcome", "?")
         wallet = t.get("proxyWallet", t.get("maker_address", "unknown"))
-        ts = t.get("timestamp", 0)
-        if isinstance(ts, str):
-            try:
-                ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-            except (ValueError, TypeError, AttributeError):
-                ts = 0
+        ts = _parse_ts(t.get("timestamp", 0))
 
         # Compute z-score if we have market stats
         zscore = 0
         market_mean = 0
         market_std = 0
         market_volume = 0
-        if market_id in market_stats:
-            ms = market_stats[market_id]
+        ms = market_stats.get(market_id)
+        if ms:
             market_mean = ms["mean"]
             market_std = ms["std"]
             market_volume = ms["total_volume"]
@@ -318,16 +400,73 @@ def find_suspicious_trades(trades, market_stats):
         # 5. COMBO BONUS — outsized bets at any odds level
         if price <= 0.15 and usd_value >= 5000:
             score += 15
-            reasons.append(f"Big bet on a long-shot — classic insider pattern")
+            reasons.append("Big bet on a long-shot — classic insider pattern")
         elif price <= 0.25 and usd_value >= 10000:
             score += 10
-            reasons.append(f"Large bet on underdog")
+            reasons.append("Large bet on underdog")
         elif price <= 0.50 and usd_value >= 25000:
             score += 7
-            reasons.append(f"Heavy bet at medium odds — notable")
+            reasons.append("Heavy bet at medium odds — notable")
         elif usd_value >= 50000:
             score += 5
-            reasons.append(f"Very large position at any odds")
+            reasons.append("Very large position at any odds")
+
+        # ─── INSIDER-SPECIFIC SIGNALS ───────────────────────────
+
+        # 6. TIMING BEFORE RESOLUTION — bets right before market closes
+        end_ts = market_end_dates.get(market_id)
+        if end_ts and ts > 0:
+            hours_to_close = (end_ts - ts) / 3600
+            if 0 < hours_to_close <= 6:
+                score += 25
+                reasons.append(f"Bet placed {hours_to_close:.0f}h before market close")
+            elif 0 < hours_to_close <= 24:
+                score += 18
+                reasons.append(f"Bet placed {hours_to_close:.0f}h before market close")
+            elif 0 < hours_to_close <= CLOSE_TO_RESOLUTION_HOURS:
+                score += 10
+                reasons.append(f"Bet placed {hours_to_close:.0f}h before market close")
+
+        # 7. VOLUME SPIKE — trade landed during an abnormal volume hour
+        if ms and ts > 0:
+            hour_bucket = ts // 3600
+            vol_mean_h = ms.get("hourly_vol_mean", 0)
+            vol_std_h = ms.get("hourly_vol_std", 0)
+            if vol_std_h > 0 and vol_mean_h > 0:
+                # Check this trade's hour bucket
+                hour_vol = sum(
+                    mt["usd_value"] for mt in ms["trades"]
+                    if mt["timestamp"] // 3600 == hour_bucket
+                )
+                vol_zscore = (hour_vol - vol_mean_h) / vol_std_h
+                if vol_zscore >= 4:
+                    score += 20
+                    reasons.append(f"Volume spike ({vol_zscore:.1f}σ above hourly avg)")
+                elif vol_zscore >= VOLUME_SPIKE_ZSCORE:
+                    score += 12
+                    reasons.append(f"Volume spike ({vol_zscore:.1f}σ above hourly avg)")
+
+        # 8. FIRST-TRADE / LOW-ACTIVITY WALLET
+        wallet_total = wallet_counts.get(wallet, 0)
+        if wallet_total <= 1 and usd_value >= 1000:
+            score += 20
+            reasons.append("First trade by this wallet — single-purpose account")
+        elif wallet_total <= 3 and usd_value >= 2000:
+            score += 12
+            reasons.append(f"Low-activity wallet (only {wallet_total} trades)")
+        elif wallet_total <= 5 and usd_value >= 5000:
+            score += 6
+            reasons.append(f"Sparse wallet history ({wallet_total} trades)")
+
+        # 9. COORDINATED WALLETS — multiple wallets same direction
+        if ms:
+            coord = ms.get("max_coordinated_wallets", 0)
+            if coord >= 5:
+                score += 15
+                reasons.append(f"Coordinated activity ({coord} wallets same direction in 6h)")
+            elif coord >= COORDINATION_MIN_WALLETS:
+                score += 8
+                reasons.append(f"Possible coordination ({coord} wallets same direction in 6h)")
 
         # Only keep if meaningful
         if score < 10:
@@ -355,6 +494,7 @@ def find_suspicious_trades(trades, market_stats):
             "name": t.get("name", ""),
             "pseudonym": t.get("pseudonym", ""),
             "tx_hash": t.get("transactionHash", ""),
+            "wallet_trade_count": wallet_total,
         })
 
     # Sort by suspicion score descending, then by potential profit
@@ -378,7 +518,7 @@ def investigate_wallet(wallet_address):
         "total_trades": 0,
         "total_volume": 0,
         "large_trades": [],
-        "markets_traded": set(),
+        "markets_traded": [],
         "avg_trade_size": 0,
         "win_rate": None,
         "first_seen": None,
@@ -424,14 +564,9 @@ def investigate_wallet(wallet_address):
             price = float(t.get("price", 0) or 0)
             usd = size * price if price > 0 else size
             volumes.append(usd)
-            result["markets_traded"].add(t.get("title", t.get("slug", "?")))
+            result["markets_traded"].append(t.get("title", t.get("slug", "?")))
 
-            ts = t.get("timestamp", 0)
-            if isinstance(ts, str):
-                try:
-                    ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                except (ValueError, TypeError, AttributeError):
-                    ts = 0
+            ts = _parse_ts(t.get("timestamp", 0))
             if ts > 0:
                 timestamps.append(ts)
 
@@ -474,7 +609,7 @@ def investigate_wallet(wallet_address):
             else:
                 result["account_age_label"] = f"{age_days // 365}y {(age_days % 365) // 30}mo old"
 
-    result["markets_traded"] = len(result["markets_traded"])
+    result["markets_traded"] = len(set(result["markets_traded"]))
     return result
 
 
@@ -533,6 +668,19 @@ def compute_aggregate_stats(suspicious_trades, wallet_investigations):
     longshot_trades = [t for t in suspicious_trades if t["price"] <= 0.15]
     longshot_profit = sum(t["potential_profit"] for t in longshot_trades)
 
+    # Insider-specific stats
+    first_trade_wallets = sum(
+        1 for t in suspicious_trades if t.get("wallet_trade_count", 99) <= 1
+    )
+    pre_resolution = sum(
+        1 for t in suspicious_trades
+        if any("before market close" in r for r in t.get("reasons", []))
+    )
+    volume_spike_trades = sum(
+        1 for t in suspicious_trades
+        if any("Volume spike" in r for r in t.get("reasons", []))
+    )
+
     return {
         "total_flagged": len(suspicious_trades),
         "total_volume_flagged": sum(sizes),
@@ -549,6 +697,10 @@ def compute_aggregate_stats(suspicious_trades, wallet_investigations):
         "total_investigated": len(wallet_investigations),
         "longshot_trades": len(longshot_trades),
         "longshot_total_profit": longshot_profit,
+        # Insider-specific
+        "first_trade_wallets": first_trade_wallets,
+        "pre_resolution_trades": pre_resolution,
+        "volume_spike_trades": volume_spike_trades,
     }
 
 
@@ -601,9 +753,9 @@ def run_scanner():
     market_stats = compute_market_stats(trades)
     print(f"    Stats for {len(market_stats)} markets with sufficient data.")
 
-    # Step 4: Find suspicious trades
-    print("  Scanning for suspicious trades...")
-    suspicious = find_suspicious_trades(trades, market_stats)
+    # Step 4: Find suspicious trades (with insider detection)
+    print("  Scanning for suspicious / insider trades...")
+    suspicious = find_suspicious_trades(trades, market_stats, markets=markets)
     print(f"    Found {len(suspicious)} suspicious trades.")
 
     if suspicious:

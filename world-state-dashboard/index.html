@@ -1546,6 +1546,9 @@ body {
       <label class="layer-toggle"><input type="checkbox" id="lyr-industrial"><span class="layer-dot" style="background:#f472b6"></span>Industrial</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-ecozones"><span class="layer-dot" style="background:#c084fc"></span>Econ Zones</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-oilfields"><span class="layer-dot" style="background:#d97706"></span>Oil/Rare Earth</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-spaceports" checked><span class="layer-dot" style="background:#e879f9"></span>Spaceports</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-airforces"><span class="layer-dot" style="background:#22d3ee"></span>Air Forces</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-trends" checked><span class="layer-dot" style="background:#f43f5e"></span>Trends</label>
     </div>
   </div>
   <div class="heatmap-indicator" id="heatmap-indicator">
@@ -1672,6 +1675,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadNews();
   loadPolymarket();
   loadXFeed();
+  loadTrends();
   setInterval(loadNews, 90 * 1000);
   setInterval(loadPolymarket, 60 * 1000);
   setInterval(loadXFeed, 300 * 1000);
@@ -1679,6 +1683,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   setInterval(() => {
     if (document.getElementById('lyr-aircraft')?.checked) loadAircraft();
   }, 30 * 1000);
+  // Refresh trends every 5 minutes
+  setInterval(() => {
+    if (document.getElementById('lyr-trends')?.checked) loadTrends();
+  }, 300 * 1000);
 });
 
 async function loadData() {
@@ -1902,9 +1910,14 @@ function initGlobe() {
     globeMap.addLayer({ id: 'lyr-shipping', type: 'line', source: 'src-shipping',
       paint: { 'line-color': '#60a5fa', 'line-width': 2, 'line-opacity': 0.5, 'line-dasharray': [8, 4] } });
 
+    // ─── Movement trend projection arrows ───
+    globeMap.addSource('src-trend-arrows', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({ id: 'lyr-trend-arrows', type: 'line', source: 'src-trend-arrows',
+      paint: { 'line-color': '#f43f5e', 'line-width': 2.5, 'line-opacity': 0.8, 'line-dasharray': [3, 2] } });
+
     // ─── New point layers for new data ───
-    ['industrial', 'ecozones', 'oilfields'].forEach(id => {
-      const colors = { industrial: '#f472b6', ecozones: '#c084fc', oilfields: '#d97706' };
+    ['industrial', 'ecozones', 'oilfields', 'spaceports', 'airforces'].forEach(id => {
+      const colors = { industrial: '#f472b6', ecozones: '#c084fc', oilfields: '#d97706', spaceports: '#e879f9', airforces: '#22d3ee' };
       globeMap.addSource('src-' + id, { type: 'geojson', data: _emptyGJ() });
       globeMap.addLayer({
         id: 'lyr-pt-' + id, type: 'circle', source: 'src-' + id,
@@ -1932,14 +1945,18 @@ function initGlobe() {
     globeMap.addLayer({ id: 'lyr-score-arcs', type: 'line', source: 'src-score-arcs',
       paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.6 } });
 
-    // ─── Country click (skip if a point/symbol layer was hit) ───
+    // ─── Country click (skip if a point/symbol layer is nearby) ───
     const _pointLayerIds = [
       ..._ptLayers.map(c => 'lyr-pt-' + c.id),
-      'lyr-pt-industrial', 'lyr-pt-ecozones', 'lyr-pt-oilfields'
+      'lyr-pt-industrial', 'lyr-pt-ecozones', 'lyr-pt-oilfields', 'lyr-pt-spaceports', 'lyr-pt-airforces'
     ];
+    const _HIT_TOL = 20; // px tolerance for point hit detection
+    function _hitBox(pt) {
+      return [[pt.x - _HIT_TOL, pt.y - _HIT_TOL], [pt.x + _HIT_TOL, pt.y + _HIT_TOL]];
+    }
     globeMap.on('click', 'country-fill', e => {
-      // Don't open country profile if clicking on a data point
-      const hit = globeMap.queryRenderedFeatures(e.point, { layers: _pointLayerIds });
+      // Don't open country profile if clicking near any data point
+      const hit = globeMap.queryRenderedFeatures(_hitBox(e.point), { layers: _pointLayerIds });
       if (hit.length) return;
       const code = e.features?.[0]?.properties?.ISO_A2;
       if (code && (data.profiles || {})[code]) showCountryProfile(code);
@@ -1967,6 +1984,8 @@ function initGlobe() {
       { layerId: 'lyr-pt-industrial', color: '#f472b6' },
       { layerId: 'lyr-pt-ecozones', color: '#c084fc' },
       { layerId: 'lyr-pt-oilfields', color: '#d97706' },
+      { layerId: 'lyr-pt-spaceports', color: '#e879f9' },
+      { layerId: 'lyr-pt-airforces', color: '#22d3ee' },
     ];
     allPopupLayers.forEach(({ layerId, color }) => {
       globeMap.on('mouseenter', layerId, e => {
@@ -1982,34 +2001,46 @@ function initGlobe() {
       });
     });
 
-    // ─── Click popup for detailed info (bases, aircraft, vessels) ───
+    // ─── Click popup for ALL point layers (with bbox tolerance) ───
     const _clickPopup = new maplibregl.Popup({ closeButton: true, className: 'globe-popup', maxWidth: '320px' });
-    // Bases click
-    globeMap.on('click', 'lyr-pt-bases', e => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
-      const f = e.features[0]; const p = f.properties;
-      _clickPopup.setLngLat(e.lngLat).setHTML(
-        `<b style="color:#3b82f6;font-size:13px">${p.name}</b><br>` +
-        `<span style="color:#999">${p.note || ''}</span>`
-      ).addTo(globeMap);
+    const _ptColorMap = {};
+    _ptLayers.forEach(c => { _ptColorMap['lyr-pt-' + c.id] = c.color; });
+    _ptColorMap['lyr-pt-industrial'] = '#f472b6';
+    _ptColorMap['lyr-pt-ecozones'] = '#c084fc';
+    _ptColorMap['lyr-pt-oilfields'] = '#d97706';
+    _ptColorMap['lyr-pt-spaceports'] = '#e879f9';
+    _ptColorMap['lyr-pt-airforces'] = '#22d3ee';
+    globeMap.on('click', e => {
+      const hits = globeMap.queryRenderedFeatures(_hitBox(e.point), { layers: _pointLayerIds });
+      if (!hits.length) return;
+      // Pick the closest hit to the click
+      let best = hits[0];
+      let bestDist = Infinity;
+      hits.forEach(h => {
+        const coords = h.geometry?.coordinates;
+        if (!coords) return;
+        const px = globeMap.project(coords);
+        const d = Math.hypot(px.x - e.point.x, px.y - e.point.y);
+        if (d < bestDist) { bestDist = d; best = h; }
+      });
+      const p = best.properties;
+      const color = _ptColorMap[best.layer.id] || '#ccc';
+      _clickPopup.setLngLat(best.geometry.coordinates)
+        .setHTML(`<b style="color:${color};font-size:13px">${p.name}</b><br><span style="color:#999">${p.note || ''}</span>`)
+        .addTo(globeMap);
     });
-    // Aircraft click
-    globeMap.on('click', 'lyr-pt-aircraft', e => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
-      const f = e.features[0]; const p = f.properties;
-      _clickPopup.setLngLat(e.lngLat).setHTML(
-        `<b style="color:#a3e635;font-size:13px">${p.name}</b><br>` +
-        `<span style="color:#999">${p.note || ''}</span>`
-      ).addTo(globeMap);
+
+    // Trend arrows hover
+    globeMap.on('mouseenter', 'lyr-trend-arrows', e => {
+      globeMap.getCanvas().style.cursor = 'pointer';
+      const f = e.features[0];
+      _globePopup.setLngLat(e.lngLat)
+        .setHTML(`<b style="color:#f43f5e">${f.properties.name || ''}</b><br><span style="color:#999">${f.properties.note || ''}</span>`)
+        .addTo(globeMap);
     });
-    // Vessels click
-    globeMap.on('click', 'lyr-pt-vessels', e => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
-      const f = e.features[0]; const p = f.properties;
-      _clickPopup.setLngLat(e.lngLat).setHTML(
-        `<b style="color:#06b6d4;font-size:13px">${p.name}</b><br>` +
-        `<span style="color:#999">${p.note || ''}</span>`
-      ).addTo(globeMap);
+    globeMap.on('mouseleave', 'lyr-trend-arrows', () => {
+      globeMap.getCanvas().style.cursor = '';
+      _globePopup.remove();
     });
 
     // Build initial data
@@ -2107,6 +2138,34 @@ function refreshGlobePoints() {
   }
   globeMap.getSource('src-oilfields')?.setData({ type: 'FeatureCollection', features: oilFeats });
 
+  // Spaceports
+  const spFeats = [];
+  if (lyr('lyr-spaceports')) {
+    (data.spaceports || []).forEach(s => spFeats.push(_pt(s.lng, s.lat, s.name, s.operator + ' · ' + s.status + ' · ' + s.detail)));
+  }
+  globeMap.getSource('src-spaceports')?.setData({ type: 'FeatureCollection', features: spFeats });
+
+  // Air Forces (plot at country capital positions)
+  const afFeats = [];
+  if (lyr('lyr-airforces')) {
+    (data.air_forces || []).forEach(af => {
+      const cap = (data.capitals || []).find(c => c.country === af.country);
+      if (cap) afFeats.push(_pt(cap.lng, cap.lat, af.name,
+        af.total_aircraft + ' aircraft · ' + af.fighters + ' fighters · ' + af.key_types));
+    });
+  }
+  globeMap.getSource('src-airforces')?.setData({ type: 'FeatureCollection', features: afFeats });
+
+  // Movement trend arrows
+  if (lyr('lyr-trends') && trendData.projections) {
+    const arrowFeats = trendData.projections.map(p =>
+      _line(p.from_lng, p.from_lat, p.to_lng, p.to_lat,
+        { name: p.name, color: '#f43f5e', note: p.name + ' → Hdg ' + p.heading + '° · ' + p.speed_kts + 'kts' }));
+    globeMap.getSource('src-trend-arrows')?.setData({ type: 'FeatureCollection', features: arrowFeats });
+  } else {
+    globeMap.getSource('src-trend-arrows')?.setData(_emptyGJ());
+  }
+
   updateLayerCount();
 }
 
@@ -2164,6 +2223,7 @@ function focusGlobe(lat, lng, alt = 1.5) {
 }
 
 let aircraftData = [];
+let trendData = { trends: [], projections: [] };
 
 function updateLayerCount() {
   const count = document.querySelectorAll('.map-layer-toggles input:checked').length;
@@ -2172,6 +2232,27 @@ function updateLayerCount() {
   if (el) el.textContent = count;
   const badge = document.getElementById('layer-count-badge');
   if (badge) badge.textContent = `(${count}/${total})`;
+}
+
+// ── Military Trend Analysis ─────────────────────────────
+async function loadTrends() {
+  try {
+    const resp = await fetch('/api/military-trends');
+    trendData = await resp.json();
+    refreshGlobePoints();
+    // Insert trends panel dynamically since it loads after initial renderPanels()
+    const grid = document.getElementById('panels-grid');
+    if (grid && trendData.trends && trendData.trends.length) {
+      const existing = grid.querySelector('[data-panel="trends"]');
+      if (!existing) {
+        const wrapper = document.createElement('div');
+        wrapper.setAttribute('data-panel', 'trends');
+        wrapper.innerHTML = buildTrendsAnalysisPanel();
+        grid.insertBefore(wrapper, grid.firstChild);
+      }
+    }
+    console.log(`[Trends] ${trendData.trends?.length || 0} regions analyzed, ${trendData.projections?.length || 0} projections`);
+  } catch (e) { console.warn('Trends fetch failed:', e); }
 }
 
 // ── Aircraft Tracking ────────────────────────────────────
@@ -2272,7 +2353,14 @@ function renderPanels() {
   // 4. Country Browser panel
   html += buildCountryBrowserPanel();
 
-  // 5. Militias panel
+  // 4.5 Military Trends panel
+  html += buildTrendsAnalysisPanel();
+
+  // 5. Air Forces panel
+  html += buildAirForcesPanel();
+  html += buildSpaceportsPanel();
+
+  // 5.5 Militias panel
   html += buildMilitiasPanel();
 
   // 6. Sanctions panel
@@ -2869,6 +2957,83 @@ function formatNewsTime(pubDate) {
   const days = Math.floor(hrs / 24);
   if (days < 7) return days + 'd ago';
   return d.toLocaleDateString();
+}
+
+// ── Military Trends Panel ───────────────────────────────
+function buildTrendsAnalysisPanel() {
+  if (!trendData.trends || !trendData.trends.length) return '';
+  const sevColors = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e' };
+  const rows = trendData.trends.map(t => {
+    const color = sevColors[t.severity] || '#666';
+    const countries = t.countries_present.join(', ') || 'none';
+    const types = Object.entries(t.vessel_types || {}).map(([k,v]) => `${v} ${k}`).join(', ');
+    const movement = t.movement_trend || 'No significant inbound movement';
+    return `<div class="c-row" style="border-left:3px solid ${color};padding-left:8px;margin-bottom:8px">
+      <div class="c-name" style="color:${color}">${t.region}</div>
+      <div class="c-sub" style="font-size:11px;opacity:0.8">
+        <b>${t.vessel_count}</b> vessels · <b>${t.base_count}</b> bases · <b>${t.inbound_count}</b> inbound
+      </div>
+      <div class="c-sub" style="font-size:10px;opacity:0.6">Countries: ${countries}</div>
+      ${types ? `<div class="c-sub" style="font-size:10px;opacity:0.6">Types: ${types}</div>` : ''}
+      <div class="c-sub" style="font-size:10px;opacity:0.7;color:${t.inbound_count > 0 ? '#f59e0b' : '#666'}">${movement}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-title">Military Movement Trends</div>
+    <div class="panel-subtitle">${trendData.total_vessels || 0} vessels tracked · ${trendData.moving_vessels || 0} underway</div>
+    <div style="max-height:400px;overflow-y:auto">${rows}</div>
+  </div>`;
+}
+
+// ── Air Forces Panel ────────────────────────────────────
+function buildAirForcesPanel() {
+  if (!data.air_forces || !data.air_forces.length) return '';
+  const rows = data.air_forces.sort((a,b) => b.total_aircraft - a.total_aircraft).map(af => {
+    const pct = Math.min(100, (af.total_aircraft / 13300) * 100);
+    return `<div class="c-row" style="margin-bottom:6px">
+      <div class="c-name">${af.name} <span style="opacity:0.5">(${af.country})</span></div>
+      <div style="display:flex;gap:8px;font-size:10px;opacity:0.7;flex-wrap:wrap">
+        <span>Total: <b>${af.total_aircraft.toLocaleString()}</b></span>
+        <span>Fighters: <b>${af.fighters}</b></span>
+        ${af.bombers ? `<span>Bombers: <b>${af.bombers}</b></span>` : ''}
+        <span>Heli: <b>${af.helicopters}</b></span>
+        <span>Transport: <b>${af.transport}</b></span>
+      </div>
+      <div style="background:rgba(255,255,255,0.05);height:4px;border-radius:2px;margin-top:3px">
+        <div style="background:#22d3ee;height:4px;border-radius:2px;width:${pct}%"></div>
+      </div>
+      <div class="c-sub" style="font-size:9px;opacity:0.5;margin-top:2px">${af.key_types}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-title">World Air Forces</div>
+    <div class="panel-subtitle">${data.air_forces.length} air forces tracked</div>
+    <div style="max-height:400px;overflow-y:auto">${rows}</div>
+  </div>`;
+}
+
+// ── Spaceports Panel ────────────────────────────────────
+function buildSpaceportsPanel() {
+  if (!data.spaceports || !data.spaceports.length) return '';
+  const active = data.spaceports.filter(s => s.status === 'active');
+  const dev = data.spaceports.filter(s => s.status === 'development');
+  const byCountry = {};
+  data.spaceports.forEach(s => { byCountry[s.country] = (byCountry[s.country] || 0) + 1; });
+  const rows = data.spaceports.map(s => {
+    const statusColor = s.status === 'active' ? '#22c55e' : s.status === 'development' ? '#f59e0b' : '#666';
+    return `<div class="c-row" style="margin-bottom:4px">
+      <div class="c-name">${s.name} <span style="opacity:0.5">(${s.country})</span></div>
+      <div class="c-sub" style="font-size:10px">
+        <span style="color:${statusColor}">${s.status.toUpperCase()}</span> · ${s.operator}
+      </div>
+      <div class="c-sub" style="font-size:9px;opacity:0.5">${s.detail}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-title">Spaceports & Launch Sites</div>
+    <div class="panel-subtitle">${active.length} active · ${dev.length} in development · ${Object.keys(byCountry).length} countries</div>
+    <div style="max-height:400px;overflow-y:auto">${rows}</div>
+  </div>`;
 }
 
 // ── Militias Panel ──────────────────────────────────────

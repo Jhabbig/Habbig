@@ -532,6 +532,10 @@ async function loadSuspicious() {
     }
 
     // Stats cards
+    const ftw = agg.first_trade_wallets || 0;
+    const preRes = agg.pre_resolution_trades || 0;
+    const volSpike = agg.volume_spike_trades || 0;
+
     statsEl.innerHTML = `
       <div class="sus-stat">
         <div class="label">Flagged Trades</div>
@@ -544,9 +548,19 @@ async function loadSuspicious() {
         <div class="detail">Max single: ${fmtMoney(agg.max_potential_profit)}</div>
       </div>
       <div class="sus-stat">
-        <div class="label">Total Flagged Volume</div>
-        <div class="value">${fmtMoney(agg.total_volume_flagged)}</div>
-        <div class="detail">Avg: ${fmtMoney(agg.avg_trade_size)}</div>
+        <div class="label">Pre-Resolution Bets</div>
+        <div class="value" style="color:${preRes > 0 ? 'var(--red)' : 'var(--text)'};">${preRes}</div>
+        <div class="detail">Placed within 48h of market close</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">First-Trade Wallets</div>
+        <div class="value" style="color:${ftw > 0 ? 'var(--red)' : 'var(--text)'};">${ftw}</div>
+        <div class="detail">Single-purpose accounts</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Volume Spikes</div>
+        <div class="value" style="color:${volSpike > 0 ? 'var(--red)' : 'var(--text)'};">${volSpike}</div>
+        <div class="detail">Trades during abnormal volume</div>
       </div>
       <div class="sus-stat">
         <div class="label">New Accounts (&lt;30d)</div>

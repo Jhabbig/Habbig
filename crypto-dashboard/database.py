@@ -11,6 +11,7 @@ DB file: data.db (stored alongside this file)
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import sqlite3
@@ -191,6 +192,22 @@ def _configure_connection(c: sqlite3.Connection) -> None:
 
 
 _local = threading.local()
+_all_connections: list[sqlite3.Connection] = []
+_conn_list_lock = threading.Lock()
+
+
+def _close_all_connections():
+    """Close all tracked thread-local SQLite connections at exit."""
+    with _conn_list_lock:
+        for c in _all_connections:
+            try:
+                c.close()
+            except Exception:
+                pass
+        _all_connections.clear()
+
+
+atexit.register(_close_all_connections)
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -200,6 +217,8 @@ def _get_conn() -> sqlite3.Connection:
         c = sqlite3.connect(DB_PATH, check_same_thread=False)
         _configure_connection(c)
         _local.conn = c
+        with _conn_list_lock:
+            _all_connections.append(c)
     return c
 
 

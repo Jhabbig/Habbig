@@ -67,7 +67,6 @@ def _make_xgb(**overrides):
         reg_alpha=5.0,
         reg_lambda=10.0,
         gamma=2.0,
-        use_label_encoder=False,
         eval_metric="logloss",
         random_state=42,
         n_jobs=-1,

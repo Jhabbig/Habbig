@@ -78,17 +78,20 @@ echo ""
 
 route_host() {
     local HOST="$1"
+    local TMPFILE
+    TMPFILE="$(mktemp)"
     echo -e "${GREEN}→${NC} $HOST"
-    if cloudflared tunnel route dns "$TUNNEL_ID" "$HOST" 2>&1 | tee /tmp/cf_route_output.tmp; then
+    if cloudflared tunnel route dns "$TUNNEL_ID" "$HOST" 2>&1 | tee "$TMPFILE"; then
         :
     else
         # Exit non-zero is fine for "already exists" — log and continue
-        if grep -q "already exists" /tmp/cf_route_output.tmp; then
+        if grep -q "already exists" "$TMPFILE"; then
             echo -e "  ${YELLOW}(route already exists, skipping)${NC}"
         else
             echo -e "  ${RED}FAILED${NC}"
         fi
     fi
+    rm -f "$TMPFILE"
     echo ""
 }
 
@@ -101,8 +104,6 @@ while IFS= read -r SUB; do
         route_host "$SUB.$DOMAIN"
     fi
 done <<< "$SUBDOMAINS"
-
-rm -f /tmp/cf_route_output.tmp
 
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${GREEN}  DNS routes configured.${NC}"

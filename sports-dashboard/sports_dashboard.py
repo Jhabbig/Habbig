@@ -308,6 +308,29 @@ def _migrate_db():
 _migrate_db()
 
 
+def _is_safe_webhook_url(url: str) -> bool:
+    """Validate that a webhook URL is HTTPS and does not target private/reserved networks."""
+    import socket
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            return False
+        hostname = parsed.hostname or ""
+        if not hostname:
+            return False
+        # Resolve and check for private IPs
+        for info in socket.getaddrinfo(hostname, None):
+            addr = info[4][0]
+            import ipaddress
+            ip = ipaddress.ip_address(addr)
+            if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+                return False
+    except Exception:
+        return False
+    return True
+
+
 def log_activity(user_id: str, action: str, detail: str = ""):
     """Log a user activity event to sports_user_activity."""
     try:
@@ -335,6 +358,9 @@ def get_user_settings(user_id: str) -> dict:
 
 
 _BEHIND_GATEWAY = bool(os.environ.get("GATEWAY_SSO_SECRET"))
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+if not _BEHIND_GATEWAY and not _DEV_MODE:
+    logging.warning("GATEWAY_SSO_SECRET not set and DEV_MODE not enabled — sports dashboard will reject unauthenticated requests")
 
 
 def get_current_user(request: Request) -> dict | None:
@@ -397,6 +423,22 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    # Fail closed: if no gateway secret and not in dev mode, reject all requests
+    if not _BEHIND_GATEWAY and not _DEV_MODE:
+        return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'"
+    if _BEHIND_GATEWAY:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
 
 # In-memory state
 # NOTE: dashboard_data holds data for a single sport at a time (the
@@ -2007,13 +2049,18 @@ def _build_kalshi_comparisons(kalshi_parsed: list[dict], poly_markets: list[dict
 
 _resolve_counter = 0  # run auto-resolve every 6th cycle (~30 min)
 _bg_scan_counter = 0  # run background multi-sport scan every 4th cycle (~20 min)
+_updater_running = False  # prevent double-start of data_updater
 
 
 async def data_updater():
     """Background task that polls APIs and updates dashboard_data."""
-    global _poly_cache, _poly_cache_time, _resolve_counter, _bg_scan_counter
+    global _poly_cache, _poly_cache_time, _resolve_counter, _bg_scan_counter, _updater_running
+    if _updater_running:
+        return
+    _updater_running = True
     while True:
-        sport = dashboard_data["active_sport"]
+        async with _data_lock:
+            sport = dashboard_data["active_sport"]
         try:
             is_esport = sport in ESPORTS_KEYS
             is_kalshi_only = sport in KALSHI_ONLY_SPORTS
@@ -2053,7 +2100,9 @@ async def data_updater():
                         pass
 
             # Check if sport changed during fetch — discard stale results
-            if sport != dashboard_data["active_sport"]:
+            async with _data_lock:
+                current_sport = dashboard_data["active_sport"]
+            if sport != current_sport:
                 continue
 
             all_poly_markets = parse_polymarket_events(poly_raw)
@@ -2253,14 +2302,16 @@ async def broadcast_update():
     global connected_ws
     if not connected_ws:
         return
-    msg = json.dumps({"type": "update", "data": dashboard_data}, default=str)
+    async with _data_lock:
+        msg = json.dumps({"type": "update", "data": dashboard_data}, default=str)
     dead = set()
-    for ws in list(connected_ws):
+    for ws in connected_ws.copy():
         try:
             await ws.send_text(msg)
         except Exception:
             dead.add(ws)
-    connected_ws -= dead
+    if dead:
+        connected_ws.difference_update(dead)
 
 
 def save_signals(signals: list[dict]):
@@ -3101,6 +3152,10 @@ async def save_alert_config(request: Request):
     min_edge = float(body.get("min_edge", 5.0))
     alert_sports = body.get("sports", [])
 
+    # Validate webhook URL against SSRF
+    if webhook_url and not _is_safe_webhook_url(webhook_url):
+        return JSONResponse({"error": "Webhook URL must be HTTPS and not target private networks"}, status_code=400)
+
     with _get_db() as conn:
         # If token is masked, keep existing
         if tg_token == "****":
@@ -3147,15 +3202,17 @@ async def test_alert(request: Request):
                 timeout=10,
             )
             sent = True
-        except Exception as e:
-            return JSONResponse({"error": f"Telegram error: {e}"}, status_code=500)
+        except Exception:
+            return JSONResponse({"error": "Telegram delivery failed"}, status_code=500)
     webhook_url = cfg.get("webhook_url", "")
     if webhook_url:
+        if not _is_safe_webhook_url(webhook_url):
+            return JSONResponse({"error": "Webhook URL must be HTTPS and not target private networks"}, status_code=400)
         try:
             requests.post(webhook_url, json={"text": msg}, timeout=10)
             sent = True
-        except Exception as e:
-            return JSONResponse({"error": f"Webhook error: {e}"}, status_code=500)
+        except Exception:
+            return JSONResponse({"error": "Webhook delivery failed"}, status_code=500)
     if not sent:
         return JSONResponse({"error": "No Telegram or webhook configured"}, status_code=400)
     return JSONResponse({"status": "ok", "message": "Test alert sent"})

@@ -167,6 +167,15 @@ CREATE TABLE IF NOT EXISTS profiles (
     created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     last_login      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS midterm_district_profiles (
+    state           TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    profile_data    TEXT NOT NULL,       -- JSON object stored as TEXT
+    auto_generated  INTEGER DEFAULT 0,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 """
 
 
@@ -590,3 +599,63 @@ class Database:
                 (limit, offset),
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    # === District Profiles ==================================================
+
+    def upsert_district_profile(self, state: str, name: str, profile_data: dict, auto_generated: bool = False):
+        """Insert or update a district/state profile."""
+        data_json = json.dumps(profile_data) if isinstance(profile_data, (dict, list)) else profile_data
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_district_profiles
+                        (state, name, profile_data, auto_generated, updated_at)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(state) DO UPDATE SET
+                         name=excluded.name,
+                         profile_data=excluded.profile_data,
+                         auto_generated=excluded.auto_generated,
+                         updated_at=excluded.updated_at""",
+                    (state.upper(), name, data_json, 1 if auto_generated else 0, now),
+                )
+
+    def get_district_profile(self, state: str) -> dict | None:
+        """Get a district profile by state abbreviation."""
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM midterm_district_profiles WHERE state = ?",
+                (state.upper(),),
+            ).fetchone()
+        if not row:
+            return None
+        d = _row_to_dict(row)
+        if isinstance(d.get("profile_data"), str):
+            try:
+                d["profile_data"] = json.loads(d["profile_data"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return d
+
+    def get_all_district_profiles(self) -> list[dict]:
+        """Get all district profiles."""
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM midterm_district_profiles ORDER BY state"
+            ).fetchall()
+        results = []
+        for row in rows:
+            d = _row_to_dict(row)
+            if isinstance(d.get("profile_data"), str):
+                try:
+                    d["profile_data"] = json.loads(d["profile_data"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(d)
+        return results
+
+    def get_profiled_states(self) -> set[str]:
+        """Return set of state abbreviations that already have profiles."""
+        with _get_conn() as conn:
+            rows = conn.execute("SELECT state FROM midterm_district_profiles").fetchall()
+        return {r["state"] for r in rows}

@@ -2,10 +2,13 @@
 """World State Dashboard — FastAPI backend."""
 
 import asyncio
+import hmac
 import json
+import logging
 import math
 import os
 import re
+import threading
 import time
 import urllib.request
 try:
@@ -16,22 +19,50 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+
+from infrastructure_data import (
+    UNDERSEA_CABLES as _INFRA_CABLES,
+    OIL_GAS_PIPELINES as _INFRA_PIPELINES,
+    OIL_RARE_EARTH_FIELDS as _INFRA_FIELDS,
+)
 
 app = FastAPI(title="World State Dashboard")
 
 HTML_PATH = Path(__file__).parent / "index.html"
 
+_sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+if not _sso_secret:
+    if _DEV_MODE:
+        logging.warning("GATEWAY_SSO_SECRET not set — world-state dashboard running in DEV_MODE (no auth)")
+    else:
+        logging.warning("GATEWAY_SSO_SECRET not set and DEV_MODE not enabled — rejecting all requests")
+
 
 @app.middleware("http")
-async def security_headers(request: Request, call_next):
+async def security_and_auth(request: Request, call_next):
+    # Authenticate via gateway SSO header
+    if _sso_secret:
+        client_secret = request.headers.get("x-gateway-secret", "")
+        if not hmac.compare_digest(client_secret, _sso_secret):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    elif not _DEV_MODE:
+        return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
+    if _sso_secret:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
+
+# ── Thread safety for global caches ──────────────────────────────────────────
+_cache_lock = threading.Lock()
 
 # ── News Feed (RSS aggregation) ───────────────────────────────────────────────
 NEWS_CACHE = {"data": [], "fetched_at": 0.0}
@@ -4358,6 +4389,104 @@ VESSEL_DEPLOYMENTS = [
      "detail": "Sydney; Indo-Pacific presence", "vessels": "L02 LHD"},
     {"name": "Cavour (C 550)", "country": "IT", "type": "carrier", "lat": 40.84, "lng": 14.27, "heading": 0, "speed_kts": 0,
      "detail": "Taranto homeport; F-35B capable", "vessels": "C 550"},
+
+    # ── More US Navy ──
+    {"name": "USS Nimitz (CVN-68)", "country": "US", "type": "carrier", "lat": 47.56, "lng": -122.63, "heading": 0, "speed_kts": 0, "detail": "Bremerton, WA; in port; maintenance", "vessels": "CVN-68 (in port)"},
+    {"name": "USS Dwight D. Eisenhower (CVN-69)", "country": "US", "type": "carrier", "lat": 36.95, "lng": -76.33, "heading": 0, "speed_kts": 0, "detail": "Norfolk, VA; in port; post-deployment refit", "vessels": "CVN-69 (in port)"},
+    {"name": "USS Abraham Lincoln (CVN-72) CSG", "country": "US", "type": "carrier_strike_group", "lat": 18.5, "lng": 134.0, "heading": 180, "speed_kts": 14, "detail": "Western Pacific/Philippine Sea; Indo-Pacific patrol", "vessels": "CVN-72 + CG/DDGs + SSN"},
+    {"name": "USS John C. Stennis (CVN-74)", "country": "US", "type": "carrier", "lat": 36.95, "lng": -76.35, "heading": 0, "speed_kts": 0, "detail": "Norfolk; RCOH/refueling", "vessels": "CVN-74 (in port)"},
+    {"name": "USS George Washington (CVN-73)", "country": "US", "type": "carrier", "lat": 35.28, "lng": 139.66, "heading": 0, "speed_kts": 0, "detail": "Forward-deployed Yokosuka (replacing Reagan)", "vessels": "CVN-73 (forward deployed)"},
+    {"name": "USS Ohio (SSGN-726) SSBN patrol", "country": "US", "type": "submarine", "lat": 35.0, "lng": -140.0, "heading": 270, "speed_kts": 8, "detail": "Pacific; deterrence patrol", "vessels": "SSGN-726"},
+    {"name": "USS West Virginia (SSBN-736)", "country": "US", "type": "submarine", "lat": 42.0, "lng": -52.0, "heading": 90, "speed_kts": 6, "detail": "Atlantic SSBN patrol", "vessels": "SSBN-736"},
+
+    # ── South Korea ──
+    {"name": "ROKS Dokdo (LPH-6111)", "country": "KR", "type": "amphibious", "lat": 35.08, "lng": 129.04, "heading": 0, "speed_kts": 0, "detail": "Busan; ROK Navy flagship", "vessels": "LPH-6111"},
+    {"name": "ROKS Marado (LPH-6112)", "country": "KR", "type": "amphibious", "lat": 33.25, "lng": 126.57, "heading": 180, "speed_kts": 10, "detail": "Jeju patrol; Indo-Pacific patrol", "vessels": "LPH-6112"},
+    {"name": "ROKS Sejong the Great (DDG-991)", "country": "KR", "type": "destroyer", "lat": 37.5, "lng": 131.5, "heading": 0, "speed_kts": 12, "detail": "East Sea patrol; Aegis destroyer", "vessels": "DDG-991"},
+
+    # ── Turkey ──
+    {"name": "TCG Anadolu (L-408)", "country": "TR", "type": "carrier", "lat": 38.42, "lng": 27.14, "heading": 270, "speed_kts": 0, "detail": "Izmir/Aegean; Turkey's first carrier (drone/F-35B capable)", "vessels": "L-408"},
+    {"name": "TCG Istanbul (F-515)", "country": "TR", "type": "frigate", "lat": 35.5, "lng": 30.0, "heading": 90, "speed_kts": 14, "detail": "Eastern Mediterranean; MILGEM frigate", "vessels": "F-515"},
+
+    # ── Egypt ──
+    {"name": "ENS Gamal Abdel Nasser (L1010)", "country": "EG", "type": "amphibious", "lat": 31.20, "lng": 29.90, "heading": 0, "speed_kts": 0, "detail": "Alexandria; Mistral-class LHD", "vessels": "L1010"},
+    {"name": "ENS Anwar El Sadat (L1020)", "country": "EG", "type": "amphibious", "lat": 24.0, "lng": 37.0, "heading": 180, "speed_kts": 12, "detail": "Red Sea patrol; Mistral-class LHD; Red Sea security", "vessels": "L1020"},
+
+    # ── Spain ──
+    {"name": "Juan Carlos I (L-61)", "country": "ES", "type": "carrier", "lat": 36.60, "lng": -6.38, "heading": 0, "speed_kts": 0, "detail": "Rota; Spanish Navy flagship; F-35B capable", "vessels": "L-61"},
+
+    # ── Brazil ──
+    {"name": "NAM Atlântico (A140)", "country": "BR", "type": "carrier", "lat": 22.90, "lng": -43.17, "heading": 0, "speed_kts": 0, "detail": "Rio de Janeiro; Ex-HMS Ocean; Brazilian Navy flagship", "vessels": "A140"},
+
+    # ── Thailand ──
+    {"name": "HTMS Chakri Naruebet", "country": "TH", "type": "carrier", "lat": 12.68, "lng": 100.88, "heading": 0, "speed_kts": 0, "detail": "Sattahip; Royal Thai Navy; world's smallest carrier", "vessels": "HTMS Chakri Naruebet"},
+
+    # ── Germany ──
+    {"name": "FGS Baden-Württemberg (F222)", "country": "DE", "type": "frigate", "lat": 55.5, "lng": 14.0, "heading": 90, "speed_kts": 12, "detail": "Baltic patrol; F125 frigate; NATO Baltic presence", "vessels": "F222"},
+    {"name": "FGS Sachsen (F219)", "country": "DE", "type": "frigate", "lat": 54.5, "lng": 7.0, "heading": 0, "speed_kts": 0, "detail": "North Sea; Type 124 air defense frigate", "vessels": "F219"},
+
+    # ── Netherlands ──
+    {"name": "HNLMS Karel Doorman (A833)", "country": "NL", "type": "support_ship", "lat": 48.0, "lng": -15.0, "heading": 180, "speed_kts": 10, "detail": "Atlantic; Joint Support Ship; NATO logistics", "vessels": "A833"},
+
+    # ── Greece ──
+    {"name": "HS Hydra (F452)", "country": "GR", "type": "frigate", "lat": 37.5, "lng": 25.5, "heading": 90, "speed_kts": 14, "detail": "Aegean patrol; MEKO 200 frigate; Aegean presence", "vessels": "F452"},
+
+    # ── Singapore ──
+    {"name": "RSS Endurance (207)", "country": "SG", "type": "amphibious", "lat": 3.5, "lng": 105.0, "heading": 90, "speed_kts": 10, "detail": "South China Sea; Endurance-class LST", "vessels": "207"},
+
+    # ── Indonesia ──
+    {"name": "KRI Makassar (590)", "country": "ID", "type": "amphibious", "lat": -5.5, "lng": 112.0, "heading": 90, "speed_kts": 10, "detail": "Java Sea patrol; Makassar-class LPD; archipelago patrol", "vessels": "590"},
+
+    # ── Iran ──
+    {"name": "IRIS Makran (441)", "country": "IR", "type": "support_ship", "lat": 26.6, "lng": 56.3, "heading": 180, "speed_kts": 8, "detail": "Strait of Hormuz; Forward staging base; largest Iranian warship", "vessels": "441"},
+    {"name": "IRIS Dena (75)", "country": "IR", "type": "frigate", "lat": 25.5, "lng": 58.0, "heading": 270, "speed_kts": 12, "detail": "Gulf of Oman; Moudge-class frigate; Gulf patrol", "vessels": "75"},
+
+    # ── Pakistan ──
+    {"name": "PNS Moawin (A39)", "country": "PK", "type": "support_ship", "lat": 24.0, "lng": 66.0, "heading": 180, "speed_kts": 10, "detail": "Arabian Sea; Fleet tanker; PN Task Group", "vessels": "A39"},
+    {"name": "PNS Tughril (F263)", "country": "PK", "type": "frigate", "lat": 12.0, "lng": 65.0, "heading": 270, "speed_kts": 14, "detail": "Indian Ocean; Type 054A/P frigate from China", "vessels": "F263"},
+
+    # ── Saudi Arabia ──
+    {"name": "HMS Al Riyadh (812)", "country": "SA", "type": "frigate", "lat": 20.5, "lng": 38.5, "heading": 180, "speed_kts": 12, "detail": "Red Sea patrol; La Fayette-class; Red Sea security", "vessels": "812"},
+
+    # ── Japan (additional) ──
+    {"name": "JS Kaga (DDH-184)", "country": "JP", "type": "carrier", "lat": 28.0, "lng": 135.0, "heading": 180, "speed_kts": 14, "detail": "Western Pacific patrol; Izumo-class; F-35B capable; Pacific patrol", "vessels": "DDH-184"},
+    {"name": "JS Maya (DDG-179)", "country": "JP", "type": "destroyer", "lat": 30.0, "lng": 128.5, "heading": 270, "speed_kts": 12, "detail": "East China Sea; Maya-class Aegis BMD", "vessels": "DDG-179"},
+
+    # ── France (additional) ──
+    {"name": "FS Mistral (L9013)", "country": "FR", "type": "amphibious", "lat": 10.0, "lng": 52.0, "heading": 90, "speed_kts": 12, "detail": "Indian Ocean; Mistral-class LHD; Indian Ocean deployment", "vessels": "L9013"},
+    {"name": "FS Dixmude (L9015)", "country": "FR", "type": "amphibious", "lat": -4.0, "lng": 6.0, "heading": 180, "speed_kts": 10, "detail": "West Africa; Mistral-class; Gulf of Guinea patrol", "vessels": "L9015"},
+
+    # ── UK (additional) ──
+    {"name": "HMS Daring (D32)", "country": "GB", "type": "destroyer", "lat": 26.0, "lng": 52.0, "heading": 90, "speed_kts": 14, "detail": "Persian Gulf; Type 45 destroyer; Gulf patrol", "vessels": "D32"},
+    {"name": "HMS Spey (P234)", "country": "GB", "type": "patrol", "lat": 1.0, "lng": 115.0, "heading": 90, "speed_kts": 12, "detail": "Indo-Pacific; River-class OPV; Indo-Pacific deployment", "vessels": "P234"},
+
+    # ── Canada ──
+    {"name": "HMCS Harry DeWolf (AOPV-430)", "country": "CA", "type": "patrol", "lat": 72.0, "lng": -90.0, "heading": 0, "speed_kts": 8, "detail": "Arctic; Arctic OPV; Northwest Passage", "vessels": "AOPV-430"},
+
+    # ── Norway ──
+    {"name": "KNM Fridtjof Nansen (F310)", "country": "NO", "type": "frigate", "lat": 67.0, "lng": 10.0, "heading": 0, "speed_kts": 12, "detail": "Norwegian Sea; Nansen-class; NATO Northern Flank", "vessels": "F310"},
+
+    # ── Denmark ──
+    {"name": "HDMS Absalon (L16)", "country": "DK", "type": "frigate", "lat": 55.0, "lng": 12.0, "heading": 90, "speed_kts": 10, "detail": "Baltic Sea; Absalon-class support ship", "vessels": "L16"},
+
+    # ── Sweden ──
+    {"name": "HMS Gotland (Gtd)", "country": "SE", "type": "submarine", "lat": 58.5, "lng": 18.0, "heading": 0, "speed_kts": 6, "detail": "Baltic Sea; Gotland-class AIP submarine; Baltic ASW", "vessels": "Gtd"},
+
+    # ── Italy (additional) ──
+    {"name": "ITS Trieste (L9890)", "country": "IT", "type": "carrier", "lat": 37.0, "lng": 16.0, "heading": 180, "speed_kts": 10, "detail": "Central Mediterranean; LHD; Italy's largest warship; F-35B capable", "vessels": "L9890"},
+
+    # ── Russia (additional) ──
+    {"name": "Admiral Gorshkov SAG", "country": "RU", "type": "surface_group", "lat": 36.0, "lng": -8.0, "heading": 90, "speed_kts": 12, "detail": "Atlantic/Mediterranean; Gorshkov-class frigate + tanker; Zircon hypersonic missiles", "vessels": "Gorshkov SAG"},
+    {"name": "Northern Fleet SSBN Patrol", "country": "RU", "type": "submarine", "lat": 72.0, "lng": 38.0, "heading": 0, "speed_kts": 5, "detail": "Barents Sea; Delta IV SSBN; strategic deterrence", "vessels": "Delta IV SSBN"},
+
+    # ── China (additional) ──
+    {"name": "Type 075 Hainan (31)", "country": "CN", "type": "amphibious", "lat": 16.0, "lng": 110.5, "heading": 180, "speed_kts": 12, "detail": "South China Sea; Type 075 LHD; amphibious assault ship", "vessels": "31"},
+    {"name": "Type 075 Guangxi (32)", "country": "CN", "type": "amphibious", "lat": 29.0, "lng": 124.0, "heading": 90, "speed_kts": 10, "detail": "East China Sea; Type 075 LHD; Taiwan contingency readiness", "vessels": "32"},
+    {"name": "PLAN Southern Theater SSN", "country": "CN", "type": "submarine", "lat": 14.0, "lng": 115.0, "heading": 180, "speed_kts": 8, "detail": "South China Sea deep patrol; Type 093 SSN; SCS patrol", "vessels": "Type 093 SSN"},
+
+    # ── India (additional) ──
+    {"name": "INS Vikramaditya (R33)", "country": "IN", "type": "carrier", "lat": 13.0, "lng": 84.0, "heading": 90, "speed_kts": 14, "detail": "Eastern Fleet Bay of Bengal; Modified Kiev-class; Eastern Fleet flagship", "vessels": "R33"},
+    {"name": "INS Arihant (S73)", "country": "IN", "type": "submarine", "lat": 10.0, "lng": 82.0, "heading": 180, "speed_kts": 6, "detail": "Bay of Bengal SSBN patrol; Arihant-class SSBN; India's sea-based nuclear deterrent", "vessels": "S73"},
 ]
 
 
@@ -4428,30 +4557,50 @@ _MIL_PREFIXES = {
     "CNV", "BAF", "IAF", "RAF", "FAF", "PAF", "VMFA", "VMGR",
     "BDOG", "PELCN", "STNGR", "HKYNS", "QUID", "GOTHAM", "OTIS",
 }
-_COMMERCIAL_RE = re.compile(r"^[A-Z]{2,3}\d{1,4}[A-Z]?$")
+# Military ICAO hex ranges (start, end) — known allocations for military transponders
+_MIL_ICAO_RANGES = [
+    (0xAE0000, 0xAEF2AF),  # US military
+    (0xADF7C8, 0xADFFFF),  # US military (additional)
+    (0x43C000, 0x43CFFF),  # UK military
+    (0x3A8000, 0x3AFFFF),  # France military
+    (0x3F4000, 0x3F7FFF),  # Germany military
+    (0x300000, 0x303FFF),  # Italy military
+    (0x340100, 0x340FFF),  # Spain military
+    (0x480000, 0x480FFF),  # Netherlands military
+    (0x710000, 0x710FFF),  # Australia military
+    (0xC2C000, 0xC2CFFF),  # Canada military
+    (0x7CF800, 0x7CFFFF),  # Japan military
+    (0x501000, 0x501FFF),  # Israel military
+    (0x0D0000, 0x0D7FFF),  # India military
+    (0xE40000, 0xE40FFF),  # Brazil military
+    (0x738000, 0x738FFF),  # South Korea military
+    (0x800200, 0x8002FF),  # Turkey military
+    (0x510000, 0x510FFF),  # Saudi Arabia military
+]
+
+
+def _is_mil_icao(icao_hex: str) -> bool:
+    """Check if ICAO hex falls in a known military range."""
+    try:
+        val = int(icao_hex, 16)
+        return any(lo <= val <= hi for lo, hi in _MIL_ICAO_RANGES)
+    except (ValueError, TypeError):
+        return False
 
 
 def filter_military_aircraft(all_aircraft):
-    """Return aircraft likely to be military/government (not commercial airlines)."""
+    """Return only positively-identified military/government aircraft."""
     results = []
     for a in all_aircraft:
         cs = a["callsign"].upper()
-        # No callsign — many military flights
-        if not cs:
+        # Known military callsign prefix
+        if cs and any(cs.startswith(p) for p in _MIL_PREFIXES):
             results.append(a)
             continue
-        # Known military prefix
-        if any(cs.startswith(p) for p in _MIL_PREFIXES):
+        # ICAO hex in a known military range
+        if _is_mil_icao(a.get("icao", "")):
             results.append(a)
             continue
-        # Skip anything matching commercial airline pattern (e.g., UAL123, BAW456)
-        if _COMMERCIAL_RE.match(cs):
-            continue
-        # Also skip if callsign is purely numeric (private/GA with ADSB)
-        if cs.isdigit():
-            continue
-        # Keep anything else (government, cargo, special missions)
-        results.append(a)
     return results
 
 
@@ -4568,6 +4717,11 @@ def fetch_satellites():
         ("gps", "https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=json"),
         ("stations", "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json"),
         ("geo", "https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=json"),
+        ("weather", "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json"),
+        ("earth-obs", "https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=json"),
+        ("comms", "https://celestrak.org/NORAD/elements/gp.php?GROUP=intelsat&FORMAT=json"),
+        ("science", "https://celestrak.org/NORAD/elements/gp.php?GROUP=science&FORMAT=json"),
+        ("starlink", "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=json"),
     ]
     for group_name, url in groups:
         try:
@@ -4854,6 +5008,107 @@ OIL_RARE_EARTH_FIELDS = [
     {"name": "Pilbara Lithium Province", "country": "AU", "lat": -21.83, "lng": 119.02, "type": "lithium", "reserves": "Major spodumene deposits", "detail": "Greenbushes, Pilgangoora, Wodgina mines; world's #1 hard-rock lithium producer"},
     {"name": "Atacama Lithium Triangle", "country": "CL", "lat": -23.50, "lng": -68.20, "type": "lithium", "reserves": "~50% global lithium reserves", "detail": "Salar de Atacama; SQM/Albemarle; Chile, Argentina, Bolivia triangle; brine extraction"},
     {"name": "Bushveld Complex (PGMs)", "country": "ZA", "lat": -24.90, "lng": 29.45, "type": "platinum_group", "reserves": "75% of global platinum reserves", "detail": "World's largest PGM deposit; platinum, palladium, rhodium; Anglo American, Impala, Sibanye"},
+]
+
+
+# ═══════════════ SPACEPORTS & LAUNCH FACILITIES ═══════════════
+SPACEPORTS = [
+    # ── United States ──
+    {"name": "Kennedy Space Center (LC-39)", "country": "US", "lat": 28.57, "lng": -80.65, "operator": "NASA/SpaceX", "status": "active", "detail": "Crewed launches; Artemis SLS; SpaceX Falcon/Starship; LC-39A/B"},
+    {"name": "Cape Canaveral SFS (SLC-40/41)", "country": "US", "lat": 28.49, "lng": -80.58, "operator": "SpaceX/ULA", "status": "active", "detail": "Falcon 9 (SLC-40); Atlas V/Vulcan (SLC-41); highest launch cadence globally"},
+    {"name": "Vandenberg SFB", "country": "US", "lat": 34.75, "lng": -120.52, "operator": "USSF/SpaceX/ULA", "status": "active", "detail": "Polar/SSO launches; Falcon 9, Delta IV Heavy; NRO payloads"},
+    {"name": "SpaceX Starbase (Boca Chica)", "country": "US", "lat": 25.99, "lng": -97.15, "operator": "SpaceX", "status": "active", "detail": "Starship/Super Heavy development & launch site; orbital launch pad"},
+    {"name": "Wallops Flight Facility", "country": "US", "lat": 37.93, "lng": -75.47, "operator": "NASA/MARS", "status": "active", "detail": "Antares/Minotaur launches; ISS resupply (Cygnus); sounding rockets"},
+    {"name": "Kodiak Launch Complex", "country": "US", "lat": 57.44, "lng": -152.34, "operator": "AASC", "status": "active", "detail": "Polar launches from Alaska; Astra, ABL Space"},
+    {"name": "Mojave Air & Space Port", "country": "US", "lat": 35.06, "lng": -118.15, "operator": "Various", "status": "active", "detail": "Horizontal launch; Virgin Orbit (ceased); Scaled Composites; test flights"},
+    {"name": "Cecil Spaceport", "country": "US", "lat": 30.22, "lng": -81.88, "operator": "JAA", "status": "active", "detail": "Horizontal launch site; Jacksonville, FL; small sat launchers"},
+    {"name": "Stennis Space Center", "country": "US", "lat": 30.37, "lng": -89.60, "operator": "NASA", "status": "active", "detail": "Rocket engine test facility; SLS core stage testing; Mississippi"},
+    # ── Russia ──
+    {"name": "Baikonur Cosmodrome", "country": "KZ", "lat": 45.97, "lng": 63.31, "operator": "Roscosmos (leased from KZ)", "status": "active", "detail": "World's first spaceport (1957); Soyuz, Proton launches; ISS crew launches"},
+    {"name": "Plesetsk Cosmodrome", "country": "RU", "lat": 62.93, "lng": 40.58, "operator": "Russian MoD", "status": "active", "detail": "Military launches; Soyuz-2, Angara; ICBM testing; world's busiest by total launches"},
+    {"name": "Vostochny Cosmodrome", "country": "RU", "lat": 51.88, "lng": 128.33, "operator": "Roscosmos", "status": "active", "detail": "Russia's newest spaceport (2016); replacing Baikonur dependence; Soyuz-2, Angara-A5"},
+    {"name": "Kapustin Yar", "country": "RU", "lat": 48.58, "lng": 45.77, "operator": "Russian MoD", "status": "active", "detail": "Missile test range; sounding rockets; Soviet-era origins (1946)"},
+    # ── China ──
+    {"name": "Jiuquan Satellite Launch Center", "country": "CN", "lat": 40.96, "lng": 100.29, "operator": "CNSA/PLA", "status": "active", "detail": "Crewed Shenzhou launches; Long March 2F; Gobi Desert; China's first spaceport"},
+    {"name": "Xichang Satellite Launch Center", "country": "CN", "lat": 28.25, "lng": 102.03, "operator": "CNSA", "status": "active", "detail": "GEO/BeiDou launches; Long March 3B; Sichuan province"},
+    {"name": "Taiyuan Satellite Launch Center", "country": "CN", "lat": 38.85, "lng": 111.61, "operator": "CNSA", "status": "active", "detail": "Polar/SSO launches; Long March 4/6; Shanxi province"},
+    {"name": "Wenchang Space Launch Site", "country": "CN", "lat": 19.61, "lng": 110.95, "operator": "CNSA", "status": "active", "detail": "Heavy-lift launches; Long March 5/7/8; Hainan; China's newest & most modern"},
+    {"name": "Eastern China Sea Launch (mobile)", "country": "CN", "lat": 34.50, "lng": 121.00, "operator": "CASIC", "status": "active", "detail": "Sea-based launches from converted ships; Long March 11; flexible launch location"},
+    # ── Europe ──
+    {"name": "Guiana Space Centre (Kourou)", "country": "FR", "lat": 5.24, "lng": -52.77, "operator": "ESA/Arianespace/CNES", "status": "active", "detail": "Ariane 6, Vega-C, Soyuz (suspended); near equator; French Guiana"},
+    {"name": "Esrange Space Center", "country": "SE", "lat": 67.89, "lng": 21.10, "operator": "SSC", "status": "active", "detail": "Sounding rockets; small sat orbital launches planned; Kiruna, Sweden"},
+    {"name": "Andøya Spaceport", "country": "NO", "lat": 69.29, "lng": 16.02, "operator": "ASP", "status": "development", "detail": "Planned small-sat polar orbit launches; first European continental orbital pad"},
+    {"name": "SaxaVord Spaceport", "country": "GB", "lat": 60.82, "lng": -0.78, "operator": "SaxaVord UK", "status": "development", "detail": "UK's first vertical launch site; Shetland Islands; polar/SSO orbits"},
+    {"name": "Sutherland Spaceport", "country": "GB", "lat": 58.51, "lng": -5.05, "operator": "Orbex/HIE", "status": "development", "detail": "Scottish Highlands; Orbex Prime launcher; planned 2025+"},
+    # ── India ──
+    {"name": "Satish Dhawan Space Centre (SHAR)", "country": "IN", "lat": 13.72, "lng": 80.23, "operator": "ISRO", "status": "active", "detail": "GSLV Mk III/LVM3, PSLV launches; Sriharikota island; Chandrayaan/Gaganyaan"},
+    {"name": "Thumba Equatorial Rocket Launching Station", "country": "IN", "lat": 8.53, "lng": 76.87, "operator": "ISRO", "status": "active", "detail": "Sounding rockets; near magnetic equator; India's first launch site (1963)"},
+    {"name": "Kulasekarapattinam (planned)", "country": "IN", "lat": 8.58, "lng": 78.09, "operator": "ISRO", "status": "development", "detail": "Planned SSLV launch pad; Tamil Nadu; small satellite launches"},
+    # ── Japan ──
+    {"name": "Tanegashima Space Center", "country": "JP", "lat": 30.40, "lng": 131.00, "operator": "JAXA", "status": "active", "detail": "H3, H-IIA launches; Japan's primary orbital launch site; Kagoshima prefecture"},
+    {"name": "Uchinoura Space Center", "country": "JP", "lat": 31.25, "lng": 131.08, "operator": "JAXA", "status": "active", "detail": "Epsilon rocket; scientific satellites; sounding rockets"},
+    # ── South Korea ──
+    {"name": "Naro Space Center", "country": "KR", "lat": 34.43, "lng": 127.54, "operator": "KARI/KASA", "status": "active", "detail": "Nuri (KSLV-II) launches; South Korea's only launch site; Goheung"},
+    # ── New Zealand ──
+    {"name": "Rocket Lab Launch Complex 1", "country": "NZ", "lat": -39.26, "lng": 177.86, "operator": "Rocket Lab", "status": "active", "detail": "Electron rocket; high-cadence small-sat launches; Mahia Peninsula"},
+    # ── Middle East ──
+    {"name": "Imam Khomeini Space Center (Semnan)", "country": "IR", "lat": 35.23, "lng": 53.92, "operator": "ISA/IRGC", "status": "active", "detail": "Simorgh, Qaem-100 SLV launches; dual-use ICBM concern; Semnan province"},
+    {"name": "Shahroud Missile Complex", "country": "IR", "lat": 36.42, "lng": 55.02, "operator": "IRGC-ASF", "status": "active", "detail": "Military space/missile launches; solid-fuel SLVs; less monitored than Semnan"},
+    {"name": "Palmachim Airbase", "country": "IL", "lat": 31.88, "lng": 34.69, "operator": "IAI/ISA", "status": "active", "detail": "Shavit SLV launches (retrograde orbit to avoid overflying neighbors); Ofeq satellites"},
+    # ── North Korea ──
+    {"name": "Sohae Satellite Launching Station", "country": "KP", "lat": 39.66, "lng": 124.71, "operator": "NADA", "status": "active", "detail": "Unha/Chollima SLV launches; dual-use ICBM technology; Dongchang-ri"},
+    {"name": "Tonghae Satellite Launching Ground", "country": "KP", "lat": 40.85, "lng": 129.67, "operator": "NADA", "status": "active", "detail": "East coast launch site; Musudan-ri; ballistic missile tests"},
+    # ── South America ──
+    {"name": "Alcântara Launch Center", "country": "BR", "lat": -2.37, "lng": -44.40, "operator": "FAB/AEB", "status": "active", "detail": "Near-equatorial (2°S); most fuel-efficient GEO launches; VLS rockets; commercial expansion"},
+    {"name": "Barreira do Inferno Launch Center", "country": "BR", "lat": -5.92, "lng": -35.26, "operator": "FAB", "status": "active", "detail": "Sounding rockets; Brazil's first launch site (1965); Natal, RN"},
+    # ── Australia ──
+    {"name": "Woomera Test Range", "country": "AU", "lat": -31.16, "lng": 136.83, "operator": "ADF/RAAF", "status": "active", "detail": "Missile/rocket testing; vast restricted area; South Australia; hypersonics testing"},
+    {"name": "Arnhem Space Centre", "country": "AU", "lat": -12.45, "lng": 136.80, "operator": "ELA", "status": "active", "detail": "Near-equatorial launch; NASA sounding rockets; commercial small-sat launches planned"},
+    {"name": "Bowen Orbital Launch Complex", "country": "AU", "lat": -20.00, "lng": 148.20, "operator": "Gilmour Space", "status": "development", "detail": "Queensland; Eris rocket; Australian commercial orbital launches"},
+    # ── Pakistan ──
+    {"name": "Tilla Satellite Launch Center", "country": "PK", "lat": 32.93, "lng": 73.35, "operator": "SUPARCO", "status": "limited", "detail": "Sounding rockets; Pakistan's primary space launch research facility"},
+    {"name": "Sonmiani Rocket Range", "country": "PK", "lat": 25.25, "lng": 66.75, "operator": "SUPARCO", "status": "active", "detail": "Sounding rocket launches; Balochistan coast; atmospheric research"},
+    # ── Other ──
+    {"name": "San Marco Platform", "country": "IT", "lat": -2.94, "lng": 40.21, "operator": "ASI (inactive)", "status": "retired", "detail": "Ocean-based platform off Kenya coast; Italian launches (1967-1988); equatorial"},
+    {"name": "Hammaguir Launch Site", "country": "DZ", "lat": 31.00, "lng": -3.05, "operator": "CNES (former)", "status": "retired", "detail": "French Saharan launch site; Diamant A/B (1965-1967); returned to Algeria"},
+    {"name": "Rocket Lab Launch Complex 2", "country": "US", "lat": 37.84, "lng": -75.49, "operator": "Rocket Lab", "status": "active", "detail": "Electron & Neutron rockets; Wallops Island, Virginia; US-based launches"},
+    {"name": "Jiuquan Commercial Launch Zone", "country": "CN", "lat": 40.90, "lng": 100.31, "operator": "LandSpace/iSpace", "status": "active", "detail": "Chinese commercial launch companies; Zhuque-2, Hyperbola; private sector space"},
+]
+
+
+# ═══════════════ WORLD AIR FORCES ═══════════════
+# Key data for major air forces worldwide (inventory estimates from open sources)
+WORLD_AIR_FORCES = [
+    # ── Top 10 by fleet size ──
+    {"country": "US", "name": "United States Air Force + Navy/Marines", "total_aircraft": 13300, "fighters": 1957, "bombers": 140, "attack": 871, "transport": 945, "helicopters": 5758, "tankers": 625, "special_mission": 742, "awacs": 31, "key_types": "F-35A/B/C, F-22, F-15E/EX, F-16, B-2, B-1B, B-52H, C-17, C-130J, KC-46A, E-3 Sentry", "detail": "World's largest air force; global power projection; 5th-gen dominance"},
+    {"country": "RU", "name": "Russian Aerospace Forces (VKS)", "total_aircraft": 4173, "fighters": 772, "bombers": 130, "attack": 739, "transport": 445, "helicopters": 1543, "tankers": 19, "special_mission": 132, "awacs": 11, "key_types": "Su-35S, Su-30SM, Su-57, Su-34, MiG-31BM, Tu-160M, Tu-95MS, Tu-22M3, Il-76, A-50U", "detail": "Second-largest; heavy losses in Ukraine; air defense focus"},
+    {"country": "CN", "name": "People's Liberation Army Air Force (PLAAF)", "total_aircraft": 3304, "fighters": 1200, "bombers": 176, "attack": 371, "transport": 286, "helicopters": 912, "tankers": 16, "special_mission": 119, "awacs": 17, "key_types": "J-20, J-16, J-10C, J-11B, H-6K/N, Y-20, KJ-500, KJ-2000, Z-20", "detail": "Rapid modernization; 5th-gen J-20; increasing stealth bomber program (H-20)"},
+    {"country": "IN", "name": "Indian Air Force (IAF)", "total_aircraft": 2296, "fighters": 564, "bombers": 0, "attack": 130, "transport": 250, "helicopters": 722, "tankers": 6, "special_mission": 48, "awacs": 3, "key_types": "Rafale, Su-30MKI, Tejas Mk1, MiG-29, Mirage 2000, C-17, C-130J, Il-76, AEW&C", "detail": "4th-largest; Rafale procurement; indigenous Tejas expanding; AMCA 5th-gen planned"},
+    {"country": "EG", "name": "Egyptian Air Force", "total_aircraft": 1062, "fighters": 337, "bombers": 0, "attack": 88, "transport": 55, "helicopters": 297, "tankers": 0, "special_mission": 12, "awacs": 2, "key_types": "F-16C/D, Rafale, MiG-29M/M2, Su-35, Ka-52, AH-64D, E-2C", "detail": "Largest in Middle East/Africa; mixed US/Russian/French fleet"},
+    {"country": "KR", "name": "Republic of Korea Air Force (ROKAF)", "total_aircraft": 898, "fighters": 406, "bombers": 0, "attack": 0, "transport": 35, "helicopters": 280, "tankers": 4, "special_mission": 20, "awacs": 4, "key_types": "KF-21, F-35A, F-15K, KF-16, FA-50, E-737, KC-330", "detail": "Advanced fleet; indigenous KF-21 Boramae entering service; 40 F-35As"},
+    {"country": "PK", "name": "Pakistan Air Force (PAF)", "total_aircraft": 970, "fighters": 387, "bombers": 0, "attack": 90, "transport": 48, "helicopters": 328, "tankers": 4, "special_mission": 12, "awacs": 7, "key_types": "JF-17 Thunder, F-16A/B/C/D, Mirage III/V, J-10CE, ZDK-03 AEW&C, Erieye", "detail": "Sino-Pak JF-17 backbone; J-10C acquisition; nuclear-capable"},
+    {"country": "JP", "name": "Japan Air Self-Defense Force (JASDF)", "total_aircraft": 743, "fighters": 297, "bombers": 0, "attack": 0, "transport": 49, "helicopters": 154, "tankers": 7, "special_mission": 35, "awacs": 17, "key_types": "F-35A/B, F-15J/DJ, F-2, E-767, E-2D, KC-767, C-2", "detail": "High-tech fleet; 147 F-35A/B planned; GCAP 6th-gen program with UK/Italy"},
+    {"country": "TR", "name": "Turkish Air Force (TurAF)", "total_aircraft": 712, "fighters": 244, "bombers": 0, "attack": 80, "transport": 86, "helicopters": 210, "tankers": 7, "special_mission": 22, "awacs": 4, "key_types": "F-16C/D Block 50+, T-129 ATAK, E-737, KAAN (5th-gen prototype), Bayraktar TB2/Akinci", "detail": "NATO's 2nd-largest; indigenous KAAN 5th-gen developing; drone superpower"},
+    {"country": "FR", "name": "French Air & Space Force + Aeronavale", "total_aircraft": 691, "fighters": 226, "bombers": 0, "attack": 0, "transport": 85, "helicopters": 219, "tankers": 15, "special_mission": 41, "awacs": 4, "key_types": "Rafale B/C/M, Mirage 2000-5/D, A330 MRTT, A400M, E-3F, NH90, Tigre", "detail": "Nuclear-capable (ASMPA); power projection; Operation Sentinelle; SCAF 6th-gen"},
+    {"country": "GB", "name": "Royal Air Force (RAF) + Fleet Air Arm", "total_aircraft": 607, "fighters": 137, "bombers": 0, "attack": 0, "transport": 57, "helicopters": 228, "tankers": 14, "special_mission": 30, "awacs": 6, "key_types": "F-35B, Typhoon FGR4, A330 Voyager, C-17, A400M, E-7 Wedgetail, Apache AH-64E, Merlin", "detail": "Carrier aviation F-35B; GCAP 6th-gen; nuclear deterrent Vanguard SLBM"},
+    {"country": "DE", "name": "German Air Force (Luftwaffe)", "total_aircraft": 465, "fighters": 136, "bombers": 0, "attack": 0, "transport": 67, "helicopters": 200, "tankers": 4, "special_mission": 20, "awacs": 0, "key_types": "Typhoon, Tornado IDS/ECR, A400M, A330 MRTT, NH90, Tiger, CH-47F", "detail": "Zeitenwende modernization; €100B special fund; F-35A order (35); nuclear sharing"},
+    {"country": "IT", "name": "Italian Air Force (Aeronautica Militare)", "total_aircraft": 437, "fighters": 89, "bombers": 0, "attack": 51, "transport": 45, "helicopters": 180, "tankers": 4, "special_mission": 18, "awacs": 0, "key_types": "F-35A/B, Typhoon, Tornado IDS, AMX, C-130J, KC-767, NH90, AW101", "detail": "F-35A/B fleet growing; GCAP 6th-gen partner; carrier aviation"},
+    {"country": "IL", "name": "Israeli Air Force (IAF/Heyl HaAvir)", "total_aircraft": 581, "fighters": 241, "bombers": 0, "attack": 0, "transport": 34, "helicopters": 178, "tankers": 8, "special_mission": 36, "awacs": 5, "key_types": "F-35I Adir, F-15I Ra'am, F-16I Sufa, AH-64D Saraf, Heron/Hermes UAVs, G550 CAEW", "detail": "Qualitative military edge; F-35I with indigenous systems; extensive combat experience"},
+    {"country": "SA", "name": "Royal Saudi Air Force (RSAF)", "total_aircraft": 848, "fighters": 281, "bombers": 0, "attack": 0, "transport": 55, "helicopters": 212, "tankers": 6, "special_mission": 18, "awacs": 5, "key_types": "F-15SA/S, Typhoon, Tornado IDS, AH-64E, E-3A, A330 MRTT", "detail": "Major F-15SA fleet; Yemen operations; Vision 2030 indigenous defense goals"},
+    {"country": "AU", "name": "Royal Australian Air Force (RAAF)", "total_aircraft": 391, "fighters": 71, "bombers": 0, "attack": 0, "transport": 38, "helicopters": 113, "tankers": 7, "special_mission": 28, "awacs": 6, "key_types": "F-35A, F/A-18F Super Hornet, EA-18G Growler, E-7A Wedgetail, KC-30A, C-17, C-130J, MQ-4C, P-8A", "detail": "High-tech small force; 72 F-35As; electronic warfare; AUKUS pillar"},
+    {"country": "BR", "name": "Brazilian Air Force (FAB)", "total_aircraft": 676, "fighters": 43, "bombers": 0, "attack": 99, "transport": 124, "helicopters": 260, "tankers": 2, "special_mission": 14, "awacs": 5, "key_types": "Gripen E/F, AMX, A-29 Super Tucano, KC-390, C-130, E-99, AH-2 Sabre", "detail": "Gripen E replacing F-5; KC-390 indigenous transport; Amazon surveillance"},
+    {"country": "PL", "name": "Polish Air Force", "total_aircraft": 347, "fighters": 88, "bombers": 0, "attack": 0, "transport": 32, "helicopters": 143, "tankers": 0, "special_mission": 12, "awacs": 0, "key_types": "F-35A (48 ordered), F-16C/D, MiG-29, FA-50, AW101, Black Hawk, AH-64E (planned)", "detail": "NATO eastern flank; massive modernization; $35B defense budget; F-35 + K2 tank"},
+    {"country": "TW", "name": "Republic of China Air Force (ROCAF)", "total_aircraft": 741, "fighters": 286, "bombers": 0, "attack": 0, "transport": 30, "helicopters": 271, "tankers": 0, "special_mission": 27, "awacs": 6, "key_types": "F-16V Viper, Mirage 2000-5, AIDC F-CK-1, E-2K Hawkeye, AH-64E, CH-47SD", "detail": "Cross-strait deterrence; 66 new F-16V Block 70; indigenous missiles; reserve mobilization"},
+    {"country": "UA", "name": "Ukrainian Air Force (PSU)", "total_aircraft": 318, "fighters": 67, "bombers": 0, "attack": 19, "transport": 32, "helicopters": 120, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "F-16AM/BM (donated), MiG-29, Su-27, Su-25, Mi-24, Mi-8, TB2 Bayraktar", "detail": "F-16 transition from MiG/Su fleet; Western donations critical; heavy attrition/reconstitution"},
+    {"country": "SE", "name": "Swedish Air Force (Flygvapnet)", "total_aircraft": 210, "fighters": 96, "bombers": 0, "attack": 0, "transport": 16, "helicopters": 60, "tankers": 0, "special_mission": 8, "awacs": 2, "key_types": "Gripen C/D/E, S 100B Argus, C-130H, NH90, Black Hawk, GlobalEye (ordered)", "detail": "Indigenous Gripen; new NATO member; Baltic defense; GlobalEye AEW&C coming"},
+    {"country": "GR", "name": "Hellenic Air Force (HAF)", "total_aircraft": 543, "fighters": 235, "bombers": 0, "attack": 0, "transport": 24, "helicopters": 170, "tankers": 0, "special_mission": 22, "awacs": 4, "key_types": "F-16C/D Viper, Rafale, Mirage 2000, AH-64D, E-2C, EMB-145H", "detail": "Aegean deterrence vs Turkey; Rafale + F-16V upgrade; large fleet for country size"},
+    {"country": "NO", "name": "Royal Norwegian Air Force (RNoAF)", "total_aircraft": 155, "fighters": 52, "bombers": 0, "attack": 0, "transport": 7, "helicopters": 45, "tankers": 0, "special_mission": 15, "awacs": 0, "key_types": "F-35A, P-8A Poseidon, C-130J, NH90, AW101, MQ-9B", "detail": "52 F-35As; Arctic/North Atlantic focus; Russian border monitoring; P-8A maritime patrol"},
+    {"country": "IR", "name": "Islamic Republic of Iran Air Force + IRGC-AF", "total_aircraft": 541, "fighters": 186, "bombers": 0, "attack": 57, "transport": 103, "helicopters": 126, "tankers": 3, "special_mission": 12, "awacs": 0, "key_types": "F-14A Tomcat, MiG-29, Su-35 (ordered), F-4 Phantom, F-5E, Shahed/Mohajer UAVs, Kowsar", "detail": "Aging fleet; F-14A unique operator; massive UAV/drone program; Su-35 acquisition from Russia"},
+    {"country": "AE", "name": "UAE Air Force & Air Defence", "total_aircraft": 531, "fighters": 139, "bombers": 0, "attack": 0, "transport": 24, "helicopters": 212, "tankers": 3, "special_mission": 16, "awacs": 2, "key_types": "F-16E/F Block 60, Mirage 2000-9, Rafale (ordered), AH-64E, UH-60M, GlobalEye", "detail": "Modern Gulf force; Rafale deal; Wing Loong/Predator UAVs; Yemen ops experience"},
+    {"country": "CA", "name": "Royal Canadian Air Force (RCAF)", "total_aircraft": 391, "fighters": 76, "bombers": 0, "attack": 0, "transport": 38, "helicopters": 155, "tankers": 5, "special_mission": 24, "awacs": 0, "key_types": "CF-18 Hornet, F-35A (88 ordered), CC-177 Globemaster, CC-130J, CP-140 Aurora, CH-148 Cyclone", "detail": "F-35A replacing CF-18; NORAD partner; Arctic sovereignty; CP-140 maritime patrol"},
+    {"country": "ES", "name": "Spanish Air Force (EdA)", "total_aircraft": 343, "fighters": 84, "bombers": 0, "attack": 0, "transport": 42, "helicopters": 126, "tankers": 3, "special_mission": 18, "awacs": 0, "key_types": "Typhoon, F/A-18 Hornet, A400M, C-130, KC-130, AV-8B+ (Navy), NH90, Tiger", "detail": "FCAS/SCAF 6th-gen partner; Canary Islands defense; Rota base support"},
+    {"country": "SG", "name": "Republic of Singapore Air Force (RSAF)", "total_aircraft": 222, "fighters": 98, "bombers": 0, "attack": 0, "transport": 22, "helicopters": 68, "tankers": 4, "special_mission": 15, "awacs": 4, "key_types": "F-35B (ordered), F-15SG, F-16C/D, G550 AEW, KC-135, AH-64D, CH-47SD", "detail": "Most advanced SE Asian air force; F-35B replacing F-16; Guam training detachment"},
+    {"country": "ID", "name": "Indonesian Air Force (TNI-AU)", "total_aircraft": 447, "fighters": 33, "bombers": 0, "attack": 32, "transport": 96, "helicopters": 195, "tankers": 0, "special_mission": 15, "awacs": 0, "key_types": "Su-27/30, F-16C/D, Rafale (ordered), T-50i, CN-235, C-130, Super Tucano", "detail": "Archipelago coverage; Rafale deal replacing aging fleet; maritime patrol focus"},
 ]
 
 
@@ -5192,10 +5447,154 @@ ECONOMIC_POWER = {
 }
 
 
+# ═══════════════ MILITARY TREND ANALYSIS ═══════════════
+# Regions for grouping military assets
+_TREND_REGIONS = {
+    "Middle East / Gulf": {"lat_min": 12, "lat_max": 42, "lng_min": 30, "lng_max": 65},
+    "Eastern Mediterranean": {"lat_min": 30, "lat_max": 42, "lng_min": 18, "lng_max": 36},
+    "Western Pacific / Taiwan Strait": {"lat_min": 15, "lat_max": 40, "lng_min": 115, "lng_max": 145},
+    "South China Sea": {"lat_min": 0, "lat_max": 22, "lng_min": 100, "lng_max": 120},
+    "North Atlantic / GIUK Gap": {"lat_min": 50, "lat_max": 72, "lng_min": -30, "lng_max": 10},
+    "Baltic Sea": {"lat_min": 53, "lat_max": 66, "lng_min": 10, "lng_max": 30},
+    "Black Sea": {"lat_min": 40, "lat_max": 48, "lng_min": 27, "lng_max": 42},
+    "Indian Ocean / Arabian Sea": {"lat_min": -10, "lat_max": 25, "lng_min": 50, "lng_max": 80},
+    "Red Sea / Gulf of Aden": {"lat_min": 10, "lat_max": 30, "lng_min": 32, "lng_max": 52},
+    "Arctic / Barents Sea": {"lat_min": 66, "lat_max": 85, "lng_min": -30, "lng_max": 60},
+    "North Africa / Sahel": {"lat_min": 5, "lat_max": 35, "lng_min": -20, "lng_max": 30},
+    "East Africa / Horn": {"lat_min": -5, "lat_max": 15, "lng_min": 30, "lng_max": 55},
+    "Korean Peninsula": {"lat_min": 33, "lat_max": 42, "lng_min": 124, "lng_max": 132},
+    "Indo-Pacific Central": {"lat_min": -10, "lat_max": 10, "lng_min": 90, "lng_max": 115},
+    "Caribbean / Gulf of Mexico": {"lat_min": 15, "lat_max": 32, "lng_min": -100, "lng_max": -60},
+}
+
+
+def _in_region(lat, lng, bounds):
+    return bounds["lat_min"] <= lat <= bounds["lat_max"] and bounds["lng_min"] <= lng <= bounds["lng_max"]
+
+
+def compute_military_trends():
+    """Analyze vessel positions, headings, and bases to identify regional trends."""
+    trends = []
+
+    # ── 1. Vessel concentration by region ──
+    region_vessels = {r: [] for r in _TREND_REGIONS}
+    moving_vessels = []
+
+    for v in VESSEL_DEPLOYMENTS:
+        for region, bounds in _TREND_REGIONS.items():
+            if _in_region(v["lat"], v["lng"], bounds):
+                region_vessels[region].append(v)
+        if v.get("speed_kts", 0) > 0:
+            moving_vessels.append(v)
+
+    # ── 2. Movement vectors — where are assets heading? ──
+    heading_to_region = {}  # region → list of vessels heading toward it
+    for v in moving_vessels:
+        heading = v.get("heading", 0)
+        speed = v.get("speed_kts", 0)
+        lat, lng = v["lat"], v["lng"]
+        # Project position ~24h ahead (rough estimate)
+        dist_nm = speed * 24
+        dist_deg = dist_nm / 60.0
+        proj_lat = lat + dist_deg * math.cos(math.radians(heading))
+        proj_lng = lng + dist_deg * math.sin(math.radians(heading))
+        proj_lat = max(-90, min(90, proj_lat))
+        proj_lng = ((proj_lng + 180) % 360) - 180
+
+        for region, bounds in _TREND_REGIONS.items():
+            if _in_region(proj_lat, proj_lng, bounds):
+                heading_to_region.setdefault(region, []).append({
+                    "vessel": v["name"], "country": v["country"],
+                    "from_lat": lat, "from_lng": lng,
+                    "proj_lat": round(proj_lat, 2), "proj_lng": round(proj_lng, 2),
+                    "heading": heading, "speed_kts": speed,
+                })
+
+    # ── 3. Base concentration by region ──
+    region_bases = {r: 0 for r in _TREND_REGIONS}
+    for b in MILITARY_BASES:
+        for region, bounds in _TREND_REGIONS.items():
+            if _in_region(b["lat"], b["lng"], bounds):
+                region_bases[region] += 1
+
+    # ── 4. Generate trend insights ──
+    for region in _TREND_REGIONS:
+        vessel_count = len(region_vessels[region])
+        base_count = region_bases[region]
+        heading_count = len(heading_to_region.get(region, []))
+        countries = list(set(v["country"] for v in region_vessels[region]))
+        moving_in = heading_to_region.get(region, [])
+
+        # Determine significance
+        if vessel_count == 0 and heading_count == 0 and base_count == 0:
+            continue
+
+        severity = "low"
+        if vessel_count >= 5 or heading_count >= 3:
+            severity = "high"
+        elif vessel_count >= 3 or heading_count >= 2:
+            severity = "medium"
+
+        movement_desc = ""
+        if moving_in:
+            moving_countries = list(set(m["country"] for m in moving_in))
+            movement_desc = f"{heading_count} vessel(s) projected heading toward this region within 24h ({', '.join(moving_countries)})"
+
+        vessel_types = {}
+        for v in region_vessels[region]:
+            vtype = v.get("type", "unknown").replace("_", " ")
+            vessel_types[vtype] = vessel_types.get(vtype, 0) + 1
+
+        trends.append({
+            "region": region,
+            "severity": severity,
+            "vessel_count": vessel_count,
+            "base_count": base_count,
+            "inbound_count": heading_count,
+            "countries_present": countries,
+            "vessel_types": vessel_types,
+            "movement_trend": movement_desc,
+            "vessels": [{"name": v["name"], "country": v["country"], "type": v.get("type", ""),
+                         "lat": v["lat"], "lng": v["lng"], "heading": v.get("heading", 0),
+                         "speed_kts": v.get("speed_kts", 0)} for v in region_vessels[region]],
+            "inbound": moving_in,
+        })
+
+    # Sort by severity then vessel count
+    sev_order = {"high": 0, "medium": 1, "low": 2}
+    trends.sort(key=lambda t: (sev_order.get(t["severity"], 3), -t["vessel_count"]))
+
+    # ── 5. Generate projected positions for all moving vessels (for map arrows) ──
+    projections = []
+    for v in VESSEL_DEPLOYMENTS:
+        speed = v.get("speed_kts", 0)
+        if speed <= 0:
+            continue
+        heading = v.get("heading", 0)
+        lat, lng = v["lat"], v["lng"]
+        # Project 12h ahead
+        dist_nm = speed * 12
+        dist_deg = dist_nm / 60.0
+        proj_lat = lat + dist_deg * math.cos(math.radians(heading))
+        proj_lng = lng + dist_deg * math.sin(math.radians(heading))
+        proj_lat = max(-90, min(90, proj_lat))
+        proj_lng = ((proj_lng + 180) % 360) - 180
+        projections.append({
+            "name": v["name"], "country": v["country"],
+            "from_lat": lat, "from_lng": lng,
+            "to_lat": round(proj_lat, 2), "to_lng": round(proj_lng, 2),
+            "heading": heading, "speed_kts": speed,
+        })
+
+    return {"trends": trends, "projections": projections, "total_vessels": len(VESSEL_DEPLOYMENTS), "moving_vessels": len(moving_vessels)}
+
+
 # ── API Routes ────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
+    if not HTML_PATH.exists():
+        return HTMLResponse("<h1>index.html not found</h1>", status_code=500)
     return HTML_PATH.read_text()
 
 
@@ -5288,6 +5687,11 @@ async def get_trends():
     })
 
 
+@app.get("/api/military-trends")
+async def get_military_trends():
+    return _json(compute_military_trends())
+
+
 @app.get("/api/aircraft")
 async def get_aircraft():
     all_planes = await asyncio.to_thread(fetch_opensky)
@@ -5297,7 +5701,7 @@ async def get_aircraft():
 
 @app.get("/api/facilities")
 async def get_facilities():
-    return _json({"facilities": NUCLEAR_FACILITIES, "bases": MILITARY_BASES, "vessels": VESSEL_DEPLOYMENTS})
+    return _json({"facilities": NUCLEAR_FACILITIES, "bases": MILITARY_BASES, "vessels": VESSEL_DEPLOYMENTS, "spaceports": SPACEPORTS, "air_forces": WORLD_AIR_FORCES})
 
 
 @app.get("/api/disasters")
@@ -5355,6 +5759,8 @@ async def get_all():
         "industrial_centers": INDUSTRIAL_CENTERS,
         "economic_zones": ECONOMIC_ZONES,
         "oil_rare_earth": OIL_RARE_EARTH_FIELDS,
+        "spaceports": SPACEPORTS,
+        "air_forces": WORLD_AIR_FORCES,
         "threat_level": "ELEVATED",
         "threat_note": "Multiple active high-intensity conflicts. Elevated nuclear rhetoric. Global trade disruptions.",
         "xfeed_accounts": len(X_ACCOUNTS),
@@ -5364,4 +5770,4 @@ async def get_all():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8070)
+    uvicorn.run(app, host="127.0.0.1", port=7050)

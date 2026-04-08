@@ -223,6 +223,21 @@ class ClobTrader:
             log.warning("Market buy failed: %s", e)
             return {"error": str(e)}
 
+    def place_market_sell(self, token_id: str, amount: float) -> dict:
+        """Place a market sell order (Fill or Kill)."""
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import SELL
+        try:
+            order = self.client.create_order(
+                OrderArgs(token_id=token_id, price=0.01, size=amount, side=SELL)
+            )
+            resp = self.client.post_order(order, order_type=OrderType.FOK)
+            log.info("Market sell placed: %s shares on %s", amount, token_id[:12])
+            return resp
+        except Exception as e:
+            log.warning("Market sell failed: %s", e)
+            return {"error": str(e)}
+
     def place_limit_order(self, token_id: str, price: float,
                           size: float, side: str) -> dict:
         """Place a limit order (Good Till Cancelled)."""

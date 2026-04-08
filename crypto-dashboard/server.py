@@ -48,6 +48,7 @@ RATE_LIMIT = 120  # requests per minute per IP
 RATE_WINDOW = 60
 _last_prune = 0.0
 _PRUNE_INTERVAL = 300  # prune stale IPs every 5 minutes
+_rate_lock = asyncio.Lock()
 
 
 @app.middleware("http")
@@ -56,21 +57,29 @@ async def security_middleware(request: Request, call_next):
     # Rate limiting per IP
     ip = request.client.host if request.client else "unknown"
     now = time.time()
-    # Prune departed IPs periodically; hard-cap to prevent unbounded growth
-    if now - _last_prune > _PRUNE_INTERVAL:
-        _last_prune = now
-        stale = [k for k, v in _request_counts.items() if not v or now - v[-1] > RATE_WINDOW]
-        for k in stale:
-            del _request_counts[k]
-        if len(_request_counts) > 10000:
-            _request_counts.clear()
-        # _login_attempts pruning removed -- login rate limiting is handled by gateway
-    reqs = _request_counts.get(ip, [])
-    reqs = [t for t in reqs if now - t < RATE_WINDOW]
-    if len(reqs) >= RATE_LIMIT and ip not in ("127.0.0.1", "::1"):
-        return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
-    reqs.append(now)
-    _request_counts[ip] = reqs
+    async with _rate_lock:
+        # Prune departed IPs periodically; hard-cap to prevent unbounded growth
+        if now - _last_prune > _PRUNE_INTERVAL:
+            _last_prune = now
+            stale = [k for k, v in _request_counts.items() if not v or now - v[-1] > RATE_WINDOW]
+            for k in stale:
+                del _request_counts[k]
+            if len(_request_counts) > 10000:
+                _request_counts.clear()
+            # _login_attempts pruning removed -- login rate limiting is handled by gateway
+        reqs = _request_counts.get(ip, [])
+        reqs = [t for t in reqs if now - t < RATE_WINDOW]
+        if len(reqs) >= RATE_LIMIT and ip not in ("127.0.0.1", "::1"):
+            return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
+        reqs.append(now)
+        _request_counts[ip] = reqs
+
+    # CSRF protection: require X-Requested-With header on state-mutating requests
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        client_host = request.client.host if request.client else ""
+        is_localhost = client_host in ("127.0.0.1", "::1", "localhost")
+        if not is_localhost and request.headers.get("x-requested-with") != "XMLHttpRequest":
+            return JSONResponse({"error": "CSRF check failed"}, status_code=403)
 
     response = await call_next(request)
 
@@ -80,6 +89,9 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss:; frame-ancestors 'none'"
+    if os.environ.get("GATEWAY_SSO_SECRET"):
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
 # ─── Authentication ──────────────────────────────────────────────────
@@ -128,6 +140,7 @@ asset_state = {}       # ticker -> full result dict
 ensembles = {}         # ticker -> trained EnsemblePredictor
 live_prices = {}       # ticker -> latest price
 connected_ws = set()   # active WebSocket connections
+_ws_lock = asyncio.Lock()
 last_refresh = {}      # ticker -> timestamp of last full refresh
 REFRESH_INTERVAL = 300 # re-analyze every 5 min (1 window)
 
@@ -252,7 +265,6 @@ def train_asset_models(ticker):
 async def price_updater():
     """Connect to Binance WebSocket stream for real-time prices, with REST fallback."""
     import aiohttp
-    global connected_ws
 
     # Build combined stream URL for all assets
     # e.g. wss://stream.binance.com:9443/stream?streams=btcusdt@trade/ethusdt@trade/...
@@ -286,16 +298,17 @@ async def price_updater():
 
                             # Batch push to clients every 1 second (avoid flooding)
                             now = time.time()
-                            if pending_update and connected_ws and now - last_push >= 1.0:
+                            if pending_update and now - last_push >= 1.0:
                                 ws_msg = json.dumps({"type": "price_update", "data": pending_update})
                                 dead = set()
-                                for client_ws in list(connected_ws):
-                                    try:
-                                        await client_ws.send_text(ws_msg)
-                                    except Exception:
-                                        dead.add(client_ws)
-                                for d in dead:
-                                    connected_ws.discard(d)
+                                async with _ws_lock:
+                                    for client_ws in list(connected_ws):
+                                        try:
+                                            await client_ws.send_text(ws_msg)
+                                        except Exception:
+                                            dead.add(client_ws)
+                                    for d in dead:
+                                        connected_ws.discard(d)
                                 pending_update = {}
                                 last_push = now
 
@@ -319,7 +332,6 @@ async def price_updater():
 
 async def window_refresher():
     """Re-analyze windows and update predictions every 5 minutes."""
-    global connected_ws
     while True:
         await asyncio.sleep(60)  # check every minute
         now = time.time()
@@ -373,7 +385,8 @@ async def window_refresher():
                     if len(old_windows) > 1000:
                         old_windows[:] = old_windows[-1000:]
                 else:
-                    old_windows = new_windows[-500:]
+                    asset_state[ticker]["windows"] = new_windows[-500:]
+                    old_windows = asset_state[ticker]["windows"]
 
                 # Update predictions using the full window history
                 if ticker not in ensembles:
@@ -413,13 +426,13 @@ async def window_refresher():
                 last_refresh[ticker] = now
 
                 # Push update to WebSocket clients
-                if connected_ws:
-                    msg = json.dumps({
-                        "type": "window_update",
-                        "ticker": ticker,
-                        "data": serialize_asset(ticker),
-                    })
-                    dead = set()
+                msg = json.dumps({
+                    "type": "window_update",
+                    "ticker": ticker,
+                    "data": serialize_asset(ticker),
+                })
+                dead = set()
+                async with _ws_lock:
                     for ws in list(connected_ws):
                         try:
                             await ws.send_text(msg)
@@ -436,18 +449,18 @@ async def window_refresher():
                             delta_str = f'{p["pred_end_delta"]:+,.2f}'
 
                             # Browser push
-                            if connected_ws:
-                                alert_msg = json.dumps({
-                                    "type": "alert",
-                                    "data": {
-                                        "ticker": ticker,
-                                        "direction": p["pred_direction"],
-                                        "confidence": conf,
-                                        "delta": delta_str,
-                                        "time": datetime.now(timezone.utc).strftime("%H:%M UTC"),
-                                    },
-                                })
-                                dead = []
+                            alert_msg = json.dumps({
+                                "type": "alert",
+                                "data": {
+                                    "ticker": ticker,
+                                    "direction": p["pred_direction"],
+                                    "confidence": conf,
+                                    "delta": delta_str,
+                                    "time": datetime.now(timezone.utc).strftime("%H:%M UTC"),
+                                },
+                            })
+                            dead = []
+                            async with _ws_lock:
                                 for ws in list(connected_ws):
                                     try:
                                         await ws.send_text(alert_msg)
@@ -492,7 +505,7 @@ async def news_trade_monitor():
     Cross-references with Polymarket, persists to DB, pushes WebSocket
     alerts for high-score items, and sends email to watchlist subscribers.
     """
-    global last_news_trade_scan, last_news_trade_time, connected_ws
+    global last_news_trade_scan, last_news_trade_time
 
     # Wait for server to be ready
     await asyncio.sleep(45)
@@ -517,20 +530,20 @@ async def news_trade_monitor():
                 new_alerts = db.get_unnotified_alerts(min_score=30)
                 for alert in new_alerts:
                     # Push WebSocket notification
-                    if connected_ws:
-                        ws_msg = json.dumps({
-                            "type": "alert",
-                            "data": {
-                                "ticker": "NEWS",
-                                "direction": "news_trade",
-                                "confidence": alert["score"],
-                                "delta": f'[{alert["source"]}] {alert["title"][:60]}',
-                                "time": alert.get("scanned_at", ""),
-                                "alert_id": alert["id"],
-                                "link": alert.get("link", ""),
-                                "related_markets": alert.get("related_markets", []),
-                            },
-                        })
+                    ws_msg = json.dumps({
+                        "type": "alert",
+                        "data": {
+                            "ticker": "NEWS",
+                            "direction": "news_trade",
+                            "confidence": alert["score"],
+                            "delta": f'[{alert["source"]}] {alert["title"][:60]}',
+                            "time": alert.get("scanned_at", ""),
+                            "alert_id": alert["id"],
+                            "link": alert.get("link", ""),
+                            "related_markets": alert.get("related_markets", []),
+                        },
+                    })
+                    async with _ws_lock:
                         for ws in list(connected_ws):
                             try:
                                 await ws.send_text(ws_msg)
@@ -605,11 +618,11 @@ def serialize_asset(ticker):
         "volatility": vol,
         "velocity": vel,
         "backtest": {
-            "dir_acc": bt["dir_acc"],
-            "hc_acc": bt["hc_acc"],
-            "hc_count": bt["hc_count"],
-            "mae": bt["mae"],
-            "total": bt["total"],
+            "dir_acc": bt.get("dir_acc", 0),
+            "hc_acc": bt.get("hc_acc", 0),
+            "hc_count": bt.get("hc_count", 0),
+            "mae": bt.get("mae", 0),
+            "total": bt.get("total", 0),
         } if bt else None,
         "predictions": preds_out,
         "recent_windows": recent_windows,
@@ -2536,156 +2549,6 @@ async def trade_page(request: Request):
 
 
 # ─── Current Affairs News Feed ───────────────────────────────────────
-    }}
-
-    const reasons = (a.reasons || []).map(r => '<span>' + escapeHtml(r) + '</span>').join('');
-
-    const watched = watchedIds.has(a.id || a.alert_id);
-    let actionBtn = '';
-    if (isWatchlist) {{
-      actionBtn = '<button class="nta-unwatch-btn" onclick="removeFromWatchlist(\'' + (a.alert_id || a.id) + '\')">Remove</button>';
-    }} else {{
-      actionBtn = watched
-        ? '<button class="nta-watch-btn watched" disabled>Watching</button>'
-        : '<button class="nta-watch-btn" onclick="addToWatchlist(\'' + a.id + '\')">+ Watch</button>';
-    }}
-
-    return '<div class="nta-item">'
-      + '<div class="nta-header">'
-      + '<div class="nta-title"><a href="' + escapeHtml(a.link) + '" target="_blank">' + escapeHtml(a.title) + '</a></div>'
-      + scoreHtml
-      + '</div>'
-      + '<div class="nta-meta">' + escapeHtml(a.source) + (a.published ? ' &bull; ' + escapeHtml(a.published) : '') + '</div>'
-      + tradeHtml
-      + (reasons ? '<div class="nta-reasons">' + reasons + '</div>' : '')
-      + '<div class="nta-actions">' + actionBtn + '</div>'
-      + '</div>';
-  }}
-
-  async function loadAlerts() {{
-    try {{
-      const resp = await fetch('/api/news-trade-alerts?min_score=10');
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const alerts = data.alerts || [];
-      if (!alerts.length) {{
-        alertsEl.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center;">No insider trading alerts detected yet. Scanner runs every 20 minutes.</div>';
-        return;
-      }}
-      alertsEl.innerHTML = alerts.map(a => renderAlert(a, false)).join('');
-    }} catch(e) {{}}
-  }}
-
-  async function loadWatchlist() {{
-    try {{
-      const resp = await fetch('/api/news-watchlist');
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const items = data.watchlist || [];
-      watchedIds = new Set(items.map(w => w.alert_id));
-      wlCountEl.textContent = items.length ? items.length + ' watched' : '';
-      if (!items.length) {{
-        watchlistEl.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center;">Your watchlist is empty. Click "+ Watch" on any alert above to track it.</div>';
-      }} else {{
-        watchlistEl.innerHTML = items.map(w => renderAlert(w, true)).join('');
-      }}
-    }} catch(e) {{}}
-  }}
-
-  window.addToWatchlist = async function(alertId) {{
-    try {{
-      const resp = await fetch('/api/news-watchlist/add', {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{alert_id: alertId}})
-      }});
-      if (resp.ok) {{
-        watchedIds.add(alertId);
-        loadAlerts();
-        loadWatchlist();
-      }}
-    }} catch(e) {{}}
-  }};
-
-  window.removeFromWatchlist = async function(alertId) {{
-    try {{
-      const resp = await fetch('/api/news-watchlist/remove', {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{alert_id: alertId}})
-      }});
-      if (resp.ok) {{
-        watchedIds.delete(alertId);
-        loadAlerts();
-        loadWatchlist();
-      }}
-    }} catch(e) {{}}
-  }};
-
-  window.toggleWatchlistView = function() {{
-    showingWatchlist = !showingWatchlist;
-    watchlistEl.style.display = showingWatchlist ? 'block' : 'none';
-    document.getElementById('wl-toggle-btn').textContent = showingWatchlist ? 'Hide Watchlist' : 'Show Watchlist';
-  }};
-
-  // Toast notification system
-  function showToast(title, body, type) {{
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = 'toast' + (type === 'news_trade' ? ' news-trade' : '');
-    toast.style.position = 'relative';
-    toast.innerHTML = '<button class="toast-close" onclick="this.parentElement.remove()">&times;</button>'
-      + '<div class="toast-title">' + escapeHtml(title) + '</div>'
-      + '<div class="toast-body">' + escapeHtml(body) + '</div>';
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 15000);
-  }}
-
-  // WebSocket listener for real-time push notifications
-  function connectWS() {{
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(proto + '//' + location.host + '/ws');
-    ws.onmessage = function(e) {{
-      try {{
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'alert' && msg.data) {{
-          const d = msg.data;
-          if (d.direction === 'news_trade') {{
-            showToast(
-              'Insider Alert [' + d.confidence + '/100]',
-              d.delta || 'New suspicious trading news detected',
-              'news_trade'
-            );
-            // Refresh alerts list
-            loadAlerts();
-            loadWatchlist();
-          }}
-        }}
-      }} catch(e) {{}}
-    }};
-    ws.onclose = function() {{ setTimeout(connectWS, 5000); }};
-    ws.onerror = function() {{ ws.close(); }};
-  }}
-
-  // Request browser notification permission
-  if ('Notification' in window && Notification.permission === 'default') {{
-    Notification.requestPermission();
-  }}
-
-  loadAlerts();
-  loadWatchlist();
-  setInterval(loadAlerts, 60000);  // refresh alerts every 60s
-  setInterval(loadWatchlist, 60000);
-  connectWS();
-}})();
-</script>
-
-<script>setInterval(()=>location.reload(),300000);</script>
-</body></html>"""
-    return HTMLResponse(html)
-
-
-# ─── Current Affairs News Feed ───────────────────────────────────────
 
 _news_cache: list = []
 _news_cache_time: float = 0
@@ -2918,14 +2781,20 @@ async def accuracy_page(request: Request):
 # CLOB TRADING API
 # ═══════════════════════════════════════════════════════════════════════
 
-# -- In-memory trader cache (per user_id) --
-_trader_cache: dict[str, clob.ClobTrader] = {}
+# -- In-memory trader cache (per user_id) with TTL --
+_trader_cache: dict[str, tuple[clob.ClobTrader, float]] = {}
+_TRADER_CACHE_TTL = 3600  # 1 hour
+_TRADER_CACHE_MAX = 100
 
 
 def _get_trader(user_id: str) -> clob.ClobTrader | None:
     """Get or create a ClobTrader for a user from their stored credentials."""
+    now = time.time()
     if user_id in _trader_cache:
-        return _trader_cache[user_id]
+        trader, ts = _trader_cache[user_id]
+        if now - ts < _TRADER_CACHE_TTL:
+            return trader
+        del _trader_cache[user_id]  # expired
     enc = db.get_clob_credentials(user_id)
     if not enc:
         return None
@@ -2937,7 +2806,11 @@ def _get_trader(user_id: str) -> clob.ClobTrader | None:
             api_passphrase=creds["api_passphrase"],
             private_key=creds["private_key"],
         )
-        _trader_cache[user_id] = trader
+        # Evict oldest entries if cache is full
+        if len(_trader_cache) >= _TRADER_CACHE_MAX:
+            oldest_key = min(_trader_cache, key=lambda k: _trader_cache[k][1])
+            del _trader_cache[oldest_key]
+        _trader_cache[user_id] = (trader, now)
         return trader
     except Exception as e:
         print(f"  [CLOB] Failed to create trader for {user_id}: {e}")
@@ -3011,8 +2884,8 @@ async def save_clob_credentials(request: Request):
         # Clear cached trader so it re-initializes with new creds
         _trader_cache.pop(user["id"], None)
         return {"ok": True}
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception:
+        return JSONResponse({"error": "Failed to save credentials"}, status_code=500)
 
 
 @app.delete("/api/clob/credentials")
@@ -3081,7 +2954,10 @@ async def place_clob_order(request: Request):
 
     # Place the order
     if order_type == "market":
-        result = await asyncio.to_thread(trader.place_market_buy, token_id, amount)
+        if side == "buy":
+            result = await asyncio.to_thread(trader.place_market_buy, token_id, amount)
+        else:
+            result = await asyncio.to_thread(trader.place_market_sell, token_id, amount)
     else:
         result = await asyncio.to_thread(trader.place_limit_order, token_id, price, size, side)
 
@@ -3491,7 +3367,8 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.close(code=4001, reason="Not authenticated")
         return
     await ws.accept()
-    connected_ws.add(ws)
+    async with _ws_lock:
+        connected_ws.add(ws)
     try:
         # Send initial state
         await ws.send_text(json.dumps({
@@ -3502,9 +3379,11 @@ async def websocket_endpoint(ws: WebSocket):
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
-        connected_ws.discard(ws)
+        async with _ws_lock:
+            connected_ws.discard(ws)
     except Exception:
-        connected_ws.discard(ws)
+        async with _ws_lock:
+            connected_ws.discard(ws)
 
 
 if __name__ == "__main__":

@@ -62,7 +62,7 @@ class TradingClient:
 
         side = "YES" if signal.action == "BUY_YES" else "NO"
         price = signal.market_prob if signal.action == "BUY_YES" else (1.0 - signal.market_prob)
-        token_id = signal.market.token_id
+        token_id = signal.market.token_id if signal.action == "BUY_YES" else (signal.market.no_token_id or signal.market.token_id)
 
         if price <= 0:
             return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
@@ -111,6 +111,7 @@ class TradingClient:
 
             # FOK failed — try GTC with 2% slippage
             slippage_price = min(round(price * 1.02, 4), 0.99)
+            shares = position.amount / slippage_price  # Recalculate shares at higher price to stay within position size
             order_args = OrderArgs(price=slippage_price, size=shares, side="BUY", token_id=token_id)
             logger.info("[LIVE] FOK failed, placing GTC @ $%.3f", slippage_price)
 

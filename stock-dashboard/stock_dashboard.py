@@ -21,8 +21,12 @@ from zoneinfo import ZoneInfo
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
 if not _sso_secret:
-    logging.warning("GATEWAY_SSO_SECRET not set — stock dashboard running without authentication (dev mode)")
+    if _DEV_MODE:
+        logging.warning("GATEWAY_SSO_SECRET not set — stock dashboard running in DEV_MODE (no auth)")
+    else:
+        logging.warning("GATEWAY_SSO_SECRET not set and DEV_MODE not enabled — rejecting all requests")
 
 TRADE_LOG = Path(__file__).parent / "stock_trades.json"
 BOT_LOG = Path(__file__).parent / "stock_bot_activity.log"
@@ -941,7 +945,8 @@ def build_svg_chart(balances):
         grid += f'<line x1="{pad_x}" y1="{gy:.1f}" x2="{w - pad_x}" y2="{gy:.1f}" stroke="#e8ecf1" stroke-width="1"/>'
         grid += f'<text x="{pad_x - 10}" y="{gy + 4:.1f}" text-anchor="end" fill="#9ca3af" font-size="10" font-family="Inter,sans-serif">${val:,.0f}</text>'
 
-    start_y = pad_y + chart_h - ((10000 - min_val) / val_range) * chart_h
+    start_bal = state.get("starting_balance", 10000) if isinstance(state, dict) else 10000
+    start_y = pad_y + chart_h - ((start_bal - min_val) / val_range) * chart_h
     start_line = f'<line x1="{pad_x}" y1="{start_y:.1f}" x2="{w - pad_x}" y2="{start_y:.1f}" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,4"/>'
 
     last_x = points[-1].split(",")[0]
@@ -958,7 +963,8 @@ def build_svg_chart(balances):
 
 class DashboardHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
-        # Authenticate via gateway SSO header (skip if secret not configured)
+        # Authenticate via gateway SSO header (reject if secret not configured unless DEV_MODE)
+        # Auth check applies to ALL endpoints (including /api/state)
         if _sso_secret:
             client_secret = self.headers.get("X-Gateway-Secret", "")
             if not hmac.compare_digest(client_secret, _sso_secret):
@@ -967,12 +973,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b'{"error": "Unauthorized"}')
                 return
+        elif not _DEV_MODE:
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error": "Service misconfigured"}')
+            return
 
+        # --- Path routing (all paths are now behind auth) ---
         if self.path == "/" or self.path == "/index.html":
             html = build_html()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'")
             self.end_headers()
             self.wfile.write(html.encode())
         elif self.path == "/api/state":
@@ -994,7 +1011,8 @@ def main():
     parser.add_argument("--port", type=int, default=DASHBOARD_PORT)
     args = parser.parse_args()
 
-    server = HTTPServer(("0.0.0.0", args.port), DashboardHandler)
+    bind_host = "0.0.0.0" if _DEV_MODE else "127.0.0.1"
+    server = HTTPServer((bind_host, args.port), DashboardHandler)
     print(f"StockSignal dashboard running at http://0.0.0.0:{args.port}")
 
     try:

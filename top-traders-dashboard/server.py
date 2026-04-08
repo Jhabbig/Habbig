@@ -38,18 +38,31 @@ INDEX_HTML = HERE / "index.html"
 app = FastAPI(title="Polymarket Top Traders Dashboard")
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
 if not _sso_secret:
-    logging.warning("GATEWAY_SSO_SECRET not set — top-traders dashboard running without authentication (dev mode)")
+    if _DEV_MODE:
+        logging.warning("GATEWAY_SSO_SECRET not set — top-traders dashboard running in DEV_MODE (no auth)")
+    else:
+        logging.warning("GATEWAY_SSO_SECRET not set and DEV_MODE not enabled — rejecting all requests")
 
 
 @app.middleware("http")
 async def gateway_auth_middleware(request: Request, call_next):
-    """Verify gateway SSO secret on all requests (skip if secret not configured)."""
+    """Verify gateway SSO secret on all requests. Reject if secret not configured (unless DEV_MODE)."""
     if _sso_secret:
         client_secret = request.headers.get("x-gateway-secret", "")
         if not hmac.compare_digest(client_secret, _sso_secret):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    return await call_next(request)
+    elif not _DEV_MODE:
+        return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    if _sso_secret:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
 
 # Small in-memory cache: { key -> (expires_at, payload) }
 _cache: dict[str, tuple[float, Any]] = {}
@@ -195,12 +208,12 @@ SUS_CACHE_TTL = 1800  # serve cached data for 30 min
 async def _suspicious_trade_monitor():
     """Periodically scan for suspicious trades in the background."""
     global _last_sus_scan, _last_sus_scan_time
+    from suspicious_trades import run_scanner
 
     await asyncio.sleep(10)  # let server start
 
     while True:
         try:
-            from suspicious_trades import run_scanner
             result = await asyncio.to_thread(run_scanner)
             if result and result.get("suspicious_trades"):
                 _last_sus_scan = result

@@ -714,12 +714,13 @@ def resolve_pending_bets(state):
             if (today_dt - bet_dt).days > 30:
                 state.losses += 1
                 state.total_trades += 1
-                # Stake was already deducted from balance at placement; no further deduction
+                # Stake was already deducted from balance at placement; record the loss
+                state.total_pnl -= bet['bet_size']
                 trade_record = {
                     **bet,
                     "actual": "expired",
                     "won": False,
-                    "pnl": 0,
+                    "pnl": -bet['bet_size'],
                     "balance_after": round(state.balance, 2),
                     "resolved_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -941,7 +942,7 @@ def run_cycle(state):
                     "total_pnl": state.total_pnl, "peak_balance": state.peak_balance,
                     "daily_bets": state.daily_bets,
                     "pending_bets": pending_list,
-                    "daily_pnl": daily_pnl,
+                    "daily_pnl": daily_pnl,  # computed from all state.trades, not truncated
                 }
                 bet_result = evaluate_bet_enhanced(
                     ticker, prediction, confidence, market_info, state_dict,
@@ -961,7 +962,7 @@ def run_cycle(state):
                     }
                     # Check risk manager
                     if risk_mgr:
-                        daily_pnl = sum(t.get("pnl", 0) for t in state.trades[-20:]
+                        daily_pnl = sum(t.get("pnl", 0) for t in state.trades
                                        if (t.get("resolved_at") or "")[:10] == today)
                         pending_list = [
                             {"ticker": t, **v} for t, v in state.pending.items()

@@ -173,7 +173,7 @@ class PolymarketAggregator:
                     import json
                     try:
                         outcomes = json.loads(outcomes)
-                    except:
+                    except Exception:
                         outcomes = []
 
                 prices_str = market.get("outcomePrices", "[]")
@@ -181,7 +181,7 @@ class PolymarketAggregator:
                     import json
                     try:
                         prices = json.loads(prices_str)
-                    except:
+                    except Exception:
                         prices = []
                 else:
                     prices = prices_str or []
@@ -192,7 +192,7 @@ class PolymarketAggregator:
                     import json
                     try:
                         token_ids = json.loads(clob_ids)
-                    except:
+                    except Exception:
                         token_ids = []
                 else:
                     token_ids = clob_ids or []

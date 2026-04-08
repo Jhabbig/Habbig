@@ -20,8 +20,11 @@ import math
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent / "crypto-dashboard"))
-from ml_predictor import get_ml_prediction
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent / "crypto-dashboard"))
+    from ml_predictor import get_ml_prediction
+except ImportError:
+    get_ml_prediction = None
 
 # ─── BTC lead signal cache (refreshed once per cycle) ─────────────────
 _btc_lead_cache = {"time": 0, "mom_3m": 0, "mom_1m": 0}
@@ -92,7 +95,7 @@ def save_state(state):
         "pending": state.pending,
         "trades": state.trades[-500:],
     }
-    tmp = TRADE_LOG + ".tmp"
+    tmp = str(TRADE_LOG) + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, TRADE_LOG)
@@ -572,12 +575,13 @@ def estimate_up_probability(rt_signals, dash_signals, coin):
                 elif tl < -30: nudge += 0.01
 
     # 13. ML ENSEMBLE ±5% (BTC has LSTM+NN+GBT, others have NN+GBT if data exists)
-    ml_prob, ml_info = get_ml_prediction(coin)
-    ml_nudge = (ml_prob - 0.5) * 0.10
-    conf = ml_info.get("confidence", "low")
-    if conf == "high": ml_nudge *= 1.5
-    elif conf == "low": ml_nudge *= 0.3
-    nudge += ml_nudge
+    if get_ml_prediction is not None:
+        ml_prob, ml_info = get_ml_prediction(coin)
+        ml_nudge = (ml_prob - 0.5) * 0.10
+        conf = ml_info.get("confidence", "low")
+        if conf == "high": ml_nudge *= 1.5
+        elif conf == "low": ml_nudge *= 0.3
+        nudge += ml_nudge
 
     # 14. PATTERN MATCH ±4%
     nudge += get_pattern_prediction(coin)

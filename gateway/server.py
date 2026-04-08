@@ -521,8 +521,21 @@ RATE_LIMITED_RESPONSE = HTMLResponse(
 # we key by a temporary CSRF cookie instead.
 
 _CSRF_COOKIE = "pm_csrf"
-_csrf_tokens: dict[str, str] = {}
+_csrf_tokens: dict[str, tuple[str, float]] = {}  # session_key → (token, created_at)
 _CSRF_TOKEN_MAX = 5000
+_CSRF_TOKEN_TTL = 3600  # seconds
+
+
+def _evict_csrf_tokens() -> None:
+    """Evict expired tokens first, then oldest if still over capacity."""
+    now = time.time()
+    expired = [k for k, (_, ts) in _csrf_tokens.items() if now - ts > _CSRF_TOKEN_TTL]
+    for k in expired:
+        del _csrf_tokens[k]
+    if len(_csrf_tokens) >= _CSRF_TOKEN_MAX:
+        to_delete = list(_csrf_tokens.keys())[:1000]
+        for k in to_delete:
+            del _csrf_tokens[k]
 
 
 def _get_csrf_token(request: Request) -> str:
@@ -530,16 +543,16 @@ def _get_csrf_token(request: Request) -> str:
     # Prefer session token, fall back to CSRF cookie
     session_key = request.cookies.get(COOKIE_NAME) or request.cookies.get(_CSRF_COOKIE)
     if session_key and session_key in _csrf_tokens:
-        return _csrf_tokens[session_key]
+        token, ts = _csrf_tokens[session_key]
+        if time.time() - ts <= _CSRF_TOKEN_TTL:
+            return token
+        # Token expired — fall through to generate a new one
+        del _csrf_tokens[session_key]
     # Generate new token
     token = secrets.token_urlsafe(32)
     if session_key:
-        if len(_csrf_tokens) >= _CSRF_TOKEN_MAX:
-            # Evict oldest entries
-            to_delete = list(_csrf_tokens.keys())[:1000]
-            for k in to_delete:
-                del _csrf_tokens[k]
-        _csrf_tokens[session_key] = token
+        _evict_csrf_tokens()
+        _csrf_tokens[session_key] = (token, time.time())
     return token
 
 
@@ -549,11 +562,8 @@ def _set_csrf_cookie_if_needed(response: Response, request: Request, csrf_token:
     if session_key:
         # Already have a session — CSRF is keyed by session, no extra cookie needed
         if session_key not in _csrf_tokens:
-            if len(_csrf_tokens) >= _CSRF_TOKEN_MAX:
-                to_delete = list(_csrf_tokens.keys())[:1000]
-                for k in to_delete:
-                    del _csrf_tokens[k]
-            _csrf_tokens[session_key] = csrf_token
+            _evict_csrf_tokens()
+            _csrf_tokens[session_key] = (csrf_token, time.time())
         return
     # No session — use or create CSRF cookie
     csrf_cookie = request.cookies.get(_CSRF_COOKIE)
@@ -568,11 +578,8 @@ def _set_csrf_cookie_if_needed(response: Response, request: Request, csrf_token:
             secure=IS_PRODUCTION,
             path="/",
         )
-    if len(_csrf_tokens) >= _CSRF_TOKEN_MAX:
-        to_delete = list(_csrf_tokens.keys())[:1000]
-        for k in to_delete:
-            del _csrf_tokens[k]
-    _csrf_tokens[csrf_cookie] = csrf_token
+    _evict_csrf_tokens()
+    _csrf_tokens[csrf_cookie] = (csrf_token, time.time())
 
 
 def _validate_csrf(request: Request, form_token: str) -> bool:
@@ -580,8 +587,12 @@ def _validate_csrf(request: Request, form_token: str) -> bool:
     session_key = request.cookies.get(COOKIE_NAME) or request.cookies.get(_CSRF_COOKIE)
     if not session_key:
         return False
-    expected = _csrf_tokens.get(session_key)
-    if not expected:
+    entry = _csrf_tokens.get(session_key)
+    if not entry:
+        return False
+    expected, ts = entry
+    if time.time() - ts > _CSRF_TOKEN_TTL:
+        del _csrf_tokens[session_key]
         return False
     return _hmac_module.compare_digest(expected, form_token)
 
@@ -592,6 +603,18 @@ def _csrf_error() -> HTMLResponse:
         "<p>Your session may have expired. Please go back and try again.</p>",
         status_code=403,
     )
+
+
+def _csrf_error_json() -> JSONResponse:
+    return JSONResponse({"error": "Invalid or missing CSRF token"}, status_code=403)
+
+
+def _validate_csrf_header(request: Request) -> bool:
+    """Validate CSRF for JSON API endpoints using the X-CSRF-Token header."""
+    token = request.headers.get("X-CSRF-Token", "")
+    if not token:
+        return False
+    return _validate_csrf(request, token)
 
 
 import hmac as _hmac_module  # stdlib hmac for CSRF compare (avoids name collision)
@@ -650,6 +673,11 @@ def _request_base_domain(request: Request) -> tuple[str, str, str]:
         if base.startswith(prefix):
             base = base[len(prefix):]
             break
+    else:
+        # Unknown subdomain — strip the first label as a fallback
+        dot_idx = base.find(".")
+        if dot_idx > 0 and dot_idx < len(base) - 1:
+            base = base[dot_idx + 1:]
 
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
     return scheme, base, port_suffix
@@ -714,7 +742,7 @@ def _get_cached_session(token: str) -> Optional[dict]:
         _SESSION_CACHE.pop(token, None)
         return None
     # Check if user is suspended
-    if session.get("suspended"):
+    if session["suspended"]:
         _SESSION_CACHE.pop(token, None)
         return None
     admin_level = session["is_admin"] or 0
@@ -1096,7 +1124,12 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
             dest = f"http://localhost:{dash_cfg['target']}"
         else:
             s, b, p = _request_base_domain(request)
-            dest = f"{s}://{dash_cfg['subdomain']}.{b}{p}/"
+            # Validate that the base domain matches the configured domain
+            # to prevent open redirects via forged Host headers.
+            if b.rstrip(".") == DOMAIN.rstrip("."):
+                dest = f"{s}://{dash_cfg['subdomain']}.{b}{p}/"
+            else:
+                dest = "/dashboards"
     else:
         dest = "/dashboards"
     response = RedirectResponse(dest, status_code=302)
@@ -2153,6 +2186,33 @@ async def reset_password_submit(
     )
 
 
+# ── Static info pages ─────────────────────────────────────────────────────────
+
+
+@app.get("/impressum", response_class=HTMLResponse)
+async def impressum_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/impressum")
+    return render_page("impressum", request=request)
+
+
+@app.get("/support", response_class=HTMLResponse)
+async def support_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/support")
+    return render_page("support", request=request)
+
+
+@app.get("/suspended", response_class=HTMLResponse)
+async def suspended_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/suspended")
+    return render_page("suspended", request=request)
+
+
 # ── Enquiry page + API ───────────────────────────────────────────────────────
 
 
@@ -3038,6 +3098,8 @@ async def trading_credentials_status(request: Request):
 async def trading_save_credentials(request: Request, platform: str):
     if request.headers.get("X-Requested-With") != "XMLHttpRequest":
         return JSONResponse({"error": "Missing required header"}, status_code=403)
+    if not _validate_csrf_header(request):
+        return _csrf_error_json()
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -3076,6 +3138,8 @@ async def trading_save_credentials(request: Request, platform: str):
 async def trading_delete_credentials(request: Request, platform: str):
     if request.headers.get("X-Requested-With") != "XMLHttpRequest":
         return JSONResponse({"error": "Missing required header"}, status_code=403)
+    if not _validate_csrf_header(request):
+        return _csrf_error_json()
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -3090,6 +3154,8 @@ async def trading_place_order(request: Request):
     """Place a trade on Polymarket or Kalshi."""
     if request.headers.get("X-Requested-With") != "XMLHttpRequest":
         return JSONResponse({"error": "Missing required header"}, status_code=403)
+    if not _validate_csrf_header(request):
+        return _csrf_error_json()
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -3590,7 +3656,7 @@ async def sse_stream(request: Request):
         return JSONResponse({"error": "No dashboards specified"}, status_code=400)
 
     allowed = [
-        d for d in dashboards
+        SUBDOMAIN_TO_KEY.get(d, d) for d in dashboards
         if cached_has_subscription(user["user_id"], SUBDOMAIN_TO_KEY.get(d, d))
         or user.get("is_admin")
     ]
@@ -3737,7 +3803,8 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
         log.warning("WebSocket proxy error for %s: %s", upstream_url, e)
     finally:
         try:
-            await ws.close()
+            if ws.client_state.name != "DISCONNECTED":
+                await ws.close()
         except Exception:
             pass
 

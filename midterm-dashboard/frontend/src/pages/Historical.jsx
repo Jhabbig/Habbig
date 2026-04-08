@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { History, Trophy } from 'lucide-react'
+import { History, Trophy, ArrowRight } from 'lucide-react'
 
 const PARTY_COLORS = {
   D: { bg: 'bg-blue-100', text: 'text-blue-700', bar: '#3b82f6' },
@@ -20,51 +21,58 @@ function ResultCard({ r }) {
   const loser = PARTY_COLORS[r.runner_up_party] || PARTY_COLORS.I
   const total = (r.winner_votes || 0) + (r.runner_up_votes || 0)
   const winnerPct = total ? (r.winner_votes / total) * 100 : r.winner_pct
+  const raceKey = `${r.race_type}_${r.state}`
 
   return (
-    <div className="bg-white border border-stone-100 rounded-xl shadow-sm p-5">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <div className="text-xs text-stone-400 uppercase tracking-wide">{r.year}</div>
-          <div className="font-semibold text-stone-800 capitalize">{r.race_type} — {r.state}</div>
+    <Link to={`/race/${raceKey}`} className="block group">
+      <div className="bg-white border border-stone-100 rounded-xl shadow-sm p-5 transition-all group-hover:shadow-md group-hover:border-stone-200 group-hover:scale-[1.01]">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-xs text-stone-400 uppercase tracking-wide">{r.year}</div>
+            <div className="font-semibold text-stone-800 capitalize">{r.race_type} — {r.state}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Trophy className="h-5 w-5 text-amber-500" />
+            <ArrowRight className="h-4 w-4 text-stone-300 group-hover:text-stone-500 transition-colors" />
+          </div>
         </div>
-        <Trophy className="h-5 w-5 text-amber-500" />
-      </div>
 
-      <div className="space-y-2 mb-3">
-        <div>
-          <div className="flex items-center justify-between text-sm mb-1">
-            <div className="flex items-center gap-2">
-              <span className={`${winner.bg} ${winner.text} px-1.5 py-0.5 rounded text-xs font-bold`}>{r.party}</span>
-              <span className="font-medium text-stone-800">{r.winner}</span>
+        <div className="space-y-2 mb-3">
+          <div>
+            <div className="flex items-center justify-between text-sm mb-1">
+              <div className="flex items-center gap-2">
+                <span className={`${winner.bg} ${winner.text} px-1.5 py-0.5 rounded text-xs font-bold`}>{r.party}</span>
+                <span className="font-medium text-stone-800">{r.winner}</span>
+              </div>
+              <span className="font-semibold text-stone-900">{r.winner_pct}%</span>
             </div>
-            <span className="font-semibold text-stone-900">{r.winner_pct}%</span>
-          </div>
-          <div className="w-full bg-stone-100 rounded-full h-2">
-            <div className="h-2 rounded-full" style={{ width: `${winnerPct}%`, backgroundColor: winner.bar }} />
-          </div>
-          <div className="text-xs text-stone-400 mt-0.5">{fmtVotes(r.winner_votes)} votes</div>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between text-sm mb-1">
-            <div className="flex items-center gap-2">
-              <span className={`${loser.bg} ${loser.text} px-1.5 py-0.5 rounded text-xs font-bold`}>{r.runner_up_party}</span>
-              <span className="text-stone-600">{r.runner_up}</span>
+            <div className="w-full bg-stone-100 rounded-full h-2">
+              <div className="h-2 rounded-full" style={{ width: `${winnerPct}%`, backgroundColor: winner.bar }} />
             </div>
-            <span className="text-stone-600">{r.runner_up_pct}%</span>
+            <div className="text-xs text-stone-400 mt-0.5">{fmtVotes(r.winner_votes)} votes</div>
           </div>
-          <div className="w-full bg-stone-100 rounded-full h-2">
-            <div className="h-2 rounded-full opacity-60" style={{ width: `${100 - winnerPct}%`, backgroundColor: loser.bar }} />
+
+          <div>
+            <div className="flex items-center justify-between text-sm mb-1">
+              <div className="flex items-center gap-2">
+                <span className={`${loser.bg} ${loser.text} px-1.5 py-0.5 rounded text-xs font-bold`}>{r.runner_up_party}</span>
+                <span className="text-stone-600">{r.runner_up}</span>
+              </div>
+              <span className="text-stone-600">{r.runner_up_pct}%</span>
+            </div>
+            <div className="w-full bg-stone-100 rounded-full h-2">
+              <div className="h-2 rounded-full opacity-60" style={{ width: `${100 - winnerPct}%`, backgroundColor: loser.bar }} />
+            </div>
+            <div className="text-xs text-stone-400 mt-0.5">{fmtVotes(r.runner_up_votes)} votes</div>
           </div>
-          <div className="text-xs text-stone-400 mt-0.5">{fmtVotes(r.runner_up_votes)} votes</div>
+        </div>
+
+        <div className="flex items-center justify-between text-xs text-stone-500 border-t border-stone-100 pt-2">
+          <span>Margin: <span className="font-semibold text-stone-800">{r.margin_pct}%</span></span>
+          <span className="text-stone-400 group-hover:text-stone-600 transition-colors text-[10px]">View district profile &rarr;</span>
         </div>
       </div>
-
-      <div className="text-xs text-stone-500 border-t border-stone-100 pt-2">
-        Margin: <span className="font-semibold text-stone-800">{r.margin_pct}%</span>
-      </div>
-    </div>
+    </Link>
   )
 }
 

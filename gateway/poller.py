@@ -90,7 +90,7 @@ class Poller:
         log.info(
             "Poller started: %d tasks across %d dashboards",
             len(self._tasks),
-            len(set(t["endpoint"] for targets in POLL_TARGETS.values() for t in targets)),
+            len(set(POLL_TARGETS.keys()) & set(self._dashboards.keys())),
         )
 
     async def stop(self) -> None:

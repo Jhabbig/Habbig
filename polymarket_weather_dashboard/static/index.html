@@ -191,6 +191,17 @@
         }
         .badge-poly { background: var(--blue-dim); color: var(--blue); }
         .badge-kalshi { background: rgba(197,138,249,.1); color: var(--purple); }
+        .city-chip {
+            font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px;
+            text-transform: uppercase; letter-spacing: .4px; white-space: nowrap;
+            background: var(--green-dim); color: var(--green); cursor: pointer;
+        }
+        .city-chip:hover { opacity: .8; }
+        .city-link {
+            color: var(--green); text-decoration: underline; text-decoration-color: rgba(52,211,153,0.3);
+            text-underline-offset: 2px; cursor: pointer; font-weight: 600;
+        }
+        .city-link:hover { text-decoration-color: var(--green); }
 
         /* Verdict banner inside card */
         .card-verdict {
@@ -359,6 +370,9 @@
         @media (min-width: 600px) { .modal { max-width: 500px; margin: 0 auto; border-radius: 12px; border: 1px solid var(--border); align-self: center; } }
         .modal-close { position: absolute; top: 14px; right: 16px; background: none; border: none; color: var(--text-3); font-size: 20px; cursor: pointer; width: 32px; height: 32px; border-radius: 4px; display: grid; place-items: center; transition: color .15s; }
         .modal-close:hover { color: var(--text-1); }
+        .chart-wrap { position: relative; width: 100%; }
+        .chart-wrap.temp { height: 180px; }
+        .chart-wrap.precip { height: 80px; margin-top: 8px; }
         .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-bottom: 20px; background: var(--border); border-radius: var(--radius); overflow: hidden; }
         .modal-cell { background: var(--bg-1); border: none; border-radius: 0; padding: 16px; }
         .modal-cell-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; font-weight: 500; }
@@ -512,7 +526,7 @@
     <div class="settings-section">
         <div class="settings-title">How It Looks</div>
         <div class="setting-row">
-            <div><div class="setting-label">Simple Headlines</div><div class="setting-desc">Show "New York · Apr 3 · 62F" instead of full questions</div></div>
+            <div><div class="setting-label">Simple Headlines</div><div class="setting-desc">Show "New York · Apr 3 · 62°F" instead of full questions</div></div>
             <button class="toggle" id="tog-headlines" onclick="togglePref('simplified_headlines', this)"></button>
         </div>
         <div class="setting-row">
@@ -534,6 +548,18 @@
         <div class="setting-row">
             <div><div class="setting-label">Collapse Model Details</div><div class="setting-desc">Show individual agency forecasts only when expanded</div></div>
             <button class="toggle" id="tog-collapse" onclick="togglePref('collapse_models', this)"></button>
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <div class="settings-title">Units</div>
+        <div style="display:flex;gap:8px">
+            <button class="theme-btn" id="unit-american" onclick="setUnits('american')" style="flex:1;padding:10px;font-size:13px">
+                <div style="font-size:18px;margin-bottom:4px">🇺🇸</div>°F · MM/DD
+            </button>
+            <button class="theme-btn" id="unit-european" onclick="setUnits('european')" style="flex:1;padding:10px;font-size:13px">
+                <div style="font-size:18px;margin-bottom:4px">🇪🇺</div>°C · DD.MM
+            </button>
         </div>
     </div>
 
@@ -636,7 +662,41 @@ let UP = {
     collapse_models: true,
     edge_threshold: 8,
     watched_cities: [],
+    unit_system: 'american',      // 'american' (°F, MM/DD) or 'european' (°C, DD.MM)
 };
+
+// ═══════════════════════════════════════════════════════════════════════
+// UNIT SYSTEM HELPERS
+// ═══════════════════════════════════════════════════════════════════════
+function isMetric() { return UP.unit_system === 'european'; }
+function tempUnit() { return isMetric() ? '°C' : '°F'; }
+function fToC(f) { return (f - 32) * 5 / 9; }
+function displayTemp(f) {
+    if (f == null || isNaN(f)) return '--';
+    const v = isMetric() ? fToC(parseFloat(f)) : parseFloat(f);
+    return Math.round(v * 10) / 10;
+}
+function displayTempInt(f) {
+    if (f == null || isNaN(f)) return '--';
+    return Math.round(isMetric() ? fToC(parseFloat(f)) : parseFloat(f));
+}
+function displayStd(std) {
+    if (std == null || isNaN(std)) return '--';
+    const v = parseFloat(std);
+    return isMetric() ? (v * 5 / 9).toFixed(1) : v;
+}
+function fmtDate(dateStr) {
+    if (!dateStr) return '--';
+    const d = new Date(dateStr + (dateStr.includes('T') ? '' : 'T00:00:00'));
+    if (isMetric()) return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function fmtNum(n) {
+    if (n == null) return '--';
+    return isMetric()
+        ? parseFloat(n).toLocaleString('de-DE', { maximumFractionDigits: 2 })
+        : parseFloat(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
 // ═══════════════════════════════════════════════════════════════════════
 // AUTH — gateway handles login; we just check if the session is valid
 // ═══════════════════════════════════════════════════════════════════════
@@ -709,11 +769,29 @@ function applyPrefsUI() {
     slider.value = UP.edge_threshold || 8;
     document.getElementById('threshold-val').textContent = (UP.edge_threshold || 8) + '%';
     document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === UP.theme));
+    document.getElementById('unit-american').classList.toggle('active', UP.unit_system !== 'european');
+    document.getElementById('unit-european').classList.toggle('active', UP.unit_system === 'european');
 }
 
 function setTheme(t) {
     UP.theme = t; applyTheme(); savePrefs();
     document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === t));
+}
+
+function setUnits(sys) {
+    UP.unit_system = sys; savePrefs();
+    document.getElementById('unit-american').classList.toggle('active', sys === 'american');
+    document.getElementById('unit-european').classList.toggle('active', sys === 'european');
+    renderMarkets();
+    // Re-render weather history if visible
+    const wxChart = document.getElementById('wx-temp-chart');
+    if (wxChart && wxChart.style.display !== 'none') {
+        const detailView = document.getElementById('view-detail');
+        if (detailView && detailView.classList.contains('active')) {
+            const cityEl = detailView.querySelector('.city-link, [data-city]');
+            // Trigger a re-render by re-opening the current detail
+        }
+    }
 }
 
 function applyTheme() {
@@ -1033,12 +1111,12 @@ function simplifyQ(m) {
     const ti = m.temp_info;
     if (city && date && ti) {
         const d = new Date(date + 'T00:00:00');
-        const dStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const dStr = fmtDate(date);
         if (ti.threshold !== null && ti.threshold !== undefined) {
-            return `${city} · ${dStr} · ${ti.is_over ? 'Above' : 'Below'} ${ti.threshold}°F`;
+            return `${city} · ${dStr} · ${ti.is_over ? 'Above' : 'Below'} ${displayTempInt(ti.threshold)}${tempUnit()}`;
         }
         if (ti.temp_lower !== null && ti.temp_lower !== undefined) {
-            return `${city} · ${dStr} · ${ti.temp_lower}–${ti.temp_upper}°F`;
+            return `${city} · ${dStr} · ${displayTempInt(ti.temp_lower)}–${displayTempInt(ti.temp_upper)}${tempUnit()}`;
         }
     }
     // Truncate long questions
@@ -1076,8 +1154,14 @@ function cardHtml(m) {
     const src = m.source || 'polymarket';
     const pe = UP.plain_english;
 
-    // Title
-    const q = UP.simplified_headlines ? simplifyQ(m) : (m.question || '');
+    // Title — inject clickable city name
+    let q = UP.simplified_headlines ? simplifyQ(m) : (m.question || '');
+    if (m.city) {
+        const cityRe = new RegExp('\\b(' + m.city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\b', 'i');
+        q = esc(q).replace(cityRe, `<a class="city-link" onclick="event.stopPropagation();detailToWeather('${esc(m.id)}')" title="View ${esc(m.city)} weather history">$1</a>`);
+    } else {
+        q = esc(q);
+    }
 
     // Source label for price bar
     const srcLabel = src === 'kalshi' ? 'Kalshi' : 'Polymarket';
@@ -1180,10 +1264,13 @@ function cardHtml(m) {
     // Fav + share
     const favCls = isFav(m.id) ? 'action-btn fav-on' : 'action-btn';
 
+    const cityDisplay = m.city ? m.city.charAt(0).toUpperCase() + m.city.slice(1) : '';
+    const cityChip = cityDisplay ? `<span class="city-chip" onclick="event.stopPropagation();detail('${m.id}');setTimeout(()=>{const el=document.getElementById('wx-history-wrap');if(el)el.scrollIntoView({behavior:'smooth'})},300)" title="View ${esc(cityDisplay)} weather history">${esc(cityDisplay)}</span>` : '';
+
     return `<div class="card ${glowClass}" onclick="detail('${m.id}')">
         <div class="card-header">
-            <div class="card-title">${esc(q)}</div>
-            <div class="card-badges"><span class="badge-sm ${badgeCls}">${badgeLabel}</span></div>
+            <div class="card-title">${q}</div>
+            <div class="card-badges">${cityChip}<span class="badge-sm ${badgeCls}">${badgeLabel}</span></div>
         </div>
         ${verdictHtml}
         <div class="price-compare">
@@ -1363,7 +1450,7 @@ function detail(id) {
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;font-size:13px;flex-wrap:wrap">
                     <span>Probability: <b>${prob}%</b></span>
-                    <span>Temp: ${md.mean}°F ±${md.std}°F</span>
+                    <span>Temp: ${displayTemp(md.mean)}${tempUnit()} ±${displayStd(md.std)}${tempUnit()}</span>
                     ${edg ? `<span style="${edgCls};font-weight:600">${pe ? 'Gap' : 'Edge'}: ${edg}</span>` : ''}
                 </div>${resInfo}
             </div>`;
@@ -1373,8 +1460,8 @@ function detail(id) {
 
     if (m.forecast_mean !== undefined) {
         html += `<div class="modal-grid">
-            <div class="modal-cell"><div class="modal-cell-label">Consensus Temp</div><div class="modal-cell-val">${m.forecast_mean}°F</div></div>
-            <div class="modal-cell"><div class="modal-cell-label">Uncertainty</div><div class="modal-cell-val">±${m.forecast_std}°F</div></div>
+            <div class="modal-cell"><div class="modal-cell-label">Consensus Temp</div><div class="modal-cell-val">${displayTemp(m.forecast_mean)}${tempUnit()}</div></div>
+            <div class="modal-cell"><div class="modal-cell-label">Uncertainty</div><div class="modal-cell-val">±${displayStd(m.forecast_std)}${tempUnit()}</div></div>
         </div>`;
     }
 
@@ -1403,6 +1490,22 @@ function detail(id) {
         <div id="price-chart-empty" style="font-size:12px;color:var(--text-3);display:none">No history yet — data is recorded every 30 minutes</div>
     </div>`;
 
+    // City weather history (100-day trends)
+    if (m.city) {
+        const cityDisplay = m.city.charAt(0).toUpperCase() + m.city.slice(1);
+        html += `<div id="wx-history-wrap" style="margin-top:20px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3)">
+                    <span style="color:var(--blue);cursor:pointer" onclick="event.stopPropagation();openCityHistory('${esc(m.city)}')">${esc(cityDisplay)}</span> — 100-Day Weather
+                </div>
+            </div>
+            <div id="wx-summary" style="display:none;margin-bottom:8px"></div>
+            <div class="chart-wrap temp"><canvas id="wx-temp-chart"></canvas></div>
+            <div class="chart-wrap precip"><canvas id="wx-precip-chart"></canvas></div>
+            <div id="wx-loading" style="font-size:12px;color:var(--text-3);text-align:center;padding:12px 0">Loading weather history...</div>
+        </div>`;
+    }
+
     modalCharts.forEach(c => c.destroy());
     modalCharts = [];
     document.getElementById('mbody').innerHTML = html;
@@ -1411,6 +1514,9 @@ function detail(id) {
 
     // Load price history chart
     loadPriceChart(m.id, 'daily');
+
+    // Load city weather history
+    if (m.city) loadWeatherHistory(m.city, m.target_date, m.temp_info);
 }
 
 function showPremiumGate() {
@@ -1453,9 +1559,8 @@ async function loadPriceChart(marketId, granularity) {
         const prices = snaps.map(s => s.yes_price !== null ? (s.yes_price * 100) : null);
         const forecasts = snaps.map(s => s.model_prob !== null ? (s.model_prob * 100) : null);
 
-        // Destroy existing charts
-        modalCharts.forEach(c => c.destroy());
-        modalCharts = [];
+        // Destroy only the price chart (not weather history charts)
+        if (window._priceChart) { window._priceChart.destroy(); window._priceChart = null; }
 
         const style = getComputedStyle(document.documentElement);
         const chart = new Chart(chartEl, {
@@ -1477,6 +1582,7 @@ async function loadPriceChart(marketId, granularity) {
                 interaction: { intersect: false, mode: 'index' },
             },
         });
+        window._priceChart = chart;
         modalCharts.push(chart);
     } catch (e) {
         console.warn('Price chart load failed:', e);
@@ -1485,6 +1591,144 @@ async function loadPriceChart(marketId, granularity) {
         if (chartEl) chartEl.style.display = 'none';
         if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'Could not load price history'; }
     }
+}
+
+async function loadWeatherHistory(city, targetDate, tempInfo) {
+    const loadEl = document.getElementById('wx-loading');
+    const summEl = document.getElementById('wx-summary');
+    const tempCanvas = document.getElementById('wx-temp-chart');
+    const precipCanvas = document.getElementById('wx-precip-chart');
+    if (!tempCanvas || !precipCanvas) return;
+
+    try {
+        const r = await fetch('/api/weather_history/' + encodeURIComponent(city));
+        const j = await r.json();
+        if (!r.ok || !j.days) {
+            if (loadEl) loadEl.textContent = 'Weather history unavailable';
+            return;
+        }
+        if (loadEl) loadEl.style.display = 'none';
+
+        // Summary stats
+        if (summEl && j.summary) {
+            const s = j.summary;
+            summEl.style.display = '';
+            summEl.innerHTML = `<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--text-2)">
+                <span>Avg High: <b style="color:var(--red)">${displayTemp(s.avg_high)}${tempUnit()}</b></span>
+                <span>Avg Low: <b style="color:var(--blue)">${displayTemp(s.avg_low)}${tempUnit()}</b></span>
+                <span>Record High: <b>${displayTemp(s.max_high)}${tempUnit()}</b></span>
+                <span>Rain Days: <b>${s.rainy_days}</b></span>
+                <span>Total Precip: <b>${isMetric() ? (parseFloat(s.total_precip) * 25.4).toFixed(1) + ' mm' : s.total_precip + '"'}</b></span>
+            </div>`;
+        }
+
+        const days = j.days;
+        const style = getComputedStyle(document.documentElement);
+        const labels = days.map(d => fmtDate(d.date));
+
+        // Threshold line dataset (if this market has a temp threshold)
+        const thresholdDatasets = [];
+        if (tempInfo && tempInfo.threshold != null) {
+            // threshold is in the unit from the question; forecasts are in °F
+            let threshF = tempInfo.threshold;
+            if (tempInfo.unit && tempInfo.unit.toUpperCase().startsWith('C')) {
+                threshF = threshF * 9 / 5 + 32;
+            }
+            const threshDisplay = isMetric() ? fToC(threshF) : threshF;
+            thresholdDatasets.push({
+                label: `Market threshold (${displayTempInt(threshF)}${tempUnit()})`,
+                data: days.map(() => threshDisplay),
+                borderColor: 'rgba(251,191,36,0.6)',
+                borderDash: [6, 3],
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+            });
+        }
+
+        // Mark target date
+        const targetIdx = targetDate ? days.findIndex(d => d.date === targetDate) : -1;
+        const pointBgHigh = days.map((_, i) => i === targetIdx ? 'var(--amber)' : 'transparent');
+        const pointRadHigh = days.map((_, i) => i === targetIdx ? 5 : 0);
+
+        // Temperature chart
+        const tempChart = new Chart(tempCanvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: `High ${tempUnit()}`,
+                        data: days.map(d => isMetric() ? fToC(d.high) : d.high),
+                        borderColor: 'rgba(248,113,113,0.8)',
+                        backgroundColor: 'rgba(248,113,113,0.08)',
+                        borderWidth: 1.5, tension: 0.3, fill: '+1',
+                        pointRadius: pointRadHigh, pointBackgroundColor: pointBgHigh,
+                    },
+                    {
+                        label: `Low ${tempUnit()}`,
+                        data: days.map(d => isMetric() ? fToC(d.low) : d.low),
+                        borderColor: 'rgba(99,102,241,0.7)',
+                        backgroundColor: 'rgba(99,102,241,0.05)',
+                        borderWidth: 1.5, tension: 0.3, fill: false,
+                        pointRadius: 0,
+                    },
+                    ...thresholdDatasets,
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, padding: 8, color: style.getPropertyValue('--text-3').trim(), font: { size: 10 } } } },
+                scales: {
+                    x: { display: true, ticks: { maxTicksLimit: 8, color: style.getPropertyValue('--text-3').trim(), font: { size: 9 } }, grid: { display: false } },
+                    y: { display: true, ticks: { callback: v => v + '°', color: style.getPropertyValue('--text-3').trim(), font: { size: 10 } }, grid: { color: style.getPropertyValue('--border').trim() } },
+                },
+                interaction: { intersect: false, mode: 'index' },
+            },
+        });
+        modalCharts.push(tempChart);
+
+        // Precipitation chart
+        const precipChart = new Chart(precipCanvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label: isMetric() ? 'Precip (mm)' : 'Precip (in)',
+                    data: days.map(d => isMetric() ? (d.precip || 0) * 25.4 : (d.precip || 0)),
+                    backgroundColor: 'rgba(99,102,241,0.4)',
+                    borderRadius: 2,
+                }],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { display: false },
+                    y: { display: true, ticks: { callback: v => v + '"', color: style.getPropertyValue('--text-3').trim(), font: { size: 9 } }, grid: { color: style.getPropertyValue('--border').trim() } },
+                },
+            },
+        });
+        modalCharts.push(precipChart);
+    } catch (e) {
+        console.warn('Weather history load failed:', e);
+        if (loadEl) loadEl.textContent = 'Could not load weather history';
+    }
+}
+
+function openCityHistory(city) {
+    const el = document.getElementById('wx-history-wrap');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function detailToWeather(id) {
+    detail(id);
+    // Wait for modal + weather data to load, then scroll to weather section
+    const poll = setInterval(() => {
+        const el = document.getElementById('wx-history-wrap');
+        if (el) { clearInterval(poll); setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200); }
+    }, 100);
+    setTimeout(() => clearInterval(poll), 5000);
 }
 
 function closeModal() {

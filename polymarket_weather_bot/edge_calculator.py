@@ -31,7 +31,7 @@ def calculate_probability(forecast: ForecastResult, market: WeatherMarket) -> fl
     Uses Gaussian model: temp ~ N(forecast_mean, forecast_std²)
     """
     mean = forecast.mean_temp_f
-    std = forecast.std_temp_f
+    std = max(forecast.std_temp_f, 0.1)  # Guard against zero std causing division-by-zero in norm.cdf
 
     if market.threshold is not None:
         if market.is_over:

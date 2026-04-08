@@ -38,6 +38,7 @@ class WeatherMarket:
     liquidity: float
     outcome: str                  # "Yes" or "No"
     token_id: str
+    no_token_id: str              # Token ID for the NO side (needed for BUY_NO trades)
     end_date: Optional[datetime]
 
 
@@ -301,10 +302,15 @@ def parse_weather_markets(raw_markets: list) -> list:
         tokens = market.get("tokens", [])
 
         if tokens:
+            # Build a map of outcome -> token_id so we can cross-reference YES/NO
+            token_map = {}
+            for token in tokens:
+                token_map[token.get("outcome", "")] = token.get("token_id", "")
             for token in tokens:
                 outcome = token.get("outcome", "Yes")
                 price = float(token.get("price", 0))
                 token_id = token.get("token_id", "")
+                no_token_id = token_map.get("No", "") if outcome == "Yes" else token_map.get("Yes", "")
                 parsed.append(WeatherMarket(
                     condition_id=market.get("conditionId", market.get("id", "")),
                     question=title, market_slug=market.get("slug", ""),
@@ -315,13 +321,18 @@ def parse_weather_markets(raw_markets: list) -> list:
                     market_price=price, volume=float(market.get("volume", 0) or 0),
                     liquidity=float(market.get("liquidity", 0) or 0),
                     outcome=outcome, token_id=token_id,
+                    no_token_id=no_token_id,
                     end_date=_parse_iso(market.get("endDate")),
                 ))
         elif prices:
+            # clobTokenIds[0] = YES token, clobTokenIds[1] = NO token
+            yes_tid = clobTokenIds[0] if len(clobTokenIds) > 0 else ""
+            no_tid = clobTokenIds[1] if len(clobTokenIds) > 1 else ""
             for i, price_str in enumerate(prices):
                 outcome = outcomes[i] if i < len(outcomes) else ("Yes" if i == 0 else "No")
                 price = float(price_str)
                 token_id = clobTokenIds[i] if i < len(clobTokenIds) else ""
+                no_token_id = no_tid if outcome == "Yes" else yes_tid
                 parsed.append(WeatherMarket(
                     condition_id=market.get("conditionId", market.get("id", "")),
                     question=title, market_slug=market.get("slug", ""),
@@ -332,6 +343,7 @@ def parse_weather_markets(raw_markets: list) -> list:
                     market_price=price, volume=float(market.get("volume", 0) or 0),
                     liquidity=float(market.get("liquidity", 0) or 0),
                     outcome=outcome, token_id=token_id,
+                    no_token_id=no_token_id,
                     end_date=_parse_iso(market.get("endDate")),
                 ))
         else:
@@ -346,6 +358,7 @@ def parse_weather_markets(raw_markets: list) -> list:
                 market_price=price, volume=float(market.get("volume", 0) or 0),
                 liquidity=float(market.get("liquidity", 0) or 0),
                 outcome="Yes", token_id="",
+                no_token_id="",
                 end_date=_parse_iso(market.get("endDate")),
             ))
 

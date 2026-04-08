@@ -52,8 +52,8 @@ def load_all_tick_data(symbol="BTCUSDT"):
     for pf in pickle_files:
         print(f"  [ML] Loading {pf.name} ({pf.stat().st_size / 1024 / 1024:.0f}MB)...")
         try:
-            with open(pf, "rb") as f:
-                data = pickle.load(f)
+            from btc_analyzer import safe_pickle_load
+            data = safe_pickle_load(pf)
         except Exception as e:
             print(f"  [ML] Error: {e}")
             continue
@@ -427,7 +427,7 @@ def fetch_recent_1s_data(minutes=60):
                 time.sleep(0.05)
             else:
                 break
-        except:
+        except Exception:
             break
 
     if not all_ts:
@@ -1068,7 +1068,7 @@ class MLPredictor:
                     cache_ok = True
                     print(f"  [ML-{self.symbol}] Loaded cached features: "
                           f"{len(self.window_features):,} windows")
-                except:
+                except Exception:
                     pass
 
         if not cache_ok:
@@ -1093,7 +1093,7 @@ class MLPredictor:
                          wf=self.window_features,
                          wo=self.window_outcomes,
                          wt=self.window_times)
-            except:
+            except Exception:
                 pass
 
         if self.window_features is None or len(self.window_features) < 100:

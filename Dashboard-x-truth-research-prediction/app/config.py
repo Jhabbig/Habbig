@@ -22,5 +22,8 @@ settings = {
 }
 
 _config_path = BASE_DIR / "config.yaml"
-with open(_config_path) as f:
-    yaml_config: dict = yaml.safe_load(f)
+try:
+    with open(_config_path) as f:
+        yaml_config: dict = yaml.safe_load(f) or {}
+except FileNotFoundError:
+    yaml_config: dict = {}

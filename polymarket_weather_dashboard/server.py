@@ -150,12 +150,14 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 
 @contextmanager
-def _get_conn():
+def _get_conn(readonly=False):
     """Yield a SQLite connection with WAL mode and row_factory.
 
     WAL mode supports concurrent readers, so the lock is only held during
     writes (commit/rollback) to avoid blocking read-heavy web requests
     behind the snapshot thread.
+
+    Pass readonly=True for SELECT-only queries to skip lock acquisition and commit.
     """
     conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -163,11 +165,13 @@ def _get_conn():
     conn.row_factory = sqlite3.Row
     try:
         yield conn
-        with _db_lock:
-            conn.commit()
+        if not readonly:
+            with _db_lock:
+                conn.commit()
     except Exception:
-        with _db_lock:
-            conn.rollback()
+        if not readonly:
+            with _db_lock:
+                conn.rollback()
         raise
     finally:
         conn.close()
@@ -196,6 +200,9 @@ DEFAULT_USER_SETTINGS = {
 }
 
 _BEHIND_GATEWAY = bool(os.environ.get("GATEWAY_SSO_SECRET"))
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+if not _BEHIND_GATEWAY and not _DEV_MODE:
+    logging.warning("GATEWAY_SSO_SECRET not set and DEV_MODE not enabled — weather dashboard will reject unauthenticated requests")
 
 
 def _get_user_from_request() -> Optional[dict]:
@@ -245,8 +252,8 @@ def require_auth(f):
     def wrapper(*args, **kwargs):
         user = _get_user_from_request()
         if not user:
-            if not _BEHIND_GATEWAY:
-                user = {"id": "local", "username": "local", "email": "", "is_admin": 1}
+            if _DEV_MODE and not _BEHIND_GATEWAY:
+                user = {"id": "local", "username": "local", "email": "", "is_admin": 0}
             else:
                 return jsonify({"error": "unauthorized"}), 401
         request.user = user
@@ -259,7 +266,7 @@ def require_admin(f):
     def wrapper(*args, **kwargs):
         user = _get_user_from_request()
         if not user:
-            if not _BEHIND_GATEWAY:
+            if _DEV_MODE and not _BEHIND_GATEWAY:
                 user = {"id": "local", "username": "local", "email": "", "is_admin": 1}
             else:
                 return jsonify({"error": "forbidden"}), 403
@@ -286,6 +293,7 @@ init_db()
 # ─── Cache ─────────────────────────────────────────────────────────────────────
 
 _cache: dict = {}
+_cache_lock = threading.Lock()
 _CACHE_MAX_SIZE = 1000
 _user_prefs_cache: dict = {}  # Fallback in-memory cache for user settings/favorites
 _USER_PREFS_CACHE_MAX_SIZE = 1000
@@ -293,16 +301,18 @@ CACHE_TTL = 300  # 5 minutes — frontend polls every 4 min to stay ahead
 
 
 def cache_get(key: str):
-    entry = _cache.get(key)
-    if entry and time.time() - entry["ts"] < CACHE_TTL:
-        return entry["data"]
-    return None
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry and time.time() - entry["ts"] < CACHE_TTL:
+            return entry["data"]
+        return None
 
 
 def cache_set(key: str, data):
-    if len(_cache) > _CACHE_MAX_SIZE:
-        _cache.clear()
-    _cache[key] = {"data": data, "ts": time.time()}
+    with _cache_lock:
+        if len(_cache) > _CACHE_MAX_SIZE:
+            _cache.clear()
+        _cache[key] = {"data": data, "ts": time.time()}
 
 
 # ─── Station Mapping ───────────────────────────────────────────────────────────
@@ -1511,6 +1521,156 @@ def api_forecast(city, date):
     })
 
 
+@app.route("/api/weather_history/<city>")
+@require_auth
+def api_weather_history(city):
+    """Return daily weather data for a city over the past 3 years.
+
+    Uses Open-Meteo's historical archive API. Returns comprehensive daily
+    metrics: temps, precipitation, snow, wind, humidity, sunshine, cloud
+    cover, pressure, UV, and dew point.
+    """
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+
+    lat, lon = station[0], station[1]
+    cache_key = f"wxhist3y_{city_key}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
+        start_date = end_date - timedelta(days=3 * 365)
+
+        daily_vars = ",".join([
+            "temperature_2m_max", "temperature_2m_min", "temperature_2m_mean",
+            "apparent_temperature_max", "apparent_temperature_min",
+            "precipitation_sum", "rain_sum", "snowfall_sum",
+            "precipitation_hours",
+            "weather_code",
+            "wind_speed_10m_max", "wind_gusts_10m_max", "wind_direction_10m_dominant",
+            "shortwave_radiation_sum", "et0_fao_evapotranspiration",
+        ])
+
+        resp = requests.get(
+            "https://archive-api.open-meteo.com/v1/archive",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "daily": daily_vars,
+                "temperature_unit": "fahrenheit",
+                "wind_speed_unit": "mph",
+                "precipitation_unit": "inch",
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return jsonify({"error": "Weather archive unavailable"}), 502
+
+        daily = resp.json().get("daily", {})
+        dates = daily.get("time", [])
+        if not dates:
+            return jsonify({"error": "No data returned"}), 404
+
+        def _val(key, i):
+            arr = daily.get(key, [])
+            return arr[i] if i < len(arr) and arr[i] is not None else None
+
+        days = []
+        for i, d in enumerate(dates):
+            days.append({
+                "date": d,
+                "high": _val("temperature_2m_max", i),
+                "low": _val("temperature_2m_min", i),
+                "mean": _val("temperature_2m_mean", i),
+                "feels_high": _val("apparent_temperature_max", i),
+                "feels_low": _val("apparent_temperature_min", i),
+                "precip": _val("precipitation_sum", i),
+                "rain": _val("rain_sum", i),
+                "snow": _val("snowfall_sum", i),
+                "precip_hrs": _val("precipitation_hours", i),
+                "weather_code": _val("weather_code", i),
+                "wind_max": _val("wind_speed_10m_max", i),
+                "wind_gust": _val("wind_gusts_10m_max", i),
+                "wind_dir": _val("wind_direction_10m_dominant", i),
+                "solar": _val("shortwave_radiation_sum", i),
+                "et0": _val("et0_fao_evapotranspiration", i),
+            })
+
+        # Compute summary stats
+        def _stats(key):
+            vals = [d[key] for d in days if d.get(key) is not None]
+            if not vals:
+                return None
+            return {
+                "avg": round(statistics.mean(vals), 1),
+                "min": round(min(vals), 1),
+                "max": round(max(vals), 1),
+                "std": round(statistics.stdev(vals), 1) if len(vals) > 1 else 0,
+            }
+
+        precips = [d["precip"] for d in days if d.get("precip") is not None]
+        snows = [d["snow"] for d in days if d.get("snow") is not None]
+
+        # Monthly averages
+        monthly = {}
+        for d in days:
+            month = d["date"][:7]  # YYYY-MM
+            if month not in monthly:
+                monthly[month] = {"highs": [], "lows": [], "precip": [], "snow": []}
+            if d.get("high") is not None:
+                monthly[month]["highs"].append(d["high"])
+            if d.get("low") is not None:
+                monthly[month]["lows"].append(d["low"])
+            if d.get("precip") is not None:
+                monthly[month]["precip"].append(d["precip"])
+            if d.get("snow") is not None:
+                monthly[month]["snow"].append(d["snow"])
+
+        monthly_summary = []
+        for month, vals in sorted(monthly.items()):
+            monthly_summary.append({
+                "month": month,
+                "avg_high": round(statistics.mean(vals["highs"]), 1) if vals["highs"] else None,
+                "avg_low": round(statistics.mean(vals["lows"]), 1) if vals["lows"] else None,
+                "total_precip": round(sum(vals["precip"]), 2) if vals["precip"] else 0,
+                "total_snow": round(sum(vals["snow"]), 2) if vals["snow"] else 0,
+                "days": len(vals["highs"]),
+            })
+
+        result = {
+            "city": city_key,
+            "station": {"lat": lat, "lon": lon, "icao": station[2], "name": station[3]},
+            "days": days,
+            "monthly": monthly_summary,
+            "summary": {
+                "temp_high": _stats("high"),
+                "temp_low": _stats("low"),
+                "temp_mean": _stats("mean"),
+                "feels_high": _stats("feels_high"),
+                "wind_max": _stats("wind_max"),
+                "wind_gust": _stats("wind_gust"),
+                "solar": _stats("solar"),
+                "total_precip": round(sum(precips), 2) if precips else None,
+                "total_snow": round(sum(snows), 2) if snows else None,
+                "rainy_days": sum(1 for p in precips if p and p > 0.01),
+                "snow_days": sum(1 for s in snows if s and s > 0.01),
+                "period": f"{dates[0]} to {dates[-1]}",
+                "total_days": len(days),
+            },
+        }
+        cache_set(cache_key, result)
+        return jsonify(result)
+    except Exception as e:
+        logger.error("Weather history fetch failed for %s: %s", city_key, e)
+        return jsonify({"error": "Failed to fetch weather history"}), 500
+
+
 @app.route("/api/stations")
 @require_auth
 def api_stations():
@@ -1540,7 +1700,7 @@ def api_history():
     per_page = min(per_page, 200)
     sb_offset = (page - 1) * per_page
 
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         where_clauses = []
         params = []
         if category:
@@ -2308,11 +2468,28 @@ def _snapshot_loop():
         _time.sleep(1800)  # 30 minutes
 
 
+@app.after_request
+def _add_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    if _BEHIND_GATEWAY:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
+
 if __name__ == "__main__":
     _debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    _production = os.environ.get("PRODUCTION", "0") == "1"
+    # Never allow debug mode in production
+    if _debug and _production:
+        logging.error("FLASK_DEBUG=1 is not allowed when PRODUCTION=1 — disabling debug mode")
+        _debug = False
+    bind_host = "0.0.0.0" if _DEV_MODE else "127.0.0.1"
     # Only start background thread in the reloader child (or when reloader is off)
     if not _debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         t = threading.Thread(target=_snapshot_loop, daemon=True)
         t.start()
         logger.info("Price snapshot background thread started (every 30 min)")
-    app.run(host="0.0.0.0", port=5050, debug=_debug)
+    app.run(host=bind_host, port=5050, debug=_debug)

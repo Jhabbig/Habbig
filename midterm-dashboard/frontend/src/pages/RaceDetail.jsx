@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, BarChart, Bar, Cell } from 'recharts'
-import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy } from 'lucide-react'
+import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb } from 'lucide-react'
 
 const sourceColors = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981', metaculus: '#a855f7' }
 const sourceLabels = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: '538 Polling', metaculus: 'Metaculus' }
@@ -37,6 +37,7 @@ export default function RaceDetail() {
   const [polls, setPolls] = useState([])
   const [historicalResults, setHistoricalResults] = useState([])
   const [raceContext, setRaceContext] = useState(null)
+  const [districtProfile, setDistrictProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [visibleSources, setVisibleSources] = useState(new Set(Object.keys(sourceColors)))
 
@@ -62,10 +63,15 @@ export default function RaceDetail() {
           api.raceContext(r.race_key).then(c => { if (c && c.found !== false) setRaceContext(c) }).catch(() => {})
         }
       }
-      // Fetch historical election results for this race_type + state
+      // Fetch historical election results and district profile for this race_type + state
       if (r?.race_type && r?.state) {
         api.historical({ race_type: r.race_type, state: r.state })
           .then(d => setHistoricalResults(d?.results || []))
+          .catch(() => {})
+      }
+      if (r?.state && r.state !== 'US') {
+        api.districtProfile(r.state)
+          .then(p => { if (p && p.found !== false) setDistrictProfile(p) })
           .catch(() => {})
       }
     }).finally(() => setLoading(false))
@@ -354,6 +360,248 @@ export default function RaceDetail() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* District / State Profile */}
+      {districtProfile && districtProfile.found !== false && (
+        <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="p-1.5 bg-emerald-50 rounded-lg">
+              <MapPin className="h-5 w-5 text-emerald-600" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-stone-800">{districtProfile.name || districtProfile.state} — State Profile</h3>
+              <p className="text-xs text-stone-400">Demographics, economy, infrastructure, political history</p>
+            </div>
+          </div>
+
+          {/* Population & Demographics */}
+          {districtProfile.demographics && (
+            <div className="mb-5">
+              <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5" /> Demographics
+                {districtProfile.population?.total > 0 && (
+                  <span className="text-stone-400 font-normal ml-1">
+                    — Pop. {(districtProfile.population.total / 1_000_000).toFixed(1)}M
+                    {districtProfile.population.rank > 0 && ` (rank #${districtProfile.population.rank})`}
+                  </span>
+                )}
+              </h4>
+              <p className="text-sm text-stone-600 leading-relaxed mb-3">{districtProfile.demographics.summary}</p>
+              {districtProfile.demographics.white && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { label: 'White', value: districtProfile.demographics.white },
+                    { label: 'Black', value: districtProfile.demographics.black },
+                    { label: 'Hispanic', value: districtProfile.demographics.hispanic },
+                    { label: 'Asian', value: districtProfile.demographics.asian },
+                  ].filter(d => d.value).map(d => (
+                    <div key={d.label} className="bg-stone-50 rounded-lg px-3 py-2 text-center">
+                      <div className="text-xs text-stone-400">{d.label}</div>
+                      <div className="text-sm font-semibold text-stone-800">{d.value}%</div>
+                    </div>
+                  ))}
+                  {districtProfile.demographics.median_age && (
+                    <div className="bg-stone-50 rounded-lg px-3 py-2 text-center">
+                      <div className="text-xs text-stone-400">Median Age</div>
+                      <div className="text-sm font-semibold text-stone-800">{districtProfile.demographics.median_age}</div>
+                    </div>
+                  )}
+                  {districtProfile.demographics.urban_pct && (
+                    <div className="bg-stone-50 rounded-lg px-3 py-2 text-center">
+                      <div className="text-xs text-stone-400">Urban</div>
+                      <div className="text-sm font-semibold text-stone-800">{districtProfile.demographics.urban_pct}%</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Economy */}
+            {districtProfile.economy && (
+              <div className="bg-stone-50 rounded-lg p-4">
+                <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5" /> Economy
+                  {districtProfile.economy.gdp_billions && (
+                    <span className="text-stone-400 font-normal ml-1">— GDP ${districtProfile.economy.gdp_billions}B</span>
+                  )}
+                </h4>
+                <p className="text-xs text-stone-600 leading-relaxed mb-2">{districtProfile.economy.summary}</p>
+                {districtProfile.economy.top_industries?.length > 0 && (
+                  <div className="mt-2">
+                    <div className="text-[10px] text-stone-400 uppercase mb-1">Top Industries</div>
+                    <div className="flex flex-wrap gap-1">
+                      {districtProfile.economy.top_industries.map((ind, i) => (
+                        <span key={i} className="text-[10px] bg-white border border-stone-200 text-stone-600 px-2 py-0.5 rounded">{ind}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {districtProfile.economy.median_household_income && (
+                  <div className="flex gap-4 mt-2 text-xs text-stone-500">
+                    <span>Median Income: <strong className="text-stone-700">${districtProfile.economy.median_household_income.toLocaleString()}</strong></span>
+                    {districtProfile.economy.unemployment_rate && (
+                      <span>Unemployment: <strong className="text-stone-700">{districtProfile.economy.unemployment_rate}%</strong></span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Infrastructure */}
+            {districtProfile.infrastructure && (
+              <div className="bg-stone-50 rounded-lg p-4">
+                <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Landmark className="h-3.5 w-3.5" /> Infrastructure
+                </h4>
+                <p className="text-xs text-stone-600 leading-relaxed mb-2">{districtProfile.infrastructure.summary}</p>
+                {districtProfile.infrastructure.major_airports?.length > 0 && (
+                  <div className="mt-2">
+                    <div className="text-[10px] text-stone-400 uppercase mb-1">Airports</div>
+                    <div className="text-xs text-stone-600">{districtProfile.infrastructure.major_airports.join(', ')}</div>
+                  </div>
+                )}
+                {districtProfile.infrastructure.military_bases?.length > 0 && (
+                  <div className="mt-2">
+                    <div className="text-[10px] text-stone-400 uppercase mb-1">Military Bases</div>
+                    <div className="text-xs text-stone-600">{districtProfile.infrastructure.military_bases.join(', ')}</div>
+                  </div>
+                )}
+                {districtProfile.infrastructure.ports?.length > 0 && (
+                  <div className="mt-2">
+                    <div className="text-[10px] text-stone-400 uppercase mb-1">Ports</div>
+                    <div className="text-xs text-stone-600">{districtProfile.infrastructure.ports.join(', ')}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Political History */}
+            {districtProfile.political_history && (
+              <div className="bg-stone-50 rounded-lg p-4">
+                <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Landmark className="h-3.5 w-3.5" /> Political History
+                  {districtProfile.political_history.cook_pvi && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ml-1 ${
+                      districtProfile.political_history.cook_pvi.startsWith('D') ? 'bg-blue-100 text-blue-700' :
+                      districtProfile.political_history.cook_pvi.startsWith('R') ? 'bg-red-100 text-red-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>PVI: {districtProfile.political_history.cook_pvi}</span>
+                  )}
+                </h4>
+                <p className="text-xs text-stone-600 leading-relaxed mb-2">{districtProfile.political_history.summary}</p>
+                <div className="space-y-1.5 mt-2">
+                  {districtProfile.political_history['2024_presidential'] && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-stone-400">2024 Presidential</span>
+                      <span className="font-medium text-stone-700">{districtProfile.political_history['2024_presidential'].winner} ({districtProfile.political_history['2024_presidential'].margin})</span>
+                    </div>
+                  )}
+                  {districtProfile.political_history['2020_presidential'] && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-stone-400">2020 Presidential</span>
+                      <span className="font-medium text-stone-700">{districtProfile.political_history['2020_presidential'].winner} ({districtProfile.political_history['2020_presidential'].margin})</span>
+                    </div>
+                  )}
+                  {districtProfile.political_history.governor_since && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-stone-400">Governor</span>
+                      <span className="font-medium text-stone-700">{districtProfile.political_history.governor_since}</span>
+                    </div>
+                  )}
+                  {districtProfile.political_history.state_legislature && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-stone-400">Legislature</span>
+                      <span className="font-medium text-stone-700">{districtProfile.political_history.state_legislature}</span>
+                    </div>
+                  )}
+                  {districtProfile.political_history.electoral_votes && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-stone-400">Electoral Votes</span>
+                      <span className="font-bold text-stone-800">{districtProfile.political_history.electoral_votes}</span>
+                    </div>
+                  )}
+                </div>
+                {districtProfile.political_history.trend && (
+                  <div className="mt-2 pt-2 border-t border-stone-200">
+                    <div className="text-[10px] text-stone-400 uppercase mb-1">Trend</div>
+                    <p className="text-xs text-stone-600">{districtProfile.political_history.trend}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Education + Geography */}
+            <div className="space-y-4">
+              {districtProfile.education && (
+                <div className="bg-stone-50 rounded-lg p-4">
+                  <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <GraduationCap className="h-3.5 w-3.5" /> Education
+                    {districtProfile.education.bachelors_or_higher_pct && (
+                      <span className="text-stone-400 font-normal ml-1">— {districtProfile.education.bachelors_or_higher_pct}% bachelor's+</span>
+                    )}
+                  </h4>
+                  <p className="text-xs text-stone-600 leading-relaxed mb-2">{districtProfile.education.summary}</p>
+                  {districtProfile.education.major_universities?.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {districtProfile.education.major_universities.map((u, i) => (
+                        <span key={i} className="text-[10px] bg-white border border-stone-200 text-stone-600 px-2 py-0.5 rounded">{u}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {districtProfile.geography && (
+                <div className="bg-stone-50 rounded-lg p-4">
+                  <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5" /> Geography
+                  </h4>
+                  {districtProfile.geography.region && (
+                    <div className="text-xs text-stone-500 mb-1">Region: <strong className="text-stone-700">{districtProfile.geography.region}</strong></div>
+                  )}
+                  {districtProfile.geography.terrain && (
+                    <p className="text-xs text-stone-600 mb-1">{districtProfile.geography.terrain}</p>
+                  )}
+                  {districtProfile.geography.climate && (
+                    <p className="text-xs text-stone-500">{districtProfile.geography.climate}</p>
+                  )}
+                  {districtProfile.geography.major_cities?.length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-[10px] text-stone-400 uppercase mb-1">Major Cities</div>
+                      <div className="text-xs text-stone-600">{districtProfile.geography.major_cities.join(', ')}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Key Facts */}
+          {districtProfile.key_facts?.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-stone-100">
+              <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <Lightbulb className="h-3.5 w-3.5" /> Key Facts
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {districtProfile.key_facts.map((fact, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs text-stone-600">
+                    <span className="text-emerald-500 mt-0.5 flex-shrink-0">&#x2022;</span>
+                    <span>{fact}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {districtProfile.updated_at && (
+            <div className="mt-3 text-[10px] text-stone-300 text-right">
+              Profile updated: {districtProfile.updated_at?.slice(0, 10)}
+            </div>
+          )}
         </div>
       )}
 

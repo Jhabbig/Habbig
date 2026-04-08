@@ -20,6 +20,7 @@ rsync -avz --delete \
   --exclude 'venv/' \
   --exclude '__pycache__/' \
   --exclude 'history.db*' \
+  --exclude 'data.db*' \
   --exclude '*.log' \
   --exclude '.git/' \
   "$LOCAL_DIR/" "$SERVER:$REMOTE_DIR/"
@@ -37,13 +38,13 @@ ssh "$SERVER" "cd $REMOTE_DIR && git add -A && git commit -m 'Deploy $(date +%Y-
 # Step 3: Restart service
 echo ""
 echo "[3/3] Restarting NoRain service..."
-ssh "$SERVER" "echo 'iamnotsmelly' | sudo -S systemctl restart norain 2>/dev/null"
+ssh "$SERVER" "sudo -n systemctl restart norain 2>/dev/null"
 sleep 3
 
 # Verify
 echo ""
 echo "=== Checking status ==="
-ssh "$SERVER" "echo 'iamnotsmelly' | sudo -S systemctl is-active norain 2>/dev/null"
+ssh "$SERVER" "sudo -n systemctl is-active norain 2>/dev/null"
 ssh "$SERVER" "curl -s http://localhost:5050/api/markets 2>/dev/null | python3 -c \"import json,sys; d=json.load(sys.stdin); print('Markets loaded:', d['count'])\" 2>/dev/null || echo 'API not ready yet (may need a few seconds)'"
 
 echo ""

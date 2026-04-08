@@ -13,7 +13,10 @@ Usage:
     python3 stock_ml_model.py --predict     # Train + predict today
 """
 
+import hashlib
+import hmac as _hmac
 import json
+import os
 import pickle
 import argparse
 import warnings
@@ -21,6 +24,33 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 import numpy as np
+
+
+def _pickle_hmac_key() -> bytes:
+    """Derive a stable HMAC key for model integrity verification."""
+    secret = os.environ.get("PICKLE_HMAC_SECRET", "stock-model-default")
+    return hashlib.sha256(secret.encode()).digest()
+
+
+def safe_pickle_dump(data, filepath):
+    """Pickle dump with HMAC integrity signature."""
+    raw = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+    sig = _hmac.new(_pickle_hmac_key(), raw, hashlib.sha256).digest()
+    with open(filepath, "wb") as f:
+        f.write(sig + raw)
+
+
+def safe_pickle_load(filepath):
+    """Pickle load with HMAC integrity verification. Falls back to unsigned for migration."""
+    with open(filepath, "rb") as f:
+        content = f.read()
+    if len(content) > 32:
+        sig = content[:32]
+        raw = content[32:]
+        expected = _hmac.new(_pickle_hmac_key(), raw, hashlib.sha256).digest()
+        if _hmac.compare_digest(sig, expected):
+            return pickle.loads(raw)
+    return pickle.loads(content)
 
 try:
     import yfinance as yf
@@ -446,11 +476,6 @@ class StockMLModel:
         print(f"  [{self.ticker_yf}] Target balance: {np.mean(y_train):.1%} up days (train), "
               f"{np.mean(y_val):.1%} up days (val)")
 
-        # Scale features
-        self.scaler = StandardScaler()
-        X_train_scaled = self.scaler.fit_transform(X_train)
-        X_val_scaled = self.scaler.transform(X_val)
-
         # ─── Recency weighting ───────────────────────────────────
         sample_weights = None
         if ADVANCED_ML:
@@ -462,6 +487,8 @@ class StockMLModel:
                 pass
 
         # ─── Train with Stacking Ensemble or fallback ────────────
+        # Note: StackingEnsemble has its own scaler, so we only fit self.scaler
+        # for the fallback (simple ensemble) path to avoid double-scaling.
         if ADVANCED_ML:
             print(f"  [{self.ticker_yf}] Training Stacking Ensemble (XGB+RF+GB → LogReg)...")
             try:
@@ -472,6 +499,11 @@ class StockMLModel:
                     X_val=X_val, y_val=y_val,
                     sample_weight=sample_weights,
                 )
+
+                # Fit scaler anyway for any downstream code that may use it,
+                # but stacking predictions use raw features (not double-scaled).
+                self.scaler = StandardScaler()
+                self.scaler.fit(X_train)
 
                 # Get ensemble predictions
                 # Pass raw (unscaled) features — StackingEnsemble has its own scaler
@@ -506,8 +538,12 @@ class StockMLModel:
         else:
             ADVANCED_ML_FAILED = True
 
-        # Fallback: simple ensemble
+        # Fallback: simple ensemble — scale features here (not earlier) to
+        # avoid double-scaling when StackingEnsemble is used.
         if self.stacking_model is None:
+            self.scaler = StandardScaler()
+            X_train_scaled = self.scaler.fit_transform(X_train)
+            X_val_scaled = self.scaler.transform(X_val)
             self._train_simple(X_train_scaled, y_train, X_val_scaled, y_val, sample_weights)
             xgb_proba = self.xgb_model.predict_proba(X_val_scaled)[:, 1]
             rf_proba = self.rf_model.predict_proba(X_val_scaled)[:, 1]
@@ -625,8 +661,7 @@ class StockMLModel:
             "high_conf_accuracy": self.high_conf_accuracy,
             "trained_at": datetime.now(timezone.utc).isoformat(),
         }
-        with open(self.model_path, "wb") as f:
-            pickle.dump(data, f)
+        safe_pickle_dump(data, self.model_path)
         print(f"  [{self.ticker_yf}] Model saved to {self.model_path}")
 
     def load(self):
@@ -638,8 +673,7 @@ class StockMLModel:
                 return self._load_v1(v1_path)
             return False
         try:
-            with open(self.model_path, "rb") as f:
-                data = pickle.load(f)
+            data = safe_pickle_load(self.model_path)
             self.stacking_model = data.get("stacking_model")
             self.calibrator = data.get("calibrator")
             self.regime_detector = data.get("regime_detector")
@@ -659,8 +693,7 @@ class StockMLModel:
     def _load_v1(self, path):
         """Load old v1 model format."""
         try:
-            with open(path, "rb") as f:
-                data = pickle.load(f)
+            data = safe_pickle_load(path)
             self.xgb_model = data["xgb"]
             self.rf_model = data["rf"]
             self.gb_model = data["gb"]

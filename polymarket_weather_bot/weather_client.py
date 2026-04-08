@@ -179,15 +179,16 @@ async def fetch_nws_forecast(
         if not day_temps:
             return None
 
+        mean_temp = sum(day_temps) / len(day_temps)
         max_temp = max(day_temps)
         std_temp = 3.0
 
         return ForecastResult(
             city="", icao="", target_date=target_date,
-            mean_temp_f=max_temp, std_temp_f=std_temp,
-            min_temp_f=max_temp - 2 * std_temp,
-            max_temp_f=max_temp + 2 * std_temp,
-            source="nws", raw_ensemble=[max_temp],
+            mean_temp_f=mean_temp, std_temp_f=std_temp,
+            min_temp_f=min(day_temps),
+            max_temp_f=max_temp,
+            source="nws", raw_ensemble=day_temps,
         )
 
     except Exception as e:

@@ -76,14 +76,14 @@ jobs:
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'SCRIPT'
             SERVICES=(
-              polymarket-gateway
-              polymarket-crypto
-              polymarket-sports
-              polymarket-weather
-              polymarket-world
-              polymarket-midterm
-              polymarket-traders
-              polymarket-stock
+              narve-gateway
+              narve-crypto
+              narve-sports
+              narve-weather
+              narve-world
+              narve-midterm
+              narve-traders
+              narve-stock
             )
             # Reload unit files if they changed
             sudo -n systemctl daemon-reload 2>/dev/null || true

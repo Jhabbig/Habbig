@@ -18,7 +18,7 @@
   // Which dashboard are we on? Extracted from the subdomain.
   var host = window.location.hostname;
   var parts = host.split(".");
-  var dashboard = parts.length >= 3 ? parts[0] : null;
+  var dashboard = parts.length >= 3 ? parts[0] : (parts.length === 2 && parts[1] === 'localhost' ? parts[0] : null);
   if (!dashboard) return; // apex domain, no SSE needed
 
   var STREAM_URL = "/api/stream?dashboards=" + encodeURIComponent(dashboard);

@@ -137,7 +137,7 @@ class PollingAggregator:
 
                 if end_date >= cutoff:
                     filtered.append(p)
-            except:
+            except Exception:
                 continue
 
         if not filtered:

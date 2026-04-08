@@ -15,6 +15,7 @@ Cache layer: module-level dict with 30-minute TTL so repeated calls
 within the same session don't hammer the API.
 """
 
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -31,24 +32,27 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _cache: Dict[str, Dict[str, Any]] = {}
+_cache_lock = threading.Lock()
 _CACHE_TTL = 30 * 60  # 30 minutes in seconds
 
 
 def _cache_get(key: str) -> Optional[Any]:
     """Return cached value if present and not expired, else None."""
-    entry = _cache.get(key)
-    if entry is None:
-        return None
-    if time.time() - entry["ts"] > _CACHE_TTL:
-        del _cache[key]
-        return None
-    return entry["value"]
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is None:
+            return None
+        if time.time() - entry["ts"] > _CACHE_TTL:
+            del _cache[key]
+            return None
+        return entry["value"]
 
 
 def _cache_set(key: str, value: Any) -> None:
-    if len(_cache) > 500:
-        _cache.clear()
-    _cache[key] = {"ts": time.time(), "value": value}
+    with _cache_lock:
+        if len(_cache) > 500:
+            _cache.clear()
+        _cache[key] = {"ts": time.time(), "value": value}
 
 
 # ---------------------------------------------------------------------------

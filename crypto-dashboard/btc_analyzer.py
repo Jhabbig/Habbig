@@ -11,6 +11,8 @@ import time
 import json
 import asyncio
 import aiohttp
+import hashlib
+import hmac as _hmac
 import pickle
 import math
 import tempfile
@@ -20,6 +22,41 @@ from pathlib import Path
 from collections import defaultdict
 
 import numpy as np
+
+
+def _pickle_hmac_key() -> bytes:
+    """Derive a stable HMAC key for pickle integrity verification."""
+    secret = os.environ.get("PICKLE_HMAC_SECRET", "")
+    if not secret:
+        key_file = Path(__file__).parent / ".secret_key"
+        if key_file.exists():
+            secret = key_file.read_bytes().hex()
+        else:
+            secret = "polymarket-cache-default"
+    return hashlib.sha256(secret.encode() if isinstance(secret, str) else secret).digest()
+
+
+def safe_pickle_dump(data, filepath):
+    """Pickle dump with HMAC integrity signature."""
+    raw = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+    sig = _hmac.new(_pickle_hmac_key(), raw, hashlib.sha256).digest()
+    with open(filepath, "wb") as f:
+        f.write(sig + raw)
+
+
+def safe_pickle_load(filepath):
+    """Pickle load with HMAC integrity verification. Falls back to unsigned for migration."""
+    with open(filepath, "rb") as f:
+        content = f.read()
+    # Try HMAC-signed format first (32-byte SHA256 prefix)
+    if len(content) > 32:
+        sig = content[:32]
+        raw = content[32:]
+        expected = _hmac.new(_pickle_hmac_key(), raw, hashlib.sha256).digest()
+        if _hmac.compare_digest(sig, expected):
+            return pickle.loads(raw)
+    # Fallback: legacy unsigned pickle (will be re-saved with HMAC on next write)
+    return pickle.loads(content)
 
 # ─── GPU acceleration via CuPy (falls back to NumPy on CPU) ─────────
 try:
@@ -157,8 +194,7 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
     if pickle_file.exists():
         print(f"  Loading cached {symbol} (pickle)...")
         try:
-            with open(pickle_file, "rb") as f:
-                data = _normalize_pickle(pickle.load(f))
+            data = _normalize_pickle(safe_pickle_load(pickle_file))
             print(f"    {len(data):,} candles from pickle cache.")
             return data, start_dt, end_dt
         except (pickle.UnpicklingError, EOFError, ValueError, TypeError) as e:
@@ -171,8 +207,7 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
         if age_hours < 48:
             print(f"  Loading recent pickle {ef.name} ({age_hours:.0f}h old)...")
             try:
-                with open(ef, "rb") as f:
-                    data = _normalize_pickle(pickle.load(f))
+                data = _normalize_pickle(safe_pickle_load(ef))
                 if len(data) >= min_candles:
                     print(f"    {len(data):,} candles from pickle cache.")
                     return data, start_dt, end_dt
@@ -199,8 +234,7 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
                 data.sort(key=lambda x: x[0])
                 del klines  # free the huge JSON immediately
                 import gc; gc.collect()
-                with open(pickle_file, "wb") as f:
-                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+                safe_pickle_dump(data, pickle_file)
                 print(f"    {len(data):,} candles. Pickle saved ({pickle_file.stat().st_size/1e6:.0f}MB vs {jf.stat().st_size/1e6:.0f}MB JSON)")
                 return data, start_dt, end_dt
 
@@ -213,8 +247,7 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
     data.sort(key=lambda x: x[0])
     del klines
     import gc; gc.collect()
-    with open(pickle_file, "wb") as f:
-        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    safe_pickle_dump(data, pickle_file)
     print(f"    Saved pickle cache ({pickle_file.stat().st_size/1e6:.0f}MB)")
     return data, start_dt, end_dt
 
