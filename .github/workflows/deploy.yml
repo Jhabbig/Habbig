@@ -1,0 +1,124 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Snapshot current server state
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "cd ~/Polymarket && ./snapshot.sh save -m 'pre-deploy (auto: ${{ github.sha }})'"
+
+      - name: Rsync files to server
+        run: |
+          SERVER="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+          SITES=(
+            gateway
+            crypto-dashboard
+            stock-dashboard
+            sports-dashboard
+            polymarket_weather_dashboard
+            world-state-dashboard
+            midterm-dashboard
+            top-traders-dashboard
+            Dashboard-x-truth-research-prediction
+            polymarket-bot
+            polymarket_weather_bot
+          )
+          EXCLUDES=(
+            "__pycache__" "*.pyc" ".DS_Store" "node_modules"
+            "venv" ".venv" ".git" ".snapshots" "*.log"
+            ".env" "*.db" "*.db-wal" "*.db-shm"
+          )
+          exclude_args=""
+          for pat in "${EXCLUDES[@]}"; do
+            exclude_args="$exclude_args --exclude=$pat"
+          done
+          for site in "${SITES[@]}"; do
+            if [ -d "$site" ]; then
+              echo "Syncing $site..."
+              rsync -azq --delete $exclude_args \
+                "$site/" "$SERVER:~/Polymarket/$site/"
+            fi
+          done
+          # Sync deploy scripts and shared files
+          rsync -azq snapshot.sh "$SERVER:~/Polymarket/snapshot.sh"
+          rsync -azq deploy/ "$SERVER:~/Polymarket/deploy/"
+
+      - name: Restart services
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'SCRIPT'
+            set -e
+            SERVICES=(
+              polymarket-gateway
+              polymarket-crypto
+              polymarket-sports
+              polymarket-weather
+              polymarket-world
+              polymarket-midterm
+              polymarket-traders
+              polymarket-stock
+            )
+            failed=0
+            for svc in "${SERVICES[@]}"; do
+              echo "Restarting $svc..."
+              sudo -n systemctl restart "$svc" || { echo "FAILED: $svc"; failed=1; }
+            done
+            sleep 3
+            echo ""
+            echo "Service status:"
+            for svc in "${SERVICES[@]}"; do
+              status=$(systemctl is-active "$svc" 2>/dev/null)
+              echo "  $svc: $status"
+              if [ "$status" != "active" ]; then
+                echo "    Last 5 log lines:"
+                journalctl -u "$svc" -n 5 --no-pager 2>/dev/null | sed 's/^/    /'
+                failed=1
+              fi
+            done
+            exit $failed
+          SCRIPT
+
+      - name: Health check
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'SCRIPT'
+            echo "Checking gateway responds..."
+            for i in 1 2 3; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7000/ 2>/dev/null || echo "000")
+              if [ "$code" = "200" ] || [ "$code" = "302" ]; then
+                echo "  Gateway OK (HTTP $code)"
+                exit 0
+              fi
+              echo "  Attempt $i: HTTP $code, retrying..."
+              sleep 3
+            done
+            echo "  Gateway not responding after 3 attempts"
+            exit 1
+          SCRIPT
