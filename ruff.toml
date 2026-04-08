@@ -1,0 +1,4 @@
+line-length = 200
+
+[lint]
+select = ["F821"]  # only block deploys on undefined names (actual bugs)

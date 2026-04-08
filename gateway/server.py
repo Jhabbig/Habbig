@@ -1778,7 +1778,7 @@ async def preview_page(request: Request, dashboard_key: str):
 # ── Profile page ────────────────────────────────────────────────────────────
 
 
-def _profile_context(user: dict, banner: str = "", csrf_token: str = "") -> dict:
+def _profile_context(user: dict, banner: str = "", csrf_token: str = "", request: Request = None) -> dict:
     import datetime as _dt
     db_user = db.get_user_by_id(user["user_id"])
     if db_user:
@@ -1852,7 +1852,7 @@ async def profile_page(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
-    return render_page("profile", request=request, **_profile_context(user, csrf_token=_get_csrf_token(request)))
+    return render_page("profile", request=request, **_profile_context(user, csrf_token=_get_csrf_token(request), request=request))
 
 
 @app.post("/profile/password")
@@ -1878,13 +1878,13 @@ async def profile_change_password(request: Request, current_password: str = Form
 
     _csrf = _get_csrf_token(request)
     if not db.verify_user_password(user["email"], current_password):
-        return render_page("profile", request=request, **_profile_context(user, err_banner("Current password is incorrect."), csrf_token=_csrf))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Current password is incorrect."), csrf_token=_csrf, request=request))
     if new_password != confirm_password:
-        return render_page("profile", request=request, **_profile_context(user, err_banner("New passwords don't match."), csrf_token=_csrf))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("New passwords don't match."), csrf_token=_csrf, request=request))
     if len(new_password) < 12 or len(new_password) > 256:
-        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must be 12\u2013256 characters."), csrf_token=_csrf))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must be 12\u2013256 characters."), csrf_token=_csrf, request=request))
     if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
-        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character."), csrf_token=_csrf))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character."), csrf_token=_csrf, request=request))
 
     db.update_user_password(user["user_id"], new_password)
     # Invalidate all other sessions so a compromised session can't persist
@@ -1935,7 +1935,7 @@ async def profile_save_trading_creds(
     if platform == "polymarket":
         pk = private_key.strip()
         if not pk:
-            ctx = _profile_context(user, csrf_token=_csrf)
+            ctx = _profile_context(user, csrf_token=_csrf, request=request)
             ctx["raw_trading_banner"] = t_err("Polymarket private key is required.")
             return render_page("profile", request=request, **ctx)
         creds = {"private_key": pk, "api_key": api_key.strip(), "api_secret": api_secret.strip(), "api_passphrase": api_passphrase.strip()}
@@ -1944,14 +1944,14 @@ async def profile_save_trading_creds(
         em = email.strip()
         pw = password.strip()
         if not ak and not (em and pw):
-            ctx = _profile_context(user, csrf_token=_csrf)
+            ctx = _profile_context(user, csrf_token=_csrf, request=request)
             ctx["raw_trading_banner"] = t_err("Kalshi API key or email + password required.")
             return render_page("profile", request=request, **ctx)
         creds = {"api_key": ak, "email": em, "password": pw}
 
     db.save_trading_credentials(user["user_id"], platform, creds)
     log.info("User %s saved %s trading credentials via profile", user.get("username", user["email"]), platform)
-    ctx = _profile_context(user, csrf_token=_csrf)
+    ctx = _profile_context(user, csrf_token=_csrf, request=request)
     ctx["raw_trading_banner"] = t_ok(f"{'Polymarket' if platform == 'polymarket' else 'Kalshi'} credentials saved and encrypted.")
     return render_page("profile", request=request, **ctx)
 
