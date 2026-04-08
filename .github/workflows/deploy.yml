@@ -75,7 +75,6 @@ jobs:
       - name: Restart services
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'SCRIPT'
-            set -e
             SERVICES=(
               polymarket-gateway
               polymarket-crypto
@@ -86,20 +85,22 @@ jobs:
               polymarket-traders
               polymarket-stock
             )
+            # Reload unit files if they changed
+            sudo -n systemctl daemon-reload 2>/dev/null || true
             failed=0
             for svc in "${SERVICES[@]}"; do
               echo "Restarting $svc..."
-              sudo -n systemctl restart "$svc" || { echo "FAILED: $svc"; failed=1; }
+              sudo -n systemctl restart "$svc" || { echo "FAILED to restart: $svc"; failed=1; }
             done
-            sleep 3
+            sleep 5
             echo ""
             echo "Service status:"
             for svc in "${SERVICES[@]}"; do
-              status=$(systemctl is-active "$svc" 2>/dev/null)
+              status=$(systemctl is-active "$svc" 2>/dev/null || true)
               echo "  $svc: $status"
               if [ "$status" != "active" ]; then
                 echo "    Last 5 log lines:"
-                journalctl -u "$svc" -n 5 --no-pager 2>/dev/null | sed 's/^/    /'
+                journalctl -u "$svc" -n 5 --no-pager 2>/dev/null | sed 's/^/    /' || true
                 failed=1
               fi
             done
