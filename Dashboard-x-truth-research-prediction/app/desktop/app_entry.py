@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, sys, threading, time, webbrowser
+import os, secrets, sys, threading, time, webbrowser
 from pathlib import Path
 
 # Figure out where we're running from — inside .app bundle or dev
@@ -28,6 +28,7 @@ def _ensure_env():
     """Create a default .env if one doesn't exist in the data directory."""
     env_path = _data_dir / ".env"
     if not env_path.exists():
+        generated_password = secrets.token_urlsafe(16)
         env_path.write_text(
             "# Polymarket Signal Dashboard Configuration\n"
             "# Edit this file to add your API credentials\n\n"
@@ -38,7 +39,7 @@ def _ensure_env():
             "TRUTHSOCIAL_ACCESS_TOKEN=\n"
             "TRUTHSOCIAL_API_BASE_URL=https://truthsocial.com\n\n"
             "DASHBOARD_USER=admin\n"
-            "DASHBOARD_PASSWORD=changeme\n\n"
+            f"DASHBOARD_PASSWORD={generated_password}\n\n"
             "DATABASE_URL=sqlite+aiosqlite:///./predictions.db\n"
             "LOG_LEVEL=INFO\n"
         )
@@ -88,7 +89,7 @@ def main():
     # Open in default browser
     webbrowser.open(SERVER_URL)
     print(f"Polymarket Signal Dashboard running at {SERVER_URL}")
-    print("Login: admin / changeme (change in Profile after login)")
+    print("Login credentials are in your .env file (change password in Profile after login)")
     print("Press Ctrl+C to quit.")
 
     try:

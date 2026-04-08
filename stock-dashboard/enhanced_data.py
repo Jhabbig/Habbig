@@ -46,6 +46,8 @@ def _cache_get(key: str) -> Optional[Any]:
 
 
 def _cache_set(key: str, value: Any) -> None:
+    if len(_cache) > 500:
+        _cache.clear()
     _cache[key] = {"ts": time.time(), "value": value}
 
 
@@ -251,7 +253,9 @@ def get_sector_peer_data(ticker: str) -> Dict[str, float]:
             continue
 
     if peer_rets:
-        defaults["peer_avg_1d_ret"] = round(float(np.mean(peer_rets)), 4)
+        avg = float(np.mean(peer_rets))
+        if not np.isnan(avg):
+            defaults["peer_avg_1d_ret"] = round(avg, 4)
 
     _cache_set(cache_key, defaults)
     return defaults

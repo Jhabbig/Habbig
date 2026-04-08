@@ -99,6 +99,8 @@ def extract_window_features(prices_in_window):
 
     p = prices_in_window
     p0 = p[0]  # opening price
+    if p0 == 0:
+        return None  # corrupted data — can't normalize
 
     # Normalize prices relative to open (basis points)
     delta = (p - p0) / p0 * 10000  # in basis points
@@ -146,12 +148,14 @@ def extract_window_features(prices_in_window):
     # ── 20: ACCELERATION ──
     # First half return vs second half return
     mid = n // 2
-    first_half = (p[mid] - p[0]) / p[0] * 10000
-    second_half = (p[-1] - p[mid]) / p[mid] * 10000
+    first_half = (p[mid] - p[0]) / p[0] * 10000 if p[0] != 0 else 0
+    second_half = (p[-1] - p[mid]) / p[mid] * 10000 if p[mid] != 0 else 0
     acceleration = second_half - first_half
 
     # ── 21: MICRO-VOLATILITY ──
-    returns_1s = np.diff(p) / p[:-1] * 10000
+    denom = p[:-1].copy()
+    denom[denom == 0] = 1e-10  # guard against zero-price ticks
+    returns_1s = np.diff(p) / denom * 10000
     volatility = np.std(returns_1s) if len(returns_1s) > 1 else 0
 
     # ── 22: UP-TICK RATIO ──

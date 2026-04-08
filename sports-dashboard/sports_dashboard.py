@@ -342,8 +342,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # In-memory state
@@ -2563,8 +2563,25 @@ async def get_referral(request: Request):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    # When behind the gateway, WS connections are already authenticated.
-    # Accept all connections since the gateway handles auth upstream.
+    # Authenticate via gateway SSO headers
+    _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
+    authed = False
+    if _sso_secret:
+        headers = ws.headers
+        if hmac.compare_digest(headers.get("x-gateway-secret", ""), _sso_secret):
+            if headers.get("x-gateway-user-id") and headers.get("x-gateway-user-email"):
+                authed = True
+        # Also check query params (WebSocket headers can be tricky for browsers)
+        if not authed:
+            qs_secret = ws.query_params.get("gateway_secret", "")
+            if qs_secret and hmac.compare_digest(qs_secret, _sso_secret):
+                authed = True
+    else:
+        # No SSO secret configured (dev mode) — allow all connections
+        authed = True
+    if not authed:
+        await ws.close(code=1008, reason="Not authenticated")
+        return
     await ws.accept()
     connected_ws.add(ws)
     try:

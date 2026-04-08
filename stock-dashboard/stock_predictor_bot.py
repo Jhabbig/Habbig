@@ -224,9 +224,14 @@ def find_stock_markets():
             if isinstance(prices, str):
                 prices = json.loads(prices)
 
+            if not isinstance(outcomes, list) or not isinstance(prices, list):
+                continue
             if len(outcomes) >= 2 and len(prices) >= 2:
-                up_price = float(prices[0]) if outcomes[0] == "Up" else float(prices[1])
-                down_price = float(prices[1]) if outcomes[0] == "Up" else float(prices[0])
+                try:
+                    up_price = float(prices[0]) if outcomes[0] == "Up" else float(prices[1])
+                    down_price = float(prices[1]) if outcomes[0] == "Up" else float(prices[0])
+                except (TypeError, ValueError):
+                    continue
 
                 markets[ticker] = {
                     "title": title,

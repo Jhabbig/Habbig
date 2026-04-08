@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -34,7 +35,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("weather_bot.log"),
+        RotatingFileHandler("weather_bot.log", maxBytes=10*1024*1024, backupCount=5),
     ],
 )
 logger = logging.getLogger("main")

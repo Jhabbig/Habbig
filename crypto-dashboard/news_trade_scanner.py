@@ -24,7 +24,9 @@ import re
 import json
 import time
 import hashlib
-import xml.etree.ElementTree as ET
+import tempfile
+import os
+import defusedxml.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from collections import defaultdict
@@ -506,7 +508,17 @@ def run_news_trade_scan(suspicious_trades: list[dict] | None = None) -> dict:
     }
     try:
         cache_file = CACHE_DIR / f"news_trade_{datetime.now(timezone.utc).strftime('%Y%m%d_%H')}.json"
-        cache_file.write_text(json.dumps(result, indent=2, default=str))
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_file), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(result, f, indent=2, default=str)
+            os.replace(tmp, cache_file)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except Exception:
         pass
 

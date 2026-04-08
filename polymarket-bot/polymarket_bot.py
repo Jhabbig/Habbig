@@ -64,9 +64,18 @@ class BotState:
         self.pending = {}  # coin -> pending bet dict
 
 
+MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
+
+
 def log(msg):
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {msg}"
+    # Rotate log if it exceeds MAX_LOG_SIZE: keep last half
+    if os.path.exists(BOT_LOG) and os.path.getsize(BOT_LOG) > MAX_LOG_SIZE:
+        with open(BOT_LOG, "r") as f:
+            lines = f.readlines()
+        with open(BOT_LOG, "w") as f:
+            f.writelines(lines[len(lines)//2:])
     with open(BOT_LOG, "a") as f:
         f.write(line + "\n")
     print(f"  {msg}")

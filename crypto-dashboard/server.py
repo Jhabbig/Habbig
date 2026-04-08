@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from collections import defaultdict
 import html as html_mod
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 
 import requests
 import numpy as np
@@ -292,7 +292,7 @@ async def price_updater():
                                 for client_ws in list(connected_ws):
                                     try:
                                         await client_ws.send_text(ws_msg)
-                                    except:
+                                    except Exception:
                                         dead.add(client_ws)
                                 for d in dead:
                                     connected_ws.discard(d)
@@ -312,7 +312,7 @@ async def price_updater():
                 for ticker, info in ASSETS.items():
                     if info["symbol"] in all_prices:
                         live_prices[ticker] = all_prices[info["symbol"]]
-        except:
+        except Exception:
             pass
         await asyncio.sleep(5)
 
@@ -423,7 +423,7 @@ async def window_refresher():
                     for ws in list(connected_ws):
                         try:
                             await ws.send_text(msg)
-                        except:
+                        except Exception:
                             dead.add(ws)
                     for d in dead:
                         connected_ws.discard(d)
@@ -522,7 +522,7 @@ async def suspicious_trade_monitor():
                             for ws in list(connected_ws):
                                 try:
                                     await ws.send_text(alert)
-                                except:
+                                except Exception:
                                     connected_ws.discard(ws)
 
                 # Keep set bounded -- clear entirely since set is unordered
@@ -1276,14 +1276,14 @@ async def get_polybot_status(request: Request):
             result["peak_balance"] = data.get("peak_balance", 0)
             result["pending"] = data.get("pending")
             result["trades"] = data.get("trades", [])[-50:]
-        except:
-            pass
+        except (json.JSONDecodeError, KeyError, TypeError, OSError) as e:
+            print(f"  [BOT STATUS] Error reading state: {e}")
     if log_file.exists():
         try:
             with open(log_file) as f:
                 result["log"] = [l.strip() for l in f.readlines()[-100:]]
-        except:
-            pass
+        except OSError as e:
+            print(f"  [BOT STATUS] Error reading log: {e}")
     return result
 
 
@@ -1429,8 +1429,8 @@ async def get_arbitrage_status(request: Request):
             result["signals"] = signals[-100:]  # last 100
             if signals:
                 result["last_scan"] = signals[-1].get("timestamp", "")
-        except:
-            pass
+        except (json.JSONDecodeError, KeyError, TypeError, OSError) as e:
+            print(f"  [SIGNALS] Error reading signals: {e}")
     return result
 
 
@@ -1463,7 +1463,7 @@ async def get_weather_status(request: Request):
                 rows = conn.execute("SELECT * FROM trades ORDER BY created_at DESC LIMIT 50").fetchall()
                 result["trades"] = [dict(r) for r in rows]
                 result["total_trades"] = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-            except:
+            except Exception:
                 pass
             conn.close()
         except Exception as e:
@@ -1661,7 +1661,7 @@ async def trade_page(request: Request):
     try:
         from suspicious_trades import get_active_markets
         markets = await asyncio.to_thread(get_active_markets, 100)
-    except:
+    except Exception:
         markets = []
 
     # Build suspicious trades rows (premium only)
@@ -2152,8 +2152,16 @@ async def api_news_trade_alerts(request: Request):
     """Return news-trade correlation alerts."""
     if not _check_auth(request):
         raise HTTPException(status_code=401)
-    min_score = int(request.query_params.get("min_score", "0"))
-    hours = int(request.query_params.get("hours", "72"))
+    try:
+        min_score = int(request.query_params.get("min_score", "0"))
+    except ValueError:
+        return JSONResponse({"error": "Invalid min_score"}, status_code=400)
+    try:
+        hours = int(request.query_params.get("hours", "72"))
+    except ValueError:
+        return JSONResponse({"error": "Invalid hours"}, status_code=400)
+    min_score = max(0, min(min_score, 100))
+    hours = min(hours, 720)
     alerts = await asyncio.to_thread(db.get_news_alerts, min_score, 50, hours)
     return JSONResponse({"alerts": alerts, "updated": last_news_trade_time})
 
@@ -2473,8 +2481,8 @@ async def websocket_endpoint(ws: WebSocket):
     if _sso_secret and hmac.compare_digest(headers.get("x-gateway-secret", ""), _sso_secret):
         if headers.get("x-gateway-user-id") and headers.get("x-gateway-user-email"):
             authed = True
-    # Localhost bypass for bots
-    if not authed and not os.environ.get("PRODUCTION", "").strip() == "1":
+    # Localhost bypass for bots — only when explicitly enabled via env var
+    if not authed and os.getenv("DEV_LOCALHOST_BYPASS") == "1":
         client_host = ws.client.host if ws.client else ""
         if client_host in ("127.0.0.1", "::1", "localhost"):
             authed = True
@@ -2494,10 +2502,10 @@ async def websocket_endpoint(ws: WebSocket):
             await ws.receive_text()
     except WebSocketDisconnect:
         connected_ws.discard(ws)
-    except:
+    except Exception:
         connected_ws.discard(ws)
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

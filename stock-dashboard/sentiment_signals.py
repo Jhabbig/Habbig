@@ -35,6 +35,8 @@ def _get_cached(key: str):
 
 
 def _set_cached(key: str, value):
+    if len(_cache) > 500:
+        _cache.clear()
     _cache[key] = {"value": value, "ts": time.time()}
 
 

@@ -7,6 +7,8 @@ Fetches event markets from Kalshi's public API and returns data for the dashboar
 import requests
 import time
 import json
+import tempfile
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -122,9 +124,18 @@ def fetch_markets(limit=200, status="open"):
     # Sort by volume
     processed.sort(key=lambda x: x.get("volume", 0), reverse=True)
 
-    # Cache
-    with open(cache_file, "w") as f:
-        json.dump(processed, f)
+    # Cache (atomic write)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_file), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(processed, f)
+        os.replace(tmp, cache_file)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     _cleanup_old_cache_files("kalshi_markets")
 
     return processed
@@ -178,8 +189,17 @@ def fetch_events(limit=100, status="open"):
 
     events.sort(key=lambda x: x["volume"], reverse=True)
 
-    with open(cache_file, "w") as f:
-        json.dump(events, f)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_file), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(events, f)
+        os.replace(tmp, cache_file)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     _cleanup_old_cache_files("kalshi_events")
 
     print(f"  [Kalshi] Fetched {len(events)} events")

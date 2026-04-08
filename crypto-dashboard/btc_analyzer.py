@@ -13,6 +13,8 @@ import asyncio
 import aiohttp
 import pickle
 import math
+import tempfile
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -1277,7 +1279,7 @@ class EnsemblePredictor:
         return p
 
     def save_to_file(self, filepath):
-        """Save entire ensemble to a JSON file."""
+        """Save entire ensemble to a JSON file (atomic write)."""
         state = {
             "model_states": [m.save_state() for m in self.models],
             "model_weights": self.model_weights,
@@ -1285,8 +1287,17 @@ class EnsemblePredictor:
             "configs": self.CONFIGS,
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
-        with open(filepath, "w") as f:
-            json.dump(state, f)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(filepath) or ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(state, f)
+            os.replace(tmp, filepath)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     @classmethod
     def load_from_file(cls, filepath):

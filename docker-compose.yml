@@ -1,0 +1,77 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 3
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "7000:7000"
+    env_file: ./gateway/.env
+    volumes:
+      - gateway-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      crypto:
+        condition: service_started
+      stock:
+        condition: service_started
+      midterm:
+        condition: service_started
+      top-traders:
+        condition: service_started
+      weather:
+        condition: service_started
+      sports:
+        condition: service_started
+      world:
+        condition: service_started
+
+  crypto:
+    build: ./crypto-dashboard
+    ports:
+      - "8000:8000"
+    env_file: ./crypto-dashboard/.env
+    volumes:
+      - crypto-data:/app/data
+
+  stock:
+    build: ./stock-dashboard
+    ports:
+      - "8050:8050"
+
+  midterm:
+    build: ./midterm-dashboard
+    ports:
+      - "8051:8051"
+
+  top-traders:
+    build: ./top-traders-dashboard
+    ports:
+      - "8052:8052"
+
+  weather:
+    build: ./polymarket_weather_dashboard
+    ports:
+      - "5050:5050"
+
+  sports:
+    build: ./sports-dashboard
+    ports:
+      - "8888:8888"
+    env_file: ./sports-dashboard/.env
+
+  world:
+    build: ./world-state-dashboard
+    ports:
+      - "7050:7050"
+
+volumes:
+  gateway-data:
+  crypto-data:

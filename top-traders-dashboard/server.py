@@ -62,6 +62,8 @@ def _cache_get(key: str) -> Any | None:
 
 
 def _cache_set(key: str, value: Any) -> None:
+    if len(_cache) > 100:
+        _cache.clear()
     _cache[key] = (time.time() + CACHE_TTL_SECONDS, value)
 
 

@@ -247,13 +247,21 @@ def cookie_domain_for(request: Request) -> Optional[str]:
         cookie applies across subdomains in production.
       * If the request host is localhost or *.localhost → return None so the
         browser stores the cookie for the exact host (works for preview/dev).
-      * Otherwise → None (safest fallback).
+      * Otherwise → derive the base domain from the request and set the cookie
+        on that, so sessions work across subdomains on any domain.
     """
     host = request.headers.get("host", "").split(":")[0].lower()
     if not host:
         return None
     if host == DOMAIN or host.endswith("." + DOMAIN):
         return PROD_COOKIE_DOMAIN
+    # localhost / dev — no domain attribute
+    if host in ("localhost", "127.0.0.1") or host.endswith(".localhost"):
+        return None
+    # Flexible: derive base from request so cookies span subdomains on any domain
+    _, base, _ = _request_base_domain(request)
+    if "." in base and base != "localhost":
+        return f".{base}"
     return None
 
 logging.basicConfig(
@@ -358,7 +366,8 @@ async def _startup():
     if not tokens:
         first_token = db.create_invite_token("Auto-generated admin token")
         log.info("=" * 50)
-        log.info("  FIRST ADMIN INVITE TOKEN: %s", first_token)
+        log.info("  FIRST ADMIN INVITE TOKEN created (check DB or logs at DEBUG level)")
+        log.debug("  FIRST ADMIN INVITE TOKEN: %s", first_token)
         log.info("=" * 50)
 
 
@@ -611,8 +620,39 @@ def get_subdomain(request: Request) -> Optional[str]:
     # Localhost subdomain testing: crypto.localhost → "crypto"
     if host.endswith(".localhost"):
         return host[: -len(".localhost")]
+    # Flexible matching: recognise known dashboard subdomains on any base domain
+    # (e.g. world.narve.ai when config says habbig.com).
+    for sub in SUBDOMAIN_TO_KEY:
+        if host.startswith(sub + "."):
+            return sub
     # Unknown host — treat as apex
     return ""
+
+
+def _request_base_domain(request: Request) -> tuple[str, str, str]:
+    """Derive (scheme, base_domain, port_suffix) from the live request.
+
+    Used so that generated links match the domain the user is actually on,
+    even if it differs from the configured DOMAIN (e.g. narve.ai vs habbig.com).
+    """
+    host_raw = request.headers.get("host", DOMAIN)
+    if ":" in host_raw:
+        host_no_port, port = host_raw.rsplit(":", 1)
+        port_suffix = ":" + port
+    else:
+        host_no_port = host_raw
+        port_suffix = ""
+
+    base = host_no_port.lower()
+    # Strip a known subdomain prefix to get the apex
+    for sub in SUBDOMAIN_TO_KEY:
+        prefix = sub + "."
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+            break
+
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    return scheme, base, port_suffix
 
 
 def is_local_host(request: Request) -> bool:
@@ -961,8 +1001,14 @@ async def login_page(request: Request, token: str = ""):
         return await proxy_request(request, "/login")
     user = current_user(request)
     if user and not user.get("_dev_bypass"):
-        # Real logged-in user → skip to dashboards (but not for dev bypass,
-        # so auth pages remain testable on localhost)
+        # Real logged-in user → skip to their default dashboard (or the hub).
+        default_key = db.get_default_dashboard(user["user_id"])
+        if default_key and default_key in DASHBOARDS:
+            dash_cfg = DASHBOARDS[default_key]
+            if is_local_host(request):
+                return RedirectResponse(f"http://localhost:{dash_cfg['target']}", status_code=302)
+            s, b, p = _request_base_domain(request)
+            return RedirectResponse(f"{s}://{dash_cfg['subdomain']}.{b}{p}/", status_code=302)
         return RedirectResponse("/dashboards", status_code=302)
     # If a claimed invite token is provided (from /gate redirect), show token section
     token = token.strip()
@@ -1042,7 +1088,18 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
         return _render_login_error("Invalid email or password.")
 
     token = db.create_session(user["id"])
-    response = RedirectResponse("/dashboards", status_code=302)
+    # Honour the user's default-dashboard preference (set in /settings).
+    default_key = db.get_default_dashboard(user["id"])
+    if default_key and default_key in DASHBOARDS:
+        dash_cfg = DASHBOARDS[default_key]
+        if is_local_host(request):
+            dest = f"http://localhost:{dash_cfg['target']}"
+        else:
+            s, b, p = _request_base_domain(request)
+            dest = f"{s}://{dash_cfg['subdomain']}.{b}{p}/"
+    else:
+        dest = "/dashboards"
+    response = RedirectResponse(dest, status_code=302)
     set_session_cookie(response, token, request)
     return response
 
@@ -1100,7 +1157,7 @@ async def signup_submit(request: Request, username: str = Form(""), email: str =
     if not username or not USERNAME_RE.match(username):
         return render_page("signup", request=request, error="Username must be 3\u201320 characters: letters, numbers, underscores only.", invite_token=invite_token, email=email)
     if db.get_user_by_username(username):
-        return render_page("signup", request=request, error="That username is already taken.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="An account with these details already exists. Please try different credentials.", invite_token=invite_token, email=email)
     if not is_valid_email(email):
         return render_page("signup", request=request, error="Enter a valid email address.", invite_token=invite_token, email=email)
     if len(password) < 12:
@@ -1116,7 +1173,7 @@ async def signup_submit(request: Request, username: str = Form(""), email: str =
     if not re.search(r"[^A-Za-z0-9]", password):
         return render_page("signup", request=request, error="Password must contain at least one special character.", invite_token=invite_token, email=email)
     if db.get_user_by_email(email):
-        return render_page("signup", request=request, error="An account with that email already exists.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="An account with these details already exists. Please try different credentials.", invite_token=invite_token, email=email)
     user_id = db.create_user(email, password, username=username)
     if not db.claim_invite_token(invite_token, user_id, email):
         db.delete_user(user_id)
@@ -1153,13 +1210,23 @@ async def logout_get(request: Request):
 
 
 @app.get("/dashboards", response_class=HTMLResponse)
-async def my_dashboards(request: Request):
+async def my_dashboards(request: Request, hub: Optional[str] = None):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/dashboards")
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
+
+    # If user set a default dashboard, redirect there (skip with ?hub=1).
+    if hub != "1":
+        default_key = db.get_default_dashboard(user["user_id"])
+        if default_key and default_key in DASHBOARDS:
+            dash_cfg = DASHBOARDS[default_key]
+            if is_local_host(request):
+                return RedirectResponse(f"http://localhost:{dash_cfg['target']}", status_code=302)
+            scheme, base, port_suffix = _request_base_domain(request)
+            return RedirectResponse(f"{scheme}://{dash_cfg['subdomain']}.{base}{port_suffix}/", status_code=302)
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
@@ -1210,6 +1277,7 @@ async def my_dashboards(request: Request):
         )
 
     # ── Build dashboard cards with feature highlights ───────────────
+    req_scheme, req_base, req_port = _request_base_domain(request)
     cards_html = []
     for key, cfg in DASHBOARDS.items():
         has_sub = _is_sub_active(subs.get(key), is_admin_user)
@@ -1221,7 +1289,7 @@ async def my_dashboards(request: Request):
             if local_mode:
                 open_url = f"http://localhost:{cfg['target']}"
             else:
-                open_url = f"https://{cfg['subdomain']}.{DOMAIN}"
+                open_url = f"{req_scheme}://{cfg['subdomain']}.{req_base}{req_port}"
             cta = f'<a class="card-cta cta-open" href="{open_url}" target="_blank">Open →</a>'
         else:
             cta = f'<a class="card-cta cta-sub" href="/preview/{key}">Learn More</a>'
@@ -1299,7 +1367,7 @@ async def my_dashboards(request: Request):
         raw_sub_summary=summary_html,
         raw_tour_steps=tour_html,
         tour_total_steps=str(total_steps),
-        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
     )
 
 
@@ -1388,7 +1456,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
         raw_banner=banner,
-        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
     )
 
 
@@ -1703,7 +1771,7 @@ async def preview_page(request: Request, dashboard_key: str):
         raw_features_html="".join(features_html_parts),
         raw_includes_html="".join(includes_html_parts),
         raw_admin_link=admin_link,
-        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
     )
 
 
@@ -1772,7 +1840,7 @@ def _profile_context(user: dict, banner: str = "", csrf_token: str = "") -> dict
         "raw_kalshi_delete": kalshi_delete,
         "poly_open_class": f"{poly_connected} {poly_open}".strip(),
         "kalshi_open_class": f"{kalshi_connected} {kalshi_open}".strip(),
-        "raw_dashboard_tabs": _build_tab_html(user["user_id"]),
+        "raw_dashboard_tabs": _build_tab_html(user["user_id"], request=request),
     }
 
 
@@ -1980,7 +2048,10 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
                 from email.mime.text import MIMEText
 
                 smtp_host = os.environ.get("SMTP_HOST", "localhost")
-                smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+                try:
+                    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+                except (ValueError, TypeError):
+                    smtp_port = 587
 
                 body_text = (
                     f"Hi,\n\n"
@@ -2007,7 +2078,8 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
                 log.error("Failed to send password reset email: %s", exc)
         else:
             # No SMTP configured — log the link so the admin can relay it.
-            log.info("SMTP not configured. Reset link for %s: %s", email, reset_link)
+            log.info("SMTP not configured. Reset link generated for %s (check /admin for details)", email)
+            log.debug("Reset link for %s: %s", email, reset_link)
 
     return render_page("forgot-password", request=request, error="", raw_success=success_msg)
 
@@ -2094,6 +2166,8 @@ async def enquire_page(request: Request):
 
 @app.post("/api/enquire")
 async def api_enquire(request: Request):
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/api/enquire")
@@ -2128,7 +2202,10 @@ async def api_enquire(request: Request):
             import smtplib
             from email.mime.text import MIMEText
             smtp_host = os.environ.get("SMTP_HOST", "localhost")
-            smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+            try:
+                smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+            except (ValueError, TypeError):
+                smtp_port = 587
             smtp_user = os.environ.get("SMTP_USER", "")
             smtp_pass = os.environ.get("SMTP_PASS", "")
 
@@ -2550,7 +2627,7 @@ async def admin_page(request: Request):
     user = _require_admin_user(request)
     csrf_token = _get_csrf_token(request)
     ctx = _build_admin_context(caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
-    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"]), **ctx)
+    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
 
 
 @app.post("/admin/tokens/generate")
@@ -2562,10 +2639,11 @@ async def admin_generate_token(request: Request, note: str = Form(""), target_em
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
     new_token = db.create_invite_token(note.strip(), target_email=target_email.strip())
-    log.info("Admin %s generated invite token: %s (target: %s)", user["email"], new_token, target_email.strip() or "none")
+    log.info("Admin %s generated invite token (target: %s)", user["email"], target_email.strip() or "none")
+    log.debug("Admin %s generated invite token: %s (target: %s)", user["email"], new_token, target_email.strip() or "none")
     csrf_token = _get_csrf_token(request)
     ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
-    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"]), **ctx)
+    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
 
 
 @app.post("/admin/tokens/revoke")
@@ -2687,7 +2765,7 @@ async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
     log.info("Admin %s created token %s for enquiry %d (%s)", admin["email"], new_token, enquiry_id, email)
     csrf_token = _get_csrf_token(request)
     ctx = _build_admin_context(new_token_str=new_token, caller_level=admin.get("admin_level", 1), csrf_token=csrf_token)
-    return render_page("admin", request=request, email=admin["email"], username=admin.get("username", admin["email"]), raw_dashboard_tabs=_build_tab_html(admin["user_id"]), **ctx)
+    return render_page("admin", request=request, email=admin["email"], username=admin.get("username", admin["email"]), raw_dashboard_tabs=_build_tab_html(admin["user_id"], request=request), **ctx)
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:
@@ -2827,9 +2905,14 @@ async def admin_bulk_users(request: Request):
     csrf_tok = form.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     action = form.get("bulk_action", "")
+    if action not in ("promote", "demote", "suspend", "unsuspend"):
+        raise HTTPException(status_code=400, detail="Invalid bulk action")
     user_ids_raw = [uid for uid in form.getlist("user_ids") if uid]
-    if not user_ids_raw or not action:
+    if not user_ids_raw:
         return RedirectResponse("/admin", status_code=302)
     user_ids = []
     for raw in user_ids_raw:
@@ -2897,7 +2980,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         raw_options="".join(option_html),
         raw_saved_banner=saved_banner,
         raw_admin_link=admin_link,
-        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
     )
 
 
@@ -2953,6 +3036,8 @@ async def trading_credentials_status(request: Request):
 
 @app.post("/api/trading/credentials/{platform}")
 async def trading_save_credentials(request: Request, platform: str):
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -2989,6 +3074,8 @@ async def trading_save_credentials(request: Request, platform: str):
 
 @app.delete("/api/trading/credentials/{platform}")
 async def trading_delete_credentials(request: Request, platform: str):
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -3001,6 +3088,8 @@ async def trading_delete_credentials(request: Request, platform: str):
 @app.post("/api/trading/place")
 async def trading_place_order(request: Request):
     """Place a trade on Polymarket or Kalshi."""
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -3211,7 +3300,7 @@ async def trading_orders(request: Request):
 # ── Switcher injection ────────────────────────────────────────────────────────
 
 
-def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf_token: str = "") -> str:
+def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf_token: str = "", request: Request = None) -> str:
     """Build the <script> tags that configure and load the dashboard switcher."""
     active_keys = cached_active_dashboard_keys(user_id)
     items = [
@@ -3223,13 +3312,18 @@ def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf
         }
         for k in active_keys
     ]
+    # Use the domain the user is actually on so links stay on the right host.
+    if request:
+        _, effective_domain, _ = _request_base_domain(request)
+    else:
+        effective_domain = DOMAIN
     cfg_json = json.dumps({
         "dashboards": items,
         "current": dashboard_key,
-        "domain": DOMAIN,
+        "domain": effective_domain,
         "username": username,
         "csrf_token": csrf_token,
-    })
+    }).replace("</", "<\\/")  # prevent </script> breakout in HTML context
     return (
         f'<script>window.__hbSwitcher={cfg_json};</script>'
         f'<script src="/_gateway_static/switcher.js"></script>'
@@ -3240,18 +3334,27 @@ def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf
 # ── Tab HTML for static gateway pages ─────────────────────────────────────────
 
 
-def _build_tab_html(user_id: int, active_tab: str = "") -> str:
+def _build_tab_html(user_id: int, active_tab: str = "", request: Request = None) -> str:
     """Generate <a class='gw-tab'> links for the gateway page header."""
     active_keys = cached_active_dashboard_keys(user_id)
-    local = DOMAIN == "localhost" or "localhost" in DOMAIN
+    # Derive scheme/domain from the live request so tabs work on any host.
+    if request:
+        scheme, base, port_suffix = _request_base_domain(request)
+        local = base == "localhost" or base.endswith(".localhost") or base == "127.0.0.1"
+    else:
+        local = DOMAIN == "localhost" or "localhost" in DOMAIN
+        scheme = "http" if local else "https"
+        base = DOMAIN
+        port_suffix = ""
     tabs = []
     for k in active_keys:
         d = DASHBOARDS[k]
         cls = "gw-tab active" if k == active_tab else "gw-tab"
         if local:
-            url = f"http://{d['subdomain']}.localhost:{CONFIG.get('gateway_port', 7000)}/"
+            gw_port = CONFIG.get("gateway_port", 7000)
+            url = f"http://{d['subdomain']}.localhost:{gw_port}/"
         else:
-            url = f"https://{d['subdomain']}.{DOMAIN}/"
+            url = f"{scheme}://{d['subdomain']}.{base}{port_suffix}/"
         tabs.append(
             f'<a class="{cls}" href="{url}" style="--tab-accent:{d["accent"]}">'
             f'<span class="gw-tab-dot" style="background:{d["accent"]}"></span>'
@@ -3281,7 +3384,7 @@ def _inject_sse_client(content: bytes) -> bytes:
     return text.encode("utf-8")
 
 
-def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, username: str = "", csrf_token: str = "") -> bytes:
+def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, username: str = "", csrf_token: str = "", request: Request = None) -> bytes:
     """Inject theme CSS (before </head>) and switcher+trade JS (before </body>)."""
     if "text/html" not in (content_type or ""):
         return content
@@ -3304,7 +3407,7 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
                 text = text[:close + 1] + css_tag + text[close + 1:]
 
     # 2. Inject JS before </body>
-    snippet = _switcher_snippet(key, user_id, username, csrf_token=csrf_token)
+    snippet = _switcher_snippet(key, user_id, username, csrf_token=csrf_token, request=request)
     idx = text.lower().rfind("</body>")
     if idx != -1:
         text = text[:idx] + snippet + text[idx:]
@@ -3320,21 +3423,26 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     """Reverse-proxy the current request to the backend matching its subdomain."""
     sub = get_subdomain(request)
     key = SUBDOMAIN_TO_KEY.get(sub)
+
+    # Build an apex URL that matches the domain the user is actually on.
+    scheme, base, port_suffix = _request_base_domain(request)
+    apex = f"{scheme}://{base}{port_suffix}"
+
     if not key:
         # Unknown subdomain — redirect to apex.
-        return RedirectResponse(f"https://{DOMAIN}/", status_code=302)
+        return RedirectResponse(f"{apex}/", status_code=302)
 
     dash_cfg = DASHBOARDS[key]
 
     # 1. Require login.
     user = current_user(request)
     if not user:
-        return RedirectResponse(f"https://{DOMAIN}/gate", status_code=302)
+        return RedirectResponse(f"{apex}/gate", status_code=302)
 
     # 2. Require active subscription.
     if not cached_has_subscription(user["user_id"], key):
         return RedirectResponse(
-            f"https://{DOMAIN}/billing?dashboard={key}",
+            f"{apex}/billing?dashboard={key}",
             status_code=302,
         )
 
@@ -3356,7 +3464,8 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         upstream_url += f"?{query}"
 
     # Cache-first: serve GET /api/* and /data/* from Redis when available.
-    if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")):
+    # Never cache /api/auth/* — responses are per-user.
+    if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")) and not path.startswith("/api/auth"):
         cached = cache.get_api(key, path)
         if cached:
             cached_body, cached_ct = cached
@@ -3431,6 +3540,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         user["user_id"],
         username=user.get("username", ""),
         csrf_token=_get_csrf_token(request),
+        request=request,
     )
     # Update Content-Length since injection may have changed the body size.
     if body is not upstream.content:
@@ -3445,7 +3555,8 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         resp_headers["pragma"] = "no-cache"
         resp_headers["x-cache"] = "MISS"
         # Write-through: cache this response for next time.
-        if request.method == "GET" and upstream.status_code == 200:
+        # Never cache /api/auth/* — responses are per-user.
+        if request.method == "GET" and upstream.status_code == 200 and not path.startswith("/api/auth"):
             cache.set_api(key, path, upstream.content, content_type)
 
     # Inject SSE client script into HTML responses for live updates.

@@ -61,17 +61,33 @@ def _tokenize(text: str) -> set[str]:
     return {t for t in text.split() if t not in STOP_WORDS and len(t) > 1}
 
 
+MIN_SHARED_TOKENS = 3
+
+
 def fuzzy_match_score(text_a: str, text_b: str) -> float:
     tokens_a, tokens_b = _tokenize(text_a), _tokenize(text_b)
     if not tokens_a or not tokens_b:
         return 0.0
-    smaller = min(len(tokens_a), len(tokens_b))
-    return len(tokens_a & tokens_b) / smaller if smaller > 0 else 0.0
+    overlap = len(tokens_a & tokens_b)
+    if overlap < MIN_SHARED_TOKENS:
+        return 0.0
+    union = len(tokens_a | tokens_b)
+    return overlap / union if union > 0 else 0.0
 
 
-def match_to_market(prediction_text: str, markets: list[dict], threshold: float | None = None) -> tuple[dict | None, float]:
+def match_to_market(
+    prediction_text: str,
+    markets: list[dict],
+    threshold: float | None = None,
+    category: str | None = None,
+) -> tuple[dict | None, float]:
     if threshold is None:
-        threshold = yaml_config.get("scoring", {}).get("market_match_threshold", 0.35)
+        threshold = yaml_config.get("scoring", {}).get("market_match_threshold", 0.50)
+    # Pre-filter by category when available — prevents cross-category mismatches
+    if category and category != "other":
+        filtered = [m for m in markets if m.get("category") == category]
+        if filtered:
+            markets = filtered
     best: tuple[dict | None, float] = (None, 0.0)
     for m in markets:
         q = m.get("market_question", "") or m.get("question", "")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import statistics
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -142,7 +143,8 @@ async def fetch_nws_forecast(
 ) -> Optional[ForecastResult]:
     """Fetch NWS forecast for US locations via api.weather.gov."""
     try:
-        headers = {"User-Agent": "PolymarketWeatherBot/1.0 (contact@example.com)"}
+        contact_email = os.getenv("NWS_CONTACT_EMAIL", "contact@example.com")
+        headers = {"User-Agent": f"PolymarketWeatherBot/1.0 ({contact_email})"}
         points_url = f"{NWS_API_URL}/points/{lat:.4f},{lon:.4f}"
 
         async with session.get(points_url, headers=headers) as resp:

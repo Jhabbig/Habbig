@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: Lint gateway
+        run: ruff check gateway/ --select E,F,W
+      - name: Lint crypto-dashboard
+        run: ruff check crypto-dashboard/ --select E,F,W
+      - name: Lint stock-dashboard
+        run: ruff check stock-dashboard/ --select E,F,W
+      - name: Lint midterm-dashboard
+        run: ruff check midterm-dashboard/ --select E,F,W
+      - name: Lint top-traders-dashboard
+        run: ruff check top-traders-dashboard/ --select E,F,W
+      - name: Lint weather dashboard
+        run: ruff check polymarket_weather_dashboard/ --select E,F,W
+      - name: Lint sports-dashboard
+        run: ruff check sports-dashboard/ --select E,F,W
+      - name: Lint world-state-dashboard
+        run: ruff check world-state-dashboard/ --select E,F,W
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build all images
+        run: docker compose build

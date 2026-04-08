@@ -4,9 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Polymarket Signal</title>
+    <!-- Tailwind CDN is a dynamic script and does not support SRI hashes -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
+    <script>document.addEventListener('htmx:configRequest', function(evt) { evt.detail.headers['X-Requested-With'] = 'XMLHttpRequest'; });</script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     <script>tailwind.config={theme:{extend:{fontFamily:{sans:['Inter','system-ui','sans-serif'],mono:['JetBrains Mono','Fira Code','monospace']}}}}</script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -84,7 +86,10 @@
                 <div id="profile-dropdown" class="hidden absolute right-0 mt-2 w-44 rounded-xl shadow-xl py-1 z-50 border themed-border" style="background:var(--bg-secondary)">
                     <a href="/profile" class="block px-4 py-2 text-xs hover-row transition-colors" style="color:var(--text-secondary)">Profile &amp; API Keys</a>
                     <hr class="themed-border my-1">
-                    <a href="/logout" class="block px-4 py-2 text-xs transition-colors" style="color:var(--negative)">Logout</a>
+                    <form method="post" action="/logout" style="display:inline;width:100%;">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="block w-full text-left px-4 py-2 text-xs transition-colors" style="color:var(--negative);background:none;border:none;cursor:pointer;">Logout</button>
+                    </form>
                 </div>
             </div>
         </div>
@@ -209,7 +214,7 @@ function setPlatform(plat) {
     // Update title
     document.getElementById('markets-title').textContent = plat === 'kalshi' ? 'Kalshi Markets' : 'Polymarket Markets';
     // Save preference
-    fetch('/preferences', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({platform: plat})});
+    fetch('/preferences', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}, body: JSON.stringify({platform: plat})});
 }
 
 // Markets tab platform toggle
@@ -228,7 +233,7 @@ function toggleTheme() {
     html.setAttribute('data-theme', next);
     document.getElementById('theme-icon-dark').classList.toggle('hidden', next === 'light');
     document.getElementById('theme-icon-light').classList.toggle('hidden', next === 'dark');
-    fetch('/preferences', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({theme: next})});
+    fetch('/preferences', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}, body: JSON.stringify({theme: next})});
 }
 
 // Close dropdown on outside click

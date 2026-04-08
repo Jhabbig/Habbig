@@ -705,12 +705,20 @@ async function checkAuth() {
             favorites = j.user.favorites || [];
             if (j.user.settings) UP = { ...UP, ...j.user.settings };
             showApp();
+        } else if (window.__hbSwitcher && window.__hbSwitcher.username) {
+            // Gateway authenticated but backend auth lookup failed — use gateway identity
+            currentUser = { username: window.__hbSwitcher.username, is_admin: 0, favorites: [], settings: {} };
+            showApp();
         } else { showAuth(); }
-    } catch { showAuth(); }
+    } catch {
+        if (window.__hbSwitcher && window.__hbSwitcher.username) {
+            currentUser = { username: window.__hbSwitcher.username, is_admin: 0, favorites: [], settings: {} };
+            showApp();
+        } else { showAuth(); }
+    }
 }
 
 function showAuth() {
-    if (window.__hbSwitcher) { window.location.href = 'https://habbig.com/login'; return; }
     document.getElementById('auth-screen').classList.remove('hidden');
     document.getElementById('app-shell').style.display = 'none';
 }

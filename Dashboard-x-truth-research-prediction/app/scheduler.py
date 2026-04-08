@@ -86,7 +86,7 @@ async def run_pipeline() -> dict:
             for post in new_posts_result.all():
                 try:
                     for ext in extractor.extract(post.content):
-                        matched_market, _ = match_to_market(f"{ext.raw_text} {post.content[:200]}", market_dicts)
+                        matched_market, _ = match_to_market(f"{ext.raw_text} {post.content[:200]}", market_dicts, category=ext.category)
                         market_slug = matched_market["market_slug"] if matched_market else None
                         market_close_time = matched_market.get("close_time") if matched_market else None
                         market_implied_prob = matched_market["yes_price"] if matched_market else None

@@ -122,6 +122,8 @@ stock_trades.json
 stock_trades_backup.json
 bot_trades.json
 suspicious_trades.json
+poly_trades.json
+*_trades.json
 
 # ─── IDE / OS cruft ──────────────────────────────────────────────────────────
 .DS_Store

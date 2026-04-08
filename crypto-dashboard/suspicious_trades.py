@@ -13,6 +13,8 @@ import requests
 import time
 import json
 import math
+import tempfile
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -634,9 +636,18 @@ def run_scanner():
         "aggregate_stats": agg,
     }
 
-    # Cache
-    with open(cache_file, "w") as f:
-        json.dump(result, f, default=str)
+    # Cache (atomic write)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_file), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(result, f, default=str)
+        os.replace(tmp, cache_file)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     print(f"  Cached to {cache_file.name}")
 
     return result

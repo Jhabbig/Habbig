@@ -381,7 +381,7 @@
 
   /* ── Credential check ─────────────────────────────────────── */
   function checkCredentials() {
-    fetch('/api/trading/credentials', { credentials: 'include' })
+    fetch('/api/trading/credentials', { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       .then(function (r) { return r.json(); })
       .then(function (d) { credStatus = d; })
       .catch(function () {});
@@ -502,7 +502,7 @@
     fetch('/api/trading/place', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       body: JSON.stringify(payload),
     })
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
@@ -538,7 +538,7 @@
 
   /* ── Order history ────────────────────────────────────────── */
   function loadOrderHistory() {
-    fetch('/api/trading/orders', { credentials: 'include' })
+    fetch('/api/trading/orders', { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var orders = d.orders || [];

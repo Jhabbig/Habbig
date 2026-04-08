@@ -348,7 +348,7 @@ app.add_middleware(
     allow_origins=[FRONTEND_ORIGIN],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 
@@ -360,7 +360,24 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
     return response
+
+
+@app.middleware("http")
+async def csrf_xhr_middleware(request: Request, call_next):
+    """Require X-Requested-With: XMLHttpRequest on state-changing endpoints."""
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        path = request.url.path
+        csrf_paths = ("/premium/watchlist", "/premium/alerts", "/admin/user/")
+        if any(path.startswith(p) for p in csrf_paths):
+            xhr = request.headers.get("x-requested-with", "")
+            if xhr != "XMLHttpRequest":
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Missing required X-Requested-With header"},
+                )
+    return await call_next(request)
 
 
 @app.middleware("http")

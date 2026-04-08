@@ -93,8 +93,12 @@ async def lifespan(app: FastAPI):
     async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.exec(select(func.count()).select_from(User))
         if (result.first() or 0) == 0:
-            admin_user = settings.get("DASHBOARD_USER", "admin")
-            admin_pass = settings.get("DASHBOARD_PASSWORD", "changeme")
+            admin_user = os.getenv("DASHBOARD_USER", "").strip() or settings.get("DASHBOARD_USER", "admin")
+            admin_pass = os.getenv("DASHBOARD_PASSWORD", "").strip()
+            if not admin_pass:
+                admin_pass = settings.get("DASHBOARD_PASSWORD", "").strip() if settings.get("DASHBOARD_PASSWORD", "").strip() else ""
+            if not admin_pass:
+                raise RuntimeError("DASHBOARD_PASSWORD must be set in environment")
             session.add(User(
                 username=admin_user,
                 email="",
@@ -275,6 +279,17 @@ async def auth_middleware(request: Request, call_next):
     return RedirectResponse("/login", status_code=302)
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-XSS-Protection"] = "0"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Login / Register / Logout
 # ---------------------------------------------------------------------------
@@ -363,8 +378,12 @@ async def forgot_password_page(request: Request):
     return templates.TemplateResponse("forgot_password.html", {"request": request})
 
 
-@app.get("/logout")
+@app.post("/logout")
 async def logout(request: Request):
+    form = await request.form()
+    csrf_token = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
     token = request.cookies.get("session")
     if token and token in _active_sessions:
         del _active_sessions[token]
@@ -487,6 +506,8 @@ async def profile_password(request: Request, current_password: str = Form(""), n
 # ---------------------------------------------------------------------------
 @app.post("/preferences")
 async def update_preferences(request: Request):
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
     user = await _get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -558,7 +579,7 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_sessio
         missing.append("TruthSocial credentials")
     preferred_platform = (getattr(user, "preferred_platform", None) or "polymarket") if user else "polymarket"
     preferred_theme = (getattr(user, "preferred_theme", None) or "dark") if user else "dark"
-    return templates.TemplateResponse("dashboard.html", {"request": request, "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), "missing_keys": missing, "user": user.username if user else _user or "anonymous", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme})
+    return templates.TemplateResponse("dashboard.html", {"request": request, "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), "missing_keys": missing, "user": user.username if user else _user or "anonymous", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme, "csrf_token": _get_csrf_token(request)})
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +679,8 @@ async def sources(request: Request, session: AsyncSession = Depends(get_session)
 
 @app.post("/sources/{handle}/trust", response_class=HTMLResponse)
 async def update_trust(handle: str, request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth)):
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
     try:
         body = await request.json()
     except (ValueError, _json.JSONDecodeError):

@@ -22,6 +22,12 @@ for svc in $SERVICES; do
     systemctl enable "$svc"
 done
 
+# Secure the environment file
+if [ -f /home/julianhabbig/Polymarket/gateway/.env.production ]; then
+    chmod 600 /home/julianhabbig/Polymarket/gateway/.env.production
+    chown julianhabbig:julianhabbig /home/julianhabbig/Polymarket/gateway/.env.production
+fi
+
 echo ""
 echo "Done. To start everything:"
 echo "  sudo systemctl start habbig-crypto habbig-weather habbig-sports habbig-world habbig-midterm habbig-traders habbig-stock"

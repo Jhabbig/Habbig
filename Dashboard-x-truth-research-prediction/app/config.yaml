@@ -48,7 +48,7 @@ scoring:
     min_global_credibility: 0.4
     min_category_credibility: 0.35
     extreme_market_bounds: [0.05, 0.95]
-  market_match_threshold: 0.35
+  market_match_threshold: 0.50
 
 quota:
   twitter_warn_pct: 0.80
