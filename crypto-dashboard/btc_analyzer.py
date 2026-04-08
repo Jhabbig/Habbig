@@ -154,10 +154,13 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
     # Check for pickle cache first
     if pickle_file.exists():
         print(f"  Loading cached {symbol} (pickle)...")
-        with open(pickle_file, "rb") as f:
-            data = _normalize_pickle(pickle.load(f))
-        print(f"    {len(data):,} candles from pickle cache.")
-        return data, start_dt, end_dt
+        try:
+            with open(pickle_file, "rb") as f:
+                data = _normalize_pickle(pickle.load(f))
+            print(f"    {len(data):,} candles from pickle cache.")
+            return data, start_dt, end_dt
+        except (pickle.UnpicklingError, EOFError, ValueError, TypeError) as e:
+            print(f"  WARNING: Corrupted pickle {pickle_file}: {e}, will re-fetch")
 
     # Check for recent pickle files
     min_candles = days * 86400 * 0.8
@@ -165,11 +168,14 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
         age_hours = (time.time() - ef.stat().st_mtime) / 3600
         if age_hours < 48:
             print(f"  Loading recent pickle {ef.name} ({age_hours:.0f}h old)...")
-            with open(ef, "rb") as f:
-                data = _normalize_pickle(pickle.load(f))
-            if len(data) >= min_candles:
-                print(f"    {len(data):,} candles from pickle cache.")
-                return data, start_dt, end_dt
+            try:
+                with open(ef, "rb") as f:
+                    data = _normalize_pickle(pickle.load(f))
+                if len(data) >= min_candles:
+                    print(f"    {len(data):,} candles from pickle cache.")
+                    return data, start_dt, end_dt
+            except (pickle.UnpicklingError, EOFError, ValueError, TypeError) as e:
+                print(f"  WARNING: Corrupted pickle {ef.name}: {e}, skipping")
 
     # Check for JSON cache and convert to pickle
     json_file = CACHE_DIR / f"{symbol}_1s_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.json"
@@ -337,7 +343,7 @@ def compute_summary(windows):
     return {
         "total_windows": n,
         "avg_last_cross_sec": sum(crosses) / len(crosses) if crosses else None,
-        "median_last_cross_sec": sorted(crosses)[len(crosses) // 2] if crosses else None,
+        "median_last_cross_sec": float(np.median(crosses)) if crosses else None,
         "windows_with_cross": len(crosses),
         "windows_that_went_negative": wn,
         "windows_that_went_positive": wp,
@@ -785,7 +791,7 @@ class WindowNeuralNet:
             features.append(0.0)
 
         # Skewness of recent deltas
-        if len(end_deltas) >= 6:
+        if len(end_deltas) >= 12:
             d_mean = float(np.mean(end_deltas[-12:]))
             d_std = float(np.std(end_deltas[-12:])) + 1e-8
             skew = float(np.mean(((end_deltas[-12:] - d_mean) / d_std) ** 3))
@@ -795,7 +801,9 @@ class WindowNeuralNet:
 
         # Kurtosis of recent deltas (tail risk)
         if len(end_deltas) >= 12:
-            kurt = float(np.mean(((end_deltas[-12:] - d_mean) / d_std) ** 4)) - 3.0
+            k_mean = float(np.mean(end_deltas[-12:]))
+            k_std = float(np.std(end_deltas[-12:])) + 1e-8
+            kurt = float(np.mean(((end_deltas[-12:] - k_mean) / k_std) ** 4)) - 3.0
             features.append(kurt)
         else:
             features.append(0.0)

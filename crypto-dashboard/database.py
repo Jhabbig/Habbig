@@ -101,6 +101,40 @@ CREATE INDEX IF NOT EXISTS idx_alert_prefs_user ON crypto_alert_preferences(user
 CREATE INDEX IF NOT EXISTS idx_alert_prefs_ticker ON crypto_alert_preferences(ticker);
 CREATE INDEX IF NOT EXISTS idx_alert_history_ticker ON crypto_alert_history(ticker);
 CREATE INDEX IF NOT EXISTS idx_kalshi_ticker ON crypto_kalshi_markets(ticker);
+
+CREATE TABLE IF NOT EXISTS news_trade_alerts (
+    id           TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    link         TEXT,
+    source       TEXT,
+    published    TEXT,
+    description  TEXT,
+    score        INTEGER DEFAULT 0,
+    keywords     TEXT DEFAULT '[]',
+    event_keywords TEXT DEFAULT '[]',
+    reasons      TEXT DEFAULT '[]',
+    amounts      TEXT DEFAULT '[]',
+    related_markets TEXT DEFAULT '[]',
+    scanned_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    notified     INTEGER DEFAULT 0,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS news_trade_watchlist (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    alert_id     TEXT NOT NULL,
+    notes        TEXT DEFAULT '',
+    notify_email INTEGER DEFAULT 1,
+    notify_push  INTEGER DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, alert_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_alerts_score ON news_trade_alerts(score DESC);
+CREATE INDEX IF NOT EXISTS idx_news_alerts_scanned ON news_trade_alerts(scanned_at);
+CREATE INDEX IF NOT EXISTS idx_news_watchlist_user ON news_trade_watchlist(user_id);
+CREATE INDEX IF NOT EXISTS idx_news_watchlist_alert ON news_trade_watchlist(alert_id);
 """
 
 
@@ -421,6 +455,143 @@ def get_user(user_id: str) -> dict | None:
             "tier": "admin",  # tier is managed by gateway subscriptions now
         }
     return None
+
+
+# ─── News-Trade Alerts ──────────────────────────────────────────────
+
+def upsert_news_alert(alert: dict):
+    """Insert or update a news-trade alert."""
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO news_trade_alerts
+               (id, title, link, source, published, description, score,
+                keywords, event_keywords, reasons, amounts, related_markets, scanned_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   score           = MAX(excluded.score, news_trade_alerts.score),
+                   related_markets = excluded.related_markets,
+                   scanned_at      = excluded.scanned_at""",
+            (alert["id"], alert["title"], alert.get("link", ""),
+             alert.get("source", ""), alert.get("published", ""),
+             alert.get("description", ""), alert.get("score", 0),
+             json.dumps(alert.get("insider_keywords", [])),
+             json.dumps(alert.get("event_keywords", [])),
+             json.dumps(alert.get("reasons", [])),
+             json.dumps(alert.get("amounts", [])),
+             json.dumps(alert.get("related_markets", [])),
+             alert.get("scanned_at", datetime.now(timezone.utc).isoformat())),
+        )
+
+
+def get_news_alerts(min_score: int = 0, limit: int = 50, hours: int = 72) -> list:
+    """Fetch recent news-trade alerts sorted by score."""
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM news_trade_alerts WHERE score >= ? AND scanned_at > ? "
+            "ORDER BY score DESC, scanned_at DESC LIMIT ?",
+            (min_score, since, limit),
+        ).fetchall()
+    result = []
+    for r in _rows(rows):
+        # Parse JSON fields
+        for field in ("keywords", "event_keywords", "reasons", "amounts", "related_markets"):
+            try:
+                r[field] = json.loads(r.get(field, "[]"))
+            except (json.JSONDecodeError, TypeError):
+                r[field] = []
+        result.append(r)
+    return result
+
+
+def get_unnotified_alerts(min_score: int = 30) -> list:
+    """Fetch high-score alerts that haven't been pushed yet."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM news_trade_alerts WHERE score >= ? AND notified = 0 "
+            "ORDER BY score DESC LIMIT 20",
+            (min_score,),
+        ).fetchall()
+    result = []
+    for r in _rows(rows):
+        for field in ("keywords", "event_keywords", "reasons", "amounts", "related_markets"):
+            try:
+                r[field] = json.loads(r.get(field, "[]"))
+            except (json.JSONDecodeError, TypeError):
+                r[field] = []
+        result.append(r)
+    return result
+
+
+def mark_alert_notified(alert_id: str):
+    """Mark a news-trade alert as notified."""
+    with _conn() as c:
+        c.execute("UPDATE news_trade_alerts SET notified = 1 WHERE id = ?", (alert_id,))
+
+
+# ─── News-Trade Watchlist ──────────────────────────────────────────
+
+def get_news_watchlist(user_id: str) -> list:
+    """Get a user's news-trade watchlist with alert details."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT w.*, a.title, a.link, a.source, a.score, a.published,
+                      a.description, a.related_markets, a.reasons, a.keywords
+               FROM news_trade_watchlist w
+               JOIN news_trade_alerts a ON a.id = w.alert_id
+               WHERE w.user_id = ?
+               ORDER BY a.score DESC""",
+            (user_id,),
+        ).fetchall()
+    result = []
+    for r in _rows(rows):
+        for field in ("related_markets", "reasons", "keywords"):
+            try:
+                r[field] = json.loads(r.get(field, "[]"))
+            except (json.JSONDecodeError, TypeError):
+                r[field] = []
+        result.append(r)
+    return result
+
+
+def add_to_news_watchlist(user_id: str, alert_id: str, notes: str = "",
+                          notify_email: bool = True, notify_push: bool = True) -> bool:
+    """Add an alert to a user's watchlist. Returns True if added, False if duplicate."""
+    try:
+        with _conn() as c:
+            c.execute(
+                """INSERT OR IGNORE INTO news_trade_watchlist
+                   (user_id, alert_id, notes, notify_email, notify_push)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (user_id, alert_id, notes,
+                 1 if notify_email else 0, 1 if notify_push else 0),
+            )
+        return True
+    except Exception:
+        return False
+
+
+def remove_from_news_watchlist(user_id: str, alert_id: str):
+    """Remove an alert from a user's watchlist."""
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM news_trade_watchlist WHERE user_id = ? AND alert_id = ?",
+            (user_id, alert_id),
+        )
+
+
+def get_watchlist_users_for_alert(alert_id: str) -> list:
+    """Get all users watching a specific alert (for push notifications)."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT w.user_id, w.notify_email, w.notify_push,
+                      COALESCE(p.email, '') AS email
+               FROM news_trade_watchlist w
+               LEFT JOIN profiles p ON p.id = w.user_id
+               WHERE w.alert_id = ?""",
+            (alert_id,),
+        ).fetchall()
+    return _rows(rows)
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────

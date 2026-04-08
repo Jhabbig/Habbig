@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin — Habbig</title>
+  <title>Admin — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
   <style>
     .admin-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
@@ -40,17 +40,20 @@
 </head>
 <body>
   <header class="gw-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Admin Panel</span>
-    </div>
+    <a href="/dashboards" class="gw-brand" style="text-decoration:none">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
+    </a>
+    <div class="gw-sep"></div>
+    <nav class="gw-tabs">{{ raw_dashboard_tabs }}</nav>
+    <div class="gw-spacer"></div>
     <nav class="gw-nav">
-      <a href="/dashboards">Dashboards</a>
       <a href="/billing">Billing</a>
       <a href="/settings">Settings</a>
-      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
-      <a href="/logout">Sign out</a>
+      <a href="/admin" class="active">Admin</a>
     </nav>
+    <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
+    <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="gw-signout">Sign out</button></form>
   </header>
 
   <div class="gw-main">
@@ -69,6 +72,7 @@
       {{ raw_new_token_banner }}
 
       <form class="generate-form" method="post" action="/admin/tokens/generate">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         <input type="text" name="note" placeholder="Note (optional) — e.g. For John, Stripe #123">
         <button type="submit" class="btn btn-primary" style="white-space:nowrap">+ Generate Token</button>
       </form>
@@ -112,6 +116,7 @@
       </div>
 
       <form id="bulk-form" method="post" action="/admin/users/bulk">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         <div class="admin-list">
           {{ raw_user_rows }}
         </div>

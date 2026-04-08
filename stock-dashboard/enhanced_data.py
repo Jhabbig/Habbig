@@ -24,9 +24,7 @@ import numpy as np
 try:
     import yfinance as yf
 except ImportError:
-    import subprocess
-    subprocess.check_call(["pip3", "install", "yfinance", "-q"])
-    import yfinance as yf
+    raise ImportError("yfinance is required: pip install yfinance")
 
 # ---------------------------------------------------------------------------
 # Cache infrastructure
@@ -331,13 +329,13 @@ def get_options_signals(ticker_yf: str) -> Dict[str, float]:
         # Put/call volume ratio (min_count=1 so all-NaN returns NaN, not 0)
         total_call_vol = calls["volume"].sum(min_count=1)
         total_put_vol = puts["volume"].sum(min_count=1)
-        if total_call_vol and total_call_vol > 0:
+        if not np.isnan(total_call_vol) and not np.isnan(total_put_vol) and total_call_vol > 0:
             defaults["pcr_volume"] = round(float(total_put_vol / total_call_vol), 4)
 
         # Put/call open interest ratio (min_count=1 so all-NaN returns NaN, not 0)
         total_call_oi = calls["openInterest"].sum(min_count=1)
         total_put_oi = puts["openInterest"].sum(min_count=1)
-        if total_call_oi and total_call_oi > 0:
+        if not np.isnan(total_call_oi) and not np.isnan(total_put_oi) and total_call_oi > 0:
             defaults["pcr_oi"] = round(float(total_put_oi / total_call_oi), 4)
 
         # Average implied volatility of near-ATM options

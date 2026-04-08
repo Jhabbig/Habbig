@@ -278,7 +278,9 @@ init_db()
 # ─── Cache ─────────────────────────────────────────────────────────────────────
 
 _cache: dict = {}
+_CACHE_MAX_SIZE = 1000
 _user_prefs_cache: dict = {}  # Fallback in-memory cache for user settings/favorites
+_USER_PREFS_CACHE_MAX_SIZE = 1000
 CACHE_TTL = 300  # 5 minutes — frontend polls every 4 min to stay ahead
 
 
@@ -290,6 +292,8 @@ def cache_get(key: str):
 
 
 def cache_set(key: str, data):
+    if len(_cache) > _CACHE_MAX_SIZE:
+        _cache.clear()
     _cache[key] = {"data": data, "ts": time.time()}
 
 
@@ -514,8 +518,8 @@ def _parse_kalshi_market(m: dict) -> Optional[dict]:
         "tags": ["kalshi", "weather"],
         "yes_price": yes_price,
         "no_price": no_price,
-        "volume": str(float(volume_fp)),
-        "liquidity": str(float(open_interest)),
+        "volume": str(float(volume_fp)) if volume_fp else "0",
+        "liquidity": str(float(open_interest)) if open_interest else "0",
         "end_date": m.get("close_time") or m.get("expiration_time"),
         "city": city,
         "target_date": target_date,
@@ -752,8 +756,11 @@ def parse_date(title: str) -> Optional[str]:
                 continue
 
     # Just month name (for monthly markets like "March 2026 Temperature")
-    for month_name, month_num in month_map.items():
-        if len(month_name) > 3 and month_name in tl:
+    # Only match full month names (>3 chars) to avoid false positives ("mar" in "market")
+    # "may" is included with word boundary since \bmay\b won't match "maybe"/"mayor"
+    full_months = {k: v for k, v in month_map.items() if len(k) > 3 or k == "may"}
+    for month_name, month_num in full_months.items():
+        if re.search(r'\b' + month_name + r'\b', tl):
             year_m = re.search(r'(20\d{2})', title)
             year = int(year_m.group(1)) if year_m else datetime.now(timezone.utc).year
             return f"{year}-{month_num:02d}-15"  # mid-month
@@ -1100,6 +1107,7 @@ def _parse_market(m):
 
 
 @app.route("/api/markets")
+@require_auth
 def api_markets():
     """Fast endpoint: returns market data without forecasts."""
     cached = cache_get("parsed_markets")
@@ -1119,7 +1127,7 @@ def api_markets():
     except Exception as e:
         logger.error("Kalshi fetch failed, continuing with Polymarket only: %s", e)
 
-    enriched.sort(key=lambda x: -(float(x["volume"]) if x["volume"] else 0))
+    enriched.sort(key=lambda x: -(float(x.get("volume") or 0)))
 
     result = {"markets": enriched, "count": len(enriched),
               "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -1128,6 +1136,7 @@ def api_markets():
 
 
 @app.route("/api/forecasts")
+@require_auth
 def api_forecasts():
     """Slower endpoint: returns multi-model forecasts for all city+date combos, with probabilities."""
     cached = cache_get("all_forecasts")
@@ -1173,11 +1182,14 @@ def api_forecasts():
         market_id = m.get("conditionId") or m.get("id", "")
         market_temps[fc_key].append((market_id, yes_price, temp_info))
 
-    # --- Kalshi markets (already parsed) ---
+    # --- Kalshi markets (reuse parsed cache from api_markets when available) ---
     try:
-        kalshi_raw = fetch_kalshi_weather_markets()
-        for km in kalshi_raw:
-            parsed = _parse_kalshi_market(km)
+        _cached_markets = cache_get("parsed_markets")
+        if _cached_markets and _cached_markets.get("markets"):
+            _kalshi_parsed = [m for m in _cached_markets["markets"] if m.get("source") == "kalshi"]
+        else:
+            _kalshi_parsed = [e for e in (_parse_kalshi_market(km) for km in fetch_kalshi_weather_markets()) if e is not None]
+        for parsed in _kalshi_parsed:
             if not parsed or not parsed.get("city") or not parsed.get("target_date") or not parsed.get("temp_info"):
                 continue
             city = parsed["city"]
@@ -1283,7 +1295,11 @@ def api_forecasts():
 
 
 @app.route("/api/forecast/<city>/<date>")
+@require_auth
 def api_forecast(city, date):
+    # Validate date format
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format, expected YYYY-MM-DD"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     station = STATION_MAP.get(city_key)
     if not station:
@@ -1300,6 +1316,7 @@ def api_forecast(city, date):
 
 
 @app.route("/api/stations")
+@require_auth
 def api_stations():
     stations = []
     seen: set[str] = set()
@@ -1317,6 +1334,7 @@ def api_stations():
 # ─── History & Accuracy Endpoints ─────────────────────────────────────────────
 
 @app.route("/api/history")
+@require_auth
 def api_history():
     """Return recent signals with pagination. Query params: page, per_page, category, period."""
     page = request.args.get("page", 1, type=int)
@@ -1362,6 +1380,7 @@ def api_history():
 
 
 @app.route("/api/accuracy")
+@require_auth
 def api_accuracy():
     """Compute accuracy stats: win rate, avg edge, by category."""
     with _get_conn() as conn:
@@ -1570,7 +1589,7 @@ def backfill_price_history() -> dict:
             for i in range(0, len(poly_rows), 500):
                 batch = poly_rows[i:i + 500]
                 conn.executemany(
-                    "INSERT OR REPLACE INTO weather_price_snapshots "
+                    "INSERT OR IGNORE INTO weather_price_snapshots "
                     "(timestamp, market_id, source, question, city, target_date, yes_price, volume) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     batch,
@@ -1638,6 +1657,7 @@ def api_backfill_history():
 
 
 @app.route("/api/price_history/<market_id>")
+@require_auth
 def api_price_history(market_id):
     """Return price history for a specific market. Daily by default, hourly requires premium."""
     granularity = request.args.get("granularity", "daily")  # daily or hourly
@@ -1669,6 +1689,7 @@ def api_price_history(market_id):
 
 
 @app.route("/api/price_history_city/<city>")
+@require_auth
 def api_price_history_city(city):
     """Return price history for all markets in a city, grouped by market_id."""
     with _get_conn() as conn:
@@ -1691,6 +1712,7 @@ def api_price_history_city(city):
 
 
 @app.route("/api/snapshot_stats")
+@require_auth
 def api_snapshot_stats():
     """Return summary stats about stored price snapshots."""
     with _get_conn() as conn:
@@ -1897,7 +1919,7 @@ def api_logout():
 def api_me():
     user = _get_user_from_request()
     if not user:
-        return jsonify({"user": None}), 200
+        return jsonify({"user": None, "settings": {}, "favorites": []}), 200
 
     # Load persisted settings/favorites from weather_user_prefs (or in-memory fallback)
     settings = {}
@@ -1954,6 +1976,8 @@ def api_user_settings():
     except Exception as e:
         logger.warning("Failed to persist settings for %s: %s", user_id, e)
         # Fall back to in-memory cache so settings survive within this session
+        if len(_user_prefs_cache) > _USER_PREFS_CACHE_MAX_SIZE:
+            _user_prefs_cache.clear()
         _user_prefs_cache[user_id] = {"settings": data}
     return jsonify({"status": "ok"})
 
@@ -1974,6 +1998,8 @@ def api_user_favorites():
             )
     except Exception as e:
         logger.warning("Failed to persist favorites for %s: %s", user_id, e)
+        if len(_user_prefs_cache) > _USER_PREFS_CACHE_MAX_SIZE:
+            _user_prefs_cache.clear()
         _user_prefs_cache.setdefault(user_id, {})["favorites"] = data
     return jsonify({"status": "ok"})
 
@@ -1981,8 +2007,9 @@ def api_user_favorites():
 # ─── Admin Endpoints ─────────────────────────────────────────────────────────
 
 @app.route("/admin")
+@require_admin
 def admin_page():
-    """Serve admin dashboard HTML — client-side auth check handles access control."""
+    """Serve admin dashboard HTML."""
     return send_from_directory(app.static_folder, "admin.html")
 
 
@@ -2096,4 +2123,4 @@ if __name__ == "__main__":
         t = threading.Thread(target=_snapshot_loop, daemon=True)
         t.start()
         logger.info("Price snapshot background thread started (every 30 min)")
-    app.run(host="0.0.0.0", port=5050, debug=_debug)
+    app.run(host="127.0.0.1", port=5050, debug=_debug)

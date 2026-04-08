@@ -8,14 +8,21 @@ Minimal, spacious, soft rounded cards, Inter font, subtle animations.
 Run: python3 stock_dashboard.py [--port 8050]
 """
 
+import hmac
 import html
 import json
+import logging
+import os
 import time
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+_sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+if not _sso_secret:
+    logging.warning("GATEWAY_SSO_SECRET not set — stock dashboard running without authentication (dev mode)")
 
 TRADE_LOG = Path(__file__).parent / "stock_trades.json"
 BOT_LOG = Path(__file__).parent / "stock_bot_activity.log"
@@ -951,6 +958,16 @@ def build_svg_chart(balances):
 
 class DashboardHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
+        # Authenticate via gateway SSO header (skip if secret not configured)
+        if _sso_secret:
+            client_secret = self.headers.get("X-Gateway-Secret", "")
+            if not hmac.compare_digest(client_secret, _sso_secret):
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Unauthorized"}')
+                return
+
         if self.path == "/" or self.path == "/index.html":
             html = build_html()
             self.send_response(200)

@@ -21,6 +21,8 @@ auth.db
 *.key
 .secret_key
 **/.secret_key
+.encryption_key
+**/.encryption_key
 *.pem
 *.p12
 *.pfx

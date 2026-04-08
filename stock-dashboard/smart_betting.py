@@ -12,6 +12,7 @@ Provides:
 
 import json
 import math
+import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -130,7 +131,9 @@ class SignalConcordanceFilter:
             directions = [d for d in directions if d != 0]
             if not directions:
                 continue
-            group_vote = 1 if sum(directions) >= 0 else -1
+            group_vote = 1 if sum(directions) > 0 else (-1 if sum(directions) < 0 else 0)
+            if group_vote == 0:
+                continue  # skip tied groups — don't count as agreeing or dissenting
             if group_vote == predicted_direction:
                 agreeing.append(cat)
             else:
@@ -418,10 +421,20 @@ class PerformanceTracker:
         return wr < min_winrate
 
     def save(self):
-        """Persist data to JSON."""
+        """Persist data to JSON atomically."""
         try:
-            with open(self.path, "w") as f:
-                json.dump(self.data, f, indent=2, default=str)
+            import tempfile
+            fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(self.data, f, indent=2, default=str)
+                os.replace(tmp, self.path)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
         except Exception as e:
             print(f"[PerformanceTracker] Failed to save: {e}")
 
@@ -434,7 +447,13 @@ class PerformanceTracker:
                 # Merge with defaults to handle missing keys
                 for key in self.data:
                     if key in loaded:
-                        self.data[key] = loaded[key]
+                        if key == "day_of_week" and isinstance(loaded[key], dict):
+                            # Ensure all weekday keys exist with correct schema
+                            merged = {str(i): {"wins": 0, "losses": 0, "pnl": 0.0} for i in range(7)}
+                            merged.update(loaded[key])
+                            self.data[key] = merged
+                        else:
+                            self.data[key] = loaded[key]
         except Exception as e:
             print(f"[PerformanceTracker] Failed to load: {e}")
 
@@ -552,9 +571,11 @@ def evaluate_bet_enhanced(ticker, prediction, confidence, market_info, state,
         balance = state.get("balance", 0)
         pending_bets = state.get("pending_bets", [])
         daily_pnl = state.get("daily_pnl", 0.0)
-        market_prob = market_info.get("market_prob", 0.5)
-
         direction = 1 if prediction.lower() in ("up", "yes") else -1
+        if direction == 1:
+            market_prob = market_info.get("market_prob", 0.5)
+        else:
+            market_prob = market_info.get("down_price", 1 - market_info.get("market_prob", 0.5))
 
         # 1. Signal concordance
         concordance_filter = SignalConcordanceFilter(min_agreement=0.6)

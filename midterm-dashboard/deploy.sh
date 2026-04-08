@@ -33,22 +33,27 @@ cd "$PROJECT_DIR"
 
 # --- Create admin user if not exists ---
 echo "[3/5] Initializing database..."
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@midtermedge.com}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:?Set ADMIN_PASSWORD before deploying}"
 python3 -c "
 import asyncio
 import sys
+import os
 sys.path.insert(0, '$BACKEND_DIR')
 from database import Database
 
 async def init():
+    email = os.environ['ADMIN_EMAIL']
+    password = os.environ['ADMIN_PASSWORD']
     db = Database('$BACKEND_DIR/midterm_dashboard.db')
     await db.connect()
     # Create admin user if not exists
-    existing = await db.get_user_by_email('admin@midtermedge.com')
+    existing = await db.get_user_by_email(email)
     if not existing:
-        uid = await db.create_user('admin@midtermedge.com', 'changeme123!', 'Admin')
+        uid = await db.create_user(email, password, 'Admin')
         if uid:
             await db.update_user_tier(uid, 'admin')
-            print('  Created admin user: admin@midtermedge.com / changeme123!')
+            print(f'  Created admin user: {email}')
     else:
         print('  Admin user already exists')
     await db.close()
@@ -87,7 +92,7 @@ echo ""
 echo "=== Deployment Complete ==="
 echo "  Dashboard: http://$(hostname -I | awk '{print $1}'):8050"
 echo "  Tailscale: http://$(tailscale ip -4 2>/dev/null || echo 'N/A'):8050"
-echo "  Admin:     admin@midtermedge.com / changeme123! (CHANGE THIS)"
+echo "  Admin:     $ADMIN_EMAIL (password was set via \$ADMIN_PASSWORD)"
 echo ""
 echo "  Manage service:"
 echo "    systemctl --user status midtermedge"

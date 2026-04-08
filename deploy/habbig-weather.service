@@ -3,6 +3,8 @@ Description=Habbig Weather Dashboard (port 5050)
 After=network.target
 
 [Service]
+# Required env vars: GATEWAY_SSO_SECRET, FLASK_SECRET
+# Note: This service loads the shared gateway .env but only needs the above vars
 Type=simple
 User=julianhabbig
 WorkingDirectory=/home/julianhabbig/Polymarket/polymarket_weather_dashboard
@@ -10,6 +12,13 @@ ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
 Restart=always
 RestartSec=5
 EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/polymarket_weather_dashboard
 
 [Install]
 WantedBy=multi-user.target

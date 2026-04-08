@@ -63,18 +63,12 @@ except ImportError:
 try:
     import yfinance as yf
 except ImportError:
-    print("Installing yfinance...")
-    import subprocess
-    subprocess.check_call(["pip3", "install", "yfinance", "-q"])
-    import yfinance as yf
+    raise ImportError("yfinance is required: pip install yfinance")
 
 try:
     import numpy as np
 except ImportError:
-    print("Installing numpy...")
-    import subprocess
-    subprocess.check_call(["pip3", "install", "numpy", "-q"])
-    import numpy as np
+    raise ImportError("numpy is required: pip install numpy")
 
 # ─── Config ───────────────────────────────────────────────────────────
 GAMMA_API = "https://gamma-api.polymarket.com"
@@ -141,6 +135,7 @@ def save_state(state):
         "losses": state.losses,
         "total_pnl": round(state.total_pnl, 2),
         "peak_balance": round(state.peak_balance, 2),
+        "starting_balance": getattr(state, "starting_balance", STARTING_BALANCE),
         "pending": state.pending,
         "daily_bets": state.daily_bets,
         "last_date": state.last_date,
@@ -179,6 +174,7 @@ def load_state():
             state.daily_bets = data.get("daily_bets", 0)
             state.last_date = data.get("last_date", "")
             state.trades = data.get("trades", [])
+            state.starting_balance = data.get("starting_balance", STARTING_BALANCE)
         except Exception:
             pass
     return state
@@ -409,8 +405,8 @@ def day_of_week_bias(closes, dates=None):
         day_map = [0] * n
         d = today_dow
         for i in range(n - 1, -1, -1):
-            d = (d - 1) % 5
             day_map[i] = d
+            d = (d - 1) % 5
         for i, dow in enumerate(day_map):
             if dow == today_dow:
                 dow_returns.append(returns[i])
@@ -713,12 +709,12 @@ def resolve_pending_bets(state):
             if (today_dt - bet_dt).days > 30:
                 state.losses += 1
                 state.total_trades += 1
-                state.total_pnl -= bet["bet_size"]
+                # Stake was already deducted from balance at placement; no further deduction
                 trade_record = {
                     **bet,
                     "actual": "expired",
                     "won": False,
-                    "pnl": round(-bet["bet_size"], 2),
+                    "pnl": 0,
                     "balance_after": round(state.balance, 2),
                     "resolved_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -755,7 +751,10 @@ def resolve_pending_bets(state):
                     won = actual_direction == bet["direction"]
                     if won:
                         # Net profit = full_payout - stake = stake * (1/market_prob - 1)
-                        net_profit = bet["bet_size"] * (1 / bet["market_prob"] - 1)
+                        mp = bet["market_prob"]
+                        if mp <= 0 or mp >= 1:
+                            mp = 0.5  # fallback for invalid market_prob
+                        net_profit = bet["bet_size"] * (1 / mp - 1)
                         # Stake was deducted at placement; return stake + net profit
                         state.balance += bet["bet_size"] + net_profit
                         state.wins += 1
@@ -765,7 +764,6 @@ def resolve_pending_bets(state):
                     else:
                         # Stake was already deducted at placement; no further deduction
                         state.losses += 1
-                        state.total_pnl -= bet["bet_size"]
                         log(f"  ✗ LOST {ticker.upper()}: bet {bet['direction']}, "
                             f"actual {actual_direction} | -${bet['bet_size']:.2f}")
 
@@ -927,7 +925,7 @@ def run_cycle(state):
         bet = None
         if SMART_BETTING:
             try:
-                daily_pnl = sum(t.get("pnl", 0) for t in state.trades[-20:]
+                daily_pnl = sum(t.get("pnl", 0) for t in state.trades
                                if (t.get("resolved_at") or "")[:10] == today)
                 pending_list = [
                     {"ticker": t, **v} for t, v in state.pending.items()
@@ -959,7 +957,7 @@ def run_cycle(state):
                     # Check risk manager
                     if risk_mgr:
                         daily_pnl = sum(t.get("pnl", 0) for t in state.trades[-20:]
-                                       if t.get("date") == today)
+                                       if (t.get("resolved_at") or "")[:10] == today)
                         pending_list = [
                             {"ticker": t, **v} for t, v in state.pending.items()
                         ]

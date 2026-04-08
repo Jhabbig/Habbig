@@ -1,5 +1,5 @@
 /**
- * Habbig In-App Trading Panel
+ * narve.ai In-App Trading Panel
  * Gateway-injected trade overlay for Polymarket & Kalshi.
  *
  * Usage from any dashboard:
@@ -350,7 +350,7 @@
   // Footer
   var footer = document.createElement('div');
   footer.className = 'tp-footer';
-  footer.textContent = 'Orders execute on the respective platform. Habbig does not custody funds.';
+  footer.textContent = 'Orders execute on the respective platform. narve.ai does not custody funds.';
   panel.appendChild(footer);
 
   overlay.appendChild(panel);

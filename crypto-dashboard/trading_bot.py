@@ -23,6 +23,8 @@ Run: python3 trading_bot.py [--live] [--reset]
 """
 
 import json
+import os
+import tempfile
 import time
 import requests
 import argparse
@@ -158,8 +160,14 @@ class TradingBot:
             "positions": [asdict(p) for p in self.state.positions],
             "closed_trades": self.state.closed_trades[-500:],
         }
-        with open(TRADE_LOG, "w") as f:
-            json.dump(data, f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(TRADE_LOG), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, TRADE_LOG)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
 
     @property
     def win_rate(self):

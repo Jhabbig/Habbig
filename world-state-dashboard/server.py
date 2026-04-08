@@ -3,13 +3,14 @@
 
 import asyncio
 import json
+import math
 import re
 import time
 import urllib.request
 try:
     from defusedxml.ElementTree import fromstring as _xml_fromstring
 except ImportError:
-    from xml.etree.ElementTree import fromstring as _xml_fromstring
+    raise ImportError("defusedxml is required: pip install defusedxml")
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -3540,6 +3541,696 @@ NUCLEAR_ARSENALS = [
 ]
 
 
+# ═══════════════ URANIUM ENRICHMENT & NUCLEAR FACILITIES ═══════════════
+# Known enrichment, reprocessing, and key nuclear facilities (IAEA/OSINT)
+NUCLEAR_FACILITIES = [
+    # ── United States ──
+    {"name": "Portsmouth GDP (decommissioned)", "country": "US", "lat": 38.73, "lng": -82.99, "type": "enrichment", "status": "decommissioned", "detail": "Former gaseous diffusion; D&D ongoing"},
+    {"name": "Paducah GDP (decommissioned)", "country": "US", "lat": 37.12, "lng": -88.81, "type": "enrichment", "status": "decommissioned", "detail": "Former gaseous diffusion; cleanup ongoing"},
+    {"name": "URENCO Eunice (NM)", "country": "US", "lat": 32.38, "lng": -103.19, "type": "enrichment", "status": "active", "detail": "Gas centrifuge; LEU production"},
+    {"name": "Centrus Piketon (OH)", "country": "US", "lat": 39.01, "lng": -83.00, "type": "enrichment", "status": "active", "detail": "HALEU demonstration cascade"},
+    {"name": "Y-12 National Security Complex", "country": "US", "lat": 35.98, "lng": -84.24, "type": "weapons", "status": "active", "detail": "HEU components; weapons secondaries"},
+    {"name": "Pantex Plant", "country": "US", "lat": 35.32, "lng": -101.95, "type": "weapons", "status": "active", "detail": "Primary US nuclear weapons assembly/disassembly"},
+    {"name": "Savannah River Site", "country": "US", "lat": 33.35, "lng": -81.74, "type": "reprocessing", "status": "active", "detail": "Tritium production; MOX (cancelled); waste processing"},
+    {"name": "Hanford Site", "country": "US", "lat": 46.55, "lng": -119.49, "type": "reprocessing", "status": "cleanup", "detail": "Former Pu production; largest cleanup site"},
+    {"name": "Idaho National Lab", "country": "US", "lat": 43.52, "lng": -112.94, "type": "research", "status": "active", "detail": "Nuclear R&D; advanced reactor testing"},
+    {"name": "Los Alamos National Lab", "country": "US", "lat": 35.84, "lng": -106.29, "type": "weapons", "status": "active", "detail": "Pu pit production; weapons design"},
+    {"name": "Lawrence Livermore NL", "country": "US", "lat": 37.69, "lng": -121.70, "type": "weapons", "status": "active", "detail": "Weapons design; NIF (fusion)"},
+    {"name": "Sandia National Labs", "country": "US", "lat": 34.96, "lng": -106.51, "type": "weapons", "status": "active", "detail": "Non-nuclear weapons components; engineering"},
+    # ── Russia ──
+    {"name": "Novouralsk (Sverdlovsk-44)", "country": "RU", "lat": 57.24, "lng": 60.08, "type": "enrichment", "status": "active", "detail": "UEIP; largest centrifuge plant"},
+    {"name": "Seversk (Tomsk-7)", "country": "RU", "lat": 56.60, "lng": 84.89, "type": "enrichment", "status": "active", "detail": "SCC; enrichment + reprocessing"},
+    {"name": "Zelenogorsk (Krasnoyarsk-45)", "country": "RU", "lat": 56.12, "lng": 94.58, "type": "enrichment", "status": "active", "detail": "ECP; centrifuge enrichment"},
+    {"name": "Angarsk ECC", "country": "RU", "lat": 52.48, "lng": 103.89, "type": "enrichment", "status": "active", "detail": "AECC; IAEA LEU Bank facility"},
+    {"name": "Mayak (Chelyabinsk-65)", "country": "RU", "lat": 55.72, "lng": 60.82, "type": "reprocessing", "status": "active", "detail": "Pu reprocessing; HLW vitrification"},
+    {"name": "Sarov (Arzamas-16)", "country": "RU", "lat": 54.93, "lng": 43.32, "type": "weapons", "status": "active", "detail": "RFNC-VNIIEF; primary weapons design lab"},
+    {"name": "Snezhinsk (Chelyabinsk-70)", "country": "RU", "lat": 56.08, "lng": 60.73, "type": "weapons", "status": "active", "detail": "RFNC-VNIITF; secondary weapons lab"},
+    {"name": "Lesnoy (Sverdlovsk-45)", "country": "RU", "lat": 58.63, "lng": 59.78, "type": "weapons", "status": "active", "detail": "Weapons assembly"},
+    {"name": "Trekhgorny (Zlatoust-36)", "country": "RU", "lat": 54.81, "lng": 58.45, "type": "weapons", "status": "active", "detail": "Weapons assembly"},
+    {"name": "Novaya Zemlya Test Site", "country": "RU", "lat": 73.37, "lng": 54.70, "type": "test_site", "status": "standby", "detail": "Nuclear weapons test site; 224 tests conducted"},
+    # ── China ──
+    {"name": "Lanzhou (Plant 504)", "country": "CN", "lat": 36.06, "lng": 103.74, "type": "enrichment", "status": "active", "detail": "Centrifuge enrichment; expanding"},
+    {"name": "Hanzhong (Plant 405)", "country": "CN", "lat": 33.23, "lng": 106.67, "type": "enrichment", "status": "active", "detail": "Centrifuge enrichment; HEU-capable"},
+    {"name": "Emeishan (Plant 814)", "country": "CN", "lat": 29.58, "lng": 103.44, "type": "enrichment", "status": "active", "detail": "Newer centrifuge facility"},
+    {"name": "Haiyan (Plant 221, decom.)", "country": "CN", "lat": 36.97, "lng": 100.35, "type": "weapons", "status": "decommissioned", "detail": "First Chinese nuclear weapons plant"},
+    {"name": "Mianyang (CAEP)", "country": "CN", "lat": 31.46, "lng": 104.74, "type": "weapons", "status": "active", "detail": "China Academy of Engineering Physics; weapons design"},
+    {"name": "Guangyuan (Plant 821)", "country": "CN", "lat": 32.43, "lng": 105.84, "type": "reprocessing", "status": "active", "detail": "Military Pu production"},
+    {"name": "Jiuquan (Plant 404)", "country": "CN", "lat": 40.17, "lng": 97.05, "type": "reprocessing", "status": "active", "detail": "Civilian pilot reprocessing"},
+    {"name": "Lop Nur Test Site", "country": "CN", "lat": 41.57, "lng": 88.31, "type": "test_site", "status": "standby", "detail": "45 nuclear tests; moratorium since 1996"},
+    # ── France ──
+    {"name": "Georges Besse II (Tricastin)", "country": "FR", "lat": 44.33, "lng": 4.72, "type": "enrichment", "status": "active", "detail": "AREVA/Orano; centrifuge LEU"},
+    {"name": "La Hague", "country": "FR", "lat": 49.68, "lng": -1.88, "type": "reprocessing", "status": "active", "detail": "Largest commercial reprocessing; UP2/UP3"},
+    {"name": "Marcoule", "country": "FR", "lat": 44.14, "lng": 4.70, "type": "reprocessing", "status": "active", "detail": "CEA; MOX fuel; defense legacy"},
+    {"name": "Valduc", "country": "FR", "lat": 47.49, "lng": 4.91, "type": "weapons", "status": "active", "detail": "Warhead assembly/disassembly; Pu/tritium"},
+    {"name": "CEA DAM Île-de-France", "country": "FR", "lat": 48.73, "lng": 2.18, "type": "weapons", "status": "active", "detail": "Nuclear weapons design (Bruyères-le-Châtel)"},
+    # ── UK ──
+    {"name": "Capenhurst (URENCO)", "country": "GB", "lat": 53.26, "lng": -2.95, "type": "enrichment", "status": "active", "detail": "URENCO UK; centrifuge enrichment"},
+    {"name": "Sellafield", "country": "GB", "lat": 54.42, "lng": -3.50, "type": "reprocessing", "status": "decommissioning", "detail": "THORP closed 2018; legacy waste management"},
+    {"name": "AWE Aldermaston", "country": "GB", "lat": 51.37, "lng": -1.15, "type": "weapons", "status": "active", "detail": "Warhead design; Pu fabrication"},
+    {"name": "AWE Burghfield", "country": "GB", "lat": 51.41, "lng": -1.02, "type": "weapons", "status": "active", "detail": "Warhead assembly"},
+    # ── Pakistan ──
+    {"name": "Kahuta (KRL)", "country": "PK", "lat": 33.60, "lng": 73.39, "type": "enrichment", "status": "active", "detail": "A.Q. Khan Research Labs; HEU for weapons"},
+    {"name": "Gadwal", "country": "PK", "lat": 31.97, "lng": 72.35, "type": "enrichment", "status": "active", "detail": "Second enrichment site"},
+    {"name": "Khushab Complex", "country": "PK", "lat": 32.02, "lng": 72.22, "type": "reprocessing", "status": "active", "detail": "4 Pu-production reactors + reprocessing"},
+    {"name": "Chashma", "country": "PK", "lat": 32.39, "lng": 71.38, "type": "power", "status": "active", "detail": "4 CNP reactors (Chinese-supplied)"},
+    # ── India ──
+    {"name": "RMP Ratnahalli", "country": "IN", "lat": 12.26, "lng": 76.71, "type": "enrichment", "status": "active", "detail": "Gas centrifuge; expanding"},
+    {"name": "BARC Trombay", "country": "IN", "lat": 19.01, "lng": 72.92, "type": "reprocessing", "status": "active", "detail": "Pu separation; Dhruva reactor"},
+    {"name": "IGCAR Kalpakkam", "country": "IN", "lat": 12.56, "lng": 80.17, "type": "reprocessing", "status": "active", "detail": "Fast breeder; reprocessing"},
+    {"name": "Pokhran Test Site", "country": "IN", "lat": 26.73, "lng": 71.73, "type": "test_site", "status": "standby", "detail": "Smiling Buddha (1974) + Shakti (1998)"},
+    # ── Israel ──
+    {"name": "Dimona (Negev NRC)", "country": "IL", "lat": 31.00, "lng": 35.15, "type": "reprocessing", "status": "active", "detail": "Pu production; undeclared weapons program"},
+    # ── North Korea ──
+    {"name": "Yongbyon Nuclear Complex", "country": "KP", "lat": 39.80, "lng": 125.75, "type": "enrichment", "status": "active", "detail": "Centrifuge enrichment + 5MWe reactor + reprocessing"},
+    {"name": "Kangson (suspected)", "country": "KP", "lat": 39.03, "lng": 125.76, "type": "enrichment", "status": "suspected", "detail": "Suspected covert enrichment site"},
+    {"name": "Punggye-ri Test Site", "country": "KP", "lat": 41.28, "lng": 129.09, "type": "test_site", "status": "demolished", "detail": "6 nuclear tests (2006-2017); tunnels demolished 2018"},
+    # ── Iran ──
+    {"name": "Natanz FEP", "country": "IR", "lat": 33.72, "lng": 51.73, "type": "enrichment", "status": "active", "detail": "Main centrifuge plant; underground halls; enriching to 60%"},
+    {"name": "Fordow FFEP", "country": "IR", "lat": 34.88, "lng": 51.58, "type": "enrichment", "status": "active", "detail": "Underground mountain facility; enriching to 60%"},
+    {"name": "Isfahan UCF", "country": "IR", "lat": 32.69, "lng": 51.69, "type": "conversion", "status": "active", "detail": "UF6 conversion; fuel fabrication"},
+    {"name": "Arak IR-40 (redesigned)", "country": "IR", "lat": 34.05, "lng": 49.24, "type": "research", "status": "active", "detail": "Heavy water reactor (redesigned under JCPOA)"},
+    {"name": "Parchin Military Complex", "country": "IR", "lat": 35.52, "lng": 51.77, "type": "weapons", "status": "suspected", "detail": "IAEA flagged; suspected EBW/implosion testing"},
+    # ── Other ──
+    {"name": "URENCO Gronau", "country": "DE", "lat": 52.20, "lng": 7.04, "type": "enrichment", "status": "active", "detail": "URENCO Germany; centrifuge LEU"},
+    {"name": "URENCO Almelo", "country": "NL", "lat": 52.36, "lng": 6.62, "type": "enrichment", "status": "active", "detail": "URENCO Netherlands; centrifuge LEU"},
+    {"name": "Rokkasho", "country": "JP", "lat": 40.96, "lng": 141.33, "type": "reprocessing", "status": "construction", "detail": "JNFL; delayed commercial reprocessing"},
+    {"name": "Yongwang/Wolsong", "country": "KR", "lat": 35.72, "lng": 129.48, "type": "power", "status": "active", "detail": "PHWR cluster; Pu concern (spent fuel)"},
+    {"name": "Pelindaba", "country": "ZA", "lat": -25.80, "lng": 27.93, "type": "research", "status": "active", "detail": "NECSA; former weapons program site (dismantled)"},
+]
+
+
+# ═══════════════ MILITARY BASES & TRAINING CENTERS ═══════════════
+# Major military installations globally (OSINT / open sources)
+MILITARY_BASES = [
+    # ── US Major Overseas ──
+    {"name": "Ramstein Air Base", "country": "US", "host": "DE", "lat": 49.44, "lng": 7.60, "type": "air_base", "branch": "USAF", "detail": "HQ USAFE-AFAFRICA; C2 hub for Europe/Africa"},
+    {"name": "Camp Humphreys", "country": "US", "host": "KR", "lat": 36.96, "lng": 127.03, "type": "army_base", "branch": "US Army", "detail": "Largest overseas US base; HQ USFK"},
+    {"name": "Kadena Air Base", "country": "US", "host": "JP", "lat": 26.35, "lng": 127.77, "type": "air_base", "branch": "USAF", "detail": "Largest US air base in Pacific"},
+    {"name": "Yokosuka Naval Base", "country": "US", "host": "JP", "lat": 35.28, "lng": 139.66, "type": "naval_base", "branch": "USN", "detail": "HQ 7th Fleet; CVN-76 homeport"},
+    {"name": "Diego Garcia", "country": "US", "host": "IO", "lat": -7.32, "lng": 72.42, "type": "air_base", "branch": "USN/USAF", "detail": "Indian Ocean strategic hub; B-2 capable"},
+    {"name": "Al Udeid Air Base", "country": "US", "host": "QA", "lat": 25.12, "lng": 51.32, "type": "air_base", "branch": "USAF", "detail": "CAOC; largest US base in Middle East"},
+    {"name": "Camp Lemonnier", "country": "US", "host": "DJ", "lat": 11.55, "lng": 43.15, "type": "military_base", "branch": "CJTF-HOA", "detail": "Only permanent US base in Africa"},
+    {"name": "Naval Station Rota", "country": "US", "host": "ES", "lat": 36.62, "lng": -6.35, "type": "naval_base", "branch": "USN", "detail": "BMD destroyers; 6th Fleet support"},
+    {"name": "Incirlik Air Base", "country": "US", "host": "TR", "lat": 37.00, "lng": 35.43, "type": "air_base", "branch": "USAF", "detail": "B61 nuclear weapons storage"},
+    {"name": "Thule Space Base", "country": "US", "host": "GL", "lat": 76.53, "lng": -68.70, "type": "space_base", "branch": "USSF", "detail": "Ballistic missile early warning; satellite tracking"},
+    {"name": "Guantánamo Bay", "country": "US", "host": "CU", "lat": 19.91, "lng": -75.10, "type": "naval_base", "branch": "USN", "detail": "Oldest overseas US base; detention facility"},
+    {"name": "NSA Bahrain", "country": "US", "host": "BH", "lat": 26.21, "lng": 50.60, "type": "naval_base", "branch": "USN", "detail": "HQ 5th Fleet; NAVCENT"},
+    # ── US Domestic Major ──
+    {"name": "Fort Liberty (Bragg)", "country": "US", "host": "US", "lat": 35.14, "lng": -79.00, "type": "army_base", "branch": "US Army", "detail": "82nd Airborne; USASOC; JSOC"},
+    {"name": "Fort Cavazos (Hood)", "country": "US", "host": "US", "lat": 31.14, "lng": -97.78, "type": "army_base", "branch": "US Army", "detail": "III Corps; 1st Cavalry Division"},
+    {"name": "Norfolk Naval Station", "country": "US", "host": "US", "lat": 36.95, "lng": -76.33, "type": "naval_base", "branch": "USN", "detail": "World's largest naval base"},
+    {"name": "San Diego Naval Base", "country": "US", "host": "US", "lat": 32.68, "lng": -117.13, "type": "naval_base", "branch": "USN", "detail": "Pacific Fleet major homeport"},
+    {"name": "Joint Base Pearl Harbor-Hickam", "country": "US", "host": "US", "lat": 21.35, "lng": -157.95, "type": "naval_base", "branch": "USN/USAF", "detail": "HQ USINDOPACOM"},
+    {"name": "Nellis AFB / Area 51", "country": "US", "host": "US", "lat": 36.24, "lng": -115.03, "type": "air_base", "branch": "USAF", "detail": "USAF Warfare Center; Red Flag; classified testing"},
+    {"name": "Peterson SFB", "country": "US", "host": "US", "lat": 38.80, "lng": -104.70, "type": "space_base", "branch": "USSF", "detail": "HQ USSPACECOM & USNORTHCOM"},
+    # ── Russia Major ──
+    {"name": "Kaliningrad (Baltic Fleet)", "country": "RU", "host": "RU", "lat": 54.71, "lng": 20.51, "type": "naval_base", "branch": "VMF", "detail": "Baltic Fleet HQ; Iskander deployment"},
+    {"name": "Severomorsk (Northern Fleet)", "country": "RU", "host": "RU", "lat": 69.07, "lng": 33.42, "type": "naval_base", "branch": "VMF", "detail": "Northern Fleet HQ; SSBN base"},
+    {"name": "Vladivostok (Pacific Fleet)", "country": "RU", "host": "RU", "lat": 43.12, "lng": 131.90, "type": "naval_base", "branch": "VMF", "detail": "Pacific Fleet HQ"},
+    {"name": "Sevastopol (Black Sea Fleet)", "country": "RU", "host": "UA/RU", "lat": 44.62, "lng": 33.52, "type": "naval_base", "branch": "VMF", "detail": "Black Sea Fleet HQ (disputed)"},
+    {"name": "Tartus Naval Facility", "country": "RU", "host": "SY", "lat": 34.89, "lng": 35.89, "type": "naval_base", "branch": "VMF", "detail": "Only Russian Mediterranean base (status uncertain post-Assad)"},
+    {"name": "Hmeimim Air Base", "country": "RU", "host": "SY", "lat": 35.41, "lng": 35.95, "type": "air_base", "branch": "VKS", "detail": "Russian air operations hub (status uncertain)"},
+    {"name": "Engels-2 Air Base", "country": "RU", "host": "RU", "lat": 51.48, "lng": 46.20, "type": "air_base", "branch": "VKS", "detail": "Tu-160 / Tu-95MS strategic bombers"},
+    {"name": "Plesetsk Cosmodrome", "country": "RU", "host": "RU", "lat": 62.93, "lng": 40.58, "type": "space_base", "branch": "VKS", "detail": "ICBM testing; military space launches"},
+    # ── China Major ──
+    {"name": "Yulin Naval Base (Hainan)", "country": "CN", "host": "CN", "lat": 18.22, "lng": 109.55, "type": "naval_base", "branch": "PLAN", "detail": "Underground SSBN pens; South Sea Fleet"},
+    {"name": "Zhanjiang (South Sea Fleet)", "country": "CN", "host": "CN", "lat": 21.20, "lng": 110.40, "type": "naval_base", "branch": "PLAN", "detail": "South Sea Fleet HQ"},
+    {"name": "Qingdao (North Sea Fleet)", "country": "CN", "host": "CN", "lat": 36.07, "lng": 120.38, "type": "naval_base", "branch": "PLAN", "detail": "North Sea Fleet HQ; CV-16 Liaoning"},
+    {"name": "Djibouti Support Base", "country": "CN", "host": "DJ", "lat": 11.59, "lng": 43.05, "type": "military_base", "branch": "PLA", "detail": "China's first overseas military base (2017)"},
+    {"name": "Fiery Cross Reef", "country": "CN", "host": "SCS", "lat": 9.55, "lng": 112.89, "type": "air_base", "branch": "PLA", "detail": "Artificial island; 3km runway; radar/SAM"},
+    {"name": "Mischief Reef", "country": "CN", "host": "SCS", "lat": 9.90, "lng": 115.53, "type": "air_base", "branch": "PLA", "detail": "Artificial island; military facilities"},
+    {"name": "Subi Reef", "country": "CN", "host": "SCS", "lat": 10.92, "lng": 114.08, "type": "air_base", "branch": "PLA", "detail": "Artificial island; military facilities"},
+    {"name": "Jiuquan Launch Center", "country": "CN", "host": "CN", "lat": 40.96, "lng": 100.29, "type": "space_base", "branch": "PLA SSF", "detail": "Crewed space launches; military satellite launches"},
+    # ── UK Major ──
+    {"name": "HMNB Clyde (Faslane)", "country": "GB", "host": "GB", "lat": 56.07, "lng": -4.82, "type": "naval_base", "branch": "RN", "detail": "Vanguard-class SSBN home; UK nuclear deterrent"},
+    {"name": "RAF Lakenheath", "country": "US", "host": "GB", "lat": 52.41, "lng": 0.56, "type": "air_base", "branch": "USAF", "detail": "48th FW; F-15E/F-35A; B61 nuclear weapons"},
+    {"name": "Akrotiri (Cyprus)", "country": "GB", "host": "CY", "lat": 34.59, "lng": 32.99, "type": "air_base", "branch": "RAF", "detail": "Sovereign Base Area; ME operations hub"},
+    # ── France Major ──
+    {"name": "Île Longue", "country": "FR", "host": "FR", "lat": 48.30, "lng": -4.52, "type": "naval_base", "branch": "Marine", "detail": "SSBN base; Le Triomphant-class"},
+    {"name": "Toulon Naval Base", "country": "FR", "host": "FR", "lat": 43.10, "lng": 5.94, "type": "naval_base", "branch": "Marine", "detail": "French Navy HQ; Charles de Gaulle CVN"},
+    {"name": "Djibouti (FFDj)", "country": "FR", "host": "DJ", "lat": 11.55, "lng": 43.12, "type": "military_base", "branch": "French Armed Forces", "detail": "1,500 troops; largest French overseas base"},
+    # ── NATO Training ──
+    {"name": "Grafenwöhr Training Area", "country": "US", "host": "DE", "lat": 49.69, "lng": 11.93, "type": "training", "branch": "NATO", "detail": "Largest US Army training area in Europe"},
+    {"name": "JMRC Hohenfels", "country": "US", "host": "DE", "lat": 49.06, "lng": 11.87, "type": "training", "branch": "NATO", "detail": "Joint Multinational Readiness Center"},
+    {"name": "NATO JFTC Bydgoszcz", "country": "NATO", "host": "PL", "lat": 53.12, "lng": 18.00, "type": "training", "branch": "NATO", "detail": "Joint Force Training Centre"},
+    # ── Other Notable ──
+    {"name": "Pine Gap", "country": "AU", "host": "AU", "lat": -23.80, "lng": 133.74, "type": "intelligence", "branch": "Five Eyes", "detail": "Signals intelligence; satellite ground station"},
+    {"name": "Changi Naval Base", "country": "SG", "host": "SG", "lat": 1.37, "lng": 104.00, "type": "naval_base", "branch": "RSN", "detail": "Key Indo-Pacific logistics hub"},
+    {"name": "Al Dhafra Air Base", "country": "US", "host": "AE", "lat": 24.25, "lng": 54.55, "type": "air_base", "branch": "USAF", "detail": "F-22/F-35/U-2/RQ-4 operations"},
+    {"name": "Anadyr (Chukotka)", "country": "RU", "host": "RU", "lat": 64.73, "lng": 177.51, "type": "air_base", "branch": "VKS", "detail": "Strategic bomber staging; Arctic defense"},
+    {"name": "Cam Ranh Bay", "country": "VN", "host": "VN", "lat": 11.99, "lng": 109.22, "type": "naval_base", "branch": "VPN", "detail": "Former US/Soviet base; Vietnamese Navy HQ South"},
+]
+
+
+# ═══════════════ MILITARY VESSEL POSITIONS ═══════════════
+# Known carrier strike group and major surface vessel deployments (OSINT/public tracking)
+# Approximate positions based on latest OSINT reporting
+VESSEL_DEPLOYMENTS = [
+    # ── US Navy Carrier Strike Groups ──
+    {"name": "USS Harry S. Truman (CVN-75) CSG", "country": "US", "type": "carrier_strike_group", "lat": 26.5, "lng": 56.5, "heading": 90, "speed_kts": 12,
+     "detail": "CSG-8 deployed to Arabian Sea/Gulf of Oman; Iran operations", "vessels": "CVN-75 + CG/DDGs + SSN"},
+    {"name": "USS Carl Vinson (CVN-70) CSG", "country": "US", "type": "carrier_strike_group", "lat": 21.0, "lng": 128.0, "heading": 270, "speed_kts": 15,
+     "detail": "CSG-1 deployed Western Pacific; Taiwan Strait patrols", "vessels": "CVN-70 + CG/DDGs + SSN"},
+    {"name": "USS Theodore Roosevelt (CVN-71) CSG", "country": "US", "type": "carrier_strike_group", "lat": 13.0, "lng": 44.0, "heading": 180, "speed_kts": 10,
+     "detail": "CSG-9 deployed Red Sea/Gulf of Aden; Houthi operations", "vessels": "CVN-71 + CG/DDGs + SSN"},
+    {"name": "USS Ronald Reagan (CVN-76)", "country": "US", "type": "carrier", "lat": 35.3, "lng": 139.6, "heading": 0, "speed_kts": 0,
+     "detail": "Forward-deployed at Yokosuka, Japan", "vessels": "CVN-76 (in port)"},
+    {"name": "USS Gerald R. Ford (CVN-78)", "country": "US", "type": "carrier", "lat": 36.9, "lng": -76.3, "heading": 0, "speed_kts": 0,
+     "detail": "In port Norfolk, VA; maintenance period", "vessels": "CVN-78 (in port)"},
+    # ── US Navy ARGs ──
+    {"name": "Bataan ARG / 26th MEU", "country": "US", "type": "amphibious_group", "lat": 33.5, "lng": 34.0, "heading": 180, "speed_kts": 8,
+     "detail": "Deployed Eastern Mediterranean", "vessels": "LHD-5 + LPD + LSD + Marines"},
+    # ── Royal Navy ──
+    {"name": "HMS Queen Elizabeth (R08)", "country": "GB", "type": "carrier", "lat": 50.80, "lng": -1.11, "heading": 0, "speed_kts": 0,
+     "detail": "Portsmouth; preparing for deployment", "vessels": "R08 + escorts"},
+    {"name": "HMS Prince of Wales (R09)", "country": "GB", "type": "carrier", "lat": 56.46, "lng": -2.97, "heading": 0, "speed_kts": 0,
+     "detail": "In port Rosyth; refit", "vessels": "R09"},
+    # ── French Navy ──
+    {"name": "Charles de Gaulle (R91) TF 473", "country": "FR", "type": "carrier_strike_group", "lat": 35.0, "lng": 18.0, "heading": 90, "speed_kts": 14,
+     "detail": "Deployed Eastern Mediterranean; Clemenceau 26 mission", "vessels": "R91 + FREMM frigates + SSN"},
+    # ── Chinese Navy ──
+    {"name": "Shandong (CV-17) CSG", "country": "CN", "type": "carrier_strike_group", "lat": 17.5, "lng": 112.0, "heading": 180, "speed_kts": 12,
+     "detail": "South China Sea patrol; combat readiness training", "vessels": "CV-17 + Type 055/052D destroyers"},
+    {"name": "Fujian (CV-18)", "country": "CN", "type": "carrier", "lat": 31.35, "lng": 121.75, "heading": 0, "speed_kts": 0,
+     "detail": "Sea trials from Shanghai; EMALS testing", "vessels": "CV-18 (sea trials)"},
+    {"name": "Liaoning (CV-16)", "country": "CN", "type": "carrier", "lat": 36.0, "lng": 120.4, "heading": 0, "speed_kts": 0,
+     "detail": "Qingdao homeport; training carrier", "vessels": "CV-16"},
+    # ── Russian Navy ──
+    {"name": "Admiral Kuznetsov", "country": "RU", "type": "carrier", "lat": 69.07, "lng": 33.42, "heading": 0, "speed_kts": 0,
+     "detail": "Severomorsk; prolonged refit (limited operational capability)", "vessels": "Kuznetsov"},
+    {"name": "Black Sea Fleet Surface Group", "country": "RU", "type": "surface_group", "lat": 44.6, "lng": 33.5, "heading": 180, "speed_kts": 8,
+     "detail": "Reduced after Ukrainian strikes; frigates + patrol vessels", "vessels": "Frigates + corvettes"},
+    {"name": "Pacific Fleet SSBN Patrol", "country": "RU", "type": "submarine", "lat": 52.0, "lng": 158.0, "heading": 0, "speed_kts": 6,
+     "detail": "Borei-class SSBN deterrence patrol; Sea of Okhotsk bastion", "vessels": "SSBN (submerged)"},
+    # ── Indian Navy ──
+    {"name": "INS Vikrant (R11) CSG", "country": "IN", "type": "carrier_strike_group", "lat": 14.5, "lng": 72.0, "heading": 270, "speed_kts": 14,
+     "detail": "Western Fleet; Arabian Sea patrol", "vessels": "R11 + Kolkata-class DDGs + frigates"},
+    # ── Other Notable ──
+    {"name": "JS Izumo (DDH-183)", "country": "JP", "type": "carrier", "lat": 35.29, "lng": 139.66, "heading": 0, "speed_kts": 0,
+     "detail": "Yokosuka; F-35B conversion complete", "vessels": "DDH-183 (light carrier)"},
+    {"name": "HMAS Canberra (L02)", "country": "AU", "type": "amphibious", "lat": -33.87, "lng": 151.21, "heading": 0, "speed_kts": 0,
+     "detail": "Sydney; Indo-Pacific presence", "vessels": "L02 LHD"},
+    {"name": "Cavour (C 550)", "country": "IT", "type": "carrier", "lat": 40.84, "lng": 14.27, "heading": 0, "speed_kts": 0,
+     "detail": "Taranto homeport; F-35B capable", "vessels": "C 550"},
+]
+
+
+# ═══════════════ OPENSKY AIRCRAFT TRACKING ═══════════════
+OPENSKY_CACHE = {"data": [], "fetched_at": 0.0}
+OPENSKY_CACHE_TTL = 30  # 30 seconds
+
+def fetch_opensky():
+    """Fetch live aircraft from OpenSky Network API. Returns list of aircraft dicts."""
+    now = time.time()
+    if OPENSKY_CACHE["data"] and (now - OPENSKY_CACHE["fetched_at"]) < OPENSKY_CACHE_TTL:
+        return OPENSKY_CACHE["data"]
+    results = []
+    try:
+        url = "https://opensky-network.org/api/states/all"
+        req = urllib.request.Request(url, headers={"User-Agent": "WorldMonitor/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = json.loads(resp.read())
+        states = raw.get("states", [])
+        # Each state: [icao24, callsign, origin_country, time_pos, last_contact,
+        #              lng, lat, baro_alt, on_ground, velocity, heading, vert_rate,
+        #              sensors, geo_alt, squawk, spi, pos_source, category]
+        for s in states:
+            if s[6] is None or s[5] is None:
+                continue  # no position
+            if s[8]:
+                continue  # on ground
+            # Category: 0=N/A, 1=No info, 2=Light, 3=Small, 4=Large,
+            # 5=High vortex, 6=Heavy, 7=High perf, 8=Rotorcraft, 9=Glider,
+            # 10=Lighter-than-air, 11=Parachute, 12=Ultralight, 14=UAV,
+            # 15=Space, 16=Surface emergency, 17=Surface service
+            cat = s[17] if len(s) > 17 else 0
+            cat_names = {0:"Unknown",1:"N/A",2:"Light",3:"Small",4:"Large",5:"High Vortex Large",
+                         6:"Heavy",7:"High Performance",8:"Rotorcraft",9:"Glider",10:"Lighter-than-air",
+                         14:"UAV/Drone",15:"Space"}
+            results.append({
+                "icao": s[0],
+                "callsign": (s[1] or "").strip(),
+                "origin": s[2] or "",
+                "lat": round(s[6], 3),
+                "lng": round(s[5], 3),
+                "alt_m": int(s[7] or s[13] or 0),
+                "alt_ft": int((s[7] or s[13] or 0) * 3.281),
+                "speed_kts": int((s[9] or 0) * 1.944),
+                "heading": int(s[10] or 0),
+                "vert_rate": round(s[11] or 0, 1),
+                "squawk": s[14] or "",
+                "type_desc": cat_names.get(cat, ""),
+                "on_ground": s[8],
+            })
+        OPENSKY_CACHE["data"] = results
+        OPENSKY_CACHE["fetched_at"] = now
+    except Exception as e:
+        print(f"[OpenSky] Error: {e}")
+        # Return cache even if stale
+    return OPENSKY_CACHE["data"]
+
+
+# Known military callsign prefixes
+_MIL_PREFIXES = {
+    "RCH", "REACH", "FORTE", "JAKE", "DUKE", "DOOM", "VIPER", "TIGER",
+    "DEMON", "HAWK", "EAGLE", "SNTRY", "NCHO", "TOPCT", "IRON", "STORK",
+    "COBRA", "VAPOR", "TEAL", "ATLAS", "DAGGER", "REAPER", "GHOST",
+    "HYPER", "ORDER", "STEEL", "EVAC", "MOOSE", "POLAR", "HAVE",
+    "ARROW", "BOLT", "FURY", "LANCE", "SABER", "TANGO", "WOLFP",
+    "CHAOS", "NIGHT", "STORM", "RAID", "SCOUT", "FLASH", "GRID",
+    "RRR", "CASA", "NAVY", "ARMY", "USAF", "AIRMIL", "NATO", "GAF",
+    "CNV", "BAF", "IAF", "RAF", "FAF", "PAF", "VMFA", "VMGR",
+    "BDOG", "PELCN", "STNGR", "HKYNS", "QUID", "GOTHAM", "OTIS",
+}
+_COMMERCIAL_RE = re.compile(r"^[A-Z]{2,3}\d{1,4}[A-Z]?$")
+
+
+def filter_military_aircraft(all_aircraft):
+    """Return aircraft likely to be military/government (not commercial airlines)."""
+    results = []
+    for a in all_aircraft:
+        cs = a["callsign"].upper()
+        # No callsign — many military flights
+        if not cs:
+            results.append(a)
+            continue
+        # Known military prefix
+        if any(cs.startswith(p) for p in _MIL_PREFIXES):
+            results.append(a)
+            continue
+        # Skip anything matching commercial airline pattern (e.g., UAL123, BAW456)
+        if _COMMERCIAL_RE.match(cs):
+            continue
+        # Also skip if callsign is purely numeric (private/GA with ADSB)
+        if cs.isdigit():
+            continue
+        # Keep anything else (government, cargo, special missions)
+        results.append(a)
+    return results
+
+
+# ═══════════════ NASA EONET – NATURAL DISASTERS ═══════════════
+EONET_CACHE = {"data": [], "fetched_at": 0.0}
+EONET_CACHE_TTL = 300  # 5 minutes
+
+def fetch_eonet():
+    now = time.time()
+    if EONET_CACHE["data"] and (now - EONET_CACHE["fetched_at"]) < EONET_CACHE_TTL:
+        return EONET_CACHE["data"]
+    results = []
+    try:
+        url = "https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=200"
+        req = urllib.request.Request(url, headers={"User-Agent": "WorldMonitor/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = json.loads(resp.read())
+        for ev in raw.get("events", []):
+            cats = [c.get("title", "") for c in ev.get("categories", [])]
+            cat = cats[0] if cats else "Unknown"
+            geom = ev.get("geometry", [])
+            if not geom:
+                continue
+            latest = geom[-1]
+            coords = latest.get("coordinates", [])
+            if len(coords) < 2:
+                continue
+            results.append({
+                "id": ev.get("id", ""),
+                "title": ev.get("title", ""),
+                "category": cat,
+                "lat": round(coords[1], 3),
+                "lng": round(coords[0], 3),
+                "date": latest.get("date", ""),
+                "magnitude": latest.get("magnitudeValue"),
+                "magnitude_unit": latest.get("magnitudeUnit", ""),
+                "link": ev.get("link", ""),
+            })
+        EONET_CACHE["data"] = results
+        EONET_CACHE["fetched_at"] = now
+    except Exception as e:
+        print(f"[EONET] Error: {e}")
+    return EONET_CACHE["data"]
+
+
+# ═══════════════ CELESTRAK – SATELLITE TRACKING ═══════════════
+SATELLITE_CACHE = {"data": [], "fetched_at": 0.0}
+SATELLITE_CACHE_TTL = 600  # 10 minutes (TLEs don't change fast)
+
+def _sat_position(s, now_dt):
+    """Compute approximate lat/lng/alt from Keplerian orbital elements."""
+    try:
+        epoch_str = s.get("EPOCH", "")
+        if not epoch_str:
+            return None
+        epoch_dt = datetime.fromisoformat(epoch_str.replace("Z", "+00:00"))
+        if epoch_dt.tzinfo is None:
+            epoch_dt = epoch_dt.replace(tzinfo=timezone.utc)
+        dt_sec = (now_dt - epoch_dt).total_seconds()
+
+        inc = math.radians(s.get("INCLINATION", 0))
+        raan = math.radians(s.get("RA_OF_ASC_NODE", 0))
+        argp = math.radians(s.get("ARG_OF_PERICENTER", 0))
+        M0 = math.radians(s.get("MEAN_ANOMALY", 0))
+        n = s.get("MEAN_MOTION", 0)  # revs/day
+        if n <= 0:
+            return None
+        ecc = s.get("ECCENTRICITY", 0)
+
+        # Mean anomaly at current time
+        M = M0 + 2 * math.pi * n * dt_sec / 86400.0
+        # Solve Kepler's equation (1 iteration for low eccentricity)
+        E = M + ecc * math.sin(M)
+        # True anomaly
+        nu = 2 * math.atan2(
+            math.sqrt(1 + ecc) * math.sin(E / 2),
+            math.sqrt(1 - ecc) * math.cos(E / 2),
+        )
+        u = argp + nu  # argument of latitude
+
+        # Geodetic latitude
+        lat = math.degrees(math.asin(math.sin(inc) * math.sin(u)))
+
+        # GMST: approximate sidereal time
+        # J2000 epoch = 2000-01-01T12:00:00 UTC
+        j2000 = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        d = (now_dt - j2000).total_seconds() / 86400.0
+        gmst = math.radians((280.46061837 + 360.98564736629 * d) % 360)
+
+        # Longitude
+        lon_eci = raan + math.atan2(math.cos(inc) * math.sin(u), math.cos(u))
+        lng = math.degrees(lon_eci - gmst)
+        lng = ((lng + 180) % 360) - 180
+
+        # Altitude (km) from semi-major axis
+        mu = 398600.4418  # km^3/s^2
+        a = (mu / (n * 2 * math.pi / 86400.0) ** 2) ** (1.0 / 3.0)
+        alt_km = a - 6371.0
+
+        return round(lat, 2), round(lng, 2), round(alt_km, 0)
+    except Exception:
+        return None
+
+
+def fetch_satellites():
+    """Fetch satellite GP data from CelesTrak, compute positions server-side."""
+    now = time.time()
+    if SATELLITE_CACHE["data"] and (now - SATELLITE_CACHE["fetched_at"]) < SATELLITE_CACHE_TTL:
+        return SATELLITE_CACHE["data"]
+    results = []
+    now_dt = datetime.now(timezone.utc)
+    groups = [
+        ("military", "https://celestrak.org/NORAD/elements/gp.php?GROUP=military&FORMAT=json"),
+        ("gps", "https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=json"),
+        ("stations", "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json"),
+        ("geo", "https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=json"),
+    ]
+    for group_name, url in groups:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "WorldMonitor/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                sats = json.loads(resp.read())
+            for s in sats:
+                pos = _sat_position(s, now_dt)
+                if not pos:
+                    continue
+                results.append({
+                    "name": s.get("OBJECT_NAME", ""),
+                    "norad_id": s.get("NORAD_CAT_ID", 0),
+                    "group": group_name,
+                    "lat": pos[0],
+                    "lng": pos[1],
+                    "alt_km": pos[2],
+                })
+        except Exception as e:
+            print(f"[CelesTrak:{group_name}] Error: {e}")
+    SATELLITE_CACHE["data"] = results
+    SATELLITE_CACHE["fetched_at"] = now
+    print(f"[CelesTrak] Computed positions for {len(results)} satellites")
+    return SATELLITE_CACHE["data"]
+
+
+# ═══════════════ CRITICAL INFRASTRUCTURE ═══════════════
+# Major data centers, undersea cable landing points, oil pipelines, nuclear reactors, capital cities
+
+CAPITAL_CITIES = [
+    {"name": "Washington D.C.", "country": "US", "lat": 38.90, "lng": -77.04, "pop": "5.4M metro"},
+    {"name": "Beijing", "country": "CN", "lat": 39.91, "lng": 116.39, "pop": "21.5M"},
+    {"name": "Moscow", "country": "RU", "lat": 55.76, "lng": 37.62, "pop": "12.6M"},
+    {"name": "London", "country": "GB", "lat": 51.51, "lng": -0.13, "pop": "9.5M"},
+    {"name": "Paris", "country": "FR", "lat": 48.86, "lng": 2.35, "pop": "11M metro"},
+    {"name": "Berlin", "country": "DE", "lat": 52.52, "lng": 13.41, "pop": "3.7M"},
+    {"name": "Tokyo", "country": "JP", "lat": 35.68, "lng": 139.69, "pop": "37.4M metro"},
+    {"name": "New Delhi", "country": "IN", "lat": 28.61, "lng": 77.21, "pop": "32M metro"},
+    {"name": "Brasília", "country": "BR", "lat": -15.78, "lng": -47.93, "pop": "4.8M metro"},
+    {"name": "Canberra", "country": "AU", "lat": -35.28, "lng": 149.13, "pop": "470K"},
+    {"name": "Ottawa", "country": "CA", "lat": 45.42, "lng": -75.70, "pop": "1.4M metro"},
+    {"name": "Seoul", "country": "KR", "lat": 37.57, "lng": 126.98, "pop": "9.7M"},
+    {"name": "Pyongyang", "country": "KP", "lat": 39.02, "lng": 125.75, "pop": "3.2M"},
+    {"name": "Taipei", "country": "TW", "lat": 25.03, "lng": 121.57, "pop": "2.6M"},
+    {"name": "Ankara", "country": "TR", "lat": 39.93, "lng": 32.85, "pop": "5.7M"},
+    {"name": "Riyadh", "country": "SA", "lat": 24.69, "lng": 46.72, "pop": "7.7M"},
+    {"name": "Tehran", "country": "IR", "lat": 35.69, "lng": 51.39, "pop": "9.4M"},
+    {"name": "Jerusalem", "country": "IL", "lat": 31.77, "lng": 35.23, "pop": "970K"},
+    {"name": "Cairo", "country": "EG", "lat": 30.04, "lng": 31.24, "pop": "21M metro"},
+    {"name": "Kyiv", "country": "UA", "lat": 50.45, "lng": 30.52, "pop": "3M"},
+    {"name": "Rome", "country": "IT", "lat": 41.90, "lng": 12.50, "pop": "4.3M metro"},
+    {"name": "Madrid", "country": "ES", "lat": 40.42, "lng": -3.70, "pop": "6.7M metro"},
+    {"name": "Warsaw", "country": "PL", "lat": 52.23, "lng": 21.01, "pop": "1.8M"},
+    {"name": "Nairobi", "country": "KE", "lat": -1.29, "lng": 36.82, "pop": "4.7M"},
+    {"name": "Pretoria", "country": "ZA", "lat": -25.75, "lng": 28.19, "pop": "2.5M"},
+    {"name": "Abuja", "country": "NG", "lat": 9.08, "lng": 7.48, "pop": "3.6M"},
+    {"name": "Mexico City", "country": "MX", "lat": 19.43, "lng": -99.13, "pop": "21.8M metro"},
+    {"name": "Jakarta", "country": "ID", "lat": -6.21, "lng": 106.85, "pop": "34M metro"},
+    {"name": "Bangkok", "country": "TH", "lat": 13.75, "lng": 100.50, "pop": "10.5M"},
+    {"name": "Hanoi", "country": "VN", "lat": 21.03, "lng": 105.85, "pop": "8.4M"},
+    {"name": "Singapore", "country": "SG", "lat": 1.35, "lng": 103.82, "pop": "5.9M"},
+    {"name": "Buenos Aires", "country": "AR", "lat": -34.60, "lng": -58.38, "pop": "15.4M metro"},
+    {"name": "Islamabad", "country": "PK", "lat": 33.69, "lng": 73.05, "pop": "1.2M"},
+    {"name": "Kabul", "country": "AF", "lat": 34.52, "lng": 69.18, "pop": "4.4M"},
+    {"name": "Baghdad", "country": "IQ", "lat": 33.31, "lng": 44.36, "pop": "8.1M"},
+    {"name": "Damascus", "country": "SY", "lat": 33.51, "lng": 36.30, "pop": "2.5M"},
+    {"name": "Addis Ababa", "country": "ET", "lat": 9.02, "lng": 38.75, "pop": "5.5M"},
+]
+
+MAJOR_DATA_CENTERS = [
+    {"name": "Ashburn (Data Center Alley)", "country": "US", "lat": 39.04, "lng": -77.49, "operator": "Multiple (AWS/Azure/Equinix)", "detail": "World's largest concentration; 70%+ US internet traffic"},
+    {"name": "The Dalles (Google)", "country": "US", "lat": 45.60, "lng": -121.18, "operator": "Google", "detail": "Massive Google campus; hydro-powered"},
+    {"name": "Council Bluffs (Google/Meta)", "country": "US", "lat": 41.26, "lng": -95.86, "operator": "Google/Meta", "detail": "Major hyperscale campus"},
+    {"name": "Frankfurt Hub", "country": "DE", "lat": 50.11, "lng": 8.68, "operator": "Equinix/DE-CIX", "detail": "Europe's largest internet exchange"},
+    {"name": "Amsterdam Hub", "country": "NL", "lat": 52.37, "lng": 4.90, "operator": "Equinix/AMS-IX", "detail": "Major European hub"},
+    {"name": "London Slough", "country": "GB", "lat": 51.51, "lng": -0.60, "operator": "Equinix/Digital Realty", "detail": "UK's primary data center cluster"},
+    {"name": "Singapore (Tuas)", "country": "SG", "lat": 1.33, "lng": 103.65, "operator": "Multiple", "detail": "SE Asia hub; 60+ facilities"},
+    {"name": "Tokyo (Inzai)", "country": "JP", "lat": 35.83, "lng": 140.15, "operator": "AWS/NTT/Equinix", "detail": "Asia's largest cluster"},
+    {"name": "Beijing-Zhangbei", "country": "CN", "lat": 41.16, "lng": 114.70, "operator": "Alibaba/Tencent", "detail": "Major Chinese cloud hub"},
+    {"name": "Guiyang (Apple/Huawei)", "country": "CN", "lat": 26.65, "lng": 106.63, "operator": "Apple iCloud China/Huawei", "detail": "China's 'Big Data Valley'"},
+    {"name": "Mumbai Hub", "country": "IN", "lat": 19.08, "lng": 72.88, "operator": "Multiple", "detail": "India's primary DC cluster"},
+    {"name": "São Paulo Hub", "country": "BR", "lat": -23.55, "lng": -46.63, "operator": "Equinix/Ascenty", "detail": "Latin America's largest"},
+    {"name": "Sydney Hub", "country": "AU", "lat": -33.87, "lng": 151.21, "operator": "Equinix/NextDC", "detail": "Oceania hub"},
+    {"name": "Dubai Hub", "country": "AE", "lat": 25.27, "lng": 55.30, "operator": "Equinix/Gulf Data Hub", "detail": "Middle East hub"},
+    {"name": "Hamina (Google)", "country": "FI", "lat": 60.57, "lng": 27.19, "operator": "Google", "detail": "Seawater-cooled; Nordic green power"},
+    {"name": "Luleå (Meta)", "country": "SE", "lat": 65.58, "lng": 22.15, "operator": "Meta", "detail": "Arctic cooling; hydro-powered"},
+]
+
+UNDERSEA_CABLES = [
+    {"name": "FLAG Atlantic-1 (FA-1)", "landing_a": {"lat": 40.57, "lng": -73.97, "loc": "New York"}, "landing_b": {"lat": 51.35, "lng": 1.43, "loc": "Whitstable, UK"}, "capacity": "10 Tbps", "length_km": 6300},
+    {"name": "TAT-14", "landing_a": {"lat": 40.57, "lng": -73.97, "loc": "New Jersey"}, "landing_b": {"lat": 53.57, "lng": 8.10, "loc": "Norden, Germany"}, "capacity": "3.2 Tbps", "length_km": 15428},
+    {"name": "MAREA", "landing_a": {"lat": 39.29, "lng": -74.45, "loc": "Virginia Beach"}, "landing_b": {"lat": 43.37, "lng": -3.21, "loc": "Bilbao, Spain"}, "capacity": "200 Tbps", "length_km": 6600},
+    {"name": "Dunant", "landing_a": {"lat": 39.29, "lng": -74.45, "loc": "Virginia Beach"}, "landing_b": {"lat": 47.29, "lng": -2.52, "loc": "Saint-Hilaire, France"}, "capacity": "250 Tbps", "length_km": 6400},
+    {"name": "SEA-ME-WE 3", "landing_a": {"lat": 1.35, "lng": 103.82, "loc": "Singapore"}, "landing_b": {"lat": 50.85, "lng": 1.59, "loc": "Calais, France"}, "capacity": "480 Gbps", "length_km": 39000},
+    {"name": "SEA-ME-WE 6", "landing_a": {"lat": 1.35, "lng": 103.82, "loc": "Singapore"}, "landing_b": {"lat": 45.44, "lng": 12.32, "loc": "Venice, Italy"}, "capacity": "100+ Tbps", "length_km": 19200},
+    {"name": "PEACE Cable", "landing_a": {"lat": 39.93, "lng": 32.85, "loc": "Pakistan"}, "landing_b": {"lat": 45.44, "lng": 12.32, "loc": "Marseille, France"}, "capacity": "96 Tbps", "length_km": 15000},
+    {"name": "2Africa", "landing_a": {"lat": 51.35, "lng": 1.43, "loc": "UK"}, "landing_b": {"lat": -33.92, "lng": 18.42, "loc": "Cape Town"}, "capacity": "180 Tbps", "length_km": 45000},
+    {"name": "JUPITER", "landing_a": {"lat": 35.68, "lng": 139.69, "loc": "Tokyo"}, "landing_b": {"lat": 47.61, "lng": -122.33, "loc": "Seattle"}, "capacity": "60 Tbps", "length_km": 14000},
+    {"name": "SJC (Southeast Asia-Japan Cable)", "landing_a": {"lat": 1.35, "lng": 103.82, "loc": "Singapore"}, "landing_b": {"lat": 35.68, "lng": 139.69, "loc": "Tokyo"}, "capacity": "28 Tbps", "length_km": 9700},
+    {"name": "ARCTIC CONNECT (planned)", "landing_a": {"lat": 60.17, "lng": 24.94, "loc": "Helsinki"}, "landing_b": {"lat": 35.68, "lng": 139.69, "loc": "Tokyo"}, "capacity": "200 Tbps", "length_km": 14000},
+    {"name": "Southern Cross NEXT", "landing_a": {"lat": -33.87, "lng": 151.21, "loc": "Sydney"}, "landing_b": {"lat": 33.77, "lng": -118.19, "loc": "Los Angeles"}, "capacity": "72 Tbps", "length_km": 13000},
+    {"name": "EllaLink", "landing_a": {"lat": -2.50, "lng": -44.28, "loc": "Fortaleza, Brazil"}, "landing_b": {"lat": 38.72, "lng": -9.14, "loc": "Lisbon"}, "capacity": "72 Tbps", "length_km": 6000},
+]
+
+OIL_GAS_PIPELINES = [
+    {"name": "Druzhba Pipeline", "type": "oil", "from_loc": {"lat": 52.23, "lng": 49.10, "name": "Samara, Russia"}, "to_loc": {"lat": 50.08, "lng": 14.44, "name": "Central Europe"}, "capacity": "1.2M bpd", "detail": "World's longest oil pipeline; supplies EU via Belarus/Ukraine"},
+    {"name": "Nord Stream (destroyed)", "type": "gas", "from_loc": {"lat": 59.93, "lng": 30.32, "name": "Vyborg, Russia"}, "to_loc": {"lat": 54.11, "lng": 13.43, "name": "Greifswald, Germany"}, "capacity": "55 bcm/yr", "detail": "Sabotaged Sep 2022; not operational"},
+    {"name": "TurkStream", "type": "gas", "from_loc": {"lat": 44.62, "lng": 37.78, "name": "Anapa, Russia"}, "to_loc": {"lat": 41.18, "lng": 28.97, "name": "Istanbul, Turkey"}, "capacity": "31.5 bcm/yr", "detail": "Operational; critical EU gas route via Turkey"},
+    {"name": "Trans-Anatolian (TANAP)", "type": "gas", "from_loc": {"lat": 40.41, "lng": 49.87, "name": "Baku, Azerbaijan"}, "to_loc": {"lat": 39.93, "lng": 32.85, "name": "Turkey/EU"}, "capacity": "16 bcm/yr", "detail": "Southern Gas Corridor; feeds TAP to Italy"},
+    {"name": "Keystone XL (cancelled) / Keystone", "type": "oil", "from_loc": {"lat": 52.27, "lng": -113.81, "name": "Hardisty, Alberta"}, "to_loc": {"lat": 29.76, "lng": -95.37, "name": "Houston, Texas"}, "capacity": "590K bpd", "detail": "Existing Keystone operational; XL expansion cancelled 2021"},
+    {"name": "Dakota Access (DAPL)", "type": "oil", "from_loc": {"lat": 47.92, "lng": -103.98, "name": "Bakken, ND"}, "to_loc": {"lat": 40.46, "lng": -90.67, "name": "Patoka, IL"}, "capacity": "750K bpd", "detail": "Controversial; operational since 2017"},
+    {"name": "East-West Pipeline (Saudi)", "type": "oil", "from_loc": {"lat": 25.38, "lng": 49.98, "name": "Abqaiq, Saudi Arabia"}, "to_loc": {"lat": 21.52, "lng": 39.16, "name": "Yanbu, Red Sea"}, "capacity": "5M bpd", "detail": "Strategic bypass for Strait of Hormuz"},
+    {"name": "BTC Pipeline", "type": "oil", "from_loc": {"lat": 40.41, "lng": 49.87, "name": "Baku, Azerbaijan"}, "to_loc": {"lat": 36.85, "lng": 36.15, "name": "Ceyhan, Turkey"}, "capacity": "1.2M bpd", "detail": "Major Caspian oil export route avoiding Russia/Iran"},
+    {"name": "ESPO Pipeline", "type": "oil", "from_loc": {"lat": 56.27, "lng": 44.12, "name": "Taishet, Russia"}, "to_loc": {"lat": 46.94, "lng": 134.32, "name": "Kozmino, Pacific"}, "capacity": "1.6M bpd", "detail": "Eastern Siberia–Pacific; feeds China/Japan/Korea"},
+    {"name": "Power of Siberia", "type": "gas", "from_loc": {"lat": 62.04, "lng": 129.74, "name": "Yakutia, Russia"}, "to_loc": {"lat": 45.75, "lng": 126.65, "name": "Heilongjiang, China"}, "capacity": "38 bcm/yr", "detail": "Russia–China gas pipeline; ramping to full capacity"},
+    {"name": "Trans-Mediterranean (Transmed)", "type": "gas", "from_loc": {"lat": 36.75, "lng": 3.06, "name": "Algeria"}, "to_loc": {"lat": 37.50, "lng": 15.09, "name": "Sicily, Italy"}, "capacity": "33 bcm/yr", "detail": "Major Algeria-to-Europe gas route via Tunisia"},
+    # ── Africa ──
+    {"name": "Trans-Saharan Gas Pipeline (planned)", "type": "gas", "from_loc": {"lat": 4.76, "lng": 7.01, "name": "Warri, Nigeria"}, "to_loc": {"lat": 36.75, "lng": 3.06, "name": "Algiers, Algeria"}, "capacity": "30 bcm/yr", "detail": "4,128 km planned pipeline; Nigeria-Niger-Algeria to feed Europe"},
+    {"name": "West African Gas Pipeline", "type": "gas", "from_loc": {"lat": 6.45, "lng": 3.39, "name": "Lagos, Nigeria"}, "to_loc": {"lat": 5.56, "lng": -0.19, "name": "Accra, Ghana"}, "capacity": "5 bcm/yr", "detail": "Supplies Benin, Togo, Ghana from Nigeria's Escravos field"},
+    {"name": "East African Crude Oil Pipeline (EACOP)", "type": "oil", "from_loc": {"lat": 1.57, "lng": 31.46, "name": "Hoima, Uganda"}, "to_loc": {"lat": -5.07, "lng": 39.10, "name": "Tanga, Tanzania"}, "capacity": "216K bpd", "detail": "1,443 km heated pipeline; world's longest heated crude pipeline; controversial"},
+    {"name": "GreenStream", "type": "gas", "from_loc": {"lat": 32.90, "lng": 12.09, "name": "Mellitah, Libya"}, "to_loc": {"lat": 37.50, "lng": 15.09, "name": "Gela, Sicily"}, "capacity": "11 bcm/yr", "detail": "Libya-Italy subsea gas pipeline; intermittent due to Libyan instability"},
+    {"name": "Mozambique-South Africa Pipeline (planned)", "type": "gas", "from_loc": {"lat": -12.97, "lng": 40.52, "name": "Cabo Delgado, Mozambique"}, "to_loc": {"lat": -26.20, "lng": 28.04, "name": "Johannesburg, South Africa"}, "capacity": "10 bcm/yr", "detail": "Planned pipeline to monetize Rovuma Basin LNG discoveries"},
+    # ── North America ──
+    {"name": "Trans-Alaska Pipeline (TAPS)", "type": "oil", "from_loc": {"lat": 70.26, "lng": -148.33, "name": "Prudhoe Bay, Alaska"}, "to_loc": {"lat": 61.13, "lng": -146.35, "name": "Valdez, Alaska"}, "capacity": "600K bpd", "detail": "1,288 km; operational since 1977; declining throughput from peak 2.1M bpd"},
+    {"name": "Colonial Pipeline", "type": "oil", "from_loc": {"lat": 29.76, "lng": -95.37, "name": "Houston, Texas"}, "to_loc": {"lat": 40.74, "lng": -74.00, "name": "New York Harbor"}, "capacity": "2.5M bpd", "detail": "8,851 km; largest refined products pipeline in US; 2021 ransomware attack"},
+    {"name": "Permian Basin - Corpus Christi (Cactus II)", "type": "oil", "from_loc": {"lat": 31.99, "lng": -102.08, "name": "Permian Basin, TX"}, "to_loc": {"lat": 27.80, "lng": -97.40, "name": "Corpus Christi, TX"}, "capacity": "670K bpd", "detail": "Key Permian export pipeline to Gulf Coast export terminals"},
+    {"name": "Enbridge Line 5", "type": "oil", "from_loc": {"lat": 46.49, "lng": -87.09, "name": "Superior, WI"}, "to_loc": {"lat": 42.98, "lng": -82.42, "name": "Sarnia, Ontario"}, "capacity": "540K bpd", "detail": "Controversial pipeline crossing Straits of Mackinac; Michigan wants shutdown"},
+    {"name": "TC Energy Mainline (NGTL)", "type": "gas", "from_loc": {"lat": 52.27, "lng": -113.81, "name": "Alberta, Canada"}, "to_loc": {"lat": 45.42, "lng": -75.70, "name": "Ottawa, Ontario"}, "capacity": "28 bcm/yr", "detail": "Canada's major west-east natural gas transmission system"},
+    {"name": "Trans Mountain Expansion (TMX)", "type": "oil", "from_loc": {"lat": 53.55, "lng": -113.49, "name": "Edmonton, Alberta"}, "to_loc": {"lat": 49.29, "lng": -122.95, "name": "Burnaby, BC"}, "capacity": "890K bpd", "detail": "Tripled capacity; completed 2024; crude export to Pacific markets"},
+    # ── Russia / Europe ──
+    {"name": "Yamal-Europe", "type": "gas", "from_loc": {"lat": 67.50, "lng": 72.00, "name": "Yamal Peninsula, Russia"}, "to_loc": {"lat": 52.23, "lng": 21.01, "name": "Mallnow, Germany (via Poland)"}, "capacity": "33 bcm/yr", "detail": "4,107 km; Russia-Belarus-Poland-Germany; flows reversed post-2022"},
+    {"name": "Blue Stream", "type": "gas", "from_loc": {"lat": 44.60, "lng": 38.00, "name": "Beregovaya, Russia"}, "to_loc": {"lat": 42.03, "lng": 35.12, "name": "Samsun, Turkey"}, "capacity": "16 bcm/yr", "detail": "Black Sea subsea pipeline; 396 km offshore section"},
+    {"name": "Nord Stream 2 (destroyed)", "type": "gas", "from_loc": {"lat": 59.73, "lng": 28.38, "name": "Ust-Luga, Russia"}, "to_loc": {"lat": 54.11, "lng": 13.43, "name": "Greifswald, Germany"}, "capacity": "55 bcm/yr", "detail": "Never entered service; sabotaged Sep 2022 alongside Nord Stream 1"},
+    {"name": "Southern Gas Corridor (TAP section)", "type": "gas", "from_loc": {"lat": 39.93, "lng": 32.85, "name": "Turkey-Greece border"}, "to_loc": {"lat": 40.85, "lng": 17.40, "name": "Brindisi, Italy"}, "capacity": "10 bcm/yr", "detail": "878 km Trans Adriatic Pipeline; Caspian gas to Europe bypassing Russia"},
+    {"name": "Soyuz Pipeline", "type": "gas", "from_loc": {"lat": 51.16, "lng": 51.37, "name": "Orenburg, Russia"}, "to_loc": {"lat": 48.68, "lng": 16.77, "name": "Baumgarten, Austria"}, "capacity": "26 bcm/yr", "detail": "Central Asian gas via Russia to Europe; declining flows post-2022"},
+    # ── Middle East / Central-South Asia ──
+    {"name": "Iran-Turkey Gas Pipeline (Tabriz-Ankara)", "type": "gas", "from_loc": {"lat": 38.08, "lng": 46.29, "name": "Tabriz, Iran"}, "to_loc": {"lat": 39.93, "lng": 32.85, "name": "Ankara, Turkey"}, "capacity": "14 bcm/yr", "detail": "Operational since 2001; frequent sabotage attacks on Turkish section"},
+    {"name": "HBJ Pipeline (India)", "type": "gas", "from_loc": {"lat": 21.17, "lng": 72.83, "name": "Hazira, Gujarat"}, "to_loc": {"lat": 26.85, "lng": 80.91, "name": "Jagdishpur, UP"}, "capacity": "18 bcm/yr", "detail": "India's 2,700 km backbone gas pipeline; GAIL-operated"},
+    {"name": "Dolphin Gas Pipeline", "type": "gas", "from_loc": {"lat": 25.92, "lng": 51.53, "name": "Ras Laffan, Qatar"}, "to_loc": {"lat": 24.47, "lng": 54.37, "name": "Abu Dhabi, UAE"}, "capacity": "19 bcm/yr", "detail": "Only cross-border pipeline in the Gulf; also feeds Oman"},
+    # ── China / East Asia ──
+    {"name": "China-Myanmar Oil & Gas Pipeline", "type": "oil", "from_loc": {"lat": 19.76, "lng": 93.12, "name": "Kyaukphyu, Myanmar"}, "to_loc": {"lat": 25.04, "lng": 102.68, "name": "Kunming, China"}, "capacity": "440K bpd oil + 12 bcm/yr gas", "detail": "771 km; allows China to bypass Strait of Malacca"},
+    {"name": "China-Central Asia Gas Pipeline (Lines A/B/C)", "type": "gas", "from_loc": {"lat": 39.77, "lng": 64.42, "name": "Turkmenistan"}, "to_loc": {"lat": 43.80, "lng": 87.60, "name": "Khorgos, China (Xinjiang)"}, "capacity": "55 bcm/yr", "detail": "1,833 km across Uzbekistan/Kazakhstan; Turkmen gas to China"},
+    {"name": "Power of Siberia 2 (planned)", "type": "gas", "from_loc": {"lat": 61.52, "lng": 90.22, "name": "Western Siberia, Russia"}, "to_loc": {"lat": 40.18, "lng": 116.41, "name": "Beijing, China (via Mongolia)"}, "capacity": "50 bcm/yr", "detail": "Planned via Mongolia; would redirect EU-bound Yamal gas to China"},
+    {"name": "West-East Gas Pipeline (China)", "type": "gas", "from_loc": {"lat": 38.93, "lng": 75.99, "name": "Tarim Basin, Xinjiang"}, "to_loc": {"lat": 31.23, "lng": 121.47, "name": "Shanghai"}, "capacity": "30 bcm/yr", "detail": "4,000 km; China's domestic backbone; 3 parallel lines"},
+    {"name": "Sakhalin-Khabarovsk-Vladivostok", "type": "gas", "from_loc": {"lat": 52.03, "lng": 142.68, "name": "Sakhalin Island, Russia"}, "to_loc": {"lat": 43.12, "lng": 131.87, "name": "Vladivostok, Russia"}, "capacity": "6 bcm/yr", "detail": "1,830 km; feeds Russian Far East and potential LNG exports to Asia"},
+    # ── South America ──
+    {"name": "Bolivia-Brazil Pipeline (GASBOL)", "type": "gas", "from_loc": {"lat": -17.78, "lng": -63.18, "name": "Santa Cruz, Bolivia"}, "to_loc": {"lat": -23.55, "lng": -46.63, "name": "Sao Paulo, Brazil"}, "capacity": "30 bcm/yr", "detail": "3,150 km; Bolivia's main gas export route; declining production"},
+    {"name": "Trans-Andean Pipeline (OTC)", "type": "oil", "from_loc": {"lat": -38.93, "lng": -68.13, "name": "Neuquen, Argentina"}, "to_loc": {"lat": -36.62, "lng": -73.08, "name": "Concepcion, Chile"}, "capacity": "113K bpd", "detail": "Crosses Andes at 2,500m elevation; crude from Vaca Muerta"},
+    {"name": "Camisea Pipeline (Peru)", "type": "gas", "from_loc": {"lat": -11.80, "lng": -72.68, "name": "Camisea, Peru"}, "to_loc": {"lat": -12.04, "lng": -77.03, "name": "Lima, Peru"}, "capacity": "12 bcm/yr", "detail": "730 km from Amazon jungle across Andes to coast; feeds Peru LNG"},
+    # ── Southeast Asia ──
+    {"name": "Trans-ASEAN Gas Pipeline (Yadana)", "type": "gas", "from_loc": {"lat": 12.34, "lng": 97.22, "name": "Yadana Field, Myanmar"}, "to_loc": {"lat": 13.76, "lng": 100.50, "name": "Bangkok, Thailand"}, "capacity": "7 bcm/yr", "detail": "346 km; Thailand's largest single gas source; production declining"},
+    {"name": "Sabah-Sarawak Gas Pipeline (Malaysia)", "type": "gas", "from_loc": {"lat": 5.95, "lng": 116.08, "name": "Kota Kinabalu, Sabah"}, "to_loc": {"lat": 2.30, "lng": 111.84, "name": "Bintulu, Sarawak"}, "capacity": "3 bcm/yr", "detail": "512 km offshore; feeds Bintulu LNG complex"},
+]
+
+NUCLEAR_REACTORS = [
+    {"name": "Zaporizhzhia NPP", "country": "UA", "lat": 47.51, "lng": 34.59, "capacity_mw": 5700, "status": "occupied", "detail": "Europe's largest NPP; Russian-occupied; IAEA monitoring"},
+    {"name": "Hinkley Point C", "country": "GB", "lat": 51.21, "lng": -3.13, "capacity_mw": 3260, "status": "construction", "detail": "First new UK reactor in decades; EPR design; over budget"},
+    {"name": "Barakah NPP", "country": "AE", "lat": 23.95, "lng": 52.26, "capacity_mw": 5600, "status": "active", "detail": "First Arab nuclear plant; 4 APR-1400 units"},
+    {"name": "Akkuyu NPP", "country": "TR", "lat": 36.14, "lng": 33.53, "capacity_mw": 4800, "status": "construction", "detail": "Rosatom-built; Turkey's first NPP"},
+    {"name": "Bushehr NPP", "country": "IR", "lat": 28.83, "lng": 50.89, "capacity_mw": 1000, "status": "active", "detail": "Iran's only power reactor; Russian-supplied VVER-1000"},
+    {"name": "Taishan EPR", "country": "CN", "lat": 21.91, "lng": 112.98, "capacity_mw": 3460, "status": "active", "detail": "World's first EPR to operate; 2 units"},
+    {"name": "Flamanville 3 EPR", "country": "FR", "lat": 49.54, "lng": -1.88, "capacity_mw": 1630, "status": "active", "detail": "Finally started 2024; 12 years late"},
+    {"name": "Vogtle 3&4", "country": "US", "lat": 33.14, "lng": -81.76, "capacity_mw": 2234, "status": "active", "detail": "Only new US reactors in decades; AP1000 design"},
+    {"name": "Kudankulam NPP", "country": "IN", "lat": 8.17, "lng": 77.71, "capacity_mw": 4000, "status": "active", "detail": "Russian-supplied VVER-1000; 6 planned units"},
+    {"name": "Chernobyl (exclusion zone)", "country": "UA", "lat": 51.39, "lng": 30.10, "capacity_mw": 0, "status": "decommissioned", "detail": "1986 disaster site; New Safe Confinement; occupied then returned"},
+    {"name": "Fukushima Daiichi", "country": "JP", "lat": 37.42, "lng": 141.03, "capacity_mw": 0, "status": "decommissioned", "detail": "2011 disaster; treated water release ongoing; decades of cleanup"},
+]
+
+# ═══════════════ SHIPPING ROUTES (major global lanes) ═══════════════
+SHIPPING_ROUTES = [
+    # ── Critical chokepoints ──
+    {"name": "Strait of Malacca", "from_loc": {"lat": 1.27, "lng": 103.75, "name": "Singapore"}, "to_loc": {"lat": 6.12, "lng": 100.37, "name": "Penang, Malaysia"}, "traffic": "~94,000 vessels/yr; 25% global trade", "detail": "World's busiest shipping lane; links Indian Ocean to South China Sea; piracy risk"},
+    {"name": "Suez Canal", "from_loc": {"lat": 29.95, "lng": 32.56, "name": "Port Said, Egypt"}, "to_loc": {"lat": 29.97, "lng": 32.58, "name": "Suez, Egypt"}, "traffic": "~24,000 transits/yr; 12-15% global trade", "detail": "193 km; Houthi attacks forced rerouting 2024; $10B annual tolls"},
+    {"name": "Panama Canal", "from_loc": {"lat": 9.38, "lng": -79.92, "name": "Colon, Panama (Atlantic)"}, "to_loc": {"lat": 8.95, "lng": -79.57, "name": "Panama City (Pacific)"}, "traffic": "~14,000 transits/yr; 5% global trade", "detail": "82 km; drought reduced transits 2023-24; Neopanamax locks since 2016"},
+    {"name": "Strait of Hormuz", "from_loc": {"lat": 26.57, "lng": 56.25, "name": "Bandar Abbas, Iran"}, "to_loc": {"lat": 25.84, "lng": 55.95, "name": "Oman/UAE side"}, "traffic": "~21M bpd oil; 20% global oil supply", "detail": "33 km wide; Iran threat to close; most critical oil chokepoint"},
+    {"name": "Bab el-Mandeb Strait", "from_loc": {"lat": 12.60, "lng": 43.30, "name": "Djibouti"}, "to_loc": {"lat": 12.80, "lng": 43.50, "name": "Yemen coast"}, "traffic": "~7M bpd oil; 9% global seaborne oil", "detail": "26 km wide; Houthi attacks 2024 disrupted traffic; Red Sea security crisis"},
+    {"name": "Strait of Gibraltar", "from_loc": {"lat": 35.90, "lng": -5.35, "name": "Tangier, Morocco"}, "to_loc": {"lat": 36.14, "lng": -5.35, "name": "Gibraltar/Algeciras"}, "traffic": "~76,000 vessels/yr", "detail": "14 km wide; gateway between Atlantic and Mediterranean"},
+    {"name": "Bosphorus & Dardanelles (Turkish Straits)", "from_loc": {"lat": 41.22, "lng": 29.05, "name": "Istanbul, Bosphorus"}, "to_loc": {"lat": 40.07, "lng": 26.37, "name": "Canakkale, Dardanelles"}, "traffic": "~42,000 vessels/yr", "detail": "Russia/Black Sea access to Mediterranean; Montreux Convention; mine risk in wartime"},
+    {"name": "Danish Straits (Oresund/Great Belt)", "from_loc": {"lat": 55.68, "lng": 12.60, "name": "Copenhagen, Denmark"}, "to_loc": {"lat": 56.15, "lng": 10.22, "name": "Aarhus, Denmark"}, "traffic": "~60,000 vessels/yr", "detail": "Baltic Sea access; critical for Russian/Nordic trade; NATO choke point"},
+    {"name": "Taiwan Strait", "from_loc": {"lat": 24.45, "lng": 118.08, "name": "Xiamen, China"}, "to_loc": {"lat": 25.05, "lng": 121.53, "name": "Taipei, Taiwan"}, "traffic": "~88% of largest container ships transit", "detail": "180 km wide; geopolitical flashpoint; semiconductor supply chain risk"},
+    {"name": "English Channel", "from_loc": {"lat": 50.92, "lng": 1.85, "name": "Calais, France"}, "to_loc": {"lat": 51.13, "lng": 1.32, "name": "Dover, UK"}, "traffic": "~500 vessels/day", "detail": "33 km at narrowest; world's busiest international seaway; Dover Strait TSS"},
+    # ── Major oceanic routes ──
+    {"name": "Cape of Good Hope Route", "from_loc": {"lat": -34.36, "lng": 18.47, "name": "Cape Town, South Africa"}, "to_loc": {"lat": -33.86, "lng": 25.57, "name": "Port Elizabeth, South Africa"}, "traffic": "Alternative to Suez; surge in 2024", "detail": "Adds 10-14 days vs Suez Canal; rerouted traffic from Red Sea crisis"},
+    {"name": "North Atlantic Route (Transatlantic)", "from_loc": {"lat": 40.67, "lng": -74.03, "name": "New York/New Jersey"}, "to_loc": {"lat": 51.95, "lng": 4.05, "name": "Rotterdam, Netherlands"}, "traffic": "~$500B/yr bilateral trade", "detail": "World's most established trade lane; container and bulk cargo"},
+    {"name": "Trans-Pacific Route (Asia-North America)", "from_loc": {"lat": 31.23, "lng": 121.47, "name": "Shanghai, China"}, "to_loc": {"lat": 33.74, "lng": -118.27, "name": "Los Angeles/Long Beach"}, "traffic": "~$1T/yr trade value", "detail": "World's highest-value shipping lane; 10,000+ km; 12-16 day transit"},
+    {"name": "South China Sea Route", "from_loc": {"lat": 1.27, "lng": 103.75, "name": "Singapore"}, "to_loc": {"lat": 22.25, "lng": 114.17, "name": "Hong Kong"}, "traffic": "~$5.3T/yr in trade passes through", "detail": "Disputed territorial waters; Chinese military buildup; 9-dash line claims"},
+    {"name": "Cape Horn Route", "from_loc": {"lat": -55.98, "lng": -67.27, "name": "Cape Horn, Chile"}, "to_loc": {"lat": -34.61, "lng": -58.38, "name": "Buenos Aires, Argentina"}, "traffic": "Backup for Panama Canal", "detail": "Treacherous waters; used for oversized vessels and Panama alternatives"},
+    {"name": "Mozambique Channel", "from_loc": {"lat": -11.85, "lng": 43.87, "name": "Comoros"}, "to_loc": {"lat": -25.97, "lng": 32.57, "name": "Maputo, Mozambique"}, "traffic": "Major oil tanker route", "detail": "460 km wide; LNG tankers from Mozambique fields; cyclone risk"},
+    {"name": "Lombok Strait", "from_loc": {"lat": -8.39, "lng": 115.69, "name": "Bali, Indonesia"}, "to_loc": {"lat": -8.57, "lng": 116.35, "name": "Lombok, Indonesia"}, "traffic": "Alternative to Malacca for large vessels", "detail": "Deeper draft than Malacca; used by VLCCs and Capesize bulkers"},
+    {"name": "Northern Sea Route (Arctic)", "from_loc": {"lat": 69.35, "lng": 33.08, "name": "Murmansk, Russia"}, "to_loc": {"lat": 43.12, "lng": 131.87, "name": "Vladivostok, Russia"}, "traffic": "~2,000 transits/yr; growing", "detail": "Russia controls; 40% shorter than Suez for Europe-Asia; seasonal ice"},
+    {"name": "Mediterranean-Black Sea Route", "from_loc": {"lat": 37.95, "lng": 23.72, "name": "Piraeus, Greece"}, "to_loc": {"lat": 41.01, "lng": 28.98, "name": "Istanbul, Turkey"}, "traffic": "~65,000 vessels/yr", "detail": "Critical for grain exports from Ukraine/Russia; Turkish Straits bottleneck"},
+    {"name": "Gulf of Aden Route", "from_loc": {"lat": 11.59, "lng": 43.15, "name": "Djibouti"}, "to_loc": {"lat": 12.78, "lng": 45.04, "name": "Aden, Yemen"}, "traffic": "Gateway to Red Sea/Suez", "detail": "Counter-piracy naval patrols; Houthi missile/drone threat zone since 2023"},
+    {"name": "East Africa Coastal Route", "from_loc": {"lat": -4.05, "lng": 39.67, "name": "Mombasa, Kenya"}, "to_loc": {"lat": -33.92, "lng": 18.42, "name": "Cape Town, South Africa"}, "traffic": "Regional trade corridor", "detail": "Container and bulk cargo linking East African ports to Southern Africa and Asia"},
+]
+
+# ═══════════════ INDUSTRIAL CENTERS (major manufacturing hubs) ═══════════════
+INDUSTRIAL_CENTERS = [
+    # ── China ──
+    {"name": "Shenzhen", "country": "CN", "lat": 22.54, "lng": 114.06, "type": "electronics", "detail": "World's electronics manufacturing hub; Foxconn, Huawei, ZTE, BYD HQs"},
+    {"name": "Dongguan", "country": "CN", "lat": 23.02, "lng": 113.75, "type": "electronics", "detail": "Pearl River Delta factory city; shoes, toys, electronics for global brands"},
+    {"name": "Shanghai Pudong", "country": "CN", "lat": 31.22, "lng": 121.54, "type": "mixed", "detail": "Financial center + advanced manufacturing; SMIC semiconductor fabs; Tesla Gigafactory"},
+    {"name": "Guangzhou", "country": "CN", "lat": 23.13, "lng": 113.26, "type": "automotive", "detail": "Major auto hub; Toyota, Honda, GAC factories; Pearl River Delta logistics center"},
+    {"name": "Suzhou Industrial Park", "country": "CN", "lat": 31.30, "lng": 120.59, "type": "mixed", "detail": "China-Singapore joint venture zone; biotech, nanotech, semiconductors"},
+    {"name": "Chongqing", "country": "CN", "lat": 29.56, "lng": 106.55, "type": "automotive", "detail": "China's largest auto production base; start of Belt & Road rail freight to Europe"},
+    # ── Japan / South Korea / Taiwan ──
+    {"name": "Toyota City", "country": "JP", "lat": 35.08, "lng": 137.16, "type": "automotive", "detail": "Global HQ of Toyota Motor; world's largest automaker by volume"},
+    {"name": "Ulsan", "country": "KR", "lat": 35.54, "lng": 129.31, "type": "automotive/shipbuilding", "detail": "Hyundai Motor + world's largest shipyard (Hyundai Heavy Industries)"},
+    {"name": "Hsinchu Science Park", "country": "TW", "lat": 24.78, "lng": 120.99, "type": "semiconductors", "detail": "TSMC HQ; world's most advanced chip fabrication; 90% of cutting-edge nodes"},
+    {"name": "Samsung Pyeongtaek Campus", "country": "KR", "lat": 36.99, "lng": 127.09, "type": "semiconductors", "detail": "World's largest semiconductor fab complex; $230B+ invested"},
+    # ── United States ──
+    {"name": "Detroit Metro", "country": "US", "lat": 42.33, "lng": -83.05, "type": "automotive", "detail": "Big Three HQ (GM, Ford, Stellantis); legacy auto + EV transition hub"},
+    {"name": "Silicon Valley", "country": "US", "lat": 37.39, "lng": -122.08, "type": "technology", "detail": "Global tech innovation center; Apple, Google, Meta, NVIDIA HQs"},
+    {"name": "Houston Ship Channel", "country": "US", "lat": 29.73, "lng": -95.22, "type": "petrochemical", "detail": "World's largest petrochemical complex; 600+ chemical plants and refineries"},
+    {"name": "Austin/San Antonio Corridor", "country": "US", "lat": 30.27, "lng": -97.74, "type": "semiconductors", "detail": "Samsung, NXP, Tesla Gigafactory Texas; CHIPS Act investment hub"},
+    # ── Europe ──
+    {"name": "Stuttgart", "country": "DE", "lat": 48.78, "lng": 9.18, "type": "automotive", "detail": "Mercedes-Benz, Porsche HQs; Bosch; precision engineering cluster"},
+    {"name": "Wolfsburg", "country": "DE", "lat": 52.42, "lng": 10.78, "type": "automotive", "detail": "Volkswagen global HQ; Europe's largest car factory; 60,000 employees"},
+    {"name": "Ruhr Area (Essen-Dortmund)", "country": "DE", "lat": 51.45, "lng": 7.01, "type": "heavy_industry", "detail": "Europe's largest industrial area; steel, chemicals, energy; ThyssenKrupp"},
+    {"name": "Rotterdam-Antwerp Petrochemical Cluster", "country": "NL/BE", "lat": 51.90, "lng": 4.48, "type": "petrochemical", "detail": "Europe's largest port + refining complex; Shell, BASF, ExxonMobil plants"},
+    {"name": "Toulouse Aerospace Cluster", "country": "FR", "lat": 43.60, "lng": 1.44, "type": "aerospace", "detail": "Airbus HQ; A320/A350/A380 final assembly; 120,000 aerospace jobs"},
+    # ── South / Southeast Asia ──
+    {"name": "Dhaka-Gazipur Garment District", "country": "BD", "lat": 23.99, "lng": 90.42, "type": "textiles", "detail": "World's 2nd-largest garment exporter; $42B/yr; 4M+ workers; Rana Plaza legacy"},
+    {"name": "Bangalore (Bengaluru)", "country": "IN", "lat": 12.97, "lng": 77.59, "type": "IT/software", "detail": "India's Silicon Valley; Infosys, Wipro, TCS; $150B+ IT exports"},
+    {"name": "Batam Industrial Zone", "country": "ID", "lat": 1.05, "lng": 104.03, "type": "electronics", "detail": "Free trade zone near Singapore; electronics assembly; shipbuilding"},
+    # ── Middle East ──
+    {"name": "Jubail Industrial City", "country": "SA", "lat": 27.01, "lng": 49.62, "type": "petrochemical", "detail": "World's largest industrial city; SABIC, Saudi Aramco; $100B+ invested"},
+    {"name": "Ras Laffan Industrial City", "country": "QA", "lat": 25.92, "lng": 51.53, "type": "LNG", "detail": "World's largest LNG production hub; QatarEnergy; North Field expansion"},
+    {"name": "Jamnagar Refinery Complex", "country": "IN", "lat": 22.47, "lng": 70.06, "type": "refining", "detail": "World's largest oil refinery; 1.4M bpd; Reliance Industries; exports globally"},
+]
+
+# ═══════════════ ECONOMIC ZONES (SEZs, FTZs, special economic zones) ═══════════════
+ECONOMIC_ZONES = [
+    # ── China ──
+    {"name": "Shenzhen SEZ", "country": "CN", "lat": 22.54, "lng": 114.06, "type": "sez", "detail": "China's first and most successful SEZ (1980); $450B GDP; tech innovation hub"},
+    {"name": "Shanghai Pilot Free Trade Zone", "country": "CN", "lat": 31.32, "lng": 121.60, "type": "ftz", "detail": "China's first FTZ (2013); Lingang expansion; financial liberalization testbed"},
+    {"name": "Hainan Free Trade Port", "country": "CN", "lat": 20.02, "lng": 110.35, "type": "ftp", "detail": "Entire island as FTP by 2025; zero tariffs; China's answer to Hong Kong/Singapore"},
+    {"name": "Xiamen SEZ", "country": "CN", "lat": 24.48, "lng": 118.09, "type": "sez", "detail": "One of original 1980 SEZs; Taiwan-facing trade hub; electronics and services"},
+    # ── Middle East ──
+    {"name": "Jebel Ali Free Zone (JAFZA)", "country": "AE", "lat": 24.99, "lng": 55.06, "type": "ftz", "detail": "World's largest FTZ; 8,700+ companies; adjacent to world's largest man-made port"},
+    {"name": "Dubai International Financial Centre (DIFC)", "country": "AE", "lat": 25.21, "lng": 55.28, "type": "financial", "detail": "Common-law financial center within UAE; 4,000+ firms; $5T capital flows"},
+    {"name": "Aqaba SEZ", "country": "JO", "lat": 29.53, "lng": 35.01, "type": "sez", "detail": "Jordan's only coastal city; 0% income tax zone; Red Sea logistics hub"},
+    {"name": "NEOM (planned)", "country": "SA", "lat": 28.00, "lng": 35.20, "type": "megaproject", "detail": "Saudi Vision 2030; $500B planned; The Line, Trojena; green hydrogen ambitions"},
+    # ── Southeast Asia ──
+    {"name": "Singapore (entire territory)", "country": "SG", "lat": 1.35, "lng": 103.82, "type": "ftp", "detail": "Entire country is effectively an FTZ; 0% tariff on most goods; global trade hub"},
+    {"name": "Batam Free Trade Zone", "country": "ID", "lat": 1.05, "lng": 104.03, "type": "ftz", "detail": "Indonesia's largest FTZ; near Singapore; electronics, shipbuilding, tourism"},
+    {"name": "Subic Bay Freeport Zone", "country": "PH", "lat": 14.82, "lng": 120.28, "type": "freeport", "detail": "Former US naval base; duty-free zone; logistics, shipbuilding, tourism"},
+    {"name": "Iskandar Malaysia (Johor)", "country": "MY", "lat": 1.55, "lng": 103.73, "type": "sez", "detail": "Bordering Singapore; 3x size of Singapore; data centers, petrochemicals, logistics"},
+    # ── India ──
+    {"name": "Gujarat International Finance Tec-City (GIFT)", "country": "IN", "lat": 23.11, "lng": 72.58, "type": "financial", "detail": "India's first IFSC; modeled on Singapore/Dubai; fintech, bullion trading"},
+    {"name": "SEEPZ Mumbai", "country": "IN", "lat": 19.15, "lng": 72.87, "type": "sez", "detail": "India's oldest export zone (1973); gems, jewelry, electronics; $8B/yr exports"},
+    # ── Europe / Americas / Other ──
+    {"name": "Shannon Free Zone", "country": "IE", "lat": 52.70, "lng": -8.85, "type": "ftz", "detail": "World's first free trade zone (1959); aviation, pharma, tech; model for global FTZs"},
+    {"name": "Manaus Free Trade Zone", "country": "BR", "lat": -3.12, "lng": -60.02, "type": "ftz", "detail": "Amazon rainforest electronics hub; Samsung, Honda; tax incentives to deter deforestation"},
+    {"name": "Colon Free Trade Zone", "country": "PA", "lat": 9.35, "lng": -79.90, "type": "ftz", "detail": "Hemisphere's largest FTZ; adjacent to Panama Canal; $14B/yr re-export trade"},
+    {"name": "Shenzhen Qianhai Cooperation Zone", "country": "CN", "lat": 22.52, "lng": 113.90, "type": "ftz", "detail": "HK-Shenzhen cooperation zone; fintech, legal services; 15% corporate tax"},
+]
+
+# ═══════════════ OIL FIELDS & RARE EARTH DEPOSITS ═══════════════
+OIL_RARE_EARTH_FIELDS = [
+    # ── Major Oil Fields ──
+    {"name": "Ghawar Field", "country": "SA", "lat": 25.38, "lng": 49.40, "type": "oil", "reserves": "~75B barrels", "detail": "World's largest conventional oil field; Saudi Aramco; 3.8M bpd peak"},
+    {"name": "Burgan Field", "country": "KW", "lat": 28.98, "lng": 47.98, "type": "oil", "reserves": "~70B barrels", "detail": "World's 2nd-largest oil field; Kuwait Petroleum Corp; 1.7M bpd capacity"},
+    {"name": "Safaniya Field", "country": "SA", "lat": 27.85, "lng": 49.70, "type": "oil", "reserves": "~37B barrels", "detail": "World's largest offshore oil field; Arabian heavy crude; Saudi Aramco"},
+    {"name": "Prudhoe Bay", "country": "US", "lat": 70.26, "lng": -148.33, "type": "oil", "reserves": "~25B barrels (original)", "detail": "North America's largest oil field; Trans-Alaska Pipeline source; declining production"},
+    {"name": "Cantarell Complex", "country": "MX", "lat": 20.17, "lng": -91.58, "type": "oil", "reserves": "~18B barrels (original)", "detail": "Once world's 2nd-largest; dramatic decline from 2.1M bpd (2004) to ~100K bpd"},
+    {"name": "Pre-salt Santos Basin", "country": "BR", "lat": -25.25, "lng": -44.50, "type": "oil", "reserves": "~15B barrels", "detail": "Ultra-deepwater; Lula/Buzios fields; Petrobras; 5-7 km below sea level"},
+    {"name": "Kashagan Field", "country": "KZ", "lat": 46.10, "lng": 51.50, "type": "oil", "reserves": "~13B barrels", "detail": "World's most expensive oil project ($55B); toxic H2S; Caspian Sea; multinational consortium"},
+    {"name": "West Qurna Field", "country": "IQ", "lat": 30.95, "lng": 47.30, "type": "oil", "reserves": "~43B barrels", "detail": "World's 4th-largest; phases 1&2; ExxonMobil/Lukoil/CNPC operators"},
+    {"name": "Permian Basin", "country": "US", "lat": 31.90, "lng": -102.30, "type": "oil", "reserves": "~46B barrels (recoverable)", "detail": "US shale revolution epicenter; Texas/New Mexico; 6M bpd; world's top-producing basin"},
+    {"name": "Vaca Muerta", "country": "AR", "lat": -38.50, "lng": -69.00, "type": "oil/gas", "reserves": "~16B barrels oil + 308T cf gas", "detail": "World's 2nd-largest shale gas, 4th-largest shale oil; Patagonia; YPF/Shell/Chevron"},
+    {"name": "North Sea Brent Field", "country": "GB/NO", "lat": 61.04, "lng": 1.72, "type": "oil", "reserves": "~4B barrels (original)", "detail": "Benchmark crude pricing (Brent crude); UK/Norway; declining; decommissioning phase"},
+    {"name": "Tengiz Field", "country": "KZ", "lat": 46.27, "lng": 53.38, "type": "oil", "reserves": "~25B barrels", "detail": "Chevron-led TCO consortium; CPC pipeline to Black Sea; $48B Future Growth Project"},
+    {"name": "Rumaila Field", "country": "IQ", "lat": 30.60, "lng": 47.38, "type": "oil", "reserves": "~17B barrels", "detail": "Iraq's largest producing field; 1.4M bpd; BP/CNPC operators"},
+    {"name": "Johan Sverdrup", "country": "NO", "lat": 58.89, "lng": 2.52, "type": "oil", "reserves": "~2.7B barrels", "detail": "Norway's largest discovery in decades; powered by shore hydroelectricity; low carbon"},
+    # ── Rare Earth & Critical Mineral Deposits ──
+    {"name": "Bayan Obo Mine", "country": "CN", "lat": 41.78, "lng": 109.97, "type": "rare_earth", "reserves": "~48M tonnes REO", "detail": "World's largest rare earth deposit; 60% of global supply; Inner Mongolia; iron ore co-product"},
+    {"name": "Mountain Pass Mine", "country": "US", "lat": 35.48, "lng": -115.53, "type": "rare_earth", "reserves": "~1.4M tonnes REO", "detail": "US's only active rare earth mine; MP Materials; DOD strategic interest; California"},
+    {"name": "Mount Weld", "country": "AU", "lat": -28.77, "lng": 122.02, "type": "rare_earth", "reserves": "~1.7M tonnes REO", "detail": "World's richest known rare earth deposit by grade; Lynas Corp; processed in Malaysia"},
+    {"name": "Norra Karr", "country": "SE", "lat": 58.10, "lng": 14.60, "type": "rare_earth", "reserves": "~0.5M tonnes REO", "detail": "Heavy rare earth deposit; EU critical minerals; permitting challenges; Leading Edge Materials"},
+    {"name": "Kvanefjeld (Kuannersuit)", "country": "GL", "lat": 60.98, "lng": -46.02, "type": "rare_earth", "reserves": "~0.7M tonnes REO", "detail": "One of world's largest undeveloped deposits; Greenland banned uranium mining; political controversy"},
+    {"name": "Steenkampskraal", "country": "ZA", "lat": -31.30, "lng": 18.75, "type": "rare_earth", "reserves": "~0.1M tonnes REO", "detail": "High-grade monazite deposit; thorium co-product; small-scale restart underway"},
+    {"name": "Serra Verde", "country": "BR", "lat": -13.80, "lng": -48.50, "type": "rare_earth", "reserves": "~0.3M tonnes REO", "detail": "Ionic clay deposit; low-cost extraction; Goias state; diversification from China"},
+    {"name": "Kolwezi Cobalt Belt", "country": "CD", "lat": -10.72, "lng": 25.47, "type": "cobalt/copper", "reserves": "70% of global cobalt reserves", "detail": "DRC copper-cobalt belt; critical for EV batteries; child labor concerns; CMOC, Glencore"},
+    {"name": "Pilbara Lithium Province", "country": "AU", "lat": -21.83, "lng": 119.02, "type": "lithium", "reserves": "Major spodumene deposits", "detail": "Greenbushes, Pilgangoora, Wodgina mines; world's #1 hard-rock lithium producer"},
+    {"name": "Atacama Lithium Triangle", "country": "CL", "lat": -23.50, "lng": -68.20, "type": "lithium", "reserves": "~50% global lithium reserves", "detail": "Salar de Atacama; SQM/Albemarle; Chile, Argentina, Bolivia triangle; brine extraction"},
+    {"name": "Bushveld Complex (PGMs)", "country": "ZA", "lat": -24.90, "lng": 29.45, "type": "platinum_group", "reserves": "75% of global platinum reserves", "detail": "World's largest PGM deposit; platinum, palladium, rhodium; Anglo American, Impala, Sibanye"},
+]
+
+
 # ═══════════════ GEOPOLITICAL INDICES (per country) ═══════════════
 # Sources: Economist Intelligence Unit, Transparency Intl, RSF, UNDP, SIPRI, World Bank
 # Scores: democracy_index (0-10), corruption_cpi (0-100), press_freedom (0=best,100=worst),
@@ -3960,6 +4651,45 @@ async def get_trends():
     })
 
 
+@app.get("/api/aircraft")
+async def get_aircraft():
+    all_planes = await asyncio.to_thread(fetch_opensky)
+    mil = filter_military_aircraft(all_planes)
+    return _json({"aircraft": mil, "count": len(mil), "total": len(all_planes)})
+
+
+@app.get("/api/facilities")
+async def get_facilities():
+    return _json({"facilities": NUCLEAR_FACILITIES, "bases": MILITARY_BASES, "vessels": VESSEL_DEPLOYMENTS})
+
+
+@app.get("/api/disasters")
+async def get_disasters():
+    events = await asyncio.to_thread(fetch_eonet)
+    return _json({"disasters": events, "count": len(events)})
+
+
+@app.get("/api/satellites")
+async def get_satellites():
+    sats = await asyncio.to_thread(fetch_satellites)
+    return _json({"satellites": sats, "count": len(sats)})
+
+
+@app.get("/api/infrastructure")
+async def get_infrastructure():
+    return _json({
+        "capitals": CAPITAL_CITIES,
+        "data_centers": MAJOR_DATA_CENTERS,
+        "undersea_cables": UNDERSEA_CABLES,
+        "pipelines": OIL_GAS_PIPELINES,
+        "reactors": NUCLEAR_REACTORS,
+        "shipping_routes": SHIPPING_ROUTES,
+        "industrial_centers": INDUSTRIAL_CENTERS,
+        "economic_zones": ECONOMIC_ZONES,
+        "oil_rare_earth": OIL_RARE_EARTH_FIELDS,
+    })
+
+
 @app.get("/api/all")
 async def get_all():
     return _json({
@@ -3976,6 +4706,18 @@ async def get_all():
         "blocs": ALLIANCE_BLOCS,
         "economic": ECONOMIC_POWER,
         "indices": COUNTRY_INDICES,
+        "facilities": NUCLEAR_FACILITIES,
+        "bases": MILITARY_BASES,
+        "vessels": VESSEL_DEPLOYMENTS,
+        "capitals": CAPITAL_CITIES,
+        "data_centers": MAJOR_DATA_CENTERS,
+        "undersea_cables": UNDERSEA_CABLES,
+        "pipelines": OIL_GAS_PIPELINES,
+        "reactors": NUCLEAR_REACTORS,
+        "shipping_routes": SHIPPING_ROUTES,
+        "industrial_centers": INDUSTRIAL_CENTERS,
+        "economic_zones": ECONOMIC_ZONES,
+        "oil_rare_earth": OIL_RARE_EARTH_FIELDS,
         "threat_level": "ELEVATED",
         "threat_note": "Multiple active high-intensity conflicts. Elevated nuclear rhetoric. Global trade disruptions.",
     })
@@ -3983,4 +4725,4 @@ async def get_all():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8070)
+    uvicorn.run(app, host="127.0.0.1", port=8070)

@@ -3,6 +3,8 @@ Description=Habbig Stock Dashboard (port 8050)
 After=network.target
 
 [Service]
+# Required env vars: (none — stock dashboard reads no env vars from .env)
+# Note: This service loads the shared gateway .env but only needs the above vars
 Type=simple
 User=julianhabbig
 WorkingDirectory=/home/julianhabbig/Polymarket/stock-dashboard
@@ -10,6 +12,13 @@ ExecStart=/home/julianhabbig/Polymarket/venv/bin/python stock_dashboard.py --por
 Restart=always
 RestartSec=5
 EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/stock-dashboard
 
 [Install]
 WantedBy=multi-user.target

@@ -200,6 +200,8 @@ def init_db() -> None:
 
 
 def _hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+    if len(password) > 256:
+        raise ValueError("Password too long")
     if salt is None:
         salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000)
@@ -340,7 +342,7 @@ def get_session(token: str) -> Optional[sqlite3.Row]:
         return None
     with conn() as c:
         row = c.execute(
-            "SELECT s.*, u.username, u.email, u.is_admin FROM sessions s "
+            "SELECT s.*, u.username, u.email, u.is_admin, u.suspended FROM sessions s "
             "JOIN users u ON u.id = s.user_id "
             "WHERE s.token = ? AND s.expires_at > ?",
             (token, int(time.time())),
@@ -650,6 +652,10 @@ def _get_fernet() -> Fernet:
     if _fernet is None:
         key = os.environ.get(_TRADING_KEY_ENV, "")
         if not key:
+            if os.getenv("PRODUCTION", "0") == "1":
+                raise RuntimeError(
+                    "TRADING_ENCRYPTION_KEY must be set in production"
+                )
             key = Fernet.generate_key().decode()
             log.warning(
                 "%s not set — using ephemeral key. "
@@ -742,10 +748,16 @@ def create_trading_order(
         return cur.lastrowid
 
 
+_TRADING_ORDER_FIELDS = {"status", "error", "fill_price", "fill_amount", "order_ext_id"}
+
+
 def update_trading_order(order_id: int, **fields) -> None:
     """Update an order with fill/error info."""
     if not fields:
         return
+    bad = set(fields) - _TRADING_ORDER_FIELDS
+    if bad:
+        raise ValueError(f"disallowed fields: {bad}")
     sets = ", ".join(f"{k} = ?" for k in fields)
     vals = list(fields.values()) + [order_id]
     with conn() as c:

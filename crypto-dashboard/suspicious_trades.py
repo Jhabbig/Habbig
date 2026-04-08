@@ -59,8 +59,10 @@ def price_to_odds_str(price: float) -> str:
     """Convert a probability price to human-readable odds string.
     e.g. 0.05 -> '20:1', 0.50 -> '2:1', 0.90 -> '1.1:1'
     """
-    if price <= 0 or price >= 1:
+    if price <= 0 or price > 1:
         return "N/A"
+    if price == 1.0:
+        return "1:1"
     odds_against = (1 - price) / price
     if odds_against >= 10:
         return f"{odds_against:.0f}:1"
@@ -77,8 +79,10 @@ def calc_potential_profit(size: float, price: float) -> float:
     Payout = size / price (you get shares worth $1 each at price)
     Profit = payout - cost = size * (1/price - 1)
     """
-    if price <= 0 or price >= 1:
+    if price <= 0 or price > 1:
         return 0
+    if price >= 1.0:
+        return 0  # no profit at certainty
     return size * (1.0 / price - 1.0)
 
 
@@ -141,7 +145,7 @@ def fetch_recent_trades(hours=SCAN_HOURS, max_total=50000):
             if isinstance(ts, str):
                 try:
                     ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                except:
+                except (ValueError, TypeError, AttributeError):
                     ts = 0
             if ts > 0 and ts < cutoff_ts:
                 hit_cutoff = True
@@ -226,7 +230,7 @@ def find_suspicious_trades(trades, market_stats):
         if isinstance(ts, str):
             try:
                 ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-            except:
+            except (ValueError, TypeError, AttributeError):
                 ts = 0
 
         # Compute z-score if we have market stats
@@ -266,7 +270,7 @@ def find_suspicious_trades(trades, market_stats):
             score += 5
             reasons.append(f"Potential profit ${potential_profit:,.0f}")
 
-        # 2. ODDS CONTEXT — long-shot bets are way more suspicious
+        # 2. ODDS CONTEXT — all odds levels can be suspicious
         odds_str = price_to_odds_str(price)
         if price <= 0.05:
             score += 30
@@ -280,6 +284,12 @@ def find_suspicious_trades(trades, market_stats):
         elif price <= 0.25:
             score += 8
             reasons.append(f"Underdog bet ({odds_str} odds, {price:.0%})")
+        elif price <= 0.40:
+            score += 4
+            reasons.append(f"Below-even bet ({odds_str} odds, {price:.0%})")
+        elif price <= 0.60:
+            score += 2
+            reasons.append(f"Medium-odds bet ({odds_str} odds, {price:.0%})")
 
         # 3. TRADE SIZE (still matters but secondary to profit)
         if usd_value >= 50000:
@@ -303,13 +313,19 @@ def find_suspicious_trades(trades, market_stats):
             score += 15
             reasons.append(f"Statistical outlier ({zscore:.1f}σ above market avg)")
 
-        # 5. COMBO BONUS — long-shot + big bet = almost certainly insider
+        # 5. COMBO BONUS — outsized bets at any odds level
         if price <= 0.15 and usd_value >= 5000:
             score += 15
             reasons.append(f"Big bet on a long-shot — classic insider pattern")
         elif price <= 0.25 and usd_value >= 10000:
             score += 10
             reasons.append(f"Large bet on underdog")
+        elif price <= 0.50 and usd_value >= 25000:
+            score += 7
+            reasons.append(f"Heavy bet at medium odds — notable")
+        elif usd_value >= 50000:
+            score += 5
+            reasons.append(f"Very large position at any odds")
 
         # Only keep if meaningful
         if score < 10:
@@ -412,7 +428,7 @@ def investigate_wallet(wallet_address):
             if isinstance(ts, str):
                 try:
                     ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                except:
+                except (ValueError, TypeError, AttributeError):
                     ts = 0
             if ts > 0:
                 timestamps.append(ts)
@@ -482,7 +498,9 @@ def investigate_top_wallets(suspicious_trades, max_wallets=15):
         inv["total_profit_potential"] = info["total_profit_potential"]
 
         # BONUS: new account making big bets = extra suspicious
+        # Copy trade dicts to avoid mutating the originals in suspicious_trades list
         if inv["is_new_account"]:
+            inv["flagged_trades"] = [dict(ft, reasons=list(ft.get("reasons", []))) for ft in inv["flagged_trades"]]
             for ft in inv["flagged_trades"]:
                 ft["score"] = min(100, ft["score"] + 15)
                 ft["reasons"].append(f"New account ({inv['account_age_label']})")

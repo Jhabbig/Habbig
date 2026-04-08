@@ -22,6 +22,7 @@
     <div class="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-8">
         {% if error %}<div class="mb-5 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{{ error }}</div>{% endif %}
         <form method="POST" action="/register" class="space-y-4" id="reg-form">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="start_platform" value="polymarket">
 
             <!-- Username -->

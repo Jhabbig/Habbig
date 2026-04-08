@@ -6,6 +6,7 @@ import collections
 import hashlib
 import hmac
 import html as html_mod
+import json as _json
 import logging
 import os
 import re as _re
@@ -75,7 +76,8 @@ def _decrypt_field(value: str) -> str:
     try:
         return _fernet.decrypt(value.encode()).decode()
     except Exception:
-        # Legacy plaintext value — return as-is
+        import logging as _log
+        _log.getLogger(__name__).warning("Failed to decrypt field — possible key rotation or legacy plaintext")
         return value
 
 # Rate limiting: track login attempts per IP
@@ -153,6 +155,56 @@ def _make_csrf_token(session_token: str) -> str:
     return hashlib.sha256(f"{session_token}:{_CSRF_SECRET}".encode()).hexdigest()[:32]
 
 
+def _get_csrf_token(request: Request) -> str:
+    """Get or create a CSRF token for the current request/session.
+
+    For authenticated users the token is derived from their session cookie.
+    For unauthenticated visitors (login/register pages) a temporary token is
+    stored in a separate cookie so that the CSRF check survives the stateless
+    round-trip.
+    """
+    session_token = request.cookies.get("session")
+    if session_token and session_token in _active_sessions:
+        return _make_csrf_token(session_token)
+    # Unauthenticated: use a dedicated csrf cookie
+    csrf_cookie = request.cookies.get("_csrf_seed")
+    if csrf_cookie:
+        return _make_csrf_token(csrf_cookie)
+    # Will be set as a cookie by the caller via _set_csrf_cookie
+    seed = secrets.token_urlsafe(32)
+    return _make_csrf_token(seed)
+
+
+def _set_csrf_cookie(request: Request, response) -> str:
+    """Ensure a _csrf_seed cookie exists for unauthenticated pages.
+
+    Returns the csrf_token to embed in the form.
+    """
+    session_token = request.cookies.get("session")
+    if session_token and session_token in _active_sessions:
+        return _make_csrf_token(session_token)
+    csrf_cookie = request.cookies.get("_csrf_seed")
+    if csrf_cookie:
+        return _make_csrf_token(csrf_cookie)
+    seed = secrets.token_urlsafe(32)
+    is_secure = request.url.scheme == "https"
+    response.set_cookie("_csrf_seed", seed, httponly=True, samesite="strict", max_age=3600, secure=is_secure)
+    return _make_csrf_token(seed)
+
+
+def _validate_csrf(request: Request, form_token: str) -> bool:
+    """Validate a CSRF token submitted in a form against the expected value."""
+    session_token = request.cookies.get("session")
+    if session_token and session_token in _active_sessions:
+        expected = _make_csrf_token(session_token)
+        return hmac.compare_digest(expected, form_token)
+    csrf_cookie = request.cookies.get("_csrf_seed")
+    if csrf_cookie:
+        expected = _make_csrf_token(csrf_cookie)
+        return hmac.compare_digest(expected, form_token)
+    return False
+
+
 def _check_rate_limit(ip: str) -> bool:
     """Returns True if rate limit exceeded."""
     now = time.time()
@@ -172,11 +224,16 @@ _SESSION_MAX_AGE = 86400 * 7  # 7 days, matches cookie max_age
 
 
 def _prune_expired_sessions() -> None:
-    """Remove sessions older than _SESSION_MAX_AGE."""
+    """Remove sessions older than _SESSION_MAX_AGE. Also cap dict size."""
     now = time.time()
     expired = [t for t, (_, ts) in _active_sessions.items() if now - ts > _SESSION_MAX_AGE]
     for t in expired:
         del _active_sessions[t]
+    # Also prune login attempts
+    stale = [ip for ip, attempts in _login_attempts.items()
+             if not attempts or (now - attempts[-1]) > 600]
+    for ip in stale:
+        del _login_attempts[ip]
 
 
 # ---------------------------------------------------------------------------
@@ -223,14 +280,25 @@ async def auth_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = "", msg: str = ""):
-    return templates.TemplateResponse("login.html", {"request": request, "error": error, "msg": msg})
+    resp = templates.TemplateResponse("login.html", {"request": request, "error": error, "msg": msg, "csrf_token": ""})
+    csrf_token = _set_csrf_cookie(request, resp)
+    # Re-render with the actual token now that the cookie is set
+    resp = templates.TemplateResponse("login.html", {"request": request, "error": error, "msg": msg, "csrf_token": csrf_token})
+    _set_csrf_cookie(request, resp)
+    return resp
 
 
 @app.post("/login")
-async def login_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), password: str = Form(""), start_platform: str = Form("polymarket")):
+async def login_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), password: str = Form(""), start_platform: str = Form("polymarket"), _csrf_token: str = Form("")):
+    # CSRF validation
+    if not _validate_csrf(request, _csrf_token):
+        csrf_token = _get_csrf_token(request)
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid form submission. Please try again.", "msg": "", "csrf_token": csrf_token})
+
     client_ip = request.client.host if request.client else "unknown"
     if _check_rate_limit(client_ip):
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Too many login attempts. Try again in 5 minutes."})
+        csrf_token = _get_csrf_token(request)
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Too many login attempts. Try again in 5 minutes.", "msg": "", "csrf_token": csrf_token})
     # Record attempt AFTER the check so the limit is exact
     _login_attempts[client_ip].append(time.time())
 
@@ -250,30 +318,41 @@ async def login_submit(request: Request, session: AsyncSession = Depends(get_ses
         is_secure = request.url.scheme == "https"
         resp.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400 * 7, secure=is_secure)
         return resp
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid username or password"})
+    csrf_token = _get_csrf_token(request)
+    return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid username or password", "msg": "", "csrf_token": csrf_token})
 
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request, error: str = ""):
-    return templates.TemplateResponse("register.html", {"request": request, "error": error})
+    resp = templates.TemplateResponse("register.html", {"request": request, "error": error, "csrf_token": ""})
+    csrf_token = _set_csrf_cookie(request, resp)
+    resp = templates.TemplateResponse("register.html", {"request": request, "error": error, "csrf_token": csrf_token})
+    _set_csrf_cookie(request, resp)
+    return resp
 
 
 @app.post("/register")
-async def register_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), email: str = Form(""), password: str = Form(""), password2: str = Form(""), start_platform: str = Form("polymarket")):
+async def register_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), email: str = Form(""), password: str = Form(""), password2: str = Form(""), start_platform: str = Form("polymarket"), _csrf_token: str = Form("")):
+    # CSRF validation
+    if not _validate_csrf(request, _csrf_token):
+        csrf_token = _get_csrf_token(request)
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Invalid form submission. Please try again.", "csrf_token": csrf_token})
+
+    csrf_token = _get_csrf_token(request)
     if len(username) < 3 or len(username) > 15:
-        return templates.TemplateResponse("register.html", {"request": request, "error": "Username must be 3–15 characters"})
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Username must be 3\u201315 characters", "csrf_token": csrf_token})
     import re as _re
     if len(password) < 12 or not _re.search(r"[A-Z]", password) or not _re.search(r"[a-z]", password) or not _re.search(r"[0-9]", password):
-        return templates.TemplateResponse("register.html", {"request": request, "error": "Password must be at least 12 characters with an uppercase letter, lowercase letter, and number"})
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Password must be at least 12 characters with an uppercase letter, lowercase letter, and number", "csrf_token": csrf_token})
     if password != password2:
-        return templates.TemplateResponse("register.html", {"request": request, "error": "Passwords don't match"})
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Passwords don't match", "csrf_token": csrf_token})
     existing = await session.exec(select(User).where(User.username == username))
     if existing.first():
-        return templates.TemplateResponse("register.html", {"request": request, "error": "Username already taken"})
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Username already taken", "csrf_token": csrf_token})
     if email:
         existing_email = await session.exec(select(User).where(User.email == email))
         if existing_email.first():
-            return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered"})
+            return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered", "csrf_token": csrf_token})
     session.add(User(username=username, email=email, password_hash=_hash_password(password), preferred_platform=start_platform if start_platform in ("polymarket", "kalshi") else "polymarket", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)))
     await session.commit()
     return RedirectResponse("/login?msg=Account+created.+Sign+in+below.", status_code=302)
@@ -304,14 +383,24 @@ async def profile_page(request: Request, session: AsyncSession = Depends(get_ses
         return RedirectResponse("/login", status_code=302)
     preferred_platform = getattr(user, "preferred_platform", None) or "polymarket"
     preferred_theme = getattr(user, "preferred_theme", None) or "dark"
-    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "msg": "", "error": "", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme, "ts_password_decrypted": _decrypt_field(user.truthsocial_password)})
+    csrf_token = _get_csrf_token(request)
+    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "msg": "", "error": "", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme, "ts_password_decrypted": "••••••••" if user.truthsocial_password else "", "csrf_token": csrf_token})
 
 
 @app.post("/profile/update", response_class=HTMLResponse)
-async def profile_update(request: Request, confirm_password: str = Form(""), new_username: str = Form(""), email: str = Form(""), twitter_bearer_token: str = Form(""), truthsocial_username: str = Form(""), truthsocial_password: str = Form(""), truthsocial_access_token: str = Form(""), preferred_platform: str = Form("polymarket"), preferred_theme: str = Form("dark")):
+async def profile_update(request: Request, confirm_password: str = Form(""), new_username: str = Form(""), email: str = Form(""), twitter_bearer_token: str = Form(""), truthsocial_username: str = Form(""), truthsocial_password: str = Form(""), truthsocial_access_token: str = Form(""), preferred_platform: str = Form("polymarket"), preferred_theme: str = Form("dark"), _csrf_token: str = Form("")):
+    csrf_token = _get_csrf_token(request)
     user = await _get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=302)
+
+    # CSRF validation
+    if not _validate_csrf(request, _csrf_token):
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            result = await session.exec(select(User).where(User.id == user.id))
+            db_user = result.first() or user
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Invalid form submission. Please try again.", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+
     async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.exec(select(User).where(User.id == user.id))
         db_user = result.first()
@@ -320,28 +409,31 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
 
         # Require password to save profile changes
         if not _verify_password(confirm_password, db_user.password_hash):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Enter your current password to save changes", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Enter your current password to save changes", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
 
         if new_username and new_username != db_user.username:
             if len(new_username) < 3 or len(new_username) > 15:
-                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username must be 3\u201315 characters", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username must be 3\u201315 characters", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
             existing = await session.exec(select(User).where(User.username == new_username))
             if existing.first():
-                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username already taken", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username already taken", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
             db_user.username = new_username
 
         db_user.email = email
-        db_user.twitter_bearer_token = twitter_bearer_token
+        if twitter_bearer_token:
+            db_user.twitter_bearer_token = _encrypt_field(twitter_bearer_token) if twitter_bearer_token else None
         db_user.truthsocial_username = truthsocial_username
-        db_user.truthsocial_password = _encrypt_field(truthsocial_password)
-        db_user.truthsocial_access_token = truthsocial_access_token
+        if truthsocial_password and truthsocial_password != "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022":
+            db_user.truthsocial_password = _encrypt_field(truthsocial_password)
+        if truthsocial_access_token:
+            db_user.truthsocial_access_token = _encrypt_field(truthsocial_access_token) if truthsocial_access_token else None
         db_user.preferred_platform = preferred_platform
         db_user.preferred_theme = preferred_theme
         db_user.updated_at = datetime.now(timezone.utc)
         session.add(db_user)
         await session.commit()
 
-        resp = templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Profile updated", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+        resp = templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Profile updated", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
         if new_username and new_username != user.username:
             # Update current session for new username and invalidate all others
             current_token = request.cookies.get("session")
@@ -359,26 +451,35 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
 
 
 @app.post("/profile/password", response_class=HTMLResponse)
-async def profile_password(request: Request, current_password: str = Form(""), new_password: str = Form(""), new_password2: str = Form("")):
+async def profile_password(request: Request, current_password: str = Form(""), new_password: str = Form(""), new_password2: str = Form(""), _csrf_token: str = Form("")):
+    csrf_token = _get_csrf_token(request)
     user = await _get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=302)
+
+    # CSRF validation
+    if not _validate_csrf(request, _csrf_token):
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            result = await session.exec(select(User).where(User.id == user.id))
+            db_user = result.first() or user
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Invalid form submission. Please try again.", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+
     async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.exec(select(User).where(User.id == user.id))
         db_user = result.first()
         if not db_user:
             return RedirectResponse("/login", status_code=302)
         if not _verify_password(current_password, db_user.password_hash):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Current password is incorrect", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Current password is incorrect", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
         if len(new_password) < 12 or not _re.search(r"[A-Z]", new_password) or not _re.search(r"[a-z]", new_password) or not _re.search(r"[0-9]", new_password):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Password must be 12+ chars with uppercase, lowercase, and a number", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Password must be 12+ chars with uppercase, lowercase, and a number", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
         if new_password != new_password2:
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "New passwords don't match", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "New passwords don't match", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
         db_user.password_hash = _hash_password(new_password)
         db_user.updated_at = datetime.now(timezone.utc)
         session.add(db_user)
         await session.commit()
-        return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Password changed", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": _decrypt_field(db_user.truthsocial_password)})
+        return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Password changed", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +490,10 @@ async def update_preferences(request: Request):
     user = await _get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (ValueError, _json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.exec(select(User).where(User.id == user.id))
         db_user = result.first()
@@ -484,10 +588,10 @@ async def feed(request: Request, session: AsyncSession = Depends(get_session), _
         ec = "text-green-400" if (pred.ev_score or 0) > 0 else "text-red-400" if (pred.ev_score or 0) < 0 else "text-gray-500"
         rh = ""
         if pred.risk_flag:
-            rh = f'<span class="text-amber-400 cursor-help" title="{_esc(", ".join(pred.risk_reasons))}"><svg class="w-3.5 h-3.5 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg></span>'
+            rh = f'<span class="text-amber-400 cursor-help" title="{_esc(", ".join(_esc(r) for r in (pred.risk_reasons or [])))}"><svg class="w-3.5 h-3.5 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg></span>'
         pl = '<span class="text-blue-400 text-xs">X</span>' if post.platform == "twitter" else '<span class="text-purple-400 text-xs">TS</span>'
         mk = f'<a href="https://polymarket.com/event/{pred.market_slug}" target="_blank" class="text-blue-400 hover:text-blue-300">{_esc((pred.market_question or "")[:45])}</a>' if pred.market_slug else '<span class="text-gray-600">\u2014</span>'
-        html_rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02]"><td class="px-4 py-3 max-w-[280px]"><div class="truncate text-gray-300">{_esc(pred.predicted_outcome)}: {_esc(post.content[:70])}</div></td><td class="px-4 py-3 text-sm text-gray-400">@{_esc(post.author_handle)}</td><td class="px-4 py-3 text-center">{pl}</td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{pred.category}</span></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full {cc}">{pred.global_credibility_at_time:.2f}</span></td><td class="px-4 py-3 font-mono text-sm {ec}">{ev}</td><td class="px-4 py-3 text-center">{rh}</td><td class="px-4 py-3 text-xs">{mk}</td><td class="px-4 py-3 text-xs text-gray-500">{_time_ago(pred.extracted_at)}</td></tr>')
+        html_rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02]"><td class="px-4 py-3 max-w-[280px]"><div class="truncate text-gray-300">{_esc(pred.predicted_outcome)}: {_esc(post.content[:70])}</div></td><td class="px-4 py-3 text-sm text-gray-400">@{_esc(post.author_handle)}</td><td class="px-4 py-3 text-center">{pl}</td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{_esc(pred.category)}</span></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full {cc}">{pred.global_credibility_at_time:.2f}</span></td><td class="px-4 py-3 font-mono text-sm {ec}">{ev}</td><td class="px-4 py-3 text-center">{rh}</td><td class="px-4 py-3 text-xs">{mk}</td><td class="px-4 py-3 text-xs text-gray-500">{_time_ago(pred.extracted_at)}</td></tr>')
     if not html_rows:
         return HTMLResponse('<tr><td colspan="9" class="text-center py-16 text-gray-600">No predictions yet. Pipeline runs every 5 minutes.</td></tr>')
     return HTMLResponse("\n".join(html_rows))
@@ -537,7 +641,7 @@ async def leaderboard(request: Request, session: AsyncSession = Depends(get_sess
         pl = '<span class="text-blue-400">X</span>' if s.platform == "twitter" else '<span class="text-purple-400">TS</span>'
         acc = f"{s.accuracy_global:.0%}" if s.accuracy_global is not None else "\u2014"
         rec = f"{s.correct_qualifying}/{s.qualifying_predictions}" if s.qualifying_predictions > 0 else "0/0"
-        cp = "".join(f'<span class="text-[10px] px-1.5 py-0.5 rounded-full {_cred_color(v)}">{c[:4]}</span> ' for c in s.categories_predicted_in[:5] if (v := s.category_credibility.get(c)) is not None)
+        cp = "".join(f'<span class="text-[10px] px-1.5 py-0.5 rounded-full {_cred_color(v)}">{c[:4]}</span> ' for c in (s.categories_predicted_in or [])[:5] if (v := (s.category_credibility or {}).get(c)) is not None)
         th = '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">Trusted</span>' if s.trusted is True else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400">Untrusted</span>' if s.trusted is False else ""
         st = '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Rated</span>' if s.accuracy_unlocked else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-500/10 text-gray-500 border border-gray-500/20">Unrated</span>'
         rk = ['', '<span class="text-lg">&#129351;</span>', '<span class="text-lg">&#129352;</span>', '<span class="text-lg">&#129353;</span>']
@@ -554,7 +658,10 @@ async def sources(request: Request, session: AsyncSession = Depends(get_session)
 
 @app.post("/sources/{handle}/trust", response_class=HTMLResponse)
 async def update_trust(handle: str, request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth)):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (ValueError, _json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     tv = body.get("trusted")
     result = await session.exec(select(Source).where(Source.handle == handle))
     source = result.first()
@@ -577,9 +684,9 @@ async def source_history(handle: str, session: AsyncSession = Depends(get_sessio
     snapshots = list(reversed(result.all()))
     if not snapshots:
         return HTMLResponse('<div class="text-gray-600 text-sm">No history.</div>')
-    labels = [s.snapshotted_at.strftime("%m/%d") for s in snapshots]
-    values = [s.global_credibility for s in snapshots]
-    cid = f"spark-{handle.replace('.', '-').replace('@', '')}"
+    labels = _json.dumps([s.snapshotted_at.strftime("%m/%d") for s in snapshots])
+    values = _json.dumps([s.global_credibility for s in snapshots])
+    cid = "spark-" + _re.sub(r'[^a-zA-Z0-9-]', '', handle.replace('.', '-').replace('@', ''))
     return HTMLResponse(f'<canvas id="{cid}" width="200" height="50"></canvas><script>new Chart(document.getElementById("{cid}"),{{type:"line",data:{{labels:{labels},datasets:[{{data:{values},borderColor:"#2D64F3",borderWidth:1.5,fill:false,pointRadius:0,tension:0.3}}]}},options:{{responsive:false,plugins:{{legend:{{display:false}}}},scales:{{x:{{display:false}},y:{{display:false,min:0,max:1}}}}}}}});</script>')
 
 
@@ -643,8 +750,8 @@ async def market_chart(slug: str, session: AsyncSession = Depends(get_session), 
     snapshots = result.all()
     if not snapshots:
         return HTMLResponse('<div class="text-gray-600 text-sm p-4">No history.</div>')
-    labels = [s.snapshotted_at.strftime("%m/%d %H:%M") for s in snapshots]
-    prices = [s.yes_price for s in snapshots]
+    labels = _json.dumps([s.snapshotted_at.strftime("%m/%d %H:%M") for s in snapshots])
+    prices = _json.dumps([s.yes_price for s in snapshots])
     title = _esc(snapshots[0].market_question[:60])
     return HTMLResponse(f'<div class="mt-4 bg-gray-800/50 rounded-xl p-5 border border-white/5"><h4 class="text-sm font-semibold text-gray-300 mb-3">{title}</h4><canvas id="market-odds-chart" height="120"></canvas><script>if(window._mktChart)window._mktChart.destroy();window._mktChart=new Chart(document.getElementById("market-odds-chart"),{{type:"line",data:{{labels:{labels},datasets:[{{label:"Yes",data:{prices},borderColor:"#2D64F3",borderWidth:2,fill:true,backgroundColor:"rgba(45,100,243,0.08)",tension:0.3,pointRadius:1}}]}},options:{{responsive:true,plugins:{{legend:{{display:false}}}},scales:{{y:{{min:0,max:1,grid:{{color:"rgba(255,255,255,0.03)"}},ticks:{{color:"#6b7280"}}}},x:{{grid:{{display:false}},ticks:{{color:"#6b7280",maxRotation:45}}}}}}}}}});</script></div>')
 

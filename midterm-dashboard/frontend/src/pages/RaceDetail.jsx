@@ -36,6 +36,7 @@ export default function RaceDetail() {
   const [history, setHistory] = useState([])
   const [polls, setPolls] = useState([])
   const [historicalResults, setHistoricalResults] = useState([])
+  const [raceContext, setRaceContext] = useState(null)
   const [loading, setLoading] = useState(true)
   const [visibleSources, setVisibleSources] = useState(new Set(Object.keys(sourceColors)))
 
@@ -44,16 +45,22 @@ export default function RaceDetail() {
       api.race(raceKey).catch(() => null),
       api.history(raceKey).catch(() => []),
       api.polling(raceKey).catch(() => []),
-    ]).then(([r, h, p]) => {
+      api.raceContext(raceKey).catch(() => null),
+    ]).then(([r, h, p, ctx]) => {
       setRace(r)
       setHistory(Array.isArray(h) ? h : h?.history || [])
       setPolls(Array.isArray(p) ? p : p?.polls || [])
+      if (ctx && ctx.found !== false) setRaceContext(ctx)
       // Also try fetching history by the canonical race_key if returned
       if (r?.race_key && r.race_key !== raceKey) {
         api.history(r.race_key).then(h2 => {
           const hist = Array.isArray(h2) ? h2 : h2?.history || []
           if (hist.length > 0) setHistory(hist)
         }).catch(() => {})
+        // Also fetch context by canonical key
+        if (!ctx || ctx.found === false) {
+          api.raceContext(r.race_key).then(c => { if (c && c.found !== false) setRaceContext(c) }).catch(() => {})
+        }
       }
       // Fetch historical election results for this race_type + state
       if (r?.race_type && r?.state) {
@@ -235,6 +242,120 @@ export default function RaceDetail() {
           )
         })()}
       </div>
+
+      {/* Race Context: Policies, Referendums, Public Opinion */}
+      {raceContext && (
+        <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-stone-800">Race Context</h3>
+            {raceContext.lean && (
+              <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                raceContext.lean.includes('D') ? 'bg-blue-100 text-blue-700' :
+                raceContext.lean.includes('R') ? 'bg-red-100 text-red-700' :
+                'bg-amber-100 text-amber-700'
+              }`}>{raceContext.lean}</span>
+            )}
+          </div>
+
+          {raceContext.context && (
+            <p className="text-sm text-stone-600 mb-4 leading-relaxed">{raceContext.context}</p>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Candidates & Policies */}
+            {raceContext.candidates?.length > 0 && (
+              <div className="bg-stone-50 rounded-lg p-4">
+                <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                  <TrendingUp className="h-3.5 w-3.5" /> Candidates & Policies
+                </h4>
+                {raceContext.candidates.map((c, i) => (
+                  <div key={i} className="mb-3 last:mb-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                        c.party === 'D' ? 'bg-blue-600 text-white' : c.party === 'R' ? 'bg-red-600 text-white' : 'bg-stone-600 text-white'
+                      }`}>{c.party}</span>
+                      <span className="text-sm font-semibold text-stone-800">{c.name}</span>
+                      {c.status && <span className="text-[10px] text-stone-400 capitalize">({c.status})</span>}
+                    </div>
+                    {c.policies && (
+                      <ul className="space-y-0.5 ml-1">
+                        {c.policies.map((p, j) => (
+                          <li key={j} className="text-xs text-stone-600 flex items-start gap-1.5">
+                            <span className="text-stone-300 mt-0.5">&#x2022;</span> {p}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Key Issues + Public Opinion */}
+            <div className="space-y-4">
+              {raceContext.key_issues?.length > 0 && (
+                <div className="bg-stone-50 rounded-lg p-4">
+                  <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    Key Issues
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {raceContext.key_issues.map((iss, i) => (
+                      <span key={i} className="text-xs bg-white border border-stone-200 text-stone-700 px-2 py-1 rounded-md">{iss}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {raceContext.public_opinion && (
+                <div className="bg-stone-50 rounded-lg p-4">
+                  <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    Public Sentiment
+                  </h4>
+                  {raceContext.public_opinion.approval && (
+                    <p className="text-xs text-stone-600 mb-1">{raceContext.public_opinion.approval}</p>
+                  )}
+                  {raceContext.public_opinion.top_concern && (
+                    <p className="text-xs text-stone-700 font-medium">{raceContext.public_opinion.top_concern}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Referendums / Ballot Measures */}
+              {raceContext.referendums?.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <h4 className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">
+                    Ballot Measures
+                  </h4>
+                  {raceContext.referendums.map((ref, i) => (
+                    <div key={i} className="mb-2 last:mb-0">
+                      <div className="text-xs font-semibold text-stone-800">{ref.title}</div>
+                      <div className="text-[10px] text-amber-700 font-medium">{ref.topic}</div>
+                      <div className="text-xs text-stone-600 mt-0.5">{ref.description}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Incumbent info */}
+              {raceContext.incumbents?.length > 0 && (
+                <div className="bg-stone-50 rounded-lg p-4">
+                  <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">Incumbent</h4>
+                  {raceContext.incumbents.map((inc, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                        inc.party === 'D' ? 'bg-blue-100 text-blue-700' : inc.party === 'R' ? 'bg-red-100 text-red-700' : 'bg-stone-100 text-stone-700'
+                      }`}>{inc.party}</span>
+                      <span className="text-sm text-stone-800 font-medium">{inc.name}</span>
+                      <span className="text-xs text-stone-400">since {inc.since}</span>
+                      {inc.note && <span className="text-[10px] text-amber-600 font-medium">({inc.note})</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Historical Results */}
       {historicalResults.length > 0 && (

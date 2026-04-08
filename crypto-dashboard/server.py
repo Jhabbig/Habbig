@@ -10,11 +10,13 @@ import time
 import math
 import os
 import hashlib
+import hmac
 import secrets
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from collections import defaultdict
 import html as html_mod
+import xml.etree.ElementTree as ET
 
 import requests
 import numpy as np
@@ -53,12 +55,14 @@ async def security_middleware(request: Request, call_next):
     # Rate limiting per IP
     ip = request.client.host if request.client else "unknown"
     now = time.time()
-    # Prune departed IPs periodically
+    # Prune departed IPs periodically; hard-cap to prevent unbounded growth
     if now - _last_prune > _PRUNE_INTERVAL:
         _last_prune = now
         stale = [k for k, v in _request_counts.items() if not v or now - v[-1] > RATE_WINDOW]
         for k in stale:
             del _request_counts[k]
+        if len(_request_counts) > 10000:
+            _request_counts.clear()
         # _login_attempts pruning removed -- login rate limiting is handled by gateway
     reqs = _request_counts.get(ip, [])
     reqs = [t for t in reqs if now - t < RATE_WINDOW]
@@ -85,7 +89,7 @@ async def security_middleware(request: Request, call_next):
 def _get_session_user(request: Request) -> dict | None:
     """Get the authenticated user from gateway SSO headers."""
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
-    if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
+    if _sso_secret and hmac.compare_digest(request.headers.get("x-gateway-secret", ""), _sso_secret):
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
         if gw_id and gw_email:
@@ -96,10 +100,8 @@ def _get_session_user(request: Request) -> dict | None:
                 "display_name": gw_email.split("@")[0],
             }
 
-    # Localhost bypass for trading bots running on the same machine.
-    # Disabled in production to prevent X-Forwarded-For spoofing attacks.
-    _is_prod = os.environ.get("PRODUCTION", "").strip() == "1"
-    if not _is_prod:
+    # Localhost bypass for trading bots — only when explicitly enabled via env var.
+    if os.environ.get("DEV_LOCALHOST_BYPASS", "").strip() == "1":
         client_host = request.client.host if request.client else ""
         if client_host in ("127.0.0.1", "::1", "localhost"):
             return {"id": "00000000-0000-0000-0000-000000000000", "email": "localhost", "tier": "admin", "display_name": "System"}
@@ -140,6 +142,7 @@ async def startup():
     asyncio.create_task(price_updater())
     asyncio.create_task(window_refresher())
     asyncio.create_task(suspicious_trade_monitor())
+    asyncio.create_task(news_trade_monitor())
     # Load data in background so server is available immediately
     asyncio.create_task(load_all_assets())
     print("Server started. Loading data in background...")
@@ -346,7 +349,7 @@ async def window_refresher():
 
                 # Merge with existing data (dedup by timestamp)
                 existing = asset_state[ticker]["data"]
-                existing_ts = {ts for ts, _ in existing[-4000:]}
+                existing_ts = {ts for ts, _ in existing}
                 for ts, price in new_data:
                     if ts not in existing_ts:
                         existing.append((ts, price))
@@ -374,6 +377,8 @@ async def window_refresher():
 
                 # Update predictions using the full window history
                 if ticker not in ensembles:
+                    # Still save the windows even if models aren't trained yet
+                    asset_state[ticker].update({"windows": old_windows})
                     continue
                 preds = ensembles[ticker].predict_current_and_recent(old_windows)
 
@@ -442,11 +447,14 @@ async def window_refresher():
                                         "time": datetime.now(timezone.utc).strftime("%H:%M UTC"),
                                     },
                                 })
+                                dead = []
                                 for ws in list(connected_ws):
                                     try:
                                         await ws.send_text(alert_msg)
-                                    except:
-                                        pass
+                                    except Exception:
+                                        dead.append(ws)
+                                for ws in dead:
+                                    connected_ws.discard(ws)
 
                             # Email alerts to users who opted in
                             try:
@@ -515,17 +523,99 @@ async def suspicious_trade_monitor():
                                 try:
                                     await ws.send_text(alert)
                                 except:
-                                    pass
+                                    connected_ws.discard(ws)
 
                 # Keep set bounded -- clear entirely since set is unordered
                 if len(seen_trade_keys) > 5000:
-                    seen_trade_keys.clear()
+                    # Keep most recent entries instead of clearing all
+                    to_remove = list(seen_trade_keys)[:2500]
+                    for k in to_remove:
+                        seen_trade_keys.discard(k)
 
                 print(f"  [SUS] Scan complete: {len(result['suspicious_trades'])} flagged trades")
         except Exception as e:
             print(f"  [SUS] Scanner error: {e}")
 
         await asyncio.sleep(1800)  # re-scan every 30 minutes
+
+
+# ─── News-Trade Correlation Monitor ─────────────────────────────────
+
+last_news_trade_scan: dict = {}
+last_news_trade_time: float = 0
+
+
+async def news_trade_monitor():
+    """Scan news for insider-trading stories every 20 minutes.
+    Cross-references with Polymarket, persists to DB, pushes WebSocket
+    alerts for high-score items, and sends email to watchlist subscribers.
+    """
+    global last_news_trade_scan, last_news_trade_time, connected_ws
+
+    # Wait for server to be ready
+    await asyncio.sleep(45)
+
+    while True:
+        try:
+            from news_trade_scanner import run_news_trade_scan
+            # Pass existing suspicious trades so scanner doesn't re-run the full scan
+            sus = last_sus_scan.get("suspicious_trades", []) if last_sus_scan else None
+            result = await asyncio.to_thread(run_news_trade_scan, sus)
+
+            if result and result.get("alerts"):
+                last_news_trade_scan = result
+                last_news_trade_time = time.time()
+
+                # Persist alerts to DB
+                for alert in result["alerts"]:
+                    try:
+                        db.upsert_news_alert(alert)
+                    except Exception as e:
+                        print(f"  [NEWS-TRADE] DB error: {e}")
+
+                # Find new high-score alerts to push
+                new_alerts = db.get_unnotified_alerts(min_score=30)
+                for alert in new_alerts:
+                    # Push WebSocket notification
+                    if connected_ws:
+                        ws_msg = json.dumps({
+                            "type": "alert",
+                            "data": {
+                                "ticker": "NEWS",
+                                "direction": "news_trade",
+                                "confidence": alert["score"],
+                                "delta": f'[{alert["source"]}] {alert["title"][:60]}',
+                                "time": alert.get("scanned_at", ""),
+                                "alert_id": alert["id"],
+                                "link": alert.get("link", ""),
+                                "related_markets": alert.get("related_markets", []),
+                            },
+                        })
+                        for ws in list(connected_ws):
+                            try:
+                                await ws.send_text(ws_msg)
+                            except Exception:
+                                connected_ws.discard(ws)
+
+                    # Email watchlist subscribers
+                    watchers = db.get_watchlist_users_for_alert(alert["id"])
+                    for w in watchers:
+                        if w.get("notify_email") and w.get("email"):
+                            try:
+                                from email_alerts import send_news_trade_alert
+                                await asyncio.to_thread(
+                                    send_news_trade_alert, w["email"], dict(alert)
+                                )
+                            except Exception:
+                                pass
+
+                    db.mark_alert_notified(alert["id"])
+
+                print(f"  [NEWS-TRADE] Scan complete: {len(result['alerts'])} alerts, {len(new_alerts)} new pushes")
+        except Exception as e:
+            print(f"  [NEWS-TRADE] Monitor error: {e}")
+
+        await asyncio.sleep(1200)  # re-scan every 20 minutes
 
 
 def serialize_asset(ticker):
@@ -667,8 +757,8 @@ async def root(request: Request):
 
     # Inject nav bar with user info
     user = _get_session_user(request)
-    user_name = (user.get("display_name") or user.get("email", "")) if user else ""
-    tier_label = user.get("tier", "free").upper() if user else "FREE"
+    user_name = html_mod.escape((user.get("display_name") or user.get("email", "")) if user else "")
+    tier_label = html_mod.escape(user.get("tier", "free").upper() if user else "FREE")
     tier_color = "var(--green)" if tier_label in ("PREMIUM","ADMIN") else "var(--muted)"
     nav_html = f"""
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:8px 0;border-bottom:1px solid var(--border);">
@@ -1001,8 +1091,11 @@ async def get_bot_status(request: Request):
     log_file = Path(__file__).parent / "bot_activity.log"
     result = {"running": False, "balance": 0, "total_pnl": 0, "total_trades": 0, "winning_trades": 0, "losing_trades": 0, "peak_balance": 0, "max_drawdown": 0, "consecutive_losses": 0, "trades": [], "log": [], "positions": []}
     if trade_file.exists():
-        with open(trade_file) as f:
-            data = json.load(f)
+        try:
+            with open(trade_file) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return result
         result["running"] = True
         result["balance"] = data.get("balance", 0)
         result["total_trades"] = data.get("total_trades", 0)
@@ -1344,8 +1437,7 @@ async def get_arbitrage_status(request: Request):
 @app.get("/arbitrage")
 async def arbitrage_dashboard(request: Request):
     """Redirect to standalone Sports Dashboard on port 8888."""
-    host = request.headers.get("host", "localhost:8000").split(":")[0]
-    return RedirectResponse(f"http://{host}:8888", status_code=302)
+    return RedirectResponse("/", status_code=302)
 
 
 # ─── Weather Dashboard ────────────────────────────────────────────────
@@ -1382,8 +1474,7 @@ async def get_weather_status(request: Request):
 @app.get("/weather")
 async def weather_dashboard(request: Request):
     """Redirect to standalone Weather Dashboard on port 5050."""
-    host = request.headers.get("host", "localhost:8000").split(":")[0]
-    return RedirectResponse(f"http://{host}:5050", status_code=302)
+    return RedirectResponse("http://localhost:5050", status_code=302)
 
 
 # ─── Dashboard Hub ───────────────────────────────────────────────────
@@ -1391,7 +1482,7 @@ async def weather_dashboard(request: Request):
 @app.get("/hub", response_class=HTMLResponse)
 async def dashboard_hub(request: Request):
     """Central hub linking to all 4 dashboards on their dedicated ports."""
-    host = request.headers.get("host", "localhost:8000").split(":")[0]
+    host = html_mod.escape(request.headers.get("host", "localhost:8000").split(":")[0])
     html = f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1561,9 +1652,9 @@ async def trade_page(request: Request):
     user = _get_session_user(request)
     is_premium = user and user["tier"] in ("premium", "admin")
 
-    # Get suspicious trades for "follow trade" feature
+    # Get suspicious trades for "follow trade" feature (free for all users)
     sus_trades = []
-    if is_premium and last_sus_scan and last_sus_scan.get("suspicious_trades"):
+    if last_sus_scan and last_sus_scan.get("suspicious_trades"):
         sus_trades = last_sus_scan["suspicious_trades"][:20]
 
     # Get active Polymarket markets
@@ -1578,7 +1669,7 @@ async def trade_page(request: Request):
     for t in sus_trades:
         odds_str = t.get("odds_str", f'{t.get("price", 0):.0%}')
         pot_profit = t.get("potential_profit", 0)
-        slug = t.get("market_id", "")
+        slug = html_mod.escape(t.get("market_id", ""), quote=True)
         poly_url = f"https://polymarket.com/event/{slug}" if slug else "#"
         sus_rows += f"""<tr>
           <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(t['title'][:60])}</td>
@@ -1593,7 +1684,7 @@ async def trade_page(request: Request):
     # Build active markets rows
     market_rows = ""
     for m in markets[:50]:
-        slug = m.get("slug", "")
+        slug = html_mod.escape(m.get("slug", ""), quote=True)
         poly_url = f"https://polymarket.com/event/{slug}" if slug else "#"
         vol = m.get("volume_24h", 0)
         vol_str = f"${vol:,.0f}" if vol >= 1000 else f"${vol:.0f}"
@@ -1607,10 +1698,10 @@ async def trade_page(request: Request):
     premium_badge = '<span style="background:var(--green);color:#000;padding:1px 8px;border-radius:4px;font-size:0.7em;font-weight:600;margin-left:8px;">PREMIUM</span>' if is_premium else ""
 
     sus_section = ""
-    if is_premium and sus_rows:
+    if sus_rows:
         sus_section = f"""
         <div class="section">
-          <h2 style="color:var(--red);">Follow Suspicious Trades{premium_badge}</h2>
+          <h2 style="color:var(--red);">Follow Suspicious Trades</h2>
           <p style="color:var(--muted);font-size:0.8em;margin-bottom:10px;">
             Trades flagged by our scanner as potentially suspicious. Click "Trade on Polymarket" to follow these trades on the same markets.
           </p>
@@ -1620,12 +1711,6 @@ async def trade_page(request: Request):
               <tbody>{sus_rows}</tbody>
             </table>
           </div>
-        </div>"""
-    elif not is_premium:
-        sus_section = """
-        <div style="background:rgba(88,166,255,0.08);border:1px solid rgba(88,166,255,0.3);border-radius:8px;padding:16px;margin-bottom:20px;">
-          <div style="font-weight:600;margin-bottom:4px;">Upgrade to Premium</div>
-          <div style="color:var(--muted);font-size:0.85em;">Premium users can see suspicious trades and follow them directly. Contact admin to upgrade.</div>
         </div>"""
 
     html = f"""<!DOCTYPE html><html lang="en"><head>
@@ -1670,6 +1755,23 @@ async def trade_page(request: Request):
 {sus_section}
 
 <div class="section">
+  <h2 style="color:var(--red);">News-Trade Insider Alerts <span style="display:inline-block;width:8px;height:8px;background:var(--red);border-radius:50%;margin-left:6px;animation:pulse 1s infinite;"></span></h2>
+  <p style="color:var(--muted);font-size:0.75em;margin-bottom:4px;">
+    Scans news for insider trading reports, suspicious bets &amp; prediction market anomalies. Cross-referenced with live Polymarket data. Scans every 20 min.
+  </p>
+  <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+    <button onclick="toggleWatchlistView()" id="wl-toggle-btn" style="background:var(--card);color:var(--blue);border:1px solid var(--blue);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:0.75em;">Show Watchlist</button>
+    <span id="wl-count" style="color:var(--muted);font-size:0.7em;"></span>
+  </div>
+  <div id="news-trade-alerts" style="border:1px solid var(--red);border-radius:8px;max-height:500px;overflow-y:auto;">
+    <div style="padding:16px;color:var(--muted);text-align:center;">Loading alerts...</div>
+  </div>
+  <div id="news-trade-watchlist" style="display:none;border:1px solid var(--blue);border-radius:8px;max-height:400px;overflow-y:auto;margin-top:10px;">
+    <div style="padding:16px;color:var(--muted);text-align:center;">Loading watchlist...</div>
+  </div>
+</div>
+
+<div class="section">
   <h2>Active Polymarket Markets (by 24h Volume)</h2>
   <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;">
     <table>
@@ -1679,9 +1781,422 @@ async def trade_page(request: Request):
   </div>
 </div>
 
+<div class="section">
+  <h2 style="color:var(--yellow);">Current Affairs Feed <span id="news-pulse" style="display:inline-block;width:8px;height:8px;background:var(--green);border-radius:50%;margin-left:6px;animation:pulse 1s infinite;"></span></h2>
+  <p style="color:var(--muted);font-size:0.75em;margin-bottom:8px;">Auto-refreshes every 5 seconds &bull; Sources: BBC, NYT, Reuters</p>
+  <div id="news-feed" style="border:1px solid var(--border);border-radius:8px;max-height:400px;overflow-y:auto;">
+    <div style="padding:16px;color:var(--muted);text-align:center;">Loading news...</div>
+  </div>
+</div>
+
+<style>
+  @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
+  .news-item {{ padding:10px 14px;border-bottom:1px solid var(--border);transition:background 0.2s; }}
+  .news-item:last-child {{ border-bottom:none; }}
+  .news-item:hover {{ background:rgba(88,166,255,0.05); }}
+  .news-item .news-title {{ font-size:0.85em;font-weight:600;margin-bottom:3px; }}
+  .news-item .news-title a {{ color:var(--text);text-decoration:none; }}
+  .news-item .news-title a:hover {{ color:var(--blue); }}
+  .news-item .news-meta {{ font-size:0.7em;color:var(--muted); }}
+  .news-item .news-summary {{ font-size:0.75em;color:var(--muted);margin-top:3px; }}
+  .news-new {{ animation:fadeIn 0.4s ease-in; }}
+  @keyframes fadeIn {{ from{{opacity:0;transform:translateY(-5px)}} to{{opacity:1;transform:translateY(0)}} }}
+</style>
+
+<script>
+(function() {{
+  const feed = document.getElementById('news-feed');
+  let knownTitles = new Set();
+  let firstLoad = true;
+
+  function escapeHtml(s) {{
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }}
+
+  async function refreshNews() {{
+    try {{
+      const resp = await fetch('/api/news');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const articles = data.articles || [];
+      if (!articles.length) return;
+
+      const newTitles = new Set(articles.map(a => a.title));
+      let html = '';
+      for (const a of articles) {{
+        const isNew = !firstLoad && !knownTitles.has(a.title);
+        const src = escapeHtml(a.source);
+        const pub = a.published ? new Date(a.published).toLocaleTimeString([], {{hour:'2-digit',minute:'2-digit'}}) : '';
+        html += '<div class="news-item' + (isNew ? ' news-new' : '') + '">'
+          + '<div class="news-title"><a href="' + escapeHtml(a.link) + '" target="_blank">' + escapeHtml(a.title) + '</a></div>'
+          + '<div class="news-meta">' + src + (pub ? ' &bull; ' + pub : '') + '</div>'
+          + (a.summary ? '<div class="news-summary">' + escapeHtml(a.summary.replace(/<[^>]*>/g,'')) + '</div>' : '')
+          + '</div>';
+      }}
+      feed.innerHTML = html;
+      knownTitles = newTitles;
+      firstLoad = false;
+    }} catch(e) {{ /* retry next cycle */ }}
+  }}
+
+  refreshNews();
+  setInterval(refreshNews, 5000);
+}})();
+</script>
+
+<style>
+  /* News-Trade Alert styles */
+  .nta-item {{ padding:12px 14px;border-bottom:1px solid var(--border);transition:background 0.2s; }}
+  .nta-item:last-child {{ border-bottom:none; }}
+  .nta-item:hover {{ background:rgba(248,81,73,0.05); }}
+  .nta-header {{ display:flex;justify-content:space-between;align-items:flex-start;gap:8px; }}
+  .nta-title {{ font-size:0.85em;font-weight:600;flex:1; }}
+  .nta-title a {{ color:var(--text);text-decoration:none; }}
+  .nta-title a:hover {{ color:var(--red); }}
+  .nta-score {{ background:var(--red);color:#fff;padding:2px 8px;border-radius:4px;font-size:0.7em;font-weight:700;white-space:nowrap; }}
+  .nta-score.medium {{ background:var(--yellow);color:#000; }}
+  .nta-score.low {{ background:var(--border);color:var(--muted); }}
+  .nta-meta {{ font-size:0.7em;color:var(--muted);margin-top:3px; }}
+  .nta-reasons {{ font-size:0.72em;color:var(--muted);margin-top:4px;padding-left:12px; }}
+  .nta-reasons span {{ display:inline-block;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.2);border-radius:3px;padding:1px 6px;margin:2px 4px 2px 0;font-size:0.9em; }}
+  .nta-markets {{ margin-top:6px;padding:6px 10px;background:rgba(88,166,255,0.05);border-radius:4px;font-size:0.72em; }}
+  .nta-markets a {{ color:var(--blue);text-decoration:none; }}
+  .nta-markets a:hover {{ text-decoration:underline; }}
+  .nta-actions {{ margin-top:6px;display:flex;gap:6px; }}
+  .nta-watch-btn {{ background:none;border:1px solid var(--blue);color:var(--blue);padding:2px 10px;border-radius:4px;cursor:pointer;font-size:0.72em;transition:all 0.2s; }}
+  .nta-watch-btn:hover {{ background:var(--blue);color:#fff; }}
+  .nta-watch-btn.watched {{ background:var(--blue);color:#fff; }}
+  .nta-unwatch-btn {{ background:none;border:1px solid var(--red);color:var(--red);padding:2px 10px;border-radius:4px;cursor:pointer;font-size:0.72em; }}
+  .nta-unwatch-btn:hover {{ background:var(--red);color:#fff; }}
+  .nta-trade {{ margin-top:6px;padding:8px 10px;background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.15);border-radius:6px; }}
+  .nta-trade-label {{ font-size:0.6em;text-transform:uppercase;letter-spacing:1px;color:var(--red);font-weight:700;margin-bottom:3px; }}
+  .nta-trade-detail {{ font-size:0.8em;margin-bottom:4px; }}
+  .nta-trade-stats {{ display:flex;flex-wrap:wrap;gap:10px;font-size:0.72em;color:var(--muted); }}
+  .nta-trade-stats b {{ color:var(--text); }}
+  .nta-trade-stats code {{ background:var(--card);padding:1px 4px;border-radius:3px;font-size:0.9em; }}
+
+  /* Toast notification */
+  #toast-container {{ position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none; }}
+  .toast {{ pointer-events:auto;background:var(--card);border:1px solid var(--red);border-radius:8px;padding:12px 16px;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,0.5);animation:slideIn 0.4s ease-out; }}
+  .toast.news-trade {{ border-color:var(--yellow); }}
+  .toast-title {{ font-size:0.85em;font-weight:700;margin-bottom:4px; }}
+  .toast-body {{ font-size:0.75em;color:var(--muted); }}
+  .toast-close {{ position:absolute;top:8px;right:12px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1em; }}
+  @keyframes slideIn {{ from{{opacity:0;transform:translateX(50px)}} to{{opacity:1;transform:translateX(0)}} }}
+</style>
+
+<div id="toast-container"></div>
+
+<script>
+(function() {{
+  const alertsEl = document.getElementById('news-trade-alerts');
+  const watchlistEl = document.getElementById('news-trade-watchlist');
+  const wlCountEl = document.getElementById('wl-count');
+  let watchedIds = new Set();
+  let showingWatchlist = false;
+
+  function escapeHtml(s) {{
+    const d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+  }}
+
+  function scoreClass(score) {{
+    if (score >= 50) return '';
+    if (score >= 25) return ' medium';
+    return ' low';
+  }}
+
+  function renderAlert(a, isWatchlist) {{
+    const scoreHtml = '<span class="nta-score' + scoreClass(a.score) + '">' + a.score + '/100</span>';
+
+    // Trade details (if present — v2 scanner always includes these)
+    let tradeHtml = '';
+    if (a.trade_title) {{
+      const profitStr = a.trade_potential_profit ? '$' + Number(a.trade_potential_profit).toLocaleString() : '?';
+      const sizeStr = a.trade_size ? '$' + Number(a.trade_size).toLocaleString() : '?';
+      const oddsStr = a.trade_odds_str || (a.trade_odds ? (a.trade_odds * 100).toFixed(0) + '%' : '?');
+      const polyUrl = a.trade_market_id ? 'https://polymarket.com/event/' + encodeURIComponent(a.trade_market_id) : '#';
+      tradeHtml = '<div class="nta-trade">'
+        + '<div class="nta-trade-label">SUSPICIOUS TRADE</div>'
+        + '<div class="nta-trade-detail">'
+        + '<a href="' + polyUrl + '" target="_blank" style="color:var(--blue);text-decoration:none;font-weight:600;">' + escapeHtml(a.trade_title.substring(0, 60)) + '</a>'
+        + ' &mdash; ' + escapeHtml(a.trade_outcome || '')
+        + '</div>'
+        + '<div class="nta-trade-stats">'
+        + '<span>Bet: <b>' + sizeStr + '</b></span>'
+        + '<span>Odds: <b>' + oddsStr + '</b></span>'
+        + '<span>Profit: <b style="color:var(--red);">' + profitStr + '</b></span>'
+        + (a.trade_time ? '<span>Placed: ' + escapeHtml(a.trade_time) + '</span>' : '')
+        + (a.trade_wallet ? '<span>Wallet: <code>' + escapeHtml(a.trade_wallet) + '...</code></span>' : '')
+        + '</div>'
+        + '</div>';
+    }}
+
+    const reasons = (a.reasons || []).map(r => '<span>' + escapeHtml(r) + '</span>').join('');
+
+    const watched = watchedIds.has(a.id || a.alert_id);
+    let actionBtn = '';
+    if (isWatchlist) {{
+      actionBtn = '<button class="nta-unwatch-btn" onclick="removeFromWatchlist(\'' + (a.alert_id || a.id) + '\')">Remove</button>';
+    }} else {{
+      actionBtn = watched
+        ? '<button class="nta-watch-btn watched" disabled>Watching</button>'
+        : '<button class="nta-watch-btn" onclick="addToWatchlist(\'' + a.id + '\')">+ Watch</button>';
+    }}
+
+    return '<div class="nta-item">'
+      + '<div class="nta-header">'
+      + '<div class="nta-title"><a href="' + escapeHtml(a.link) + '" target="_blank">' + escapeHtml(a.title) + '</a></div>'
+      + scoreHtml
+      + '</div>'
+      + '<div class="nta-meta">' + escapeHtml(a.source) + (a.published ? ' &bull; ' + escapeHtml(a.published) : '') + '</div>'
+      + tradeHtml
+      + (reasons ? '<div class="nta-reasons">' + reasons + '</div>' : '')
+      + '<div class="nta-actions">' + actionBtn + '</div>'
+      + '</div>';
+  }}
+
+  async function loadAlerts() {{
+    try {{
+      const resp = await fetch('/api/news-trade-alerts?min_score=10');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const alerts = data.alerts || [];
+      if (!alerts.length) {{
+        alertsEl.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center;">No insider trading alerts detected yet. Scanner runs every 20 minutes.</div>';
+        return;
+      }}
+      alertsEl.innerHTML = alerts.map(a => renderAlert(a, false)).join('');
+    }} catch(e) {{}}
+  }}
+
+  async function loadWatchlist() {{
+    try {{
+      const resp = await fetch('/api/news-watchlist');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const items = data.watchlist || [];
+      watchedIds = new Set(items.map(w => w.alert_id));
+      wlCountEl.textContent = items.length ? items.length + ' watched' : '';
+      if (!items.length) {{
+        watchlistEl.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center;">Your watchlist is empty. Click "+ Watch" on any alert above to track it.</div>';
+      }} else {{
+        watchlistEl.innerHTML = items.map(w => renderAlert(w, true)).join('');
+      }}
+    }} catch(e) {{}}
+  }}
+
+  window.addToWatchlist = async function(alertId) {{
+    try {{
+      const resp = await fetch('/api/news-watchlist/add', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{alert_id: alertId}})
+      }});
+      if (resp.ok) {{
+        watchedIds.add(alertId);
+        loadAlerts();
+        loadWatchlist();
+      }}
+    }} catch(e) {{}}
+  }};
+
+  window.removeFromWatchlist = async function(alertId) {{
+    try {{
+      const resp = await fetch('/api/news-watchlist/remove', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{alert_id: alertId}})
+      }});
+      if (resp.ok) {{
+        watchedIds.delete(alertId);
+        loadAlerts();
+        loadWatchlist();
+      }}
+    }} catch(e) {{}}
+  }};
+
+  window.toggleWatchlistView = function() {{
+    showingWatchlist = !showingWatchlist;
+    watchlistEl.style.display = showingWatchlist ? 'block' : 'none';
+    document.getElementById('wl-toggle-btn').textContent = showingWatchlist ? 'Hide Watchlist' : 'Show Watchlist';
+  }};
+
+  // Toast notification system
+  function showToast(title, body, type) {{
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast' + (type === 'news_trade' ? ' news-trade' : '');
+    toast.style.position = 'relative';
+    toast.innerHTML = '<button class="toast-close" onclick="this.parentElement.remove()">&times;</button>'
+      + '<div class="toast-title">' + escapeHtml(title) + '</div>'
+      + '<div class="toast-body">' + escapeHtml(body) + '</div>';
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 15000);
+  }}
+
+  // WebSocket listener for real-time push notifications
+  function connectWS() {{
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(proto + '//' + location.host + '/ws');
+    ws.onmessage = function(e) {{
+      try {{
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'alert' && msg.data) {{
+          const d = msg.data;
+          if (d.direction === 'news_trade') {{
+            showToast(
+              'Insider Alert [' + d.confidence + '/100]',
+              d.delta || 'New suspicious trading news detected',
+              'news_trade'
+            );
+            // Refresh alerts list
+            loadAlerts();
+            loadWatchlist();
+          }} else if (d.direction === 'suspicious') {{
+            showToast(
+              'Suspicious Trade [Score: ' + d.confidence + ']',
+              d.delta || 'Large suspicious trade detected on Polymarket',
+              'suspicious'
+            );
+          }}
+        }}
+      }} catch(e) {{}}
+    }};
+    ws.onclose = function() {{ setTimeout(connectWS, 5000); }};
+    ws.onerror = function() {{ ws.close(); }};
+  }}
+
+  // Request browser notification permission
+  if ('Notification' in window && Notification.permission === 'default') {{
+    Notification.requestPermission();
+  }}
+
+  loadAlerts();
+  loadWatchlist();
+  setInterval(loadAlerts, 60000);  // refresh alerts every 60s
+  setInterval(loadWatchlist, 60000);
+  connectWS();
+}})();
+</script>
+
 <script>setInterval(()=>location.reload(),300000);</script>
 </body></html>"""
     return HTMLResponse(html)
+
+
+# ─── Current Affairs News Feed ───────────────────────────────────────
+
+_news_cache: list = []
+_news_cache_time: float = 0
+_NEWS_CACHE_TTL = 60  # refresh from RSS every 60s
+
+RSS_FEEDS = [
+    ("https://feeds.bbci.co.uk/news/world/rss.xml", "BBC"),
+    ("https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "NYT"),
+    ("https://feeds.reuters.com/reuters/topNews", "Reuters"),
+]
+
+
+def _fetch_news_from_rss() -> list:
+    """Fetch latest headlines from multiple RSS feeds."""
+    articles = []
+    for url, source in RSS_FEEDS:
+        try:
+            resp = requests.get(url, timeout=5, headers={"User-Agent": "CryptoEdge/1.0"})
+            if resp.status_code != 200:
+                continue
+            root = ET.fromstring(resp.content)
+            # Standard RSS 2.0 structure
+            for item in root.iter("item"):
+                title_el = item.find("title")
+                link_el = item.find("link")
+                pub_el = item.find("pubDate")
+                desc_el = item.find("description")
+                if title_el is None or title_el.text is None:
+                    continue
+                articles.append({
+                    "title": title_el.text.strip(),
+                    "link": (link_el.text or "").strip() if link_el is not None else "",
+                    "source": source,
+                    "published": (pub_el.text or "").strip() if pub_el is not None else "",
+                    "summary": (desc_el.text or "").strip()[:200] if desc_el is not None else "",
+                })
+        except Exception:
+            continue
+    # Sort by published date (most recent first), limit to 30
+    articles.sort(key=lambda a: a.get("published", ""), reverse=True)
+    return articles[:30]
+
+
+@app.get("/api/news")
+async def api_news(request: Request):
+    """Return cached current affairs headlines as JSON."""
+    global _news_cache, _news_cache_time
+    if not _check_auth(request):
+        raise HTTPException(status_code=401)
+    now = time.time()
+    if now - _news_cache_time > _NEWS_CACHE_TTL or not _news_cache:
+        _news_cache = await asyncio.to_thread(_fetch_news_from_rss)
+        _news_cache_time = now
+    return JSONResponse({"articles": _news_cache, "updated": _news_cache_time})
+
+
+# ─── News-Trade Alerts API ──────────────────────────────────────────
+
+@app.get("/api/news-trade-alerts")
+async def api_news_trade_alerts(request: Request):
+    """Return news-trade correlation alerts."""
+    if not _check_auth(request):
+        raise HTTPException(status_code=401)
+    min_score = int(request.query_params.get("min_score", "0"))
+    hours = int(request.query_params.get("hours", "72"))
+    alerts = await asyncio.to_thread(db.get_news_alerts, min_score, 50, hours)
+    return JSONResponse({"alerts": alerts, "updated": last_news_trade_time})
+
+
+@app.get("/api/news-watchlist")
+async def api_get_watchlist(request: Request):
+    """Get the current user's news-trade watchlist."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    items = await asyncio.to_thread(db.get_news_watchlist, user["id"])
+    return JSONResponse({"watchlist": items})
+
+
+@app.post("/api/news-watchlist/add")
+async def api_add_to_watchlist(request: Request):
+    """Add an alert to the user's watchlist."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    alert_id = body.get("alert_id", "")
+    if not alert_id:
+        raise HTTPException(status_code=400, detail="alert_id required")
+    notes = body.get("notes", "")
+    ok = await asyncio.to_thread(
+        db.add_to_news_watchlist, user["id"], alert_id, notes
+    )
+    return JSONResponse({"ok": ok})
+
+
+@app.post("/api/news-watchlist/remove")
+async def api_remove_from_watchlist(request: Request):
+    """Remove an alert from the user's watchlist."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    alert_id = body.get("alert_id", "")
+    if not alert_id:
+        raise HTTPException(status_code=400, detail="alert_id required")
+    await asyncio.to_thread(db.remove_from_news_watchlist, user["id"], alert_id)
+    return JSONResponse({"ok": True})
 
 
 # ─── Accuracy Tracker ────────────────────────────────────────────────
@@ -1811,7 +2326,8 @@ async def settings_page(request: Request):
     if not wl_html:
         wl_html = '<div style="color:var(--muted);">No watchlists yet.</div>'
 
-    tier_badge = f'<span style="background:{"var(--green)" if user["tier"]=="premium" else "var(--blue)"};color:#fff;padding:3px 10px;border-radius:12px;font-size:0.75em;font-weight:600;">{user["tier"].upper()}</span>'
+    tier_esc = html_mod.escape(user["tier"].upper())
+    tier_badge = f'<span style="background:{"var(--green)" if user["tier"]=="premium" else "var(--blue)"};color:#fff;padding:3px 10px;border-radius:12px;font-size:0.75em;font-weight:600;">{tier_esc}</span>'
 
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1838,14 +2354,14 @@ async def settings_page(request: Request):
 
 <div class="info-box">
   <div style="color:var(--muted);font-size:0.8em;">EMAIL</div>
-  <div style="font-size:1.1em;margin-top:2px;">{user['email']}</div>
+  <div style="font-size:1.1em;margin-top:2px;">{html_mod.escape(user['email'])}</div>
 </div>
 <div class="info-box">
   <div style="color:var(--muted);font-size:0.8em;">NAME</div>
-  <div style="font-size:1.1em;margin-top:2px;">{user['display_name'] or '(not set)'}</div>
+  <div style="font-size:1.1em;margin-top:2px;">{html_mod.escape(user['display_name'] or '(not set)')}</div>
 </div>
 
-<h2>Your Tier: {user['tier'].upper()}</h2>
+<h2>Your Tier: {tier_esc}</h2>
 <div class="info-box">
   {"<p style='color:var(--green);font-weight:600;'>Premium features active: Neural Net predictions, Suspicious Trades detector, Model Marketplace</p>" if user['tier'] in ('premium','admin') else "<p style='color:var(--muted);'>Free tier — upgrade to Premium for neural net predictions, suspicious trade alerts, and model marketplace.</p><p style='margin-top:8px;'><em>Contact admin to upgrade.</em></p>"}
 </div>
@@ -1950,6 +2466,21 @@ async def disclaimer_page():
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    # Authenticate via gateway SSO headers (same as HTTP requests)
+    _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
+    headers = ws.headers
+    authed = False
+    if _sso_secret and hmac.compare_digest(headers.get("x-gateway-secret", ""), _sso_secret):
+        if headers.get("x-gateway-user-id") and headers.get("x-gateway-user-email"):
+            authed = True
+    # Localhost bypass for bots
+    if not authed and not os.environ.get("PRODUCTION", "").strip() == "1":
+        client_host = ws.client.host if ws.client else ""
+        if client_host in ("127.0.0.1", "::1", "localhost"):
+            authed = True
+    if not authed:
+        await ws.close(code=4001, reason="Not authenticated")
+        return
     await ws.accept()
     connected_ws.add(ws)
     try:

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """SQLite database layer for the Midterm Elections Dashboard.
 
 Uses sqlite3 with WAL mode, a threading lock, and a contextmanager for

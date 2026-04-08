@@ -4,6 +4,10 @@ After=network.target
 Wants=habbig-crypto.service habbig-weather.service habbig-sports.service habbig-world.service habbig-midterm.service habbig-traders.service habbig-stock.service
 
 [Service]
+# Required env vars: GATEWAY_SSO_SECRET, GATEWAY_COOKIE_SECRET, STRIPE_SECRET_KEY,
+#   STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET, SMTP_USER, SMTP_PASS,
+#   SMTP_HOST, SMTP_PORT, ENQUIRY_EMAIL, PRODUCTION
+# Note: This service loads the shared gateway .env and uses most vars
 Type=simple
 User=julianhabbig
 WorkingDirectory=/home/julianhabbig/Polymarket/gateway

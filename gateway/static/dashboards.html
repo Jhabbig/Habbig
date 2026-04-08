@@ -3,23 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboards — Habbig</title>
+  <title>Dashboards — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
 </head>
 <body>
   <header class="gw-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
-    </div>
+    <a href="/dashboards" class="gw-brand" style="text-decoration:none">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
+    </a>
+    <div class="gw-sep"></div>
+    <nav class="gw-tabs">{{ raw_dashboard_tabs }}</nav>
+    <div class="gw-spacer"></div>
     <nav class="gw-nav">
-      <a href="/dashboards" class="active">Dashboards</a>
       <a href="/billing">Billing</a>
       <a href="/settings">Settings</a>
       {{ raw_admin_link }}
-      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
-      <a href="/logout">Sign out</a>
     </nav>
+    <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
+    <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="gw-signout">Sign out</button></form>
   </header>
 
   <main class="gw-main">
@@ -53,7 +55,7 @@
       <!-- Step 1: Welcome -->
       <div class="tour-step tour-step-welcome" data-step="1">
         <div class="tour-welcome-logo">H</div>
-        <h2 class="tour-welcome-title">Welcome to Habbig</h2>
+        <h2 class="tour-welcome-title">Welcome to narve.ai</h2>
         <p class="tour-welcome-sub">
           Your prediction market edge, six dashboards deep. Each dashboard
           covers a different market &mdash; sports, weather, crypto, elections,

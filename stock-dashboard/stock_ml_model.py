@@ -25,9 +25,7 @@ import numpy as np
 try:
     import yfinance as yf
 except ImportError:
-    import subprocess
-    subprocess.check_call(["pip3", "install", "yfinance", "-q"])
-    import yfinance as yf
+    raise ImportError("yfinance is required: pip install yfinance")
 
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -35,19 +33,12 @@ try:
     from sklearn.model_selection import TimeSeriesSplit
     from sklearn.metrics import accuracy_score, classification_report
 except ImportError:
-    import subprocess
-    subprocess.check_call(["pip3", "install", "scikit-learn", "-q"])
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import TimeSeriesSplit
-    from sklearn.metrics import accuracy_score, classification_report
+    raise ImportError("scikit-learn is required: pip install scikit-learn")
 
 try:
     from xgboost import XGBClassifier
 except ImportError:
-    import subprocess
-    subprocess.check_call(["pip3", "install", "xgboost", "-q"])
-    from xgboost import XGBClassifier
+    raise ImportError("xgboost is required: pip install xgboost")
 
 warnings.filterwarnings("ignore")
 

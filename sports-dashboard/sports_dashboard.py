@@ -8,6 +8,7 @@ Signals only — no trading logic.
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -24,7 +25,7 @@ from rapidfuzz import fuzz
 import sqlite3
 import threading
 from contextlib import contextmanager
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, HTTPException, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -296,7 +297,7 @@ def get_current_user(request: Request) -> dict | None:
     handles all authentication; this dashboard just trusts the forwarded headers.
     """
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
-    if _sso_secret and request.headers.get("x-gateway-secret") == _sso_secret:
+    if _sso_secret and hmac.compare_digest(request.headers.get("x-gateway-secret", ""), _sso_secret):
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
         if gw_id and gw_email:
@@ -311,7 +312,7 @@ def get_current_user(request: Request) -> dict | None:
                         return {
                             "id": profile["id"],
                             "email": profile.get("email", gw_email),
-                            "username": profile.get("username", gw_email.split("@")[0]),
+                            "username": profile.get("username", gw_email.split("@")[0] if "@" in gw_email else gw_email),
                             "is_admin": profile.get("is_admin", 0),
                         }
             except Exception:
@@ -320,7 +321,7 @@ def get_current_user(request: Request) -> dict | None:
             return {
                 "id": gw_id,
                 "email": gw_email,
-                "username": gw_email.split("@")[0],
+                "username": gw_email.split("@")[0] if "@" in gw_email else gw_email,
                 "is_admin": 0,
                 "_gateway_sso": True,
             }
@@ -333,10 +334,13 @@ def get_current_user(request: Request) -> dict | None:
 # App setup
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Sports Betting Dashboard")
+_cors_origins = ["http://192.168.178.160:8888", "http://localhost:8888"]
+_cf_origin = os.getenv("CLOUDFLARE_ORIGIN")
+if _cf_origin:
+    _cors_origins.append(_cf_origin)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://192.168.178.160:8888", "http://localhost:8888"],
-    allow_origin_regex=r"https://.*\.trycloudflare\.com",
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1867,6 +1871,15 @@ async def update_settings(request: Request):
 
     body = await request.json()
 
+    try:
+        divergence = float(body.get("divergence_threshold", 5.0))
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "Invalid divergence_threshold"}, status_code=400)
+    try:
+        notif = int(body.get("notifications_enabled", 1))
+    except (ValueError, TypeError):
+        notif = 1
+
     # Upsert settings into sports_user_settings
     with _get_db() as conn:
         conn.execute(
@@ -1879,8 +1892,8 @@ async def update_settings(request: Request):
                    theme = excluded.theme""",
             (user["id"],
              body.get("default_sport", "basketball_nba"),
-             float(body.get("divergence_threshold", 5.0)),
-             int(body.get("notifications_enabled", 1)),
+             divergence,
+             notif,
              body.get("theme", "dark")),
         )
     return JSONResponse({"status": "ok"})
@@ -1950,10 +1963,10 @@ async def admin_stats(request: Request):
         activity = [dict(r) for r in act_rows]
 
         # Edge performance stats
-        edge_total = conn.execute("SELECT COUNT(*) FROM sports_edge_history").fetchone()[0]
-        edge_resolved = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolved = 1").fetchone()[0]
-        edge_correct = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'correct'").fetchone()[0]
-        edge_incorrect = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'incorrect'").fetchone()[0]
+        edge_total = (conn.execute("SELECT COUNT(*) FROM sports_edge_history").fetchone() or (0,))[0]
+        edge_resolved = (conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolved = 1").fetchone() or (0,))[0]
+        edge_correct = (conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'correct'").fetchone() or (0,))[0]
+        edge_incorrect = (conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'incorrect'").fetchone() or (0,))[0]
         edge_win_rate = round(edge_correct / edge_resolved * 100, 1) if edge_resolved > 0 else 0.0
 
     return JSONResponse({
@@ -1979,7 +1992,7 @@ def _require_auth(request: Request):
     """Return user or raise 401."""
     user = get_current_user(request)
     if not user:
-        return None
+        raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 
 
@@ -2516,10 +2529,10 @@ async def edge_stats(request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     with _get_db() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM sports_edge_history").fetchone()[0]
-        correct = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'correct'").fetchone()[0]
-        incorrect = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'incorrect'").fetchone()[0]
-        pending = conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolved = 0").fetchone()[0]
+        total = (conn.execute("SELECT COUNT(*) FROM sports_edge_history").fetchone() or (0,))[0]
+        correct = (conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'correct'").fetchone() or (0,))[0]
+        incorrect = (conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolution = 'incorrect'").fetchone() or (0,))[0]
+        pending = (conn.execute("SELECT COUNT(*) FROM sports_edge_history WHERE resolved = 0").fetchone() or (0,))[0]
     resolved = correct + incorrect
     win_rate = round(correct / resolved * 100, 1) if resolved > 0 else 0.0
     return JSONResponse({
@@ -2574,11 +2587,15 @@ async def dashboard(request: Request):
     if not user:
         return RedirectResponse("/login", status_code=302)
     settings = get_user_settings(user["id"])
-    user_threshold = settings.get("divergence_threshold", DIVERGENCE_THRESHOLD)
+    try:
+        user_threshold = float(settings.get("divergence_threshold", DIVERGENCE_THRESHOLD))
+    except (ValueError, TypeError):
+        user_threshold = DIVERGENCE_THRESHOLD
     user_sport = settings.get("default_sport", "basketball_nba")
+    import html as _html_mod
     html = DASHBOARD_HTML.replace("__USER_THRESHOLD__", str(user_threshold))
-    html = html.replace("__USER_SPORT__", user_sport)
-    html = html.replace("__USERNAME__", user["username"])
+    html = html.replace("__USER_SPORT__", _html_mod.escape(user_sport).replace("\\", "\\\\").replace("'", "\\'"))
+    html = html.replace("__USERNAME__", _html_mod.escape(user["username"]).replace("\\", "\\\\").replace("'", "\\'"))
     return HTMLResponse(html)
 
 
@@ -5861,4 +5878,4 @@ setInterval(loadAdmin, 30000);
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8888, log_level="info")
+    uvicorn.run(app, host="127.0.0.1", port=8888, log_level="info")

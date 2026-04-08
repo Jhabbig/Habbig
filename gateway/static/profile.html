@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Profile — Habbig</title>
+  <title>Profile — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
   <style>
     .profile-card {
@@ -101,18 +101,20 @@
 </head>
 <body>
   <header class="gw-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
-    </div>
+    <a href="/dashboards" class="gw-brand" style="text-decoration:none">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
+    </a>
+    <div class="gw-sep"></div>
+    <nav class="gw-tabs">{{ raw_dashboard_tabs }}</nav>
+    <div class="gw-spacer"></div>
     <nav class="gw-nav">
-      <a href="/dashboards">Dashboards</a>
       <a href="/billing">Billing</a>
       <a href="/settings">Settings</a>
       {{ raw_admin_link }}
-      <a href="/profile" class="gw-user-pill active" style="text-decoration:none">{{ username }}</a>
-      <a href="/logout">Sign out</a>
     </nav>
+    <a href="/profile" class="gw-user-pill active" style="text-decoration:none">{{ username }}</a>
+    <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="gw-signout">Sign out</button></form>
   </header>
 
   <main class="gw-main gw-main-narrow">
@@ -150,6 +152,7 @@
       <div class="profile-section-desc">Enter your current password and choose a new one.</div>
 
       <form method="post" action="/profile/password">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         <div class="profile-field">
           <label class="profile-label" for="current_password">Current Password</label>
           <input class="profile-input" type="password" id="current_password" name="current_password" required autocomplete="current-password">
@@ -189,6 +192,7 @@
           {{ raw_poly_status }}
         </div>
         <form method="post" action="/profile/trading/polymarket" style="display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
           <div class="profile-field" style="margin:0">
             <label class="profile-label">Private Key (Ethereum wallet)</label>
             <input class="profile-input" type="password" name="private_key" placeholder="0x..." autocomplete="off">
@@ -222,6 +226,7 @@
           {{ raw_kalshi_status }}
         </div>
         <form method="post" action="/profile/trading/kalshi" style="display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
           <div class="profile-field" style="margin:0">
             <label class="profile-label">API Key</label>
             <input class="profile-input" type="password" name="api_key" placeholder="Kalshi API key" autocomplete="off">
@@ -247,7 +252,7 @@
     <div class="profile-card" style="border-color:rgba(239,68,68,0.2)">
       <div class="profile-section-title" style="color:var(--red)">Sessions</div>
       <div class="profile-section-desc">Sign out of this device. Other sessions stay active.</div>
-      <a href="/logout" class="btn btn-danger" style="display:inline-block;padding:10px 20px;font-size:13px;text-decoration:none">Sign out</a>
+      <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="btn btn-danger" style="padding:10px 20px;font-size:13px;cursor:pointer">Sign out</button></form>
     </div>
   </main>
 </body>

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import aiohttp
 import asyncio
 import logging
@@ -137,7 +138,17 @@ class KalshiAggregator:
                 async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 429:
                         rate_limit_hits += 1
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(5)
+                        # Retry this event once after backoff
+                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as retry_resp:
+                            if retry_resp.status == 200:
+                                data = await retry_resp.json()
+                                markets = data.get("markets", [])
+                                if markets:
+                                    for m in markets:
+                                        m["_event_category"] = event.get("category", "")
+                                        m["_event_title"] = event.get("title", "")
+                                    all_markets[event_ticker] = markets
                         continue
                     if resp.status != 200:
                         continue
@@ -291,6 +302,8 @@ class KalshiAggregator:
             end_date = m.get("expiration_time") or m.get("close_time")
             if not _is_current_open_market(end_date, m.get("status")):
                 continue
+            if self._is_sports_junk(m):
+                continue
             title = m.get("title", "")
             subtitle = m.get("subtitle", "")
 
@@ -306,7 +319,7 @@ class KalshiAggregator:
 
             outcomes = [
                 {"name": "Yes", "probability": yes_price, "token_id": None},
-                {"name": "No", "probability": no_price or (1 - yes_price if yes_price else None), "token_id": None}
+                {"name": "No", "probability": no_price if no_price is not None else (1 - yes_price if yes_price is not None else None), "token_id": None}
             ]
             if m.get("yes_sub_title"):
                 outcomes[0]["name"] = m["yes_sub_title"]
@@ -332,12 +345,32 @@ class KalshiAggregator:
             })
         return normalized
 
+    def _is_sports_junk(self, market: dict) -> bool:
+        """Detect sports parlays and non-election markets that leaked through."""
+        ticker = (market.get("ticker") or market.get("event_ticker") or "").upper()
+        title = (market.get("title") or "").lower()
+        event_title = (market.get("_event_title") or "").lower()
+        combined = f"{title} {event_title}"
+        sports_tickers = ("KXMVE", "KXSPORTS", "KXNBA", "KXNFL", "KXMLB", "KXNHL",
+                          "KXSOCCER", "KXTENNIS", "KXMMA", "KXGOLF", "KXNCAA")
+        if any(ticker.startswith(p) for p in sports_tickers):
+            return True
+        sports_terms = ["nba", "nfl", "mlb", "nhl", "goals scored", "points scored",
+                        "wins by over", "touchdown", "home run", "penalty kick",
+                        "assists", "rebounds", "strikeout", "bundesliga", "la liga",
+                        "premier league", "serie a", "champions league"]
+        if any(t in combined for t in sports_terms):
+            return True
+        return False
+
     def _normalize_markets(self, markets: list[dict]) -> list[dict]:
         """Normalize Kalshi US election markets."""
         normalized = []
         for m in markets:
             end_date = m.get("expiration_time") or m.get("close_time")
             if not _is_current_open_market(end_date, m.get("status")):
+                continue
+            if self._is_sports_junk(m):
                 continue
             title = m.get("title", "")
             subtitle = m.get("subtitle", "")
@@ -353,7 +386,7 @@ class KalshiAggregator:
             elif "control" in combined or "majority" in combined:
                 race_type = "control"
             elif "president" in combined:
-                race_type = "control"
+                race_type = "presidential"
 
             yes_price = m.get("yes_bid", 0) or m.get("last_price", 0) or 0
             no_price = m.get("no_bid", 0) or 0
@@ -367,7 +400,7 @@ class KalshiAggregator:
 
             outcomes = [
                 {"name": "Yes", "probability": yes_price, "token_id": None},
-                {"name": "No", "probability": no_price or (1 - yes_price if yes_price else None), "token_id": None}
+                {"name": "No", "probability": no_price if no_price is not None else (1 - yes_price if yes_price is not None else None), "token_id": None}
             ]
             if m.get("yes_sub_title"):
                 outcomes[0]["name"] = m["yes_sub_title"]
@@ -417,7 +450,7 @@ class KalshiAggregator:
             ("poland", "PL"), ("polish", "PL"),
             ("china", "CN"), ("chinese", "CN"),
             ("russia", "RU"), ("russian", "RU"),
-            ("african", "AF"),
+            ("south africa", "ZA"), ("african union", "AU"),
             ("european union", "EU"), ("eu ", "EU"),
         ]
         title_lower = title.lower()
@@ -444,7 +477,14 @@ class KalshiAggregator:
             "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
             "Wisconsin": "WI", "Wyoming": "WY"
         }
+        # Check full state names first (no false positives)
+        title_lower = title.lower()
         for name, abbr in states.items():
-            if name.lower() in title.lower() or f" {abbr} " in f" {title} ":
+            if name.lower() in title_lower:
+                return abbr
+        # Only check abbreviations that won't match common English words
+        ambiguous_abbrs = {"IN", "OR", "ME", "OH", "AL", "OK", "HI", "ID", "PA", "MA"}
+        for name, abbr in states.items():
+            if abbr not in ambiguous_abbrs and f" {abbr} " in f" {title} ":
                 return abbr
         return None

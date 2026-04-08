@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Historical US election results.
 
 Hand-curated dataset of recent federal/statewide election winners including

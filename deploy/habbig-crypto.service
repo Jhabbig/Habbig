@@ -3,6 +3,8 @@ Description=Habbig Crypto Dashboard (port 8000)
 After=network.target
 
 [Service]
+# Required env vars: GATEWAY_SSO_SECRET, SMTP_USER, SMTP_PASS, SMTP_HOST, SMTP_PORT, FROM_EMAIL
+# Note: This service loads the shared gateway .env but only needs the above vars
 Type=simple
 User=julianhabbig
 WorkingDirectory=/home/julianhabbig/Polymarket/crypto-dashboard
@@ -10,6 +12,13 @@ ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
 Restart=always
 RestartSec=5
 EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/crypto-dashboard
 
 [Install]
 WantedBy=multi-user.target

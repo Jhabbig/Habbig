@@ -23,6 +23,7 @@
 
     <!-- Account info -->
     <form method="POST" action="/profile/update" class="bg-white/[0.02] border border-white/5 rounded-xl p-6 mb-6">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">Account</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
@@ -61,7 +62,7 @@
         <div class="space-y-4">
             <div>
                 <label class="block text-xs text-gray-500 mb-1.5">X (Twitter) Bearer Token</label>
-                <input type="password" name="twitter_bearer_token" value="{{ user.twitter_bearer_token }}" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 font-mono focus:outline-none focus:border-[#2D64F3]/50 transition-all" placeholder="AAAA...">
+                <input type="password" name="twitter_bearer_token" value="" placeholder="{{ '••••••••' if user.twitter_bearer_token else 'AAAA...' }}" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 font-mono focus:outline-none focus:border-[#2D64F3]/50 transition-all" placeholder="AAAA...">
                 <p class="text-[10px] text-gray-600 mt-1">Get from <a href="https://developer.x.com" target="_blank" class="text-[#2D64F3]">developer.x.com</a> — requires Basic tier ($100/mo)</p>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -76,7 +77,7 @@
             </div>
             <div>
                 <label class="block text-xs text-gray-500 mb-1.5">TruthSocial Access Token <span class="text-gray-600">(alternative to username/password)</span></label>
-                <input type="password" name="truthsocial_access_token" value="{{ user.truthsocial_access_token }}" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 font-mono focus:outline-none focus:border-[#2D64F3]/50 transition-all" placeholder="Optional — fallback auth method">
+                <input type="password" name="truthsocial_access_token" value="" placeholder="{{ '••••••••' if user.truthsocial_access_token else 'Optional — fallback auth method' }}" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 font-mono focus:outline-none focus:border-[#2D64F3]/50 transition-all" placeholder="Optional — fallback auth method">
                 <p class="text-[10px] text-gray-600 mt-1">TruthSocial is a free Mastodon-compatible platform. Create an account at <a href="https://truthsocial.com" target="_blank" class="text-[#2D64F3]">truthsocial.com</a>, then set username + password above. No separate API key needed.</p>
             </div>
         </div>
@@ -90,6 +91,7 @@
 
     <!-- Change password -->
     <form method="POST" action="/profile/password" class="bg-white/[0.02] border border-white/5 rounded-xl p-6">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">Change Password</h2>
         <div class="space-y-4">
             <div>
@@ -99,7 +101,7 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-xs text-gray-500 mb-1.5">New Password</label>
-                    <input type="password" name="new_password" required minlength="6" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-[#2D64F3]/50 transition-all">
+                    <input type="password" name="new_password" required minlength="12" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-[#2D64F3]/50 transition-all">
                 </div>
                 <div>
                     <label class="block text-xs text-gray-500 mb-1.5">Confirm New Password</label>

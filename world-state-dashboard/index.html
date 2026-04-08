@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>World Monitor</title>
-<script src="https://cdn.jsdelivr.net/npm/globe.gl@2.35.1/dist/globe.gl.min.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
 :root {
@@ -175,19 +176,21 @@ body {
   bottom: 12px;
   left: 16px;
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   z-index: 20;
   pointer-events: auto;
+  max-width: 60%;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
+  gap: 4px;
+  font-size: 9px;
   color: var(--text-2);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
 }
 
 .legend-dot {
@@ -196,20 +199,56 @@ body {
   border-radius: 50%;
 }
 
-.map-stats {
-  position: absolute;
-  bottom: 12px;
-  right: 16px;
-  display: flex;
-  gap: 16px;
-  z-index: 20;
-  font-size: 10px;
-  color: var(--text-2);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
 
-.map-stats span { color: var(--green); }
+
+/* Layer Toggles */
+.map-layer-toggles {
+  position: absolute; top: 12px; left: 16px; z-index: 25;
+  display: flex; flex-direction: column; gap: 3px;
+  background: rgba(10,10,10,0.92); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 4px; padding: 0;
+  max-width: 180px; transition: max-height 0.3s ease, opacity 0.3s ease;
+  overflow: hidden;
+}
+.map-layer-toggles.collapsed .layer-toggles-body { display: none; }
+.layer-toggles-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px; cursor: pointer; border-bottom: 1px solid var(--border);
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--green); font-weight: 700; font-family: var(--mono);
+  user-select: none;
+}
+.layer-toggles-header:hover { color: var(--green-bright); }
+.layer-toggles-header .arrow { transition: transform 0.2s; font-size: 8px; }
+.map-layer-toggles.collapsed .layer-toggles-header .arrow { transform: rotate(-90deg); }
+.layer-toggles-body { padding: 4px 8px 6px; display: flex; flex-direction: column; gap: 2px; }
+.layer-toggle {
+  display: flex; align-items: center; gap: 5px; font-size: 9px;
+  color: var(--text-2); cursor: pointer; text-transform: uppercase; letter-spacing: 0.4px;
+  white-space: nowrap; padding: 1px 0;
+}
+.layer-toggle:hover { color: var(--text-0); }
+.layer-toggle input { width: 11px; height: 11px; accent-color: var(--green); cursor: pointer; }
+.layer-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+/* MapLibre globe overrides */
+#globe-container { width: 100%; height: 100%; }
+#globe-container .maplibregl-canvas { outline: none; }
+#globe-container .maplibregl-ctrl-attrib { display: none !important; }
+.globe-popup .maplibregl-popup-content {
+  background: rgba(10,10,10,0.95); color: #e0e0e0; font-family: var(--mono);
+  font-size: 11px; padding: 6px 10px; border-radius: 3px;
+  border: 1px solid #333; max-width: 260px; line-height: 1.4;
+}
+.globe-popup .maplibregl-popup-tip { border-top-color: rgba(10,10,10,0.95); }
+
+/* Sources bar at page bottom */
+.sources-bar {
+  text-align: center; padding: 12px 0; font-size: 10px;
+  color: #888; text-transform: uppercase; letter-spacing: 0.5px;
+  border-top: 1px solid var(--border); margin-top: 8px;
+}
+.sources-bar span { color: var(--green); font-weight: 600; }
 
 /* Heatmap indicator */
 .heatmap-indicator {
@@ -985,6 +1024,102 @@ body {
 .cb-card-name { font-size: 11px; font-weight: 700; color: var(--text-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cb-card-meta { font-size: 9px; color: var(--text-2); margin-top: 2px; }
 
+/* ── Trend Sparklines ─────────────────────────────── */
+.trend-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.trend-row:last-child { border-bottom: none; }
+.trend-label { flex: 1; min-width: 0; }
+.trend-title { font-size: 11px; font-weight: 700; color: var(--text-0); }
+.trend-sub { font-size: 9px; color: var(--text-2); margin-top: 1px; }
+.trend-spark { width: 80px; height: 28px; flex-shrink: 0; }
+.trend-val { font-size: 13px; font-weight: 800; color: var(--text-0); font-variant-numeric: tabular-nums; width: 50px; text-align: right; flex-shrink: 0; }
+.trend-dir { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; flex-shrink: 0; }
+.trend-dir.up { background: rgba(220,38,38,0.15); color: #dc2626; }
+.trend-dir.down { background: rgba(22,163,74,0.15); color: #16a34a; }
+.trend-dir.stable { background: rgba(202,138,4,0.15); color: #ca8a04; }
+
+/* ── Alliance Blocs ──────────────────────────────── */
+.bloc-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.bloc-row:hover { background: var(--bg-2); }
+.bloc-row:last-child { border-bottom: none; }
+.bloc-name { font-size: 12px; font-weight: 700; color: var(--text-0); min-width: 80px; }
+.bloc-stat { font-size: 10px; color: var(--text-2); }
+.bloc-stat b { color: var(--text-0); font-variant-numeric: tabular-nums; }
+.bloc-trend { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; margin-left: auto; flex-shrink: 0; }
+.bloc-trend.expanding { background: rgba(22,163,74,0.15); color: #16a34a; }
+.bloc-trend.stable { background: rgba(202,138,4,0.15); color: #ca8a04; }
+.bloc-trend.weakening { background: rgba(220,38,38,0.15); color: #dc2626; }
+.bloc-trend.deepening { background: rgba(37,99,235,0.15); color: #3b82f6; }
+.bloc-trend.reforming { background: rgba(168,85,247,0.15); color: #a855f7; }
+.bloc-trend.consolidating { background: rgba(37,99,235,0.15); color: #3b82f6; }
+.bloc-trend.maturing { background: rgba(22,163,74,0.15); color: #16a34a; }
+.bloc-trend.diversifying { background: rgba(202,138,4,0.15); color: #ca8a04; }
+.bloc-trend.refocusing { background: rgba(202,138,4,0.15); color: #ca8a04; }
+.bloc-trend.fractured { background: rgba(220,38,38,0.15); color: #dc2626; }
+
+/* ── Democracy Tracker ───────────────────────────── */
+.dem-bar-container { padding: 12px; }
+.dem-bar-wrap { margin-bottom: 10px; }
+.dem-bar-label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px; margin-bottom: 4px;
+}
+.dem-bar-label-name { font-weight: 700; color: var(--text-0); }
+.dem-bar-label-num { font-weight: 600; font-variant-numeric: tabular-nums; }
+.dem-bar-track { height: 16px; background: var(--bg-2); border-radius: 3px; overflow: hidden; position: relative; }
+.dem-bar-fill { height: 100%; border-radius: 3px; transition: width 1s ease; display: flex; align-items: center; padding-left: 6px; }
+.dem-bar-pct { font-size: 8px; font-weight: 700; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,0.6); }
+.dem-examples { font-size: 9px; color: var(--text-2); margin-top: 3px; }
+
+/* ── GDP Share Shift ─────────────────────────────── */
+.gdp-shift-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.gdp-shift-row:last-child { border-bottom: none; }
+.gdp-shift-year { font-size: 11px; font-weight: 700; color: var(--text-0); width: 40px; flex-shrink: 0; }
+.gdp-shift-bars { flex: 1; display: flex; height: 18px; border-radius: 3px; overflow: hidden; }
+.gdp-shift-seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,0.5); transition: width 1s ease; }
+
+/* ── Country Indices in Modal ────────────────────── */
+.cm-indices-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; padding: 4px 0;
+}
+.cm-idx-card {
+  padding: 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px; text-align: center;
+}
+.cm-idx-val { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cm-idx-label { font-size: 9px; color: var(--text-2); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+.cm-idx-bar { height: 3px; border-radius: 2px; margin-top: 4px; background: var(--bg-2); overflow: hidden; }
+.cm-idx-bar-fill { height: 100%; border-radius: 2px; }
+
+/* ── Econ Ranking Panel ──────────────────────────── */
+.econ-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 11px;
+}
+.econ-row:last-child { border-bottom: none; }
+.econ-rank { font-size: 10px; font-weight: 700; color: var(--text-2); width: 18px; text-align: right; }
+.econ-flag { font-size: 16px; }
+.econ-name { flex: 1; font-weight: 600; color: var(--text-0); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.econ-gdp { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text-0); width: 50px; text-align: right; }
+.econ-growth { font-size: 10px; font-weight: 700; width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+.econ-growth.pos { color: #16a34a; }
+.econ-growth.neg { color: #dc2626; }
+.econ-debt { font-size: 9px; color: var(--text-2); width: 42px; text-align: right; }
+
 /* ── Footer ──────────────────────────────────────── */
 .footer {
   padding: 12px 16px;
@@ -1186,15 +1321,29 @@ body {
   <div id="globe-container"></div>
   <div class="map-overlay-top"></div>
   <div class="map-overlay-bottom"></div>
-  <div class="map-legend">
-    <div class="legend-item"><span class="legend-dot" style="background:var(--red)"></span> active war</div>
-    <div class="legend-item"><span class="legend-dot" style="background:var(--orange)"></span> tension</div>
-    <div class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span> watch</div>
-    <div class="legend-item"><span class="legend-dot" style="background:#a855f7"></span> militia</div>
-  </div>
-  <div class="map-stats">
-    <span>layers: <span>3</span></span>
-    <span>sources: <span>osint</span></span>
+  <div class="map-layer-toggles" id="map-layer-toggles">
+    <div class="layer-toggles-header" id="layer-toggles-header">
+      <span>Layers <span id="layer-count-badge" style="color:var(--text-2);font-weight:400"></span></span>
+      <span class="arrow">&#9660;</span>
+    </div>
+    <div class="layer-toggles-body">
+      <label class="layer-toggle"><input type="checkbox" id="lyr-conflicts" checked><span class="layer-dot" style="background:#dc2626"></span>Conflicts</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-bases" checked><span class="layer-dot" style="background:#3b82f6"></span>Bases</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-nukes" checked><span class="layer-dot" style="background:#f59e0b"></span>Nuclear</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-vessels" checked><span class="layer-dot" style="background:#06b6d4"></span>Vessels</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-aircraft"><span class="layer-dot" style="background:#a3e635"></span>Aircraft</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-disasters"><span class="layer-dot" style="background:#ef4444"></span>Disasters</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-satellites"><span class="layer-dot" style="background:#818cf8"></span>Satellites</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-capitals" checked><span class="layer-dot" style="background:#fbbf24"></span>Capitals</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-datacenters"><span class="layer-dot" style="background:#34d399"></span>Data Centers</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-cables"><span class="layer-dot" style="background:#38bdf8"></span>Cables</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-pipelines"><span class="layer-dot" style="background:#fb923c"></span>Pipelines</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-reactors"><span class="layer-dot" style="background:#84cc16"></span>Reactors</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-shipping"><span class="layer-dot" style="background:#60a5fa"></span>Shipping</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-industrial"><span class="layer-dot" style="background:#f472b6"></span>Industrial</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-ecozones"><span class="layer-dot" style="background:#c084fc"></span>Econ Zones</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-oilfields"><span class="layer-dot" style="background:#d97706"></span>Oil/Rare Earth</label>
+    </div>
   </div>
   <div class="heatmap-indicator" id="heatmap-indicator">
     <span class="heatmap-indicator-label">Relations:</span>
@@ -1254,10 +1403,11 @@ function setTheme(theme) {
   else document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem('wm-theme', theme);
   document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
-  // Update globe background
-  if (globe) {
+  // Update globe background (MapLibre sky/fog)
+  if (globeMap) {
     const bgMap = { dark: '#050505', light: '#e0e0e0', green: '#030803', amber: '#080604', blue: '#040610' };
-    globe.backgroundColor(bgMap[theme] || '#050505');
+    const bg = bgMap[theme] || '#050505';
+    try { globeMap.setFog({ color: bg, 'horizon-blend': 0.02 }); } catch(e) {}
   }
 }
 
@@ -1296,12 +1446,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderPanels();
   updateHeaderStats();
   document.getElementById('last-updated').textContent = new Date().toLocaleString();
-  // Fetch news asynchronously (may take a few seconds from RSS feeds)
+
+  // Collapsible layer panel
+  document.getElementById('layer-toggles-header').addEventListener('click', () => {
+    document.getElementById('map-layer-toggles').classList.toggle('collapsed');
+  });
+
+  // Layer toggle checkboxes
+  document.querySelectorAll('.map-layer-toggles input').forEach(cb => {
+    cb.addEventListener('change', () => {
+      updateLayerCount();
+      refreshGlobePoints();
+      refreshGlobeArcs();
+      // Fetch data on first toggle
+      if (cb.id === 'lyr-aircraft' && cb.checked && aircraftData.length === 0) loadAircraft();
+      if (cb.id === 'lyr-disasters' && cb.checked && globeDisasters.length === 0) loadDisasters();
+      if (cb.id === 'lyr-satellites' && cb.checked && globeSatellites.length === 0) loadSatellites();
+    });
+  });
+
+  // Fetch news & polymarket asynchronously
   loadNews();
   loadPolymarket();
-  // Refresh news every 90 seconds, polymarket every 60 seconds (aligned with server cache TTLs)
   setInterval(loadNews, 90 * 1000);
   setInterval(loadPolymarket, 60 * 1000);
+  // Refresh aircraft every 30s if layer is on
+  setInterval(() => {
+    if (document.getElementById('lyr-aircraft')?.checked) loadAircraft();
+  }, 30 * 1000);
 });
 
 async function loadData() {
@@ -1341,125 +1513,400 @@ async function loadNews() {
   }
 }
 
-// ── Globe ────────────────────────────────────────────────
+// ── Globe (MapLibre GL) ──────────────────────────────────
+let globeMap = null;
+let _globeReady = false;
+let globeDisasters = [];
+let globeSatellites = [];
+const _globePopup = typeof maplibregl !== 'undefined' ? new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'globe-popup', offset: 10 }) : null;
+
+// Point layer configs: id, color, radius, strokeWidth
+const _ptLayers = [
+  { id: 'hotspots', color: '#ea580c', radius: 6, sw: 2 },
+  { id: 'militias', color: '#a855f7', radius: 5, sw: 1 },
+  { id: 'bases', color: '#3b82f6', radius: 5, sw: 1 },
+  { id: 'nukes', color: '#f59e0b', radius: 6, sw: 1 },
+  { id: 'vessels', color: '#06b6d4', radius: 10, sw: 2 },
+  { id: 'aircraft', color: '#a3e635', radius: 4, sw: 0 },
+  { id: 'disasters', color: '#ef4444', radius: 7, sw: 2 },
+  { id: 'satellites', color: '#818cf8', radius: 2, sw: 0 },
+  { id: 'capitals', color: '#fbbf24', radius: 6, sw: 1 },
+  { id: 'datacenters', color: '#34d399', radius: 5, sw: 1 },
+  { id: 'reactors', color: '#84cc16', radius: 5, sw: 1 },
+];
+
+function _pt(lng, lat, name, note, extra) {
+  const props = { name, note };
+  if (extra) Object.assign(props, extra);
+  return { type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: props };
+}
+function _emptyGJ() { return { type: 'FeatureCollection', features: [] }; }
+
 function initGlobe() {
   const container = document.getElementById('globe-container');
-  const w = container.clientWidth;
-  const h = container.clientHeight;
+  globeMap = new maplibregl.Map({
+    container,
+    style: {
+      version: 8,
+      sources: {
+        satellite: {
+          type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256, maxzoom: 19,
+        },
+      },
+      layers: [{ id: 'satellite-base', type: 'raster', source: 'satellite' }],
+      glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    },
+    center: [40, 20],
+    zoom: 1.5,
+    maxZoom: 18,
+    projection: 'globe',
+    attributionControl: false,
+  });
+  globe = globeMap; // backward compat
 
-  // Combine hotspots + militias into points layer
-  const hotspotPts = (data.hotspots || []).map(h => ({...h, _kind: 'hotspot'}));
-  const militiaPts = (data.militias || []).map(m => ({...m, _kind: 'militia'}));
-  const allPoints = [...hotspotPts, ...militiaPts];
+  globeMap.on('load', () => {
+    _globeReady = true;
 
-  globe = Globe()
-    .width(w).height(h)
-    .backgroundColor('#050505')
-    .globeImageUrl('https://unpkg.com/three-globe@2.35.1/example/img/earth-night.jpg')
-    .atmosphereColor('#0f5040')
-    .atmosphereAltitude(0.18)
-    .arcsData(data.conflicts)
-    .arcStartLat(d => d.startLat).arcStartLng(d => d.startLng)
-    .arcEndLat(d => d.endLat).arcEndLng(d => d.endLng)
-    .arcColor(d => {
-      // Score arcs (country profile heatmap) use _scoreArc + _score
-      if (d._scoreArc) {
-        const c = scoreColor(d._score);
-        return [c + 'e6', c + '55'];
+    // ─── Create custom icon images ───
+    function _makeIcon(size, drawFn) {
+      const c = document.createElement('canvas');
+      c.width = size; c.height = size;
+      const ctx = c.getContext('2d');
+      drawFn(ctx, size);
+      return ctx.getImageData(0, 0, size, size);
+    }
+    globeMap.addImage('plane-icon', _makeIcon(32, (ctx) => {
+      ctx.fillStyle = '#a3e635';
+      ctx.beginPath();
+      ctx.moveTo(16, 0); ctx.lineTo(32, 12); ctx.lineTo(20, 11); ctx.lineTo(22, 32); ctx.lineTo(16, 27);
+      ctx.lineTo(10, 32); ctx.lineTo(12, 11); ctx.lineTo(0, 12); ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+    }));
+    globeMap.addImage('ship-icon', _makeIcon(28, (ctx) => {
+      ctx.fillStyle = '#06b6d4';
+      ctx.beginPath();
+      ctx.moveTo(14, 0); ctx.lineTo(22, 10); ctx.lineTo(20, 10); ctx.lineTo(20, 24);
+      ctx.lineTo(8, 24); ctx.lineTo(8, 10); ctx.lineTo(6, 10); ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.stroke();
+    }));
+
+    // ─── Country borders ───
+    globeMap.addSource('countries', {
+      type: 'geojson',
+      data: 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson',
+    });
+    globeMap.addLayer({ id: 'country-fill', type: 'fill', source: 'countries',
+      paint: { 'fill-color': 'rgba(30,200,120,0.04)' } });
+    globeMap.addLayer({ id: 'country-borders', type: 'line', source: 'countries',
+      paint: { 'line-color': 'rgba(30,200,120,0.4)', 'line-width': 0.8 } });
+    globeMap.addLayer({ id: 'country-hover', type: 'fill', source: 'countries',
+      paint: { 'fill-color': 'rgba(30,200,120,0.18)' }, filter: ['==', 'NAME', ''] });
+
+    // ─── Point sources + layers ───
+    _ptLayers.forEach(cfg => {
+      globeMap.addSource('src-' + cfg.id, { type: 'geojson', data: _emptyGJ() });
+      if (cfg.id === 'aircraft') {
+        globeMap.addLayer({
+          id: 'lyr-pt-aircraft', type: 'symbol', source: 'src-aircraft',
+          layout: {
+            'icon-image': 'plane-icon', 'icon-size': 0.65,
+            'icon-rotate': ['get', 'heading'], 'icon-rotation-alignment': 'map',
+            'icon-allow-overlap': true, 'icon-ignore-placement': true,
+          },
+          paint: { 'icon-opacity': 0.9 },
+        });
+      } else if (cfg.id === 'vessels') {
+        globeMap.addLayer({
+          id: 'lyr-pt-vessels', type: 'symbol', source: 'src-vessels',
+          layout: {
+            'icon-image': 'ship-icon', 'icon-size': 0.7,
+            'icon-rotate': ['get', 'heading'], 'icon-rotation-alignment': 'map',
+            'icon-allow-overlap': true, 'icon-ignore-placement': true,
+          },
+          paint: { 'icon-opacity': 0.95 },
+        });
+      } else {
+        globeMap.addLayer({
+          id: 'lyr-pt-' + cfg.id, type: 'circle', source: 'src-' + cfg.id,
+          paint: {
+            'circle-radius': cfg.radius, 'circle-color': cfg.color,
+            'circle-stroke-width': cfg.sw, 'circle-stroke-color': 'rgba(255,255,255,0.3)',
+            'circle-opacity': 0.9,
+          },
+        });
       }
-      // Relation arcs use _relType
-      if (d._relType === 'ally') return ['rgba(22,163,74,0.9)', 'rgba(22,163,74,0.4)'];
-      if (d._relType === 'partner') return ['rgba(37,99,235,0.9)', 'rgba(37,99,235,0.4)'];
-      if (d._relType === 'rival') return ['rgba(234,88,12,0.9)', 'rgba(234,88,12,0.4)'];
-      if (d._relType === 'adversary') return ['rgba(220,38,38,0.9)', 'rgba(220,38,38,0.4)'];
-      // Conflict arcs
-      if (d.intensity >= 5) return ['rgba(220,38,38,0.9)', 'rgba(220,38,38,0.4)'];
-      if (d.intensity >= 4) return ['rgba(234,88,12,0.9)', 'rgba(234,88,12,0.4)'];
-      return ['rgba(202,138,4,0.8)', 'rgba(202,138,4,0.3)'];
-    })
-    .arcDashLength(d => d._scoreArc ? 0.4 : (d._relType ? 0.3 : 0.5))
-    .arcDashGap(d => d._scoreArc ? 0.2 : (d._relType ? 0.15 : 0.25))
-    .arcDashAnimateTime(d => d._scoreArc ? 2000 : (d._relType ? 1500 : 2500))
-    .arcStroke(d => d._scoreArc ? 0.6 : (d._relType ? 0.8 : 0.2 + (d.intensity || 0) * 0.2))
-    .arcLabel(d => {
-      if (d._scoreArc) return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
-        <b style="color:${scoreColor(d._score)}">${d._relName}</b><br>
-        <span style="color:#999">Relation: ${d._score}/100 &middot; ${scoreLabel(d._score)}</span>
-      </div>`;
-      if (d._relType) return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
-        <b style="color:#e0e0e0">${d._relName}</b><br>
-        <span style="color:#666">${d._relDetail}</span>
-      </div>`;
-      return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
-        <b style="color:#e0e0e0">${d.name}</b><br>
-        <span style="color:#666">Since ${d.started} &middot; ${d.casualties}</span>
-      </div>`;
-    })
-    .pointsData(allPoints)
-    .pointLat(d => d.lat).pointLng(d => d.lng)
-    .pointColor(d => {
-      if (d._kind === 'score-self') return d._color || '#22d3ee';
-      if (d._kind === 'score') return d._color;
-      if (d._kind === 'militia') return '#a855f7';
-      return d.level === 'high' ? '#dc2626' : d.level === 'elevated' ? '#ea580c' : '#2563eb';
-    })
-    .pointAltitude(d => {
-      if (d._kind === 'score-self') return 0.18;
-      if (d._kind === 'score') return 0.08 + (d._score || 0) * 0.001;
-      if (d._kind === 'militia') return 0.06;
-      return 0.05;
-    })
-    .pointRadius(d => {
-      if (d._kind === 'score-self') return 0.55;
-      if (d._kind === 'score') return 0.38;
-      if (d._kind === 'militia') return 0.3;
-      return 0.35;
-    })
-    .pointLabel(d => {
-      if (d._kind === 'score-self') return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #22d3ee;max-width:220px">
-        <b style="color:#22d3ee">${d.name}</b><br>
-        <span style="color:#999">Selected country</span>
-      </div>`;
-      if (d._kind === 'score') return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
-        <b style="color:${d._color}">${d.name}</b><br>
-        <span style="color:#999">Relation: ${d._score}/100 &middot; ${scoreLabel(d._score)}</span>
-      </div>`;
-      if (d._kind === 'militia') return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:220px">
-        <b style="color:#a855f7">${d.name}</b><br>
-        <span style="color:#999">${d.country}</span><br>
-        <span style="color:#666">${d.type} &middot; ${d.strength}</span><br>
-        <span style="color:#555">${d.note}</span>
-      </div>`;
-      return `<div style="font-family:var(--mono);background:rgba(10,10,10,0.95);padding:6px 10px;border-radius:3px;font-size:11px;border:1px solid #333;max-width:200px">
-        <b style="color:#e0e0e0">${d.name}</b><br>
-        <span style="color:#666">${d.note}</span>
-      </div>`;
-    })
-    .ringsData([...data.hotspots, ...data.militias.map(m => ({...m, level: 'militia'}))])
-    .ringLat(d => d.lat).ringLng(d => d.lng)
-    .ringColor(d => {
-      if (d.level === 'militia') return t => `rgba(168,85,247,${1 - t})`;
-      if (d.level === 'high') return t => `rgba(220,38,38,${1 - t})`;
-      if (d.level === 'elevated') return t => `rgba(234,88,12,${1 - t})`;
-      return t => `rgba(37,99,235,${1 - t})`;
-    })
-    .ringMaxRadius(2.5).ringPropagationSpeed(1.2).ringRepeatPeriod(2000)
-    (container);
+    });
 
-  globe.pointOfView({ lat: 20, lng: 40, altitude: 2.0 }, 1000);
-  globe.controls().autoRotate = true;
-  globe.controls().autoRotateSpeed = 0.25;
-  globe.controls().enableDamping = true;
+    // ─── New line layer: shipping routes ───
+    globeMap.addSource('src-shipping', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({ id: 'lyr-shipping', type: 'line', source: 'src-shipping',
+      paint: { 'line-color': '#60a5fa', 'line-width': 2, 'line-opacity': 0.5, 'line-dasharray': [8, 4] } });
 
-  window.addEventListener('resize', () => {
-    globe.width(container.clientWidth).height(container.clientHeight);
+    // ─── New point layers for new data ───
+    ['industrial', 'ecozones', 'oilfields'].forEach(id => {
+      const colors = { industrial: '#f472b6', ecozones: '#c084fc', oilfields: '#d97706' };
+      globeMap.addSource('src-' + id, { type: 'geojson', data: _emptyGJ() });
+      globeMap.addLayer({
+        id: 'lyr-pt-' + id, type: 'circle', source: 'src-' + id,
+        paint: {
+          'circle-radius': 5, 'circle-color': colors[id],
+          'circle-stroke-width': 1, 'circle-stroke-color': 'rgba(255,255,255,0.3)',
+          'circle-opacity': 0.9,
+        },
+      });
+    });
+
+    // ─── Line sources + layers ───
+    ['conflict-arcs', 'cables', 'pipelines', 'relation-arcs', 'score-arcs'].forEach(id => {
+      globeMap.addSource('src-' + id, { type: 'geojson', data: _emptyGJ() });
+    });
+    globeMap.addLayer({ id: 'lyr-conflict-arcs', type: 'line', source: 'src-conflict-arcs',
+      paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.7 },
+      layout: { 'line-cap': 'round' } });
+    globeMap.addLayer({ id: 'lyr-cables', type: 'line', source: 'src-cables',
+      paint: { 'line-color': '#38bdf8', 'line-width': 1.5, 'line-opacity': 0.6, 'line-dasharray': [6, 3] } });
+    globeMap.addLayer({ id: 'lyr-pipelines', type: 'line', source: 'src-pipelines',
+      paint: { 'line-color': '#fb923c', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [5, 3] } });
+    globeMap.addLayer({ id: 'lyr-relation-arcs', type: 'line', source: 'src-relation-arcs',
+      paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.8 } });
+    globeMap.addLayer({ id: 'lyr-score-arcs', type: 'line', source: 'src-score-arcs',
+      paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.6 } });
+
+    // ─── Country click ───
+    globeMap.on('click', 'country-fill', e => {
+      const code = e.features?.[0]?.properties?.ISO_A2;
+      if (code && (data.profiles || {})[code]) showCountryProfile(code);
+    });
+    globeMap.on('mousemove', 'country-fill', e => {
+      globeMap.getCanvas().style.cursor = 'pointer';
+      if (e.features?.length) {
+        globeMap.setFilter('country-hover', ['==', 'NAME', e.features[0].properties.NAME]);
+        const props = e.features[0].properties;
+        const code = props.ISO_A2 || '';
+        const profile = (data.profiles || {})[code];
+        const html = `<b style="color:#1ec878">${props.NAME || ''}</b>${profile ? '<br><span style="color:#888">Pop: ' + profile.population + '</span><br><span style="color:#666">Click for profile</span>' : ''}`;
+        _globePopup.setLngLat(e.lngLat).setHTML(html).addTo(globeMap);
+      }
+    });
+    globeMap.on('mouseleave', 'country-fill', () => {
+      globeMap.getCanvas().style.cursor = '';
+      globeMap.setFilter('country-hover', ['==', 'NAME', '']);
+      _globePopup.remove();
+    });
+
+    // ─── Point hover popup ───
+    const allPopupLayers = [
+      ..._ptLayers.map(c => ({ layerId: 'lyr-pt-' + c.id, color: c.color })),
+      { layerId: 'lyr-pt-industrial', color: '#f472b6' },
+      { layerId: 'lyr-pt-ecozones', color: '#c084fc' },
+      { layerId: 'lyr-pt-oilfields', color: '#d97706' },
+    ];
+    allPopupLayers.forEach(({ layerId, color }) => {
+      globeMap.on('mouseenter', layerId, e => {
+        globeMap.getCanvas().style.cursor = 'pointer';
+        const f = e.features[0];
+        _globePopup.setLngLat(e.lngLat)
+          .setHTML(`<b style="color:${color}">${f.properties.name || ''}</b><br><span style="color:#999">${f.properties.note || ''}</span>`)
+          .addTo(globeMap);
+      });
+      globeMap.on('mouseleave', layerId, () => {
+        globeMap.getCanvas().style.cursor = '';
+        _globePopup.remove();
+      });
+    });
+
+    // Build initial data
+    refreshGlobePoints();
+    refreshGlobeArcs();
   });
 }
 
+function refreshGlobePoints() {
+  if (!_globeReady) return;
+  const lyr = id => document.getElementById(id)?.checked;
+
+  // Build feature arrays per layer
+  const feats = {};
+  _ptLayers.forEach(c => { feats[c.id] = []; });
+
+  if (lyr('lyr-conflicts')) {
+    (data.hotspots || []).forEach(h => feats.hotspots.push(_pt(h.lng, h.lat, h.name, h.note)));
+    (data.militias || []).forEach(m => feats.militias.push(_pt(m.lng, m.lat, m.name, m.country + ' · ' + m.type)));
+  }
+  if (lyr('lyr-bases')) {
+    (data.bases || []).forEach(b => feats.bases.push(_pt(b.lng, b.lat, b.name, b.country + ' · ' + b.type)));
+  }
+  if (lyr('lyr-vessels')) {
+    (data.vessels || []).forEach(v => feats.vessels.push(_pt(v.lng, v.lat, v.name,
+      v.vessels + ' · Hdg ' + v.heading + '° · ' + v.speed_kts + 'kts',
+      { heading: v.heading || 0 })));
+  }
+  if (lyr('lyr-aircraft') && aircraftData.length) {
+    aircraftData.slice(0, 500).forEach(p => {
+      const note = [p.origin, p.type_desc || '', p.alt_m + 'm', p.speed_kts + 'kts', 'Hdg ' + (p.heading||0) + '°'].filter(Boolean).join(' · ');
+      feats.aircraft.push(_pt(p.lng, p.lat, p.callsign || p.icao, note, { heading: p.heading || 0 }));
+    });
+  }
+  if (lyr('lyr-nukes')) {
+    (data.facilities || []).forEach(f => feats.nukes.push(_pt(f.lng, f.lat, f.name, f.type.replace(/_/g, ' ') + ' · ' + f.status)));
+  }
+  if (lyr('lyr-disasters')) {
+    globeDisasters.forEach(d => feats.disasters.push(_pt(d.lng, d.lat, d.title, d.category + (d.magnitude ? ' · Mag ' + d.magnitude : ''))));
+  }
+  if (lyr('lyr-capitals')) {
+    (data.capitals || []).forEach(c => feats.capitals.push(_pt(c.lng, c.lat, c.name, c.country + ' · pop ' + c.pop)));
+  }
+  if (lyr('lyr-datacenters')) {
+    (data.data_centers || []).forEach(d => feats.datacenters.push(_pt(d.lng, d.lat, d.name, d.operator + ' · ' + d.detail)));
+  }
+  if (lyr('lyr-reactors')) {
+    (data.reactors || []).forEach(r => feats.reactors.push(_pt(r.lng, r.lat, r.name, r.capacity_mw + 'MW · ' + r.status)));
+  }
+  if (lyr('lyr-satellites')) {
+    globeSatellites.forEach(s => feats.satellites.push(_pt(s.lng, s.lat, s.name, s.group.toUpperCase() + ' · NORAD ' + s.norad_id + ' · Alt ' + s.alt_km + 'km')));
+  }
+
+  // Update each MapLibre source
+  _ptLayers.forEach(cfg => {
+    const src = globeMap.getSource('src-' + cfg.id);
+    if (src) src.setData({ type: 'FeatureCollection', features: feats[cfg.id] || [] });
+  });
+
+  // New point layers
+  const industrialFeats = [];
+  if (lyr('lyr-industrial')) {
+    (data.industrial_centers || []).forEach(c => industrialFeats.push(_pt(c.lng, c.lat, c.name, c.type + ' · ' + c.detail)));
+  }
+  globeMap.getSource('src-industrial')?.setData({ type: 'FeatureCollection', features: industrialFeats });
+
+  const ezFeats = [];
+  if (lyr('lyr-ecozones')) {
+    (data.economic_zones || []).forEach(z => ezFeats.push(_pt(z.lng, z.lat, z.name, z.type.toUpperCase() + ' · ' + z.detail)));
+  }
+  globeMap.getSource('src-ecozones')?.setData({ type: 'FeatureCollection', features: ezFeats });
+
+  const oilFeats = [];
+  if (lyr('lyr-oilfields')) {
+    (data.oil_rare_earth || []).forEach(o => oilFeats.push(_pt(o.lng, o.lat, o.name, o.type.toUpperCase() + (o.reserves ? ' · ' + o.reserves : '') + ' · ' + o.detail)));
+  }
+  globeMap.getSource('src-oilfields')?.setData({ type: 'FeatureCollection', features: oilFeats });
+
+  updateLayerCount();
+}
+
+function _line(startLng, startLat, endLng, endLat, props) {
+  return { type: 'Feature', geometry: { type: 'LineString', coordinates: [[startLng, startLat], [endLng, endLat]] }, properties: props };
+}
+
+function refreshGlobeArcs() {
+  if (!_globeReady) return;
+  const lyr = id => document.getElementById(id)?.checked;
+
+  // Conflict arcs
+  const conflictFeats = [];
+  if (lyr('lyr-conflicts')) {
+    (data.conflicts || []).forEach(c => {
+      const color = c.intensity >= 5 ? '#dc2626' : c.intensity >= 4 ? '#ea580c' : '#ca8a04';
+      conflictFeats.push(_line(c.startLng, c.startLat, c.endLng, c.endLat, { color, name: c.name }));
+    });
+  }
+  globeMap.getSource('src-conflict-arcs')?.setData({ type: 'FeatureCollection', features: conflictFeats });
+
+  // Cables
+  const cableFeats = [];
+  if (lyr('lyr-cables')) {
+    (data.undersea_cables || []).forEach(c => {
+      cableFeats.push(_line(c.landing_a.lng, c.landing_a.lat, c.landing_b.lng, c.landing_b.lat, { name: c.name }));
+    });
+  }
+  globeMap.getSource('src-cables')?.setData({ type: 'FeatureCollection', features: cableFeats });
+
+  // Pipelines
+  const pipeFeats = [];
+  if (lyr('lyr-pipelines')) {
+    (data.pipelines || []).forEach(p => {
+      pipeFeats.push(_line(p.from_loc.lng, p.from_loc.lat, p.to_loc.lng, p.to_loc.lat, { name: p.name }));
+    });
+  }
+  globeMap.getSource('src-pipelines')?.setData({ type: 'FeatureCollection', features: pipeFeats });
+
+  // Shipping routes
+  const shipFeats = [];
+  if (lyr('lyr-shipping')) {
+    (data.shipping_routes || []).forEach(r => {
+      shipFeats.push(_line(r.from_loc.lng, r.from_loc.lat, r.to_loc.lng, r.to_loc.lat, { name: r.name }));
+    });
+  }
+  globeMap.getSource('src-shipping')?.setData({ type: 'FeatureCollection', features: shipFeats });
+}
+
 function focusGlobe(lat, lng, alt = 1.5) {
-  if (!globe) return;
-  globe.pointOfView({ lat, lng, altitude: alt }, 800);
-  globe.controls().autoRotate = false;
+  if (!globeMap) return;
+  // Convert globe.gl altitude (1.5 ≈ far, 0.5 ≈ close) to zoom level
+  const zoom = Math.max(1, Math.min(12, 4 / alt));
+  globeMap.flyTo({ center: [lng, lat], zoom, duration: 800 });
+}
+
+let aircraftData = [];
+
+function updateLayerCount() {
+  const count = document.querySelectorAll('.map-layer-toggles input:checked').length;
+  const total = document.querySelectorAll('.map-layer-toggles input').length;
+  const el = document.getElementById('layer-count');
+  if (el) el.textContent = count;
+  const badge = document.getElementById('layer-count-badge');
+  if (badge) badge.textContent = `(${count}/${total})`;
+}
+
+// ── Aircraft Tracking ────────────────────────────────────
+async function loadAircraft() {
+  try {
+    const resp = await fetch('/api/aircraft');
+    const d = await resp.json();
+    aircraftData = d.aircraft || [];
+    renderAircraftOnMap();
+  } catch (e) {
+    console.warn('Aircraft fetch failed:', e);
+  }
+}
+
+function renderAircraftOnMap() {
+  refreshGlobePoints();
+}
+
+// ── Disaster Tracking (NASA EONET) ──────────────────────
+async function loadDisasters() {
+  try {
+    const resp = await fetch('/api/disasters');
+    const d = await resp.json();
+    globeDisasters = d.disasters || [];
+    renderDisastersOnMap();
+    refreshGlobePoints();
+  } catch (e) { console.warn('Disasters fetch failed:', e); }
+}
+
+function renderDisastersOnMap() {
+  refreshGlobePoints();
+}
+
+// ── Satellite Tracking (CelesTrak — positions computed server-side) ──
+async function loadSatellites() {
+  try {
+    const resp = await fetch('/api/satellites');
+    const d = await resp.json();
+    globeSatellites = d.satellites || [];
+    renderSatellitesOnMap();
+    refreshGlobePoints();
+    console.log(`[Satellites] Loaded ${globeSatellites.length} positions`);
+  } catch (e) { console.warn('Satellites fetch failed:', e); }
+}
+
+function renderSatellitesOnMap() {
+  refreshGlobePoints();
 }
 
 // ── Header Stats ─────────────────────────────────────────
@@ -1496,22 +1943,34 @@ function renderPanels() {
     html += buildIndicatorPanel(ind);
   });
 
-  // 3.5 Country Browser panel
+  // 3.5 Global Trends panel
+  html += buildTrendsPanel();
+
+  // 3.6 Alliance Blocs panel
+  html += buildBlocsPanel();
+
+  // 3.7 Democracy Tracker + GDP Shift + Econ Ranking
+  html += buildDemocracyPanel();
+  html += buildGDPShiftPanel();
+  html += buildEconPanel();
+
+  // 4. Country Browser panel
   html += buildCountryBrowserPanel();
 
-  // 4. Militias panel
+  // 5. Militias panel
   html += buildMilitiasPanel();
 
-  // 5. Sanctions panel
+  // 6. Sanctions panel
   html += buildSanctionsPanel();
 
-  // 6. Nuclear Arsenals panel
+  // 7. Nuclear Arsenals panel
   html += buildNuclearPanel();
 
   grid.innerHTML = html;
 
   // Post-render: sparklines + click handlers
   data.indicators.forEach(ind => drawSparkline(ind));
+  drawTrendSparklines();
   bindConflictClicks();
   bindHotspotClicks();
   bindMilitiaClicks();
@@ -1626,6 +2085,160 @@ function buildNuclearPanel() {
 
   return `<div class="panel">
     <div class="panel-head">Nuclear Arsenals <span class="panel-badge red">9</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Global Trends Panel ─────────────────────────────────
+function buildTrendsPanel() {
+  const trends = data.trends || {};
+  const keys = Object.keys(trends);
+  if (!keys.length) return '';
+  const rows = keys.map(k => {
+    const t = trends[k];
+    const vals = t.values || [];
+    const latest = vals[vals.length - 1];
+    const prev = vals[vals.length - 2];
+    const dir = latest > prev ? 'up' : latest < prev ? 'down' : 'stable';
+    const dirLabel = t.trend || dir;
+    const dirCls = dirLabel.includes('rising') || dirLabel.includes('worsening') || dirLabel.includes('elevated') ? 'up'
+      : dirLabel.includes('declining') || dirLabel.includes('recovering') ? 'down' : 'stable';
+    return `<div class="trend-row">
+      <div class="trend-label">
+        <div class="trend-title">${t.title}</div>
+        <div class="trend-sub">${t.description || ''}</div>
+      </div>
+      <canvas class="trend-spark" id="tsp-${k}" width="80" height="28"></canvas>
+      <div class="trend-val" style="color:${t.color || 'var(--text-0)'}">${latest}${t.unit === 'countries' || t.unit === 'active' || t.unit === 'total stockpile' || t.unit === 'country programs' || t.unit === '# countries bad/v.bad' ? '' : t.unit === 'million' ? 'M' : t.unit === '$T/yr' ? 'T' : t.unit === 'thousands/yr' ? 'K' : ''}</div>
+      <span class="trend-dir ${dirCls}">${dirLabel}</span>
+    </div>`;
+  }).join('');
+  return `<div class="panel" style="grid-column: span 2; max-height: 520px;">
+    <div class="panel-head">Global Geopolitical Trends <span class="panel-badge red">${keys.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+function drawTrendSparklines() {
+  const trends = data.trends || {};
+  Object.keys(trends).forEach(k => {
+    const t = trends[k];
+    const canvas = document.getElementById(`tsp-${k}`);
+    if (!canvas || !t.values) return;
+    new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: t.years || t.values.map((_, i) => i),
+        datasets: [{
+          data: t.values,
+          borderColor: t.color || '#22d3ee',
+          backgroundColor: (t.color || '#22d3ee') + '15',
+          fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5,
+        }],
+      },
+      options: {
+        responsive: false, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: { x: { display: false }, y: { display: false, beginAtZero: false } },
+        animation: { duration: 800 },
+      },
+    });
+  });
+}
+
+// ── Alliance Blocs Panel ────────────────────────────────
+function buildBlocsPanel() {
+  const blocs = data.blocs || [];
+  if (!blocs.length) return '';
+  const rows = blocs.map(b => {
+    const trendCls = escapeHtml(b.trend).replace(/\s+/g, '-').replace(/rapidly\s*/i, '');
+    return `<div class="bloc-row" title="${escapeHtml(b.trend_detail || '')}">
+      <span class="bloc-name">${escapeHtml(b.name)}</span>
+      <span class="bloc-stat"><b>${escapeHtml(b.members)}</b> members</span>
+      <span class="bloc-stat"><b>${escapeHtml(b.combined_gdp)}</b> GDP</span>
+      <span class="bloc-stat"><b>${escapeHtml(b.combined_military)}</b></span>
+      ${b.combined_nukes > 0 ? `<span class="bloc-stat" style="color:var(--red)">☢ ${b.combined_nukes.toLocaleString()}</span>` : ''}
+      <span class="bloc-trend ${trendCls}">${escapeHtml(b.trend)}</span>
+    </div>`;
+  }).join('');
+  return `<div class="panel" style="grid-column: span 2; max-height: 480px;">
+    <div class="panel-head">Alliance Blocs & Power Groups <span class="panel-badge blue">${blocs.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Democracy Tracker Panel ─────────────────────────────
+function buildDemocracyPanel() {
+  const dem = data.democracy || {};
+  const cats = ['full_democracies', 'flawed_democracies', 'hybrid_regimes', 'authoritarian'];
+  const total = cats.reduce((s, c) => s + (dem[c]?.count || 0), 0);
+  if (!total) return '';
+  const bars = cats.map(c => {
+    const d = dem[c];
+    if (!d) return '';
+    const pct = ((d.count / total) * 100).toFixed(1);
+    const popPct = d.population_pct || 0;
+    const examples = (d.examples || []).map(code => countryFlag(code)).join(' ');
+    return `<div class="dem-bar-wrap">
+      <div class="dem-bar-label">
+        <span class="dem-bar-label-name" style="color:${d.color}">${d.label}</span>
+        <span class="dem-bar-label-num" style="color:${d.color}">${d.count} countries (${popPct}% pop)</span>
+      </div>
+      <div class="dem-bar-track">
+        <div class="dem-bar-fill" style="width:${pct}%;background:${d.color}">
+          <span class="dem-bar-pct">${pct}%</span>
+        </div>
+      </div>
+      <div class="dem-examples">${examples}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Democracy Tracker (EIU 2024) <span class="panel-badge green">${total}</span></div>
+    <div class="panel-body"><div class="dem-bar-container">${bars}</div></div>
+  </div>`;
+}
+
+// ── GDP Share Shift Panel ───────────────────────────────
+function buildGDPShiftPanel() {
+  const eco = data.economic || {};
+  const shift = eco.share_shift?.data;
+  if (!shift) return '';
+  const years = Object.keys(shift).sort();
+  const rows = years.map(y => {
+    const d = shift[y];
+    return `<div class="gdp-shift-row">
+      <span class="gdp-shift-year">${y}</span>
+      <div class="gdp-shift-bars">
+        <div class="gdp-shift-seg" style="width:${d.G7}%;background:#3b82f6">G7 ${d.G7}%</div>
+        <div class="gdp-shift-seg" style="width:${d.BRICS}%;background:#dc2626">BRICS ${d.BRICS}%</div>
+        <div class="gdp-shift-seg" style="width:${d.Rest}%;background:#6b7280">Rest ${d.Rest}%</div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Global GDP Share Shift <span class="panel-badge orange">PPP</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Economic Ranking Panel ──────────────────────────────
+function buildEconPanel() {
+  const ranking = (data.economic || {}).gdp_ranking || [];
+  if (!ranking.length) return '';
+  const rows = ranking.map((e, i) => {
+    const growCls = e.gdp_growth >= 0 ? 'pos' : 'neg';
+    const growSign = e.gdp_growth >= 0 ? '+' : '';
+    return `<div class="econ-row">
+      <span class="econ-rank">${i + 1}</span>
+      <span class="econ-flag">${countryFlag(e.code)}</span>
+      <span class="econ-name">${e.name}</span>
+      <span class="econ-gdp">$${e.gdp_t}T</span>
+      <span class="econ-growth ${growCls}">${growSign}${e.gdp_growth}%</span>
+      <span class="econ-debt">${e.debt_gdp}% D/G</span>
+    </div>`;
+  }).join('');
+  return `<div class="panel" style="max-height: 480px;">
+    <div class="panel-head">Top Economies <span class="panel-badge green">${ranking.length}</span></div>
     <div class="panel-body">${rows}</div>
   </div>`;
 }
@@ -1870,10 +2483,10 @@ function showRelations(code) {
     <div class="rel-row" data-lat="${r.lat}" data-lng="${r.lng}">
       <span class="rel-flag">${countryFlag(r.target)}</span>
       <div class="rel-info">
-        <div class="rel-name">${r.name}</div>
-        <div class="rel-detail">${r.detail}</div>
+        <div class="rel-name">${escapeHtml(r.name)}</div>
+        <div class="rel-detail">${escapeHtml(r.detail)}</div>
       </div>
-      <span class="rel-type ${r.type}">${r.type}</span>
+      <span class="rel-type ${escapeHtml(r.type)}">${escapeHtml(r.type)}</span>
     </div>
   `).join('');
 
@@ -1890,7 +2503,7 @@ function showRelations(code) {
 }
 
 function drawRelationArcs(code) {
-  if (!globe) return;
+  if (!globeMap || !_globeReady) return;
   const c = data.relations[code];
   if (!c) return;
 
@@ -1904,13 +2517,24 @@ function drawRelationArcs(code) {
   }));
 
   relationArcs = relArcs;
-  globe.arcsData([...data.conflicts, ...relationArcs]);
+  // Build GeoJSON for relation arcs
+  const features = relationArcs.map(a =>
+    _line(a.startLng, a.startLat, a.endLng, a.endLat, {
+      _relType: a._relType, _relName: a._relName, _relDetail: a._relDetail
+    })
+  );
+  const src = globeMap.getSource('src-relation-arcs');
+  if (src) src.setData({ type: 'FeatureCollection', features });
+  // Also refresh conflict arcs
+  refreshGlobeArcs();
 }
 
 function clearRelations() {
-  if (!globe) return;
+  if (!globeMap || !_globeReady) return;
   relationArcs = [];
-  globe.arcsData(data.conflicts);
+  const src = globeMap.getSource('src-relation-arcs');
+  if (src) src.setData(_emptyGJ());
+  refreshGlobeArcs();
 }
 
 // ── Country Profiles ────────────────────────────────────
@@ -1978,12 +2602,12 @@ function showCountryProfile(code) {
   // Build sections
   const leaders = (p.leaders || []).map(l =>
     `<div class="cm-leader">
-      <div class="cm-leader-role">${l.role}</div>
-      <div class="cm-leader-name">${l.name}</div>
+      <div class="cm-leader-role">${escapeHtml(l.role)}</div>
+      <div class="cm-leader-name">${escapeHtml(l.name)}</div>
     </div>`).join('');
 
   const memberships = (p.memberships || []).map(m =>
-    `<span class="cm-membership">${m}</span>`).join('');
+    `<span class="cm-membership">${escapeHtml(m)}</span>`).join('');
 
   const POLICY_LABELS = {
     abortion: 'Abortion',
@@ -2000,12 +2624,41 @@ function showCountryProfile(code) {
     const statusClass = (v.status || '').toLowerCase().split('-')[0];
     return `<div class="cm-policy">
       <div class="cm-policy-head">
-        <span class="cm-policy-name">${label}</span>
-        <span class="cm-policy-status ${statusClass}">${v.status}</span>
+        <span class="cm-policy-name">${escapeHtml(label)}</span>
+        <span class="cm-policy-status ${escapeHtml(statusClass)}">${escapeHtml(v.status)}</span>
       </div>
-      <div class="cm-policy-detail">${v.detail}</div>
+      <div class="cm-policy-detail">${escapeHtml(v.detail)}</div>
     </div>`;
   }).join('');
+
+  // Geopolitical indices
+  const idx = (data.indices || {})[code];
+  let indicesHtml = '';
+  if (idx) {
+    const idxItems = [
+      { key: 'democracy_index', label: 'Democracy', max: 10, fmt: v => v.toFixed(1), colorFn: v => v >= 8 ? '#16a34a' : v >= 6 ? '#65a30d' : v >= 4 ? '#ca8a04' : '#dc2626' },
+      { key: 'corruption_cpi', label: 'Anti-Corruption', max: 100, fmt: v => v, colorFn: v => v >= 60 ? '#16a34a' : v >= 40 ? '#ca8a04' : '#dc2626' },
+      { key: 'press_freedom', label: 'Press Freedom', max: 100, fmt: v => v.toFixed(0), colorFn: v => v <= 25 ? '#16a34a' : v <= 45 ? '#ca8a04' : '#dc2626', invert: true },
+      { key: 'hdi', label: 'HDI', max: 1, fmt: v => v.toFixed(3), colorFn: v => v >= 0.8 ? '#16a34a' : v >= 0.6 ? '#ca8a04' : '#dc2626' },
+      { key: 'military_spend_pct', label: 'Mil. Spend', max: 10, fmt: v => v.toFixed(1) + '%', colorFn: v => v >= 5 ? '#dc2626' : v >= 2 ? '#ca8a04' : '#16a34a' },
+      { key: 'gdp_growth', label: 'GDP Growth', max: 10, fmt: v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%', colorFn: v => v >= 3 ? '#16a34a' : v >= 0 ? '#ca8a04' : '#dc2626' },
+      { key: 'fragile_state', label: 'Fragility', max: 120, fmt: v => v.toFixed(0), colorFn: v => v <= 40 ? '#16a34a' : v <= 70 ? '#ca8a04' : '#dc2626', invert: true },
+    ];
+    const cards = idxItems.filter(it => idx[it.key] !== undefined).map(it => {
+      const v = idx[it.key];
+      const color = it.colorFn(v);
+      const pct = it.invert ? ((it.max - v) / it.max) * 100 : (v / it.max) * 100;
+      return `<div class="cm-idx-card">
+        <div class="cm-idx-val" style="color:${color}">${it.fmt(v)}</div>
+        <div class="cm-idx-label">${it.label}</div>
+        <div class="cm-idx-bar"><div class="cm-idx-bar-fill" style="width:${Math.max(0, Math.min(100, pct))}%;background:${color}"></div></div>
+      </div>`;
+    }).join('');
+    indicesHtml = `<div class="cm-section">
+      <div class="cm-section-title">Geopolitical Indices</div>
+      <div class="cm-indices-grid">${cards}</div>
+    </div>`;
+  }
 
   // Relations sorted by score desc
   const scores = p.relation_scores || {};
@@ -2016,9 +2669,9 @@ function showCountryProfile(code) {
     const otherName = (data.profiles && data.profiles[rc] && data.profiles[rc].name)
       || (COUNTRY_COORDS[rc] && COUNTRY_COORDS[rc].name)
       || rc;
-    return `<div class="cm-rel" data-code="${rc}">
+    return `<div class="cm-rel" data-code="${escapeHtml(rc)}">
       <span class="cm-rel-flag">${countryFlag(rc)}</span>
-      <span class="cm-rel-name">${otherName}</span>
+      <span class="cm-rel-name">${escapeHtml(otherName)}</span>
       <div class="cm-rel-bar"><div class="cm-rel-bar-fill" style="width:${score}%;background:${color}"></div></div>
       <span class="cm-rel-score" style="color:${color}">${score}</span>
     </div>`;
@@ -2028,17 +2681,18 @@ function showCountryProfile(code) {
     <div class="cm-header">
       <span class="cm-flag">${countryFlag(code)}</span>
       <div class="cm-title-block">
-        <div class="cm-title">${p.name}</div>
-        <div class="cm-subtitle">${p.govt}</div>
+        <div class="cm-title">${escapeHtml(p.name)}</div>
+        <div class="cm-subtitle">${escapeHtml(p.govt)}</div>
       </div>
       <button class="cm-close" onclick="closeCountryProfile()">&times;</button>
     </div>
     <div class="cm-stats">
-      <div class="cm-stat"><div class="cm-stat-label">Capital</div><div class="cm-stat-value">${p.capital}</div></div>
-      <div class="cm-stat"><div class="cm-stat-label">Population</div><div class="cm-stat-value">${p.population}</div></div>
-      <div class="cm-stat"><div class="cm-stat-label">GDP</div><div class="cm-stat-value">${p.gdp}</div></div>
-      <div class="cm-stat"><div class="cm-stat-label">Military Rank</div><div class="cm-stat-value">#${p.military_rank}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">Capital</div><div class="cm-stat-value">${escapeHtml(p.capital)}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">Population</div><div class="cm-stat-value">${escapeHtml(p.population)}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">GDP</div><div class="cm-stat-value">${escapeHtml(p.gdp)}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">Military Rank</div><div class="cm-stat-value">#${escapeHtml(String(p.military_rank))}</div></div>
     </div>
+    ${indicesHtml}
     <div class="cm-section">
       <div class="cm-section-title">Leadership</div>
       <div class="cm-leaders">${leaders}</div>
@@ -2081,7 +2735,7 @@ function closeCountryProfile() {
 }
 
 function drawRelationHeatmap(code) {
-  if (!globe) return;
+  if (!globeMap || !_globeReady) return;
   const p = (data.profiles || {})[code];
   if (!p) return;
 
@@ -2093,15 +2747,12 @@ function drawRelationHeatmap(code) {
     document.getElementById('heatmap-country').textContent = p.name;
   }
 
-  // Build a points layer: the selected country + every country in its relation_scores
+  // Build score points as GeoJSON features for the score-arcs layer
   const scoreSet = p.relation_scores || {};
-  const scorePts = [];
+  const scoreFeatures = [];
 
   // Center marker (the selected country itself) — bright cyan
-  scorePts.push({
-    lat: p.lat, lng: p.lng, _kind: 'score-self',
-    name: p.name, _score: 100, _color: '#22d3ee',
-  });
+  scoreFeatures.push(_pt(p.lng, p.lat, p.name, 'Selected country'));
 
   // All countries that have a relation score from this one
   Object.entries(scoreSet).forEach(([rc, score]) => {
@@ -2110,45 +2761,37 @@ function drawRelationHeatmap(code) {
     if (target) {
       lat = target.lat; lng = target.lng; name = target.name;
     } else {
-      // Fall back to COUNTRY_COORDS lookup
       const fb = COUNTRY_COORDS[rc];
       if (!fb) return;
       lat = fb.lat; lng = fb.lng; name = fb.name;
     }
-    scorePts.push({
-      lat, lng, _kind: 'score', _code: rc,
-      name, _score: score, _color: scoreColor(score),
-    });
+    scoreFeatures.push(_pt(lng, lat, name, `Score: ${score}`));
   });
 
-  // Combine with existing hotspots + militias
-  const hotspotPts = (data.hotspots || []).map(h => ({...h, _kind: 'hotspot'}));
-  const militiaPts = (data.militias || []).map(m => ({...m, _kind: 'militia'}));
-  const combined = [...hotspotPts, ...militiaPts, ...scorePts];
+  // Update score-points source (reuse existing or add to an existing layer)
+  const src = globeMap.getSource('src-score-arcs');
 
-  globe.pointsData(combined);
-
-  // Also draw arcs from the center country to every scored country
-  const scoreArcs = Object.entries(scoreSet).map(([rc, score]) => {
+  // Draw arcs from the center country to every scored country
+  const arcFeatures = Object.entries(scoreSet).map(([rc, score]) => {
     const target = (data.profiles || {})[rc] || COUNTRY_COORDS[rc];
     if (!target) return null;
-    return {
-      startLat: p.lat, startLng: p.lng,
-      endLat: target.lat, endLng: target.lng,
-      _scoreArc: true, _score: score,
-      _relName: target.name || rc,
-    };
+    return _line(p.lng, p.lat, target.lng, target.lat, {
+      _scoreArc: true, _score: score, _relName: target.name || rc
+    });
   }).filter(Boolean);
 
-  globe.arcsData([...data.conflicts, ...scoreArcs]);
+  if (src) src.setData({ type: 'FeatureCollection', features: arcFeatures });
+
+  // Refresh normal points so score points overlay on map
+  refreshGlobePoints();
 }
 
 function clearRelationHeatmap() {
-  if (!globe) return;
-  const hotspotPts = (data.hotspots || []).map(h => ({...h, _kind: 'hotspot'}));
-  const militiaPts = (data.militias || []).map(m => ({...m, _kind: 'militia'}));
-  globe.pointsData([...hotspotPts, ...militiaPts]);
-  globe.arcsData(data.conflicts);
+  if (!globeMap || !_globeReady) return;
+  const src = globeMap.getSource('src-score-arcs');
+  if (src) src.setData(_emptyGJ());
+  refreshGlobePoints();
+  refreshGlobeArcs();
   const ind = document.getElementById('heatmap-indicator');
   if (ind) ind.classList.remove('active');
 }
@@ -2258,5 +2901,11 @@ const COUNTRY_COORDS = {
   FJ: {lat: -18.12, lng: 178.44, name: 'Fiji'},
 };
 </script>
+
+<div class="sources-bar">
+  <span>layers: <span id="layer-count">5</span>/16</span> &nbsp;·&nbsp;
+  <span>sources: osint · opensky · celestrak · eonet</span>
+</div>
+
 </body>
 </html>

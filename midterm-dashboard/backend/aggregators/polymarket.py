@@ -1,3 +1,4 @@
+from __future__ import annotations
 import aiohttp
 import asyncio
 import logging
@@ -413,7 +414,14 @@ class PolymarketAggregator:
             "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
             "Wisconsin": "WI", "Wyoming": "WY"
         }
+        # Check full state names first (no false positives)
+        title_lower = title.lower()
         for name, abbr in states.items():
-            if name.lower() in title.lower() or f" {abbr} " in f" {title} ":
+            if name.lower() in title_lower:
+                return abbr
+        # Only check abbreviations that won't match common English words
+        ambiguous_abbrs = {"IN", "OR", "ME", "OH", "AL", "OK", "HI", "ID", "PA", "MA"}
+        for name, abbr in states.items():
+            if abbr not in ambiguous_abbrs and f" {abbr} " in f" {title} ":
                 return abbr
         return None

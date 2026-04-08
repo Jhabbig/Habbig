@@ -12,12 +12,15 @@ Data sources (all public, unauthenticated):
 Run: python3 server.py   (listens on :8052)
 """
 
+import hmac
+import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # ─── Config ───────────────────────────────────────────────────────────
@@ -32,6 +35,20 @@ HERE = Path(__file__).parent
 INDEX_HTML = HERE / "index.html"
 
 app = FastAPI(title="Polymarket Top Traders Dashboard")
+
+_sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+if not _sso_secret:
+    logging.warning("GATEWAY_SSO_SECRET not set — top-traders dashboard running without authentication (dev mode)")
+
+
+@app.middleware("http")
+async def gateway_auth_middleware(request: Request, call_next):
+    """Verify gateway SSO secret on all requests (skip if secret not configured)."""
+    if _sso_secret:
+        client_secret = request.headers.get("x-gateway-secret", "")
+        if not hmac.compare_digest(client_secret, _sso_secret):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return await call_next(request)
 
 # Small in-memory cache: { key -> (expires_at, payload) }
 _cache: dict[str, tuple[float, Any]] = {}
@@ -182,4 +199,4 @@ async def healthz():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="info")

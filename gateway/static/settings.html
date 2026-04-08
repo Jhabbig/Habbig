@@ -3,32 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings — Habbig</title>
+  <title>Settings — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
 </head>
 <body>
   <header class="gw-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
-    </div>
+    <a href="/dashboards" class="gw-brand" style="text-decoration:none">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
+    </a>
+    <div class="gw-sep"></div>
+    <nav class="gw-tabs">{{ raw_dashboard_tabs }}</nav>
+    <div class="gw-spacer"></div>
     <nav class="gw-nav">
-      <a href="/dashboards">Dashboards</a>
       <a href="/billing">Billing</a>
       <a href="/settings" class="active">Settings</a>
       {{ raw_admin_link }}
-      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
-      <a href="/logout">Sign out</a>
     </nav>
+    <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
+    <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="gw-signout">Sign out</button></form>
   </header>
 
   <main class="gw-main gw-main-narrow">
     <h1 class="gw-page-title">Settings</h1>
-    <p class="gw-page-sub">Control how Habbig opens up for you.</p>
+    <p class="gw-page-sub">Control how narve.ai opens up for you.</p>
 
     {{ raw_saved_banner }}
 
     <form method="post" action="/settings" class="settings-card">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
       <div class="settings-section">
         <div class="settings-section-title">Default landing page</div>
         <div class="settings-section-desc">
@@ -54,7 +57,7 @@
       </div>
       <div class="settings-hint">
         <div class="settings-hint-title">Signed in on another device?</div>
-        <div class="settings-hint-body">Use <a href="/logout">Sign out</a> here to revoke this session. Other sessions stay active until you sign out of them.</div>
+        <div class="settings-hint-body">Use the Sign out button in the navigation bar to revoke this session. Other sessions stay active until you sign out of them.</div>
       </div>
     </div>
   </main>

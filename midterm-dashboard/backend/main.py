@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import json
 import logging
@@ -239,7 +240,7 @@ async def divergence_calculator():
             # Group markets by race_key (race_type + state)
             by_race: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
             for m in all_markets:
-                race_key = f"{m.get('race_type', 'other')}_{m.get('state', 'US')}"
+                race_key = f"{m.get('race_type', 'other')}_{m.get('state') or 'US'}"
                 source = m.get("source", "unknown")
                 by_race[race_key][source].append(m)
 
@@ -463,9 +464,9 @@ async def data_overview():
             for o in outcomes:
                 name = (o.get("name") or "").lower()
                 prob = o.get("probability") or 0
-                if "democrat" in name or "dem" in name or "yes" in name:
+                if "democrat" in name or name in ("dem", "dems") or "yes" in name:
                     dem_prob = prob
-                elif "republican" in name or "rep" in name or "no" in name:
+                elif "republican" in name or name in ("rep", "reps", "gop") or name == "no":
                     rep_prob = prob
             if not rep_prob and dem_prob:
                 rep_prob = 1 - dem_prob
@@ -478,6 +479,96 @@ async def data_overview():
     }
 
 
+import re as _re
+
+
+def _canonical_question(m: dict) -> str:
+    """Derive a canonical question key so the *same* question matches across
+    sources while *different* questions stay separate.
+
+    Examples:
+      "Which party will win the 2026 US Senate election in Texas?"
+        → senate_TX_party_winner
+      "Who will win the 2026 Texas Republican Senate nomination?"
+        → senate_TX_primary
+      "Will Democrats win the U.S. Senate in 2026?"
+        → senate_US_party_winner
+      "Trump out as President before 2027?"
+        → national_trump_leaves_office
+      "Will China invade Taiwan by end of 2026?"
+        → national_china_taiwan
+    """
+    title = (m.get("title") or "").lower()
+    event = (m.get("event_title") or "").lower()
+    text = title + " " + event
+    rt = m.get("race_type", "other")
+    st = m.get("state")
+
+    # ---- state-level elections ----
+    if st:
+        if any(kw in text for kw in ("primary", "nomination", "nominee", "advance from")):
+            # Distinguish Dem vs Rep primaries
+            if any(kw in text for kw in ("republican", "gop", "rep ")):
+                return f"{rt}_{st}_primary_r"
+            elif any(kw in text for kw in ("democrat", "dem ", "democratic")):
+                return f"{rt}_{st}_primary_d"
+            return f"{rt}_{st}_primary"
+        if any(kw in text for kw in ("which party", "will democrat", "will republican",
+                                      "party win", "party control", "dems win",
+                                      "republicans win", "democrats win")):
+            return f"{rt}_{st}_party_winner"
+        if "margin" in text:
+            return f"{rt}_{st}_margin"
+        if any(kw in text for kw in ("who will win", "election winner", "win the")):
+            return f"{rt}_{st}_winner"
+        # fallback: election-level grouping
+        return f"{rt}_{st}_general"
+
+    # ---- national / no-state markets ----
+    # Senate control
+    if any(kw in text for kw in ("control the senate", "win the senate",
+                                  "party will control the senate",
+                                  "senate in 2026", "win the u.s. senate")):
+        return "national_senate_control"
+    # House control
+    if any(kw in text for kw in ("control the house", "win the house",
+                                  "house in the 2026", "house seats")):
+        return "national_house_control"
+    # Balance of power
+    if "balance of power" in text:
+        return "national_balance_of_power"
+    # Senate seat count
+    if _re.search(r"hold exactly \d+ senate", text) or "senate seats" in text:
+        return "national_senate_seats"
+    # Trump leaving office
+    if "trump" in text and any(kw in text for kw in ("out as president", "removed",
+                                                      "leave office", "resign")):
+        return "national_trump_leaves"
+    # Trump impeachment
+    if "trump" in text and "impeach" in text:
+        return "national_trump_impeach"
+    # Speaker of the House
+    if "speaker" in text:
+        return "national_house_speaker"
+    # White House press secretary
+    if "press secretary" in text:
+        return "national_press_secretary"
+    # Senate leader
+    if "senate" in text and ("leader" in text or "leadership" in text):
+        return "national_senate_leader"
+    # Governor seat count
+    if "governor" in text and ("exactly" in text or "governorship" in text):
+        return "national_governor_count"
+    # Geopolitical / non-election (should not cross-match)
+    for subject in ("china", "taiwan", "iran", "israel", "ukraine", "russia",
+                     "greenland", "paramount", "caruso", "zelenskyy", "putin"):
+        if subject in text:
+            return f"geo_{subject}_{m.get('source', 'x')}_{m.get('source_id', '')}"
+
+    # Fallback: unique per market to prevent false grouping
+    return f"other_{m.get('source', 'x')}_{m.get('source_id', '')}"
+
+
 @app.get("/data/races")
 async def data_races(
     race_type: Optional[str] = None,
@@ -486,20 +577,79 @@ async def data_races(
     search: Optional[str] = None,
     min_volume: Optional[float] = None,
 ):
-    """List all tracked races with latest odds."""
+    """List all tracked races with latest odds.
+
+    Returns ``matched`` (elections with 2+ sources) and ``unmatched``
+    (single-source elections) so the frontend can display them separately.
+    Markets are grouped by canonical question so only truly equivalent
+    questions are compared across sources.
+    """
     markets = state.db.get_markets(
         race_type=race_type, state=state_abbr, source=source,
         search=search, min_volume=min_volume,
     )
-    # Exclude world markets from races list unless explicitly requested
-    if race_type != "world":
-        markets = [m for m in markets if m.get("race_type") != "world"]
+    valid_race_types = {"senate", "house", "governor", "control", "presidential"}
+    if race_type and race_type != "world":
+        pass
+    else:
+        markets = [m for m in markets if m.get("race_type") in valid_race_types]
+
+    # --- group by canonical question ------------------------------------
+    from collections import defaultdict
+    buckets: dict[str, dict[str, list[dict]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
     for m in markets:
-        # Use race_type + state as the grouping key so all sources share the same key
-        m["race_key"] = f"{m.get('race_type', 'other')}_{m.get('state') or 'US'}"
-        # Also keep a unique key for direct lookup
-        m["market_id"] = f"{m.get('source', 'unknown')}_{m.get('source_id', '')}"
-    return {"races": markets}
+        src = m.get("source", "unknown")
+        m["market_id"] = f"{src}_{m.get('source_id', '')}"
+        cq = _canonical_question(m)
+        m["_cq"] = cq
+        buckets[cq][src].append(m)
+
+    matched = []
+    unmatched = []
+
+    for cq, by_source in buckets.items():
+        # Pick the highest-volume market per source
+        best = {}
+        total_vol = 0
+        for src, src_markets in by_source.items():
+            rep = max(src_markets, key=lambda x: x.get("volume") or 0)
+            best[src] = rep
+            total_vol += rep.get("volume") or 0
+
+        if not best:
+            continue
+
+        first = next(iter(best.values()))
+        rt = first.get("race_type", "other")
+        st = first.get("state")
+        race_key = f"{rt}_{st}" if st else cq
+
+        for m in best.values():
+            m["race_key"] = race_key
+
+        entry = {
+            "race_key": race_key,
+            "canonical": cq,
+            "race_type": rt,
+            "state": st,
+            "title": first.get("event_title") or first.get("title"),
+            "sources": best,
+            "source_count": len(best),
+            "volume": total_vol,
+        }
+
+        if len(best) >= 2:
+            matched.append(entry)
+        else:
+            unmatched.append(entry)
+
+    matched.sort(key=lambda e: e["volume"], reverse=True)
+    unmatched.sort(key=lambda e: e["volume"], reverse=True)
+
+    return {"matched": matched, "unmatched": unmatched}
 
 
 @app.get("/data/race/{race_key}")
@@ -697,6 +847,26 @@ async def data_historical(
     }
 
 
+@app.get("/data/race-context/{race_key}")
+async def data_race_context(race_key: str):
+    """Policy context, referendums, and key issues for a race.
+
+    race_key format: "{race_type}_{state}" e.g. "senate_GA", "governor_FL"
+    """
+    from race_context import get_context, get_all_contexts
+    ctx = get_context(*race_key.split("_", 1)) if "_" in race_key else None
+    if ctx:
+        return {"race_key": race_key, **ctx}
+    return {"race_key": race_key, "found": False}
+
+
+@app.get("/data/race-contexts")
+async def data_race_contexts():
+    """All race contexts."""
+    from race_context import get_all_contexts
+    return {"contexts": get_all_contexts()}
+
+
 @app.get("/data/world-elections")
 async def data_world_elections(
     country: Optional[str] = None,
@@ -863,8 +1033,8 @@ if _frontend_dist.is_dir():
     async def serve_spa(full_path: str):
         """Serve the React SPA index.html for all non-API routes."""
         # If the request matches a real file, serve it
-        file_path = _frontend_dist / full_path
-        if full_path and file_path.is_file():
+        file_path = (_frontend_dist / full_path).resolve()
+        if full_path and file_path.is_file() and str(file_path).startswith(str(_frontend_dist.resolve())):
             return FileResponse(str(file_path))
         # Otherwise serve index.html for client-side routing
         index = _frontend_dist / "index.html"
@@ -881,7 +1051,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=PORT,
         reload=bool(os.getenv("DEV")),
         log_level="info",

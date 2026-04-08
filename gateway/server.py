@@ -39,7 +39,10 @@ if _env_file.exists():
         _line = _line.strip()
         if _line and not _line.startswith("#") and "=" in _line:
             _k, _, _v = _line.partition("=")
-            os.environ[_k.strip()] = _v.strip()
+            _v = _v.strip()
+            if len(_v) >= 2 and _v[0] == _v[-1] and _v[0] in ('"', "'"):
+                _v = _v[1:-1]
+            os.environ[_k.strip()] = _v
 
 import httpx
 import stripe
@@ -413,7 +416,7 @@ _CSP_VALUE = "; ".join([
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
-    "connect-src 'self' https:",
+    "connect-src 'self' https://*.stripe.com https://*.polymarket.com https://*.kalshi.com",
     "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
@@ -503,6 +506,88 @@ RATE_LIMITED_RESPONSE = HTMLResponse(
 )
 
 
+# ── CSRF protection ──────────────────────────────────────────────────────────
+# Per-session CSRF tokens stored in-memory. Keyed by session token (from cookie).
+# For unauthenticated forms (login, signup, gate, forgot-password, reset-password)
+# we key by a temporary CSRF cookie instead.
+
+_CSRF_COOKIE = "pm_csrf"
+_csrf_tokens: dict[str, str] = {}
+_CSRF_TOKEN_MAX = 5000
+
+
+def _get_csrf_token(request: Request) -> str:
+    """Return the CSRF token for the current request, creating one if needed."""
+    # Prefer session token, fall back to CSRF cookie
+    session_key = request.cookies.get(COOKIE_NAME) or request.cookies.get(_CSRF_COOKIE)
+    if session_key and session_key in _csrf_tokens:
+        return _csrf_tokens[session_key]
+    # Generate new token
+    token = secrets.token_urlsafe(32)
+    if session_key:
+        if len(_csrf_tokens) >= _CSRF_TOKEN_MAX:
+            # Evict oldest entries
+            to_delete = list(_csrf_tokens.keys())[:1000]
+            for k in to_delete:
+                del _csrf_tokens[k]
+        _csrf_tokens[session_key] = token
+    return token
+
+
+def _set_csrf_cookie_if_needed(response: Response, request: Request, csrf_token: str) -> None:
+    """Set a CSRF cookie for unauthenticated users so token validation works."""
+    session_key = request.cookies.get(COOKIE_NAME)
+    if session_key:
+        # Already have a session — CSRF is keyed by session, no extra cookie needed
+        if session_key not in _csrf_tokens:
+            if len(_csrf_tokens) >= _CSRF_TOKEN_MAX:
+                to_delete = list(_csrf_tokens.keys())[:1000]
+                for k in to_delete:
+                    del _csrf_tokens[k]
+            _csrf_tokens[session_key] = csrf_token
+        return
+    # No session — use or create CSRF cookie
+    csrf_cookie = request.cookies.get(_CSRF_COOKIE)
+    if not csrf_cookie:
+        csrf_cookie = secrets.token_urlsafe(24)
+        response.set_cookie(
+            key=_CSRF_COOKIE,
+            value=csrf_cookie,
+            max_age=3600,
+            httponly=True,
+            samesite="lax",
+            secure=IS_PRODUCTION,
+            path="/",
+        )
+    if len(_csrf_tokens) >= _CSRF_TOKEN_MAX:
+        to_delete = list(_csrf_tokens.keys())[:1000]
+        for k in to_delete:
+            del _csrf_tokens[k]
+    _csrf_tokens[csrf_cookie] = csrf_token
+
+
+def _validate_csrf(request: Request, form_token: str) -> bool:
+    """Validate a CSRF token from form data against the stored token."""
+    session_key = request.cookies.get(COOKIE_NAME) or request.cookies.get(_CSRF_COOKIE)
+    if not session_key:
+        return False
+    expected = _csrf_tokens.get(session_key)
+    if not expected:
+        return False
+    return _hmac_module.compare_digest(expected, form_token)
+
+
+def _csrf_error() -> HTMLResponse:
+    return HTMLResponse(
+        "<h1>Invalid request</h1>"
+        "<p>Your session may have expired. Please go back and try again.</p>",
+        status_code=403,
+    )
+
+
+import hmac as _hmac_module  # stdlib hmac for CSRF compare (avoids name collision)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -586,6 +671,10 @@ def _get_cached_session(token: str) -> Optional[dict]:
         return entry[1]
     session = db.get_session(token)
     if not session:
+        _SESSION_CACHE.pop(token, None)
+        return None
+    # Check if user is suspended
+    if session.get("suspended"):
         _SESSION_CACHE.pop(token, None)
         return None
     admin_level = session["is_admin"] or 0
@@ -718,7 +807,7 @@ def _get_or_create_stripe_customer(user_id: str, email: str) -> str:
     existing = stripe.Customer.list(email=email, limit=1)
     if existing.data:
         return existing.data[0].id
-    customer = stripe.Customer.create(email=email, metadata={"user_id": user_id})
+    customer = stripe.Customer.create(email=email, metadata={"user_id": str(user_id)})
     return customer.id
 
 
@@ -743,19 +832,28 @@ def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
     return True
 
 
-def render_page(name: str, **context) -> HTMLResponse:
+def render_page(name: str, request: Optional[Request] = None, **context) -> HTMLResponse:
     """Tiny templating: load static/<name>.html and do {{ key }} substitution.
 
     Keys prefixed with ``raw_`` are inserted verbatim (used for pre-escaped
     server-side HTML). All other values are HTML-escaped before insertion.
     For convenience, the well-known keys ``dashboard_cards`` and
     ``billing_rows`` are also treated as raw.
+
+    When ``request`` is provided, a CSRF token is auto-generated and made
+    available as ``{{ csrf_token }}`` in the template.  A CSRF cookie is
+    also set on the response for unauthenticated pages.
     """
     path = STATIC_DIR / f"{name}.html"
     page = path.read_text()
     # Auto-fill empty raw_admin_link if not provided (prevents {{ raw_admin_link }} showing)
     if "raw_admin_link" not in context:
         context["raw_admin_link"] = ""
+    # Auto-generate CSRF token when request is available
+    csrf_token = ""
+    if request is not None:
+        csrf_token = _get_csrf_token(request)
+    context.setdefault("csrf_token", csrf_token)
     raw_keys = {"dashboard_cards", "billing_rows"}
     for key, value in context.items():
         placeholder = "{{ " + key + " }}"
@@ -763,7 +861,11 @@ def render_page(name: str, **context) -> HTMLResponse:
             page = page.replace(placeholder, str(value))
         else:
             page = page.replace(placeholder, html.escape(str(value)))
-    return HTMLResponse(page)
+    resp = HTMLResponse(page)
+    # Set CSRF cookie for unauthenticated users
+    if request is not None and csrf_token:
+        _set_csrf_cookie_if_needed(resp, request, csrf_token)
+    return resp
 
 
 # ── Apex routes (login / signup / my dashboards / billing) ────────────────────
@@ -815,7 +917,7 @@ async def gate_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/gate")
-    return render_page("gate", error="")
+    return render_page("gate", request=request, error="")
 
 
 @app.post("/gate")
@@ -823,12 +925,17 @@ async def gate_submit(request: Request, token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/gate")
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     token = token.strip()
     if not token:
-        return render_page("gate", error="Please enter an invite token.")
+        return render_page("gate", request=request, error="Please enter an invite token.")
     invite = db.get_invite_token(token)
     if not invite or invite["status"] == "revoked":
-        return render_page("gate", error="Invalid or revoked token.")
+        return render_page("gate", request=request, error="Invalid or revoked token.")
     if invite["status"] == "claimed":
         return RedirectResponse(f"/login?{urlencode({'token': invite['token']})}", status_code=303)
     # Unclaimed — PRG redirect to the signup page with token in URL
@@ -868,7 +975,7 @@ async def login_page(request: Request, token: str = ""):
             token_section = _login_token_section(invite["token"], email_hint)
             footer_link = '<a href="/gate">Use a different token</a>'
     return render_page(
-        "login", error="",
+        "login", request=request, error="",
         raw_token_section=token_section,
         raw_footer_link=footer_link,
         raw_success="",
@@ -880,6 +987,12 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
+
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
 
     ip = _get_client_ip(request)
     if _is_rate_limited(ip, "login", _RATE_MAX_LOGIN):
@@ -894,13 +1007,13 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
             invite = db.get_invite_token(invite_token)
             email_hint = db.mask_email(invite["claimed_by_email"] or "") if invite else ""
             return render_page(
-                "login", error=msg,
+                "login", request=request, error=msg,
                 raw_token_section=_login_token_section(invite_token, email_hint),
                 raw_footer_link='<a href="/gate">Use a different token</a>',
                 raw_success="",
             )
         return render_page(
-            "login", error=msg,
+            "login", request=request, error=msg,
             raw_token_section="",
             raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
             raw_success="",
@@ -912,13 +1025,13 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     user = db.get_user_by_email_or_username(identifier)
     if not user:
         log.warning("Failed login: account not found for identifier=%s ip=%s", identifier, request.client.host if request.client else "unknown")
-        return _render_login_error("Account not found.")
+        return _render_login_error("Invalid email or password.")
 
     # If token provided (gate flow), enforce token-to-user binding
     if invite_token:
         invite = db.get_invite_token(invite_token)
         if not invite or invite["status"] != "claimed":
-            return render_page("gate", error="Invalid or expired token. Please enter your invite token again.")
+            return render_page("gate", request=request, error="Invalid or expired token. Please enter your invite token again.")
         if invite["claimed_by_user_id"] != user["id"]:
             return _render_login_error("This token does not belong to that account.")
 
@@ -926,7 +1039,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
         return _render_login_error("This account has been suspended.")
     if not db.verify_user_password(user["email"], password):
         log.warning("Failed login: wrong password for user=%s ip=%s", user["username"] or user["email"], request.client.host if request.client else "unknown")
-        return _render_login_error("Invalid password.")
+        return _render_login_error("Invalid email or password.")
 
     token = db.create_session(user["id"])
     response = RedirectResponse("/dashboards", status_code=302)
@@ -954,7 +1067,7 @@ async def signup_page(request: Request, token: str = ""):
         target_email = invite["target_email"] or ""
     except (IndexError, KeyError):
         pass
-    return render_page("signup", error="", invite_token=invite["token"], email=target_email)
+    return render_page("signup", request=request, error="", invite_token=invite["token"], email=target_email)
 
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
@@ -966,49 +1079,64 @@ async def signup_submit(request: Request, username: str = Form(""), email: str =
     if sub:
         return await proxy_request(request, "/signup")
 
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "signup", _RATE_MAX_SIGNUP):
+        return render_page("signup", request=request, error="Too many signup attempts. Please try again later.", invite_token=invite_token, email=email)
+
     invite_token = invite_token.strip()
     invite = db.get_invite_token(invite_token) if invite_token else None
     if not invite or invite["status"] != "unclaimed":
-        return render_page("gate", error="Invalid or already used invite token. Please enter a valid token.")
+        return render_page("gate", request=request, error="Invalid or already used invite token. Please enter a valid token.")
 
     username = username.strip()
     email = (email or "").lower().strip()
 
     if not username or not USERNAME_RE.match(username):
-        return render_page("signup", error="Username must be 3\u201320 characters: letters, numbers, underscores only.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Username must be 3\u201320 characters: letters, numbers, underscores only.", invite_token=invite_token, email=email)
     if db.get_user_by_username(username):
-        return render_page("signup", error="That username is already taken.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="That username is already taken.", invite_token=invite_token, email=email)
     if not is_valid_email(email):
-        return render_page("signup", error="Enter a valid email address.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Enter a valid email address.", invite_token=invite_token, email=email)
     if len(password) < 12:
-        return render_page("signup", error="Password must be at least 12 characters.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Password must be at least 12 characters.", invite_token=invite_token, email=email)
     if len(password) > 256:
-        return render_page("signup", error="Password is too long.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Password is too long.", invite_token=invite_token, email=email)
     if not re.search(r"[A-Z]", password):
-        return render_page("signup", error="Password must contain at least one uppercase letter.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Password must contain at least one uppercase letter.", invite_token=invite_token, email=email)
     if not re.search(r"[a-z]", password):
-        return render_page("signup", error="Password must contain at least one lowercase letter.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Password must contain at least one lowercase letter.", invite_token=invite_token, email=email)
     if not re.search(r"[0-9]", password):
-        return render_page("signup", error="Password must contain at least one number.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Password must contain at least one number.", invite_token=invite_token, email=email)
     if not re.search(r"[^A-Za-z0-9]", password):
-        return render_page("signup", error="Password must contain at least one special character.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="Password must contain at least one special character.", invite_token=invite_token, email=email)
     if db.get_user_by_email(email):
-        return render_page("signup", error="An account with that email already exists.", invite_token=invite_token, email=email)
+        return render_page("signup", request=request, error="An account with that email already exists.", invite_token=invite_token, email=email)
     user_id = db.create_user(email, password, username=username)
     if not db.claim_invite_token(invite_token, user_id, email):
         db.delete_user(user_id)
-        return render_page("gate", error="This token was just claimed by someone else. Please use a different token.")
+        return render_page("gate", request=request, error="This token was just claimed by someone else. Please use a different token.")
     token = db.create_session(user_id)
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, token, request)
     return response
 
 
-@app.get("/logout")
+@app.post("/logout")
 async def logout(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/logout")
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     token = request.cookies.get(COOKIE_NAME)
     if token:
         db.delete_session(token)
@@ -1016,6 +1144,12 @@ async def logout(request: Request):
     response = RedirectResponse("/gate", status_code=302)
     clear_session_cookie(response, request)
     return response
+
+
+@app.get("/logout")
+async def logout_get(request: Request):
+    """Fallback GET handler — redirect to login so old bookmarks still work."""
+    return RedirectResponse("/gate", status_code=302)
 
 
 @app.get("/dashboards", response_class=HTMLResponse)
@@ -1071,7 +1205,7 @@ async def my_dashboards(request: Request):
             '<div class="sub-summary-label">No active subscriptions</div>'
             '</div>'
             '<p class="sub-summary-hint">Pick a dashboard below to see what it offers, or '
-            '<a href="/pricing">view bundle plans</a> to save.</p>'
+            '<a href="/billing">view plans</a> to save.</p>'
             '</div>'
         )
 
@@ -1158,13 +1292,14 @@ async def my_dashboards(request: Request):
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
-        "dashboards",
+        "dashboards", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         dashboard_cards="".join(cards_html),
         raw_admin_link=admin_link,
         raw_sub_summary=summary_html,
         raw_tour_steps=tour_html,
         tour_total_steps=str(total_steps),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
     )
 
 
@@ -1189,6 +1324,8 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
     now = int(time.time())
+    csrf_token = _get_csrf_token(request)
+    csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
@@ -1226,6 +1363,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
           <div class="billing-row-status">{status_label}</div>
           <div class="billing-row-actions">
             <form method="post" action="/billing">
+              {csrf_hidden}
               {monthly_btn}
               {annual_btn}
               {cancel_btn}
@@ -1245,11 +1383,12 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
             '</div>'
         )
     return render_page(
-        "billing",
+        "billing", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
         raw_banner=banner,
+        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
     )
 
 
@@ -1258,6 +1397,11 @@ async def billing_action(request: Request, action: str = Form(...)):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/billing")
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
@@ -1329,10 +1473,17 @@ async def billing_action(request: Request, action: str = Form(...)):
 @app.post("/billing/subscribe")
 async def billing_subscribe(request: Request, plan: str = Form(""), interval: str = Form("monthly")):
     """Subscribe the logged-in user to a bundle plan (trader/pro)."""
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
     if plan not in ("trader", "pro"):
+        return RedirectResponse("/billing", status_code=302)
+    if interval not in ("monthly", "annual"):
         return RedirectResponse("/billing", status_code=302)
 
     if not STRIPE_SECRET_KEY:
@@ -1393,12 +1544,16 @@ async def stripe_webhook(request: Request):
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid payload")
-        except stripe.error.SignatureVerificationError:
+        except stripe.SignatureVerificationError:
             raise HTTPException(status_code=400, detail="Invalid signature")
     else:
         if IS_PRODUCTION:
             log.error("Stripe webhook received but STRIPE_WEBHOOK_SECRET is not set — rejecting")
             raise HTTPException(status_code=500, detail="Webhook secret not configured")
+        # Dev-only: skip verification only when explicitly opted in
+        if os.getenv("STRIPE_SKIP_VERIFICATION") != "1":
+            log.error("Stripe webhook: no secret and STRIPE_SKIP_VERIFICATION!=1 — rejecting")
+            raise HTTPException(status_code=400, detail="Webhook verification required")
         # No webhook secret configured — parse payload directly (dev only)
         event = json.loads(payload)
 
@@ -1440,6 +1595,8 @@ async def stripe_webhook(request: Request):
             # Bundle plan — unlock all dashboards
             plan_type = meta.get("plan_type", "trader")
             interval = meta.get("interval", "monthly")
+            if interval not in ("monthly", "annual"):
+                interval = "monthly"
             duration = 30 if interval == "monthly" else 365
             for key in DASHBOARDS:
                 db.upsert_subscription(
@@ -1534,7 +1691,7 @@ async def preview_page(request: Request, dashboard_key: str):
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
 
     return render_page(
-        "preview",
+        "preview", request=request,
         dashboard_name=cfg["display_name"],
         dashboard_key=dashboard_key,
         tagline=preview.get("tagline", cfg["description"]),
@@ -1546,13 +1703,14 @@ async def preview_page(request: Request, dashboard_key: str):
         raw_features_html="".join(features_html_parts),
         raw_includes_html="".join(includes_html_parts),
         raw_admin_link=admin_link,
+        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
     )
 
 
 # ── Profile page ────────────────────────────────────────────────────────────
 
 
-def _profile_context(user: dict, banner: str = "") -> dict:
+def _profile_context(user: dict, banner: str = "", csrf_token: str = "") -> dict:
     import datetime as _dt
     db_user = db.get_user_by_id(user["user_id"])
     if db_user:
@@ -1580,15 +1738,16 @@ def _profile_context(user: dict, banner: str = "") -> dict:
     cred_status = db.has_trading_credentials(user["user_id"])
     connected = '<span class="setup-status on">Connected</span>'
     not_connected = '<span class="setup-status off">Not connected</span>'
+    csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
     poly_delete = (
-        '<form method="post" action="/profile/trading/polymarket/delete" style="display:inline" '
-        'onsubmit="return confirm(\'Disconnect Polymarket?\')"><button type="submit" '
-        'class="setup-btn-remove">Disconnect</button></form>'
+        f'<form method="post" action="/profile/trading/polymarket/delete" style="display:inline" '
+        f'onsubmit="return confirm(\'Disconnect Polymarket?\')">{csrf_hidden}<button type="submit" '
+        f'class="setup-btn-remove">Disconnect</button></form>'
     ) if cred_status["polymarket"] else ""
     kalshi_delete = (
-        '<form method="post" action="/profile/trading/kalshi/delete" style="display:inline" '
-        'onsubmit="return confirm(\'Disconnect Kalshi?\')"><button type="submit" '
-        'class="setup-btn-remove">Disconnect</button></form>'
+        f'<form method="post" action="/profile/trading/kalshi/delete" style="display:inline" '
+        f'onsubmit="return confirm(\'Disconnect Kalshi?\')">{csrf_hidden}<button type="submit" '
+        f'class="setup-btn-remove">Disconnect</button></form>'
     ) if cred_status["kalshi"] else ""
 
     # Cards that aren't connected start open so the user sees the setup steps
@@ -1613,6 +1772,7 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         "raw_kalshi_delete": kalshi_delete,
         "poly_open_class": f"{poly_connected} {poly_open}".strip(),
         "kalshi_open_class": f"{kalshi_connected} {kalshi_open}".strip(),
+        "raw_dashboard_tabs": _build_tab_html(user["user_id"]),
     }
 
 
@@ -1624,7 +1784,7 @@ async def profile_page(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
-    return render_page("profile", **_profile_context(user))
+    return render_page("profile", request=request, **_profile_context(user, csrf_token=_get_csrf_token(request)))
 
 
 @app.post("/profile/password")
@@ -1632,6 +1792,11 @@ async def profile_change_password(request: Request, current_password: str = Form
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/profile/password")
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
@@ -1643,14 +1808,15 @@ async def profile_change_password(request: Request, current_password: str = Form
     err_banner = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
     ok_banner = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
 
+    _csrf = _get_csrf_token(request)
     if not db.verify_user_password(user["email"], current_password):
-        return render_page("profile", **_profile_context(user, err_banner("Current password is incorrect.")))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Current password is incorrect."), csrf_token=_csrf))
     if new_password != confirm_password:
-        return render_page("profile", **_profile_context(user, err_banner("New passwords don't match.")))
-    if len(new_password) < 12:
-        return render_page("profile", **_profile_context(user, err_banner("Password must be at least 12 characters.")))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("New passwords don't match."), csrf_token=_csrf))
+    if len(new_password) < 12 or len(new_password) > 256:
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must be 12\u2013256 characters."), csrf_token=_csrf))
     if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
-        return render_page("profile", **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character.")))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character."), csrf_token=_csrf))
 
     db.update_user_password(user["user_id"], new_password)
     # Invalidate all other sessions so a compromised session can't persist
@@ -1659,7 +1825,7 @@ async def profile_change_password(request: Request, current_password: str = Form
     # Re-create a session for the current user so they stay logged in
     new_token = db.create_session(user["user_id"])
     log.info("User %s changed their password, all sessions invalidated", user.get("username", user["email"]))
-    resp = render_page("profile", **_profile_context(user, ok_banner("Password changed successfully. All other sessions have been signed out.")))
+    resp = render_page("profile", request=request, **_profile_context(user, ok_banner("Password changed successfully. All other sessions have been signed out."), csrf_token=_get_csrf_token(request)))
     set_session_cookie(resp, new_token, request)
     return resp
 
@@ -1677,6 +1843,11 @@ async def profile_save_trading_creds(
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, f"/profile/trading/{platform}")
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
@@ -1692,28 +1863,29 @@ async def profile_save_trading_creds(
         f'font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
     )
 
+    _csrf = _get_csrf_token(request)
     if platform == "polymarket":
         pk = private_key.strip()
         if not pk:
-            ctx = _profile_context(user)
+            ctx = _profile_context(user, csrf_token=_csrf)
             ctx["raw_trading_banner"] = t_err("Polymarket private key is required.")
-            return render_page("profile", **ctx)
+            return render_page("profile", request=request, **ctx)
         creds = {"private_key": pk, "api_key": api_key.strip(), "api_secret": api_secret.strip(), "api_passphrase": api_passphrase.strip()}
     else:
         ak = api_key.strip()
         em = email.strip()
         pw = password.strip()
         if not ak and not (em and pw):
-            ctx = _profile_context(user)
+            ctx = _profile_context(user, csrf_token=_csrf)
             ctx["raw_trading_banner"] = t_err("Kalshi API key or email + password required.")
-            return render_page("profile", **ctx)
+            return render_page("profile", request=request, **ctx)
         creds = {"api_key": ak, "email": em, "password": pw}
 
     db.save_trading_credentials(user["user_id"], platform, creds)
     log.info("User %s saved %s trading credentials via profile", user.get("username", user["email"]), platform)
-    ctx = _profile_context(user)
+    ctx = _profile_context(user, csrf_token=_csrf)
     ctx["raw_trading_banner"] = t_ok(f"{'Polymarket' if platform == 'polymarket' else 'Kalshi'} credentials saved and encrypted.")
-    return render_page("profile", **ctx)
+    return render_page("profile", request=request, **ctx)
 
 
 @app.post("/profile/trading/{platform}/delete")
@@ -1721,6 +1893,11 @@ async def profile_delete_trading_creds(request: Request, platform: str):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, f"/profile/trading/{platform}/delete")
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
@@ -1755,7 +1932,7 @@ async def forgot_password_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/forgot-password")
-    return render_page("forgot-password", error="", raw_success="")
+    return render_page("forgot-password", request=request, error="", raw_success="")
 
 
 @app.post("/forgot-password")
@@ -1763,6 +1940,12 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/forgot-password")
+
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
 
     ip = _get_client_ip(request)
     if _is_rate_limited(ip, "forgot", _RATE_MAX_FORGOT):
@@ -1777,7 +1960,7 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
     )
 
     if not email or not is_valid_email(email):
-        return render_page("forgot-password", error="Please enter a valid email address.", raw_success="")
+        return render_page("forgot-password", request=request, error="Please enter a valid email address.", raw_success="")
 
     user = db.get_user_by_email(email)
     if user:
@@ -1826,7 +2009,7 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
             # No SMTP configured — log the link so the admin can relay it.
             log.info("SMTP not configured. Reset link for %s: %s", email, reset_link)
 
-    return render_page("forgot-password", error="", raw_success=success_msg)
+    return render_page("forgot-password", request=request, error="", raw_success=success_msg)
 
 
 @app.get("/reset-password", response_class=HTMLResponse)
@@ -1839,11 +2022,11 @@ async def reset_password_page(request: Request, token: str = ""):
     reset = db.get_password_reset(token) if token else None
     if not reset:
         return render_page(
-            "forgot-password",
+            "forgot-password", request=request,
             error="This reset link is invalid or has expired. Please request a new one.",
             raw_success="",
         )
-    return render_page("reset-password", token=token, error="", raw_success="")
+    return render_page("reset-password", request=request, token=token, error="", raw_success="")
 
 
 @app.post("/reset-password")
@@ -1857,21 +2040,27 @@ async def reset_password_submit(
     if sub:
         return await proxy_request(request, "/reset-password")
 
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
     token = token.strip()
     reset = db.get_password_reset(token) if token else None
     if not reset:
         return render_page(
-            "forgot-password",
+            "forgot-password", request=request,
             error="This reset link is invalid or has expired. Please request a new one.",
             raw_success="",
         )
 
     if new_password != confirm_password:
-        return render_page("reset-password", token=token, error="Passwords don't match.", raw_success="")
+        return render_page("reset-password", request=request, token=token, error="Passwords don't match.", raw_success="")
 
     pwd_err = _validate_password(new_password)
     if pwd_err:
-        return render_page("reset-password", token=token, error=pwd_err, raw_success="")
+        return render_page("reset-password", request=request, token=token, error=pwd_err, raw_success="")
 
     db.update_user_password(reset["user_id"], new_password)
     db.use_password_reset(token)
@@ -1884,7 +2073,7 @@ async def reset_password_submit(
 
     # Redirect to login with a success indicator.
     return render_page(
-        "login",
+        "login", request=request,
         error="",
         raw_token_section="",
         raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
@@ -1900,7 +2089,7 @@ async def enquire_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/enquire")
-    return render_page("enquire")
+    return render_page("enquire", request=request)
 
 
 @app.post("/api/enquire")
@@ -1908,6 +2097,9 @@ async def api_enquire(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/api/enquire")
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "enquire", 3):
+        return JSONResponse({"error": "Too many requests. Please try again later."}, status_code=429)
     try:
         body = await request.json()
     except Exception:
@@ -1981,7 +2173,7 @@ def _require_admin_user(request: Request) -> dict:
     return user
 
 
-def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict:
+def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_token: str = "") -> dict:
     """Build the template context for the admin page."""
     tokens = db.list_invite_tokens()
     users = db.list_all_users()
@@ -2011,6 +2203,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
         if status == "unclaimed":
             revoke_btn = (
                 f'<form method="post" action="/admin/tokens/revoke">'
+                f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
                 f'<input type="hidden" name="token_id" value="{t["id"]}">'
                 f'<button type="submit" class="btn btn-danger">Revoke</button></form>'
             )
@@ -2025,6 +2218,9 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
     # User rows HTML — with checkboxes and full management
     import datetime as _dt
     is_super = caller_level >= 2
+    csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
+    pw_style = 'style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);width:140px"'
+    pw_field = f'<input name="password" type="password" placeholder="Your password" {pw_style} required>'
     user_rows = []
     dash_opts = "".join(
         f'<option value="{k}">{html.escape(cfg["display_name"])}</option>'
@@ -2043,6 +2239,8 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             badges += '<span class="badge" style="background:var(--red-bg);color:var(--red)">SUSPENDED</span> '
         joined = _dt.datetime.fromtimestamp(u["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         uname = html.escape(u["username"] or u["email"].split("@")[0])
+        # Also escape for JS string context (backslashes and single quotes)
+        uname_js = uname.replace("\\", "\\\\").replace("'", "\\'")
         email_esc = html.escape(u["email"])
 
         # Determine if caller can manage this user
@@ -2065,27 +2263,28 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                 )
                 actions += (
                     f'<form method="post" action="/admin/users/{u["id"]}/role" onclick="event.stopPropagation()" '
-                    f'onsubmit="return confirm(\'Change role for {uname}?\')" style="display:flex;gap:6px;align-items:center">'
+                    f'onsubmit="return confirm(\'Change role for {uname_js}?\')" style="display:flex;gap:6px;align-items:center">'
+                    f'{csrf_hidden}'
                     f'<select name="level" {sel_style}>{role_opts}</select>'
+                    f'{pw_field}'
                     f'<button class="btn btn-primary-outline" style="font-size:11px">Set Role</button></form>'
                 )
             else:
-                # Regular admin: promote/demote regular users only
-                if ulevel == 0:
-                    actions += f'<form method="post" action="/admin/users/{u["id"]}/promote" onsubmit="return confirm(\'Promote {uname} to admin?\')"><button class="btn btn-primary-outline" style="font-size:11px">Promote to Admin</button></form>'
-                elif ulevel == 1:
-                    actions += f'<form method="post" action="/admin/users/{u["id"]}/demote" onsubmit="return confirm(\'Demote {uname}?\')"><button class="btn btn-danger" style="font-size:11px">Demote to User</button></form>'
+                # Regular admin: can only demote level-1 admins (promote requires super admin)
+                if ulevel == 1:
+                    actions += f'<form method="post" action="/admin/users/{u["id"]}/demote" onsubmit="return confirm(\'Demote {uname_js}?\')" style="display:flex;gap:6px;align-items:center">{csrf_hidden}{pw_field}<button class="btn btn-danger" style="font-size:11px">Demote to User</button></form>'
 
             # Suspend/unsuspend
             if not u["suspended"]:
-                actions += f'<form method="post" action="/admin/users/{u["id"]}/suspend" onsubmit="return confirm(\'Suspend {uname}?\')"><button class="btn btn-danger" style="font-size:11px">Suspend</button></form>'
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/suspend" onsubmit="return confirm(\'Suspend {uname_js}?\')" style="display:flex;gap:6px;align-items:center">{csrf_hidden}{pw_field}<button class="btn btn-danger" style="font-size:11px">Suspend</button></form>'
             else:
-                actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend"><button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend">{csrf_hidden}<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
 
             # Change email (admin+)
             detail_extra += (
                 f'<form method="post" action="/admin/users/{u["id"]}/email" onclick="event.stopPropagation()" '
                 f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                f'{csrf_hidden}'
                 f'<input name="new_email" type="email" placeholder="New email" {sel_style} style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);flex:1">'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Change Email</button></form>'
             )
@@ -2096,6 +2295,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                     f'<form method="post" action="/admin/users/{u["id"]}/revoke-token" onclick="event.stopPropagation()" '
                     f'onsubmit="return confirm(\'Revoke token for {uname}? They will not be able to log in.\')"'
                     f' style="margin-top:8px">'
+                    f'{csrf_hidden}'
                     f'<button class="btn btn-danger" style="font-size:11px">Revoke Invite Token</button></form>'
                 )
 
@@ -2103,6 +2303,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             detail_extra += (
                 f'<form method="post" action="/admin/users/{u["id"]}/new-token" onclick="event.stopPropagation()" '
                 f'onsubmit="return confirm(\'Generate a new invite token for {uname}?\')" style="margin-top:8px">'
+                f'{csrf_hidden}'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
             )
 
@@ -2117,11 +2318,13 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/grant" onclick="event.stopPropagation()" '
                     f'style="margin-top:8px">'
+                    f'{csrf_hidden}'
                     f'<div style="display:flex;flex-wrap:wrap;gap:8px 14px;margin-bottom:8px">{dash_checks}</div>'
                     f'<div style="display:flex;gap:6px;align-items:center">'
                     f'<button type="button" onclick="let c=this.closest(\'form\').querySelectorAll(\'input[type=checkbox]\');let all=Array.from(c).every(x=>x.checked);c.forEach(x=>x.checked=!all)" '
                     f'class="btn btn-primary-outline" style="font-size:11px">Toggle All</button>'
                     f'<select name="plan" {sel_style}><option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
+                    f'{pw_field}'
                     f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button>'
                     f'</div></form>'
                 )
@@ -2175,16 +2378,17 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
         "raw_user_rows": "".join(user_rows),
         "raw_stat_cards": stat_cards,
         "raw_new_token_banner": new_token_banner,
-        "raw_enquiry_rows": _build_enquiry_rows(),
+        "raw_enquiry_rows": _build_enquiry_rows(csrf_token=csrf_token),
         "raw_revenue_content": _build_revenue_content(),
     }
 
 
-def _build_enquiry_rows() -> str:
+def _build_enquiry_rows(csrf_token: str = "") -> str:
     enquiries = db.list_enquiries()
     if not enquiries:
         return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No enquiries yet.</div></div></div>'
     import datetime as _dt
+    csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
     rows = []
     for e in enquiries:
         read_badge = "" if e["read"] else '<span class="badge" style="background:var(--accent-light);color:var(--accent)">NEW</span> '
@@ -2193,10 +2397,12 @@ def _build_enquiry_rows() -> str:
         if not e["read"]:
             mark_btn = (
                 f'<form method="post" action="/admin/enquiries/{e["id"]}/read">'
+                f'{csrf_hidden}'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Mark Read</button></form>'
             )
         create_token_btn = (
             f'<form method="post" action="/admin/enquiries/{e["id"]}/create-token">'
+            f'{csrf_hidden}'
             f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Create Token</button></form>'
         )
         rows.append(
@@ -2342,50 +2548,94 @@ def _build_revenue_content() -> str:
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     user = _require_admin_user(request)
-    ctx = _build_admin_context(caller_level=user.get("admin_level", 1))
-    return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
+    csrf_token = _get_csrf_token(request)
+    ctx = _build_admin_context(caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
+    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"]), **ctx)
 
 
 @app.post("/admin/tokens/generate")
 async def admin_generate_token(request: Request, note: str = Form(""), target_email: str = Form("")):
     user = _require_admin_user(request)
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     new_token = db.create_invite_token(note.strip(), target_email=target_email.strip())
     log.info("Admin %s generated invite token: %s (target: %s)", user["email"], new_token, target_email.strip() or "none")
-    ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1))
-    return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
+    csrf_token = _get_csrf_token(request)
+    ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
+    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"]), **ctx)
 
 
 @app.post("/admin/tokens/revoke")
 async def admin_revoke_token(request: Request, token_id: int = Form(0)):
     user = _require_admin_user(request)
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     db.revoke_invite_token(token_id)
     log.info("Admin %s revoked token id=%d", user["email"], token_id)
     return RedirectResponse("/admin", status_code=302)
 
 
+def _verify_admin_password(request: Request, admin: dict, password: str) -> bool:
+    """Verify the admin's password for destructive actions. Returns True if valid."""
+    return db.verify_user_password(admin["email"], password)
+
+
 @app.post("/admin/users/{user_id}/promote")
 async def admin_promote(request: Request, user_id: int):
-    admin = _require_admin_user(request)
+    admin = _require_super_admin(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_admin(user_id, True)
+    flush_session_cache()
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/demote")
 async def admin_demote(request: Request, user_id: int):
     admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot demote yourself")
     db.set_user_admin(user_id, False)
+    flush_session_cache()
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/suspend")
 async def admin_suspend(request: Request, user_id: int):
     admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot suspend yourself")
     db.set_user_suspended(user_id, True)
     flush_session_cache()
     log.info("Admin %s suspended user id=%s", admin.get("email"), user_id)
@@ -2395,6 +2645,10 @@ async def admin_suspend(request: Request, user_id: int):
 @app.post("/admin/users/{user_id}/unsuspend")
 async def admin_unsuspend(request: Request, user_id: int):
     admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, False)
@@ -2406,6 +2660,10 @@ async def admin_unsuspend(request: Request, user_id: int):
 @app.post("/admin/enquiries/{enquiry_id}/read")
 async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
     _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     db.mark_enquiry_read(enquiry_id)
     return RedirectResponse("/admin", status_code=302)
 
@@ -2413,6 +2671,10 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
 @app.post("/admin/enquiries/{enquiry_id}/create-token")
 async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
     admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     enquiry = db.get_enquiry_by_id(enquiry_id)
     if not enquiry:
         raise HTTPException(status_code=404, detail="Enquiry not found")
@@ -2423,8 +2685,9 @@ async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
     )
     db.mark_enquiry_read(enquiry_id)
     log.info("Admin %s created token %s for enquiry %d (%s)", admin["email"], new_token, enquiry_id, email)
-    ctx = _build_admin_context(new_token_str=new_token, caller_level=admin.get("admin_level", 1))
-    return render_page("admin", email=admin["email"], username=admin.get("username", admin["email"]), **ctx)
+    csrf_token = _get_csrf_token(request)
+    ctx = _build_admin_context(new_token_str=new_token, caller_level=admin.get("admin_level", 1), csrf_token=csrf_token)
+    return render_page("admin", request=request, email=admin["email"], username=admin.get("username", admin["email"]), raw_dashboard_tabs=_build_tab_html(admin["user_id"]), **ctx)
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:
@@ -2451,9 +2714,19 @@ def _require_super_admin(request: Request) -> dict:
 @app.post("/admin/users/{user_id}/role")
 async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
     admin = _require_super_admin(request)
-    if level < 0 or level > 2:
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
+    if level not in (0, 1, 2):
         raise HTTPException(status_code=400, detail="Invalid role level")
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
     db.set_user_role(user_id, level)
+    flush_session_cache()
     log.info("Super admin %s set user %s role to %d", admin["email"], user_id, level)
     return RedirectResponse("/admin", status_code=302)
 
@@ -2461,6 +2734,10 @@ async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
 @app.post("/admin/users/{user_id}/email")
 async def admin_change_email(request: Request, user_id: int, new_email: str = Form("")):
     admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     new_email = new_email.strip().lower()
@@ -2470,25 +2747,34 @@ async def admin_change_email(request: Request, user_id: int, new_email: str = Fo
     if existing and existing["id"] != user_id:
         raise HTTPException(status_code=400, detail="Email already in use")
     db.update_user_email(user_id, new_email)
-    log.info("Super admin %s changed email for user %s to %s", admin["email"], user_id, new_email)
+    flush_session_cache()
+    log.info("Admin %s changed email for user %s to %s", admin["email"], user_id, new_email)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/revoke-token")
 async def admin_revoke_user_token(request: Request, user_id: int):
     admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     user = db.get_user_by_id(user_id)
     if user and user["invite_token_id"]:
         db.revoke_invite_token(user["invite_token_id"])
-    log.info("Super admin %s revoked token for user %s", admin["email"], user_id)
+    log.info("Admin %s revoked token for user %s", admin["email"], user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/{user_id}/new-token")
 async def admin_new_token_for_user(request: Request, user_id: int):
     admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     user = db.get_user_by_id(user_id)
@@ -2505,8 +2791,16 @@ async def admin_new_token_for_user(request: Request, user_id: int):
 async def admin_grant_subscription(request: Request, user_id: int):
     admin = _require_super_admin(request)
     form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     dashboard_keys = form.getlist("dashboard_keys")
     plan = form.get("plan", "monthly")
+    if plan not in ("monthly", "annual"):
+        raise HTTPException(status_code=400, detail="Invalid plan")
     if not dashboard_keys:
         raise HTTPException(status_code=400, detail="No dashboards selected")
     duration = 30 if plan == "monthly" else 365
@@ -2530,6 +2824,9 @@ async def admin_grant_subscription(request: Request, user_id: int):
 async def admin_bulk_users(request: Request):
     admin = _require_admin_user(request)
     form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     action = form.get("bulk_action", "")
     user_ids_raw = [uid for uid in form.getlist("user_ids") if uid]
     if not user_ids_raw or not action:
@@ -2595,11 +2892,12 @@ async def settings_page(request: Request, saved: Optional[str] = None):
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
-        "settings",
+        "settings", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         raw_options="".join(option_html),
         raw_saved_banner=saved_banner,
         raw_admin_link=admin_link,
+        raw_dashboard_tabs=_build_tab_html(user["user_id"]),
     )
 
 
@@ -2608,6 +2906,11 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/settings")
+    # CSRF check
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
@@ -2766,7 +3069,7 @@ async def trading_place_order(request: Request):
     except Exception as e:
         log.exception("Trade execution error for order %s: %s", order_id, e)
         db.update_trading_order(order_id, status="error", error=str(e))
-        return JSONResponse({"error": f"Trade failed: {str(e)}"}, status_code=500)
+        return JSONResponse({"error": "Trade failed. Check logs for details."}, status_code=500)
 
 
 async def _execute_polymarket_trade(
@@ -2908,7 +3211,7 @@ async def trading_orders(request: Request):
 # ── Switcher injection ────────────────────────────────────────────────────────
 
 
-def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "") -> str:
+def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf_token: str = "") -> str:
     """Build the <script> tags that configure and load the dashboard switcher."""
     active_keys = cached_active_dashboard_keys(user_id)
     items = [
@@ -2925,12 +3228,37 @@ def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "") -> s
         "current": dashboard_key,
         "domain": DOMAIN,
         "username": username,
+        "csrf_token": csrf_token,
     })
     return (
         f'<script>window.__hbSwitcher={cfg_json};</script>'
         f'<script src="/_gateway_static/switcher.js"></script>'
         f'<script src="/_gateway_static/trade.js"></script>'
     )
+
+
+# ── Tab HTML for static gateway pages ─────────────────────────────────────────
+
+
+def _build_tab_html(user_id: int, active_tab: str = "") -> str:
+    """Generate <a class='gw-tab'> links for the gateway page header."""
+    active_keys = cached_active_dashboard_keys(user_id)
+    local = DOMAIN == "localhost" or "localhost" in DOMAIN
+    tabs = []
+    for k in active_keys:
+        d = DASHBOARDS[k]
+        cls = "gw-tab active" if k == active_tab else "gw-tab"
+        if local:
+            url = f"http://{d['subdomain']}.localhost:{CONFIG.get('gateway_port', 7000)}/"
+        else:
+            url = f"https://{d['subdomain']}.{DOMAIN}/"
+        tabs.append(
+            f'<a class="{cls}" href="{url}" style="--tab-accent:{d["accent"]}">'
+            f'<span class="gw-tab-dot" style="background:{d["accent"]}"></span>'
+            f'{html.escape(d["display_name"])}'
+            f'</a>'
+        )
+    return "".join(tabs)
 
 
 # ── SSE script injection ───────────────────────────────────────────────────────
@@ -2953,7 +3281,7 @@ def _inject_sse_client(content: bytes) -> bytes:
     return text.encode("utf-8")
 
 
-def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, username: str = "") -> bytes:
+def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, username: str = "", csrf_token: str = "") -> bytes:
     """Inject theme CSS (before </head>) and switcher+trade JS (before </body>)."""
     if "text/html" not in (content_type or ""):
         return content
@@ -2976,7 +3304,7 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
                 text = text[:close + 1] + css_tag + text[close + 1:]
 
     # 2. Inject JS before </body>
-    snippet = _switcher_snippet(key, user_id, username)
+    snippet = _switcher_snippet(key, user_id, username, csrf_token=csrf_token)
     idx = text.lower().rfind("</body>")
     if idx != -1:
         text = text[:idx] + snippet + text[idx:]
@@ -3047,6 +3375,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     hop_by_hop = {
         "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
         "te", "trailers", "transfer-encoding", "upgrade", "host",
+        "content-encoding", "content-length",
     }
     fwd_headers = {
         k: v for k, v in request.headers.items()
@@ -3101,6 +3430,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         key,
         user["user_id"],
         username=user.get("username", ""),
+        csrf_token=_get_csrf_token(request),
     )
     # Update Content-Length since injection may have changed the body size.
     if body is not upstream.content:
@@ -3305,15 +3635,15 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    # Use multiple workers in production to utilise all CPU cores.
-    # SQLite WAL mode supports concurrent readers across processes.
-    # Cap at 4 — diminishing returns beyond that for a reverse proxy
-    # with a lightweight SQLite backend.
-    workers = min(os.cpu_count() or 1, 4) if IS_PRODUCTION else 1
+    # Single worker: the in-memory rate limiter and CSRF token store are
+    # not shared across processes, so multiple workers would allow trivial
+    # bypasses. For a small application fronted by Cloudflare this is fine;
+    # if horizontal scaling is ever needed, move rate limiting and CSRF
+    # storage to Redis first.
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
         port=GATEWAY_PORT,
         log_level="info",
-        workers=workers,
+        workers=1,
     )

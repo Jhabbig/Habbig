@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Account - Habbig</title>
+  <title>Account - narve.ai</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
@@ -96,7 +96,7 @@
           <div class="connect-title">Polymarket</div>
         </div>
         <div class="connect-desc">
-          Connect your Polymarket account to place bets directly from Habbig dashboards.
+          Connect your Polymarket account to place bets directly from narve.ai dashboards.
           Markets on every dashboard link out to Polymarket where you can trade with your existing wallet.
         </div>
         <div class="connect-status">
@@ -113,7 +113,7 @@
       <a href="/settings" class="acct-link">Settings</a>
       <a href="/billing" class="acct-link">Billing</a>
       <a href="/dashboards" class="acct-link">Dashboards</a>
-      <a href="/logout" class="acct-link" style="color:#f28b82;border-color:rgba(242,139,130,.2)">Sign out</a>
+      <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="acct-link" style="color:#f28b82;border-color:rgba(242,139,130,.2);cursor:pointer;font:inherit">Sign out</button></form>
     </div>
   </div>
 </body>

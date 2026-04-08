@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign in — Habbig</title>
+  <title>Sign in — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
   <style>
     .auth-error:empty { display: none; }
@@ -38,8 +38,8 @@
 <body class="auth-body">
   <div class="auth-wrap">
     <a href="/" class="auth-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
     </a>
 
     <div class="auth-card">
@@ -47,6 +47,7 @@
       <div class="auth-sub">Sign in to access your dashboards.</div>
 
       <form class="auth-form" method="post" action="/login">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         {{ raw_token_section }}
 
         <label for="identifier">Username or Email</label>

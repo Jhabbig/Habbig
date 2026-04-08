@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { Search, ArrowRight, MapPin, X, History } from 'lucide-react'
+import { Search, ArrowRight, MapPin, X, History, Scale, Vote, MessageCircle, GitCompare, Layers } from 'lucide-react'
 
 const SOURCE_STYLES = {
   polymarket: { bg: 'bg-purple-100', text: 'text-purple-700', bar: '#a855f7', label: 'Polymarket' },
@@ -15,12 +15,10 @@ const PARTY_COLORS = {
   I: 'bg-purple-100 text-purple-700',
 }
 
-// Pick the "headline" probability for a source: highest outcome with a probability
 function topProb(market) {
-  const outcomes = (market.outcomes || []).filter(o => typeof o.probability === 'number')
+  const outcomes = (market?.outcomes || []).filter(o => typeof o.probability === 'number')
   if (!outcomes.length) return null
-  const sorted = [...outcomes].sort((a, b) => (b.probability || 0) - (a.probability || 0))
-  return sorted[0]
+  return [...outcomes].sort((a, b) => (b.probability || 0) - (a.probability || 0))[0]
 }
 
 function SourceColumn({ source, market, raceTitle, allSources }) {
@@ -74,66 +72,174 @@ function SourceColumn({ source, market, raceTitle, allSources }) {
   )
 }
 
-function DeltaBadge({ polymarket, kalshi }) {
-  const p = polymarket ? topProb(polymarket) : null
-  const k = kalshi ? topProb(kalshi) : null
-  if (!p || !k) return null
-  const delta = Math.abs((p.probability || 0) - (k.probability || 0)) * 100
+function DeltaBadge({ sources }) {
+  const probs = Object.entries(sources || {}).map(([src, m]) => {
+    const t = topProb(m)
+    return t ? { src, prob: t.probability || 0 } : null
+  }).filter(Boolean)
+  if (probs.length < 2) return null
+  const max = Math.max(...probs.map(p => p.prob))
+  const min = Math.min(...probs.map(p => p.prob))
+  const delta = (max - min) * 100
   if (delta < 0.5) return null
   const color = delta > 10 ? 'bg-red-100 text-red-700' : delta > 5 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
   return (
     <div className={`flex flex-col items-center justify-center px-3 py-2 rounded-lg ${color} shrink-0`}>
-      <span className="text-[9px] font-bold uppercase tracking-wider opacity-70">Δ Spread</span>
+      <span className="text-[9px] font-bold uppercase tracking-wider opacity-70">Spread</span>
       <span className="text-base font-bold tabular-nums">{delta.toFixed(1)}%</span>
     </div>
   )
 }
 
+function HistoryBlock({ hist }) {
+  if (!hist?.length) return null
+  const last = hist[0]
+  const lastColor = last.party === 'D' ? 'border-blue-200 bg-blue-50' : last.party === 'R' ? 'border-red-200 bg-red-50' : 'border-stone-200 bg-stone-50'
+  const lastBadge = last.party === 'D' ? 'bg-blue-600 text-white' : last.party === 'R' ? 'bg-red-600 text-white' : 'bg-stone-600 text-white'
+  const dWins = hist.filter(h => h.party === 'D').length
+  const rWins = hist.filter(h => h.party === 'R').length
+  return (
+    <div className="pt-3 border-t border-stone-100">
+      <div className={`rounded-lg border p-3 ${lastColor}`}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <History className="h-3.5 w-3.5 text-stone-500" />
+            <span className="text-[10px] text-stone-500 uppercase tracking-wide font-semibold">Last result ({last.year})</span>
+          </div>
+          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${lastBadge}`}>{last.party} +{last.margin_pct}%</span>
+        </div>
+        <div className="text-sm font-semibold text-stone-800">{last.winner} <span className="font-normal text-stone-500">beat {last.runner_up}</span></div>
+        <div className="text-[11px] text-stone-500">{last.winner_pct}% vs {last.runner_up_pct}% &middot; {last.winner_votes >= 1000000 ? `${(last.winner_votes/1000000).toFixed(1)}M` : `${(last.winner_votes/1000).toFixed(0)}K`} votes</div>
+      </div>
+      {hist.length > 1 && (
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-[10px] text-stone-400">History:</span>
+          <div className="flex flex-wrap gap-1">
+            {hist.map((h, i) => (
+              <span key={i} className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${PARTY_COLORS[h.party] || 'bg-stone-100 text-stone-600'}`}
+                title={`${h.winner} (${h.winner_pct}%) beat ${h.runner_up} (${h.runner_up_pct}%)`}>
+                {h.year} {h.winner.split(' ').pop()} ({h.party})
+              </span>
+            ))}
+          </div>
+          <span className="text-[10px] text-stone-400 ml-auto">
+            {dWins > 0 && <span className="text-blue-600 font-semibold">{dWins}D</span>}
+            {dWins > 0 && rWins > 0 && ' / '}
+            {rWins > 0 && <span className="text-red-600 font-semibold">{rWins}R</span>}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RaceCard({ g, hist, ctx }) {
+  const sourceKeys = Object.keys(g.sources || {})
+  const leanColor = ctx?.lean?.includes('D') ? 'bg-blue-100 text-blue-700' : ctx?.lean?.includes('R') ? 'bg-red-100 text-red-700' : ctx?.lean === 'Toss-up' ? 'bg-amber-100 text-amber-700' : ''
+  return (
+    <Link to={`/race/${g.race_key}`}
+      className="bg-white shadow-sm border border-stone-100 rounded-xl p-5 hover:border-stone-300 transition-colors block">
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-stone-800 truncate">{g.title}</span>
+            {ctx?.lean && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${leanColor}`}>{ctx.lean}</span>}
+          </div>
+          <div className="flex items-center gap-3 mt-1 text-xs text-stone-400">
+            {g.state && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{g.state}</span>}
+            <span className="capitalize">{g.race_type}</span>
+            {g.volume > 0 && <span>${(g.volume / 1000).toFixed(0)}k vol</span>}
+            <span>{sourceKeys.length} source{sourceKeys.length !== 1 ? 's' : ''}</span>
+          </div>
+        </div>
+        <ArrowRight className="h-4 w-4 text-stone-400 shrink-0 mt-1" />
+      </div>
+
+      {/* Source columns */}
+      <div className="flex items-stretch gap-2 mb-3">
+        {sourceKeys.map(src => (
+          <SourceColumn key={src} source={src} market={g.sources[src]} raceTitle={g.title} allSources={g.sources} />
+        ))}
+        {sourceKeys.length >= 2 && <DeltaBadge sources={g.sources} />}
+      </div>
+
+      {/* Context */}
+      {ctx && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3 pt-3 border-t border-stone-100">
+          {ctx.key_issues?.length > 0 && (
+            <div>
+              <div className="flex items-center gap-1 mb-1">
+                <Scale className="h-3 w-3 text-stone-400" />
+                <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wide">Key Issues</span>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {ctx.key_issues.slice(0, 4).map((iss, i) => (
+                  <span key={i} className="text-[10px] bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded">{iss}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {ctx.referendums?.length > 0 && (
+            <div>
+              <div className="flex items-center gap-1 mb-1">
+                <Vote className="h-3 w-3 text-stone-400" />
+                <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wide">Ballot Measures</span>
+              </div>
+              {ctx.referendums.map((ref, i) => (
+                <div key={i} className="text-[10px] text-stone-600">
+                  <span className="font-medium">{ref.title}</span> — {ref.description?.slice(0, 60)}{ref.description?.length > 60 ? '...' : ''}
+                </div>
+              ))}
+            </div>
+          )}
+          {ctx.public_opinion && (
+            <div className="sm:col-span-2">
+              <div className="flex items-center gap-1 mb-1">
+                <MessageCircle className="h-3 w-3 text-stone-400" />
+                <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wide">Public Sentiment</span>
+              </div>
+              <div className="text-[10px] text-stone-600">{ctx.public_opinion.top_concern}</div>
+            </div>
+          )}
+          {ctx.incumbents?.length > 0 && (
+            <div className="sm:col-span-2">
+              <div className="text-[10px] text-stone-500">
+                <span className="font-semibold">Incumbent:</span> {ctx.incumbents.map(inc => `${inc.name} (${inc.party}${inc.note ? `, ${inc.note}` : ''})`).join(', ')}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <HistoryBlock hist={hist} />
+    </Link>
+  )
+}
+
 export default function Races() {
-  const [races, setRaces] = useState([])
+  const [matched, setMatched] = useState([])
+  const [unmatched, setUnmatched] = useState([])
   const [historical, setHistorical] = useState([])
+  const [contexts, setContexts] = useState({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
-  const [sourceFilter, setSourceFilter] = useState('all')
   const [stateFilter, setStateFilter] = useState('all')
-  const [minVolume, setMinVolume] = useState(0)
 
   useEffect(() => {
     Promise.all([
-      api.races().then(d => Array.isArray(d) ? d : d?.races || []),
+      api.races().then(d => {
+        setMatched(d?.matched || [])
+        setUnmatched(d?.unmatched || [])
+      }),
       api.historical().then(d => d?.results || []).catch(() => []),
+      api.raceContexts().then(d => d?.contexts || {}).catch(() => ({})),
     ])
-      .then(([r, h]) => { setRaces(r); setHistorical(h) })
+      .then(([, h, c]) => { setHistorical(h); setContexts(c) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
 
-  // Group markets by race_key so we can show all sources for a race on one row
-  const grouped = useMemo(() => {
-    const map = new Map()
-    for (const m of races) {
-      const key = m.race_key || `${m.race_type || 'other'}_${m.state || 'US'}`
-      if (!map.has(key)) {
-        map.set(key, {
-          race_key: key,
-          race_type: m.race_type,
-          state: m.state,
-          title: m.title || m.event_title,
-          event_title: m.event_title,
-          sources: {},
-          volume: 0,
-        })
-      }
-      const g = map.get(key)
-      g.sources[m.source] = m
-      g.volume += m.volume || 0
-      if (!g.title) g.title = m.title || m.event_title
-    }
-    return Array.from(map.values())
-  }, [races])
-
-  // Index historical by race_type+state for fast lookup
   const histIndex = useMemo(() => {
     const idx = new Map()
     for (const h of historical) {
@@ -141,43 +247,40 @@ export default function Races() {
       if (!idx.has(key)) idx.set(key, [])
       idx.get(key).push(h)
     }
-    // Sort each bucket by year desc
     for (const v of idx.values()) v.sort((a, b) => b.year - a.year)
     return idx
   }, [historical])
 
-  const filtered = useMemo(() => grouped.filter(g => {
+  const allRaces = useMemo(() => [...matched, ...unmatched], [matched, unmatched])
+
+  const applyFilters = (list) => list.filter(g => {
     const matchesSearch = !search || (g.title || '').toLowerCase().includes(search.toLowerCase()) || (g.state || '').toLowerCase().includes(search.toLowerCase())
     const matchesType = typeFilter === 'all' || g.race_type === typeFilter
-    const matchesSource = sourceFilter === 'all' || sourceFilter in g.sources
     const matchesState = stateFilter === 'all' || g.state === stateFilter
-    const matchesVolume = g.volume >= minVolume
-    return matchesSearch && matchesType && matchesSource && matchesState && matchesVolume
-  }), [grouped, search, typeFilter, sourceFilter, stateFilter, minVolume])
+    return matchesSearch && matchesType && matchesState
+  })
 
-  const types = ['all', ...new Set(grouped.map(r => r.race_type).filter(Boolean))]
-  const sources = ['all', ...new Set(races.map(r => r.source).filter(Boolean))]
-  const states = ['all', ...[...new Set(grouped.map(r => r.state).filter(Boolean))].sort()]
-  const hasFilters = search || typeFilter !== 'all' || sourceFilter !== 'all' || stateFilter !== 'all' || minVolume > 0
+  const filteredMatched = useMemo(() => applyFilters(matched), [matched, search, typeFilter, stateFilter])
+  const filteredUnmatched = useMemo(() => applyFilters(unmatched), [unmatched, search, typeFilter, stateFilter])
 
-  const clearFilters = () => {
-    setSearch(''); setTypeFilter('all'); setSourceFilter('all'); setStateFilter('all'); setMinVolume(0)
-  }
+  const types = ['all', ...new Set(allRaces.map(r => r.race_type).filter(Boolean))]
+  const states = ['all', ...[...new Set(allRaces.map(r => r.state).filter(Boolean))].sort()]
+  const hasFilters = search || typeFilter !== 'all' || stateFilter !== 'all'
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-semibold text-stone-800">All Races</h1>
-        <span className="text-sm text-stone-400">{filtered.length} of {grouped.length}</span>
+        <span className="text-sm text-stone-400">{filteredMatched.length + filteredUnmatched.length} races</span>
       </div>
 
-      <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-4 mb-4 space-y-3">
+      {/* Filters */}
+      <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-4 mb-6 space-y-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
           <input type="text" placeholder="Search races..." value={search} onChange={e => setSearch(e.target.value)}
             className="w-full bg-stone-50 border border-stone-200 rounded-lg pl-10 pr-4 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-900/10" />
         </div>
-
         <div className="flex flex-wrap gap-1">
           {types.map(t => (
             <button key={t} onClick={() => setTypeFilter(t)}
@@ -186,15 +289,7 @@ export default function Races() {
             </button>
           ))}
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="text-xs text-stone-400 block mb-1">Source</label>
-            <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-1.5 text-sm text-stone-700">
-              {sources.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs text-stone-400 block mb-1">State</label>
             <select value={stateFilter} onChange={e => setStateFilter(e.target.value)}
@@ -202,15 +297,10 @@ export default function Races() {
               {states.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
-          <div>
-            <label className="text-xs text-stone-400 block mb-1">Min volume: ${minVolume.toLocaleString()}</label>
-            <input type="range" min="0" max="1000000" step="10000" value={minVolume}
-              onChange={e => setMinVolume(Number(e.target.value))} className="w-full" />
-          </div>
         </div>
-
         {hasFilters && (
-          <button onClick={clearFilters} className="text-xs text-stone-500 hover:text-stone-800 flex items-center gap-1">
+          <button onClick={() => { setSearch(''); setTypeFilter('all'); setStateFilter('all') }}
+            className="text-xs text-stone-500 hover:text-stone-800 flex items-center gap-1">
             <X className="h-3 w-3" /> Clear filters
           </button>
         )}
@@ -218,56 +308,54 @@ export default function Races() {
 
       {loading ? (
         <div className="grid gap-3">{[1,2,3,4,5].map(i => <div key={i} className="bg-white shadow-sm border border-stone-100 rounded-xl animate-pulse h-32"></div>)}</div>
-      ) : filtered.length > 0 ? (
-        <div className="grid gap-3">
-          {filtered.map((g) => {
-            const hist = histIndex.get(`${g.race_type}_${g.state}`) || []
-            const sourceKeys = Object.keys(g.sources)
-            return (
-              <Link key={g.race_key} to={`/race/${g.race_key}`}
-                className="bg-white shadow-sm border border-stone-100 rounded-xl p-5 hover:border-stone-300 transition-colors block">
-                <div className="flex items-start justify-between gap-4 mb-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-stone-800 truncate">{g.title}</div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-stone-400">
-                      {g.state && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{g.state}</span>}
-                      <span className="capitalize">{g.race_type}</span>
-                      {g.volume > 0 && <span>${(g.volume / 1000).toFixed(0)}k vol</span>}
-                      <span>{sourceKeys.length} source{sourceKeys.length !== 1 ? 's' : ''}</span>
-                    </div>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-stone-400 shrink-0 mt-1" />
-                </div>
-
-                {/* Per-source probability columns, side-by-side */}
-                <div className="flex items-stretch gap-2 mb-3">
-                  <SourceColumn source="polymarket" market={g.sources.polymarket} raceTitle={g.title} allSources={g.sources} />
-                  <DeltaBadge polymarket={g.sources.polymarket} kalshi={g.sources.kalshi} />
-                  <SourceColumn source="kalshi" market={g.sources.kalshi} raceTitle={g.title} allSources={g.sources} />
-                  {g.sources.predictit && <SourceColumn source="predictit" market={g.sources.predictit} raceTitle={g.title} allSources={g.sources} />}
-                </div>
-
-                {/* Historical pattern */}
-                {hist.length > 0 && (
-                  <div className="flex items-center gap-2 pt-2 border-t border-stone-100">
-                    <History className="h-3.5 w-3.5 text-stone-400 shrink-0" />
-                    <span className="text-xs text-stone-400">Past:</span>
-                    <div className="flex flex-wrap gap-1">
-                      {hist.map((h, i) => (
-                        <span key={i} className={`text-xs font-medium px-1.5 py-0.5 rounded ${PARTY_COLORS[h.party] || 'bg-stone-100 text-stone-600'}`}
-                          title={`${h.winner} (${h.winner_pct}%) beat ${h.runner_up} (${h.runner_up_pct}%) — margin ${h.margin_pct}%`}>
-                          {h.year} {h.party}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </Link>
-            )
-          })}
-        </div>
       ) : (
-        <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 text-center py-12"><p className="text-stone-400">No races match your filters.</p></div>
+        <>
+          {/* SECTION 1: Cross-Source Comparison */}
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <GitCompare className="h-5 w-5 text-emerald-600" />
+              <h2 className="text-xl font-semibold text-stone-800">Cross-Source Comparison</h2>
+              <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">{filteredMatched.length} races</span>
+            </div>
+            <p className="text-xs text-stone-400 mb-4">Elections tracked by multiple prediction markets. Compare odds across Polymarket, Kalshi, and PredictIt.</p>
+            {filteredMatched.length > 0 ? (
+              <div className="grid gap-3">
+                {filteredMatched.map(g => (
+                  <RaceCard key={g.race_key} g={g}
+                    hist={histIndex.get(`${g.race_type}_${g.state}`) || []}
+                    ctx={contexts[`${g.race_type}_${g.state}`]} />
+                ))}
+              </div>
+            ) : (
+              <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 text-center">
+                <p className="text-stone-400">No cross-source races match your filters.</p>
+              </div>
+            )}
+          </div>
+
+          {/* SECTION 2: Single Source Markets */}
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <Layers className="h-5 w-5 text-stone-500" />
+              <h2 className="text-xl font-semibold text-stone-800">Single Source Markets</h2>
+              <span className="text-xs bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full font-medium">{filteredUnmatched.length} races</span>
+            </div>
+            <p className="text-xs text-stone-400 mb-4">Elections available on only one platform. Historical data shows past winners and partisan lean.</p>
+            {filteredUnmatched.length > 0 ? (
+              <div className="grid gap-3">
+                {filteredUnmatched.map(g => (
+                  <RaceCard key={g.race_key} g={g}
+                    hist={histIndex.get(`${g.race_type}_${g.state}`) || []}
+                    ctx={contexts[`${g.race_type}_${g.state}`]} />
+                ))}
+              </div>
+            ) : (
+              <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 text-center">
+                <p className="text-stone-400">No single-source races match your filters.</p>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   )

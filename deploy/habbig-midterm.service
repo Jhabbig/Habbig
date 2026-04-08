@@ -3,6 +3,8 @@ Description=Habbig Midterm Dashboard (port 8051)
 After=network.target
 
 [Service]
+# Required env vars: GATEWAY_SSO_SECRET, PORT, FRONTEND_ORIGIN
+# Note: This service loads the shared gateway .env but only needs the above vars
 Type=simple
 User=julianhabbig
 WorkingDirectory=/home/julianhabbig/Polymarket/midterm-dashboard/backend
@@ -10,6 +12,13 @@ ExecStart=/home/julianhabbig/Polymarket/venv/bin/python main.py
 Restart=always
 RestartSec=5
 EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/midterm-dashboard/backend
 
 [Install]
 WantedBy=multi-user.target

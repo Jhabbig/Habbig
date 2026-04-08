@@ -1,0 +1,14 @@
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+*.log
+.git/
+__pycache__/
+venv/
+*.pyc
+.encryption_key
+.secret_key
+data/
+*.pkl
