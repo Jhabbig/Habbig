@@ -945,7 +945,7 @@ def build_svg_chart(balances):
         grid += f'<line x1="{pad_x}" y1="{gy:.1f}" x2="{w - pad_x}" y2="{gy:.1f}" stroke="#e8ecf1" stroke-width="1"/>'
         grid += f'<text x="{pad_x - 10}" y="{gy + 4:.1f}" text-anchor="end" fill="#9ca3af" font-size="10" font-family="Inter,sans-serif">${val:,.0f}</text>'
 
-    start_bal = state.get("starting_balance", 10000) if isinstance(state, dict) else 10000
+    start_bal = 10000
     start_y = pad_y + chart_h - ((start_bal - min_val) / val_range) * chart_h
     start_line = f'<line x1="{pad_x}" y1="{start_y:.1f}" x2="{w - pad_x}" y2="{start_y:.1f}" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,4"/>'
 
