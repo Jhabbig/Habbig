@@ -1,6 +1,6 @@
-# Deploying to habbig.com — Step-by-Step Checklist
+# Deploying to narve.ai — Step-by-Step Checklist
 
-Everything you need to put this gateway online at `habbig.com` with HTTPS,
+Everything you need to put this gateway online at `narve.ai` with HTTPS,
 no public IP required, no port forwarding, and all 7 dashboards accessible
 at their own subdomain. Uses Cloudflare Tunnel, which is free and matches
 how you're already sharing dashboards with your father.
@@ -11,7 +11,7 @@ Estimated time: **~45 minutes**, most of that is waiting on DNS.
 
 ## 0. What you'll need before starting
 
-- [ ] The `habbig.com` domain (purchased, see step 1)
+- [ ] The `narve.ai` domain (purchased, see step 1)
 - [ ] A free [Cloudflare](https://dash.cloudflare.com/sign-up) account
 - [ ] `cloudflared` installed on the machine that will host the dashboards
   - macOS: `brew install cloudflared`
@@ -20,18 +20,18 @@ Estimated time: **~45 minutes**, most of that is waiting on DNS.
 
 ---
 
-## 1. Buy habbig.com
+## 1. Buy narve.ai
 
 Fastest path: **Cloudflare Registrar**.
 
 1. Go to https://dash.cloudflare.com → **Domain Registration → Register Domains**
-2. Search `habbig.com`, add to cart, checkout (Cloudflare charges at-cost, usually $8–10/yr for `.com`)
+2. Search `narve.ai`, add to cart, checkout (Cloudflare charges at-cost, usually $8–10/yr for `.com`)
 3. Done — DNS is auto-wired to Cloudflare, no nameserver changes needed
 
 **If you buy it elsewhere** (Namecheap, Porkbun, GoDaddy, etc.):
 
-1. Purchase `habbig.com` on the registrar of your choice
-2. In Cloudflare, click **Add a Site → habbig.com** (Free plan)
+1. Purchase `narve.ai` on the registrar of your choice
+2. In Cloudflare, click **Add a Site → narve.ai** (Free plan)
 3. Cloudflare gives you two nameservers like `alice.ns.cloudflare.com` / `bob.ns.cloudflare.com`
 4. Go back to your registrar, replace the existing nameservers with those two
 5. Wait 5 min – 24 hr for Cloudflare to show "Active"
@@ -46,7 +46,7 @@ On the machine that will run the dashboards:
 cloudflared tunnel login
 ```
 
-This opens a browser, log in to Cloudflare, pick `habbig.com`, click **Authorize**.
+This opens a browser, log in to Cloudflare, pick `narve.ai`, click **Authorize**.
 A certificate lands in `~/.cloudflared/cert.pem`.
 
 ---
@@ -54,14 +54,14 @@ A certificate lands in `~/.cloudflared/cert.pem`.
 ## 3. Create the tunnel
 
 ```bash
-cloudflared tunnel create habbig-gateway
+cloudflared tunnel create narve-gateway
 ```
 
 Output includes a tunnel UUID, e.g.:
 
 ```
 Tunnel credentials written to /Users/julianhabbig/.cloudflared/3f2a8e1c-....json
-Created tunnel habbig-gateway with id 3f2a8e1c-4b1d-4a3f-9e8a-abcdef012345
+Created tunnel narve-gateway with id 3f2a8e1c-4b1d-4a3f-9e8a-abcdef012345
 ```
 
 **Save the tunnel ID** — you'll paste it into the next two steps.
@@ -78,14 +78,14 @@ credentials-file: /Users/julianhabbig/.cloudflared/3f2a8e1c-4b1d-4a3f-9e8a-abcde
 
 ingress:
   # Wildcard — every subdomain goes to the gateway, which then routes by Host header
-  - hostname: "*.habbig.com"
+  - hostname: "*.narve.ai"
     service: http://localhost:7000
     originRequest:
       noTLSVerify: true
       connectTimeout: 10s
 
   # Apex — the landing page / login / billing
-  - hostname: "habbig.com"
+  - hostname: "narve.ai"
     service: http://localhost:7000
     originRequest:
       noTLSVerify: true
@@ -108,7 +108,7 @@ of clicking through the dashboard 8 times, use the helper script:
 ./gateway/setup_cloudflare.sh 3f2a8e1c-4b1d-4a3f-9e8a-abcdef012345
 ```
 
-That runs `cloudflared tunnel route dns` for `habbig.com` + all 7 subdomains
+That runs `cloudflared tunnel route dns` for `narve.ai` + all 7 subdomains
 defined in `gateway/config.json`. If a route already exists, it'll say so and
 move on — safe to re-run.
 
@@ -150,7 +150,7 @@ Check: `curl http://localhost:7000/login` should return HTML.
 **Terminal 2 — cloudflared:**
 
 ```bash
-cloudflared tunnel run habbig-gateway
+cloudflared tunnel run narve-gateway
 ```
 
 You should see log lines like `Registered tunnel connection` × 4 (Cloudflare
@@ -162,12 +162,12 @@ opens 4 connections for redundancy).
 
 From **any other device** (not the host machine):
 
-1. Visit `https://habbig.com` — should show the login page with a valid
+1. Visit `https://narve.ai` — should show the login page with a valid
    HTTPS padlock (Cloudflare's certificate)
 2. Click **Sign up**, create an account with a real email + 8+ char password
 3. Go to **Billing**, click **Monthly $9.99** under Crypto Edge
 4. Go to **My Dashboards**, click **Open →** on the Crypto Edge card
-5. You should land at `https://crypto.habbig.com` showing the crypto dashboard
+5. You should land at `https://crypto.narve.ai` showing the crypto dashboard
 6. Open the other subdomains to verify each one proxies correctly
 
 ---
@@ -210,7 +210,7 @@ cleanest path is a systemd unit that runs the script at `multi-user.target`.
 ## Troubleshooting
 
 **`Error 1033` or `Host Error` in browser:**
-Cloudflare can't reach your tunnel. Check `cloudflared tunnel run habbig-gateway`
+Cloudflare can't reach your tunnel. Check `cloudflared tunnel run narve-gateway`
 is still running and shows connected status.
 
 **`502 Bad Gateway`:**
@@ -223,13 +223,13 @@ sure you're visiting `https://` (not `http://`), and that Cloudflare's SSL mode
 is **Full** (Overview → SSL/TLS → set to Full, not Flexible).
 
 **Signup works but cookie doesn't persist:**
-The session cookie has `Domain=.habbig.com` — check that your browser is
-actually hitting `habbig.com` (not an IP). Also clear any stale `pm_gateway_session`
+The session cookie has `Domain=.narve.ai` — check that your browser is
+actually hitting `narve.ai` (not an IP). Also clear any stale `pm_gateway_session`
 cookie from previous localhost tests.
 
 **A subdomain shows login instead of the dashboard:**
 That account doesn't have a subscription for that dashboard. Go to
-`https://habbig.com/billing` and subscribe.
+`https://narve.ai/billing` and subscribe.
 
 **Dashboard loads but its internal links are broken:**
 The dashboard has absolute paths like `/static/foo.css` that aren't namespaced
@@ -260,11 +260,11 @@ Dashboard Status:
   Port 8888 (Sports):   RUNNING
   Port 7050 (World):    RUNNING
 
-$ curl -s https://habbig.com/login | grep -o '<title>.*</title>'
+$ curl -s https://narve.ai/login | grep -o '<title>.*</title>'
 <title>Sign in — Polymarket Dashboards</title>
 
-$ cloudflared tunnel info habbig-gateway
-NAME:     habbig-gateway
+$ cloudflared tunnel info narve-gateway
+NAME:     narve-gateway
 ID:       3f2a8e1c-...
 CREATED:  2026-04-05 ...
 CONNECTIONS:

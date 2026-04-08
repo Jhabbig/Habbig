@@ -231,31 +231,13 @@
         document.getElementById('adm-pass').addEventListener('keydown', e => { if (e.key === 'Enter') adminLogin(); });
     }
 
-    async function adminLogin() {
-        const username = document.getElementById('adm-user').value.trim();
-        const password = document.getElementById('adm-pass').value;
-        const errEl = document.getElementById('adm-error');
-        errEl.textContent = '';
-        if (!username || !password) { errEl.textContent = 'Username and password required'; return; }
-        try {
-            const r = await fetch('/api/auth/login', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
-            const j = await r.json();
-            if (!r.ok) { errEl.textContent = j.error || 'Login failed'; return; }
-            if (!j.user.is_admin) { errEl.textContent = 'This account is not an admin'; return; }
-            // Reload the page now that we have the auth cookie
-            window.location.reload();
-        } catch { errEl.textContent = 'Connection error'; }
-    }
-
     async function checkAdmin() {
         try {
             const r = await fetch('/api/auth/me');
             const j = await r.json();
             if (!j.user) {
-                showAdminLogin();
+                // Not authenticated — redirect to gateway login
+                window.location.href = 'https://narve.ai/login';
                 return;
             }
             if (!j.user.is_admin) {
@@ -266,7 +248,7 @@
             loadAll();
             setInterval(loadAll, 30000);
         } catch {
-            showAdminLogin('Could not connect to server');
+            window.location.href = 'https://narve.ai/login';
         }
     }
     checkAdmin();

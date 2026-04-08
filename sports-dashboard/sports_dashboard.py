@@ -250,10 +250,62 @@ def _init_db():
                 slug TEXT,
                 UNIQUE(source, slug, outcome)
             );
+            CREATE TABLE IF NOT EXISTS sports_match_flags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                home_team TEXT,
+                away_team TEXT,
+                poly_question TEXT,
+                reason TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS sports_alert_config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT UNIQUE NOT NULL,
+                enabled INTEGER DEFAULT 0,
+                telegram_chat_id TEXT DEFAULT '',
+                telegram_bot_token TEXT DEFAULT '',
+                webhook_url TEXT DEFAULT '',
+                min_edge REAL DEFAULT 5.0,
+                sports TEXT DEFAULT '[]',
+                last_alert_at TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS sports_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sport TEXT,
+                event_id TEXT,
+                home_team TEXT,
+                away_team TEXT,
+                home_score INTEGER,
+                away_score INTEGER,
+                completed INTEGER DEFAULT 0,
+                winner TEXT DEFAULT '',
+                commence_time TEXT,
+                fetched_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(sport, event_id)
+            );
         """)
 
 
 _init_db()
+
+# Migrations: add columns that may not exist in older databases
+def _migrate_db():
+    with _get_db() as conn:
+        # Add columns to sports_edge_history for auto-resolution
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_edge_history)").fetchall()}
+        if "commence_time" not in cols:
+            conn.execute("ALTER TABLE sports_edge_history ADD COLUMN commence_time TEXT DEFAULT ''")
+        if "event_id" not in cols:
+            conn.execute("ALTER TABLE sports_edge_history ADD COLUMN event_id TEXT DEFAULT ''")
+        if "market_type" not in cols:
+            conn.execute("ALTER TABLE sports_edge_history ADD COLUMN market_type TEXT DEFAULT 'h2h'")
+        # Add market_type to snapshots
+        snap_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_market_snapshots)").fetchall()}
+        if "market_type" not in snap_cols:
+            conn.execute("ALTER TABLE sports_market_snapshots ADD COLUMN market_type TEXT DEFAULT 'h2h'")
+
+_migrate_db()
 
 
 def log_activity(user_id: str, action: str, detail: str = ""):
@@ -430,7 +482,7 @@ OUTRIGHT_SPORT_KEYS = {
 }
 
 
-def fetch_odds(sport_key: str) -> tuple[list[dict], str | None]:
+def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[list[dict], str | None]:
     """Fetch match odds from The Odds API. Returns (events, requests_remaining)."""
     if not ODDS_API_KEY:
         return [], None
@@ -439,7 +491,7 @@ def fetch_odds(sport_key: str) -> tuple[list[dict], str | None]:
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "eu,uk,us",
-        "markets": "h2h",
+        "markets": markets,
         "oddsFormat": "decimal",
     }
     resp = requests.get(url, params=params, timeout=30)
@@ -473,23 +525,31 @@ def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
         return [], None
 
 
-def parse_odds_events(raw: list[dict]) -> list[dict]:
+def parse_odds_events(raw: list[dict], market_type: str = "h2h") -> list[dict]:
     """Parse odds into structured events with implied probabilities."""
     events = []
     for ev in raw:
         bookmakers_data = {}
         for bk in ev.get("bookmakers", []):
             for mkt in bk.get("markets", []):
-                if mkt["key"] != "h2h":
+                if mkt["key"] != market_type:
                     continue
                 outcomes = {}
                 for o in mkt["outcomes"]:
                     implied = (1.0 / o["price"]) * 100
-                    outcomes[o["name"]] = {
+                    label = o["name"]
+                    # For spreads/totals, include point value in label
+                    if market_type == "spreads" and o.get("point") is not None:
+                        label = f"{o['name']} {o['point']:+g}"
+                    elif market_type == "totals" and o.get("point") is not None:
+                        label = f"{o['name']} {o['point']}"
+                    outcomes[label] = {
                         "decimal_odds": o["price"],
                         "implied_prob": round(implied, 2),
+                        "point": o.get("point"),
                     }
-                bookmakers_data[bk["key"]] = {
+                bk_key = f"{bk['key']}_{market_type}" if market_type != "h2h" else bk["key"]
+                bookmakers_data[bk_key] = {
                     "title": bk["title"],
                     "last_update": bk["last_update"],
                     "outcomes": outcomes,
@@ -512,7 +572,8 @@ def parse_odds_events(raw: list[dict]) -> list[dict]:
             consensus[name] = round(avg, 2)
 
         # Find sharpest book (Pinnacle preferred)
-        sharp_key = "pinnacle" if "pinnacle" in bookmakers_data else list(bookmakers_data.keys())[0]
+        pin_key = f"pinnacle_{market_type}" if market_type != "h2h" else "pinnacle"
+        sharp_key = pin_key if pin_key in bookmakers_data else list(bookmakers_data.keys())[0]
         sharp = bookmakers_data[sharp_key]
 
         events.append({
@@ -525,6 +586,7 @@ def parse_odds_events(raw: list[dict]) -> list[dict]:
             "sharp_outcomes": sharp["outcomes"],
             "consensus_probs": consensus,
             "num_bookmakers": len(bookmakers_data),
+            "market_type": market_type,
         })
     return events
 
@@ -1389,10 +1451,12 @@ def _save_edge_history(sport: str, comparisons: list[dict]):
                 if existing:
                     continue
                 conn.execute(
-                    "INSERT INTO sports_edge_history (sport, home_team, away_team, outcome, sharp_prob, poly_prob, divergence, kelly_pct, confidence_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO sports_edge_history (sport, home_team, away_team, outcome, sharp_prob, poly_prob, divergence, kelly_pct, confidence_score, commence_time, event_id, market_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (sport, home, comp.get("away_team", ""), outcome,
                      oc.get("sharp_prob"), oc.get("poly_prob"), oc.get("divergence"),
-                     oc.get("kelly_pct"), comp.get("confidence_score")),
+                     oc.get("kelly_pct"), comp.get("confidence_score"),
+                     comp.get("commence_time", ""), comp.get("event_id", ""),
+                     comp.get("market_type", "h2h")),
                 )
 
 
@@ -1419,6 +1483,341 @@ def _save_market_snapshots(sport: str, comparisons: list[dict]):
                 "INSERT INTO sports_market_snapshots (sport, event_name, outcome, book_prob, poly_prob, kalshi_prob, divergence, poly_volume, kalshi_volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+
+
+# ---------------------------------------------------------------------------
+# Auto-resolution: fetch scores and resolve edge history
+# ---------------------------------------------------------------------------
+
+def fetch_scores(sport_key: str) -> list[dict]:
+    """Fetch completed game scores from The Odds API."""
+    if not ODDS_API_KEY or sport_key in ESPORTS_KEYS or sport_key in KALSHI_ONLY_SPORTS:
+        return []
+    try:
+        resp = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{sport_key}/scores",
+            params={"apiKey": ODDS_API_KEY, "daysFrom": 3},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        log.warning("fetch_scores(%s) error: %s", sport_key, e)
+        return []
+
+
+def _store_scores(sport_key: str, scores: list[dict]):
+    """Store/update completed game scores."""
+    with _get_db() as conn:
+        for sc in scores:
+            if not sc.get("completed"):
+                continue
+            home = sc.get("home_team", "")
+            away = sc.get("away_team", "")
+            event_id = sc.get("id", "")
+            home_score = away_score = 0
+            for s in sc.get("scores", []) or []:
+                if s.get("name") == home:
+                    home_score = int(s.get("score", 0) or 0)
+                elif s.get("name") == away:
+                    away_score = int(s.get("score", 0) or 0)
+            winner = home if home_score > away_score else (away if away_score > home_score else "draw")
+            conn.execute(
+                """INSERT INTO sports_scores (sport, event_id, home_team, away_team, home_score, away_score, completed, winner, commence_time)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                   ON CONFLICT(sport, event_id) DO UPDATE SET
+                       home_score = excluded.home_score, away_score = excluded.away_score,
+                       completed = 1, winner = excluded.winner""",
+                (sport_key, event_id, home, away, home_score, away_score, winner,
+                 sc.get("commence_time", "")),
+            )
+
+
+def _auto_resolve_edges():
+    """Resolve unresolved edge_history entries against completed scores."""
+    resolved_count = 0
+    with _get_db() as conn:
+        # Get all completed scores from last 7 days
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        scores = conn.execute(
+            "SELECT * FROM sports_scores WHERE completed = 1 AND fetched_at >= ?", (cutoff,)
+        ).fetchall()
+        score_map = {}
+        for sc in scores:
+            sc = dict(sc)
+            key = (normalize_name(sc["home_team"]), normalize_name(sc["away_team"]))
+            score_map[key] = sc
+            # Also index by reversed order
+            rev_key = (normalize_name(sc["away_team"]), normalize_name(sc["home_team"]))
+            score_map[rev_key] = sc
+
+        # Get unresolved edges from last 7 days
+        unresolved = conn.execute(
+            "SELECT * FROM sports_edge_history WHERE resolved = 0 AND detected_at >= ?", (cutoff,)
+        ).fetchall()
+
+        for edge in unresolved:
+            edge = dict(edge)
+            home_n = normalize_name(edge["home_team"])
+            away_n = normalize_name(edge["away_team"])
+            score = score_map.get((home_n, away_n))
+            if not score:
+                # Try fuzzy match
+                for (sh, sa), sc_data in score_map.items():
+                    if fuzz.ratio(home_n, sh) > 80 and fuzz.ratio(away_n, sa) > 80:
+                        score = sc_data
+                        break
+            if not score:
+                continue
+
+            # Determine if edge was correct
+            outcome_name = normalize_name(edge["outcome"])
+            winner_name = normalize_name(score["winner"])
+            divergence = edge["divergence"] or 0
+
+            # Edge said "buy on Polymarket" (divergence > 0) = book thinks outcome more likely
+            # So the edge is "correct" if that outcome actually won
+            if divergence > 0:
+                # We recommended this outcome — check if it won
+                is_correct = fuzz.ratio(outcome_name, winner_name) > 75
+            else:
+                # Negative divergence = Polymarket overpriced this outcome
+                # "Correct" if this outcome did NOT win
+                is_correct = fuzz.ratio(outcome_name, winner_name) <= 75
+
+            resolution = "correct" if is_correct else "incorrect"
+            conn.execute(
+                "UPDATE sports_edge_history SET resolved = 1, resolution = ? WHERE id = ?",
+                (resolution, edge["id"]),
+            )
+            resolved_count += 1
+
+    if resolved_count > 0:
+        print(f"Auto-resolved {resolved_count} edges", flush=True)
+    return resolved_count
+
+
+# ---------------------------------------------------------------------------
+# Line movement: compute trend from recent snapshots
+# ---------------------------------------------------------------------------
+
+def _compute_edge_trends(comparisons: list[dict]) -> dict:
+    """For each event+outcome, compute trend direction from recent snapshots."""
+    trends = {}
+    cutoff_2h = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+    with _get_db() as conn:
+        for comp in comparisons:
+            event_name = comp.get("home_team", "") + (" vs " + comp.get("away_team", "") if comp.get("away_team") else "")
+            for oc in comp.get("outcomes", []):
+                outcome = oc.get("outcome", "")
+                key = f"{event_name}|{outcome}"
+
+                # Get recent snapshots for this event+outcome
+                rows = conn.execute(
+                    "SELECT divergence, snapshot_at FROM sports_market_snapshots WHERE event_name = ? AND outcome = ? AND snapshot_at >= ? ORDER BY snapshot_at",
+                    (event_name, outcome, cutoff_24h),
+                ).fetchall()
+
+                if len(rows) < 2:
+                    trends[key] = {"direction": "new", "change_2h": 0, "change_24h": 0, "points": []}
+                    continue
+
+                points = [(r["divergence"] or 0) for r in rows]
+                current = oc.get("divergence", 0) or 0
+
+                # 2h trend
+                recent_rows = [r for r in rows if r["snapshot_at"] >= cutoff_2h]
+                if recent_rows:
+                    change_2h = round(current - (recent_rows[0]["divergence"] or 0), 2)
+                else:
+                    change_2h = 0
+
+                # 24h trend
+                change_24h = round(current - (rows[0]["divergence"] or 0), 2)
+
+                if abs(change_2h) < 0.5:
+                    direction = "stable"
+                elif change_2h > 0:
+                    direction = "widening"  # edge is growing
+                else:
+                    direction = "narrowing"  # edge is closing
+
+                # Keep last 12 points for sparkline
+                trends[key] = {
+                    "direction": direction,
+                    "change_2h": change_2h,
+                    "change_24h": change_24h,
+                    "points": points[-12:],
+                }
+
+    return trends
+
+
+# ---------------------------------------------------------------------------
+# Alerts: send notifications for new edges
+# ---------------------------------------------------------------------------
+
+def _send_alerts(sport: str, signals: list[dict]):
+    """Send Telegram/webhook alerts for new edge signals."""
+    if not signals:
+        return
+    with _get_db() as conn:
+        configs = conn.execute(
+            "SELECT * FROM sports_alert_config WHERE enabled = 1"
+        ).fetchall()
+
+    for cfg in configs:
+        cfg = dict(cfg)
+        min_edge = cfg.get("min_edge", 5.0)
+        allowed_sports = json.loads(cfg.get("sports", "[]"))
+        if allowed_sports and sport not in allowed_sports:
+            continue
+
+        # Check cooldown (max 1 alert per 5 min per user)
+        last = cfg.get("last_alert_at", "")
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                if (datetime.now(timezone.utc) - last_dt).total_seconds() < 300:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # Filter signals above user's min_edge
+        user_signals = []
+        for s in signals:
+            max_div = s.get("max_divergence", 0)
+            if max_div >= min_edge:
+                user_signals.append(s)
+        if not user_signals:
+            continue
+
+        # Build message
+        lines = [f"Sharpe Alert: {len(user_signals)} edge(s) in {SPORTS.get(sport, sport)}"]
+        for s in user_signals[:5]:
+            best = max(s.get("outcomes", [{}]), key=lambda o: abs(o.get("divergence_pct", 0) or 0), default={})
+            lines.append(
+                f"  {s.get('home_team','')} vs {s.get('away_team','')}: "
+                f"{best.get('outcome_name','')} {best.get('divergence_pct',0):+.1f}%"
+            )
+        if len(user_signals) > 5:
+            lines.append(f"  ...and {len(user_signals) - 5} more")
+        msg = "\n".join(lines)
+
+        # Send Telegram
+        tg_token = cfg.get("telegram_bot_token", "")
+        tg_chat = cfg.get("telegram_chat_id", "")
+        if tg_token and tg_chat:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                    json={"chat_id": tg_chat, "text": msg, "parse_mode": "HTML"},
+                    timeout=10,
+                )
+            except Exception as e:
+                log.warning("Telegram alert error: %s", e)
+
+        # Send webhook
+        webhook_url = cfg.get("webhook_url", "")
+        if webhook_url:
+            try:
+                requests.post(
+                    webhook_url,
+                    json={"text": msg, "signals": user_signals[:5], "sport": sport},
+                    timeout=10,
+                )
+            except Exception as e:
+                log.warning("Webhook alert error: %s", e)
+
+        # Update last alert time
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE sports_alert_config SET last_alert_at = ? WHERE user_id = ?",
+                (datetime.now(timezone.utc).isoformat(), cfg["user_id"]),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Multi-sport scanning: scan all sports in background
+# ---------------------------------------------------------------------------
+
+# Per-sport cache for cross-sport edge feed
+_cross_sport_edges: dict[str, list[dict]] = {}  # sport_key -> top edges
+_cross_sport_lock = threading.Lock()
+
+
+def _update_cross_sport_edges(sport: str, comparisons: list[dict]):
+    """Update the cross-sport edge cache with top edges for a sport."""
+    top = []
+    for c in comparisons:
+        if not c.get("has_signal"):
+            continue
+        best = max(c.get("outcomes", [{}]), key=lambda o: abs(o.get("divergence_pct", 0) or 0), default={})
+        top.append({
+            "sport": sport,
+            "sport_name": SPORTS.get(sport, sport),
+            "home_team": c.get("home_team", ""),
+            "away_team": c.get("away_team", ""),
+            "outcome": best.get("outcome_name", ""),
+            "divergence": best.get("divergence_pct", 0),
+            "kelly_pct": best.get("kelly_pct", 0),
+            "confidence": c.get("confidence_score", 0),
+            "time_until": c.get("time_until", ""),
+            "commence_time": c.get("commence_time", ""),
+        })
+    top.sort(key=lambda x: -abs(x["divergence"]))
+    with _cross_sport_lock:
+        _cross_sport_edges[sport] = top[:10]
+
+
+def _get_all_cross_sport_edges() -> list[dict]:
+    """Return top edges across all sports, sorted by divergence."""
+    with _cross_sport_lock:
+        all_edges = []
+        for edges in _cross_sport_edges.values():
+            all_edges.extend(edges)
+    all_edges.sort(key=lambda x: -abs(x["divergence"]))
+    return all_edges[:20]
+
+
+# ---------------------------------------------------------------------------
+# Orderbook depth helper
+# ---------------------------------------------------------------------------
+
+def fetch_orderbook_depth(token_id: str) -> dict:
+    """Fetch Polymarket orderbook and compute executable depth at mid price."""
+    try:
+        resp = requests.get(
+            f"{POLYMARKET_HOST}/book",
+            params={"token_id": token_id},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        book = resp.json()
+    except Exception:
+        return {"bid_depth": 0, "ask_depth": 0, "mid_price": 0, "executable_size": 0}
+
+    bids = book.get("bids", [])
+    asks = book.get("asks", [])
+
+    # Compute depth within 2% of mid price
+    best_bid = float(bids[0]["price"]) if bids else 0
+    best_ask = float(asks[0]["price"]) if asks else 1
+    mid = (best_bid + best_ask) / 2 if (best_bid and best_ask) else 0
+    spread = best_ask - best_bid if (best_bid and best_ask) else 0
+
+    bid_depth = sum(float(b["size"]) for b in bids if float(b["price"]) >= mid * 0.98)
+    ask_depth = sum(float(a["size"]) for a in asks if float(a["price"]) <= mid * 1.02)
+
+    return {
+        "bid_depth": round(bid_depth, 2),
+        "ask_depth": round(ask_depth, 2),
+        "mid_price": round(mid, 4),
+        "spread": round(spread, 4),
+        "executable_size": round(min(bid_depth, ask_depth), 2),
+    }
 
 
 _scan_event = asyncio.Event()  # set to trigger immediate re-scan
@@ -1606,9 +2005,13 @@ def _build_kalshi_comparisons(kalshi_parsed: list[dict], poly_markets: list[dict
     return comparisons
 
 
+_resolve_counter = 0  # run auto-resolve every 6th cycle (~30 min)
+_bg_scan_counter = 0  # run background multi-sport scan every 4th cycle (~20 min)
+
+
 async def data_updater():
     """Background task that polls APIs and updates dashboard_data."""
-    global _poly_cache, _poly_cache_time
+    global _poly_cache, _poly_cache_time, _resolve_counter, _bg_scan_counter
     while True:
         sport = dashboard_data["active_sport"]
         try:
@@ -1636,7 +2039,7 @@ async def data_updater():
                 outright_raw, remaining2 = [], None
                 kalshi_raw = await asyncio.to_thread(fetch_kalshi_markets, sport)
             else:
-                # Traditional sports: fetch bookmaker odds + Kalshi in parallel
+                # Traditional sports: fetch bookmaker odds (h2h + spreads + totals) + Kalshi in parallel
                 odds_task = asyncio.to_thread(fetch_odds, sport)
                 outright_task = asyncio.to_thread(fetch_outright_odds, sport)
                 kalshi_task = asyncio.to_thread(fetch_kalshi_markets, sport)
@@ -1677,7 +2080,8 @@ async def data_updater():
                 kalshi_parsed = parse_kalshi_markets(kalshi_raw)
                 comparisons = _build_kalshi_comparisons(kalshi_parsed, poly_markets)
             else:
-                odds_events = parse_odds_events(raw_odds)
+                # Parse h2h (moneyline) markets
+                odds_events = parse_odds_events(raw_odds, "h2h")
                 outright_odds = parse_outright_events(outright_raw)
                 kalshi_parsed = parse_kalshi_markets(kalshi_raw)
 
@@ -1686,8 +2090,23 @@ async def data_updater():
                 # Futures/outright comparisons
                 futures_comparisons = compare_outrights(outright_odds, poly_markets)
 
-                # Combine: match-level first, then futures
-                comparisons = match_comparisons + futures_comparisons
+                # Parse spreads and totals markets
+                spreads_events = parse_odds_events(raw_odds, "spreads")
+                totals_events = parse_odds_events(raw_odds, "totals")
+                spreads_comparisons = match_and_compare(spreads_events, poly_markets, kalshi_parsed)
+                totals_comparisons = match_and_compare(totals_events, poly_markets, kalshi_parsed)
+                # Tag market type on each comparison
+                for c in match_comparisons:
+                    c["market_type"] = "h2h"
+                for c in spreads_comparisons:
+                    c["market_type"] = "spreads"
+                for c in totals_comparisons:
+                    c["market_type"] = "totals"
+                for c in futures_comparisons:
+                    c["market_type"] = "futures"
+
+                # Combine all market types
+                comparisons = match_comparisons + spreads_comparisons + totals_comparisons + futures_comparisons
 
             comparisons.sort(key=lambda x: (-x["has_signal"], -x["max_divergence"]))
             signals = [c for c in comparisons if c["has_signal"]]
@@ -1704,6 +2123,30 @@ async def data_updater():
             except Exception as snap_err:
                 print(f"Snapshot save error: {snap_err}", flush=True)
 
+            # Compute line movement trends from snapshot history
+            try:
+                trends = await asyncio.to_thread(_compute_edge_trends, comparisons)
+                # Attach trend data to each comparison
+                for comp in comparisons:
+                    event_name = comp.get("home_team", "") + (" vs " + comp.get("away_team", "") if comp.get("away_team") else "")
+                    for oc in comp.get("outcomes", []):
+                        key = f"{event_name}|{oc.get('outcome', '')}"
+                        oc["trend"] = trends.get(key, {"direction": "new", "change_2h": 0, "change_24h": 0, "points": []})
+            except Exception as trend_err:
+                print(f"Trend compute error: {trend_err}", flush=True)
+
+            # Update cross-sport edge cache
+            try:
+                _update_cross_sport_edges(sport, comparisons)
+            except Exception:
+                pass
+
+            # Send alerts for new signals
+            try:
+                await asyncio.to_thread(_send_alerts, sport, signals)
+            except Exception as alert_err:
+                print(f"Alert send error: {alert_err}", flush=True)
+
             # Build complete update in a local dict, then swap atomically
             update = {
                 "comparisons": comparisons,
@@ -1718,6 +2161,7 @@ async def data_updater():
                 "error": None,
                 "active_sport": sport,
                 "is_esport": is_esport,
+                "cross_sport_edges": _get_all_cross_sport_edges(),
             }
             async with _data_lock:
                 # Only apply if sport hasn't changed while we built the update
@@ -1741,12 +2185,67 @@ async def data_updater():
                 dashboard_data["error"] = str(e)
             print(f"Update error: {e}", flush=True)
 
+        # Periodic: auto-resolve edges every ~30 min
+        _resolve_counter += 1
+        if _resolve_counter >= 6:
+            _resolve_counter = 0
+            try:
+                await asyncio.to_thread(_run_score_resolution, sport)
+            except Exception as res_err:
+                print(f"Auto-resolve error: {res_err}", flush=True)
+
+        # Periodic: background multi-sport scan every ~20 min
+        _bg_scan_counter += 1
+        if _bg_scan_counter >= 4:
+            _bg_scan_counter = 0
+            asyncio.create_task(_background_multi_sport_scan())
+
         # Wait for poll interval OR immediate rescan trigger
         _scan_event.clear()
         try:
             await asyncio.wait_for(_scan_event.wait(), timeout=POLL_INTERVAL)
         except asyncio.TimeoutError:
             pass
+
+
+def _run_score_resolution(sport: str):
+    """Fetch scores for a sport and auto-resolve edges."""
+    scores = fetch_scores(sport)
+    if scores:
+        _store_scores(sport, scores)
+    _auto_resolve_edges()
+
+
+async def _background_multi_sport_scan():
+    """Scan non-active sports in the background for cross-sport edge feed."""
+    active = dashboard_data["active_sport"]
+    # Pick a few non-active traditional sports to scan
+    scan_sports = [k for k in SPORTS if k != active and k not in ESPORTS_KEYS and k not in KALSHI_ONLY_SPORTS]
+    # Limit to 3 per cycle to conserve API calls
+    for sport_key in scan_sports[:3]:
+        try:
+            raw_odds, _ = await asyncio.to_thread(fetch_odds, sport_key, "h2h")
+            if not raw_odds:
+                continue
+            import time as _time
+            poly_raw = _poly_cache.get("_global", [])
+            if not poly_raw:
+                continue
+            all_poly = parse_polymarket_events(poly_raw)
+            sport_filters = SPORT_POLY_FILTERS.get(sport_key, [])
+            if sport_filters:
+                poly_filtered = [pm for pm in all_poly if any(kw in (pm["market_question"] + " " + pm["event_title"] + " " + " ".join(pm["tags"])).lower() for kw in sport_filters)]
+            else:
+                poly_filtered = all_poly
+            odds_events = parse_odds_events(raw_odds, "h2h")
+            comparisons = match_and_compare(odds_events, poly_filtered)
+            for c in comparisons:
+                c["market_type"] = "h2h"
+            _update_cross_sport_edges(sport_key, comparisons)
+        except Exception as e:
+            log.warning("BG scan %s error: %s", sport_key, e)
+        # Small delay between sports to avoid hammering APIs
+        await asyncio.sleep(2)
 
 
 async def broadcast_update():
@@ -1828,6 +2327,13 @@ async def startup():
         except Exception as e:
             print(f"Backfill error: {e}", flush=True)
     asyncio.create_task(_backfill_wrapper())
+    # Run initial auto-resolution in background
+    async def _initial_resolve():
+        try:
+            await asyncio.to_thread(_auto_resolve_edges)
+        except Exception as e:
+            print(f"Initial auto-resolve error: {e}", flush=True)
+    asyncio.create_task(_initial_resolve())
     print(f"Sports Dashboard started. Polling {dashboard_data['active_sport']} every {POLL_INTERVAL}s")
     if not ODDS_API_KEY:
         print("WARNING: ODDS_API_KEY not set — bookmaker odds will be unavailable")
@@ -1841,12 +2347,12 @@ async def startup():
 
 @app.get("/login")
 async def login_page():
-    return RedirectResponse("https://habbig.com/login", status_code=302)
+    return RedirectResponse("https://narve.ai/login", status_code=302)
 
 
 @app.get("/api/logout")
 async def logout():
-    return RedirectResponse("https://habbig.com/logout", status_code=302)
+    return RedirectResponse("https://narve.ai/logout", status_code=302)
 
 
 @app.get("/api/me")
@@ -2545,6 +3051,260 @@ async def edge_stats(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Cross-sport edges endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/cross-sport-edges")
+async def api_cross_sport_edges(request: Request):
+    """Return top edges across all scanned sports."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    return JSONResponse({"edges": _get_all_cross_sport_edges()})
+
+
+# ---------------------------------------------------------------------------
+# Alerts configuration endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/alerts")
+async def get_alert_config(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM sports_alert_config WHERE user_id = ? LIMIT 1", (user["id"],)
+        ).fetchone()
+    if row:
+        cfg = dict(row)
+        cfg["sports"] = json.loads(cfg.get("sports", "[]"))
+        # Don't expose bot token to client
+        cfg["telegram_bot_token"] = "****" if cfg.get("telegram_bot_token") else ""
+        return JSONResponse(cfg)
+    return JSONResponse({
+        "enabled": 0, "telegram_chat_id": "", "telegram_bot_token": "",
+        "webhook_url": "", "min_edge": 5.0, "sports": [],
+    })
+
+
+@app.post("/api/alerts")
+async def save_alert_config(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    body = await request.json()
+    enabled = int(body.get("enabled", 0))
+    tg_chat = str(body.get("telegram_chat_id", "")).strip()
+    tg_token = str(body.get("telegram_bot_token", "")).strip()
+    webhook_url = str(body.get("webhook_url", "")).strip()
+    min_edge = float(body.get("min_edge", 5.0))
+    alert_sports = body.get("sports", [])
+
+    with _get_db() as conn:
+        # If token is masked, keep existing
+        if tg_token == "****":
+            existing = conn.execute(
+                "SELECT telegram_bot_token FROM sports_alert_config WHERE user_id = ?", (user["id"],)
+            ).fetchone()
+            if existing:
+                tg_token = existing[0] or ""
+        conn.execute(
+            """INSERT INTO sports_alert_config (user_id, enabled, telegram_chat_id, telegram_bot_token, webhook_url, min_edge, sports)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   enabled = excluded.enabled, telegram_chat_id = excluded.telegram_chat_id,
+                   telegram_bot_token = excluded.telegram_bot_token, webhook_url = excluded.webhook_url,
+                   min_edge = excluded.min_edge, sports = excluded.sports""",
+            (user["id"], enabled, tg_chat, tg_token, webhook_url, min_edge, json.dumps(alert_sports)),
+        )
+    log_activity(user["id"], "update_alerts", f"enabled={enabled}")
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/alerts/test")
+async def test_alert(request: Request):
+    """Send a test alert to verify config."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM sports_alert_config WHERE user_id = ? LIMIT 1", (user["id"],)
+        ).fetchone()
+    if not row:
+        return JSONResponse({"error": "No alert config found"}, status_code=404)
+    cfg = dict(row)
+    msg = "Sharpe Test Alert: Your alerts are configured correctly!"
+    sent = False
+    tg_token = cfg.get("telegram_bot_token", "")
+    tg_chat = cfg.get("telegram_chat_id", "")
+    if tg_token and tg_chat:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                json={"chat_id": tg_chat, "text": msg},
+                timeout=10,
+            )
+            sent = True
+        except Exception as e:
+            return JSONResponse({"error": f"Telegram error: {e}"}, status_code=500)
+    webhook_url = cfg.get("webhook_url", "")
+    if webhook_url:
+        try:
+            requests.post(webhook_url, json={"text": msg}, timeout=10)
+            sent = True
+        except Exception as e:
+            return JSONResponse({"error": f"Webhook error: {e}"}, status_code=500)
+    if not sent:
+        return JSONResponse({"error": "No Telegram or webhook configured"}, status_code=400)
+    return JSONResponse({"status": "ok", "message": "Test alert sent"})
+
+
+# ---------------------------------------------------------------------------
+# Match flagging endpoint
+# ---------------------------------------------------------------------------
+
+@app.post("/api/flag-match")
+async def flag_match(request: Request):
+    """Let users report a bad fuzzy match."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    body = await request.json()
+    home = body.get("home_team", "")
+    away = body.get("away_team", "")
+    poly_q = body.get("poly_question", "")
+    reason = body.get("reason", "")
+    if not home:
+        return JSONResponse({"error": "home_team required"}, status_code=400)
+    with _get_db() as conn:
+        conn.execute(
+            "INSERT INTO sports_match_flags (user_id, home_team, away_team, poly_question, reason) VALUES (?, ?, ?, ?, ?)",
+            (user["id"], home, away, poly_q, reason),
+        )
+    log_activity(user["id"], "flag_match", f"{home} vs {away}: {reason}")
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/api/flagged-matches")
+async def list_flagged_matches(request: Request):
+    """Admin: view flagged matches."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_match_flags ORDER BY created_at DESC LIMIT 100"
+        ).fetchall()
+    return JSONResponse({"flags": [dict(r) for r in rows]})
+
+
+# ---------------------------------------------------------------------------
+# Orderbook depth endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/orderbook-depth/{token_id}")
+async def get_orderbook_depth(token_id: str, request: Request):
+    """Fetch orderbook depth summary for a Polymarket token."""
+    if not get_current_user(request):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        depth = await asyncio.to_thread(fetch_orderbook_depth, token_id)
+        return JSONResponse(depth)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
+# Edge performance & Sharpe ratio endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/edge-performance")
+async def edge_performance(request: Request):
+    """Return rolling edge performance stats and Sharpe ratio over time."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    with _get_db() as conn:
+        # Get resolved edges grouped by week
+        rows = conn.execute("""
+            SELECT
+                strftime('%Y-%W', detected_at) as week,
+                COUNT(*) as total,
+                SUM(CASE WHEN resolution = 'correct' THEN 1 ELSE 0 END) as correct,
+                SUM(CASE WHEN resolution = 'incorrect' THEN 1 ELSE 0 END) as incorrect,
+                AVG(divergence) as avg_divergence,
+                AVG(CASE WHEN resolution = 'correct' THEN divergence ELSE 0 END) as avg_winning_edge
+            FROM sports_edge_history
+            WHERE resolved = 1
+            GROUP BY week
+            ORDER BY week
+        """).fetchall()
+
+        weekly = []
+        returns = []
+        for r in rows:
+            r = dict(r)
+            total = r["total"] or 1
+            correct = r["correct"] or 0
+            win_rate = correct / total
+            # Simplified return: win_rate * avg_edge - (1 - win_rate) * avg_edge
+            avg_edge = abs(r["avg_divergence"] or 0) / 100
+            expected_return = win_rate * avg_edge - (1 - win_rate) * avg_edge
+            returns.append(expected_return)
+
+            weekly.append({
+                "week": r["week"],
+                "total": total,
+                "correct": correct,
+                "incorrect": r["incorrect"] or 0,
+                "win_rate": round(win_rate * 100, 1),
+                "avg_edge": round(abs(r["avg_divergence"] or 0), 2),
+                "expected_return": round(expected_return * 100, 2),
+            })
+
+        # Compute rolling Sharpe ratio (annualized)
+        if len(returns) >= 2:
+            mean_ret = statistics.mean(returns)
+            std_ret = statistics.stdev(returns)
+            sharpe = round((mean_ret / std_ret) * (52 ** 0.5), 2) if std_ret > 0 else 0
+        else:
+            sharpe = 0
+
+        # Overall stats
+        total_resolved = sum(w["total"] for w in weekly)
+        total_correct = sum(w["correct"] for w in weekly)
+        overall_win_rate = round(total_correct / total_resolved * 100, 1) if total_resolved > 0 else 0
+
+    return JSONResponse({
+        "weekly": weekly,
+        "sharpe_ratio": sharpe,
+        "overall_win_rate": overall_win_rate,
+        "total_resolved": total_resolved,
+        "total_correct": total_correct,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Auto-resolution scores endpoint (admin)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/scores")
+async def api_scores(request: Request):
+    """Return recent completed scores."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_scores WHERE completed = 1 ORDER BY fetched_at DESC LIMIT 50"
+        ).fetchall()
+    return JSONResponse({"scores": [dict(r) for r in rows]})
+
+
+# ---------------------------------------------------------------------------
 # Referral endpoint
 # ---------------------------------------------------------------------------
 
@@ -3116,25 +3876,131 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
   .btn-primary:hover { opacity: 0.8; }
 
-  /* ---- Responsive ---- */
+  /* ---- Trend Indicators ---- */
+  .trend-arrow { font-size: 11px; font-weight: 600; margin-left: 4px; }
+  .trend-arrow.widening { color: var(--green); }
+  .trend-arrow.narrowing { color: var(--red); }
+  .trend-arrow.stable { color: var(--muted); }
+  .trend-arrow.new { color: var(--blue); }
+  .trend-change { font-size: 10px; color: var(--muted); margin-left: 4px; }
+  .sparkline { display: inline-block; vertical-align: middle; margin-left: 6px; }
+  .sparkline canvas { display: block; }
+
+  /* ---- Market Type Badge ---- */
+  .market-type-badge {
+    font-size: 9px; font-weight: 600; padding: 2px 6px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    background: var(--surface3); color: var(--muted);
+    margin-left: 8px;
+  }
+  .market-type-badge.spreads { background: var(--purple-dim); color: var(--purple); }
+  .market-type-badge.totals { background: var(--orange-dim); color: var(--orange); }
+  .market-type-badge.futures { background: var(--gold-dim); color: var(--gold); }
+
+  /* ---- Cross-Sport Ticker ---- */
+  .cross-sport-ticker {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 16px 20px; margin-bottom: 24px; overflow: hidden;
+  }
+  .cross-sport-ticker h3 {
+    font-size: 11px; font-weight: 500; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px;
+  }
+  .ticker-items { display: flex; gap: 1px; overflow-x: auto; background: var(--border); }
+  .ticker-item {
+    flex-shrink: 0; min-width: 200px; padding: 12px 16px;
+    background: var(--surface); cursor: pointer;
+  }
+  .ticker-item:hover { background: var(--surface2); }
+  .ticker-sport { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .ticker-teams { font-size: 12px; font-weight: 500; margin: 4px 0; }
+  .ticker-edge { font-size: 14px; font-weight: 300; color: var(--green); }
+
+  /* ---- Edge Stats Tab ---- */
+  .sharpe-chart-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 24px; margin-bottom: 24px;
+  }
+  .sharpe-chart-wrap h3 {
+    font-size: 14px; font-weight: 500; margin-bottom: 16px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .sharpe-big { font-size: 36px; font-weight: 300; margin-bottom: 4px; }
+  .sharpe-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .perf-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: 24px; background: var(--border); }
+  .perf-card { background: var(--surface); padding: 20px; text-align: left; }
+  .perf-value { font-size: 22px; font-weight: 300; }
+  .perf-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  /* ---- Alerts Tab ---- */
+  .alert-form { max-width: 500px; }
+  .alert-form .field { margin-bottom: 20px; }
+  .alert-form label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .alert-form input[type="text"], .alert-form input[type="number"] {
+    width: 100%; padding: 8px 0; background: transparent;
+    border: none; border-bottom: 1px solid var(--border);
+    color: var(--text); font-size: 13px; font-family: inherit; font-weight: 300;
+  }
+  .alert-form input:focus { border-bottom-color: var(--text); outline: none; }
+  .alert-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; margin-bottom: 16px; }
+
+  /* ---- Flag Match ---- */
+  .btn-flag {
+    padding: 5px 10px; font-size: 10px; font-weight: 400;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .btn-flag:hover { border-color: var(--yellow); color: var(--yellow); }
+
+  /* ---- Depth Indicator ---- */
+  .depth-badge {
+    font-size: 10px; padding: 2px 6px;
+    background: var(--surface3); color: var(--text-secondary);
+  }
+  .depth-badge.deep { background: var(--green-dim); color: var(--green); }
+  .depth-badge.thin { background: var(--yellow-dim); color: var(--yellow); }
+
+  /* ---- Responsive (enhanced) ---- */
   @media (max-width: 768px) {
-    .nav { padding: 0 16px; }
-    .container { padding: 20px 16px 60px; }
+    .nav { padding: 0 12px; height: 48px; }
+    .nav-brand { font-size: 14px; }
+    .nav-status { display: none; }
+    .container { padding: 16px 12px 60px; }
     .stats-row { grid-template-columns: repeat(2, 1fr); }
     .stats-row .stat-card:last-child { grid-column: span 2; }
     .profit-summary { grid-template-columns: repeat(2, 1fr); }
     .profit-summary .profit-card:last-child { grid-column: span 2; }
     .hero-steps { flex-direction: column; }
+    .hero { padding: 20px; margin-bottom: 20px; }
     .top-opps { flex-direction: column; }
     .intel-grid { grid-template-columns: repeat(2, 1fr); }
-    .toolbar { flex-direction: column; }
+    .toolbar { flex-direction: column; gap: 8px; }
     .toolbar input[type="text"] { width: 100%; }
-    .card-header { flex-wrap: wrap; }
-    .main-tabs { padding: 0 16px; }
-    .category-row { padding: 0 16px; }
-    .subcategory-row { padding: 0 16px; }
+    .card-header { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+    .card-teams { font-size: 13px; }
+    .card-detail { padding: 0 14px 20px; }
+    .card-actions { flex-wrap: wrap; gap: 6px; }
+    .btn-action { padding: 6px 10px; font-size: 10px; }
+    .main-tabs { padding: 0 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .main-tab { padding: 10px 14px; font-size: 11px; white-space: nowrap; }
+    .category-row { padding: 0 12px; }
+    .subcategory-row { padding: 0 12px; }
+    .stat-value { font-size: 20px; }
+    .stat-card { padding: 14px; }
+    .cross-sport-ticker { padding: 12px 14px; margin-bottom: 16px; }
+    .perf-grid { grid-template-columns: repeat(2, 1fr); }
+    .sharpe-chart-wrap { padding: 16px; }
+    .outcome-table { font-size: 11px; }
+    .outcome-table th, .outcome-table td { padding: 6px 6px; }
+    .prob-row { flex-wrap: wrap; }
+    .prob-label { width: 80px; font-size: 11px; }
+    .modal { padding: 20px; max-width: 95%; }
   }
   @media (max-width: 480px) {
+    .nav-right { gap: 4px; }
+    .nav-link { padding: 4px 6px; font-size: 11px; }
+    .btn-upgrade { padding: 4px 10px; font-size: 10px; }
     .stats-row { grid-template-columns: 1fr; }
     .stats-row .stat-card:last-child { grid-column: span 1; }
     .profit-summary { grid-template-columns: 1fr; }
@@ -3142,6 +4008,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .intel-grid { grid-template-columns: 1fr; }
     .main-tabs { overflow-x: auto; }
     .nav-right .nav-link span.hide-mobile { display: none; }
+    .card-meta { flex-wrap: wrap; gap: 4px; }
+    .signal-badge { font-size: 9px; padding: 2px 6px; }
+    .outcome-chips { gap: 4px; }
+    .outcome-chip { font-size: 10px; padding: 2px 6px; }
+    .ticker-item { min-width: 160px; padding: 10px 12px; }
+    .perf-grid { grid-template-columns: 1fr; }
+    .card-action-hint { font-size: 11px; padding: 0 14px 10px; }
   }
 </style>
 </head>
@@ -3172,6 +4045,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <button class="main-tab active" onclick="switchTab('dashboard')" id="tabBtnDashboard">Dashboard</button>
   <button class="main-tab" onclick="switchTab('profit')" id="tabBtnProfit">Profit Tracker</button>
   <button class="main-tab" onclick="switchTab('watchlist')" id="tabBtnWatchlist">Watchlist</button>
+  <button class="main-tab" onclick="switchTab('edgestats')" id="tabBtnEdgestats">Edge Stats</button>
+  <button class="main-tab" onclick="switchTab('alerts')" id="tabBtnAlerts">Alerts</button>
   <button class="main-tab" onclick="switchTab('history')" id="tabBtnHistory">History</button>
 </div>
 
@@ -3202,6 +4077,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <div class="hero-step-text"><strong>You see the edge</strong> — when Polymarket is cheaper, you buy before the price corrects.</div>
         </div>
       </div>
+    </div>
+
+    <!-- Cross-Sport Ticker -->
+    <div class="cross-sport-ticker" id="crossSportTicker" style="display:none;">
+      <h3>Top Edges Across All Sports</h3>
+      <div class="ticker-items" id="tickerItems"></div>
     </div>
 
     <!-- Top Opportunities -->
@@ -3247,6 +4128,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <option value="kelly">Sort: Kelly Size</option>
         <option value="book_agreement">Sort: Book Agreement</option>
       </select>
+      <select id="marketTypeFilter" onchange="render()" style="border:none;border-bottom:1px solid var(--border);background:transparent;font-size:12px;padding:4px 8px;font-family:inherit;color:var(--text);">
+        <option value="all">All Markets</option>
+        <option value="h2h">Moneyline</option>
+        <option value="spreads">Spreads</option>
+        <option value="totals">Totals</option>
+        <option value="futures">Futures</option>
+      </select>
       <label class="toggle-wrap">
         <input type="checkbox" id="signalsToggle" onchange="signalsOnly=this.checked;render()">
         Opportunities Only
@@ -3277,6 +4165,60 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="tab-content" id="tabWatchlist">
     <div class="watchlist-list" id="watchlistList"></div>
     <div class="empty-state" id="watchlistEmpty" style="display:none;">Your watchlist is empty. Star events from the dashboard to track them.</div>
+  </div>
+
+  <!-- EDGE STATS TAB -->
+  <div class="tab-content" id="tabEdgestats">
+    <div class="perf-grid" id="perfGrid"></div>
+    <div class="sharpe-chart-wrap">
+      <h3>Rolling Edge Performance</h3>
+      <div style="display:flex;align-items:flex-end;gap:32px;margin-bottom:24px;">
+        <div>
+          <div class="sharpe-big" id="sharpeValue">-</div>
+          <div class="sharpe-label">Sharpe Ratio (Annualized)</div>
+        </div>
+        <div>
+          <div class="sharpe-big" id="overallWinRate" style="font-size:28px;">-</div>
+          <div class="sharpe-label">Overall Win Rate</div>
+        </div>
+      </div>
+      <canvas id="sharpeChart" width="800" height="200" style="width:100%;height:200px;"></canvas>
+    </div>
+    <div class="empty-state" id="edgeStatsEmpty" style="display:none;">Not enough resolved edges yet. Data builds over time as events complete.</div>
+  </div>
+
+  <!-- ALERTS TAB -->
+  <div class="tab-content" id="tabAlerts">
+    <div style="max-width:560px;">
+      <h2 style="font-size:18px;font-weight:500;margin-bottom:24px;">Alert Settings</h2>
+      <div class="alert-form">
+        <label class="alert-toggle">
+          <input type="checkbox" id="alertEnabled" style="accent-color:var(--text);">
+          Enable Alerts
+        </label>
+        <div class="field">
+          <label>Minimum Edge % (only alert above this)</label>
+          <input type="number" id="alertMinEdge" value="5" min="1" max="50" step="0.5">
+        </div>
+        <div class="field">
+          <label>Telegram Bot Token</label>
+          <input type="text" id="alertTgToken" placeholder="123456:ABC-DEF...">
+        </div>
+        <div class="field">
+          <label>Telegram Chat ID</label>
+          <input type="text" id="alertTgChat" placeholder="e.g. -1001234567890">
+        </div>
+        <div class="field">
+          <label>Webhook URL (optional, e.g. Slack/Discord)</label>
+          <input type="text" id="alertWebhook" placeholder="https://hooks.slack.com/...">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:24px;">
+          <button class="btn-primary" onclick="saveAlerts()">Save Alerts</button>
+          <button class="btn-sm" onclick="testAlert()">Test Alert</button>
+        </div>
+        <div id="alertStatus" style="margin-top:12px;font-size:12px;color:var(--muted);"></div>
+      </div>
+    </div>
   </div>
 
   <!-- HISTORY TAB (Pro only) -->
@@ -3479,7 +4421,15 @@ function connectWS() {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'update') {
-        if (msg.data.active_sport && msg.data.active_sport !== activeSport) return;
+        // Always update cross-sport edges even if sport doesn't match
+        if (msg.data.cross_sport_edges) {
+          data = data || {};
+          data.cross_sport_edges = msg.data.cross_sport_edges;
+        }
+        if (msg.data.active_sport && msg.data.active_sport !== activeSport) {
+          renderCrossSportTicker();
+          return;
+        }
         data = msg.data;
         refreshCountdown = POLL;
         render();
@@ -3653,6 +4603,12 @@ function render() {
   document.getElementById('heroBanner').style.display = userLayout.visible_widgets.includes('hero') && !localStorage.getItem('sharpe_hero_dismissed') ? '' : 'none';
   document.getElementById('topOpps').style.display = userLayout.visible_widgets.includes('top_opps') ? '' : 'none';
   document.querySelector('.stats-row').style.display = userLayout.visible_widgets.includes('stats') ? '' : 'none';
+
+  // Cross-sport ticker
+  renderCrossSportTicker();
+
+  // Draw sparklines after DOM is updated
+  requestAnimationFrame(drawSparklines);
 }
 
 /* ===== Top Opportunities ===== */
@@ -3688,8 +4644,10 @@ function renderCards(comps) {
   const search = (document.getElementById('searchInput').value || '').toLowerCase();
   const sortBy = document.getElementById('sortSelect').value;
 
+  const marketFilter = document.getElementById('marketTypeFilter').value;
   let filtered = comps.filter(c => {
     if (signalsOnly && !(c.outcomes || []).some(o => Math.abs(o.divergence_pct || 0) >= THRESH)) return false;
+    if (marketFilter !== 'all' && (c.market_type || 'h2h') !== marketFilter) return false;
     if (search) {
       const hay = ((c.home_team || '') + ' ' + (c.away_team || '')).toLowerCase();
       if (!hay.includes(search)) return false;
@@ -3733,10 +4691,19 @@ function renderCards(comps) {
     html += '<div class="card" id="' + cardId + '">';
     // Header
     html += '<div class="card-header" onclick="toggleCard(\'' + cardId + '\')">';
-    html += '<div class="card-teams">' + esc(c.home_team || 'Unknown') + '<span class="vs">vs</span>' + esc(c.away_team || '') + '</div>';
+    html += '<div class="card-teams">' + esc(c.home_team || 'Unknown') + '<span class="vs">vs</span>' + esc(c.away_team || '');
+    const mtype = c.market_type || 'h2h';
+    if (mtype !== 'h2h') html += '<span class="market-type-badge ' + mtype + '">' + mtype + '</span>';
+    html += '</div>';
     html += '<div class="card-meta">';
     if (c.time_to_event_hours != null) html += '<span class="card-time">' + (c.time_to_event_hours < 1 ? '<1h' : Math.round(c.time_to_event_hours) + 'h') + '</span>';
     html += '<span class="signal-badge ' + badgeCls + '">' + (isSignal ? dir + ' ' + fmt(Math.abs(bestOutcome.divergence_pct || 0)) + '%' : 'No Edge') + '</span>';
+    // Trend arrow
+    const bestTrend = bestOutcome.trend || {};
+    const trendDir = bestTrend.direction || 'new';
+    const trendIcon = trendDir === 'widening' ? '&#9650;' : trendDir === 'narrowing' ? '&#9660;' : trendDir === 'stable' ? '&#8212;' : '&#9679;';
+    html += '<span class="trend-arrow ' + trendDir + '" title="Edge ' + trendDir + '">' + trendIcon + '</span>';
+    if (bestTrend.change_2h) html += '<span class="trend-change">' + (bestTrend.change_2h > 0 ? '+' : '') + fmt(bestTrend.change_2h, 1) + '/2h</span>';
     html += renderConfidenceStars(c.confidence_score);
     html += '</div></div>';
 
@@ -3754,10 +4721,14 @@ function renderCards(comps) {
     // Outcome chips
     if (c.outcomes && c.outcomes.length) {
       html += '<div class="outcome-chips">';
-      c.outcomes.forEach(o => {
+      c.outcomes.forEach((o, oi) => {
         const d = o.divergence_pct || 0;
         const cls = Math.abs(d) >= THRESH ? (d > 0 ? 'pos' : 'neg') : '';
-        html += '<span class="outcome-chip ' + cls + '">' + esc(o.outcome_name || '?') + ' ' + fmtPct(d) + '</span>';
+        const t = o.trend || {};
+        const sparkId = cardId + '-spark-' + oi;
+        html += '<span class="outcome-chip ' + cls + '">' + esc(o.outcome_name || '?') + ' ' + fmtPct(d);
+        if (t.points && t.points.length > 2) html += '<span class="sparkline"><canvas id="' + sparkId + '" width="40" height="16"></canvas></span>';
+        html += '</span>';
       });
       html += '</div>';
     }
@@ -3816,6 +4787,7 @@ function renderCards(comps) {
     if (c.kalshi_event) html += '<a href="https://kalshi.com/events/' + esc(c.kalshi_event) + '" target="_blank" class="btn-action kalshi-btn">Trade on Kalshi</a>';
     html += '<button class="btn-action btn-watchlist' + (watchlistIds.has(wKey) ? ' active' : '') + '" onclick="event.stopPropagation();toggleWatchlist(\'' + wKey.replace(/'/g,"\\'") + '\',\'' + esc(c.home_team||'').replace(/'/g,"\\'") + '\',\'' + esc(c.away_team||'').replace(/'/g,"\\'") + '\')">&#9733; Watchlist</button>';
     html += '<button class="btn-action" onclick="event.stopPropagation();logTrade(\'' + wKey.replace(/'/g,"\\'") + '\',\'' + esc((bestOutcome.outcome_name||'')).replace(/'/g,"\\'") + '\',' + Math.round((bestOutcome.poly_price||0)*100) + ')">Log Trade</button>';
+    html += '<button class="btn-flag" onclick="event.stopPropagation();flagMatch(\'' + esc(c.home_team||'').replace(/'/g,"\\'") + '\',\'' + esc(c.away_team||'').replace(/'/g,"\\'") + '\',\'' + esc(c.poly_question||'').replace(/'/g,"\\'") + '\')" title="Report bad match">&#9873; Flag</button>';
     html += '</div>';
 
     html += '</div>'; // card-detail
@@ -3906,6 +4878,8 @@ function switchTab(tab) {
   if (tab === 'dashboard') { document.getElementById('tabDashboard').classList.add('active'); }
   else if (tab === 'profit') { document.getElementById('tabProfit').classList.add('active'); renderProfitTracker(); }
   else if (tab === 'watchlist') { document.getElementById('tabWatchlist').classList.add('active'); renderWatchlist(); }
+  else if (tab === 'edgestats') { document.getElementById('tabEdgestats').classList.add('active'); loadEdgePerformance(); }
+  else if (tab === 'alerts') { document.getElementById('tabAlerts').classList.add('active'); loadAlertConfig(); }
   else if (tab === 'history') { document.getElementById('tabHistory').classList.add('active'); initHistory(); }
 }
 
@@ -4090,6 +5064,204 @@ function dismissHero() {
   document.getElementById('heroBanner').style.display = 'none';
 }
 
+/* ===== Cross-Sport Ticker ===== */
+function renderCrossSportTicker() {
+  const edges = (data && data.cross_sport_edges) || [];
+  const wrap = document.getElementById('crossSportTicker');
+  const items = document.getElementById('tickerItems');
+  if (!edges.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  items.innerHTML = edges.slice(0, 10).map(e =>
+    '<div class="ticker-item" onclick="switchSport(\'' + (Object.entries(sports).find(([k,s]) => s.title === e.sport_name)?.[0] || '') + '\')">' +
+    '<div class="ticker-sport">' + esc(e.sport_name) + '</div>' +
+    '<div class="ticker-teams">' + esc(e.home_team) + ' vs ' + esc(e.away_team) + '</div>' +
+    '<div class="ticker-edge">' + fmtPct(Math.abs(e.divergence)) + ' &mdash; ' + esc(e.outcome) + '</div>' +
+    '</div>'
+  ).join('');
+}
+
+/* ===== Sparkline Drawing ===== */
+function drawSparklines() {
+  if (!data || !data.comparisons) return;
+  data.comparisons.forEach((c, ci) => {
+    (c.outcomes || []).forEach((o, oi) => {
+      const t = o.trend || {};
+      if (!t.points || t.points.length < 3) return;
+      const cvs = document.getElementById('card-' + ci + '-spark-' + oi);
+      if (!cvs) return;
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width, h = cvs.height;
+      const pts = t.points;
+      const mn = Math.min(...pts), mx = Math.max(...pts);
+      const range = mx - mn || 1;
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath();
+      ctx.strokeStyle = t.direction === 'widening' ? '#34d399' : t.direction === 'narrowing' ? '#f87171' : '#5c5e6a';
+      ctx.lineWidth = 1.5;
+      pts.forEach((v, i) => {
+        const x = (i / (pts.length - 1)) * w;
+        const y = h - ((v - mn) / range) * (h - 4) - 2;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    });
+  });
+}
+
+/* ===== Flag Match ===== */
+function flagMatch(home, away, polyQ) {
+  const reason = prompt('Why is this match incorrect? (optional)');
+  if (reason === null) return;
+  fetch('/api/flag-match', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ home_team: home, away_team: away, poly_question: polyQ, reason: reason })
+  }).then(r => {
+    if (r.ok) alert('Match flagged. Thank you!');
+    else alert('Failed to flag match.');
+  }).catch(() => alert('Error flagging match.'));
+}
+
+/* ===== Edge Performance / Sharpe ===== */
+function loadEdgePerformance() {
+  fetch('/api/edge-performance', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    const empty = document.getElementById('edgeStatsEmpty');
+    if (!d.weekly || !d.weekly.length) { empty.style.display = ''; return; }
+    empty.style.display = 'none';
+
+    // Performance grid
+    const grid = document.getElementById('perfGrid');
+    const s = d.sharpe_ratio || 0;
+    const sCol = s >= 1 ? 'var(--green)' : s >= 0 ? 'var(--text)' : 'var(--red)';
+    grid.innerHTML =
+      '<div class="perf-card"><div class="perf-value" style="color:' + sCol + '">' + fmt(s, 2) + '</div><div class="perf-label">Sharpe Ratio</div></div>' +
+      '<div class="perf-card"><div class="perf-value">' + fmt(d.overall_win_rate, 1) + '%</div><div class="perf-label">Win Rate</div></div>' +
+      '<div class="perf-card"><div class="perf-value">' + (d.total_resolved || 0) + '</div><div class="perf-label">Resolved Edges</div></div>' +
+      '<div class="perf-card"><div class="perf-value">' + (d.total_correct || 0) + '</div><div class="perf-label">Correct Calls</div></div>';
+
+    document.getElementById('sharpeValue').textContent = fmt(s, 2);
+    document.getElementById('sharpeValue').style.color = sCol;
+    document.getElementById('overallWinRate').textContent = fmt(d.overall_win_rate, 1) + '%';
+
+    // Draw chart
+    drawSharpeChart(d.weekly);
+  }).catch(() => {});
+}
+
+function drawSharpeChart(weekly) {
+  const cvs = document.getElementById('sharpeChart');
+  if (!cvs || !weekly.length) return;
+  const ctx = cvs.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  cvs.width = cvs.offsetWidth * dpr;
+  cvs.height = 200 * dpr;
+  ctx.scale(dpr, dpr);
+  const w = cvs.offsetWidth, h = 200;
+  const pad = { top: 20, right: 20, bottom: 30, left: 50 };
+  const plotW = w - pad.left - pad.right;
+  const plotH = h - pad.top - pad.bottom;
+
+  // Data
+  const winRates = weekly.map(w => w.win_rate);
+  const mn = Math.min(...winRates, 0);
+  const mx = Math.max(...winRates, 100);
+  const range = mx - mn || 1;
+
+  // Background
+  ctx.fillStyle = '#131417';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (plotH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#5c5e6a'; ctx.font = '10px Inter'; ctx.textAlign = 'right';
+    ctx.fillText(fmt(mx - (range / 4) * i, 0) + '%', pad.left - 8, y + 3);
+  }
+
+  // 50% reference line
+  const y50 = pad.top + plotH * (1 - (50 - mn) / range);
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(pad.left, y50); ctx.lineTo(w - pad.right, y50); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Win rate line
+  ctx.beginPath();
+  ctx.strokeStyle = '#34d399';
+  ctx.lineWidth = 2;
+  weekly.forEach((wk, i) => {
+    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
+    const y = pad.top + plotH * (1 - (wk.win_rate - mn) / range);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Points
+  weekly.forEach((wk, i) => {
+    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
+    const y = pad.top + plotH * (1 - (wk.win_rate - mn) / range);
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = wk.win_rate >= 50 ? '#34d399' : '#f87171';
+    ctx.fill();
+  });
+
+  // X-axis labels
+  ctx.fillStyle = '#5c5e6a'; ctx.font = '9px Inter'; ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(weekly.length / 8));
+  weekly.forEach((wk, i) => {
+    if (i % step !== 0 && i !== weekly.length - 1) return;
+    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
+    ctx.fillText(wk.week || '', x, h - 8);
+  });
+}
+
+/* ===== Alerts Config ===== */
+function loadAlertConfig() {
+  fetch('/api/alerts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    document.getElementById('alertEnabled').checked = !!d.enabled;
+    document.getElementById('alertMinEdge').value = d.min_edge || 5;
+    document.getElementById('alertTgToken').value = d.telegram_bot_token || '';
+    document.getElementById('alertTgChat').value = d.telegram_chat_id || '';
+    document.getElementById('alertWebhook').value = d.webhook_url || '';
+  }).catch(() => {});
+}
+
+function saveAlerts() {
+  const body = {
+    enabled: document.getElementById('alertEnabled').checked ? 1 : 0,
+    min_edge: parseFloat(document.getElementById('alertMinEdge').value) || 5,
+    telegram_bot_token: document.getElementById('alertTgToken').value.trim(),
+    telegram_chat_id: document.getElementById('alertTgChat').value.trim(),
+    webhook_url: document.getElementById('alertWebhook').value.trim(),
+    sports: [],
+  };
+  fetch('/api/alerts', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => {
+    const el = document.getElementById('alertStatus');
+    if (r.ok) el.textContent = 'Saved!'; else el.textContent = 'Error saving.';
+    setTimeout(() => el.textContent = '', 3000);
+  }).catch(() => {});
+}
+
+function testAlert() {
+  fetch('/api/alerts/test', { method: 'POST', credentials: 'same-origin' })
+    .then(r => r.json()).then(d => {
+      const el = document.getElementById('alertStatus');
+      if (d.status === 'ok') el.textContent = 'Test alert sent!';
+      else el.textContent = d.error || 'Error';
+      setTimeout(() => el.textContent = '', 5000);
+    }).catch(() => {});
+}
+
 /* ===== Countdown Timer ===== */
 setInterval(() => {
   if (refreshCountdown > 0) refreshCountdown--;
@@ -4114,7 +5286,7 @@ fetch('/api/data' + (activeSport ? '?sport=' + encodeURIComponent(activeSport) :
 </body>
 </html>"""
 
-# (Auth HTML removed — all auth handled by gateway via habbig.com/login)
+# (Auth HTML removed — all auth handled by gateway via narve.ai/login)
 
 
 _REMOVED_AUTH_HTML = """removed

@@ -1,13 +1,13 @@
 [Unit]
-Description=Habbig Top Traders Dashboard (port 8052)
+Description=Narve Crypto Dashboard (port 8000)
 After=network.target
 
 [Service]
-# Required env vars: (none — top-traders dashboard reads no env vars from .env)
+# Required env vars: GATEWAY_SSO_SECRET, SMTP_USER, SMTP_PASS, SMTP_HOST, SMTP_PORT, FROM_EMAIL
 # Note: This service loads the shared gateway .env but only needs the above vars
 Type=simple
 User=julianhabbig
-WorkingDirectory=/home/julianhabbig/Polymarket/top-traders-dashboard
+WorkingDirectory=/home/julianhabbig/Polymarket/crypto-dashboard
 ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
 Restart=always
 RestartSec=5
@@ -18,7 +18,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
-ReadWritePaths=/home/julianhabbig/Polymarket/top-traders-dashboard
+ReadWritePaths=/home/julianhabbig/Polymarket/crypto-dashboard
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

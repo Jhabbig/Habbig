@@ -304,9 +304,9 @@ async def login_page(request: Request, error: str = "", msg: str = ""):
 
 
 @app.post("/login")
-async def login_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), password: str = Form(""), start_platform: str = Form("polymarket"), _csrf_token: str = Form("")):
+async def login_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), password: str = Form(""), start_platform: str = Form("polymarket"), csrf_token_field: str = Form("", alias="_csrf_token")):
     # CSRF validation
-    if not _validate_csrf(request, _csrf_token):
+    if not _validate_csrf(request, csrf_token_field):
         csrf_token = _get_csrf_token(request)
         return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid form submission. Please try again.", "msg": "", "csrf_token": csrf_token})
 
@@ -347,9 +347,9 @@ async def register_page(request: Request, error: str = ""):
 
 
 @app.post("/register")
-async def register_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), email: str = Form(""), password: str = Form(""), password2: str = Form(""), start_platform: str = Form("polymarket"), _csrf_token: str = Form("")):
+async def register_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), email: str = Form(""), password: str = Form(""), password2: str = Form(""), start_platform: str = Form("polymarket"), csrf_token_field: str = Form("", alias="_csrf_token")):
     # CSRF validation
-    if not _validate_csrf(request, _csrf_token):
+    if not _validate_csrf(request, csrf_token_field):
         csrf_token = _get_csrf_token(request)
         return templates.TemplateResponse("register.html", {"request": request, "error": "Invalid form submission. Please try again.", "csrf_token": csrf_token})
 
@@ -407,14 +407,14 @@ async def profile_page(request: Request, session: AsyncSession = Depends(get_ses
 
 
 @app.post("/profile/update", response_class=HTMLResponse)
-async def profile_update(request: Request, confirm_password: str = Form(""), new_username: str = Form(""), email: str = Form(""), twitter_bearer_token: str = Form(""), truthsocial_username: str = Form(""), truthsocial_password: str = Form(""), truthsocial_access_token: str = Form(""), preferred_platform: str = Form("polymarket"), preferred_theme: str = Form("dark"), _csrf_token: str = Form("")):
+async def profile_update(request: Request, confirm_password: str = Form(""), new_username: str = Form(""), email: str = Form(""), twitter_bearer_token: str = Form(""), truthsocial_username: str = Form(""), truthsocial_password: str = Form(""), truthsocial_access_token: str = Form(""), preferred_platform: str = Form("polymarket"), preferred_theme: str = Form("dark"), csrf_token_field: str = Form("", alias="_csrf_token")):
     csrf_token = _get_csrf_token(request)
     user = await _get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=302)
 
     # CSRF validation
-    if not _validate_csrf(request, _csrf_token):
+    if not _validate_csrf(request, csrf_token_field):
         async with AsyncSession(engine, expire_on_commit=False) as session:
             result = await session.exec(select(User).where(User.id == user.id))
             db_user = result.first() or user
@@ -470,14 +470,14 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
 
 
 @app.post("/profile/password", response_class=HTMLResponse)
-async def profile_password(request: Request, current_password: str = Form(""), new_password: str = Form(""), new_password2: str = Form(""), _csrf_token: str = Form("")):
+async def profile_password(request: Request, current_password: str = Form(""), new_password: str = Form(""), new_password2: str = Form(""), csrf_token_field: str = Form("", alias="_csrf_token")):
     csrf_token = _get_csrf_token(request)
     user = await _get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=302)
 
     # CSRF validation
-    if not _validate_csrf(request, _csrf_token):
+    if not _validate_csrf(request, csrf_token_field):
         async with AsyncSession(engine, expire_on_commit=False) as session:
             result = await session.exec(select(User).where(User.id == user.id))
             db_user = result.first() or user

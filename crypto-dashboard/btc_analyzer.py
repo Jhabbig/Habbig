@@ -1418,7 +1418,7 @@ def _render_model_panel(res):
           </details>"""
 
 
-def generate_dashboard(all_results, suspicious_data=None):
+def generate_dashboard(all_results):
     """Generate multi-asset tabbed HTML dashboard."""
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -1651,157 +1651,6 @@ def generate_dashboard(all_results, suspicious_data=None):
           </details>
         </div>"""
 
-    # ── Suspicious Trades Tab ──
-    sus_tab_btn = ""
-    sus_tab_content = ""
-    if suspicious_data and suspicious_data.get("suspicious_trades"):
-        sd = suspicious_data
-        agg = sd.get("aggregate_stats", {})
-        trades_list = sd["suspicious_trades"]
-        wallets = sd.get("wallet_investigations", {})
-
-        sus_tab_btn = '<button class="tab-btn" onclick="switchTab(\'SUS\')" id="btn-SUS" style="background:rgba(248,81,73,0.15);color:var(--red);border-color:var(--red);">Suspicious Trades</button>'
-
-        # Trade rows
-        trade_rows = ""
-        for t in trades_list[:50]:
-            sc = t["score"]
-            sc_class = "negative" if sc >= 50 else ("yellow" if sc >= 30 else "")
-            price_class = "negative" if t.get("price", 0) <= 0.15 else ""
-            wallet_short = t["wallet"][:8] + "..." if t["wallet"] else "?"
-            name_str = t.get("pseudonym") or t.get("name") or wallet_short
-
-            # Potential profit — the key metric
-            pot_profit = t.get("potential_profit", 0)
-            profit_class = "negative" if pot_profit >= 20000 else ("yellow" if pot_profit >= 5000 else "")
-            odds_str = t.get("odds_str", f'{t.get("price", 0):.0%}')
-
-            # Wallet info
-            w_info = wallets.get(t["wallet"], {})
-            age_label = w_info.get("account_age_label", "")
-            age_days = w_info.get("account_age_days")
-            if not age_label:
-                age_label = f"{age_days}d" if age_days is not None else "?"
-            age_class = "negative" if w_info.get("is_new_account") else ""
-            total_trades = w_info.get("total_trades", "?")
-
-            reasons_str = "; ".join(t["reasons"][:3])
-
-            trade_rows += f"""<tr>
-              <td class="{sc_class}" style="font-weight:700;">{sc}</td>
-              <td>{t["time_str"]}</td>
-              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">{t["title"][:60]}</td>
-              <td>{t["outcome"]}</td>
-              <td style="font-weight:700;">${t["usd_value"]:,.0f}</td>
-              <td class="{price_class}" style="font-weight:600;">{odds_str}</td>
-              <td class="{profit_class}" style="font-weight:700;">${pot_profit:,.0f}</td>
-              <td title="{t["wallet"]}">{name_str}</td>
-              <td class="{age_class}">{age_label}</td>
-              <td>{total_trades}</td>
-              <td style="font-size:0.75em;color:var(--muted);">{reasons_str}</td>
-            </tr>"""
-
-        # Wallet investigation cards
-        wallet_cards = ""
-        sorted_wallets = sorted(wallets.items(), key=lambda x: x[1].get("max_suspicion_score", 0), reverse=True)[:10]
-        for addr, w in sorted_wallets:
-            name = w.get("pseudonym") or w.get("name") or addr[:12]+"..."
-            age_label = w.get("account_age_label", "")
-            age_days = w.get("account_age_days")
-            if not age_label:
-                age_label = f"{age_days}d old" if age_days is not None else "?"
-            is_new = w.get("is_new_account", False)
-            age_badge = f'<span class="{"negative" if is_new else ""}">{age_label}</span>'
-            new_badge = ' <span style="background:var(--red);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.7em;">NEW</span>' if is_new else ""
-            profit_pot = w.get("total_profit_potential", 0)
-
-            large = w.get("large_trades", [])
-            large_html = ""
-            for lt in large[:5]:
-                lt_odds = lt.get("odds_str", f'{lt.get("price", 0):.0%}')
-                lt_profit = lt.get("potential_profit", 0)
-                large_html += f'<div style="font-size:0.75em;color:var(--muted);padding:2px 0;">${lt["size"]:,.0f} at {lt_odds} → ${lt_profit:,.0f} profit on {lt["title"][:35]} ({lt["time"]})</div>'
-            if not large_html:
-                large_html = '<div style="font-size:0.75em;color:var(--muted);">No other large trades found</div>'
-
-            wallet_cards += f"""
-            <div class="card" style="border-color:var(--red);">
-              <div class="label">{name}{new_badge}</div>
-              <div style="display:flex;gap:16px;margin-bottom:6px;flex-wrap:wrap;">
-                <div><span class="mini-label">Score</span><br><span class="value-sm negative">{w.get("max_suspicion_score", 0)}</span></div>
-                <div><span class="mini-label">Account Age</span><br><span class="value-sm">{age_badge}</span></div>
-                <div><span class="mini-label">Profit Potential</span><br><span class="value-sm negative">${profit_pot:,.0f}</span></div>
-                <div><span class="mini-label">Trades</span><br><span class="value-sm">{w.get("total_trades", "?")}</span></div>
-                <div><span class="mini-label">Volume</span><br><span class="value-sm">${w.get("total_volume", 0):,.0f}</span></div>
-                <div><span class="mini-label">Markets</span><br><span class="value-sm">{w.get("markets_traded", "?")}</span></div>
-              </div>
-              <div style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px;">
-                <span class="mini-label">Large Trades</span>
-                {large_html}
-              </div>
-            </div>"""
-
-        new_acc_class = "negative" if agg.get("new_accounts", 0) > 0 else ""
-
-        sus_tab_content = f"""
-        <div class="tab-content" id="tab-SUS">
-          <h2 style="font-size:1.3em;margin-bottom:16px;color:var(--red);">Suspicious Trades — Last {sd.get("scan_hours", 72)}h</h2>
-
-          <div style="background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:0.85em;color:var(--muted);">
-            Trades are ranked by <strong style="color:var(--red);">potential profit</strong>, not just size.
-            A $1,000 bet at 20:1 odds = $20,000 potential profit — way more suspicious than a $10,000 bet at even odds.
-            New accounts making large long-shot bets get extra suspicion points.
-          </div>
-
-          <div class="cards" style="margin-bottom:20px;">
-            <div class="card" style="border-color:var(--red);">
-              <div class="label">Flagged Trades</div>
-              <div class="value negative">{agg.get("total_flagged", 0)}</div>
-              <div class="detail">From {sd.get("total_trades_scanned", 0):,} scanned</div>
-            </div>
-            <div class="card" style="border-color:var(--red);">
-              <div class="label">Total Potential Profit</div>
-              <div class="value negative">${agg.get("total_potential_profit", 0):,.0f}</div>
-              <div class="detail">Max single: ${agg.get("max_potential_profit", 0):,.0f}</div>
-            </div>
-            <div class="card" style="border-color:var(--red);">
-              <div class="label">Total Flagged Volume</div>
-              <div class="value">${agg.get("total_volume_flagged", 0):,.0f}</div>
-              <div class="detail">Avg: ${agg.get("avg_trade_size", 0):,.0f}</div>
-            </div>
-            <div class="card" style="border-color:var(--red);">
-              <div class="label">New Accounts (&lt;30d)</div>
-              <div class="value {new_acc_class}">{agg.get("new_accounts", 0)}</div>
-              <div class="detail">Of {agg.get("total_investigated", 0)} investigated</div>
-            </div>
-            <div class="card" style="border-color:var(--red);">
-              <div class="label">Long-shot Bets (&le;15%)</div>
-              <div class="value">{agg.get("longshot_trades", 0)}</div>
-              <div class="detail">Profit potential: ${agg.get("longshot_total_profit", 0):,.0f}</div>
-            </div>
-            <div class="card" style="border-color:var(--red);">
-              <div class="label">Unique Wallets / Markets</div>
-              <div class="value">{agg.get("unique_wallets", 0)} / {agg.get("unique_markets", 0)}</div>
-              <div class="detail">Distinct actors and events</div>
-            </div>
-          </div>
-
-          <h3 style="font-size:1em;margin-bottom:12px;">Top Investigated Wallets</h3>
-          <div class="cards" style="margin-bottom:20px;">{wallet_cards}</div>
-
-          <h3 style="font-size:1em;margin-bottom:12px;">All Flagged Trades</h3>
-          <div class="table-container" style="max-height:60vh;overflow-y:auto;">
-            <table>
-              <thead><tr>
-                <th>Score</th><th>Time</th><th>Market</th><th>Outcome</th>
-                <th>Bet Size</th><th>Odds</th><th>Potential Profit</th><th>Trader</th>
-                <th>Acct Age</th><th>Trades</th><th>Why Flagged</th>
-              </tr></thead>
-              <tbody>{trade_rows}</tbody>
-            </table>
-          </div>
-        </div>"""
-
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1897,8 +1746,8 @@ def generate_dashboard(all_results, suspicious_data=None):
   &#9888; <strong>Not financial advice.</strong> Predictions are probabilistic estimates from ML models trained on historical data. Past accuracy does not guarantee future results. <a href="/disclaimer" style="color:var(--blue);">Full disclaimer</a>
 </div>
 
-<div class="tab-bar">{tab_buttons}{sus_tab_btn}</div>
-{tab_contents}{sus_tab_content}
+<div class="tab-bar">{tab_buttons}</div>
+{tab_contents}
 
 <script>
 const CHART_DATA = {json.dumps(chart_data_all)};
@@ -2099,19 +1948,8 @@ def main():
     for ticker, info in ASSETS.items():
         all_results[ticker] = process_asset(ticker, info["symbol"])
 
-    # Run suspicious trades scanner
-    print("\n" + "=" * 60)
-    print("  Running Polymarket Suspicious Trades Scanner...")
-    print("=" * 60)
-    try:
-        from suspicious_trades import run_scanner
-        sus_data = run_scanner()
-    except Exception as e:
-        print(f"  Scanner error: {e}")
-        sus_data = None
-
     output_path = Path(__file__).parent / "crypto_dashboard.html"
-    html = generate_dashboard(all_results, suspicious_data=sus_data)
+    html = generate_dashboard(all_results)
     with open(output_path, "w") as f:
         f.write(html)
     print(f"\nDashboard saved to: {output_path}")

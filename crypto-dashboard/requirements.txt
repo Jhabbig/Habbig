@@ -4,3 +4,5 @@ requests>=2.31
 numpy>=1.26
 aiohttp>=3.9
 defusedxml>=0.7
+cryptography>=42.0
+py-clob-client>=0.18

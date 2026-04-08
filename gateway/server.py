@@ -4,10 +4,10 @@ Polymarket Dashboard Gateway
 ============================
 Single entry point for all dashboards. Routes by subdomain:
 
-    habbig.com              → apex (login, signup, "my dashboards", billing)
-    <subdomain>.habbig.com  → reverse-proxied to the matching local dashboard
+    narve.ai              → apex (login, signup, "my dashboards", billing)
+    <subdomain>.narve.ai  → reverse-proxied to the matching local dashboard
 
-Session cookie is scoped to `.habbig.com` so one login covers every subdomain.
+Session cookie is scoped to `.narve.ai` so one login covers every subdomain.
 Per-request subscription check gates access to each dashboard.
 
 Environment variables:
@@ -233,7 +233,7 @@ IS_PRODUCTION: bool = os.environ.get("PRODUCTION", "").lower() in ("1", "true", 
 
 COOKIE_NAME = "pm_gateway_session"
 # Leading dot makes the cookie apply to every subdomain.
-# Computed per-request below to support both production (.habbig.com) and
+# Computed per-request below to support both production (.narve.ai) and
 # local testing (*.localhost) — the browser rejects the Domain attribute when
 # it doesn't match the actual request host, so we inspect each request.
 PROD_COOKIE_DOMAIN = f".{DOMAIN}" if "." in DOMAIN and DOMAIN != "localhost" else None
@@ -621,7 +621,7 @@ def get_subdomain(request: Request) -> Optional[str]:
     if host.endswith(".localhost"):
         return host[: -len(".localhost")]
     # Flexible matching: recognise known dashboard subdomains on any base domain
-    # (e.g. world.narve.ai when config says habbig.com).
+    # (e.g. world.narve.ai when config says narve.ai).
     for sub in SUBDOMAIN_TO_KEY:
         if host.startswith(sub + "."):
             return sub
@@ -633,7 +633,7 @@ def _request_base_domain(request: Request) -> tuple[str, str, str]:
     """Derive (scheme, base_domain, port_suffix) from the live request.
 
     Used so that generated links match the domain the user is actually on,
-    even if it differs from the configured DOMAIN (e.g. narve.ai vs habbig.com).
+    even if it differs from the configured DOMAIN (e.g. narve.ai vs narve.ai).
     """
     host_raw = request.headers.get("host", DOMAIN)
     if ":" in host_raw:
@@ -3394,7 +3394,7 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
         return content
 
     # 1. Inject shared theme CSS before </head>
-    css_tag = '<link rel="stylesheet" href="/_gateway_static/habbig-theme.css">'
+    css_tag = '<link rel="stylesheet" href="/_gateway_static/narve-theme.css">'
     lower = text.lower()
     head_idx = lower.rfind("</head>")
     if head_idx != -1:

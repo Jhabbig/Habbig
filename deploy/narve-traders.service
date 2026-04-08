@@ -1,14 +1,14 @@
 [Unit]
-Description=Habbig Midterm Dashboard (port 8051)
+Description=Narve Top Traders Dashboard (port 8052)
 After=network.target
 
 [Service]
-# Required env vars: GATEWAY_SSO_SECRET, PORT, FRONTEND_ORIGIN
+# Required env vars: (none — top-traders dashboard reads no env vars from .env)
 # Note: This service loads the shared gateway .env but only needs the above vars
 Type=simple
 User=julianhabbig
-WorkingDirectory=/home/julianhabbig/Polymarket/midterm-dashboard/backend
-ExecStart=/home/julianhabbig/Polymarket/venv/bin/python main.py
+WorkingDirectory=/home/julianhabbig/Polymarket/top-traders-dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
 Restart=always
 RestartSec=5
 EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
@@ -18,7 +18,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
-ReadWritePaths=/home/julianhabbig/Polymarket/midterm-dashboard/backend
+ReadWritePaths=/home/julianhabbig/Polymarket/top-traders-dashboard
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

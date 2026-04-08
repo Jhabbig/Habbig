@@ -1,14 +1,14 @@
 [Unit]
-Description=Habbig Stock Dashboard (port 8050)
+Description=Narve World State Dashboard (port 7050)
 After=network.target
 
 [Service]
-# Required env vars: (none — stock dashboard reads no env vars from .env)
+# Required env vars: (none — world-state dashboard reads no env vars from .env)
 # Note: This service loads the shared gateway .env but only needs the above vars
 Type=simple
 User=julianhabbig
-WorkingDirectory=/home/julianhabbig/Polymarket/stock-dashboard
-ExecStart=/home/julianhabbig/Polymarket/venv/bin/python stock_dashboard.py --port 8050
+WorkingDirectory=/home/julianhabbig/Polymarket/world-state-dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 7050
 Restart=always
 RestartSec=5
 EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
@@ -18,7 +18,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
-ReadWritePaths=/home/julianhabbig/Polymarket/stock-dashboard
+ReadWritePaths=/home/julianhabbig/Polymarket/world-state-dashboard
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

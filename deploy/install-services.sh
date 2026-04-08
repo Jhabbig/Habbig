@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Install all Habbig dashboard systemd services.
+# Install all Narve dashboard systemd services.
 # Run on the Ubuntu production box:  sudo bash deploy/install-services.sh
 #
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVICES="habbig-gateway habbig-crypto habbig-weather habbig-sports habbig-world habbig-midterm habbig-traders habbig-stock"
+SERVICES="narve-gateway narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock"
 
 echo "Installing systemd service units..."
 for svc in $SERVICES; do
@@ -30,11 +30,11 @@ fi
 
 echo ""
 echo "Done. To start everything:"
-echo "  sudo systemctl start habbig-crypto habbig-weather habbig-sports habbig-world habbig-midterm habbig-traders habbig-stock"
-echo "  sudo systemctl start habbig-gateway"
+echo "  sudo systemctl start narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock"
+echo "  sudo systemctl start narve-gateway"
 echo ""
 echo "To check status:"
-echo "  systemctl status 'habbig-*'"
+echo "  systemctl status 'narve-*'"
 echo ""
 echo "Logs:"
-echo "  journalctl -u habbig-gateway -f"
+echo "  journalctl -u narve-gateway -f"

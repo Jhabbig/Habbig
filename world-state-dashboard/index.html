@@ -672,6 +672,209 @@ body {
   letter-spacing: 1px;
 }
 
+/* ── X Intelligence Feed ──────────────────────────── */
+.xfeed-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  transition: background 0.15s;
+  text-decoration: none;
+  display: block;
+  color: inherit;
+  position: relative;
+}
+.xfeed-row:hover { background: var(--bg-2); }
+.xfeed-row:last-child { border-bottom: none; }
+
+.xfeed-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.xfeed-author {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-0);
+}
+
+.xfeed-handle {
+  font-size: 9px;
+  color: var(--text-2);
+}
+
+.xfeed-time {
+  font-size: 9px;
+  color: var(--text-2);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.xfeed-text {
+  font-size: 11px;
+  color: var(--text-0);
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.xfeed-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  align-items: center;
+}
+
+.xfeed-tag {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.xfeed-tag.topic-conflict { color: #ef4444; border-color: rgba(239,68,68,0.3); }
+.xfeed-tag.topic-diplomacy { color: #22d3ee; border-color: rgba(34,211,238,0.3); }
+.xfeed-tag.topic-nuclear { color: #f59e0b; border-color: rgba(245,158,11,0.3); }
+.xfeed-tag.topic-sanctions { color: #a855f7; border-color: rgba(168,85,247,0.3); }
+.xfeed-tag.topic-intelligence { color: #6366f1; border-color: rgba(99,102,241,0.3); }
+.xfeed-tag.topic-military { color: #3b82f6; border-color: rgba(59,130,246,0.3); }
+.xfeed-tag.topic-humanitarian { color: #f97316; border-color: rgba(249,115,22,0.3); }
+.xfeed-tag.topic-election { color: #8b5cf6; border-color: rgba(139,92,246,0.3); }
+.xfeed-tag.topic-economy { color: #10b981; border-color: rgba(16,185,129,0.3); }
+.xfeed-tag.topic-climate { color: #06b6d4; border-color: rgba(6,182,212,0.3); }
+.xfeed-tag.topic-general { color: var(--text-2); }
+
+.xfeed-sentiment {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.xfeed-sentiment.negative { color: #ef4444; background: rgba(239,68,68,0.1); }
+.xfeed-sentiment.positive { color: #22c55e; background: rgba(34,197,94,0.1); }
+.xfeed-sentiment.neutral { color: var(--text-2); background: rgba(255,255,255,0.04); }
+
+.xfeed-urgent {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #ef4444;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: rgba(239,68,68,0.15);
+  animation: urgentPulse 2s ease infinite;
+}
+@keyframes urgentPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.xfeed-metrics {
+  display: flex;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 9px;
+  color: var(--text-2);
+}
+
+.xfeed-metric { display: flex; align-items: center; gap: 2px; }
+
+.xfeed-impact {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  border: 1.5px solid;
+}
+.xfeed-impact.high { color: #ef4444; border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+.xfeed-impact.medium { color: #f59e0b; border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
+.xfeed-impact.low { color: var(--text-2); border-color: var(--border); background: rgba(255,255,255,0.02); }
+
+.xfeed-cat {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.xfeed-cat.leader { color: #f59e0b; background: rgba(245,158,11,0.1); }
+.xfeed-cat.institution { color: #3b82f6; background: rgba(59,130,246,0.1); }
+.xfeed-cat.analyst { color: #8b5cf6; background: rgba(139,92,246,0.1); }
+.xfeed-cat.journalist { color: #22d3ee; background: rgba(34,211,238,0.1); }
+
+.xfeed-filter-bar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-wrap: wrap;
+}
+
+.xfeed-filter-btn {
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.xfeed-filter-btn:hover { border-color: var(--text-1); color: var(--text-0); }
+.xfeed-filter-btn.active { border-color: var(--green); color: var(--green); background: rgba(74,222,128,0.08); }
+
+.xfeed-notoken {
+  padding: 20px 16px;
+  text-align: center;
+}
+.xfeed-notoken-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-0);
+  margin-bottom: 8px;
+}
+.xfeed-notoken-text {
+  font-size: 10px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.xfeed-notoken code {
+  font-size: 10px;
+  background: rgba(255,255,255,0.06);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+.xfeed-accounts-list {
+  font-size: 9px;
+  color: var(--text-2);
+  margin-top: 10px;
+  max-height: 120px;
+  overflow-y: auto;
+  text-align: left;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  line-height: 1.6;
+}
+
 /* ── Polymarket Rows ────────────────────────────── */
 .poly-row {
   display: flex;
@@ -1465,11 +1668,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Fetch news & polymarket asynchronously
+  // Fetch news, polymarket, and X feed asynchronously
   loadNews();
   loadPolymarket();
+  loadXFeed();
   setInterval(loadNews, 90 * 1000);
   setInterval(loadPolymarket, 60 * 1000);
+  setInterval(loadXFeed, 300 * 1000);
   // Refresh aircraft every 30s if layer is on
   setInterval(() => {
     if (document.getElementById('lyr-aircraft')?.checked) loadAircraft();
@@ -1482,9 +1687,12 @@ async function loadData() {
     data = await resp.json();
     data.news = [];
     data.polymarket = [];
+    data.xfeed = [];
+    data.xfeed_has_token = data.xfeed_has_token || false;
+    data.xfeed_accounts = data.xfeed_accounts || 0;
   } catch (e) {
     console.error('Failed to load data:', e);
-    data = { conflicts: [], hotspots: [], indicators: [], sanctions: [], nuclear: [], militias: [], relations: {}, profiles: {}, news: [], polymarket: [], threat_level: 'UNKNOWN', threat_note: '' };
+    data = { conflicts: [], hotspots: [], indicators: [], sanctions: [], nuclear: [], militias: [], relations: {}, profiles: {}, news: [], polymarket: [], xfeed: [], xfeed_has_token: false, xfeed_accounts: 0, threat_level: 'UNKNOWN', threat_note: '' };
   }
 }
 
@@ -1510,6 +1718,22 @@ async function loadNews() {
     if (newsBody) newsBody.innerHTML = buildNewsRows();
   } catch (e) {
     console.error('Failed to load news:', e);
+  }
+}
+
+let xfeedFilter = 'all';
+async function loadXFeed() {
+  try {
+    const resp = await fetch('/api/xfeed');
+    const d = await resp.json();
+    data.xfeed = d.posts || [];
+    data.xfeed_has_token = d.has_token;
+    data.xfeed_accounts = d.accounts_tracked || 0;
+    const body = document.getElementById('xfeed-panel-body');
+    if (body) body.innerHTML = buildXFeedRows();
+    bindXFeedFilters();
+  } catch (e) {
+    console.error('Failed to load X feed:', e);
   }
 }
 
@@ -1566,7 +1790,8 @@ function initGlobe() {
   });
   globe = globeMap; // backward compat
 
-  globeMap.on('load', () => {
+  function _onGlobeLoad() {
+    if (_globeReady) return; // already initialized
     _globeReady = true;
 
     // ─── Create custom icon images ───
@@ -1577,21 +1802,52 @@ function initGlobe() {
       drawFn(ctx, size);
       return ctx.getImageData(0, 0, size, size);
     }
-    globeMap.addImage('plane-icon', _makeIcon(32, (ctx) => {
+    // Plane icon — top-down aircraft silhouette (nose up)
+    globeMap.addImage('plane-icon', _makeIcon(40, (ctx) => {
       ctx.fillStyle = '#a3e635';
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 0.8;
+      // Fuselage
       ctx.beginPath();
-      ctx.moveTo(16, 0); ctx.lineTo(32, 12); ctx.lineTo(20, 11); ctx.lineTo(22, 32); ctx.lineTo(16, 27);
-      ctx.lineTo(10, 32); ctx.lineTo(12, 11); ctx.lineTo(0, 12); ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.moveTo(20, 0); ctx.quadraticCurveTo(23, 6, 22, 14);
+      ctx.lineTo(22, 30); ctx.quadraticCurveTo(21, 36, 20, 38);
+      ctx.quadraticCurveTo(19, 36, 18, 30); ctx.lineTo(18, 14);
+      ctx.quadraticCurveTo(17, 6, 20, 0); ctx.fill(); ctx.stroke();
+      // Main wings
+      ctx.beginPath();
+      ctx.moveTo(22, 14); ctx.lineTo(39, 20); ctx.lineTo(38, 22); ctx.lineTo(22, 18);
+      ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(18, 14); ctx.lineTo(1, 20); ctx.lineTo(2, 22); ctx.lineTo(18, 18);
+      ctx.fill(); ctx.stroke();
+      // Tail fins
+      ctx.beginPath();
+      ctx.moveTo(22, 30); ctx.lineTo(28, 34); ctx.lineTo(27, 36); ctx.lineTo(22, 33);
+      ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(18, 30); ctx.lineTo(12, 34); ctx.lineTo(13, 36); ctx.lineTo(18, 33);
+      ctx.fill(); ctx.stroke();
     }));
-    globeMap.addImage('ship-icon', _makeIcon(28, (ctx) => {
+    // Ship icon — top-down vessel silhouette (bow up)
+    globeMap.addImage('ship-icon', _makeIcon(32, (ctx) => {
       ctx.fillStyle = '#06b6d4';
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 0.8;
+      // Hull
       ctx.beginPath();
-      ctx.moveTo(14, 0); ctx.lineTo(22, 10); ctx.lineTo(20, 10); ctx.lineTo(20, 24);
-      ctx.lineTo(8, 24); ctx.lineTo(8, 10); ctx.lineTo(6, 10); ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.moveTo(16, 0); // Bow point
+      ctx.quadraticCurveTo(24, 6, 24, 10); // Starboard bow curve
+      ctx.lineTo(24, 24); // Starboard side
+      ctx.quadraticCurveTo(24, 28, 22, 30); // Starboard stern
+      ctx.lineTo(10, 30); // Stern
+      ctx.quadraticCurveTo(8, 28, 8, 24); // Port stern
+      ctx.lineTo(8, 10); // Port side
+      ctx.quadraticCurveTo(8, 6, 16, 0); // Port bow curve
+      ctx.fill(); ctx.stroke();
+      // Bridge/superstructure
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.fillRect(12, 10, 8, 6);
+      // Deck line
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(16, 4); ctx.lineTo(16, 28); ctx.stroke();
     }));
 
     // ─── Country borders ───
@@ -1676,8 +1932,15 @@ function initGlobe() {
     globeMap.addLayer({ id: 'lyr-score-arcs', type: 'line', source: 'src-score-arcs',
       paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.6 } });
 
-    // ─── Country click ───
+    // ─── Country click (skip if a point/symbol layer was hit) ───
+    const _pointLayerIds = [
+      ..._ptLayers.map(c => 'lyr-pt-' + c.id),
+      'lyr-pt-industrial', 'lyr-pt-ecozones', 'lyr-pt-oilfields'
+    ];
     globeMap.on('click', 'country-fill', e => {
+      // Don't open country profile if clicking on a data point
+      const hit = globeMap.queryRenderedFeatures(e.point, { layers: _pointLayerIds });
+      if (hit.length) return;
       const code = e.features?.[0]?.properties?.ISO_A2;
       if (code && (data.profiles || {})[code]) showCountryProfile(code);
     });
@@ -1719,10 +1982,49 @@ function initGlobe() {
       });
     });
 
+    // ─── Click popup for detailed info (bases, aircraft, vessels) ───
+    const _clickPopup = new maplibregl.Popup({ closeButton: true, className: 'globe-popup', maxWidth: '320px' });
+    // Bases click
+    globeMap.on('click', 'lyr-pt-bases', e => {
+      if (e.originalEvent) e.originalEvent.stopPropagation();
+      const f = e.features[0]; const p = f.properties;
+      _clickPopup.setLngLat(e.lngLat).setHTML(
+        `<b style="color:#3b82f6;font-size:13px">${p.name}</b><br>` +
+        `<span style="color:#999">${p.note || ''}</span>`
+      ).addTo(globeMap);
+    });
+    // Aircraft click
+    globeMap.on('click', 'lyr-pt-aircraft', e => {
+      if (e.originalEvent) e.originalEvent.stopPropagation();
+      const f = e.features[0]; const p = f.properties;
+      _clickPopup.setLngLat(e.lngLat).setHTML(
+        `<b style="color:#a3e635;font-size:13px">${p.name}</b><br>` +
+        `<span style="color:#999">${p.note || ''}</span>`
+      ).addTo(globeMap);
+    });
+    // Vessels click
+    globeMap.on('click', 'lyr-pt-vessels', e => {
+      if (e.originalEvent) e.originalEvent.stopPropagation();
+      const f = e.features[0]; const p = f.properties;
+      _clickPopup.setLngLat(e.lngLat).setHTML(
+        `<b style="color:#06b6d4;font-size:13px">${p.name}</b><br>` +
+        `<span style="color:#999">${p.note || ''}</span>`
+      ).addTo(globeMap);
+    });
+
     // Build initial data
     refreshGlobePoints();
     refreshGlobeArcs();
-  });
+  }
+  globeMap.on('load', _onGlobeLoad);
+  // Fallback: poll until style is loaded, then init
+  const _fallbackInterval = setInterval(() => {
+    if (_globeReady) { clearInterval(_fallbackInterval); return; }
+    try {
+      if (globeMap.isStyleLoaded()) { clearInterval(_fallbackInterval); _onGlobeLoad(); }
+      else { globeMap.resize(); }
+    } catch(e) {}
+  }, 2000);
 }
 
 function refreshGlobePoints() {
@@ -1738,7 +2040,10 @@ function refreshGlobePoints() {
     (data.militias || []).forEach(m => feats.militias.push(_pt(m.lng, m.lat, m.name, m.country + ' · ' + m.type)));
   }
   if (lyr('lyr-bases')) {
-    (data.bases || []).forEach(b => feats.bases.push(_pt(b.lng, b.lat, b.name, b.country + ' · ' + b.type)));
+    (data.bases || []).forEach(b => {
+      const note = [b.branch, b.type.replace(/_/g,' '), b.country + (b.host && b.host !== b.country ? ' in ' + b.host : ''), b.detail].filter(Boolean).join(' · ');
+      feats.bases.push(_pt(b.lng, b.lat, b.name, note));
+    });
   }
   if (lyr('lyr-vessels')) {
     (data.vessels || []).forEach(v => feats.vessels.push(_pt(v.lng, v.lat, v.name,
@@ -1747,7 +2052,14 @@ function refreshGlobePoints() {
   }
   if (lyr('lyr-aircraft') && aircraftData.length) {
     aircraftData.slice(0, 500).forEach(p => {
-      const note = [p.origin, p.type_desc || '', p.alt_m + 'm', p.speed_kts + 'kts', 'Hdg ' + (p.heading||0) + '°'].filter(Boolean).join(' · ');
+      const parts = [p.origin, p.type_desc || ''];
+      parts.push('Alt: ' + (p.alt_ft || p.alt_m) + (p.alt_ft ? 'ft' : 'm'));
+      parts.push(p.speed_kts + 'kts');
+      parts.push('Hdg ' + (p.heading||0) + '°');
+      if (p.vert_rate && p.vert_rate !== 0) parts.push('VS ' + p.vert_rate + 'm/s');
+      if (p.squawk) parts.push('SQK ' + p.squawk);
+      parts.push('ICAO: ' + p.icao);
+      const note = parts.filter(Boolean).join(' · ');
       feats.aircraft.push(_pt(p.lng, p.lat, p.callsign || p.icao, note, { heading: p.heading || 0 }));
     });
   }
@@ -1931,6 +2243,9 @@ function renderPanels() {
 
   // 0.5 Polymarket prediction markets panel
   html += buildPolyPanel();
+
+  // 0.6 X Intelligence Feed panel
+  html += buildXFeedPanel();
 
   // 1. Active Conflicts panel
   html += buildConflictsPanel();
@@ -2371,6 +2686,146 @@ function buildPolyRows() {
       <span class="poly-outcome ${outcomeClass}">${m.top_outcome || 'Yes'}</span>
     </a>`;
   }).join('');
+}
+
+// ── X Intelligence Feed Panel ──────────────────────────
+function buildXFeedPanel() {
+  return `<div class="panel" style="grid-column: span 2; max-height: 600px;">
+    <div class="panel-head">
+      X Intelligence Feed
+      <span class="panel-badge blue" id="xfeed-count">loading...</span>
+    </div>
+    <div class="xfeed-filter-bar" id="xfeed-filters">
+      <button class="xfeed-filter-btn active" data-xfilter="all">All</button>
+      <button class="xfeed-filter-btn" data-xfilter="leader">Leaders</button>
+      <button class="xfeed-filter-btn" data-xfilter="institution">Institutions</button>
+      <button class="xfeed-filter-btn" data-xfilter="analyst">Analysts</button>
+      <button class="xfeed-filter-btn" data-xfilter="journalist">Journalists</button>
+      <button class="xfeed-filter-btn" data-xfilter="urgent">Urgent</button>
+    </div>
+    <div class="panel-body" id="xfeed-panel-body">
+      <div class="news-loading">Fetching X intelligence feed...</div>
+    </div>
+  </div>`;
+}
+
+function buildXFeedRows() {
+  const posts = data.xfeed || [];
+  const hasToken = data.xfeed_has_token;
+  const accountCount = data.xfeed_accounts || 0;
+  const xbadge = document.getElementById('xfeed-count');
+
+  // No API token configured — show setup instructions
+  if (!hasToken) {
+    if (xbadge) xbadge.textContent = 'NO TOKEN';
+    return `<div class="xfeed-notoken">
+      <div class="xfeed-notoken-title">X API Token Required</div>
+      <div class="xfeed-notoken-text">
+        Set your X/Twitter Bearer Token to activate this feed:<br>
+        <code>export X_BEARER_TOKEN="your_token_here"</code><br><br>
+        Tracking <strong>${accountCount}</strong> key geopolitical accounts including world leaders,
+        institutions, defense analysts, and journalists.
+      </div>
+      <div class="xfeed-accounts-list">
+        <strong>Tracked accounts:</strong> ${buildAccountsList()}
+      </div>
+    </div>`;
+  }
+
+  if (posts.length === 0) {
+    return '<div class="news-loading">No posts available</div>';
+  }
+
+  if (xbadge) xbadge.textContent = posts.length;
+
+  // Filter posts
+  const filtered = xfeedFilter === 'all' ? posts
+    : xfeedFilter === 'urgent' ? posts.filter(p => p.analysis && p.analysis.urgent)
+    : posts.filter(p => p.author_category === xfeedFilter);
+
+  if (filtered.length === 0) {
+    return '<div class="news-loading">No posts match this filter</div>';
+  }
+
+  return filtered.map(p => {
+    const analysis = p.analysis || {};
+    const impactClass = p.impact_score >= 7 ? 'high' : p.impact_score >= 4 ? 'medium' : 'low';
+
+    // Build topic tags
+    const topicTags = (analysis.topics || []).map(t =>
+      `<span class="xfeed-tag topic-${escapeHtml(t)}">${escapeHtml(t)}</span>`
+    ).join('');
+
+    // Country mentions
+    const countryTags = (analysis.countries || []).map(c =>
+      `<span class="xfeed-tag">${countryFlag(c)}</span>`
+    ).join('');
+
+    return `<a class="xfeed-row" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer">
+      <div class="xfeed-impact ${impactClass}">${p.impact_score}</div>
+      <div class="xfeed-header">
+        <span class="xfeed-cat ${escapeHtml(p.author_category)}">${escapeHtml(p.author_category)}</span>
+        <span class="xfeed-author">${escapeHtml(p.author_name)}</span>
+        <span class="xfeed-handle">@${escapeHtml(p.author_handle)}</span>
+        <span class="xfeed-time">${formatXTime(p.created_at)}</span>
+      </div>
+      <div class="xfeed-text">${escapeHtml(p.text)}</div>
+      <div class="xfeed-tags">
+        ${analysis.urgent ? '<span class="xfeed-urgent">URGENT</span>' : ''}
+        <span class="xfeed-sentiment ${analysis.sentiment || 'neutral'}">${analysis.sentiment || 'neutral'}</span>
+        ${topicTags}
+        ${countryTags}
+      </div>
+      <div class="xfeed-metrics">
+        <span class="xfeed-metric">\u2665 ${formatCompact(p.likes)}</span>
+        <span class="xfeed-metric">\u21BB ${formatCompact(p.retweets)}</span>
+        <span class="xfeed-metric">\u{1F4AC} ${formatCompact(p.replies)}</span>
+        <span class="xfeed-metric">\u275D ${formatCompact(p.quotes)}</span>
+      </div>
+    </a>`;
+  }).join('');
+}
+
+function buildAccountsList() {
+  // Static list of tracked accounts (mirrors backend X_ACCOUNTS)
+  const accounts = [
+    'POTUS', 'realDonaldTrump', 'ZelenskyyUa', 'EmmanuelMacron', 'OlafScholz',
+    'KeirStarmer', 'IsraeliPM', 'RTErdogan', 'NATO', 'UN', 'EU_Commission',
+    'StateDept', 'DeptofDefense', 'CIA', 'WHO', 'WFP', 'KofmanMichael',
+    'RALee85', 'DefMon3', 'wartranslated', 'NOELreports', 'sentdefender',
+    'Reuters', 'AP'
+  ];
+  return accounts.map(h => `@${h}`).join(', ');
+}
+
+function formatXTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 60000) return 'just now';
+  if (diffMs < 3600000) return Math.floor(diffMs / 60000) + 'm';
+  if (diffMs < 86400000) return Math.floor(diffMs / 3600000) + 'h';
+  return Math.floor(diffMs / 86400000) + 'd';
+}
+
+function formatCompact(n) {
+  if (!n || n < 1) return '0';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toString();
+}
+
+function bindXFeedFilters() {
+  document.querySelectorAll('.xfeed-filter-btn').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.xfeed-filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      xfeedFilter = btn.dataset.xfilter;
+      const body = document.getElementById('xfeed-panel-body');
+      if (body) body.innerHTML = buildXFeedRows();
+    };
+  });
 }
 
 function escapeHtml(s) {

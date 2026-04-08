@@ -432,7 +432,7 @@ async def auth_logout(request: Request):
     accept = request.headers.get("accept", "")
     if "application/json" in accept:
         return JSONResponse({"status": "ok"})
-    return RedirectResponse("https://habbig.com/logout", status_code=302)
+    return RedirectResponse("https://narve.ai/logout", status_code=302)
 
 
 @app.get("/auth/me")

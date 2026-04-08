@@ -31,6 +31,7 @@ from btc_analyzer import (
     EnsemblePredictor, generate_dashboard,
 )
 import database as db
+import clob_trading as clob
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -141,7 +142,6 @@ async def startup():
     # Start background tasks immediately so dashboards work
     asyncio.create_task(price_updater())
     asyncio.create_task(window_refresher())
-    asyncio.create_task(suspicious_trade_monitor())
     asyncio.create_task(news_trade_monitor())
     # Load data in background so server is available immediately
     asyncio.create_task(load_all_assets())
@@ -481,64 +481,6 @@ async def window_refresher():
                 print(f"  Refresh error {ticker}: {e}")
 
 
-last_sus_scan: dict = {}  # cached suspicious scan results
-last_sus_scan_time: float = 0
-
-async def suspicious_trade_monitor():
-    """Periodically scan for suspicious trades and push alerts for new ones."""
-    global last_sus_scan, last_sus_scan_time, connected_ws
-    seen_trade_keys: set = set()
-
-    # Wait for server to be ready
-    await asyncio.sleep(30)
-
-    while True:
-        try:
-            from suspicious_trades import run_scanner
-            result = await asyncio.to_thread(run_scanner)
-            if result and result.get("suspicious_trades"):
-                last_sus_scan = result
-                last_sus_scan_time = time.time()
-
-                # Check for new trades we haven't seen
-                for t in result["suspicious_trades"]:
-                    key = f'{t.get("wallet","")[:12]}_{t.get("usd_value",0)}_{t.get("title","")[:20]}'
-                    pot_profit = t.get("potential_profit", 0)
-                    if key not in seen_trade_keys and (pot_profit >= 5000 or t.get("score", 0) >= 50):
-                        seen_trade_keys.add(key)
-                        odds_str = t.get("odds_str", f'{t.get("price",0):.0%}')
-                        # Push alert to connected clients
-                        if connected_ws:
-                            alert = json.dumps({
-                                "type": "alert",
-                                "data": {
-                                    "ticker": "SUS",
-                                    "direction": "suspicious",
-                                    "confidence": t.get("score", 0),
-                                    "delta": f'${t.get("usd_value",0):,.0f} at {odds_str} → ${pot_profit:,.0f} profit on {t.get("title","")[:35]}',
-                                    "time": t.get("time_str", ""),
-                                },
-                            })
-                            for ws in list(connected_ws):
-                                try:
-                                    await ws.send_text(alert)
-                                except Exception:
-                                    connected_ws.discard(ws)
-
-                # Keep set bounded -- clear entirely since set is unordered
-                if len(seen_trade_keys) > 5000:
-                    # Keep most recent entries instead of clearing all
-                    to_remove = list(seen_trade_keys)[:2500]
-                    for k in to_remove:
-                        seen_trade_keys.discard(k)
-
-                print(f"  [SUS] Scan complete: {len(result['suspicious_trades'])} flagged trades")
-        except Exception as e:
-            print(f"  [SUS] Scanner error: {e}")
-
-        await asyncio.sleep(1800)  # re-scan every 30 minutes
-
-
 # ─── News-Trade Correlation Monitor ─────────────────────────────────
 
 last_news_trade_scan: dict = {}
@@ -558,9 +500,7 @@ async def news_trade_monitor():
     while True:
         try:
             from news_trade_scanner import run_news_trade_scan
-            # Pass existing suspicious trades so scanner doesn't re-run the full scan
-            sus = last_sus_scan.get("suspicious_trades", []) if last_sus_scan else None
-            result = await asyncio.to_thread(run_news_trade_scan, sus)
+            result = await asyncio.to_thread(run_news_trade_scan)
 
             if result and result.get("alerts"):
                 last_news_trade_scan = result
@@ -682,17 +622,17 @@ def serialize_asset(ticker):
 
 @app.get("/login")
 async def login_page():
-    return RedirectResponse("https://habbig.com/login", status_code=302)
+    return RedirectResponse("https://narve.ai/login", status_code=302)
 
 
 @app.get("/signup")
 async def signup_page():
-    return RedirectResponse("https://habbig.com/signup", status_code=302)
+    return RedirectResponse("https://narve.ai/signup", status_code=302)
 
 
 @app.get("/logout")
 async def logout():
-    resp = RedirectResponse("https://habbig.com/logout", status_code=302)
+    resp = RedirectResponse("https://narve.ai/logout", status_code=302)
     resp.delete_cookie("session")
     return resp
 
@@ -703,7 +643,7 @@ async def logout():
 async def root(request: Request):
     """Serve the live crypto dashboard."""
     if not _check_auth(request):
-        return RedirectResponse("https://habbig.com/login", status_code=302)
+        return RedirectResponse("https://narve.ai/login", status_code=302)
     if not asset_state:
         return HTMLResponse("<h1>Loading... refresh in 30s</h1>")
     # Generate and serve the dashboard with live JS injected
@@ -743,17 +683,7 @@ async def root(request: Request):
             "chart_24h": chart_24h,
             "chart_7d": chart_7d,
         }
-    # Suspicious trades: premium only — use the background monitor's cache
-    # instead of re-running the scanner on every page load.
-    sus_data = None
-    if _is_premium(request) and last_sus_scan:
-        sus_data = dict(last_sus_scan)
-        if sus_data.get("suspicious_trades"):
-            sus_data["suspicious_trades"] = [
-                t for t in sus_data["suspicious_trades"]
-                if t.get("potential_profit", 0) >= 1000 or t.get("score", 0) >= 40
-            ]
-    html = generate_dashboard(all_results, suspicious_data=sus_data)
+    html = generate_dashboard(all_results)
 
     # Inject nav bar with user info
     user = _get_session_user(request)
@@ -1118,7 +1048,7 @@ async def get_bot_status(request: Request):
 async def bot_dashboard(request: Request):
     """Self-contained bot monitoring dashboard."""
     if not _check_auth(request):
-        return RedirectResponse("https://habbig.com/login", status_code=302)
+        return RedirectResponse("https://narve.ai/login", status_code=302)
     html = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1290,7 +1220,7 @@ async def get_polybot_status(request: Request):
 @app.get("/polybot", response_class=HTMLResponse)
 async def polybot_dashboard(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("https://habbig.com/login", status_code=302)
+        return RedirectResponse("https://narve.ai/login", status_code=302)
     html = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1540,7 +1470,7 @@ async def dashboard_hub(request: Request):
 @app.get("/kalshi", response_class=HTMLResponse)
 async def kalshi_dashboard(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("https://habbig.com/login", status_code=302)
+        return RedirectResponse("https://narve.ai/login", status_code=302)
     user = _get_session_user(request)
 
     try:
@@ -1646,92 +1576,137 @@ async def kalshi_dashboard(request: Request):
 
 @app.get("/trade", response_class=HTMLResponse)
 async def trade_page(request: Request):
-    """Polymarket trading page — browse markets and follow/place trades."""
+    """Polymarket CLOB trading page with order book, trading panel, and positions."""
     if not _check_auth(request):
-        return RedirectResponse("https://habbig.com/login", status_code=302)
+        return RedirectResponse("https://narve.ai/login", status_code=302)
     user = _get_session_user(request)
-    is_premium = user and user["tier"] in ("premium", "admin")
-
-    # Get suspicious trades for "follow trade" feature (free for all users)
-    sus_trades = []
-    if last_sus_scan and last_sus_scan.get("suspicious_trades"):
-        sus_trades = last_sus_scan["suspicious_trades"][:20]
-
-    # Get active Polymarket markets
-    try:
-        from suspicious_trades import get_active_markets
-        markets = await asyncio.to_thread(get_active_markets, 100)
-    except Exception:
-        markets = []
-
-    # Build suspicious trades rows (premium only)
-    sus_rows = ""
-    for t in sus_trades:
-        odds_str = t.get("odds_str", f'{t.get("price", 0):.0%}')
-        pot_profit = t.get("potential_profit", 0)
-        slug = html_mod.escape(t.get("market_id", ""), quote=True)
-        poly_url = f"https://polymarket.com/event/{slug}" if slug else "#"
-        sus_rows += f"""<tr>
-          <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(t['title'][:60])}</td>
-          <td>{html_mod.escape(str(t['outcome']))}</td>
-          <td style="font-weight:600;">{odds_str}</td>
-          <td style="font-weight:700;">${t['usd_value']:,.0f}</td>
-          <td class="negative" style="font-weight:700;">${pot_profit:,.0f}</td>
-          <td style="font-weight:700;color:var(--red);">{t['score']}</td>
-          <td><a href="{poly_url}" target="_blank" style="background:var(--blue);color:#fff;padding:4px 10px;border-radius:4px;text-decoration:none;font-size:0.8em;white-space:nowrap;">Trade on Polymarket</a></td>
-        </tr>"""
-
-    # Build active markets rows
-    market_rows = ""
-    for m in markets[:50]:
-        slug = html_mod.escape(m.get("slug", ""), quote=True)
-        poly_url = f"https://polymarket.com/event/{slug}" if slug else "#"
-        vol = m.get("volume_24h", 0)
-        vol_str = f"${vol:,.0f}" if vol >= 1000 else f"${vol:.0f}"
-        market_rows += f"""<tr>
-          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(m['question'][:70])}</td>
-          <td>{vol_str}</td>
-          <td>${m.get('liquidity', 0):,.0f}</td>
-          <td><a href="{poly_url}" target="_blank" style="color:var(--blue);text-decoration:none;font-size:0.85em;">Open →</a></td>
-        </tr>"""
-
-    premium_badge = '<span style="background:var(--green);color:#000;padding:1px 8px;border-radius:4px;font-size:0.7em;font-weight:600;margin-left:8px;">PREMIUM</span>' if is_premium else ""
-
-    sus_section = ""
-    if sus_rows:
-        sus_section = f"""
-        <div class="section">
-          <h2 style="color:var(--red);">Follow Suspicious Trades</h2>
-          <p style="color:var(--muted);font-size:0.8em;margin-bottom:10px;">
-            Trades flagged by our scanner as potentially suspicious. Click "Trade on Polymarket" to follow these trades on the same markets.
-          </p>
-          <div style="overflow-x:auto;border:1px solid var(--red);border-radius:8px;">
-            <table>
-              <thead><tr><th>Market</th><th>Outcome</th><th>Odds</th><th>Bet Size</th><th>Potential Profit</th><th>Score</th><th>Action</th></tr></thead>
-              <tbody>{sus_rows}</tbody>
-            </table>
-          </div>
-        </div>"""
+    has_creds = db.has_clob_credentials(user["id"])
 
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CryptoEdge — Trade</title>
+<title>CryptoEdge — Trade on Polymarket</title>
 <style>
-  :root {{ --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#d29922; }}
+  :root {{ --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#d29922;--purple:#a371f7; }}
   * {{ margin:0;padding:0;box-sizing:border-box; }}
   body {{ background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',sans-serif;padding:16px; }}
   .nav {{ display:flex;gap:16px;font-size:0.85em;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);flex-wrap:wrap;justify-content:space-between; }}
   .nav-links {{ display:flex;gap:16px; }}
   .nav a {{ color:var(--muted);text-decoration:none; }} .nav a.active {{ color:var(--blue);font-weight:600; }}
-  h1 {{ font-size:1.4em;margin-bottom:8px; }}
+  h1 {{ font-size:1.4em;margin-bottom:4px; }}
   .positive {{ color:var(--green); }} .negative {{ color:var(--red); }}
+
+  /* Tabs */
+  .tabs {{ display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border); }}
+  .tab {{ padding:10px 20px;cursor:pointer;font-size:0.85em;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.2s;background:none;border-top:none;border-left:none;border-right:none; }}
+  .tab:hover {{ color:var(--text); }}
+  .tab.active {{ color:var(--blue);border-bottom-color:var(--blue);font-weight:600; }}
+  .tab-content {{ display:none; }}
+  .tab-content.active {{ display:block; }}
+
+  /* Search */
+  .search-bar {{ display:flex;gap:10px;margin-bottom:16px; }}
+  .search-bar input {{ flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:0.9em; }}
+  .search-bar input::placeholder {{ color:var(--muted); }}
+  .search-bar input:focus {{ outline:none;border-color:var(--blue); }}
+
+  /* Market cards */
+  .market-grid {{ display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px; }}
+  .market-card {{ background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;transition:all 0.2s; }}
+  .market-card:hover {{ border-color:var(--blue);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,0.3); }}
+  .market-card .mc-question {{ font-size:0.9em;font-weight:600;margin-bottom:10px;line-height:1.3; }}
+  .market-card .mc-outcomes {{ display:flex;gap:8px;margin-bottom:10px; }}
+  .mc-outcome {{ flex:1;padding:8px;border-radius:6px;text-align:center;font-size:0.8em; }}
+  .mc-outcome.yes {{ background:rgba(63,185,80,0.1);border:1px solid rgba(63,185,80,0.3); }}
+  .mc-outcome.no {{ background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3); }}
+  .mc-outcome .price {{ font-size:1.3em;font-weight:700; }}
+  .mc-outcome .label {{ font-size:0.7em;color:var(--muted);text-transform:uppercase; }}
+  .market-card .mc-meta {{ display:flex;gap:12px;font-size:0.7em;color:var(--muted); }}
+  .mc-fav {{ position:absolute;top:10px;right:12px;background:none;border:none;font-size:1.2em;cursor:pointer;color:var(--muted);transition:color 0.2s; }}
+  .mc-fav.active {{ color:var(--yellow); }}
+  .mc-fav:hover {{ color:var(--yellow); }}
+
+  /* Trading modal */
+  .modal-overlay {{ display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;justify-content:center;align-items:flex-start;padding:40px 16px;overflow-y:auto; }}
+  .modal-overlay.open {{ display:flex; }}
+  .modal {{ background:var(--bg);border:1px solid var(--border);border-radius:12px;width:100%;max-width:800px;max-height:90vh;overflow-y:auto; }}
+  .modal-header {{ display:flex;justify-content:space-between;align-items:flex-start;padding:20px;border-bottom:1px solid var(--border); }}
+  .modal-header h2 {{ font-size:1.1em;flex:1;line-height:1.3; }}
+  .modal-close {{ background:none;border:none;color:var(--muted);font-size:1.5em;cursor:pointer;padding:0 4px; }}
+  .modal-close:hover {{ color:var(--text); }}
+  .modal-body {{ padding:20px;display:grid;grid-template-columns:1fr 320px;gap:20px; }}
+  @media (max-width:720px) {{ .modal-body {{ grid-template-columns:1fr; }} }}
+
+  /* Order book */
+  .ob-container {{ border:1px solid var(--border);border-radius:8px;overflow:hidden; }}
+  .ob-header {{ background:var(--card);padding:8px 12px;font-size:0.75em;font-weight:600;color:var(--muted);text-transform:uppercase;display:flex;justify-content:space-between; }}
+  .ob-side {{ max-height:200px;overflow-y:auto; }}
+  .ob-row {{ display:flex;justify-content:space-between;padding:3px 12px;font-size:0.78em;position:relative; }}
+  .ob-row .ob-fill {{ position:absolute;top:0;bottom:0;right:0;opacity:0.08; }}
+  .ob-row.ask .ob-fill {{ background:var(--red); }}
+  .ob-row.bid .ob-fill {{ background:var(--green); }}
+  .ob-spread {{ text-align:center;padding:6px;font-size:0.72em;color:var(--muted);background:var(--card);border-top:1px solid var(--border);border-bottom:1px solid var(--border); }}
+
+  /* Trade panel */
+  .trade-panel {{ background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px; }}
+  .tp-toggle {{ display:flex;gap:0;margin-bottom:14px;border-radius:6px;overflow:hidden;border:1px solid var(--border); }}
+  .tp-toggle button {{ flex:1;padding:8px;background:var(--bg);border:none;color:var(--muted);font-weight:600;cursor:pointer;font-size:0.85em;transition:all 0.2s; }}
+  .tp-toggle button.active-buy {{ background:var(--green);color:#000; }}
+  .tp-toggle button.active-sell {{ background:var(--red);color:#fff; }}
+  .tp-field {{ margin-bottom:12px; }}
+  .tp-field label {{ display:block;font-size:0.72em;color:var(--muted);margin-bottom:4px;text-transform:uppercase; }}
+  .tp-field input, .tp-field select {{ width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-size:0.9em; }}
+  .tp-field input:focus, .tp-field select:focus {{ outline:none;border-color:var(--blue); }}
+  .tp-estimate {{ background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:14px;font-size:0.8em; }}
+  .tp-estimate .row {{ display:flex;justify-content:space-between;margin-bottom:4px; }}
+  .tp-estimate .row:last-child {{ margin-bottom:0; }}
+  .tp-submit {{ width:100%;padding:12px;border:none;border-radius:8px;font-size:0.95em;font-weight:700;cursor:pointer;transition:all 0.2s; }}
+  .tp-submit.buy {{ background:var(--green);color:#000; }}
+  .tp-submit.sell {{ background:var(--red);color:#fff; }}
+  .tp-submit:hover {{ opacity:0.9;transform:translateY(-1px); }}
+  .tp-submit:disabled {{ opacity:0.4;cursor:not-allowed;transform:none; }}
+
+  /* Positions / history table */
   table {{ width:100%;border-collapse:collapse;font-size:0.82em; }}
   th {{ background:var(--card);color:var(--muted);text-transform:uppercase;font-size:0.7em;padding:10px 8px;text-align:left; }}
   td {{ padding:6px 8px;border-top:1px solid var(--border); }}
   tr:hover td {{ background:rgba(88,166,255,0.05); }}
-  .section {{ margin-bottom:24px; }}
-  .section h2 {{ font-size:1em;color:var(--blue);margin-bottom:10px; }}
+
+  /* Status bar */
+  .status-bar {{ display:flex;gap:16px;align-items:center;margin-bottom:16px;padding:10px 16px;background:var(--card);border:1px solid var(--border);border-radius:8px;font-size:0.82em;flex-wrap:wrap; }}
+  .sb-item {{ display:flex;align-items:center;gap:6px; }}
+  .sb-dot {{ width:8px;height:8px;border-radius:50%;animation:pulse 1.5s infinite; }}
+  @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
+
+  /* Loading */
+  .loading {{ text-align:center;padding:40px;color:var(--muted); }}
+  .spinner {{ display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite; }}
+  @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
+
+  /* Warning banner */
+  .warn-banner {{ background:rgba(210,153,34,0.1);border:1px solid rgba(210,153,34,0.3);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.75em;color:var(--yellow); }}
+
+  /* Confirm dialog */
+  .confirm-overlay {{ display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:2000;justify-content:center;align-items:center; }}
+  .confirm-overlay.open {{ display:flex; }}
+  .confirm-box {{ background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:420px;width:90%; }}
+  .confirm-box h3 {{ margin-bottom:12px;font-size:1.1em; }}
+  .confirm-box .details {{ background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:16px;font-size:0.85em; }}
+  .confirm-box .btn-row {{ display:flex;gap:10px;justify-content:flex-end; }}
+  .confirm-box button {{ padding:8px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:0.85em; }}
+  .confirm-box .btn-cancel {{ background:var(--border);color:var(--text); }}
+  .confirm-box .btn-confirm {{ background:var(--green);color:#000; }}
+  .confirm-box .btn-confirm.sell {{ background:var(--red);color:#fff; }}
+
+  /* Toast */
+  #toast-container {{ position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none; }}
+  .toast {{ pointer-events:auto;background:var(--card);border:1px solid var(--green);border-radius:8px;padding:12px 16px;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,0.5);animation:slideIn 0.4s ease-out;position:relative; }}
+  .toast.error {{ border-color:var(--red); }}
+  .toast-title {{ font-size:0.85em;font-weight:700;margin-bottom:4px; }}
+  .toast-body {{ font-size:0.75em;color:var(--muted); }}
+  .toast-close {{ position:absolute;top:8px;right:12px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1em; }}
+  @keyframes slideIn {{ from{{opacity:0;transform:translateX(50px)}} to{{opacity:1;transform:translateX(0)}} }}
 </style></head><body>
+
 <div class="nav">
   <div class="nav-links">
     <a href="/">Dashboard</a>
@@ -1746,193 +1721,821 @@ async def trade_page(request: Request):
 </div>
 
 <h1>Polymarket Trading</h1>
-<p style="color:var(--muted);font-size:0.85em;margin-bottom:16px;">{len(markets)} active markets &bull; Browse and trade directly on Polymarket</p>
+<p style="color:var(--muted);font-size:0.85em;margin-bottom:12px;">Direct CLOB integration &bull; Live order books &bull; Place trades</p>
 
-<div style="background:rgba(210,153,34,0.1);border:1px solid rgba(210,153,34,0.3);border-radius:8px;padding:10px 16px;margin-bottom:20px;font-size:0.75em;color:var(--yellow);">
-  &#9888; <strong>Not financial advice.</strong> Trading prediction markets involves risk. Never bet more than you can afford to lose.
+<div class="warn-banner">
+  &#9888; <strong>Not financial advice.</strong> Trading prediction markets involves real money and real risk. Never bet more than you can afford to lose.
 </div>
 
-{sus_section}
-
-<div class="section">
-  <h2 style="color:var(--red);">News-Trade Insider Alerts <span style="display:inline-block;width:8px;height:8px;background:var(--red);border-radius:50%;margin-left:6px;animation:pulse 1s infinite;"></span></h2>
-  <p style="color:var(--muted);font-size:0.75em;margin-bottom:4px;">
-    Scans news for insider trading reports, suspicious bets &amp; prediction market anomalies. Cross-referenced with live Polymarket data. Scans every 20 min.
-  </p>
-  <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
-    <button onclick="toggleWatchlistView()" id="wl-toggle-btn" style="background:var(--card);color:var(--blue);border:1px solid var(--blue);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:0.75em;">Show Watchlist</button>
-    <span id="wl-count" style="color:var(--muted);font-size:0.7em;"></span>
+<!-- Status Bar -->
+<div class="status-bar">
+  <div class="sb-item">
+    <span class="sb-dot" style="background:{'var(--green)' if has_creds else 'var(--red)'}"></span>
+    <span>{'Wallet Connected' if has_creds else '<a href="/settings" style="color:var(--blue);">Connect Wallet</a>'}</span>
   </div>
-  <div id="news-trade-alerts" style="border:1px solid var(--red);border-radius:8px;max-height:500px;overflow-y:auto;">
+  <div class="sb-item" id="sb-balance" style="display:{'flex' if has_creds else 'none'};">
+    <span style="color:var(--muted);">Balance:</span>
+    <span id="usdc-balance" style="font-weight:600;">Loading...</span>
+  </div>
+  <div class="sb-item" id="sb-open-orders" style="display:{'flex' if has_creds else 'none'};">
+    <span style="color:var(--muted);">Open Orders:</span>
+    <span id="open-orders-count" style="font-weight:600;">0</span>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('markets')">Markets</button>
+  <button class="tab" onclick="switchTab('favorites')">Favorites</button>
+  <button class="tab" onclick="switchTab('positions')">Open Orders</button>
+  <button class="tab" onclick="switchTab('history')">Trade History</button>
+  <button class="tab" onclick="switchTab('alerts')">Insider Alerts</button>
+</div>
+
+<!-- Markets Tab -->
+<div id="tab-markets" class="tab-content active">
+  <div class="search-bar">
+    <input type="text" id="market-search" placeholder="Search markets... (e.g. Bitcoin, Trump, Fed, World Cup)" oninput="debounceSearch()">
+  </div>
+  <div id="market-grid" class="market-grid">
+    <div class="loading"><span class="spinner"></span><br>Loading markets...</div>
+  </div>
+  <div style="text-align:center;margin-top:16px;">
+    <button id="load-more-btn" onclick="loadMoreMarkets()" style="display:none;background:var(--card);border:1px solid var(--border);color:var(--blue);padding:8px 24px;border-radius:6px;cursor:pointer;font-size:0.85em;">Load More</button>
+  </div>
+</div>
+
+<!-- Favorites Tab -->
+<div id="tab-favorites" class="tab-content">
+  <div id="favorites-grid" class="market-grid">
+    <div class="loading">No favorites yet. Star markets to add them here.</div>
+  </div>
+</div>
+
+<!-- Open Orders Tab -->
+<div id="tab-positions" class="tab-content">
+  <div id="positions-container">
+    {'<div class="loading">Connect your wallet in <a href="/settings" style="color:var(--blue);">Settings</a> to see open orders.</div>' if not has_creds else '<div class="loading"><span class="spinner"></span><br>Loading open orders...</div>'}
+  </div>
+</div>
+
+<!-- Trade History Tab -->
+<div id="tab-history" class="tab-content">
+  <div id="history-container">
+    <div class="loading"><span class="spinner"></span><br>Loading trade history...</div>
+  </div>
+</div>
+
+<!-- Insider Alerts Tab -->
+<div id="tab-alerts" class="tab-content">
+  <p style="color:var(--muted);font-size:0.75em;margin-bottom:8px;">
+    Scans news for insider trading reports, suspicious bets &amp; prediction market anomalies. Cross-referenced with live Polymarket data.
+  </p>
+  <div id="news-trade-alerts" style="border:1px solid var(--red);border-radius:8px;max-height:600px;overflow-y:auto;">
     <div style="padding:16px;color:var(--muted);text-align:center;">Loading alerts...</div>
   </div>
-  <div id="news-trade-watchlist" style="display:none;border:1px solid var(--blue);border-radius:8px;max-height:400px;overflow-y:auto;margin-top:10px;">
-    <div style="padding:16px;color:var(--muted);text-align:center;">Loading watchlist...</div>
+</div>
+
+<!-- Trading Modal -->
+<div class="modal-overlay" id="trade-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-question">Loading...</h2>
+      <button class="modal-close" onclick="closeTradeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Left: Order Book -->
+      <div>
+        <div class="ob-container">
+          <div class="ob-header"><span>PRICE</span><span>SIZE</span></div>
+          <div id="ob-asks" class="ob-side"></div>
+          <div id="ob-spread" class="ob-spread">Spread: —</div>
+          <div id="ob-bids" class="ob-side"></div>
+        </div>
+        <div style="margin-top:12px;">
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <div class="mc-outcome yes" style="flex:1;padding:10px;">
+              <div class="label">YES</div>
+              <div class="price" id="modal-yes-price">—</div>
+            </div>
+            <div class="mc-outcome no" style="flex:1;padding:10px;">
+              <div class="label">NO</div>
+              <div class="price" id="modal-no-price">—</div>
+            </div>
+          </div>
+          <div style="font-size:0.72em;color:var(--muted);" id="modal-meta"></div>
+        </div>
+      </div>
+
+      <!-- Right: Trade Panel -->
+      <div class="trade-panel">
+        <div style="font-size:0.85em;font-weight:600;margin-bottom:10px;">Place Order</div>
+
+        <!-- Outcome selector -->
+        <div class="tp-field">
+          <label>Outcome</label>
+          <div class="tp-toggle" id="outcome-toggle">
+            <button class="active-buy" onclick="setOutcome('yes')">YES</button>
+            <button onclick="setOutcome('no')">NO</button>
+          </div>
+        </div>
+
+        <!-- Buy/Sell toggle -->
+        <div class="tp-field">
+          <label>Side</label>
+          <div class="tp-toggle" id="side-toggle">
+            <button class="active-buy" onclick="setSide('buy')">BUY</button>
+            <button onclick="setSide('sell')">SELL</button>
+          </div>
+        </div>
+
+        <!-- Order type -->
+        <div class="tp-field">
+          <label>Order Type</label>
+          <select id="order-type" onchange="updateEstimate()">
+            <option value="market">Market Order</option>
+            <option value="limit">Limit Order</option>
+          </select>
+        </div>
+
+        <!-- Amount (market orders) -->
+        <div class="tp-field" id="amount-field">
+          <label>Amount (USDC)</label>
+          <input type="number" id="order-amount" placeholder="0.00" min="1" step="1" oninput="updateEstimate()">
+        </div>
+
+        <!-- Price (limit orders) -->
+        <div class="tp-field" id="price-field" style="display:none;">
+          <label>Limit Price</label>
+          <input type="number" id="order-price" placeholder="0.50" min="0.01" max="0.99" step="0.01" oninput="updateEstimate()">
+        </div>
+
+        <!-- Size (limit orders) -->
+        <div class="tp-field" id="size-field" style="display:none;">
+          <label>Shares</label>
+          <input type="number" id="order-size" placeholder="0" min="1" step="1" oninput="updateEstimate()">
+        </div>
+
+        <!-- Estimate -->
+        <div class="tp-estimate" id="order-estimate">
+          <div class="row"><span style="color:var(--muted);">Est. Cost</span><span id="est-cost">$0.00</span></div>
+          <div class="row"><span style="color:var(--muted);">Potential Payout</span><span id="est-payout" style="color:var(--green);">$0.00</span></div>
+          <div class="row"><span style="color:var(--muted);">Potential Profit</span><span id="est-profit" style="color:var(--green);">$0.00</span></div>
+        </div>
+
+        <button class="tp-submit buy" id="submit-order-btn" onclick="submitOrder()" {'disabled' if not has_creds else ''}>
+          {'Connect Wallet First' if not has_creds else 'Place Order'}
+        </button>
+
+        {'' if has_creds else '<p style="font-size:0.7em;color:var(--muted);margin-top:8px;text-align:center;">Go to <a href="/settings" style="color:var(--blue);">Settings</a> to connect your Polymarket wallet.</p>'}
+      </div>
+    </div>
   </div>
 </div>
 
-<div class="section">
-  <h2>Active Polymarket Markets (by 24h Volume)</h2>
-  <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;">
-    <table>
-      <thead><tr><th>Market</th><th>24h Volume</th><th>Liquidity</th><th>Action</th></tr></thead>
-      <tbody>{market_rows}</tbody>
-    </table>
+<!-- Confirm Dialog -->
+<div class="confirm-overlay" id="confirm-dialog">
+  <div class="confirm-box">
+    <h3>Confirm Order</h3>
+    <div class="details" id="confirm-details"></div>
+    <div style="font-size:0.72em;color:var(--yellow);margin-bottom:12px;">&#9888; This will execute a real trade with real USDC.</div>
+    <div class="btn-row">
+      <button class="btn-cancel" onclick="cancelConfirm()">Cancel</button>
+      <button class="btn-confirm" id="confirm-btn" onclick="confirmOrder()">Confirm Trade</button>
+    </div>
   </div>
 </div>
-
-<div class="section">
-  <h2 style="color:var(--yellow);">Current Affairs Feed <span id="news-pulse" style="display:inline-block;width:8px;height:8px;background:var(--green);border-radius:50%;margin-left:6px;animation:pulse 1s infinite;"></span></h2>
-  <p style="color:var(--muted);font-size:0.75em;margin-bottom:8px;">Auto-refreshes every 5 seconds &bull; Sources: BBC, NYT, Reuters</p>
-  <div id="news-feed" style="border:1px solid var(--border);border-radius:8px;max-height:400px;overflow-y:auto;">
-    <div style="padding:16px;color:var(--muted);text-align:center;">Loading news...</div>
-  </div>
-</div>
-
-<style>
-  @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:0.3}} }}
-  .news-item {{ padding:10px 14px;border-bottom:1px solid var(--border);transition:background 0.2s; }}
-  .news-item:last-child {{ border-bottom:none; }}
-  .news-item:hover {{ background:rgba(88,166,255,0.05); }}
-  .news-item .news-title {{ font-size:0.85em;font-weight:600;margin-bottom:3px; }}
-  .news-item .news-title a {{ color:var(--text);text-decoration:none; }}
-  .news-item .news-title a:hover {{ color:var(--blue); }}
-  .news-item .news-meta {{ font-size:0.7em;color:var(--muted); }}
-  .news-item .news-summary {{ font-size:0.75em;color:var(--muted);margin-top:3px; }}
-  .news-new {{ animation:fadeIn 0.4s ease-in; }}
-  @keyframes fadeIn {{ from{{opacity:0;transform:translateY(-5px)}} to{{opacity:1;transform:translateY(0)}} }}
-</style>
-
-<script>
-(function() {{
-  const feed = document.getElementById('news-feed');
-  let knownTitles = new Set();
-  let firstLoad = true;
-
-  function escapeHtml(s) {{
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-  }}
-
-  async function refreshNews() {{
-    try {{
-      const resp = await fetch('/api/news');
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const articles = data.articles || [];
-      if (!articles.length) return;
-
-      const newTitles = new Set(articles.map(a => a.title));
-      let html = '';
-      for (const a of articles) {{
-        const isNew = !firstLoad && !knownTitles.has(a.title);
-        const src = escapeHtml(a.source);
-        const pub = a.published ? new Date(a.published).toLocaleTimeString([], {{hour:'2-digit',minute:'2-digit'}}) : '';
-        html += '<div class="news-item' + (isNew ? ' news-new' : '') + '">'
-          + '<div class="news-title"><a href="' + escapeHtml(a.link) + '" target="_blank">' + escapeHtml(a.title) + '</a></div>'
-          + '<div class="news-meta">' + src + (pub ? ' &bull; ' + pub : '') + '</div>'
-          + (a.summary ? '<div class="news-summary">' + escapeHtml(a.summary.replace(/<[^>]*>/g,'')) + '</div>' : '')
-          + '</div>';
-      }}
-      feed.innerHTML = html;
-      knownTitles = newTitles;
-      firstLoad = false;
-    }} catch(e) {{ /* retry next cycle */ }}
-  }}
-
-  refreshNews();
-  setInterval(refreshNews, 5000);
-}})();
-</script>
-
-<style>
-  /* News-Trade Alert styles */
-  .nta-item {{ padding:12px 14px;border-bottom:1px solid var(--border);transition:background 0.2s; }}
-  .nta-item:last-child {{ border-bottom:none; }}
-  .nta-item:hover {{ background:rgba(248,81,73,0.05); }}
-  .nta-header {{ display:flex;justify-content:space-between;align-items:flex-start;gap:8px; }}
-  .nta-title {{ font-size:0.85em;font-weight:600;flex:1; }}
-  .nta-title a {{ color:var(--text);text-decoration:none; }}
-  .nta-title a:hover {{ color:var(--red); }}
-  .nta-score {{ background:var(--red);color:#fff;padding:2px 8px;border-radius:4px;font-size:0.7em;font-weight:700;white-space:nowrap; }}
-  .nta-score.medium {{ background:var(--yellow);color:#000; }}
-  .nta-score.low {{ background:var(--border);color:var(--muted); }}
-  .nta-meta {{ font-size:0.7em;color:var(--muted);margin-top:3px; }}
-  .nta-reasons {{ font-size:0.72em;color:var(--muted);margin-top:4px;padding-left:12px; }}
-  .nta-reasons span {{ display:inline-block;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.2);border-radius:3px;padding:1px 6px;margin:2px 4px 2px 0;font-size:0.9em; }}
-  .nta-markets {{ margin-top:6px;padding:6px 10px;background:rgba(88,166,255,0.05);border-radius:4px;font-size:0.72em; }}
-  .nta-markets a {{ color:var(--blue);text-decoration:none; }}
-  .nta-markets a:hover {{ text-decoration:underline; }}
-  .nta-actions {{ margin-top:6px;display:flex;gap:6px; }}
-  .nta-watch-btn {{ background:none;border:1px solid var(--blue);color:var(--blue);padding:2px 10px;border-radius:4px;cursor:pointer;font-size:0.72em;transition:all 0.2s; }}
-  .nta-watch-btn:hover {{ background:var(--blue);color:#fff; }}
-  .nta-watch-btn.watched {{ background:var(--blue);color:#fff; }}
-  .nta-unwatch-btn {{ background:none;border:1px solid var(--red);color:var(--red);padding:2px 10px;border-radius:4px;cursor:pointer;font-size:0.72em; }}
-  .nta-unwatch-btn:hover {{ background:var(--red);color:#fff; }}
-  .nta-trade {{ margin-top:6px;padding:8px 10px;background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.15);border-radius:6px; }}
-  .nta-trade-label {{ font-size:0.6em;text-transform:uppercase;letter-spacing:1px;color:var(--red);font-weight:700;margin-bottom:3px; }}
-  .nta-trade-detail {{ font-size:0.8em;margin-bottom:4px; }}
-  .nta-trade-stats {{ display:flex;flex-wrap:wrap;gap:10px;font-size:0.72em;color:var(--muted); }}
-  .nta-trade-stats b {{ color:var(--text); }}
-  .nta-trade-stats code {{ background:var(--card);padding:1px 4px;border-radius:3px;font-size:0.9em; }}
-
-  /* Toast notification */
-  #toast-container {{ position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none; }}
-  .toast {{ pointer-events:auto;background:var(--card);border:1px solid var(--red);border-radius:8px;padding:12px 16px;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,0.5);animation:slideIn 0.4s ease-out; }}
-  .toast.news-trade {{ border-color:var(--yellow); }}
-  .toast-title {{ font-size:0.85em;font-weight:700;margin-bottom:4px; }}
-  .toast-body {{ font-size:0.75em;color:var(--muted); }}
-  .toast-close {{ position:absolute;top:8px;right:12px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1em; }}
-  @keyframes slideIn {{ from{{opacity:0;transform:translateX(50px)}} to{{opacity:1;transform:translateX(0)}} }}
-</style>
 
 <div id="toast-container"></div>
 
 <script>
 (function() {{
-  const alertsEl = document.getElementById('news-trade-alerts');
-  const watchlistEl = document.getElementById('news-trade-watchlist');
-  const wlCountEl = document.getElementById('wl-count');
-  let watchedIds = new Set();
-  let showingWatchlist = false;
+  // ── State ──
+  let allMarkets = [];
+  let offset = 0;
+  let favorites = new Set();
+  let currentModal = null;  // {{market, yesToken, noToken}}
+  let tradeSide = 'buy';
+  let tradeOutcome = 'yes';
+  let pendingOrder = null;
+  let searchTimeout = null;
+  const hasCreds = {'true' if has_creds else 'false'};
 
-  function escapeHtml(s) {{
+  function esc(s) {{
     const d = document.createElement('div');
     d.textContent = s || '';
     return d.innerHTML;
   }}
 
-  function scoreClass(score) {{
-    if (score >= 50) return '';
-    if (score >= 25) return ' medium';
-    return ' low';
+  function toast(title, body, isError) {{
+    const c = document.getElementById('toast-container');
+    const t = document.createElement('div');
+    t.className = 'toast' + (isError ? ' error' : '');
+    t.style.position = 'relative';
+    t.innerHTML = '<button class="toast-close" onclick="this.parentElement.remove()">&times;</button>'
+      + '<div class="toast-title">' + esc(title) + '</div>'
+      + '<div class="toast-body">' + esc(body) + '</div>';
+    c.appendChild(t);
+    setTimeout(() => t.remove(), 8000);
   }}
 
-  function renderAlert(a, isWatchlist) {{
-    const scoreHtml = '<span class="nta-score' + scoreClass(a.score) + '">' + a.score + '/100</span>';
+  // ── Tab switching ──
+  window.switchTab = function(tab) {{
+    document.querySelectorAll('.tab').forEach((t,i) => {{
+      const tabs = ['markets','favorites','positions','history','alerts'];
+      t.classList.toggle('active', tabs[i] === tab);
+    }});
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    if (tab === 'favorites') loadFavorites();
+    if (tab === 'positions') loadOpenOrders();
+    if (tab === 'history') loadTradeHistory();
+    if (tab === 'alerts') loadAlerts();
+  }};
 
-    // Trade details (if present — v2 scanner always includes these)
-    let tradeHtml = '';
-    if (a.trade_title) {{
-      const profitStr = a.trade_potential_profit ? '$' + Number(a.trade_potential_profit).toLocaleString() : '?';
-      const sizeStr = a.trade_size ? '$' + Number(a.trade_size).toLocaleString() : '?';
-      const oddsStr = a.trade_odds_str || (a.trade_odds ? (a.trade_odds * 100).toFixed(0) + '%' : '?');
-      const polyUrl = a.trade_market_id ? 'https://polymarket.com/event/' + encodeURIComponent(a.trade_market_id) : '#';
-      tradeHtml = '<div class="nta-trade">'
-        + '<div class="nta-trade-label">SUSPICIOUS TRADE</div>'
-        + '<div class="nta-trade-detail">'
-        + '<a href="' + polyUrl + '" target="_blank" style="color:var(--blue);text-decoration:none;font-weight:600;">' + escapeHtml(a.trade_title.substring(0, 60)) + '</a>'
-        + ' &mdash; ' + escapeHtml(a.trade_outcome || '')
+  // ── Market loading ──
+  async function loadMarkets(query) {{
+    const grid = document.getElementById('market-grid');
+    if (!query && allMarkets.length > 0) return;  // already loaded
+    grid.innerHTML = '<div class="loading"><span class="spinner"></span><br>Loading markets...</div>';
+    try {{
+      const url = query
+        ? '/api/clob/markets?q=' + encodeURIComponent(query) + '&limit=30'
+        : '/api/clob/markets?limit=30&offset=0';
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (query) {{
+        renderMarkets(data, true);
+      }} else {{
+        allMarkets = data;
+        offset = data.length;
+        renderMarkets(allMarkets, true);
+        document.getElementById('load-more-btn').style.display = data.length >= 30 ? 'inline-block' : 'none';
+      }}
+    }} catch(e) {{
+      grid.innerHTML = '<div class="loading">Failed to load markets.</div>';
+    }}
+  }}
+
+  window.loadMoreMarkets = async function() {{
+    try {{
+      const resp = await fetch('/api/clob/markets?limit=30&offset=' + offset);
+      const data = await resp.json();
+      allMarkets = allMarkets.concat(data);
+      offset += data.length;
+      renderMarkets(allMarkets, true);
+      document.getElementById('load-more-btn').style.display = data.length >= 30 ? 'inline-block' : 'none';
+    }} catch(e) {{}}
+  }};
+
+  function renderMarkets(markets, isMain) {{
+    const grid = document.getElementById(isMain ? 'market-grid' : 'favorites-grid');
+    if (!markets || markets.length === 0) {{
+      grid.innerHTML = '<div class="loading">No markets found.</div>';
+      return;
+    }}
+    let html = '';
+    for (const m of markets) {{
+      const q = esc(m.question || m.title || '?');
+      const condId = m.conditionId || m.condition_id || '';
+
+      // Parse token prices
+      let yesPrice = '—', noPrice = '—';
+      const tokens = m.tokens || [];
+      const outcomePrices = m.outcomePrices ? JSON.parse(m.outcomePrices) : null;
+      if (outcomePrices && outcomePrices.length >= 2) {{
+        yesPrice = (parseFloat(outcomePrices[0]) * 100).toFixed(0) + '%';
+        noPrice = (parseFloat(outcomePrices[1]) * 100).toFixed(0) + '%';
+      }} else if (tokens.length >= 2) {{
+        yesPrice = tokens[0].price ? (tokens[0].price * 100).toFixed(0) + '%' : '—';
+        noPrice = tokens[1].price ? (tokens[1].price * 100).toFixed(0) + '%' : '—';
+      }}
+
+      const vol = m.volume ? '$' + Number(m.volume).toLocaleString(undefined, {{maximumFractionDigits:0}}) : '—';
+      const liq = m.liquidity ? '$' + Number(m.liquidity).toLocaleString(undefined, {{maximumFractionDigits:0}}) : '—';
+      const isFav = favorites.has(condId);
+
+      html += '<div class="market-card" style="position:relative;" onclick="openTradeModal(\'' + condId + '\')">'
+        + '<button class="mc-fav ' + (isFav ? 'active' : '') + '" onclick="event.stopPropagation();toggleFav(\'' + condId + '\',\'' + q.replace(/'/g, "\\'") + '\')">' + (isFav ? '&#9733;' : '&#9734;') + '</button>'
+        + '<div class="mc-question">' + q + '</div>'
+        + '<div class="mc-outcomes">'
+        + '<div class="mc-outcome yes"><div class="label">Yes</div><div class="price">' + yesPrice + '</div></div>'
+        + '<div class="mc-outcome no"><div class="label">No</div><div class="price">' + noPrice + '</div></div>'
         + '</div>'
-        + '<div class="nta-trade-stats">'
-        + '<span>Bet: <b>' + sizeStr + '</b></span>'
-        + '<span>Odds: <b>' + oddsStr + '</b></span>'
-        + '<span>Profit: <b style="color:var(--red);">' + profitStr + '</b></span>'
-        + (a.trade_time ? '<span>Placed: ' + escapeHtml(a.trade_time) + '</span>' : '')
-        + (a.trade_wallet ? '<span>Wallet: <code>' + escapeHtml(a.trade_wallet) + '...</code></span>' : '')
-        + '</div>'
-        + '</div>';
+        + '<div class="mc-meta">'
+        + '<span>Vol: ' + vol + '</span>'
+        + '<span>Liq: ' + liq + '</span>'
+        + '</div></div>';
+    }}
+    grid.innerHTML = html;
+  }}
+
+  // ── Search ──
+  window.debounceSearch = function() {{
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {{
+      const q = document.getElementById('market-search').value.trim();
+      if (q.length >= 2) {{
+        loadMarkets(q);
+      }} else if (q.length === 0) {{
+        renderMarkets(allMarkets, true);
+      }}
+    }}, 400);
+  }};
+
+  // ── Favorites ──
+  async function loadFavoritesData() {{
+    try {{
+      const resp = await fetch('/api/clob/favorites');
+      const data = await resp.json();
+      favorites = new Set((data.favorites || []).map(f => f.condition_id));
+    }} catch(e) {{}}
+  }}
+
+  async function loadFavorites() {{
+    const grid = document.getElementById('favorites-grid');
+    try {{
+      const resp = await fetch('/api/clob/favorites');
+      const data = await resp.json();
+      const favs = data.favorites || [];
+      favorites = new Set(favs.map(f => f.condition_id));
+      if (favs.length === 0) {{
+        grid.innerHTML = '<div class="loading">No favorites yet. Star markets to add them here.</div>';
+        return;
+      }}
+      // Fetch each favorite's current market data
+      const marketPromises = favs.map(f => fetch('/api/clob/markets?q=' + encodeURIComponent(f.question || '')).then(r => r.json()));
+      const results = await Promise.all(marketPromises);
+      const favMarkets = results.flat().filter(m => favs.some(f => f.condition_id === (m.conditionId || m.condition_id)));
+      if (favMarkets.length > 0) {{
+        renderFavoritesGrid(favMarkets);
+      }} else {{
+        // Fallback: show names
+        grid.innerHTML = favs.map(f => '<div class="market-card" onclick="openTradeModal(\'' + f.condition_id + '\')"><div class="mc-question">' + esc(f.question) + '</div></div>').join('');
+      }}
+    }} catch(e) {{
+      grid.innerHTML = '<div class="loading">Failed to load favorites.</div>';
+    }}
+  }}
+
+  function renderFavoritesGrid(markets) {{
+    const grid = document.getElementById('favorites-grid');
+    // Reuse the main renderer
+    let html = '';
+    for (const m of markets) {{
+      const q = esc(m.question || m.title || '?');
+      const condId = m.conditionId || m.condition_id || '';
+      let yesPrice = '—', noPrice = '—';
+      const outcomePrices = m.outcomePrices ? JSON.parse(m.outcomePrices) : null;
+      if (outcomePrices && outcomePrices.length >= 2) {{
+        yesPrice = (parseFloat(outcomePrices[0]) * 100).toFixed(0) + '%';
+        noPrice = (parseFloat(outcomePrices[1]) * 100).toFixed(0) + '%';
+      }}
+      const vol = m.volume ? '$' + Number(m.volume).toLocaleString(undefined, {{maximumFractionDigits:0}}) : '—';
+      html += '<div class="market-card" onclick="openTradeModal(\'' + condId + '\')">'
+        + '<button class="mc-fav active" onclick="event.stopPropagation();toggleFav(\'' + condId + '\',\'' + q.replace(/'/g, "\\'") + '\')">&#9733;</button>'
+        + '<div class="mc-question">' + q + '</div>'
+        + '<div class="mc-outcomes">'
+        + '<div class="mc-outcome yes"><div class="label">Yes</div><div class="price">' + yesPrice + '</div></div>'
+        + '<div class="mc-outcome no"><div class="label">No</div><div class="price">' + noPrice + '</div></div>'
+        + '</div><div class="mc-meta"><span>Vol: ' + vol + '</span></div></div>';
+    }}
+    grid.innerHTML = html;
+  }}
+
+  window.toggleFav = async function(conditionId, question) {{
+    if (favorites.has(conditionId)) {{
+      favorites.delete(conditionId);
+      await fetch('/api/clob/favorite/' + conditionId, {{method: 'DELETE'}});
+    }} else {{
+      favorites.add(conditionId);
+      await fetch('/api/clob/favorite', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{condition_id: conditionId, question: question}})
+      }});
+    }}
+    // Re-render current view
+    if (allMarkets.length > 0) renderMarkets(allMarkets, true);
+  }};
+
+  // ── Trade Modal ──
+  window.openTradeModal = async function(conditionId) {{
+    const modal = document.getElementById('trade-modal');
+    modal.classList.add('open');
+    document.getElementById('modal-question').textContent = 'Loading...';
+    document.getElementById('ob-asks').innerHTML = '<div style="padding:12px;text-align:center;color:var(--muted);"><span class="spinner"></span></div>';
+    document.getElementById('ob-bids').innerHTML = '';
+    document.getElementById('ob-spread').textContent = 'Spread: —';
+
+    // Find market in loaded data
+    let market = allMarkets.find(m => (m.conditionId || m.condition_id) === conditionId);
+    if (!market) {{
+      // Try fetching from API
+      try {{
+        const resp = await fetch('/api/clob/market/' + conditionId);
+        if (resp.ok) market = await resp.json();
+      }} catch(e) {{}}
+    }}
+
+    if (!market) {{
+      document.getElementById('modal-question').textContent = 'Market not found';
+      return;
+    }}
+
+    // Parse tokens
+    const tokens = market.tokens || [];
+    let yesToken = null, noToken = null;
+    if (tokens.length >= 2) {{
+      yesToken = tokens.find(t => (t.outcome || '').toLowerCase() === 'yes') || tokens[0];
+      noToken = tokens.find(t => (t.outcome || '').toLowerCase() === 'no') || tokens[1];
+    }} else if (market.clobTokenIds) {{
+      // CLOB market format
+      const ids = typeof market.clobTokenIds === 'string' ? JSON.parse(market.clobTokenIds) : market.clobTokenIds;
+      yesToken = {{token_id: ids[0], outcome: 'Yes'}};
+      noToken = {{token_id: ids[1], outcome: 'No'}};
+    }}
+
+    currentModal = {{market, yesToken, noToken, conditionId}};
+    document.getElementById('modal-question').textContent = market.question || market.title || '?';
+
+    // Set prices
+    const outcomePrices = market.outcomePrices ? JSON.parse(market.outcomePrices) : null;
+    if (outcomePrices && outcomePrices.length >= 2) {{
+      document.getElementById('modal-yes-price').textContent = (parseFloat(outcomePrices[0]) * 100).toFixed(1) + '%';
+      document.getElementById('modal-no-price').textContent = (parseFloat(outcomePrices[1]) * 100).toFixed(1) + '%';
+    }}
+
+    const vol = market.volume ? '$' + Number(market.volume).toLocaleString() : '—';
+    const liq = market.liquidity ? '$' + Number(market.liquidity).toLocaleString() : '—';
+    document.getElementById('modal-meta').innerHTML = 'Volume: ' + vol + ' &bull; Liquidity: ' + liq
+      + ' &bull; <a href="https://polymarket.com/event/' + esc(market.slug || conditionId) + '" target="_blank" style="color:var(--blue);">View on Polymarket &#8599;</a>';
+
+    // Load order book for the YES token
+    if (yesToken) {{
+      loadOrderBook(yesToken.token_id || yesToken);
+    }}
+
+    // Reset trade form
+    tradeOutcome = 'yes';
+    tradeSide = 'buy';
+    document.getElementById('order-amount').value = '';
+    document.getElementById('order-price').value = '';
+    document.getElementById('order-size').value = '';
+    updateToggles();
+    updateEstimate();
+  }};
+
+  async function loadOrderBook(tokenId) {{
+    try {{
+      const resp = await fetch('/api/clob/book/' + tokenId);
+      if (!resp.ok) throw new Error('Failed');
+      const book = resp.ok ? await resp.json() : null;
+      renderOrderBook(book);
+    }} catch(e) {{
+      document.getElementById('ob-asks').innerHTML = '<div style="padding:12px;text-align:center;color:var(--muted);">Order book unavailable</div>';
+      document.getElementById('ob-bids').innerHTML = '';
+    }}
+  }}
+
+  function renderOrderBook(book) {{
+    const asksEl = document.getElementById('ob-asks');
+    const bidsEl = document.getElementById('ob-bids');
+    const spreadEl = document.getElementById('ob-spread');
+
+    if (!book) {{
+      asksEl.innerHTML = '<div style="padding:12px;color:var(--muted);text-align:center;">No data</div>';
+      bidsEl.innerHTML = '';
+      spreadEl.textContent = 'Spread: —';
+      return;
+    }}
+
+    const asks = (book.asks || []).slice(0, 15).reverse();
+    const bids = (book.bids || []).slice(0, 15);
+    const maxSize = Math.max(...[...asks, ...bids].map(o => parseFloat(o.size || 0)), 1);
+
+    asksEl.innerHTML = asks.map(o => {{
+      const pct = (parseFloat(o.size) / maxSize * 100).toFixed(0);
+      return '<div class="ob-row ask"><span class="ob-fill" style="width:' + pct + '%"></span>'
+        + '<span style="color:var(--red);z-index:1;position:relative;">' + parseFloat(o.price).toFixed(2) + '</span>'
+        + '<span style="z-index:1;position:relative;">' + parseFloat(o.size).toFixed(0) + '</span></div>';
+    }}).join('');
+
+    bidsEl.innerHTML = bids.map(o => {{
+      const pct = (parseFloat(o.size) / maxSize * 100).toFixed(0);
+      return '<div class="ob-row bid"><span class="ob-fill" style="width:' + pct + '%"></span>'
+        + '<span style="color:var(--green);z-index:1;position:relative;">' + parseFloat(o.price).toFixed(2) + '</span>'
+        + '<span style="z-index:1;position:relative;">' + parseFloat(o.size).toFixed(0) + '</span></div>';
+    }}).join('');
+
+    // Spread
+    const bestBid = bids.length ? parseFloat(bids[0].price) : 0;
+    const bestAsk = asks.length ? parseFloat(asks[asks.length - 1].price) : 0;
+    if (bestBid && bestAsk) {{
+      spreadEl.textContent = 'Spread: ' + ((bestAsk - bestBid) * 100).toFixed(1) + '% | Mid: ' + (((bestBid + bestAsk) / 2) * 100).toFixed(1) + '%';
+    }}
+  }}
+
+  window.closeTradeModal = function() {{
+    document.getElementById('trade-modal').classList.remove('open');
+    currentModal = null;
+  }};
+
+  // Close modal on overlay click
+  document.getElementById('trade-modal').addEventListener('click', function(e) {{
+    if (e.target === this) closeTradeModal();
+  }});
+
+  // ── Trade controls ──
+  window.setOutcome = function(outcome) {{
+    tradeOutcome = outcome;
+    updateToggles();
+    // Reload order book for the selected outcome's token
+    if (currentModal) {{
+      const token = outcome === 'yes' ? currentModal.yesToken : currentModal.noToken;
+      if (token) loadOrderBook(token.token_id || token);
+    }}
+    updateEstimate();
+  }};
+
+  window.setSide = function(side) {{
+    tradeSide = side;
+    updateToggles();
+    updateEstimate();
+  }};
+
+  function updateToggles() {{
+    const ob = document.getElementById('outcome-toggle').children;
+    ob[0].className = tradeOutcome === 'yes' ? 'active-buy' : '';
+    ob[1].className = tradeOutcome === 'no' ? 'active-sell' : '';
+
+    const sb = document.getElementById('side-toggle').children;
+    sb[0].className = tradeSide === 'buy' ? 'active-buy' : '';
+    sb[1].className = tradeSide === 'sell' ? 'active-sell' : '';
+
+    const submitBtn = document.getElementById('submit-order-btn');
+    submitBtn.className = 'tp-submit ' + tradeSide;
+    if (hasCreds) submitBtn.textContent = tradeSide === 'buy' ? 'Buy ' + tradeOutcome.toUpperCase() : 'Sell ' + tradeOutcome.toUpperCase();
+
+    const orderType = document.getElementById('order-type').value;
+    document.getElementById('amount-field').style.display = orderType === 'market' ? 'block' : 'none';
+    document.getElementById('price-field').style.display = orderType === 'limit' ? 'block' : 'none';
+    document.getElementById('size-field').style.display = orderType === 'limit' ? 'block' : 'none';
+  }}
+
+  window.updateEstimate = function() {{
+    updateToggles();
+    const orderType = document.getElementById('order-type').value;
+    let cost = 0, payout = 0;
+
+    if (orderType === 'market') {{
+      const amount = parseFloat(document.getElementById('order-amount').value) || 0;
+      // Estimate using current price
+      let price = 0.5;
+      if (currentModal && currentModal.market.outcomePrices) {{
+        const prices = JSON.parse(currentModal.market.outcomePrices);
+        price = tradeOutcome === 'yes' ? parseFloat(prices[0]) : parseFloat(prices[1]);
+      }}
+      cost = amount;
+      payout = price > 0 ? amount / price : 0;
+    }} else {{
+      const price = parseFloat(document.getElementById('order-price').value) || 0;
+      const size = parseFloat(document.getElementById('order-size').value) || 0;
+      cost = price * size;
+      payout = size;  // each share pays $1 if correct
+    }}
+
+    document.getElementById('est-cost').textContent = '$' + cost.toFixed(2);
+    document.getElementById('est-payout').textContent = '$' + payout.toFixed(2);
+    document.getElementById('est-profit').textContent = '$' + (payout - cost).toFixed(2);
+    document.getElementById('est-profit').style.color = (payout - cost) >= 0 ? 'var(--green)' : 'var(--red)';
+  }};
+
+  // ── Order submission ──
+  window.submitOrder = function() {{
+    if (!hasCreds) {{
+      toast('Wallet Not Connected', 'Go to Settings to add your Polymarket API keys.', true);
+      return;
+    }}
+    if (!currentModal) return;
+
+    const orderType = document.getElementById('order-type').value;
+    const token = tradeOutcome === 'yes' ? currentModal.yesToken : currentModal.noToken;
+    const tokenId = token ? (token.token_id || token) : '';
+
+    let amount = 0, price = 0, size = 0;
+    if (orderType === 'market') {{
+      amount = parseFloat(document.getElementById('order-amount').value) || 0;
+      if (amount <= 0) {{ toast('Invalid Amount', 'Enter an amount greater than 0.', true); return; }}
+    }} else {{
+      price = parseFloat(document.getElementById('order-price').value) || 0;
+      size = parseFloat(document.getElementById('order-size').value) || 0;
+      if (price <= 0 || size <= 0) {{ toast('Invalid Order', 'Price and shares must be greater than 0.', true); return; }}
+    }}
+
+    // Show confirmation
+    pendingOrder = {{
+      token_id: tokenId,
+      condition_id: currentModal.conditionId,
+      market_question: currentModal.market.question || '',
+      outcome: tradeOutcome.toUpperCase(),
+      side: tradeSide,
+      order_type: orderType,
+      amount, price, size
+    }};
+
+    const cost = orderType === 'market' ? amount : (price * size);
+    document.getElementById('confirm-details').innerHTML =
+      '<div style="margin-bottom:6px;font-weight:600;">' + esc(currentModal.market.question || '') + '</div>'
+      + '<div><strong>' + tradeSide.toUpperCase() + '</strong> ' + tradeOutcome.toUpperCase() + '</div>'
+      + '<div>Type: ' + orderType + '</div>'
+      + (orderType === 'market'
+        ? '<div>Amount: <strong>$' + amount.toFixed(2) + ' USDC</strong></div>'
+        : '<div>Price: ' + price.toFixed(2) + ' &times; ' + size + ' shares = <strong>$' + cost.toFixed(2) + ' USDC</strong></div>'
+      );
+
+    const confirmBtn = document.getElementById('confirm-btn');
+    confirmBtn.className = 'btn-confirm' + (tradeSide === 'sell' ? ' sell' : '');
+    confirmBtn.textContent = tradeSide === 'buy' ? 'Confirm Buy' : 'Confirm Sell';
+    document.getElementById('confirm-dialog').classList.add('open');
+  }};
+
+  window.cancelConfirm = function() {{
+    document.getElementById('confirm-dialog').classList.remove('open');
+    pendingOrder = null;
+  }};
+
+  window.confirmOrder = async function() {{
+    document.getElementById('confirm-dialog').classList.remove('open');
+    if (!pendingOrder) return;
+
+    const btn = document.getElementById('submit-order-btn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+
+    try {{
+      const resp = await fetch('/api/clob/order', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(pendingOrder)
+      }});
+      const data = await resp.json();
+      if (resp.ok && !data.error) {{
+        toast('Order Placed', pendingOrder.side.toUpperCase() + ' ' + pendingOrder.outcome + ' — ' + (pendingOrder.order_type === 'market' ? '$' + pendingOrder.amount : pendingOrder.size + ' shares'), false);
+        // Refresh order book
+        const token = tradeOutcome === 'yes' ? currentModal.yesToken : currentModal.noToken;
+        if (token) loadOrderBook(token.token_id || token);
+        // Refresh balance
+        loadBalance();
+      }} else {{
+        toast('Order Failed', data.error || 'Unknown error', true);
+      }}
+    }} catch(e) {{
+      toast('Network Error', e.message, true);
+    }}
+
+    btn.disabled = false;
+    btn.textContent = tradeSide === 'buy' ? 'Buy ' + tradeOutcome.toUpperCase() : 'Sell ' + tradeOutcome.toUpperCase();
+    pendingOrder = null;
+  }};
+
+  // ── Balance & Orders ──
+  async function loadBalance() {{
+    if (!hasCreds) return;
+    try {{
+      const resp = await fetch('/api/clob/balance');
+      if (resp.ok) {{
+        const data = await resp.json();
+        const bal = data.allowances ? '$' + Number(data.allowances).toLocaleString(undefined, {{minimumFractionDigits: 2}}) : (data.error ? 'Error' : '$0.00');
+        document.getElementById('usdc-balance').textContent = bal;
+      }}
+    }} catch(e) {{}}
+  }}
+
+  async function loadOpenOrders() {{
+    if (!hasCreds) return;
+    const container = document.getElementById('positions-container');
+    try {{
+      const resp = await fetch('/api/clob/orders');
+      if (!resp.ok) throw new Error('Failed');
+      const orders = await resp.json();
+      const list = Array.isArray(orders) ? orders : [];
+      document.getElementById('open-orders-count').textContent = list.length;
+
+      if (list.length === 0) {{
+        container.innerHTML = '<div class="loading">No open orders.</div>';
+        return;
+      }}
+      let html = '<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;"><table>'
+        + '<thead><tr><th>Market</th><th>Side</th><th>Price</th><th>Size</th><th>Filled</th><th>Action</th></tr></thead><tbody>';
+      for (const o of list) {{
+        html += '<tr>'
+          + '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + esc(o.market || o.asset_id || '—') + '</td>'
+          + '<td><span class="' + (o.side === 'BUY' ? 'positive' : 'negative') + '">' + (o.side || '—') + '</span></td>'
+          + '<td>' + (o.price || '—') + '</td>'
+          + '<td>' + (o.size || o.original_size || '—') + '</td>'
+          + '<td>' + (o.size_matched || '0') + '</td>'
+          + '<td><button onclick="cancelOrder(\'' + (o.id || '') + '\')" style="background:none;border:1px solid var(--red);color:var(--red);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:0.75em;">Cancel</button></td>'
+          + '</tr>';
+      }}
+      html += '</tbody></table></div>';
+      container.innerHTML = html;
+    }} catch(e) {{
+      container.innerHTML = '<div class="loading">Failed to load orders.</div>';
+    }}
+  }}
+
+  window.cancelOrder = async function(orderId) {{
+    try {{
+      const resp = await fetch('/api/clob/order/' + orderId, {{method: 'DELETE'}});
+      if (resp.ok) {{
+        toast('Order Cancelled', 'Order ' + orderId.substring(0, 8) + '... cancelled.', false);
+        loadOpenOrders();
+      }} else {{
+        const data = await resp.json();
+        toast('Cancel Failed', data.error || 'Unknown error', true);
+      }}
+    }} catch(e) {{
+      toast('Error', e.message, true);
+    }}
+  }};
+
+  async function loadTradeHistory() {{
+    const container = document.getElementById('history-container');
+    try {{
+      const resp = await fetch('/api/clob/trades');
+      if (!resp.ok) throw new Error('Failed');
+      const data = await resp.json();
+      const trades = data.trades || [];
+      if (trades.length === 0) {{
+        container.innerHTML = '<div class="loading">No trades yet.</div>';
+        return;
+      }}
+      let html = '<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;"><table>'
+        + '<thead><tr><th>Time</th><th>Market</th><th>Outcome</th><th>Side</th><th>Type</th><th>Amount</th><th>Status</th></tr></thead><tbody>';
+      for (const t of trades) {{
+        const time = t.created_at ? new Date(t.created_at).toLocaleString() : '—';
+        const question = (t.market_question || '').substring(0, 50);
+        html += '<tr>'
+          + '<td style="font-size:0.78em;white-space:nowrap;">' + time + '</td>'
+          + '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + esc(question) + '</td>'
+          + '<td>' + esc(t.outcome || '—') + '</td>'
+          + '<td><span class="' + (t.side === 'buy' ? 'positive' : 'negative') + '">' + (t.side || '—').toUpperCase() + '</span></td>'
+          + '<td>' + (t.order_type || '—') + '</td>'
+          + '<td>$' + (t.amount || 0).toFixed(2) + '</td>'
+          + '<td>' + esc(t.status || '—') + '</td>'
+          + '</tr>';
+      }}
+      html += '</tbody></table></div>';
+      container.innerHTML = html;
+    }} catch(e) {{
+      container.innerHTML = '<div class="loading">Failed to load trade history.</div>';
+    }}
+  }}
+
+  // ── Insider Alerts ──
+  async function loadAlerts() {{
+    const el = document.getElementById('news-trade-alerts');
+    try {{
+      const resp = await fetch('/api/news-trade-alerts');
+      if (!resp.ok) throw new Error('Failed');
+      const data = await resp.json();
+      const alerts = data.alerts || [];
+      if (alerts.length === 0) {{
+        el.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center;">No insider alerts detected.</div>';
+        return;
+      }}
+      let html = '';
+      for (const a of alerts) {{
+        const scoreColor = a.score >= 50 ? 'var(--red)' : a.score >= 25 ? 'var(--yellow)' : 'var(--muted)';
+        html += '<div style="padding:12px 14px;border-bottom:1px solid var(--border);">'
+          + '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+          + '<div style="font-size:0.85em;font-weight:600;flex:1;">'
+          + (a.link ? '<a href="' + esc(a.link) + '" target="_blank" style="color:var(--text);text-decoration:none;">' + esc(a.title || '') + '</a>' : esc(a.title || ''))
+          + '</div>'
+          + '<span style="background:' + scoreColor + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:0.7em;font-weight:700;">' + (a.score || 0) + '/100</span>'
+          + '</div>'
+          + '<div style="font-size:0.7em;color:var(--muted);margin-top:3px;">' + esc(a.source || '') + '</div>'
+          + '</div>';
+      }}
+      el.innerHTML = html;
+    }} catch(e) {{
+      el.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center;">Failed to load alerts.</div>';
+    }}
+  }}
+
+  // ── Init ──
+  loadFavoritesData().then(() => loadMarkets());
+  if (hasCreds) {{
+    loadBalance();
+  }}
+}})();
+</script>
+</body></html>"""
+    return HTMLResponse(html)
+
+
+# ─── Current Affairs News Feed ───────────────────────────────────────
     }}
 
     const reasons = (a.reasons || []).map(r => '<span>' + escapeHtml(r) + '</span>').join('');
@@ -2056,12 +2659,6 @@ async def trade_page(request: Request):
             // Refresh alerts list
             loadAlerts();
             loadWatchlist();
-          }} else if (d.direction === 'suspicious') {{
-            showToast(
-              'Suspicious Trade [Score: ' + d.confidence + ']',
-              d.delta || 'Large suspicious trade detected on Polymarket',
-              'suspicious'
-            );
           }}
         }}
       }} catch(e) {{}}
@@ -2212,7 +2809,7 @@ async def api_remove_from_watchlist(request: Request):
 @app.get("/accuracy", response_class=HTMLResponse)
 async def accuracy_page(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("https://habbig.com/login", status_code=302)
+        return RedirectResponse("https://narve.ai/login", status_code=302)
     user = _get_session_user(request)
 
     # Get accuracy stats for each ticker
@@ -2317,12 +2914,274 @@ async def accuracy_page(request: Request):
     return HTMLResponse(html)
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# CLOB TRADING API
+# ═══════════════════════════════════════════════════════════════════════
+
+# -- In-memory trader cache (per user_id) --
+_trader_cache: dict[str, clob.ClobTrader] = {}
+
+
+def _get_trader(user_id: str) -> clob.ClobTrader | None:
+    """Get or create a ClobTrader for a user from their stored credentials."""
+    if user_id in _trader_cache:
+        return _trader_cache[user_id]
+    enc = db.get_clob_credentials(user_id)
+    if not enc:
+        return None
+    try:
+        creds = clob.decrypt_credentials(enc)
+        trader = clob.ClobTrader(
+            api_key=creds["api_key"],
+            api_secret=creds["api_secret"],
+            api_passphrase=creds["api_passphrase"],
+            private_key=creds["private_key"],
+        )
+        _trader_cache[user_id] = trader
+        return trader
+    except Exception as e:
+        print(f"  [CLOB] Failed to create trader for {user_id}: {e}")
+        return None
+
+
+@app.get("/api/clob/book/{token_id}")
+async def clob_order_book(token_id: str, request: Request):
+    """Get order book for a token (no auth needed for read)."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    book = await asyncio.to_thread(clob.get_order_book, token_id)
+    if book is None:
+        return JSONResponse({"error": "Failed to fetch order book"}, status_code=502)
+    return book
+
+
+@app.get("/api/clob/price/{token_id}")
+async def clob_price(token_id: str, request: Request, side: str = "buy"):
+    """Get best price for a token."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    price = await asyncio.to_thread(clob.get_price, token_id, side)
+    if price is None:
+        return JSONResponse({"error": "Failed to fetch price"}, status_code=502)
+    return price
+
+
+@app.get("/api/clob/markets")
+async def clob_markets(request: Request, limit: int = 50, offset: int = 0, q: str = ""):
+    """Get markets from Gamma API with optional search."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if q:
+        markets = await asyncio.to_thread(clob.search_markets, q, limit)
+    else:
+        markets = await asyncio.to_thread(clob.get_markets, limit, offset)
+    return markets
+
+
+@app.get("/api/clob/market/{condition_id}")
+async def clob_market_detail(condition_id: str, request: Request):
+    """Get detailed market info from CLOB."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    market = await asyncio.to_thread(clob.get_clob_market, condition_id)
+    if market is None:
+        return JSONResponse({"error": "Market not found"}, status_code=404)
+    return market
+
+
+@app.post("/api/clob/credentials")
+async def save_clob_credentials(request: Request):
+    """Save encrypted CLOB API credentials."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    required = ["api_key", "api_secret", "api_passphrase", "private_key"]
+    for field in required:
+        if not body.get(field, "").strip():
+            return JSONResponse({"error": f"Missing {field}"}, status_code=400)
+    try:
+        encrypted = clob.encrypt_credentials({
+            "api_key": body["api_key"].strip(),
+            "api_secret": body["api_secret"].strip(),
+            "api_passphrase": body["api_passphrase"].strip(),
+            "private_key": body["private_key"].strip(),
+        })
+        db.save_clob_credentials(user["id"], encrypted)
+        # Clear cached trader so it re-initializes with new creds
+        _trader_cache.pop(user["id"], None)
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/clob/credentials")
+async def delete_clob_credentials(request: Request):
+    """Remove stored CLOB credentials."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    db.delete_clob_credentials(user["id"])
+    _trader_cache.pop(user["id"], None)
+    return {"ok": True}
+
+
+@app.get("/api/clob/test-connection")
+async def test_clob_connection(request: Request):
+    """Test that stored CLOB credentials work."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    trader = _get_trader(user["id"])
+    if not trader:
+        return JSONResponse({"error": "No credentials configured"}, status_code=400)
+    result = await asyncio.to_thread(trader.test_connection)
+    return result
+
+
+@app.get("/api/clob/balance")
+async def clob_balance(request: Request):
+    """Get USDC balance from CLOB."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    trader = _get_trader(user["id"])
+    if not trader:
+        return JSONResponse({"error": "No credentials configured"}, status_code=400)
+    balance = await asyncio.to_thread(trader.get_balance)
+    return balance
+
+
+@app.post("/api/clob/order")
+async def place_clob_order(request: Request):
+    """Place an order on Polymarket CLOB."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    trader = _get_trader(user["id"])
+    if not trader:
+        return JSONResponse({"error": "No credentials configured. Go to Settings to add your Polymarket API keys."}, status_code=400)
+
+    body = await request.json()
+    token_id = body.get("token_id", "").strip()
+    side = body.get("side", "").strip().lower()
+    order_type = body.get("order_type", "market").strip().lower()
+    amount = float(body.get("amount", 0))
+    price = float(body.get("price", 0))
+    size = float(body.get("size", 0))
+
+    if not token_id:
+        return JSONResponse({"error": "Missing token_id"}, status_code=400)
+    if side not in ("buy", "sell"):
+        return JSONResponse({"error": "Side must be 'buy' or 'sell'"}, status_code=400)
+    if order_type == "market" and amount <= 0:
+        return JSONResponse({"error": "Amount must be > 0 for market orders"}, status_code=400)
+    if order_type == "limit" and (price <= 0 or size <= 0):
+        return JSONResponse({"error": "Price and size must be > 0 for limit orders"}, status_code=400)
+
+    # Place the order
+    if order_type == "market":
+        result = await asyncio.to_thread(trader.place_market_buy, token_id, amount)
+    else:
+        result = await asyncio.to_thread(trader.place_limit_order, token_id, price, size, side)
+
+    # Log the trade
+    status = "error" if "error" in result else "submitted"
+    order_id = result.get("orderID", result.get("order_id", ""))
+    db.log_clob_trade(
+        user_id=user["id"],
+        order_id=order_id,
+        condition_id=body.get("condition_id", ""),
+        token_id=token_id,
+        market_question=body.get("market_question", ""),
+        outcome=body.get("outcome", ""),
+        side=side,
+        order_type=order_type,
+        price=price if order_type == "limit" else 0,
+        size=size if order_type == "limit" else 0,
+        amount=amount,
+        status=status,
+        response_data=result,
+    )
+
+    if "error" in result:
+        return JSONResponse({"error": result["error"]}, status_code=400)
+    return result
+
+
+@app.get("/api/clob/orders")
+async def clob_open_orders(request: Request):
+    """Get user's open orders."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    trader = _get_trader(user["id"])
+    if not trader:
+        return JSONResponse({"error": "No credentials configured"}, status_code=400)
+    orders = await asyncio.to_thread(trader.get_open_orders)
+    return orders
+
+
+@app.delete("/api/clob/order/{order_id}")
+async def cancel_clob_order(order_id: str, request: Request):
+    """Cancel an open order."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    trader = _get_trader(user["id"])
+    if not trader:
+        return JSONResponse({"error": "No credentials configured"}, status_code=400)
+    result = await asyncio.to_thread(trader.cancel_order, order_id)
+    return result
+
+
+@app.get("/api/clob/trades")
+async def clob_trade_history(request: Request):
+    """Get user's trade history (from CLOB + local log)."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    local_trades = db.get_clob_trades(user["id"], limit=50)
+    return {"trades": local_trades}
+
+
+@app.post("/api/clob/favorite")
+async def add_clob_favorite(request: Request):
+    """Add a market to favorites."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    db.add_clob_favorite(user["id"], body["condition_id"], body.get("question", ""))
+    return {"ok": True}
+
+
+@app.delete("/api/clob/favorite/{condition_id}")
+async def remove_clob_favorite(condition_id: str, request: Request):
+    """Remove a market from favorites."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    db.remove_clob_favorite(user["id"], condition_id)
+    return {"ok": True}
+
+
+@app.get("/api/clob/favorites")
+async def get_clob_favorites(request: Request):
+    """Get user's favorite markets."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    favs = db.get_clob_favorites(user["id"])
+    return {"favorites": favs}
+
+
 # ─── Settings / Watchlist ────────────────────────────────────────────
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("https://habbig.com/login", status_code=302)
+        return RedirectResponse("https://narve.ai/login", status_code=302)
     user = _get_session_user(request)
     watchlists = db.get_watchlists(user["id"])
     alert_prefs = db.get_alert_prefs(user["id"])
@@ -2337,11 +3196,13 @@ async def settings_page(request: Request):
     tier_esc = html_mod.escape(user["tier"].upper())
     tier_badge = f'<span style="background:{"var(--green)" if user["tier"]=="premium" else "var(--blue)"};color:#fff;padding:3px 10px;border-radius:12px;font-size:0.75em;font-weight:600;">{tier_esc}</span>'
 
+    has_creds = db.has_clob_credentials(user["id"])
+
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CryptoEdge — Settings</title>
 <style>
-  :root {{ --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#3fb950;--red:#f85149;--blue:#58a6ff; }}
+  :root {{ --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#d29922; }}
   * {{ margin:0;padding:0;box-sizing:border-box; }}
   body {{ background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',sans-serif;padding:16px;max-width:700px;margin:0 auto; }}
   .nav {{ display:flex;gap:16px;font-size:0.85em;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border); }}
@@ -2353,9 +3214,21 @@ async def settings_page(request: Request):
   .card .label {{ color:var(--muted);font-size:0.7em;text-transform:uppercase; }}
   .card .value {{ font-size:1.1em;font-weight:600;margin-top:4px; }}
   .info-box {{ background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px; }}
+  .form-field {{ margin-bottom:12px; }}
+  .form-field label {{ display:block;font-size:0.75em;color:var(--muted);margin-bottom:4px;text-transform:uppercase; }}
+  .form-field input {{ width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-size:0.9em;font-family:monospace; }}
+  .form-field input:focus {{ outline:none;border-color:var(--blue); }}
+  .btn {{ padding:8px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:0.85em;transition:all 0.2s; }}
+  .btn-primary {{ background:var(--blue);color:#fff; }}
+  .btn-primary:hover {{ opacity:0.9; }}
+  .btn-danger {{ background:var(--red);color:#fff; }}
+  .btn-danger:hover {{ opacity:0.9; }}
+  .btn-secondary {{ background:var(--card);color:var(--blue);border:1px solid var(--blue); }}
+  .btn:disabled {{ opacity:0.4;cursor:not-allowed; }}
+  .status-dot {{ display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px; }}
 </style></head><body>
 <div class="nav">
-  <a href="/">&larr; Dashboard</a> <a href="/settings" style="color:var(--blue);font-weight:600;">Settings</a>
+  <a href="/">&larr; Dashboard</a> <a href="/trade">Trade</a> <a href="/settings" style="color:var(--blue);font-weight:600;">Settings</a>
 </div>
 
 <h1>Account Settings {tier_badge}</h1>
@@ -2371,12 +3244,140 @@ async def settings_page(request: Request):
 
 <h2>Your Tier: {tier_esc}</h2>
 <div class="info-box">
-  {"<p style='color:var(--green);font-weight:600;'>Premium features active: Neural Net predictions, Suspicious Trades detector, Model Marketplace</p>" if user['tier'] in ('premium','admin') else "<p style='color:var(--muted);'>Free tier — upgrade to Premium for neural net predictions, suspicious trade alerts, and model marketplace.</p><p style='margin-top:8px;'><em>Contact admin to upgrade.</em></p>"}
+  {"<p style='color:var(--green);font-weight:600;'>Premium features active: Neural Net predictions, Model Marketplace</p>" if user['tier'] in ('premium','admin') else "<p style='color:var(--muted);'>Free tier — upgrade to Premium for neural net predictions and model marketplace.</p><p style='margin-top:8px;'><em>Contact admin to upgrade.</em></p>"}
+</div>
+
+<h2>Polymarket Trading Wallet</h2>
+<div class="info-box" id="clob-section">
+  <div style="margin-bottom:12px;">
+    <span class="status-dot" style="background:{'var(--green)' if has_creds else 'var(--red)'};"></span>
+    <strong>{'Connected' if has_creds else 'Not Connected'}</strong>
+    <span style="color:var(--muted);font-size:0.8em;margin-left:8px;" id="conn-test-result"></span>
+  </div>
+
+  {'<div id="creds-connected"><p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">Your Polymarket CLOB API credentials are stored encrypted. You can trade directly from the <a href="/trade" style="color:var(--blue);">Trade</a> page.</p><div style="display:flex;gap:8px;"><button class="btn btn-secondary" onclick="testConnection()">Test Connection</button><button class="btn btn-danger" onclick="removeCreds()">Remove Credentials</button></div></div>' if has_creds else ''}
+
+  <div id="creds-form" style="display:{'none' if has_creds else 'block'};">
+    <p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">
+      Connect your Polymarket wallet to trade directly from CryptoEdge. You need API credentials from
+      <a href="https://polymarket.com" target="_blank" style="color:var(--blue);">Polymarket</a>.
+    </p>
+
+    <div style="background:rgba(210,153,34,0.1);border:1px solid rgba(210,153,34,0.3);border-radius:6px;padding:10px;margin-bottom:14px;font-size:0.75em;color:var(--yellow);">
+      &#9888; Your credentials are encrypted with AES-256 before storage. The private key never leaves this server. However, use a dedicated trading wallet — not your main wallet.
+    </div>
+
+    <div class="form-field">
+      <label>API Key</label>
+      <input type="text" id="clob-api-key" placeholder="Your Polymarket CLOB API key" autocomplete="off">
+    </div>
+    <div class="form-field">
+      <label>API Secret</label>
+      <input type="password" id="clob-api-secret" placeholder="Your Polymarket CLOB API secret" autocomplete="off">
+    </div>
+    <div class="form-field">
+      <label>API Passphrase</label>
+      <input type="password" id="clob-api-passphrase" placeholder="Your Polymarket CLOB API passphrase" autocomplete="off">
+    </div>
+    <div class="form-field">
+      <label>Private Key (Polygon Wallet)</label>
+      <input type="password" id="clob-private-key" placeholder="0x..." autocomplete="off">
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-primary" id="save-creds-btn" onclick="saveCreds()">Save &amp; Connect</button>
+      {'<button class="btn btn-secondary" onclick="cancelCredsForm()">Cancel</button>' if has_creds else ''}
+    </div>
+    <div id="creds-error" style="color:var(--red);font-size:0.8em;margin-top:8px;display:none;"></div>
+  </div>
 </div>
 
 <h2>Watchlists</h2>
 <div class="cards">{wl_html}</div>
 
+<script>
+(function() {{
+  async function saveCreds() {{
+    const btn = document.getElementById('save-creds-btn');
+    const errEl = document.getElementById('creds-error');
+    errEl.style.display = 'none';
+
+    const data = {{
+      api_key: document.getElementById('clob-api-key').value.trim(),
+      api_secret: document.getElementById('clob-api-secret').value.trim(),
+      api_passphrase: document.getElementById('clob-api-passphrase').value.trim(),
+      private_key: document.getElementById('clob-private-key').value.trim(),
+    }};
+
+    if (!data.api_key || !data.api_secret || !data.api_passphrase || !data.private_key) {{
+      errEl.textContent = 'All fields are required.';
+      errEl.style.display = 'block';
+      return;
+    }}
+
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    try {{
+      const resp = await fetch('/api/clob/credentials', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(data)
+      }});
+      const result = await resp.json();
+      if (resp.ok && result.ok) {{
+        location.reload();
+      }} else {{
+        errEl.textContent = result.error || 'Failed to save credentials.';
+        errEl.style.display = 'block';
+      }}
+    }} catch(e) {{
+      errEl.textContent = 'Network error: ' + e.message;
+      errEl.style.display = 'block';
+    }}
+    btn.disabled = false;
+    btn.textContent = 'Save & Connect';
+  }}
+
+  async function testConnection() {{
+    const resultEl = document.getElementById('conn-test-result');
+    resultEl.textContent = 'Testing...';
+    resultEl.style.color = 'var(--muted)';
+    try {{
+      const resp = await fetch('/api/clob/test-connection');
+      const data = await resp.json();
+      if (data.ok) {{
+        resultEl.textContent = 'Connection successful!';
+        resultEl.style.color = 'var(--green)';
+      }} else {{
+        resultEl.textContent = 'Failed: ' + (data.error || 'Unknown error');
+        resultEl.style.color = 'var(--red)';
+      }}
+    }} catch(e) {{
+      resultEl.textContent = 'Error: ' + e.message;
+      resultEl.style.color = 'var(--red)';
+    }}
+  }}
+
+  async function removeCreds() {{
+    if (!confirm('Remove your Polymarket trading credentials? You will not be able to trade until you re-add them.')) return;
+    try {{
+      await fetch('/api/clob/credentials', {{method: 'DELETE'}});
+      location.reload();
+    }} catch(e) {{}}
+  }}
+
+  function cancelCredsForm() {{
+    document.getElementById('creds-form').style.display = 'none';
+    const conn = document.getElementById('creds-connected');
+    if (conn) conn.style.display = 'block';
+  }}
+
+  window.saveCreds = saveCreds;
+  window.testConnection = testConnection;
+  window.removeCreds = removeCreds;
+  window.cancelCredsForm = cancelCredsForm;
+}})();
+</script>
 </body></html>"""
     return HTMLResponse(html)
 

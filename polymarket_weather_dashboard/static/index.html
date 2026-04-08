@@ -64,43 +64,6 @@
         @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         .fade-in { animation: fadeUp .3s ease-out both; }
 
-        /* ── AUTH ── */
-        #auth-screen {
-            position: fixed; inset: 0; z-index: 9999;
-            background: var(--bg-0);
-            display: flex; align-items: center; justify-content: center;
-        }
-        #auth-screen.hidden { display: none; }
-        .auth-box {
-            width: 340px; max-width: 90vw; padding: 48px 32px; text-align: center;
-        }
-        .auth-logo {
-            width: 40px; height: 40px;
-            background: var(--text-1); border-radius: 8px;
-            display: grid; place-items: center; font-weight: 700;
-            font-size: 16px; color: var(--bg-0); margin: 0 auto 24px;
-        }
-        .auth-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; letter-spacing: -0.02em; }
-        .auth-sub { font-size: 13px; color: var(--text-3); margin-bottom: 32px; line-height: 1.6; }
-        .auth-input {
-            width: 100%; padding: 12px 0; margin-bottom: 4px;
-            background: transparent; border: none; border-bottom: 1px solid var(--border);
-            color: var(--text-1); font-size: 14px; font-family: inherit; outline: none;
-            transition: border-color .2s;
-        }
-        .auth-input:focus { border-bottom-color: var(--text-1); }
-        .auth-btn {
-            width: 100%; padding: 13px; background: var(--text-1); color: var(--bg-0);
-            border: none; border-radius: 6px; font-size: 14px; font-weight: 600;
-            font-family: inherit; cursor: pointer; margin-top: 24px;
-            transition: opacity .15s;
-        }
-        .auth-btn:hover { opacity: .85; }
-        .auth-btn:active { opacity: .7; }
-        .auth-toggle { margin-top: 24px; font-size: 13px; color: var(--text-3); }
-        .auth-toggle a { color: var(--text-2); cursor: pointer; text-decoration: underline; font-weight: 500; }
-        .auth-error { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 18px; }
-
         /* ── TOP BAR ── */
         .topbar {
             position: sticky; top: 0; z-index: 100;
@@ -285,6 +248,7 @@
         .model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; }
         .model-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); padding: 3px 0; }
         .model-row.res { color: var(--cyan); font-weight: 600; }
+        .model-row.climo { color: var(--amber); font-style: italic; }
         .model-name { min-width: 46px; font-weight: 600; }
         .model-bar { flex: 1; height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
         .model-bar-fill { height: 100%; border-radius: 2px; background: var(--text-3); opacity: .4; transition: width .4s; }
@@ -445,24 +409,6 @@
 </head>
 <body>
 
-<!-- AUTH SCREEN -->
-<div id="auth-screen" class="hidden">
-    <div class="auth-box">
-        <div class="auth-logo">N</div>
-        <div class="auth-title" id="auth-mode-title">Sign In</div>
-        <div class="auth-sub">Compare prediction market prices against weather forecasts to find mispriced bets</div>
-        <input class="auth-input" id="auth-user" placeholder="Username" autocomplete="username">
-        <input class="auth-input" id="auth-pass" type="password" placeholder="Password" autocomplete="current-password">
-        <input class="auth-input" id="auth-email" type="email" placeholder="Email (optional)" style="display:none">
-        <button class="auth-btn" id="auth-submit" onclick="authSubmit()">Sign In</button>
-        <div class="auth-error" id="auth-error"></div>
-        <div class="auth-toggle">
-            <span id="auth-toggle-text">No account?</span>
-            <a onclick="toggleAuthMode()"><span id="auth-toggle-link">Create one</span></a>
-        </div>
-    </div>
-</div>
-
 <!-- APP -->
 <div id="app-shell" style="display:none">
 
@@ -613,7 +559,7 @@
     <div class="settings-section">
         <div class="settings-title">About NoRain</div>
         <div style="font-size:13px;color:var(--text-2);line-height:1.7">
-            NoRain compares weather prediction market prices (from <b>Polymarket</b> and <b>Kalshi</b>) against forecasts from 5 weather agencies (GFS, ECMWF, ICON, GEM, UKMO) to spot mispriced bets.
+            NoRain compares weather prediction market prices (from <b>Polymarket</b> and <b>Kalshi</b>) against forecasts from 8 weather agencies (GFS, ECMWF, ICON, GEM, UKMO, JMA, MET.no, BOM) plus <b>NWS</b> official forecasts and <b>30-year climatology</b> to spot mispriced bets.
         </div>
         <div style="font-size:12px;color:var(--text-3);margin-top:10px;line-height:1.6">
             <b>Not financial advice.</b> Predictions can be wrong. Past performance does not guarantee future results.
@@ -691,10 +637,8 @@ let UP = {
     edge_threshold: 8,
     watched_cities: [],
 };
-let authMode = 'login';
-
 // ═══════════════════════════════════════════════════════════════════════
-// AUTH
+// AUTH — gateway handles login; we just check if the session is valid
 // ═══════════════════════════════════════════════════════════════════════
 async function checkAuth() {
     try {
@@ -706,25 +650,23 @@ async function checkAuth() {
             if (j.user.settings) UP = { ...UP, ...j.user.settings };
             showApp();
         } else if (window.__hbSwitcher && window.__hbSwitcher.username) {
-            // Gateway authenticated but backend auth lookup failed — use gateway identity
             currentUser = { username: window.__hbSwitcher.username, is_admin: 0, favorites: [], settings: {} };
             showApp();
-        } else { showAuth(); }
+        } else {
+            // Not authenticated — redirect to gateway login
+            window.location.href = 'https://narve.ai/login';
+        }
     } catch {
         if (window.__hbSwitcher && window.__hbSwitcher.username) {
             currentUser = { username: window.__hbSwitcher.username, is_admin: 0, favorites: [], settings: {} };
             showApp();
-        } else { showAuth(); }
+        } else {
+            window.location.href = 'https://narve.ai/login';
+        }
     }
 }
 
-function showAuth() {
-    document.getElementById('auth-screen').classList.remove('hidden');
-    document.getElementById('app-shell').style.display = 'none';
-}
-
 function showApp() {
-    document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('app-shell').style.display = '';
     document.getElementById('username-display').textContent = currentUser.username;
     if (currentUser.is_admin) document.getElementById('admin-link-group').style.display = '';
@@ -733,47 +675,9 @@ function showApp() {
     initApp();
 }
 
-function toggleAuthMode() {
-    authMode = authMode === 'login' ? 'register' : 'login';
-    document.getElementById('auth-mode-title').textContent = authMode === 'login' ? 'Sign In' : 'Create Account';
-    document.getElementById('auth-submit').textContent = authMode === 'login' ? 'Sign In' : 'Create Account';
-    document.getElementById('auth-toggle-text').textContent = authMode === 'login' ? 'No account?' : 'Already have one?';
-    document.getElementById('auth-toggle-link').textContent = authMode === 'login' ? 'Create one' : 'Sign in';
-    document.getElementById('auth-email').style.display = authMode === 'register' ? '' : 'none';
-    document.getElementById('auth-error').textContent = '';
-}
-
-async function authSubmit() {
-    const username = document.getElementById('auth-user').value.trim();
-    const password = document.getElementById('auth-pass').value;
-    const email = document.getElementById('auth-email').value.trim();
-    const errEl = document.getElementById('auth-error');
-    errEl.textContent = '';
-    if (!username || !password) { errEl.textContent = 'Username and password required'; return; }
-    const url = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-    const body = { username, password };
-    if (authMode === 'register' && email) body.email = email;
-    try {
-        const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const j = await r.json();
-        if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
-        currentUser = j.user;
-        favorites = j.user.favorites || [];
-        if (j.user.settings) UP = { ...UP, ...j.user.settings };
-        // Admin users go straight to admin dashboard
-        if (currentUser.is_admin) { window.location.href = '/admin'; return; }
-        showApp();
-    } catch (e) { errEl.textContent = 'Connection error'; }
-}
-
 async function logout() {
-    if (window.__hbSwitcher) { window.location.href = 'https://habbig.com/logout'; return; }
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    currentUser = null;
-    showAuth();
+    window.location.href = 'https://narve.ai/logout';
 }
-
-document.getElementById('auth-pass').addEventListener('keydown', e => { if (e.key === 'Enter') authSubmit(); });
 
 // ═══════════════════════════════════════════════════════════════════════
 // USER PREFS
@@ -1214,18 +1118,21 @@ function cardHtml(m) {
     if (m.models && Object.keys(m.models).length > 0) {
         const entries = Object.entries(m.models).sort((a, b) => {
             if (a[1].is_resolution) return -1; if (b[1].is_resolution) return 1;
+            if (a[0] === 'climatology') return 1; if (b[0] === 'climatology') return -1;
             return (b[1].prob || 0) - (a[1].prob || 0);
         });
         const items = entries.map(([id, md]) => {
+            const isClimo = id === 'climatology';
             const prob = (md.prob * 100);
-            const cls = md.is_resolution ? 'model-row res' : 'model-row';
-            const tag = md.is_resolution ? `<span class="res-tag">RES</span>` : '';
+            const cls = md.is_resolution ? 'model-row res' : (isClimo ? 'model-row climo' : 'model-row');
+            const tag = md.is_resolution ? `<span class="res-tag">RES</span>` : (isClimo ? `<span class="res-tag" style="background:var(--amber-dim);color:var(--amber)">REF</span>` : '');
             const w = Math.max(Math.min(prob, 100), 3);
-            return `<div class="${cls}"><span class="model-name">${esc(md.name)}${tag}</span><div class="model-bar"><div class="model-bar-fill" style="width:${w}%"></div></div><span class="model-pct">${prob.toFixed(0)}%</span></div>`;
+            const barBg = isClimo ? 'background:var(--amber);opacity:.4' : '';
+            return `<div class="${cls}"><span class="model-name">${esc(md.name)}${tag}</span><div class="model-bar"><div class="model-bar-fill" style="width:${w}%;${barBg}"></div></div><span class="model-pct">${prob.toFixed(0)}%</span></div>`;
         }).join('');
         const cid = 'mg-' + m.id.substring(0, 8);
         if (UP.collapse_models) {
-            const summary = `${entries.length} agencies`;
+            const summary = `${entries.length} sources`;
             modelsHtml = `<div class="models-section">
                 <button class="models-toggle" onclick="event.stopPropagation();const g=document.getElementById('${cid}');const show=g.style.display==='none';g.style.display=show?'':'none';this.textContent=show?'Hide agency details':'Show ${summary}'">Show ${summary}</button>
                 <div class="model-grid" id="${cid}" style="display:none">${items}</div>

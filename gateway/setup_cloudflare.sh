@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# setup_cloudflare.sh — Register DNS routes for habbig.com + all dashboard
+# setup_cloudflare.sh — Register DNS routes for narve.ai + all dashboard
 # subdomains in one shot.
 #
 # Usage:
@@ -8,7 +8,7 @@
 #
 # Prereqs:
 #   1. You've run `cloudflared tunnel login` and `cloudflared tunnel create`
-#   2. habbig.com is active in your Cloudflare account
+#   2. narve.ai is active in your Cloudflare account
 #   3. The tunnel ID is visible via `cloudflared tunnel list`
 #
 # What it does:
@@ -110,8 +110,8 @@ echo -e "${BLUE}=========================================${NC}"
 echo ""
 echo "Next steps:"
 echo "  1. Make sure ~/.cloudflared/config.yml has the wildcard ingress"
-echo "     (see gateway/DEPLOY_HABBIG.md step 4)"
+echo "     (see gateway/DEPLOY_NARVE.md step 4)"
 echo "  2. Start the tunnel:"
-echo -e "       ${YELLOW}cloudflared tunnel run habbig-gateway${NC}"
+echo -e "       ${YELLOW}cloudflared tunnel run narve-gateway${NC}"
 echo "  3. Visit https://$DOMAIN/"
 echo ""

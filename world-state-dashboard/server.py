@@ -4,6 +4,7 @@
 import asyncio
 import json
 import math
+import os
 import re
 import time
 import urllib.request
@@ -215,6 +216,294 @@ def fetch_polymarket():
 
     POLYMARKET_CACHE["data"] = results
     POLYMARKET_CACHE["fetched_at"] = now
+    return results
+
+
+# ── X / Twitter Intelligence Feed ────────────────────────────────────────────
+XFEED_CACHE = {"data": [], "fetched_at": 0.0}
+XFEED_CACHE_TTL = 300  # 5 minutes — X API rate limits are strict
+
+X_BEARER_TOKEN = os.environ.get("X_BEARER_TOKEN", "")
+
+# Key geopolitical figures and institutions to track
+X_ACCOUNTS = [
+    # ── World Leaders ──
+    {"handle": "POTUS", "name": "President of the United States", "category": "leader", "country": "US"},
+    {"handle": "realDonaldTrump", "name": "Donald Trump", "category": "leader", "country": "US"},
+    {"handle": "VP", "name": "Vice President of the United States", "category": "leader", "country": "US"},
+    {"handle": "ZelenskyyUa", "name": "Volodymyr Zelenskyy", "category": "leader", "country": "UA"},
+    {"handle": "EmmanuelMacron", "name": "Emmanuel Macron", "category": "leader", "country": "FR"},
+    {"handle": "OlafScholz", "name": "Olaf Scholz", "category": "leader", "country": "DE"},
+    {"handle": "RishiSunak", "name": "Rishi Sunak", "category": "leader", "country": "GB"},
+    {"handle": "KeirStarmer", "name": "Keir Starmer", "category": "leader", "country": "GB"},
+    {"handle": "naaboripamo", "name": "Narendra Modi", "category": "leader", "country": "IN"},
+    {"handle": "IsraeliPM", "name": "Prime Minister of Israel", "category": "leader", "country": "IL"},
+    {"handle": "RTErdogan", "name": "Recep Tayyip Erdogan", "category": "leader", "country": "TR"},
+    {"handle": "Tsaborni", "name": "Giorgia Meloni", "category": "leader", "country": "IT"},
+    {"handle": "presidaboric", "name": "Gabriel Boric", "category": "leader", "country": "CL"},
+    # ── Institutions ──
+    {"handle": "NATO", "name": "NATO", "category": "institution", "country": "INT"},
+    {"handle": "UN", "name": "United Nations", "category": "institution", "country": "INT"},
+    {"handle": "EU_Commission", "name": "European Commission", "category": "institution", "country": "EU"},
+    {"handle": "StateDept", "name": "US State Department", "category": "institution", "country": "US"},
+    {"handle": "DeptofDefense", "name": "US Department of Defense", "category": "institution", "country": "US"},
+    {"handle": "SecDef", "name": "US Secretary of Defense", "category": "institution", "country": "US"},
+    {"handle": "CIA", "name": "CIA", "category": "institution", "country": "US"},
+    {"handle": "ABORNI", "name": "IAEA", "category": "institution", "country": "INT"},
+    {"handle": "WHO", "name": "World Health Organization", "category": "institution", "country": "INT"},
+    {"handle": "WFP", "name": "World Food Programme", "category": "institution", "country": "INT"},
+    # ── Defense & Intel Analysts ──
+    {"handle": "KofmanMichael", "name": "Michael Kofman", "category": "analyst", "country": "US"},
+    {"handle": "RALee85", "name": "Rob Lee", "category": "analyst", "country": "US"},
+    {"handle": "DefMon3", "name": "DefMon", "category": "analyst", "country": "INT"},
+    {"handle": "wartranslated", "name": "WarTranslated", "category": "analyst", "country": "INT"},
+    {"handle": "NOELreports", "name": "NOEL Reports", "category": "analyst", "country": "INT"},
+    {"handle": "sentdefender", "name": "OSINTdefender", "category": "analyst", "country": "INT"},
+    # ── Key Journalists ──
+    {"handle": "christaborni", "name": "Christiane Amanpour", "category": "journalist", "country": "US"},
+    {"handle": "baborni", "name": "BBC Breaking News", "category": "journalist", "country": "GB"},
+    {"handle": "Reuters", "name": "Reuters", "category": "journalist", "country": "INT"},
+    {"handle": "AP", "name": "Associated Press", "category": "journalist", "country": "INT"},
+]
+
+# ── Sentiment & Analysis Keywords ──
+_NEGATIVE_WORDS = frozenset([
+    "war", "attack", "strike", "bomb", "missile", "kill", "dead", "death", "casualt",
+    "threat", "danger", "crisis", "conflict", "invade", "invasion", "escalat", "tension",
+    "sanction", "collapse", "destroy", "explosion", "terror", "nuclear", "weapon", "shoot",
+    "hostage", "siege", "retreat", "defeat", "violated", "breach", "warning", "urgent",
+    "catastroph", "disaster", "famine", "refugee", "displac", "evacuate", "emergency",
+    "coup", "assassination", "detained", "arrest", "condemn", "provocat", "retaliat",
+])
+
+_POSITIVE_WORDS = frozenset([
+    "peace", "ceasefire", "agreement", "treaty", "diplomacy", "negotiat", "cooperat",
+    "aid", "humanitarian", "relief", "rebuild", "stabiliz", "de-escalat", "dialogue",
+    "alliance", "partner", "support", "progress", "reform", "liberat", "protect",
+    "reunif", "reconcil", "elected", "democratic", "freedom", "resolution", "accord",
+])
+
+_TOPIC_KEYWORDS = {
+    "conflict": ["war", "attack", "strike", "bomb", "missile", "battle", "offensive", "front", "casualt", "combat", "troops", "military"],
+    "diplomacy": ["negotiate", "summit", "treaty", "agreement", "diplomat", "ambassador", "dialogue", "talks", "ceasefire", "peace", "accord"],
+    "nuclear": ["nuclear", "warhead", "enrichment", "uranium", "plutonium", "IAEA", "nonprolif", "atomic", "radiation"],
+    "sanctions": ["sanction", "embargo", "restrict", "ban", "tariff", "trade war", "frozen assets", "blacklist"],
+    "intelligence": ["intelligence", "espionage", "spy", "surveillance", "cyber", "hack", "intercept", "classified"],
+    "military": ["deploy", "naval", "aircraft carrier", "submarine", "fighter jet", "drone", "regiment", "battalion", "exercise", "NATO", "defense"],
+    "humanitarian": ["refugee", "displaced", "famine", "aid", "humanitarian", "crisis", "evacuat", "food", "shelter", "UNHCR", "WFP"],
+    "election": ["election", "vote", "ballot", "poll", "candidat", "campaign", "democrat", "inaugurat", "referendum"],
+    "economy": ["economy", "GDP", "inflation", "recession", "trade", "market", "debt", "fiscal", "monetary", "currency", "oil price"],
+    "climate": ["climate", "emission", "carbon", "warming", "flood", "drought", "wildfire", "hurricane", "typhoon", "disaster"],
+}
+
+_URGENCY_KEYWORDS = frozenset([
+    "breaking", "urgent", "just in", "developing", "alert", "imminent",
+    "emergency", "critical", "live", "happening now", "confirmed",
+])
+
+_COUNTRY_MENTIONS = {
+    "US": ["united states", "america", "washington", "pentagon", "white house", "congress", "biden", "trump"],
+    "RU": ["russia", "moscow", "kremlin", "putin"],
+    "UA": ["ukraine", "kyiv", "kiev", "zelenskyy", "zelensky"],
+    "CN": ["china", "beijing", "xi jinping", "taiwan strait", "south china sea"],
+    "IL": ["israel", "jerusalem", "tel aviv", "netanyahu", "idf", "gaza"],
+    "IR": ["iran", "tehran", "khamenei", "irgc", "hezbollah"],
+    "KP": ["north korea", "pyongyang", "kim jong"],
+    "TW": ["taiwan", "taipei"],
+    "SY": ["syria", "damascus", "assad"],
+    "YE": ["yemen", "houthi", "sanaa"],
+    "SD": ["sudan", "khartoum", "rsf", "rapid support"],
+    "MM": ["myanmar", "burma", "junta"],
+    "PK": ["pakistan", "islamabad"],
+    "IN": ["india", "delhi", "modi"],
+    "SA": ["saudi", "riyadh", "mbs"],
+    "TR": ["turkey", "türkiye", "ankara", "erdogan"],
+    "DE": ["germany", "berlin", "scholz", "merz"],
+    "FR": ["france", "paris", "macron"],
+    "GB": ["britain", "london", "uk", "starmer"],
+}
+
+
+def _analyze_post(text: str) -> dict:
+    """Analyze a tweet for sentiment, topics, urgency, and mentioned countries."""
+    lower = text.lower()
+
+    # Sentiment
+    neg_count = sum(1 for w in _NEGATIVE_WORDS if w in lower)
+    pos_count = sum(1 for w in _POSITIVE_WORDS if w in lower)
+    if neg_count > pos_count + 1:
+        sentiment = "negative"
+    elif pos_count > neg_count + 1:
+        sentiment = "positive"
+    else:
+        sentiment = "neutral"
+
+    # Topics
+    topics = []
+    for topic, keywords in _TOPIC_KEYWORDS.items():
+        if any(kw in lower for kw in keywords):
+            topics.append(topic)
+    if not topics:
+        topics = ["general"]
+
+    # Urgency
+    is_urgent = any(kw in lower for kw in _URGENCY_KEYWORDS)
+
+    # Country mentions
+    countries = []
+    for code, keywords in _COUNTRY_MENTIONS.items():
+        if any(kw in lower for kw in keywords):
+            countries.append(code)
+
+    return {
+        "sentiment": sentiment,
+        "topics": topics[:3],
+        "urgent": is_urgent,
+        "countries": countries[:5],
+    }
+
+
+def _x_api_request(url: str) -> dict:
+    """Make an authenticated request to the X API v2."""
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {X_BEARER_TOKEN}",
+        "User-Agent": "WorldMonitor/1.0",
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _resolve_user_ids(handles: list[str]) -> dict:
+    """Resolve X handles to user IDs (batch, max 100)."""
+    usernames = ",".join(handles[:100])
+    url = f"https://api.x.com/2/users/by?usernames={usernames}&user.fields=id,name,username,profile_image_url,public_metrics"
+    data = _x_api_request(url)
+    result = {}
+    for user in data.get("data", []):
+        result[user["username"].lower()] = user
+    return result
+
+
+# Persistent user ID cache (resolved once, reused)
+_USER_ID_CACHE = {"ids": {}, "resolved": False}
+
+
+def fetch_xfeed():
+    """Fetch recent posts from key geopolitical figures on X."""
+    now = time.time()
+    if XFEED_CACHE["data"] and (now - XFEED_CACHE["fetched_at"]) < XFEED_CACHE_TTL:
+        return XFEED_CACHE["data"]
+
+    if not X_BEARER_TOKEN:
+        print("[xfeed] No X_BEARER_TOKEN set — skipping X feed")
+        return []
+
+    results = []
+
+    try:
+        # Resolve user IDs if needed
+        if not _USER_ID_CACHE["resolved"]:
+            handles = [a["handle"] for a in X_ACCOUNTS]
+            # Batch in groups of 100
+            for i in range(0, len(handles), 100):
+                batch = handles[i:i+100]
+                try:
+                    resolved = _resolve_user_ids(batch)
+                    _USER_ID_CACHE["ids"].update(resolved)
+                except Exception as e:
+                    print(f"[xfeed] user resolve batch {i} failed: {e}")
+            _USER_ID_CACHE["resolved"] = True
+
+        # Build handle→account lookup
+        account_lookup = {a["handle"].lower(): a for a in X_ACCOUNTS}
+
+        # Fetch recent tweets from each user (limit API calls — use search instead)
+        # Strategy: use search endpoint with OR query for all handles
+        # This is more efficient than per-user timeline calls
+        handle_chunks = []
+        chunk = []
+        for a in X_ACCOUNTS:
+            uid_info = _USER_ID_CACHE["ids"].get(a["handle"].lower())
+            if uid_info:
+                chunk.append(f"from:{a['handle']}")
+                if len(chunk) >= 15:  # X search OR limit
+                    handle_chunks.append(chunk)
+                    chunk = []
+        if chunk:
+            handle_chunks.append(chunk)
+
+        for chunk in handle_chunks[:3]:  # Limit to 3 search calls
+            query = " OR ".join(chunk)
+            url = (
+                f"https://api.x.com/2/tweets/search/recent"
+                f"?query={urllib.request.quote(query)}"
+                f"&max_results=50"
+                f"&tweet.fields=created_at,public_metrics,author_id,lang"
+                f"&expansions=author_id"
+                f"&user.fields=username,name,profile_image_url"
+            )
+            try:
+                resp_data = _x_api_request(url)
+
+                # Build author lookup from includes
+                authors = {}
+                for u in resp_data.get("includes", {}).get("users", []):
+                    authors[u["id"]] = u
+
+                for tweet in resp_data.get("data", []):
+                    author_id = tweet.get("author_id", "")
+                    author = authors.get(author_id, {})
+                    username = author.get("username", "unknown").lower()
+                    acct = account_lookup.get(username, {})
+                    metrics = tweet.get("public_metrics", {})
+
+                    # Skip non-English or very short tweets
+                    text = tweet.get("text", "")
+                    if len(text) < 20:
+                        continue
+
+                    analysis = _analyze_post(text)
+
+                    # Impact score: combination of engagement + urgency + account importance
+                    engagement = (
+                        metrics.get("like_count", 0)
+                        + metrics.get("retweet_count", 0) * 3
+                        + metrics.get("reply_count", 0) * 2
+                        + metrics.get("quote_count", 0) * 2
+                    )
+                    cat_weight = {"leader": 3, "institution": 2, "analyst": 1.5, "journalist": 1}.get(acct.get("category", ""), 1)
+                    urgency_bonus = 1.5 if analysis["urgent"] else 1.0
+                    impact_score = round(min(10, (math.log10(max(engagement, 1)) * cat_weight * urgency_bonus)), 1)
+
+                    results.append({
+                        "id": tweet["id"],
+                        "text": text,
+                        "author_handle": author.get("username", "unknown"),
+                        "author_name": acct.get("name") or author.get("name", "Unknown"),
+                        "author_category": acct.get("category", "unknown"),
+                        "author_country": acct.get("country", "INT"),
+                        "author_avatar": author.get("profile_image_url", ""),
+                        "created_at": tweet.get("created_at", ""),
+                        "likes": metrics.get("like_count", 0),
+                        "retweets": metrics.get("retweet_count", 0),
+                        "replies": metrics.get("reply_count", 0),
+                        "quotes": metrics.get("quote_count", 0),
+                        "url": f"https://x.com/{author.get('username', 'x')}/status/{tweet['id']}",
+                        "analysis": analysis,
+                        "impact_score": impact_score,
+                    })
+            except Exception as e:
+                print(f"[xfeed] search chunk failed: {e}")
+
+        # Sort by impact score desc, then by recency
+        results.sort(key=lambda x: (x["impact_score"], x["created_at"]), reverse=True)
+        results = results[:80]
+
+    except Exception as e:
+        print(f"[xfeed] fetch failed: {e}")
+
+    XFEED_CACHE["data"] = results
+    XFEED_CACHE["fetched_at"] = now
     return results
 
 
@@ -3689,6 +3978,333 @@ MILITARY_BASES = [
     {"name": "Al Dhafra Air Base", "country": "US", "host": "AE", "lat": 24.25, "lng": 54.55, "type": "air_base", "branch": "USAF", "detail": "F-22/F-35/U-2/RQ-4 operations"},
     {"name": "Anadyr (Chukotka)", "country": "RU", "host": "RU", "lat": 64.73, "lng": 177.51, "type": "air_base", "branch": "VKS", "detail": "Strategic bomber staging; Arctic defense"},
     {"name": "Cam Ranh Bay", "country": "VN", "host": "VN", "lat": 11.99, "lng": 109.22, "type": "naval_base", "branch": "VPN", "detail": "Former US/Soviet base; Vietnamese Navy HQ South"},
+
+    # ── Germany (Bundeswehr) ──
+    {"name": "Kommando Heer (Strausberg)", "country": "DE", "host": "DE", "lat": 52.58, "lng": 13.88, "type": "army_base", "branch": "Bundeswehr", "detail": "German Army Command HQ"},
+    {"name": "Büchel Air Base", "country": "DE", "host": "DE", "lat": 50.17, "lng": 7.07, "type": "air_base", "branch": "Luftwaffe", "detail": "NATO nuclear sharing; Tornado IDS wing"},
+    {"name": "Wilhelmshaven Naval Base", "country": "DE", "host": "DE", "lat": 53.51, "lng": 8.13, "type": "naval_base", "branch": "Deutsche Marine", "detail": "German Navy HQ; frigate homeport"},
+
+    # ── Italy ──
+    {"name": "Aviano Air Base", "country": "US", "host": "IT", "lat": 46.03, "lng": 12.60, "type": "air_base", "branch": "USAF", "detail": "31st FW; F-16 wing; NATO south flank"},
+    {"name": "Naval Station Naples (Capodichino)", "country": "US", "host": "IT", "lat": 40.88, "lng": 14.29, "type": "naval_base", "branch": "USN", "detail": "HQ Allied Joint Force Command Naples; 6th Fleet"},
+    {"name": "Taranto Naval Base", "country": "IT", "host": "IT", "lat": 40.47, "lng": 17.24, "type": "naval_base", "branch": "Marina Militare", "detail": "Italian Navy main base; Cavour homeport"},
+
+    # ── Spain ──
+    {"name": "Morón Air Base", "country": "US", "host": "ES", "lat": 37.18, "lng": -5.62, "type": "air_base", "branch": "USMC/USAF", "detail": "SPMAGTF-CR-AF staging; crisis response"},
+    {"name": "Ferrol Naval Base", "country": "ES", "host": "ES", "lat": 43.48, "lng": -8.24, "type": "naval_base", "branch": "Armada Española", "detail": "Spanish Navy Atlantic base; F-100 frigates"},
+
+    # ── Poland ──
+    {"name": "Rzeszów-Jasionka (35th Air Wing)", "country": "PL", "host": "PL", "lat": 50.11, "lng": 22.02, "type": "air_base", "branch": "Polish AF", "detail": "NATO eastern flank hub; Ukraine logistics gateway"},
+    {"name": "Redzikowo Aegis Ashore", "country": "US", "host": "PL", "lat": 54.48, "lng": 17.10, "type": "missile_defense", "branch": "USN/NATO", "detail": "Aegis Ashore BMD site; SM-3 interceptors"},
+    {"name": "Poznań Land Command", "country": "PL", "host": "PL", "lat": 52.41, "lng": 16.93, "type": "army_base", "branch": "Polish Army", "detail": "HQ Polish Ground Forces"},
+
+    # ── Norway ──
+    {"name": "Bodø Main Air Station", "country": "NO", "host": "NO", "lat": 67.27, "lng": 14.37, "type": "air_base", "branch": "RNoAF", "detail": "NATO QRA North; arctic air operations"},
+    {"name": "Ramsund Naval Station", "country": "NO", "host": "NO", "lat": 68.44, "lng": 16.52, "type": "naval_base", "branch": "RNoN", "detail": "Norwegian Navy northern base; coastal defense"},
+
+    # ── Sweden ──
+    {"name": "Luleå / Kallax Air Base (F 21)", "country": "SE", "host": "SE", "lat": 65.55, "lng": 22.13, "type": "air_base", "branch": "Flygvapnet", "detail": "Sweden's northernmost fighter wing; Gripen base"},
+    {"name": "Berga Naval Base", "country": "SE", "host": "SE", "lat": 59.22, "lng": 18.21, "type": "naval_base", "branch": "Swedish Navy", "detail": "Swedish Navy main base; submarine flotilla"},
+
+    # ── Finland ──
+    {"name": "Rovaniemi Air Base (Lapland)", "country": "FI", "host": "FI", "lat": 66.56, "lng": 25.83, "type": "air_base", "branch": "Finnish AF", "detail": "NATO's newest Arctic air base; F/A-18 Hornets"},
+    {"name": "Upinniemi Naval Base", "country": "FI", "host": "FI", "lat": 60.10, "lng": 24.36, "type": "naval_base", "branch": "Finnish Navy", "detail": "Finnish Navy main base; coastal defense"},
+
+    # ── Denmark ──
+    {"name": "Skrydstrup Air Base (Fighter Wing)", "country": "DK", "host": "DK", "lat": 55.22, "lng": 9.27, "type": "air_base", "branch": "RDAF", "detail": "Danish F-16/F-35 fighter wing; Baltic QRA"},
+    {"name": "Frederikshavn Naval Station", "country": "DK", "host": "DK", "lat": 57.43, "lng": 10.54, "type": "naval_base", "branch": "Royal Danish Navy", "detail": "Danish Navy main operational base"},
+
+    # ── Netherlands ──
+    {"name": "Den Helder Naval Base", "country": "NL", "host": "NL", "lat": 52.96, "lng": 4.78, "type": "naval_base", "branch": "RNLN", "detail": "Royal Netherlands Navy main base; De Zeven Provinciën frigates"},
+    {"name": "Volkel Air Base", "country": "NL", "host": "NL", "lat": 51.66, "lng": 5.71, "type": "air_base", "branch": "RNLAF", "detail": "NATO nuclear sharing; F-35A wing"},
+
+    # ── Belgium ──
+    {"name": "Kleine-Brogel Air Base", "country": "BE", "host": "BE", "lat": 51.17, "lng": 5.47, "type": "air_base", "branch": "Belgian AF", "detail": "NATO nuclear sharing; F-16 wing"},
+    {"name": "Zeebrugge Naval Base", "country": "BE", "host": "BE", "lat": 51.34, "lng": 3.20, "type": "naval_base", "branch": "Belgian Navy", "detail": "Belgian naval component HQ; MCM vessels"},
+
+    # ── Greece ──
+    {"name": "Souda Bay (NSA Souda)", "country": "US", "host": "GR", "lat": 35.49, "lng": 24.12, "type": "naval_base", "branch": "USN/NATO", "detail": "Deep-water port; E Mediterranean logistics hub"},
+    {"name": "Araxos Air Base", "country": "GR", "host": "GR", "lat": 38.15, "lng": 21.42, "type": "air_base", "branch": "Hellenic AF", "detail": "NATO storage; reserve fighter base"},
+
+    # ── Turkey (domestic) ──
+    {"name": "Çiğli Air Base (2nd Main Jet Base)", "country": "TR", "host": "TR", "lat": 38.51, "lng": 27.01, "type": "air_base", "branch": "TurAF", "detail": "Basic jet training; F-16 ops"},
+    {"name": "Gölcük Naval Base", "country": "TR", "host": "TR", "lat": 40.72, "lng": 29.81, "type": "naval_base", "branch": "Turkish Navy", "detail": "Turkish Navy HQ; submarine force base"},
+    {"name": "Akıncı Air Base (Ankara)", "country": "TR", "host": "TR", "lat": 40.08, "lng": 32.57, "type": "air_base", "branch": "TurAF", "detail": "F-16 wing; capital defense; Bayraktar ops"},
+
+    # ── Romania ──
+    {"name": "Mihail Kogălniceanu Air Base", "country": "US", "host": "RO", "lat": 44.36, "lng": 28.49, "type": "air_base", "branch": "USAF/NATO", "detail": "NATO eastern flank rotational hub; Black Sea ops"},
+    {"name": "Deveselu Aegis Ashore", "country": "US", "host": "RO", "lat": 44.04, "lng": 24.28, "type": "missile_defense", "branch": "USN/NATO", "detail": "Aegis Ashore BMD site; SM-3 interceptors"},
+
+    # ── Bulgaria ──
+    {"name": "Graf Ignatievo Air Base", "country": "BG", "host": "BG", "lat": 42.29, "lng": 24.71, "type": "air_base", "branch": "Bulgarian AF", "detail": "Bulgarian fighter wing; MiG-29 → F-16 transition"},
+    {"name": "Novo Selo Training Area", "country": "US", "host": "BG", "lat": 42.06, "lng": 25.60, "type": "training", "branch": "US Army/NATO", "detail": "Joint US-Bulgarian training range"},
+
+    # ── Czech Republic ──
+    {"name": "Čáslav Air Base (21st TAW)", "country": "CZ", "host": "CZ", "lat": 49.94, "lng": 15.38, "type": "air_base", "branch": "Czech AF", "detail": "JAS 39 Gripen wing; NATO QRA"},
+
+    # ── Hungary ──
+    {"name": "Kecskemét Air Base", "country": "HU", "host": "HU", "lat": 46.92, "lng": 19.74, "type": "air_base", "branch": "Hungarian AF", "detail": "JAS 39 Gripen wing; air policing"},
+
+    # ── Portugal ──
+    {"name": "Lajes Field (Azores)", "country": "US", "host": "PT", "lat": 38.76, "lng": -27.09, "type": "air_base", "branch": "USAF", "detail": "Mid-Atlantic staging; P-8 ASW ops"},
+
+    # ── Estonia ──
+    {"name": "Ämari Air Base", "country": "EE", "host": "EE", "lat": 59.26, "lng": 24.21, "type": "air_base", "branch": "Estonian AF/NATO", "detail": "NATO Baltic Air Policing rotational base"},
+    {"name": "Tapa Military Base", "country": "EE", "host": "EE", "lat": 59.26, "lng": 25.96, "type": "army_base", "branch": "NATO eFP", "detail": "NATO enhanced Forward Presence battlegroup (UK-led)"},
+
+    # ── Latvia ──
+    {"name": "Lielvārde Air Base", "country": "LV", "host": "LV", "lat": 56.77, "lng": 24.85, "type": "air_base", "branch": "Latvian AF/NATO", "detail": "National Guard aviation; NATO rotational"},
+    {"name": "Ādaži Military Base", "country": "LV", "host": "LV", "lat": 57.07, "lng": 24.33, "type": "army_base", "branch": "NATO eFP", "detail": "NATO enhanced Forward Presence battlegroup (Canada-led)"},
+
+    # ── Lithuania ──
+    {"name": "Šiauliai Air Base", "country": "LT", "host": "LT", "lat": 55.89, "lng": 23.39, "type": "air_base", "branch": "Lithuanian AF/NATO", "detail": "NATO Baltic Air Policing primary base"},
+    {"name": "Rukla Military Base", "country": "LT", "host": "LT", "lat": 55.08, "lng": 24.02, "type": "army_base", "branch": "NATO eFP", "detail": "NATO enhanced Forward Presence battlegroup (Germany-led)"},
+
+    # ── Croatia ──
+    {"name": "Pleso Air Base (Zagreb)", "country": "HR", "host": "HR", "lat": 45.74, "lng": 16.07, "type": "air_base", "branch": "Croatian AF", "detail": "HQ Croatian Air Force; Rafale wing incoming"},
+
+    # ── Slovakia ──
+    {"name": "Sliač Air Base", "country": "SK", "host": "SK", "lat": 48.64, "lng": 19.14, "type": "air_base", "branch": "Slovak AF", "detail": "Slovak fighter wing; F-16 transition"},
+
+    # ── Austria ──
+    {"name": "Zeltweg Air Base (Hinterstoisser)", "country": "AT", "host": "AT", "lat": 47.21, "lng": 14.75, "type": "air_base", "branch": "Austrian AF", "detail": "Eurofighter Typhoon wing; Airpower show"},
+
+    # ── Switzerland ──
+    {"name": "Payerne Air Base", "country": "CH", "host": "CH", "lat": 46.84, "lng": 6.91, "type": "air_base", "branch": "Swiss AF", "detail": "F/A-18 Hornet wing; primary fighter base"},
+
+    # ── Ireland ──
+    {"name": "Casement Aerodrome (Baldonnel)", "country": "IE", "host": "IE", "lat": 53.30, "lng": -6.45, "type": "air_base", "branch": "Irish Air Corps", "detail": "Only Irish military airfield; maritime patrol"},
+
+    # ── Israel ──
+    {"name": "Nevatim Air Base", "country": "IL", "host": "IL", "lat": 31.21, "lng": 34.93, "type": "air_base", "branch": "IAF", "detail": "F-35I Adir wing; primary stealth operations"},
+    {"name": "Palmachim Air Base", "country": "IL", "host": "IL", "lat": 31.90, "lng": 34.69, "type": "air_base", "branch": "IAF", "detail": "Missile test range; Arrow & Iron Dome batteries"},
+    {"name": "Haifa Naval Base", "country": "IL", "host": "IL", "lat": 32.82, "lng": 34.98, "type": "naval_base", "branch": "Israeli Navy", "detail": "Israeli Navy HQ; Dolphin-class submarine base"},
+
+    # ── Saudi Arabia ──
+    {"name": "King Abdulaziz Air Base (Dhahran)", "country": "SA", "host": "SA", "lat": 26.27, "lng": 50.15, "type": "air_base", "branch": "RSAF", "detail": "Eastern Province air defense; F-15SA wing"},
+    {"name": "Prince Sultan Air Base", "country": "US", "host": "SA", "lat": 24.07, "lng": 47.58, "type": "air_base", "branch": "USAF/RSAF", "detail": "CAOC fallback; F-22/F-15E rotational deployments"},
+    {"name": "King Faisal Naval Base (Jeddah)", "country": "SA", "host": "SA", "lat": 21.52, "lng": 39.17, "type": "naval_base", "branch": "RSNF", "detail": "Red Sea fleet HQ; Western Fleet"},
+
+    # ── UAE (domestic complement to Al Dhafra) ──
+    {"name": "Zayed Military City", "country": "AE", "host": "AE", "lat": 24.37, "lng": 54.61, "type": "army_base", "branch": "UAE Armed Forces", "detail": "UAE Presidential Guard; ground forces HQ"},
+
+    # ── Egypt ──
+    {"name": "Cairo West Air Base", "country": "EG", "host": "EG", "lat": 30.12, "lng": 30.92, "type": "air_base", "branch": "EAF", "detail": "Egypt's primary military airfield; F-16/Rafale wing"},
+    {"name": "Berenice Military Base", "country": "EG", "host": "EG", "lat": 23.97, "lng": 35.44, "type": "military_base", "branch": "Egyptian Armed Forces", "detail": "Red Sea mega-base; joint naval/air; opened 2020"},
+
+    # ── Iran ──
+    {"name": "Bandar Abbas Naval Base", "country": "IR", "host": "IR", "lat": 27.15, "lng": 56.28, "type": "naval_base", "branch": "IRIN/IRGCN", "detail": "Main Iranian naval base; Strait of Hormuz control"},
+    {"name": "Isfahan Nuclear Technology Center", "country": "IR", "host": "IR", "lat": 32.63, "lng": 51.68, "type": "military_base", "branch": "IRGC", "detail": "UCF; nuclear fuel cycle facility; fortified"},
+    {"name": "Bushehr (Khatam al-Anbiya garrison)", "country": "IR", "host": "IR", "lat": 28.95, "lng": 50.82, "type": "missile_defense", "branch": "IRGC-ASF", "detail": "Coastal defense; anti-ship missile batteries; near reactor"},
+
+    # ── Iraq ──
+    {"name": "Balad Air Base (Al Bakr)", "country": "IQ", "host": "IQ", "lat": 34.09, "lng": 44.36, "type": "air_base", "branch": "IqAF", "detail": "Iraq's largest airfield; F-16IQ wing; former USAF hub"},
+    {"name": "Camp Taji (Al-Taji)", "country": "IQ", "host": "IQ", "lat": 33.54, "lng": 44.26, "type": "army_base", "branch": "Iraqi Army", "detail": "Iraqi armor/mechanized training; north of Baghdad"},
+
+    # ── Jordan ──
+    {"name": "Muwaffaq Salti Air Base (Al-Azraq)", "country": "JO", "host": "JO", "lat": 31.83, "lng": 36.78, "type": "air_base", "branch": "RJAF/USAF", "detail": "F-16 wing; US/coalition ISR operations hub"},
+
+    # ── Oman ──
+    {"name": "Thumrait Air Base", "country": "OM", "host": "OM", "lat": 17.67, "lng": 54.02, "type": "air_base", "branch": "RAFO/USAF", "detail": "Omani/US operations; major pre-positioned base"},
+    {"name": "Duqm Naval Base", "country": "OM", "host": "OM", "lat": 19.66, "lng": 57.70, "type": "naval_base", "branch": "RNO/UK", "detail": "New deep-water facility; UK Joint Logistics Support Base"},
+
+    # ── Kuwait ──
+    {"name": "Ali Al Salem Air Base", "country": "US", "host": "KW", "lat": 29.35, "lng": 47.52, "type": "air_base", "branch": "USAF", "detail": "386th AEW; primary CENTCOM transit hub"},
+    {"name": "Camp Arifjan", "country": "US", "host": "KW", "lat": 28.93, "lng": 48.10, "type": "army_base", "branch": "US Army", "detail": "HQ ARCENT forward; largest US Army base in ME"},
+
+    # ── Bahrain (complement to NSA Bahrain) ──
+    {"name": "Shaikh Isa Air Base", "country": "BH", "host": "BH", "lat": 25.92, "lng": 50.59, "type": "air_base", "branch": "RBAF", "detail": "Bahraini F-16 wing; joint operations"},
+
+    # ── Qatar (complement to Al Udeid) ──
+    {"name": "As Sayliyah Army Base", "country": "US", "host": "QA", "lat": 25.27, "lng": 51.39, "type": "army_base", "branch": "US Army", "detail": "Largest pre-positioned equipment stocks outside US"},
+
+    # ── Lebanon ──
+    {"name": "Beirut Air Base (Rafic Hariri)", "country": "LB", "host": "LB", "lat": 33.81, "lng": 35.49, "type": "air_base", "branch": "LAF", "detail": "Lebanese Armed Forces air wing; Super Tucano ops"},
+
+    # ── Morocco ──
+    {"name": "Kénitra Air Base", "country": "MA", "host": "MA", "lat": 34.30, "lng": -6.60, "type": "air_base", "branch": "Royal Moroccan AF", "detail": "F-16 wing; primary fighter base"},
+
+    # ── Algeria ──
+    {"name": "Tamanrasset Air Base", "country": "DZ", "host": "DZ", "lat": 22.81, "lng": 5.45, "type": "air_base", "branch": "Algerian AF", "detail": "Saharan defense; southern strategic projection"},
+    {"name": "Mers El Kébir Naval Base", "country": "DZ", "host": "DZ", "lat": 35.73, "lng": -0.72, "type": "naval_base", "branch": "Algerian Navy", "detail": "Main naval base; Kilo-class submarine homeport"},
+
+    # ── Tunisia ──
+    {"name": "Bizerte Naval Base", "country": "TN", "host": "TN", "lat": 37.27, "lng": 9.87, "type": "naval_base", "branch": "Tunisian Navy", "detail": "Tunisian Navy HQ; Mediterranean patrol"},
+
+    # ── Libya ──
+    {"name": "Al-Jufra Air Base", "country": "LY", "host": "LY", "lat": 29.20, "lng": 16.00, "type": "air_base", "branch": "LNA", "detail": "Central Libya; contested; Russian Wagner/Africa Corps presence"},
+
+    # ── Japan (domestic JSDF) ──
+    {"name": "Yokosuka (JMSDF)", "country": "JP", "host": "JP", "lat": 35.29, "lng": 139.65, "type": "naval_base", "branch": "JMSDF", "detail": "JMSDF Fleet HQ; DDH Izumo homeport"},
+    {"name": "Sasebo Naval Base (JMSDF)", "country": "JP", "host": "JP", "lat": 33.16, "lng": 129.72, "type": "naval_base", "branch": "JMSDF", "detail": "Amphibious force base; Osumi-class LPDs"},
+    {"name": "Misawa Air Base", "country": "US", "host": "JP", "lat": 40.70, "lng": 141.37, "type": "air_base", "branch": "USAF/JASDF", "detail": "35th FW F-16s; SIGINT; northern Honshu"},
+
+    # ── South Korea (domestic ROK) ──
+    {"name": "Gyeryong (ROK MND HQ)", "country": "KR", "host": "KR", "lat": 36.27, "lng": 127.03, "type": "military_base", "branch": "ROK Armed Forces", "detail": "ROK Joint Chiefs/Service HQs; military capital"},
+    {"name": "Jinhae Naval Base", "country": "KR", "host": "KR", "lat": 35.15, "lng": 128.68, "type": "naval_base", "branch": "ROKN", "detail": "ROK Navy HQ; submarine command"},
+
+    # ── India ──
+    {"name": "INS Kadamba (Karwar)", "country": "IN", "host": "IN", "lat": 14.80, "lng": 74.12, "type": "naval_base", "branch": "Indian Navy", "detail": "India's largest naval base; Arihant SSBN homeport"},
+    {"name": "Ambala Air Force Station", "country": "IN", "host": "IN", "lat": 30.37, "lng": 76.82, "type": "air_base", "branch": "IAF", "detail": "Rafale wing; frontline base near Pakistan/China"},
+    {"name": "Jodhpur Air Force Station", "country": "IN", "host": "IN", "lat": 26.25, "lng": 73.05, "type": "air_base", "branch": "IAF", "detail": "Su-30MKI wing; western sector defense"},
+    {"name": "Port Blair (Andaman & Nicobar Command)", "country": "IN", "host": "IN", "lat": 11.65, "lng": 92.73, "type": "military_base", "branch": "Indian Tri-Service", "detail": "India's only tri-service command; Malacca Strait watch"},
+
+    # ── Pakistan ──
+    {"name": "PAC Kamra (Pakistan Aeronautical Complex)", "country": "PK", "host": "PK", "lat": 33.87, "lng": 72.40, "type": "air_base", "branch": "PAF", "detail": "JF-17 production; major PAF base"},
+    {"name": "PNS Jinnah (Karachi Naval Dockyard)", "country": "PK", "host": "PK", "lat": 24.84, "lng": 66.98, "type": "naval_base", "branch": "Pakistan Navy", "detail": "Pakistan Navy HQ; submarine base"},
+    {"name": "Sargodha Air Base (PAF Mushaf)", "country": "PK", "host": "PK", "lat": 32.05, "lng": 72.67, "type": "air_base", "branch": "PAF", "detail": "F-16/JF-17 wing; central air defense"},
+
+    # ── Australia ──
+    {"name": "HMAS Stirling (Fleet Base West)", "country": "AU", "host": "AU", "lat": -32.24, "lng": 115.69, "type": "naval_base", "branch": "RAN", "detail": "Indian Ocean fleet base; future AUKUS SSN homeport"},
+    {"name": "RAAF Tindal", "country": "AU", "host": "AU", "lat": -14.52, "lng": 132.38, "type": "air_base", "branch": "RAAF", "detail": "Northern Australia; F-35A wing; USAF bomber rotations"},
+    {"name": "RAAF Amberley", "country": "AU", "host": "AU", "lat": -27.64, "lng": 152.71, "type": "air_base", "branch": "RAAF", "detail": "F/A-18F Super Hornet / EA-18G Growler wing"},
+
+    # ── New Zealand ──
+    {"name": "Devonport Naval Base", "country": "NZ", "host": "NZ", "lat": -36.83, "lng": 174.80, "type": "naval_base", "branch": "RNZN", "detail": "Royal New Zealand Navy HQ; ANZAC frigate homeport"},
+    {"name": "RNZAF Ohakea", "country": "NZ", "host": "NZ", "lat": -40.21, "lng": 175.39, "type": "air_base", "branch": "RNZAF", "detail": "RNZAF main operating base; NH90/A109 helicopters"},
+
+    # ── Indonesia ──
+    {"name": "Surabaya Naval Base (Koarmatim)", "country": "ID", "host": "ID", "lat": -7.25, "lng": 112.73, "type": "naval_base", "branch": "TNI-AL", "detail": "Eastern Fleet Command; largest Indonesian naval base"},
+    {"name": "TNI HQ Cilangkap", "country": "ID", "host": "ID", "lat": -6.34, "lng": 106.89, "type": "military_base", "branch": "TNI", "detail": "Indonesian Armed Forces Headquarters"},
+
+    # ── Thailand ──
+    {"name": "U-Tapao Air Base", "country": "TH", "host": "TH", "lat": 12.68, "lng": 101.01, "type": "air_base", "branch": "RTAF/USN", "detail": "RTAF main base; Cobra Gold exercises; Gripen wing"},
+    {"name": "Sattahip Naval Base", "country": "TH", "host": "TH", "lat": 12.67, "lng": 100.89, "type": "naval_base", "branch": "RTN", "detail": "Royal Thai Navy HQ; HTMS Chakri Naruebet homeport"},
+
+    # ── Philippines ──
+    {"name": "Subic Bay (Hanjin/Naval)", "country": "PH", "host": "PH", "lat": 14.80, "lng": 120.28, "type": "naval_base", "branch": "Philippine Navy", "detail": "Former US base; renewed EDCA site; SCS access"},
+    {"name": "Clark Air Base (Basa)", "country": "PH", "host": "PH", "lat": 15.19, "lng": 120.56, "type": "air_base", "branch": "PAF", "detail": "EDCA enhanced cooperation site; FA-50 wing"},
+
+    # ── Singapore (complement to Changi) ──
+    {"name": "Tengah Air Base", "country": "SG", "host": "SG", "lat": 1.39, "lng": 103.71, "type": "air_base", "branch": "RSAF", "detail": "F-15SG/F-35B wing; Singapore's largest air base"},
+
+    # ── Malaysia ──
+    {"name": "RMAF Butterworth", "country": "MY", "host": "MY", "lat": 5.47, "lng": 100.39, "type": "air_base", "branch": "RMAF", "detail": "Su-30MKM/F/A-18D wing; Five Power Defence base"},
+    {"name": "KD Sultan Abdul Halim (Kota Kinabalu)", "country": "MY", "host": "MY", "lat": 6.04, "lng": 116.05, "type": "naval_base", "branch": "RMN", "detail": "Eastern Fleet; South China Sea patrol"},
+
+    # ── Myanmar ──
+    {"name": "Naypyidaw (Ministry of Defence)", "country": "MM", "host": "MM", "lat": 19.76, "lng": 96.13, "type": "military_base", "branch": "Tatmadaw", "detail": "Myanmar military HQ; Tatmadaw command center"},
+
+    # ── Taiwan ──
+    {"name": "Zuoying Naval Base (Kaohsiung)", "country": "TW", "host": "TW", "lat": 22.70, "lng": 120.27, "type": "naval_base", "branch": "ROCN", "detail": "ROC Navy Fleet Command; submarine base"},
+    {"name": "Hsinchu Air Base", "country": "TW", "host": "TW", "lat": 24.82, "lng": 120.94, "type": "air_base", "branch": "ROCAF", "detail": "Mirage 2000 wing; Taiwan Strait frontline"},
+    {"name": "Hualien Air Base (Jiashan)", "country": "TW", "host": "TW", "lat": 24.02, "lng": 121.62, "type": "air_base", "branch": "ROCAF", "detail": "F-16V wing; underground mountain hangars"},
+
+    # ── Bangladesh ──
+    {"name": "BNS Haji Mohsin (Chattogram)", "country": "BD", "host": "BD", "lat": 22.30, "lng": 91.80, "type": "naval_base", "branch": "Bangladesh Navy", "detail": "Bangladesh Navy main base; Bay of Bengal patrol"},
+
+    # ── Sri Lanka ──
+    {"name": "SLNS Rangalla (Trincomalee)", "country": "LK", "host": "LK", "lat": 8.57, "lng": 81.23, "type": "naval_base", "branch": "Sri Lanka Navy", "detail": "Eastern naval command; deep-water harbor"},
+
+    # ── Canada ──
+    {"name": "CFB Esquimalt", "country": "CA", "host": "CA", "lat": 48.43, "lng": -123.42, "type": "naval_base", "branch": "RCN", "detail": "Pacific Fleet HQ; Victoria-class submarine base"},
+    {"name": "CFB Cold Lake", "country": "CA", "host": "CA", "lat": 54.41, "lng": -110.28, "type": "air_base", "branch": "RCAF", "detail": "CF-18 Hornet wing; Maple Flag exercises"},
+    {"name": "CFB Halifax", "country": "CA", "host": "CA", "lat": 44.63, "lng": -63.58, "type": "naval_base", "branch": "RCN", "detail": "Atlantic Fleet HQ; Halifax-class frigate homeport"},
+
+    # ── Mexico ──
+    {"name": "Campo Militar No. 1 (Mexico City)", "country": "MX", "host": "MX", "lat": 19.46, "lng": -99.21, "type": "army_base", "branch": "SEDENA", "detail": "Mexican Army HQ; largest military base in Mexico"},
+    {"name": "Base Naval de Acapulco", "country": "MX", "host": "MX", "lat": 16.84, "lng": -99.92, "type": "naval_base", "branch": "SEMAR", "detail": "Pacific naval zone; counter-narcotics ops"},
+
+    # ── Brazil ──
+    {"name": "Brasília (1st Army Division)", "country": "BR", "host": "BR", "lat": -15.79, "lng": -47.88, "type": "army_base", "branch": "Brazilian Army", "detail": "Army HQ; capital garrison; strategic reserve"},
+    {"name": "São Pedro da Aldeia (NAe)", "country": "BR", "host": "BR", "lat": -22.81, "lng": -42.09, "type": "naval_base", "branch": "Brazilian Navy", "detail": "Naval aviation base; NAe São Paulo operations"},
+    {"name": "Manaus (CMA / 12th Military Region)", "country": "BR", "host": "BR", "lat": -3.13, "lng": -60.02, "type": "army_base", "branch": "Brazilian Army", "detail": "Amazon Military Command; jungle warfare center"},
+
+    # ── Argentina ──
+    {"name": "Puerto Belgrano Naval Base", "country": "AR", "host": "AR", "lat": -38.88, "lng": -62.08, "type": "naval_base", "branch": "ARA", "detail": "Argentine Navy main base; fleet HQ"},
+    {"name": "Río Gallegos Air Base", "country": "AR", "host": "AR", "lat": -51.62, "lng": -69.31, "type": "air_base", "branch": "FAA", "detail": "Southern air defense; Patagonia/Falklands watch"},
+
+    # ── Chile ──
+    {"name": "Base Naval Talcahuano", "country": "CL", "host": "CL", "lat": -36.72, "lng": -73.11, "type": "naval_base", "branch": "Chilean Navy", "detail": "Chilean Navy main base; Scorpène submarine homeport"},
+    {"name": "Punta Arenas (Chabunco Air Base)", "country": "CL", "host": "CL", "lat": -53.00, "lng": -70.85, "type": "air_base", "branch": "FACh", "detail": "Southernmost Chilean military base; Antarctic staging"},
+
+    # ── Colombia ──
+    {"name": "Palanquero Air Base (Germán Olano)", "country": "CO", "host": "CO", "lat": 5.48, "lng": -74.66, "type": "air_base", "branch": "FAC", "detail": "Colombian Air Force main base; Kfir wing"},
+    {"name": "Tolemaida Military Base", "country": "CO", "host": "CO", "lat": 4.25, "lng": -74.65, "type": "army_base", "branch": "Colombian Army", "detail": "Largest military base in Colombia; rapid deployment force"},
+
+    # ── Peru ──
+    {"name": "Callao Naval Base (Base Naval del Callao)", "country": "PE", "host": "PE", "lat": -12.06, "lng": -77.16, "type": "naval_base", "branch": "Peruvian Navy", "detail": "Peruvian Navy HQ; Pacific fleet base"},
+    {"name": "Las Palmas Air Base (Jorge Chávez)", "country": "PE", "host": "PE", "lat": -12.15, "lng": -76.99, "type": "air_base", "branch": "FAP", "detail": "Peruvian Air Force main base; MiG-29/Su-25 wing"},
+
+    # ── Venezuela ──
+    {"name": "Libertador Air Base (Palo Negro)", "country": "VE", "host": "VE", "lat": 10.18, "lng": -67.56, "type": "air_base", "branch": "AVB", "detail": "Venezuelan Air Force HQ; Su-30MKV wing"},
+    {"name": "Puerto Cabello Naval Base", "country": "VE", "host": "VE", "lat": 10.47, "lng": -68.01, "type": "naval_base", "branch": "Venezuelan Navy", "detail": "Venezuelan Navy main base; patrol fleet HQ"},
+
+    # ── Cuba ──
+    {"name": "San Antonio de los Baños Air Base", "country": "CU", "host": "CU", "lat": 22.87, "lng": -82.51, "type": "air_base", "branch": "DAAFAR", "detail": "Cuban Air Force primary base; MiG-29 wing"},
+
+    # ── Ecuador ──
+    {"name": "Manta Air Base", "country": "EC", "host": "EC", "lat": -0.95, "lng": -80.68, "type": "air_base", "branch": "FAE", "detail": "Former US FOL; Ecuadorian AF Kfir/Super Tucano ops"},
+
+    # ── South Africa ──
+    {"name": "Simon's Town Naval Base", "country": "ZA", "host": "ZA", "lat": -34.19, "lng": 18.43, "type": "naval_base", "branch": "SAN", "detail": "South African Navy HQ; Cape sea-route patrol"},
+    {"name": "AFB Hoedspruit", "country": "ZA", "host": "ZA", "lat": -24.37, "lng": 31.05, "type": "air_base", "branch": "SAAF", "detail": "Gripen wing; main fighter base"},
+
+    # ── Nigeria ──
+    {"name": "Abuja (Nigerian Armed Forces HQ)", "country": "NG", "host": "NG", "lat": 9.06, "lng": 7.49, "type": "military_base", "branch": "Nigerian Armed Forces", "detail": "Defence HQ; joint operations command"},
+    {"name": "Port Harcourt Naval Base (NNS Pathfinder)", "country": "NG", "host": "NG", "lat": 4.78, "lng": 7.01, "type": "naval_base", "branch": "Nigerian Navy", "detail": "Niger Delta security; Gulf of Guinea patrol"},
+
+    # ── Kenya ──
+    {"name": "Nanyuki (British Army Training Unit)", "country": "GB", "host": "KE", "lat": 0.01, "lng": 37.07, "type": "training", "branch": "British Army", "detail": "BATUK; jungle/desert warfare training"},
+    {"name": "Manda Bay (Camp Simba)", "country": "US", "host": "KE", "lat": -2.26, "lng": 40.91, "type": "military_base", "branch": "US DoD", "detail": "US operations base; counter-al-Shabaab staging"},
+
+    # ── Ethiopia ──
+    {"name": "Bishoftu (Debre Zeit) Air Base", "country": "ET", "host": "ET", "lat": 8.73, "lng": 38.95, "type": "air_base", "branch": "ENDF", "detail": "Ethiopian Air Force main base; Su-27/30 wing"},
+
+    # ── DRC ──
+    {"name": "Camp Kokolo (Kinshasa)", "country": "CD", "host": "CD", "lat": -4.33, "lng": 15.30, "type": "army_base", "branch": "FARDC", "detail": "DRC military garrison; Presidential Guard base"},
+
+    # ── Cameroon ──
+    {"name": "Douala Naval Base", "country": "CM", "host": "CM", "lat": 4.01, "lng": 9.73, "type": "naval_base", "branch": "Cameroon Navy", "detail": "Cameroon Navy HQ; Gulf of Guinea patrol"},
+
+    # ── Somalia ──
+    {"name": "Mogadishu (Halane Camp / Aden Abdulle)", "country": "SO", "host": "SO", "lat": 2.01, "lng": 45.30, "type": "military_base", "branch": "SNA/AMISOM", "detail": "Somali National Army HQ; AMISOM/ATMIS base"},
+
+    # ── Sudan ──
+    {"name": "Merowe Air Base", "country": "SD", "host": "SD", "lat": 18.44, "lng": 31.84, "type": "air_base", "branch": "SAF", "detail": "Sudanese AF forward base; MiG-29 ops"},
+
+    # ── Ghana ──
+    {"name": "Burma Camp (Accra)", "country": "GH", "host": "GH", "lat": 5.58, "lng": -0.16, "type": "army_base", "branch": "Ghana Armed Forces", "detail": "Ghana military HQ; major garrison"},
+
+    # ── Senegal ──
+    {"name": "Dakar-Ouakam Air Base", "country": "SN", "host": "SN", "lat": 14.73, "lng": -17.50, "type": "air_base", "branch": "Senegalese AF", "detail": "Senegal military air hub; Dakar garrison"},
+
+    # ── Tanzania ──
+    {"name": "Lugalo Military Camp (Dar es Salaam)", "country": "TZ", "host": "TZ", "lat": -6.81, "lng": 39.28, "type": "army_base", "branch": "TPDF", "detail": "Tanzania People's Defence Force HQ"},
+
+    # ── Uganda ──
+    {"name": "Entebbe Air Base", "country": "UG", "host": "UG", "lat": 0.05, "lng": 32.44, "type": "air_base", "branch": "UPDF", "detail": "UPDF Air Force main base; regional intervention staging"},
+
+    # ── Rwanda ──
+    {"name": "Kanombe Military Barracks (Kigali)", "country": "RW", "host": "RW", "lat": -1.97, "lng": 30.13, "type": "army_base", "branch": "RDF", "detail": "Rwanda Defence Force main garrison"},
+
+    # ── Mozambique ──
+    {"name": "Maputo Military Base", "country": "MZ", "host": "MZ", "lat": -25.97, "lng": 32.57, "type": "military_base", "branch": "FADM", "detail": "Mozambique Armed Forces HQ; southern command"},
+
+    # ── Angola ──
+    {"name": "Luanda Naval Base", "country": "AO", "host": "AO", "lat": -8.80, "lng": 13.23, "type": "naval_base", "branch": "Angolan Navy", "detail": "Angolan Navy HQ; offshore patrol"},
+
+    # ── Zimbabwe ──
+    {"name": "Thornhill Air Base (Gweru)", "country": "ZW", "host": "ZW", "lat": -19.44, "lng": 29.86, "type": "air_base", "branch": "AFZ", "detail": "Air Force of Zimbabwe main base; fighter/trainer wing"},
+
+    # ── Kazakhstan ──
+    {"name": "Baikonur Cosmodrome", "country": "RU", "host": "KZ", "lat": 45.62, "lng": 63.31, "type": "space_base", "branch": "Roscosmos", "detail": "World's first spaceport; leased by Russia; Soyuz launches"},
+
+    # ── Uzbekistan ──
+    {"name": "Termez Air Base", "country": "UZ", "host": "UZ", "lat": 37.24, "lng": 67.31, "type": "air_base", "branch": "Uzbek AF", "detail": "Southern border base; former coalition logistics hub"},
+
+    # ── Turkmenistan ──
+    {"name": "Mary Air Base", "country": "TM", "host": "TM", "lat": 37.62, "lng": 61.90, "type": "air_base", "branch": "Turkmen AF", "detail": "Turkmenistan's primary fighter base; MiG-29 wing"},
+
+    # ── Mongolia ──
+    {"name": "Buyant-Ukhaa (Five Hills Training Area)", "country": "MN", "host": "MN", "lat": 47.84, "lng": 106.77, "type": "training", "branch": "Mongolian AF", "detail": "Khaan Quest multinational exercises; main training area"},
+
+    # ── North Korea ──
+    {"name": "Pyongyang (Korean People's Army HQ)", "country": "KP", "host": "KP", "lat": 39.02, "lng": 125.75, "type": "military_base", "branch": "KPA", "detail": "Supreme Command; Ministry of People's Armed Forces"},
+    {"name": "Yongbyon Nuclear Scientific Research Center", "country": "KP", "host": "KP", "lat": 39.80, "lng": 125.75, "type": "military_base", "branch": "KPA", "detail": "Primary nuclear weapons complex; 5MWe reactor; enrichment"},
+
+    # ── Nepal ──
+    {"name": "Bhadrakali Military Camp (Kathmandu)", "country": "NP", "host": "NP", "lat": 27.71, "lng": 85.32, "type": "army_base", "branch": "Nepal Army", "detail": "Nepal Army HQ; main garrison"},
 ]
 
 
@@ -4619,6 +5235,17 @@ async def get_polymarket():
     return _json({"markets": markets})
 
 
+@app.get("/api/xfeed")
+async def get_xfeed():
+    posts = await asyncio.to_thread(fetch_xfeed)
+    return _json({
+        "posts": posts,
+        "count": len(posts),
+        "accounts_tracked": len(X_ACCOUNTS),
+        "has_token": bool(X_BEARER_TOKEN),
+    })
+
+
 @app.get("/api/militias")
 async def get_militias():
     return _json({"militias": MILITIAS})
@@ -4730,6 +5357,8 @@ async def get_all():
         "oil_rare_earth": OIL_RARE_EARTH_FIELDS,
         "threat_level": "ELEVATED",
         "threat_note": "Multiple active high-intensity conflicts. Elevated nuclear rhetoric. Global trade disruptions.",
+        "xfeed_accounts": len(X_ACCOUNTS),
+        "xfeed_has_token": bool(X_BEARER_TOKEN),
     })
 
 

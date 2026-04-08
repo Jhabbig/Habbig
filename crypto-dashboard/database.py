@@ -135,6 +135,46 @@ CREATE INDEX IF NOT EXISTS idx_news_alerts_score ON news_trade_alerts(score DESC
 CREATE INDEX IF NOT EXISTS idx_news_alerts_scanned ON news_trade_alerts(scanned_at);
 CREATE INDEX IF NOT EXISTS idx_news_watchlist_user ON news_trade_watchlist(user_id);
 CREATE INDEX IF NOT EXISTS idx_news_watchlist_alert ON news_trade_watchlist(alert_id);
+
+CREATE TABLE IF NOT EXISTS clob_credentials (
+    user_id      TEXT PRIMARY KEY,
+    encrypted    TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS clob_trade_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    order_id        TEXT,
+    condition_id    TEXT,
+    token_id        TEXT,
+    market_question TEXT,
+    outcome         TEXT,
+    side            TEXT NOT NULL,
+    order_type      TEXT NOT NULL DEFAULT 'market',
+    price           REAL,
+    size            REAL,
+    amount          REAL,
+    status          TEXT NOT NULL DEFAULT 'submitted',
+    response_data   TEXT DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_clob_trades_user ON clob_trade_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_clob_trades_status ON clob_trade_log(status);
+CREATE INDEX IF NOT EXISTS idx_clob_trades_created ON clob_trade_log(created_at);
+
+CREATE TABLE IF NOT EXISTS clob_favorites (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    condition_id TEXT NOT NULL,
+    question     TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, condition_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_clob_favorites_user ON clob_favorites(user_id);
 """
 
 
@@ -592,6 +632,136 @@ def get_watchlist_users_for_alert(alert_id: str) -> list:
             (alert_id,),
         ).fetchall()
     return _rows(rows)
+
+
+# ─── CLOB Credentials ──────────────────────────────────────────────
+
+def save_clob_credentials(user_id: str, encrypted: str):
+    """Save encrypted CLOB API credentials for a user."""
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO clob_credentials (user_id, encrypted, updated_at)
+               VALUES (?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                   encrypted = excluded.encrypted,
+                   updated_at = datetime('now')""",
+            (user_id, encrypted),
+        )
+
+
+def get_clob_credentials(user_id: str) -> Optional[str]:
+    """Get encrypted CLOB credentials for a user. Returns the encrypted blob."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT encrypted FROM clob_credentials WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return row["encrypted"] if row else None
+
+
+def delete_clob_credentials(user_id: str):
+    """Delete CLOB credentials for a user."""
+    with _conn() as c:
+        c.execute("DELETE FROM clob_credentials WHERE user_id = ?", (user_id,))
+
+
+def has_clob_credentials(user_id: str) -> bool:
+    """Check if a user has CLOB credentials stored."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM clob_credentials WHERE user_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return row is not None
+
+
+# ─── CLOB Trade Log ───────────────────────────────────────────────
+
+def log_clob_trade(user_id: str, order_id: str, condition_id: str,
+                   token_id: str, market_question: str, outcome: str,
+                   side: str, order_type: str, price: float,
+                   size: float, amount: float, status: str,
+                   response_data: dict) -> int:
+    """Log a CLOB trade. Returns the log row ID."""
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO clob_trade_log
+               (user_id, order_id, condition_id, token_id, market_question,
+                outcome, side, order_type, price, size, amount, status, response_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, order_id, condition_id, token_id, market_question,
+             outcome, side, order_type, price, size, amount, status,
+             json.dumps(response_data)),
+        )
+        return cur.lastrowid or 0
+
+
+def get_clob_trades(user_id: str, limit: int = 50) -> list:
+    """Get recent CLOB trades for a user."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM clob_trade_log WHERE user_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    result = []
+    for r in _rows(rows):
+        try:
+            r["response_data"] = json.loads(r.get("response_data", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            r["response_data"] = {}
+        result.append(r)
+    return result
+
+
+def update_clob_trade_status(trade_id: int, status: str, response_data: dict = None):
+    """Update the status of a logged trade."""
+    with _conn() as c:
+        if response_data:
+            c.execute(
+                "UPDATE clob_trade_log SET status = ?, response_data = ? WHERE id = ?",
+                (status, json.dumps(response_data), trade_id),
+            )
+        else:
+            c.execute(
+                "UPDATE clob_trade_log SET status = ? WHERE id = ?",
+                (status, trade_id),
+            )
+
+
+# ─── CLOB Favorites ──────────────────────────────────────────────
+
+def get_clob_favorites(user_id: str) -> list:
+    """Get a user's favorite markets."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM clob_favorites WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def add_clob_favorite(user_id: str, condition_id: str, question: str) -> bool:
+    """Add a market to favorites. Returns True if added."""
+    try:
+        with _conn() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO clob_favorites (user_id, condition_id, question) "
+                "VALUES (?, ?, ?)",
+                (user_id, condition_id, question),
+            )
+        return True
+    except Exception:
+        return False
+
+
+def remove_clob_favorite(user_id: str, condition_id: str):
+    """Remove a market from favorites."""
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM clob_favorites WHERE user_id = ? AND condition_id = ?",
+            (user_id, condition_id),
+        )
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────

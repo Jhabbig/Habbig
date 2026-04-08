@@ -10,7 +10,7 @@
  *   window.__hbSwitcher = {
  *     dashboards: [{ key, subdomain, display_name, accent }, ...],
  *     current: "crypto",
- *     domain: "habbig.com",
+ *     domain: "narve.ai",
  *     username: "julian"
  *   }
  */

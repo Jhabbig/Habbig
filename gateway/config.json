@@ -1,6 +1,6 @@
 {
-  "_comment": "Edit subdomain values to change how dashboards appear at *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running.",
-  "domain": "habbig.com",
+  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running.",
+  "domain": "narve.ai",
   "gateway_port": 7000,
   "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
   "dashboards": {

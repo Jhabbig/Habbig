@@ -1,4 +1,4 @@
-# Polymarket Gateway — habbig.com
+# Polymarket Gateway — narve.ai
 
 Central entry point for every dashboard. One apex domain for login/signup/billing,
 one subdomain per dashboard, one session cookie shared across all of them,
@@ -7,14 +7,14 @@ per-dashboard subscriptions so users can pick and mix.
 ## Domain layout
 
 ```
-habbig.com                  → apex: login, signup, my dashboards, billing
-crypto.habbig.com           → proxy → :8000 (crypto-dashboard)
-markets.habbig.com          → proxy → :8050 (stock-dashboard)
-midterm.habbig.com          → proxy → :8051 (midterm-dashboard)
-traders.habbig.com          → proxy → :8052 (top-traders-dashboard)
-weather.habbig.com          → proxy → :5050 (polymarket_weather_dashboard)
-sports.habbig.com           → proxy → :8888 (sports-dashboard)
-world.habbig.com            → proxy → :7050 (world-state-dashboard)
+narve.ai                  → apex: login, signup, my dashboards, billing
+crypto.narve.ai           → proxy → :8000 (crypto-dashboard)
+markets.narve.ai          → proxy → :8050 (stock-dashboard)
+midterm.narve.ai          → proxy → :8051 (midterm-dashboard)
+traders.narve.ai          → proxy → :8052 (top-traders-dashboard)
+weather.narve.ai          → proxy → :5050 (polymarket_weather_dashboard)
+sports.narve.ai           → proxy → :8888 (sports-dashboard)
+world.narve.ai            → proxy → :7050 (world-state-dashboard)
 ```
 
 Change any subdomain name in `config.json`. The internal `key` stays the same
@@ -23,7 +23,7 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
 ## How it works
 
 - **One cookie, all subdomains.** Session cookie `pm_gateway_session` is scoped
-  to `.habbig.com` so logging in at the apex covers every subdomain.
+  to `.narve.ai` so logging in at the apex covers every subdomain.
 - **Per-request subscription check.** Every proxied request verifies the user
   has an active subscription for that specific dashboard. No sub →
   redirect to `/billing?dashboard=<key>`.
@@ -48,7 +48,7 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
 | `auth.db` | SQLite database — created automatically on first run |
 | `static/` | Apex pages — login, signup, dashboards, billing, shared CSS (Notion/Wispr tokens) |
 | `requirements.txt` | Python deps for the gateway process |
-| `DEPLOY_HABBIG.md` | **Step-by-step checklist** for getting habbig.com online |
+| `DEPLOY_NARVE.md` | **Step-by-step checklist** for getting narve.ai online |
 | `setup_cloudflare.sh` | Helper that runs all the `cloudflared tunnel route dns` commands in one go |
 
 ## Run locally (no domain needed)
@@ -71,20 +71,20 @@ http://crypto.localhost:7000          # <- proxies to :8000 via the gateway
 
 ## Production deployment
 
-See **`DEPLOY_HABBIG.md`** for the full step-by-step checklist. Short version:
+See **`DEPLOY_NARVE.md`** for the full step-by-step checklist. Short version:
 
-1. Buy `habbig.com` (Cloudflare Registrar is cheapest; if elsewhere, change
+1. Buy `narve.ai` (Cloudflare Registrar is cheapest; if elsewhere, change
    nameservers to Cloudflare).
 2. Install & authenticate `cloudflared`.
-3. Create a tunnel: `cloudflared tunnel create habbig-gateway`.
+3. Create a tunnel: `cloudflared tunnel create narve-gateway`.
 4. Drop the ingress file at `~/.cloudflared/config.yml`:
    ```yaml
    tunnel: <tunnel-id>
    credentials-file: /home/<you>/.cloudflared/<tunnel-id>.json
    ingress:
-     - hostname: "*.habbig.com"
+     - hostname: "*.narve.ai"
        service: http://localhost:7000
-     - hostname: "habbig.com"
+     - hostname: "narve.ai"
        service: http://localhost:7000
      - service: http_status:404
    ```
@@ -95,9 +95,9 @@ See **`DEPLOY_HABBIG.md`** for the full step-by-step checklist. Short version:
    export PRODUCTION=1
    export GATEWAY_COOKIE_SECRET="$(openssl rand -hex 32)"
    ./start_dashboards.sh restart
-   cloudflared tunnel run habbig-gateway
+   cloudflared tunnel run narve-gateway
    ```
-7. Visit `https://habbig.com` — real signup, real subscription gating, dev
+7. Visit `https://narve.ai` — real signup, real subscription gating, dev
    bypass automatically disabled.
 
 ## Environment variables
@@ -112,7 +112,7 @@ See **`DEPLOY_HABBIG.md`** for the full step-by-step checklist. Short version:
 1. Add its entry to `config.json` with a unique top-level key, subdomain,
    target port, display name, accent color, and prices.
 2. Add a startup line to `start_dashboards.sh`.
-3. Run `cloudflared tunnel route dns <tunnel-id> <newsub>.habbig.com`.
+3. Run `cloudflared tunnel route dns <tunnel-id> <newsub>.narve.ai`.
 4. Restart gateway + `cloudflared`.
 
 ## Wiring real Stripe payments later
@@ -141,7 +141,7 @@ Good for a partner who will edit code, designs, and UI in parallel.
    cd "/Users/julianhabbig/Claude Vibecoding /Polymarket"
    git init
    git add .
-   git commit -m "Initial import of Habbig stack"
+   git commit -m "Initial import of Narve stack"
    ```
 2. Create a **private** GitHub repo (no password or token typed in chat) and
    push. Invite your partner as a collaborator from the GitHub web UI.
@@ -155,7 +155,7 @@ Good for a partner who will edit code, designs, and UI in parallel.
    sudo systemctl restart polymarket-*.service
    ```
 4. Your partner gets an admin account on the gateway by signing up at
-   `https://habbig.com/signup`, then running (on Ubuntu):
+   `https://narve.ai/signup`, then running (on Ubuntu):
    ```bash
    cd ~/Polymarket/gateway
    ~/Polymarket/venv/bin/python3 -c "

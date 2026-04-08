@@ -1,7 +1,7 @@
 [Unit]
-Description=Habbig Gateway (port 7000)
+Description=Narve Gateway (port 7000)
 After=network.target
-Wants=habbig-crypto.service habbig-weather.service habbig-sports.service habbig-world.service habbig-midterm.service habbig-traders.service habbig-stock.service
+Wants=narve-crypto.service narve-weather.service narve-sports.service narve-world.service narve-midterm.service narve-traders.service narve-stock.service
 
 [Service]
 # Required env vars: GATEWAY_SSO_SECRET, GATEWAY_COOKIE_SECRET, STRIPE_SECRET_KEY,

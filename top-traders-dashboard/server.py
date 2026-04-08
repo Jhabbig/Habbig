@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Top Traders Dashboard — tracks the top 3 traders on Polymarket and
-streams their recent trades.
+Top Traders Dashboard — tracks the top 3 traders on Polymarket,
+streams their recent trades, and scans for suspicious trades.
 
 Data sources (all public, unauthenticated):
   - https://lb-api.polymarket.com/volume?window=<all|1d|7d|30d>&limit=N
@@ -12,6 +12,7 @@ Data sources (all public, unauthenticated):
 Run: python3 server.py   (listens on :8052)
 """
 
+import asyncio
 import hmac
 import logging
 import os
@@ -183,6 +184,48 @@ async def top_traders(
     }
     _cache_set(key, payload)
     return payload
+
+
+# ─── Suspicious Trades Scanner ───────────────────────────────────────
+_last_sus_scan: dict = {}
+_last_sus_scan_time: float = 0
+SUS_CACHE_TTL = 1800  # serve cached data for 30 min
+
+
+async def _suspicious_trade_monitor():
+    """Periodically scan for suspicious trades in the background."""
+    global _last_sus_scan, _last_sus_scan_time
+
+    await asyncio.sleep(10)  # let server start
+
+    while True:
+        try:
+            from suspicious_trades import run_scanner
+            result = await asyncio.to_thread(run_scanner)
+            if result and result.get("suspicious_trades"):
+                _last_sus_scan = result
+                _last_sus_scan_time = time.time()
+                logging.info(
+                    "Suspicious scan complete: %d flagged trades",
+                    len(result["suspicious_trades"]),
+                )
+        except Exception as e:
+            logging.error("Suspicious scanner error: %s", e)
+
+        await asyncio.sleep(1800)  # re-scan every 30 min
+
+
+@app.on_event("startup")
+async def _start_scanner():
+    asyncio.create_task(_suspicious_trade_monitor())
+
+
+@app.get("/api/suspicious-trades")
+async def suspicious_trades_api():
+    """Return the latest suspicious trade scan results."""
+    if not _last_sus_scan:
+        return {"suspicious_trades": [], "aggregate_stats": {}, "wallet_investigations": {}}
+    return _last_sus_scan
 
 
 # ─── Frontend ─────────────────────────────────────────────────────────

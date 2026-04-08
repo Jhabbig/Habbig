@@ -159,7 +159,7 @@
     window.closeTour = function() {
       overlay.classList.remove('open');
       document.body.style.overflow = '';
-      localStorage.setItem('habbig_onboarded', '1');
+      localStorage.setItem('narve_onboarded', '1');
     };
     window.startTour = function() {
       overlay.classList.add('open');
@@ -168,7 +168,7 @@
     };
 
     // Auto-show on first visit
-    if (!localStorage.getItem('habbig_onboarded')) {
+    if (!localStorage.getItem('narve_onboarded')) {
       startTour();
     }
   })();
