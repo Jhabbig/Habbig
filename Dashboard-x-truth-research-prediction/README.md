@@ -50,3 +50,28 @@ Edit `.env` for API credentials and auth.
 | Markets not matching | Lower market_match_threshold in config.yaml |
 | X quota exhausted | Resets 1st of month |
 | "App is damaged" (macOS) | Right-click -> Open |
+
+## Files in this directory
+
+**Application code**
+| File / dir | Purpose |
+|---|---|
+| `app/` | Python application package — FastAPI app, scraping pipeline, scoring, desktop wrapper. See `app/README.md`. |
+| `scripts/` | Build/release helpers — DMG builder, icon generator. See `scripts/README.md`. |
+
+**Config / data**
+| File | Purpose |
+|---|---|
+| `polymarket.spec` | PyInstaller spec file. Used by `scripts/build_dmg.sh` to bundle the desktop app. |
+| `predictions.db` (+ `-shm`, `-wal`) | Main SQLite DB. Stores raw posts, predictions, sources, market snapshots, credibility history. |
+| `.encryption_key` | App-managed encryption key for sensitive fields. Auto-generated, never commit. |
+
+**Docker / build**
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Container build for the `truth-research` service. |
+| `docker-compose.yml` | **Standalone** compose file (separate from the root one). Brings up just this dashboard. |
+| `.dockerignore` | Excludes `*.db`, `.env`, `dist/`, etc. from the Docker build context. |
+| `requirements.txt` | Python deps (FastAPI, SQLModel, APScheduler, httpx, tweepy, etc.). |
+| `.env` / `.env.example` | Per-service env vars. Copy `.env.example` to `.env` to use. |
+| `README.md` | This file. |

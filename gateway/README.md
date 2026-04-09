@@ -40,16 +40,32 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
 
 ## Files
 
+**Python**
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI app — apex routes, reverse proxy, WebSocket proxy, auth middleware |
-| `db.py` | SQLite layer — users, sessions, subscriptions, PBKDF2 password hashing |
-| `config.json` | **Edit this** to change subdomain names, prices, or target ports |
-| `auth.db` | SQLite database — created automatically on first run |
-| `static/` | Apex pages — login, signup, dashboards, billing, shared CSS (Notion/Wispr tokens) |
-| `requirements.txt` | Python deps for the gateway process |
-| `DEPLOY_NARVE.md` | **Step-by-step checklist** for getting narve.ai online |
-| `setup_cloudflare.sh` | Helper that runs all the `cloudflared tunnel route dns` commands in one go |
+| `server.py` | FastAPI app — apex routes, reverse proxy, WebSocket proxy, auth middleware, subscription gating. |
+| `db.py` | SQLite layer — users, sessions, subscriptions, PBKDF2 password hashing, Fernet-encrypted secrets. |
+| `cache.py` | Redis caching + pub/sub layer. Caches dashboard API responses with TTL and publishes `data_updated` events to drive SSE. |
+| `poller.py` | Background poller that fetches each dashboard's main API endpoints, stores responses in Redis, and publishes `data_updated` so SSE clients refresh instantly. |
+| `sse.py` | Server-Sent Events stream — subscribes to Redis pub/sub and forwards events over `EventSource("/api/stream?dashboards=...")`. |
+
+**Config / data**
+| File | Purpose |
+|---|---|
+| `config.json` | **Edit this** to change subdomain names, prices, target ports, or accent colors per dashboard. The internal `key` for each dashboard must NOT change. |
+| `auth.db` | SQLite database — users, sessions, subscriptions. Created automatically on first run. |
+| `static/` | Apex pages and shared assets. See `static/README.md`. |
+
+**Build / deploy**
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Container build for the `gateway` service. |
+| `.dockerignore` | Excludes `auth.db`, `__pycache__`, etc. from the Docker build context. |
+| `requirements.txt` | Python deps for the gateway process. |
+| `setup_cloudflare.sh` | Runs all the `cloudflared tunnel route dns` commands for the apex + every subdomain in one go. |
+| `DEPLOY_NARVE.md` | **Step-by-step checklist** for getting narve.ai online in production. |
+| `.env.example` | Reference for env vars. Copy to `.env` to use. |
+| `README.md` | This file. |
 
 ## Run locally (no domain needed)
 
