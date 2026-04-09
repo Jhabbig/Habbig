@@ -23,6 +23,43 @@ from aggregators import (
     PredictItAggregator,
     PollingAggregator,
 )
+from race_keys import parse_district_from_title, race_key_to_jurisdiction
+
+
+def market_race_key(market: dict) -> str:
+    """Build a canonical race_key for a market.
+
+    For most race types this is ``{race_type}_{state}``. For US House races,
+    we attempt to parse the district number from the title so each district
+    becomes its own race (e.g. ``house_TX-28``).
+
+    Markets that lack a meaningful race_type (missing or "other") or a state
+    return a unique per-market sentinel keyed off ``source`` + ``source_id``.
+    Without this, every unmatched market would collapse into the same
+    ``other_US`` bucket — causing unrelated markets like "Bulgarian elections"
+    and "Will LeBron be president" to be grouped as the same race.
+    """
+    rt_raw = market.get("race_type")
+    st_raw = market.get("state")
+    rt = (rt_raw or "").lower()
+    st = (st_raw or "").upper()
+
+    if not rt or rt == "other" or not st:
+        # Cannot canonicalize — keep this market in its own bucket so the
+        # divergence calculator and detail endpoint never collide it with
+        # an unrelated market.
+        return f"unmatched_{market.get('source', 'x')}_{market.get('source_id', '')}"
+
+    if rt == "house":
+        title = market.get("event_title") or market.get("title") or ""
+        district = parse_district_from_title(title)
+        if district:
+            return f"house_{st}-{district}"
+        # House market without a parseable district is ambiguous — don't
+        # group it with the at-large state bucket.
+        return f"unmatched_{market.get('source', 'x')}_{market.get('source_id', '')}"
+
+    return f"{rt}_{st}"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -135,6 +172,7 @@ def _check_rate_limit(ip: str, tier: str) -> bool:
 
     # Prune entries older than the window
     cutoff = now - window
+    # Note: relies on state.rate_limit_store being a defaultdict(list)
     state.rate_limit_store[ip] = [t for t in state.rate_limit_store[ip] if t > cutoff]
 
     # Clean up empty keys to prevent unbounded memory growth from blocked IPs
@@ -146,7 +184,7 @@ def _check_rate_limit(ip: str, tier: str) -> bool:
         return False
 
     # Only record the timestamp if the request is allowed
-    state.rate_limit_store[ip].append(now)
+    state.rate_limit_store.setdefault(ip, []).append(now)
     return True
 
 
@@ -237,15 +275,19 @@ async def divergence_calculator():
             logger.info("Computing divergence snapshots")
             all_markets = state.db.get_all_markets(active_only=True)
 
-            # Group markets by race_key (race_type + state)
+            # Group markets by race_key (race_type + state, with district for house)
             by_race: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
             for m in all_markets:
-                race_key = f"{m.get('race_type', 'other')}_{m.get('state') or 'US'}"
+                race_key = market_race_key(m)
                 source = m.get("source", "unknown")
                 by_race[race_key][source].append(m)
 
             count = 0
             for race_key, sources in by_race.items():
+                # Unmatched markets get a unique per-source sentinel from
+                # market_race_key — never compare them across sources.
+                if race_key.startswith("unmatched_"):
+                    continue
                 if len(sources) < 2:
                     continue
 
@@ -267,6 +309,9 @@ async def divergence_calculator():
                 parts = race_key.split("_", 1)
                 race_type = parts[0] if parts else "other"
                 state_abbr = parts[1] if len(parts) > 1 else None
+                # House district keys look like "TX-28"; strip district for the state column
+                if race_type == "house" and state_abbr and "-" in state_abbr:
+                    state_abbr = state_abbr.split("-", 1)[0]
 
                 state.db.record_divergence(
                     race_key=race_key,
@@ -366,6 +411,103 @@ async def district_profile_updater():
         await asyncio.sleep(PROFILE_CHECK_INTERVAL)
 
 
+async def jurisdiction_profile_updater():
+    """Background task: enrich every jurisdiction (state, district, country) with live data.
+
+    Walks active markets, derives the (jurisdiction_type, jurisdiction_code) for each,
+    and refreshes them via Census/BEA/BLS/World Bank/Wikipedia. Profiles older than
+    7 days are refreshed; new ones are created on first sight. Runs hourly.
+    """
+    JURISDICTION_REFRESH_INTERVAL = 3600  # 1 hour
+    STALE_AFTER_DAYS = 7
+
+    while True:
+        try:
+            from data_sources.enrich import (
+                enrich_state_profile,
+                enrich_house_district_profile,
+                enrich_country_profile,
+            )
+            from district_profiles import get_profile as get_static_state
+            from datetime import datetime, timezone, timedelta
+
+            all_markets = state.db.get_all_markets(active_only=True)
+
+            # Build the unique set of jurisdictions referenced by active markets
+            jurisdictions: set[tuple[str, str]] = set()
+            for m in all_markets:
+                rt = (m.get("race_type") or "").lower()
+                st = (m.get("state") or "").upper()
+                title = m.get("event_title") or m.get("title") or ""
+
+                if rt == "world" and st:
+                    jurisdictions.add(("country", st))
+                elif rt == "house" and st and st != "US":
+                    district = parse_district_from_title(title)
+                    if district:
+                        jurisdictions.add(("us_district", f"{st}-{district}"))
+                    else:
+                        jurisdictions.add(("us_state", st))
+                elif st and st != "US" and len(st) <= 3:
+                    jurisdictions.add(("us_state", st))
+
+            stale_cutoff = datetime.now(timezone.utc) - timedelta(days=STALE_AFTER_DAYS)
+            refreshed = 0
+            errors = 0
+
+            for jt, jc in jurisdictions:
+                # Skip if cached and fresh
+                cached = state.db.get_jurisdiction_profile(jt, jc)
+                if cached:
+                    updated_at = cached.get("updated_at") or ""
+                    try:
+                        ts = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                        if ts > stale_cutoff:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                try:
+                    if jt == "us_state":
+                        base = get_static_state(jc) or {}
+                        enriched = await enrich_state_profile(state.http_session, jc, base=base)
+                        name = enriched.get("name") or base.get("name") or jc
+                    elif jt == "us_district":
+                        st_code, district = jc.split("-", 1)
+                        enriched = await enrich_house_district_profile(
+                            state.http_session, st_code, district
+                        )
+                        name = f"{st_code} District {int(district)}" if district != "00" else f"{st_code} (At-large)"
+                    elif jt == "country":
+                        enriched = await enrich_country_profile(state.http_session, jc)
+                        name = enriched.get("name") or jc
+                    else:
+                        continue
+
+                    state.db.upsert_jurisdiction_profile(
+                        jurisdiction_type=jt,
+                        jurisdiction_code=jc,
+                        name=name,
+                        profile_data=enriched,
+                        auto_generated=True,
+                    )
+                    refreshed += 1
+                except Exception as e:
+                    errors += 1
+                    logger.warning(f"Jurisdiction enrich failed for {jt}/{jc}: {e}")
+
+            if refreshed or errors:
+                logger.info(
+                    f"Jurisdiction profile updater: refreshed {refreshed}, errors {errors}, "
+                    f"total tracked {len(jurisdictions)}"
+                )
+
+        except Exception as e:
+            logger.error(f"Jurisdiction profile updater error: {e}", exc_info=True)
+
+        await asyncio.sleep(JURISDICTION_REFRESH_INTERVAL)
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -392,6 +534,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(data_refresh_loop(), name="data_refresh"),
         asyncio.create_task(divergence_calculator(), name="divergence"),
         asyncio.create_task(district_profile_updater(), name="district_profiles"),
+        asyncio.create_task(jurisdiction_profile_updater(), name="jurisdiction_profiles"),
     ]
 
     logger.info("Background tasks started")
@@ -722,7 +865,12 @@ async def data_races(
         first = next(iter(best.values()))
         rt = first.get("race_type", "other")
         st = first.get("state")
-        race_key = f"{rt}_{st}" if st else cq
+        race_key = market_race_key(first) if st else cq
+
+        # Derive district code (e.g. "28") for house races so the frontend can display it
+        district = None
+        if rt == "house" and "-" in (race_key or ""):
+            district = race_key.split("-", 1)[1]
 
         for m in best.values():
             m["race_key"] = race_key
@@ -732,6 +880,7 @@ async def data_races(
             "canonical": cq,
             "race_type": rt,
             "state": st,
+            "district": district,
             "title": first.get("event_title") or first.get("title"),
             "sources": best,
             "source_count": len(best),
@@ -755,22 +904,25 @@ async def data_race_detail(race_key: str):
 
     race_key can be:
     - "race_type_STATE" e.g. "senate_GA" — matches all sources for that race
+    - "house_STATE-NN" e.g. "house_TX-28" — district-specific house race
+    - "world_CC" e.g. "world_HU" — international race
     - "source_sourceId" e.g. "predictit_8156" — direct market lookup, then find siblings
     - legacy "race_type_STATE_sourceId" format
     """
     all_markets = state.db.get_all_markets(active_only=True)
 
-    # Step 1: find the target market(s)
+    # Step 1: find the target market(s) using the canonical race_key helper
     matched = {}
     target_race_type = None
     target_state = None
+    target_district = None  # for house races
 
     for m in all_markets:
         rt = m.get("race_type", "other")
         st = m.get("state") or "US"
         sid = m.get("source_id", "")
         source = m.get("source", "unknown")
-        group_key = f"{rt}_{st}"
+        group_key = market_race_key(m)
 
         if (group_key == race_key
             or f"{source}_{sid}" == race_key
@@ -779,26 +931,31 @@ async def data_race_detail(race_key: str):
             matched[source] = m
             target_race_type = rt
             target_state = st
+            if rt == "house" and "-" in group_key:
+                target_district = group_key.split("-", 1)[1]
 
-    # Step 2: if we found a target, also grab all other sources with same race_type + state
+    # Step 2: if we found a target, grab all sibling markets with the same canonical key
     if target_race_type and target_state:
+        target_key = race_key if "_" in race_key else f"{target_race_type}_{target_state}"
         for m in all_markets:
-            rt = m.get("race_type", "other")
-            st = m.get("state") or "US"
             source = m.get("source", "unknown")
-            if rt == target_race_type and st == target_state and source not in matched:
+            if source in matched:
+                continue
+            if market_race_key(m) == target_key:
                 matched[source] = m
 
     if not matched:
         raise HTTPException(status_code=404, detail="Race not found")
 
     first = list(matched.values())[0]
+    canonical_key = market_race_key(first)
     return {
-        "race_key": f"{target_race_type}_{target_state}",
+        "race_key": canonical_key,
         "title": first.get("title"),
         "event_title": first.get("event_title"),
         "race_type": first.get("race_type"),
         "state": first.get("state"),
+        "district": target_district,
         "by_source": {
             s: {
                 "outcomes": m.get("outcomes", []),
@@ -1015,6 +1172,98 @@ async def data_district_profiles():
     }
 
 
+# ============================================================================
+# Unified jurisdiction profiles (US states, US House districts, countries)
+# ============================================================================
+
+@app.get("/data/jurisdiction-profile")
+async def data_jurisdiction_profile(
+    jurisdiction_type: str,
+    jurisdiction_code: str,
+    refresh: bool = False,
+):
+    """Fetch a unified jurisdiction profile.
+
+    Parameters:
+        jurisdiction_type: 'us_state' | 'us_district' | 'country'
+        jurisdiction_code: e.g. 'GA', 'TX-28', 'HU'
+        refresh: if True, fetch fresh data from external sources and re-cache
+
+    Returns the merged profile (live data from Census/BEA/BLS/WorldBank/Wikipedia
+    layered on top of any curated static data).
+    """
+    jt = jurisdiction_type.lower()
+    jc = jurisdiction_code.upper()
+
+    if jt not in ("us_state", "us_district", "country"):
+        raise HTTPException(status_code=400, detail="invalid jurisdiction_type")
+
+    # Check cache first (unless refresh requested)
+    if not refresh:
+        cached = state.db.get_jurisdiction_profile(jt, jc)
+        if cached:
+            return {
+                "jurisdiction_type": jt,
+                "jurisdiction_code": jc,
+                "name": cached["name"],
+                "auto_generated": bool(cached.get("auto_generated")),
+                "updated_at": cached.get("updated_at"),
+                "candidates": cached.get("candidates_data") or [],
+                **(cached.get("profile_data") or {}),
+            }
+
+    # Build fresh
+    from data_sources import (
+        enrich_state_profile,
+        enrich_house_district_profile,
+        enrich_country_profile,
+    )
+
+    base: dict = {}
+    if jt == "us_state":
+        # Layer on top of any curated static data
+        from district_profiles import get_profile as get_static
+        base = get_static(jc) or {}
+        profile = await enrich_state_profile(state.http_session, jc, base=base)
+        name = profile.get("name") or base.get("name") or jc
+    elif jt == "us_district":
+        # jc is "TX-28" or "WY-AL"
+        try:
+            st_abbr, district = jc.split("-", 1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="us_district code must be 'STATE-NN'")
+        profile = await enrich_house_district_profile(state.http_session, st_abbr, district)
+        name = profile.get("name") or jc
+    else:  # country
+        profile = await enrich_country_profile(state.http_session, jc)
+        name = profile.get("name") or jc
+
+    # Cache it
+    state.db.upsert_jurisdiction_profile(
+        jurisdiction_type=jt,
+        jurisdiction_code=jc,
+        name=name,
+        profile_data=profile,
+        auto_generated=False,
+    )
+    return {
+        "jurisdiction_type": jt,
+        "jurisdiction_code": jc,
+        "name": name,
+        "auto_generated": False,
+        "updated_at": profile.get("_enriched_at"),
+        "candidates": [],
+        **profile,
+    }
+
+
+@app.get("/data/jurisdiction-profiles")
+async def data_jurisdiction_profiles(jurisdiction_type: Optional[str] = None):
+    """List all jurisdiction profiles (metadata only)."""
+    rows = state.db.get_all_jurisdiction_profiles(jurisdiction_type)
+    return {"profiles": rows}
+
+
 @app.get("/data/world-elections")
 async def data_world_elections(
     country: Optional[str] = None,
@@ -1161,6 +1410,54 @@ async def admin_data_status(request: Request):
         if lu and (sources[s]["last_updated"] is None or lu > sources[s]["last_updated"]):
             sources[s]["last_updated"] = lu
     return {"sources": dict(sources)}
+
+
+# ===================================================================
+# FX rates proxy (frankfurter.dev) — cached, USD base
+# ===================================================================
+
+_fx_cache: dict = {"data": None, "fetched_at": 0.0}
+_FX_TTL = 3600  # 1 hour
+_FX_FALLBACK = {
+    "base": "USD",
+    "date": "fallback",
+    "rates": {
+        "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
+        "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
+        "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
+        "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
+        "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
+        "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+    },
+}
+
+
+@app.get("/api/fx-rates")
+async def get_fx_rates():
+    """Return USD-base FX rates, cached for 1h. Source: frankfurter.dev."""
+    now = time.time()
+    cached = _fx_cache["data"]
+    if cached and (now - _fx_cache["fetched_at"]) < _FX_TTL:
+        return cached
+    try:
+        async with state.http_session.get(
+            "https://api.frankfurter.dev/v1/latest?base=USD",
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as r:
+            if r.status == 200:
+                data = await r.json()
+                # Ensure USD = 1 is included for round-tripping
+                data.setdefault("rates", {})
+                data["rates"]["USD"] = 1.0
+                _fx_cache["data"] = data
+                _fx_cache["fetched_at"] = now
+                return data
+    except Exception as e:
+        logger.warning(f"FX rate fetch failed: {e}")
+    # Serve stale cache if we have one, else fallback
+    if cached:
+        return cached
+    return _FX_FALLBACK
 
 
 # ===================================================================
