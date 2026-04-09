@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import logging
 from datetime import datetime, timezone
 
@@ -73,10 +74,25 @@ async def run_pipeline() -> dict:
         await session.commit()
 
         try:
-            from app.processing.extractor import PredictionExtractor, match_to_market
+            from app.processing.extractor import PredictionExtractor, match_to_market, _tokenize
             extractor = PredictionExtractor()
             mk_result = await session.exec(select(MarketSnapshot))
-            market_dicts = [{"market_slug": ms.market_slug, "market_question": ms.market_question, "category": ms.category, "yes_price": ms.yes_price, "close_time": ms.close_time} for ms in mk_result.all()]
+            # Tokenize each market question once up front so the inner match loop
+            # only pays a set-intersection cost per prediction (was O(P×M) tokenizations).
+            # Also bucket by category so match_to_market does an O(1) dict lookup
+            # instead of rescanning the whole market list on every prediction.
+            markets_by_category: dict[str, list[dict]] = collections.defaultdict(list)
+            for ms in mk_result.all():
+                question = ms.market_question or ""
+                entry = {
+                    "market_slug": ms.market_slug,
+                    "market_question": question,
+                    "category": ms.category,
+                    "yes_price": ms.yes_price,
+                    "close_time": ms.close_time,
+                    "_tokens": _tokenize(question),
+                }
+                markets_by_category[ms.category or "other"].append(entry)
 
             processed_result = await session.exec(select(Prediction.raw_post_id).distinct())
             processed_ids = set(processed_result.all())
@@ -86,7 +102,8 @@ async def run_pipeline() -> dict:
             for post in new_posts_result.all():
                 try:
                     for ext in extractor.extract(post.content):
-                        matched_market, _ = match_to_market(f"{ext.raw_text} {post.content[:200]}", market_dicts, category=ext.category)
+                        candidate_markets = markets_by_category.get(ext.category, [])
+                        matched_market, _ = match_to_market(f"{ext.raw_text} {post.content[:200]}", candidate_markets)
                         market_slug = matched_market["market_slug"] if matched_market else None
                         market_close_time = matched_market.get("close_time") if matched_market else None
                         market_implied_prob = matched_market["yes_price"] if matched_market else None

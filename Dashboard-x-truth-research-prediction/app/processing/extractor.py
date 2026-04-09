@@ -6,8 +6,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.config import yaml_config
+from app.models import CategoryEnum
 
 logger = logging.getLogger(__name__)
+
+_scoring_cfg = yaml_config.get("scoring", {})
+MARKET_MATCH_THRESHOLD = _scoring_cfg.get("market_match_threshold", 0.50)
+MIN_SHARED_TOKENS = _scoring_cfg.get("min_shared_tokens", 3)
+NEAR_PERFECT_SCORE = 0.95
 
 
 @dataclass
@@ -61,11 +67,13 @@ def _tokenize(text: str) -> set[str]:
     return {t for t in text.split() if t not in STOP_WORDS and len(t) > 1}
 
 
-MIN_SHARED_TOKENS = 3
+def _jaccard(tokens_a: set[str], tokens_b: set[str]) -> float:
+    """Jaccard similarity, with a minimum-overlap floor.
 
-
-def fuzzy_match_score(text_a: str, text_b: str) -> float:
-    tokens_a, tokens_b = _tokenize(text_a), _tokenize(text_b)
+    Returns 0.0 when fewer than MIN_SHARED_TOKENS tokens are shared — this
+    kills coincidental 1-2 word overlaps that would otherwise dominate short
+    texts (the root cause of the Bulgarian-election / LeBron mismatch).
+    """
     if not tokens_a or not tokens_b:
         return 0.0
     overlap = len(tokens_a & tokens_b)
@@ -75,25 +83,39 @@ def fuzzy_match_score(text_a: str, text_b: str) -> float:
     return overlap / union if union > 0 else 0.0
 
 
+def fuzzy_match_score(text_a: str, text_b: str) -> float:
+    return _jaccard(_tokenize(text_a), _tokenize(text_b))
+
+
 def match_to_market(
     prediction_text: str,
     markets: list[dict],
     threshold: float | None = None,
     category: str | None = None,
 ) -> tuple[dict | None, float]:
+    """Match a prediction to the best candidate market.
+
+    Strictly filters by category when one is given: a politics prediction
+    will never match a sports market, even if no politics markets exist
+    (in which case `(None, 0.0)` is returned).
+    """
     if threshold is None:
-        threshold = yaml_config.get("scoring", {}).get("market_match_threshold", 0.50)
-    # Pre-filter by category when available — prevents cross-category mismatches
-    if category and category != "other":
-        filtered = [m for m in markets if m.get("category") == category]
-        if filtered:
-            markets = filtered
+        threshold = MARKET_MATCH_THRESHOLD
+    if category and category != CategoryEnum.other.value:
+        markets = [m for m in markets if m.get("category") == category]
+        if not markets:
+            return (None, 0.0)
+    pred_tokens = _tokenize(prediction_text)
     best: tuple[dict | None, float] = (None, 0.0)
     for m in markets:
-        q = m.get("market_question", "") or m.get("question", "")
-        score = fuzzy_match_score(prediction_text, q)
+        mkt_tokens = m.get("_tokens")
+        if mkt_tokens is None:
+            mkt_tokens = _tokenize(m.get("market_question", "") or m.get("question", ""))
+        score = _jaccard(pred_tokens, mkt_tokens)
         if score > best[1]:
             best = (m, score)
+            if score >= NEAR_PERFECT_SCORE:
+                break
     return best if best[1] >= threshold else (None, 0.0)
 
 

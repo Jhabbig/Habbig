@@ -49,18 +49,15 @@ def test_malformed_no_crash():
     assert extractor.extract(None) == []
 
 def test_fuzzy_match_strong():
-    # Jaccard: shared tokens {trump, win, 2024, election} = 4, union = 6 → 0.67
     assert fuzzy_match_score("Trump will win the 2024 election", "Will Donald Trump win the 2024 Presidential Election?") > 0.50
 
 def test_fuzzy_match_weak():
     assert fuzzy_match_score("Lakers win championship", "Will inflation exceed 5% in 2025?") == 0.0
 
 def test_fuzzy_match_cross_category_rejected():
-    # Bulgarian elections vs LeBron — should NOT match even if a token or two overlap
     assert fuzzy_match_score("Bulgaria hold parliamentary elections", "Will LeBron James be the next president") == 0.0
 
 def test_fuzzy_match_min_overlap():
-    # Only 1-2 shared tokens should return 0 regardless of ratio
     assert fuzzy_match_score("bitcoin price", "bitcoin crash") == 0.0
 
 def test_match_to_market_category_filter():
@@ -68,24 +65,40 @@ def test_match_to_market_category_filter():
         {"market_question": "Will Trump win the 2026 midterm senate race?", "category": "politics"},
         {"market_question": "Will LeBron James win MVP this season in the NBA finals?", "category": "sports"},
     ]
-    # A politics prediction should match politics market, not sports
     matched, score = match_to_market(
         "Trump looks strong going into the 2026 midterm senate race", markets, category="politics"
     )
     assert matched is not None
     assert matched["category"] == "politics"
+    assert score >= 0.50
 
-def test_match_to_market_no_cross_category():
+def test_match_to_market_strict_no_fallback():
+    # If no markets exist in the requested category, we must return None rather
+    # than silently matching against the wrong category (the original bug).
     markets = [
-        {"market_question": "Will Bulgaria hold early parliamentary elections in 2026?", "category": "politics"},
         {"market_question": "Will LeBron James be elected president of the United States?", "category": "sports"},
     ]
-    # A sports prediction should NOT match a politics market
-    matched, _ = match_to_market(
-        "LeBron might run for president some day", markets, category="sports"
+    matched, score = match_to_market(
+        "Will Bulgaria hold early parliamentary elections in 2026", markets, category="politics"
     )
-    # Only the sports market is considered; it shouldn't match well enough
-    assert matched is None or matched["category"] == "sports"
+    assert matched is None
+    assert score == 0.0
+
+def test_match_to_market_pretokenized_fast_path():
+    # When callers supply pre-computed _tokens, the matcher should use them
+    # directly without re-tokenizing the market question.
+    markets = [
+        {
+            "market_question": "Will Trump win the 2026 midterm senate race?",
+            "category": "politics",
+            "_tokens": {"trump", "win", "2026", "midterm", "senate", "race"},
+        },
+    ]
+    matched, score = match_to_market(
+        "Trump will win the 2026 midterm senate race", markets, category="politics"
+    )
+    assert matched is not None
+    assert score >= 0.50
 
 def test_infer_politics():
     assert infer_category("Trump will win the presidential election") == "politics"
