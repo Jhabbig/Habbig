@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
+import { fmtMoney, fmtNum } from '../lib/settings'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, BarChart, Bar, Cell } from 'recharts'
-import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb } from 'lucide-react'
+import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb, Flag, ShieldCheck, X } from 'lucide-react'
 
 const sourceColors = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981', metaculus: '#a855f7' }
 const sourceLabels = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: '538 Polling', metaculus: 'Metaculus' }
@@ -38,8 +39,67 @@ export default function RaceDetail() {
   const [historicalResults, setHistoricalResults] = useState([])
   const [raceContext, setRaceContext] = useState(null)
   const [districtProfile, setDistrictProfile] = useState(null)
+  const [candidates, setCandidates] = useState([])
   const [loading, setLoading] = useState(true)
   const [visibleSources, setVisibleSources] = useState(new Set(Object.keys(sourceColors)))
+  const [currentUser, setCurrentUser] = useState(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
+
+  useEffect(() => {
+    api.me().then(setCurrentUser).catch(() => setCurrentUser(null))
+  }, [])
+
+  const isAdmin = currentUser?.tier === 'admin'
+
+  const refetchRace = () => api.race(raceKey).then(setRace).catch(() => {})
+
+  const handleFlagMarket = async (source, sourceId) => {
+    if (!race?.race_key || reviewBusy) return
+    const note = window.prompt(
+      `Mark ${sourceLabels[source] || source} as a WRONG market for this race?\n\nOptional note:`,
+      ''
+    )
+    if (note === null) return  // user cancelled
+    setReviewBusy(true)
+    try {
+      await api.flagMarket(race.race_key, source, sourceId, note || null)
+      await refetchRace()
+    } catch (e) {
+      window.alert(`Failed to flag market: ${e.message}`)
+    } finally {
+      setReviewBusy(false)
+    }
+  }
+
+  const handleUnflagMarket = async (source, sourceId) => {
+    if (!race?.race_key || reviewBusy) return
+    setReviewBusy(true)
+    try {
+      await api.unflagMarket(race.race_key, source, sourceId)
+      await refetchRace()
+    } catch (e) {
+      window.alert(`Failed to unflag market: ${e.message}`)
+    } finally {
+      setReviewBusy(false)
+    }
+  }
+
+  const handleToggleVerify = async () => {
+    if (!race?.race_key || reviewBusy) return
+    setReviewBusy(true)
+    try {
+      if (race.verified) {
+        await api.unverifyRace(race.race_key)
+      } else {
+        await api.verifyRace(race.race_key, null)
+      }
+      await refetchRace()
+    } catch (e) {
+      window.alert(`Failed to update verification: ${e.message}`)
+    } finally {
+      setReviewBusy(false)
+    }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -69,10 +129,36 @@ export default function RaceDetail() {
           .then(d => setHistoricalResults(d?.results || []))
           .catch(() => {})
       }
-      if (r?.state && r.state !== 'US') {
-        api.districtProfile(r.state)
-          .then(p => { if (p && p.found !== false) setDistrictProfile(p) })
+      // Fetch enriched candidates (Wikipedia bios)
+      if (r?.race_key) {
+        api.raceCandidates(r.race_key)
+          .then(c => setCandidates(c?.candidates || []))
           .catch(() => {})
+      }
+      // Resolve jurisdiction (state, district, or country) and fetch unified profile
+      if (r?.state) {
+        let jt = null
+        let jc = null
+        if (r.race_type === 'world') {
+          jt = 'country'
+          jc = r.state
+        } else if (r.race_type === 'house' && r.district) {
+          jt = 'us_district'
+          jc = `${r.state}-${r.district}`
+        } else if (r.state !== 'US') {
+          jt = 'us_state'
+          jc = r.state
+        }
+        if (jt && jc) {
+          api.jurisdictionProfile(jt, jc)
+            .then(p => { if (p && p.found !== false) setDistrictProfile(p) })
+            .catch(() => {
+              // Fallback to legacy state-only endpoint for backward compat
+              if (jt === 'us_state') {
+                api.districtProfile(jc).then(p => { if (p && p.found !== false) setDistrictProfile(p) }).catch(() => {})
+              }
+            })
+        }
       }
     }).finally(() => setLoading(false))
   }, [raceKey])
@@ -144,17 +230,44 @@ export default function RaceDetail() {
             <h1 className="text-2xl font-semibold text-stone-800">{race.title || race.event_title}</h1>
             <div className="flex items-center gap-3 mt-1 text-sm text-stone-500">
               {race.state && <span className="uppercase font-medium">{race.state}</span>}
-              <span className="capitalize">{race.race_type}</span>
+              {race.district && <span className="font-medium text-amber-700">District {parseInt(race.district, 10) || race.district}</span>}
+              <span className="capitalize">{race.race_type === 'world' ? 'International' : race.race_type}</span>
               <span className="text-stone-300">{sourceCount} source{sourceCount !== 1 ? 's' : ''}</span>
             </div>
           </div>
-          {maxSpread && (
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${spreadColor}`}>
-              <TrendingUp className="h-3 w-3" />
-              {(maxSpread.spread * 100).toFixed(1)}% spread
-              <span className="opacity-70">({sourceLabels[maxSpread.sources[0]] || maxSpread.sources[0]} vs {sourceLabels[maxSpread.sources[1]] || maxSpread.sources[1]})</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {race.verified && (
+              <div
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
+                title={race.verified_by ? `Verified by ${race.verified_by}` : 'Human-verified'}
+              >
+                <ShieldCheck className="h-3 w-3" />
+                Verified
+              </div>
+            )}
+            {maxSpread && (
+              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${spreadColor}`}>
+                <TrendingUp className="h-3 w-3" />
+                {(maxSpread.spread * 100).toFixed(1)}% spread
+                <span className="opacity-70">({sourceLabels[maxSpread.sources[0]] || maxSpread.sources[0]} vs {sourceLabels[maxSpread.sources[1]] || maxSpread.sources[1]})</span>
+              </div>
+            )}
+            {isAdmin && (
+              <button
+                onClick={handleToggleVerify}
+                disabled={reviewBusy}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors disabled:opacity-50 ${
+                  race.verified
+                    ? 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+                    : 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                }`}
+                title={race.verified ? 'Remove human verification' : 'Mark this source pairing as human-verified'}
+              >
+                <ShieldCheck className="h-3 w-3" />
+                {race.verified ? 'Unverify' : 'Verify match'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Source Comparison with outcome bars */}
@@ -167,18 +280,30 @@ export default function RaceDetail() {
             const tradeable = source === 'polymarket' || source === 'kalshi'
             const topOutcome = outcomes.length > 0 ? outcomes.reduce((a, b) => ((b.probability || 0) > (a.probability || 0) ? b : a), outcomes[0]) : null
 
+            const isFlagged = data.flagged === true
             return (
-              <div key={source} className="bg-stone-50 rounded-lg p-4">
+              <div
+                key={source}
+                className={`rounded-lg p-4 ${isFlagged ? 'bg-red-50/40 border border-red-200/60 opacity-75' : 'bg-stone-50'}`}
+              >
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-xs font-medium text-stone-600 flex items-center gap-1.5">
                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }}></div>
-                    {sourceLabels[source] || source}
+                    <span className={isFlagged ? 'line-through' : ''}>{sourceLabels[source] || source}</span>
+                    {isFlagged && (
+                      <span
+                        className="text-[9px] uppercase font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded"
+                        title={data.flag_note || 'Marked as wrong by an admin'}
+                      >
+                        Flagged
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {data.volume > 0 && (
                       <span className="text-[10px] text-stone-400">${(data.volume / 1000).toFixed(0)}k vol</span>
                     )}
-                    {tradeable && (
+                    {tradeable && !isFlagged && (
                       <button
                         onClick={() => {
                           const polyData = race.by_source?.polymarket
@@ -200,12 +325,34 @@ export default function RaceDetail() {
                         Trade
                       </button>
                     )}
+                    {isAdmin && (isFlagged ? (
+                      <button
+                        onClick={() => handleUnflagMarket(source, data.source_id)}
+                        disabled={reviewBusy}
+                        title="Restore this market — it does belong to this race after all"
+                        className="text-[10px] font-semibold px-2 py-1 rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <X className="h-3 w-3" /> Unflag
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleFlagMarket(source, data.source_id)}
+                        disabled={reviewBusy}
+                        title={`Flag this ${sourceLabels[source] || source} market as NOT belonging to this race`}
+                        className="text-[10px] font-semibold px-2 py-1 rounded-md border border-stone-200 text-stone-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50 transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <Flag className="h-3 w-3" /> Wrong
+                      </button>
+                    ))}
                   </div>
                 </div>
-                {data.title && data.title !== race.title && (
-                  <p className="text-[10px] text-stone-400 mb-2 italic">{data.title}</p>
+                {isFlagged && data.flag_note && (
+                  <p className="text-[10px] text-red-700 mb-2 italic">Note: {data.flag_note}</p>
                 )}
-                <div className="space-y-0.5">
+                {data.title && data.title !== race.title && (
+                  <p className={`text-[10px] mb-2 italic ${isFlagged ? 'text-red-400 line-through' : 'text-stone-400'}`}>{data.title}</p>
+                )}
+                <div className={`space-y-0.5 ${isFlagged ? 'opacity-60' : ''}`}>
                   {outcomes.slice(0, 12).map((o, i) => (
                     <OutcomeBar key={i} name={o.name} probability={o.probability} maxProb={maxProb} color={color} />
                   ))}
@@ -363,7 +510,64 @@ export default function RaceDetail() {
         </div>
       )}
 
-      {/* District / State Profile */}
+      {/* Candidates (Wikipedia bios + market probabilities) */}
+      {candidates.length > 0 && (
+        <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="p-1.5 bg-amber-50 rounded-lg">
+              <Users className="h-5 w-5 text-amber-600" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-stone-800">Candidates</h3>
+              <p className="text-xs text-stone-400">Market-implied odds + Wikipedia bios. Click any card to read more.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {candidates.map((c, i) => {
+              const pct = ((c.probability || 0) * 100).toFixed(1)
+              const isFavorite = i === 0 && (c.probability || 0) > 0.4
+              return (
+                <a
+                  key={c.name}
+                  href={c.url || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`block rounded-lg p-3 border transition-colors ${
+                    isFavorite ? 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+                      : 'bg-stone-50 border-stone-100 hover:bg-stone-100'
+                  } ${!c.url ? 'pointer-events-none' : ''}`}
+                >
+                  <div className="flex items-start gap-3">
+                    {c.thumbnail ? (
+                      <img src={c.thumbnail} alt={c.name} className="w-14 h-14 rounded-full object-cover flex-shrink-0 border border-stone-200" loading="lazy" />
+                    ) : (
+                      <div className="w-14 h-14 rounded-full bg-stone-200 flex-shrink-0 flex items-center justify-center text-stone-500 text-lg font-semibold">
+                        {c.name?.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-sm font-semibold text-stone-800 truncate">{c.name}</span>
+                        <span className={`text-sm font-bold tabular-nums flex-shrink-0 ${
+                          isFavorite ? 'text-amber-700' : 'text-stone-700'
+                        }`}>{pct}%</span>
+                      </div>
+                      {c.description && (
+                        <div className="text-[10px] text-stone-500 truncate" title={c.description}>{c.description}</div>
+                      )}
+                      {c.extract && (
+                        <p className="text-xs text-stone-600 mt-1 line-clamp-2 leading-snug">{c.extract}</p>
+                      )}
+                    </div>
+                  </div>
+                </a>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Jurisdiction Profile (state, district, or country) */}
       {districtProfile && districtProfile.found !== false && (
         <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
@@ -371,7 +575,13 @@ export default function RaceDetail() {
               <MapPin className="h-5 w-5 text-emerald-600" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-stone-800">{districtProfile.name || districtProfile.state} — State Profile</h3>
+              <h3 className="text-lg font-semibold text-stone-800">
+                {districtProfile.name || districtProfile.state}
+                {' — '}
+                {districtProfile.jurisdiction_type === 'country' ? 'Country Profile'
+                  : districtProfile.jurisdiction_type === 'us_district' ? 'District Profile'
+                  : 'State Profile'}
+              </h3>
               <p className="text-xs text-stone-400">Demographics, economy, infrastructure, political history</p>
             </div>
           </div>
@@ -440,10 +650,15 @@ export default function RaceDetail() {
                     </div>
                   </div>
                 )}
-                {districtProfile.economy.median_household_income && (
-                  <div className="flex gap-4 mt-2 text-xs text-stone-500">
-                    <span>Median Income: <strong className="text-stone-700">${districtProfile.economy.median_household_income.toLocaleString()}</strong></span>
-                    {districtProfile.economy.unemployment_rate && (
+                {(districtProfile.economy.median_household_income || districtProfile.economy.gdp_per_capita || districtProfile.economy.unemployment_rate) && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-stone-500">
+                    {districtProfile.economy.median_household_income && (
+                      <span>Median Income: <strong className="text-stone-700">{fmtMoney(districtProfile.economy.median_household_income)}</strong></span>
+                    )}
+                    {districtProfile.economy.gdp_per_capita && (
+                      <span>GDP / Capita: <strong className="text-stone-700">{fmtMoney(districtProfile.economy.gdp_per_capita)}</strong></span>
+                    )}
+                    {districtProfile.economy.unemployment_rate != null && (
                       <span>Unemployment: <strong className="text-stone-700">{districtProfile.economy.unemployment_rate}%</strong></span>
                     )}
                   </div>
@@ -531,6 +746,18 @@ export default function RaceDetail() {
                     <p className="text-xs text-stone-600">{districtProfile.political_history.trend}</p>
                   </div>
                 )}
+                {districtProfile.political_history.wikipedia_url && (
+                  <div className="mt-2 pt-2 border-t border-stone-200">
+                    <a
+                      href={districtProfile.political_history.wikipedia_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-emerald-700 hover:text-emerald-900 font-medium"
+                    >
+                      Read more on Wikipedia &rarr;
+                    </a>
+                  </div>
+                )}
               </div>
             )}
 
@@ -597,11 +824,48 @@ export default function RaceDetail() {
             </div>
           )}
 
-          {districtProfile.updated_at && (
-            <div className="mt-3 text-[10px] text-stone-300 text-right">
-              Profile updated: {districtProfile.updated_at?.slice(0, 10)}
+          {/* Recent Elections — Wikipedia history (US states, US districts, countries) */}
+          {districtProfile.recent_elections?.length > 0 && (
+            <div className="mt-5 pt-4 border-t border-stone-100">
+              <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <History className="h-3.5 w-3.5" /> Recent Elections
+              </h4>
+              <div className="space-y-3">
+                {districtProfile.recent_elections.slice(0, 6).map((el, i) => (
+                  <a
+                    key={i}
+                    href={el.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block bg-stone-50 hover:bg-stone-100 transition-colors rounded-lg p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          {el.year && <span className="text-[10px] font-bold text-stone-500 bg-white border border-stone-200 px-1.5 py-0.5 rounded">{el.year}</span>}
+                          <span className="text-sm font-semibold text-stone-800 truncate">{el.title}</span>
+                        </div>
+                        {el.extract && <p className="text-xs text-stone-600 leading-relaxed line-clamp-3">{el.extract}</p>}
+                      </div>
+                      {el.thumbnail && (
+                        <img src={el.thumbnail} alt="" className="w-16 h-16 object-cover rounded flex-shrink-0" loading="lazy" />
+                      )}
+                    </div>
+                  </a>
+                ))}
+              </div>
             </div>
           )}
+
+          {/* Data sources footer */}
+          <div className="mt-3 text-[10px] text-stone-300 text-right flex items-center justify-end gap-2">
+            {districtProfile._data_sources?.length > 0 && (
+              <span>Sources: {districtProfile._data_sources.join(' \u00B7 ')}</span>
+            )}
+            {districtProfile.updated_at && (
+              <span>Updated: {districtProfile.updated_at?.slice(0, 10)}</span>
+            )}
+          </div>
         </div>
       )}
 
@@ -721,7 +985,7 @@ export default function RaceDetail() {
                     <td className="py-2 px-3 text-right">
                       <span className="text-xs font-bold text-stone-800">{poll.percentage != null ? `${poll.percentage}%` : '—'}</span>
                     </td>
-                    <td className="py-2 px-3 text-right text-xs text-stone-400">{poll.sample_size != null ? poll.sample_size.toLocaleString() : '—'}</td>
+                    <td className="py-2 px-3 text-right text-xs text-stone-400">{poll.sample_size != null ? fmtNum(poll.sample_size) : '—'}</td>
                     <td className="py-2 px-3 text-right text-xs text-stone-400">{poll.end_date || poll.start_date || '—'}</td>
                   </tr>
                 ))}

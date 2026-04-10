@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -92,6 +93,16 @@ class AlertBody(BaseModel):
     race_key: str
     threshold: Optional[float] = None
     direction: Optional[str] = "any"  # "up", "down", "any"
+
+
+class FlagMarketBody(BaseModel):
+    source: str
+    source_id: str
+    note: Optional[str] = None
+
+
+class VerifyRaceBody(BaseModel):
+    note: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -274,11 +285,17 @@ async def divergence_calculator():
         try:
             logger.info("Computing divergence snapshots")
             all_markets = state.db.get_all_markets(active_only=True)
+            # Fetch human-review flags once per pass so we don't hit SQLite
+            # per-market inside the grouping loop.
+            wrong_flags = state.db.get_all_wrong_flags()
 
             # Group markets by race_key (race_type + state, with district for house)
             by_race: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
             for m in all_markets:
                 race_key = market_race_key(m)
+                # Skip markets a human flagged as "wrong" for this race.
+                if (m.get("source", ""), m.get("source_id", "")) in wrong_flags.get(race_key, set()):
+                    continue
                 source = m.get("source", "unknown")
                 by_race[race_key][source].append(m)
 
@@ -603,20 +620,52 @@ async def csrf_xhr_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _gateway_authenticated(request: Request) -> bool:
+    """Return True if the request carries a valid gateway HMAC header."""
+    secret = os.environ.get("GATEWAY_SSO_SECRET")
+    if not secret:
+        return False
+    provided = request.headers.get("x-gateway-secret", "")
+    return bool(provided) and hmac.compare_digest(provided, secret)
+
+
+def _client_identity(request: Request) -> str:
+    """Identify the caller for rate-limiting / auditing.
+
+    Without this helper every request looked like it came from the gateway's
+    IP because the dashboard always sees `request.client.host == <gateway>`.
+    A globally-shared rate quota was the result. We now:
+
+    1. Prefer the authenticated user id if the gateway forwarded one and the
+       gateway HMAC header validates (so the id is trustworthy).
+    2. Otherwise fall back to the first hop in X-Forwarded-For — but only when
+       the gateway secret is present, because that header is trivially
+       spoofable on a direct connection.
+    3. Else fall back to the raw socket peer.
+    """
+    if _gateway_authenticated(request):
+        uid = request.headers.get("x-gateway-user-id", "").strip()
+        if uid:
+            return f"user:{uid}"
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            first = xff.split(",")[0].strip()
+            if first:
+                return f"ip:{first}"
+    return f"ip:{request.client.host if request.client else 'unknown'}"
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     # Only trust the tier header if the gateway secret is valid
-    import hmac
-    _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
-    _provided = request.headers.get("x-gateway-secret", "")
-    if _sso_secret and hmac.compare_digest(_provided, _sso_secret):
+    if _gateway_authenticated(request):
         tier = request.headers.get("x-gateway-user-tier", "free")
     else:
         tier = "free"
 
-    ip = request.client.host if request.client else "unknown"
+    identity = _client_identity(request)
 
-    if not _check_rate_limit(ip, tier):
+    if not _check_rate_limit(identity, tier):
         return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded. Please slow down."},
@@ -632,12 +681,19 @@ async def audit_sensitive_actions(request: Request, call_next):
 
     path = request.url.path
     if path.startswith(("/admin/", "/premium/")):
-        ip = request.client.host if request.client else "unknown"
-        user_id = request.headers.get("x-gateway-user-id")
+        identity = _client_identity(request)
+        # Only trust the gateway-supplied user id when the HMAC header proves
+        # the request actually came through the gateway. Otherwise an attacker
+        # hitting the backend directly could poison the audit log with any
+        # user id they liked.
+        if _gateway_authenticated(request):
+            user_id = request.headers.get("x-gateway-user-id")
+        else:
+            user_id = None
         await _audit_log(
             action=f"{request.method} {path}",
             user_id=user_id,
-            ip=ip,
+            ip=identity,
             detail=f"status={response.status_code}",
         )
 
@@ -834,17 +890,35 @@ async def data_races(
     else:
         markets = [m for m in markets if m.get("race_type") in valid_race_types]
 
+    # Fetch human-review state once per request.
+    wrong_flags = state.db.get_all_wrong_flags()
+    verifications = state.db.get_all_verifications()
+
     # --- group by canonical question ------------------------------------
     from collections import defaultdict
     buckets: dict[str, dict[str, list[dict]]] = defaultdict(
         lambda: defaultdict(list)
     )
 
-    for m in markets:
+    # Shallow-copy each row before mutating. The rows come straight from the
+    # aggregator/db cache; mutating them in place leaks "market_id" and "_cq"
+    # back into the cache and corrupts subsequent requests (and races with
+    # background refresh tasks).
+    for raw in markets:
+        m = dict(raw)
         src = m.get("source", "unknown")
-        m["market_id"] = f"{src}_{m.get('source_id', '')}"
+        sid = m.get("source_id", "")
+        m["market_id"] = f"{src}_{sid}"
         cq = _canonical_question(m)
+        mk = market_race_key(m)
         m["_cq"] = cq
+        # Skip markets a human flagged as "wrong" for this race. The flag
+        # could have been written under either the canonical question (cq)
+        # or the market_race_key (mk) depending on which endpoint the admin
+        # used — check both so the listing stays in sync with the detail page.
+        pair = (src, sid)
+        if pair in wrong_flags.get(cq, set()) or pair in wrong_flags.get(mk, set()):
+            continue
         buckets[cq][src].append(m)
 
     matched = []
@@ -875,6 +949,11 @@ async def data_races(
         for m in best.values():
             m["race_key"] = race_key
 
+        # A race is human-verified when EITHER its canonical question
+        # (``cq``) or its race_key has a verification record. We check both
+        # so old verifications bookmarked against race_key keep working.
+        verification = verifications.get(cq) or verifications.get(race_key)
+
         entry = {
             "race_key": race_key,
             "canonical": cq,
@@ -885,6 +964,9 @@ async def data_races(
             "sources": best,
             "source_count": len(best),
             "volume": total_vol,
+            "verified": bool(verification),
+            "verified_by": (verification or {}).get("reviewer_email"),
+            "verified_at": (verification or {}).get("verified_at"),
         }
 
         if len(best) >= 2:
@@ -910,6 +992,8 @@ async def data_race_detail(race_key: str):
     - legacy "race_type_STATE_sourceId" format
     """
     all_markets = state.db.get_all_markets(active_only=True)
+    # Load flag state once so step 2 can skip flagged sibling markets.
+    wrong_flags = state.db.get_all_wrong_flags()
 
     # Step 1: find the target market(s) using the canonical race_key helper
     matched = {}
@@ -942,6 +1026,9 @@ async def data_race_detail(race_key: str):
             if source in matched:
                 continue
             if market_race_key(m) == target_key:
+                # Don't re-attach a sibling the reviewer flagged as wrong.
+                if (source, m.get("source_id", "")) in wrong_flags.get(target_key, set()):
+                    continue
                 matched[source] = m
 
     if not matched:
@@ -949,6 +1036,22 @@ async def data_race_detail(race_key: str):
 
     first = list(matched.values())[0]
     canonical_key = market_race_key(first)
+
+    # Mark (but don't strip) entries the admin flagged as wrong. The listing
+    # and divergence calculator filter flagged markets out, but the detail
+    # page keeps them visible so the admin can see what they flagged and
+    # undo it. Non-admin users will see them struck-through in the UI.
+    flagged_here = wrong_flags.get(canonical_key, set()) | wrong_flags.get(race_key, set())
+    flags_for_race = state.db.get_flags_for_race(canonical_key)
+    flag_notes_by_pair = {
+        (f["source"], f["source_id"]): f.get("note")
+        for f in flags_for_race
+    }
+
+    verification = (
+        state.db.get_race_verification(canonical_key)
+        or state.db.get_race_verification(race_key)
+    )
     return {
         "race_key": canonical_key,
         "title": first.get("title"),
@@ -956,6 +1059,10 @@ async def data_race_detail(race_key: str):
         "race_type": first.get("race_type"),
         "state": first.get("state"),
         "district": target_district,
+        "verified": bool(verification),
+        "verified_by": (verification or {}).get("reviewer_email"),
+        "verified_at": (verification or {}).get("verified_at"),
+        "flags": flags_for_race,
         "by_source": {
             s: {
                 "outcomes": m.get("outcomes", []),
@@ -964,10 +1071,138 @@ async def data_race_detail(race_key: str):
                 "liquidity": m.get("liquidity", 0),
                 "slug": m.get("slug", ""),
                 "source_id": m.get("source_id", ""),
+                "flagged": (s, m.get("source_id", "")) in flagged_here,
+                "flag_note": flag_notes_by_pair.get((s, m.get("source_id", ""))),
             }
             for s, m in matched.items()
         },
     }
+
+
+@app.get("/data/race/{race_key}/candidates")
+async def data_race_candidates(race_key: str, refresh: bool = False):
+    """Extract candidates from a race's market outcomes and enrich each with Wikipedia.
+
+    Returns a list of {name, party?, probability?, description?, extract?, url?, thumbnail?}.
+    Skips yes/no and party-only markets. Caches results in the jurisdiction profile so
+    we don't hammer Wikipedia on every page view.
+    """
+    # Reuse the race detail logic to find the canonical race
+    detail = await data_race_detail(race_key)
+    sources = detail.get("by_source", {})
+
+    # Aggregate candidates across sources, preferring multi-outcome markets
+    # (these have actual candidate names, not yes/no)
+    candidate_outcomes: dict[str, dict] = {}
+    for src, data in sources.items():
+        outcomes = data.get("outcomes", [])
+        names = [(o.get("name") or "").strip() for o in outcomes]
+        # Skip yes/no markets and party-only markets
+        if not names or len(names) < 2:
+            continue
+        if all(n.lower() in ("yes", "no") for n in names if n):
+            continue
+        if all(n.lower() in ("republican", "democratic", "democrat", "republican party",
+                              "democratic party", "other", "independent") for n in names if n):
+            continue
+        # This source has real candidates
+        for o in outcomes:
+            name = (o.get("name") or "").strip()
+            if not name or name.lower() in ("yes", "no"):
+                continue
+            # Skip generic party labels
+            if name.lower() in ("republican", "democratic", "democrat", "republican party",
+                                 "democratic party", "other", "independent"):
+                continue
+            existing = candidate_outcomes.get(name)
+            if existing is None or (o.get("probability") or 0) > (existing.get("probability") or 0):
+                candidate_outcomes[name] = {
+                    "name": name,
+                    "probability": o.get("probability"),
+                    "source": src,
+                }
+
+    if not candidate_outcomes:
+        return {"race_key": race_key, "candidates": [], "note": "No candidate-level outcomes found"}
+
+    # Sort by probability desc, take top 10
+    sorted_candidates = sorted(
+        candidate_outcomes.values(),
+        key=lambda c: c.get("probability") or 0,
+        reverse=True,
+    )[:10]
+
+    # Check cache: if we have cached candidates for this race_key, return them unless refresh
+    if not refresh:
+        cached = state.db.get_jurisdiction_profile("race_candidates", race_key)
+        if cached and cached.get("candidates_data"):
+            try:
+                cached_list = json.loads(cached["candidates_data"])
+                # Update probabilities with current values
+                cached_by_name = {c.get("name"): c for c in cached_list}
+                merged = []
+                for sc in sorted_candidates:
+                    bio = cached_by_name.get(sc["name"], {})
+                    merged.append({**bio, **sc})
+                return {"race_key": race_key, "candidates": merged}
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    # Build a context hint + state name to disambiguate common names
+    # e.g. "Mike Collins" → score Wikipedia hits by whether they mention "Georgia"
+    rt = detail.get("race_type", "")
+    st = detail.get("state", "")
+    state_name_hint: Optional[str] = None
+    context_parts = []
+    if st and st != "US":
+        from data_sources.fips import state_to_name
+        from data_sources.countries import country_name
+        state_name_hint = state_to_name(st) or country_name(st) or st
+        context_parts.append(state_name_hint)
+    if rt and rt != "world":
+        context_parts.append(rt)
+    context_hint = " ".join(context_parts) if context_parts else None
+
+    # Fresh enrichment: fetch Wikipedia bio for each candidate
+    from data_sources.wikipedia import fetch_person_bio
+    enriched = []
+    for c in sorted_candidates:
+        bio = await fetch_person_bio(
+            state.http_session,
+            c["name"],
+            context=context_hint,
+            state_name=state_name_hint,
+        )
+        if bio:
+            enriched.append({
+                **c,
+                "description": bio.get("description"),
+                "extract": bio.get("extract"),
+                "url": bio.get("url"),
+                "thumbnail": bio.get("thumbnail"),
+            })
+        else:
+            enriched.append(c)
+
+    # Cache to DB
+    try:
+        state.db.upsert_jurisdiction_profile(
+            jurisdiction_type="race_candidates",
+            jurisdiction_code=race_key,
+            name=race_key,
+            profile_data={"updated_at": _iso_now()},
+            candidates_data=enriched,
+            auto_generated=True,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to cache candidates for {race_key}: {e}")
+
+    return {"race_key": race_key, "candidates": enriched}
+
+
+def _iso_now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 @app.get("/data/history/{race_key}")
@@ -1272,13 +1507,18 @@ async def data_world_elections(
     min_volume: Optional[float] = None,
 ):
     """World leader election markets from prediction platforms."""
-    markets = state.db.get_markets(
+    raw_markets = state.db.get_markets(
         race_type="world", state=country, source=source,
         search=search, min_volume=min_volume,
     )
-    for m in markets:
+    # Shallow-copy each row to avoid mutating cached objects shared with
+    # other handlers.
+    markets = []
+    for raw in raw_markets:
+        m = dict(raw)
         m["race_key"] = f"world_{m.get('state') or 'INTL'}"
         m["market_id"] = f"{m.get('source', 'unknown')}_{m.get('source_id', '')}"
+        markets.append(m)
     return {"markets": markets}
 
 
@@ -1396,6 +1636,57 @@ async def admin_audit_log(request: Request, limit: int = 100):
     await require_tier(request, "admin")
     entries = state.db.get_audit_log(limit=limit)
     return {"logs": entries}
+
+
+@app.post("/admin/race/{race_key}/flag")
+async def admin_flag_market(race_key: str, body: FlagMarketBody, request: Request):
+    """Flag a market as NOT belonging to *race_key*.
+
+    Idempotent: flagging the same (source, source_id, race_key) twice just
+    updates the reviewer/note. The matching layer excludes flagged markets
+    from the race bucket on the next request and on the next divergence pass.
+    """
+    user = await require_tier(request, "admin")
+    state.db.flag_market_as_wrong(
+        source=body.source,
+        source_id=body.source_id,
+        race_key=race_key,
+        reviewer_id=user.get("id"),
+        reviewer_email=user.get("email"),
+        note=body.note,
+    )
+    return {"ok": True, "flagged": {"source": body.source, "source_id": body.source_id, "race_key": race_key}}
+
+
+@app.delete("/admin/race/{race_key}/flag/{source}/{source_id}")
+async def admin_unflag_market(race_key: str, source: str, source_id: str, request: Request):
+    await require_tier(request, "admin")
+    removed = state.db.unflag_market(source=source, source_id=source_id, race_key=race_key)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Flag not found")
+    return {"ok": True}
+
+
+@app.post("/admin/race/{race_key}/verify")
+async def admin_verify_race(race_key: str, body: VerifyRaceBody, request: Request):
+    """Mark the current source pairing for *race_key* as human-verified."""
+    user = await require_tier(request, "admin")
+    state.db.verify_race(
+        race_key=race_key,
+        reviewer_id=user.get("id"),
+        reviewer_email=user.get("email"),
+        note=body.note,
+    )
+    return {"ok": True, "race_key": race_key}
+
+
+@app.delete("/admin/race/{race_key}/verify")
+async def admin_unverify_race(race_key: str, request: Request):
+    await require_tier(request, "admin")
+    removed = state.db.unverify_race(race_key)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Verification not found")
+    return {"ok": True}
 
 
 @app.get("/admin/data-status")

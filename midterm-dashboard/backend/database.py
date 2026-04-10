@@ -176,6 +176,44 @@ CREATE TABLE IF NOT EXISTS midterm_district_profiles (
     created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+-- New jurisdiction table supports US states, US House districts, and countries.
+-- jurisdiction_type: 'us_state' | 'us_district' | 'country'
+-- jurisdiction_code: 'WY' | 'TX-28' | 'HU'
+CREATE TABLE IF NOT EXISTS midterm_jurisdiction_profiles (
+    jurisdiction_type TEXT NOT NULL,
+    jurisdiction_code TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    profile_data      TEXT NOT NULL,
+    candidates_data   TEXT,
+    auto_generated    INTEGER DEFAULT 0,
+    created_at        TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at        TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (jurisdiction_type, jurisdiction_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_jurisdiction_type ON midterm_jurisdiction_profiles(jurisdiction_type);
+
+CREATE TABLE IF NOT EXISTS midterm_market_match_flags (
+    source          TEXT NOT NULL,
+    source_id       TEXT NOT NULL,
+    race_key        TEXT NOT NULL,
+    reviewer_id     TEXT,
+    reviewer_email  TEXT,
+    note            TEXT,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (source, source_id, race_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_match_flags_race_key ON midterm_market_match_flags(race_key);
+
+CREATE TABLE IF NOT EXISTS midterm_market_race_verifications (
+    race_key        TEXT PRIMARY KEY,
+    reviewer_id     TEXT,
+    reviewer_email  TEXT,
+    note            TEXT,
+    verified_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 """
 
 
@@ -397,6 +435,116 @@ class Database:
                         details_json,
                     ),
                 )
+
+    # === Human-review market match flags ====================================
+
+    def flag_market_as_wrong(
+        self,
+        source: str,
+        source_id: str,
+        race_key: str,
+        reviewer_id: str | None = None,
+        reviewer_email: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Record that a human reviewed (source, source_id) as NOT belonging
+        to *race_key*. The matching layer will exclude this pair from the
+        race bucket."""
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_market_match_flags
+                        (source, source_id, race_key, reviewer_id, reviewer_email, note)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(source, source_id, race_key) DO UPDATE SET
+                         reviewer_id = excluded.reviewer_id,
+                         reviewer_email = excluded.reviewer_email,
+                         note = excluded.note,
+                         created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')""",
+                    (source, source_id, race_key, reviewer_id, reviewer_email, note),
+                )
+
+    def unflag_market(self, source: str, source_id: str, race_key: str) -> bool:
+        """Remove a wrong-market flag. Returns True if a row was deleted."""
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    "DELETE FROM midterm_market_match_flags WHERE source=? AND source_id=? AND race_key=?",
+                    (source, source_id, race_key),
+                )
+                return cur.rowcount > 0
+
+    def get_flags_for_race(self, race_key: str) -> list[dict]:
+        """All flags attached to *race_key*, newest first."""
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM midterm_market_match_flags WHERE race_key=? ORDER BY created_at DESC",
+                (race_key,),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def get_all_wrong_flags(self) -> dict[str, set[tuple[str, str]]]:
+        """Return race_key → set of (source, source_id) flagged as wrong.
+
+        Called once per matching pass so the scheduler loop isn't fetching
+        per-market from SQLite.
+        """
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT race_key, source, source_id FROM midterm_market_match_flags"
+            ).fetchall()
+        out: dict[str, set[tuple[str, str]]] = {}
+        for r in rows:
+            out.setdefault(r["race_key"], set()).add((r["source"], r["source_id"]))
+        return out
+
+    def verify_race(
+        self,
+        race_key: str,
+        reviewer_id: str | None = None,
+        reviewer_email: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Mark a race_key as human-verified. Upserts."""
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_market_race_verifications
+                        (race_key, reviewer_id, reviewer_email, note)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(race_key) DO UPDATE SET
+                         reviewer_id = excluded.reviewer_id,
+                         reviewer_email = excluded.reviewer_email,
+                         note = excluded.note,
+                         verified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')""",
+                    (race_key, reviewer_id, reviewer_email, note),
+                )
+
+    def unverify_race(self, race_key: str) -> bool:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    "DELETE FROM midterm_market_race_verifications WHERE race_key=?",
+                    (race_key,),
+                )
+                return cur.rowcount > 0
+
+    def get_race_verification(self, race_key: str) -> dict | None:
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM midterm_market_race_verifications WHERE race_key=?",
+                (race_key,),
+            ).fetchone()
+        return _row_to_dict(row) if row else None
+
+    def get_all_verifications(self) -> dict[str, dict]:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM midterm_market_race_verifications"
+            ).fetchall()
+        return {r["race_key"]: _row_to_dict(r) for r in rows}
+
+    # === Divergence history =================================================
 
     def get_divergence_history(
         self, race_key: str = None, days: int = 30
@@ -659,3 +807,101 @@ class Database:
         with _get_conn() as conn:
             rows = conn.execute("SELECT state FROM midterm_district_profiles").fetchall()
         return {r["state"] for r in rows}
+
+    # === Jurisdiction Profiles (states / districts / countries) =============
+
+    def upsert_jurisdiction_profile(
+        self,
+        jurisdiction_type: str,
+        jurisdiction_code: str,
+        name: str,
+        profile_data: dict,
+        candidates_data: list | None = None,
+        auto_generated: bool = False,
+    ):
+        """Upsert a jurisdiction profile (US state, US district, or country)."""
+        prof_json = json.dumps(profile_data) if isinstance(profile_data, (dict, list)) else profile_data
+        cand_json = json.dumps(candidates_data) if candidates_data is not None else None
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_jurisdiction_profiles
+                        (jurisdiction_type, jurisdiction_code, name, profile_data,
+                         candidates_data, auto_generated, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(jurisdiction_type, jurisdiction_code) DO UPDATE SET
+                         name=excluded.name,
+                         profile_data=excluded.profile_data,
+                         candidates_data=COALESCE(excluded.candidates_data, midterm_jurisdiction_profiles.candidates_data),
+                         auto_generated=excluded.auto_generated,
+                         updated_at=excluded.updated_at""",
+                    (
+                        jurisdiction_type,
+                        jurisdiction_code.upper(),
+                        name,
+                        prof_json,
+                        cand_json,
+                        1 if auto_generated else 0,
+                        now,
+                    ),
+                )
+
+    def get_jurisdiction_profile(
+        self, jurisdiction_type: str, jurisdiction_code: str
+    ) -> dict | None:
+        """Fetch a single jurisdiction profile."""
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT * FROM midterm_jurisdiction_profiles
+                   WHERE jurisdiction_type = ? AND jurisdiction_code = ?""",
+                (jurisdiction_type, jurisdiction_code.upper()),
+            ).fetchone()
+        if not row:
+            return None
+        d = _row_to_dict(row)
+        for k in ("profile_data", "candidates_data"):
+            if isinstance(d.get(k), str):
+                try:
+                    d[k] = json.loads(d[k])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        return d
+
+    def get_all_jurisdiction_profiles(
+        self, jurisdiction_type: str | None = None
+    ) -> list[dict]:
+        """List jurisdiction profiles, optionally filtered by type."""
+        with _get_conn() as conn:
+            if jurisdiction_type:
+                rows = conn.execute(
+                    """SELECT jurisdiction_type, jurisdiction_code, name, auto_generated, updated_at
+                       FROM midterm_jurisdiction_profiles
+                       WHERE jurisdiction_type = ?
+                       ORDER BY jurisdiction_code""",
+                    (jurisdiction_type,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT jurisdiction_type, jurisdiction_code, name, auto_generated, updated_at
+                       FROM midterm_jurisdiction_profiles
+                       ORDER BY jurisdiction_type, jurisdiction_code"""
+                ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def get_profiled_jurisdictions(
+        self, jurisdiction_type: str | None = None
+    ) -> set[str]:
+        """Return set of (jurisdiction_type, jurisdiction_code) tuples already profiled,
+        or just codes if filtered by type."""
+        with _get_conn() as conn:
+            if jurisdiction_type:
+                rows = conn.execute(
+                    "SELECT jurisdiction_code FROM midterm_jurisdiction_profiles WHERE jurisdiction_type = ?",
+                    (jurisdiction_type,),
+                ).fetchall()
+                return {r["jurisdiction_code"] for r in rows}
+            rows = conn.execute(
+                "SELECT jurisdiction_type, jurisdiction_code FROM midterm_jurisdiction_profiles"
+            ).fetchall()
+        return {f"{r['jurisdiction_type']}:{r['jurisdiction_code']}" for r in rows}
