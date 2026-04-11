@@ -1,0 +1,15 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:18px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Market resolved</h1>
+<p style="margin:0 0 20px;color:#0d0d0d;font-size:15px;line-height:1.5;">{{ market_question }}</p>
+<div style="background:#f5f5f5;border:1px solid #e0e0e0;border-radius:6px;padding:16px 20px;margin:20px 0;">
+  <div style="font-size:11px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Outcome</div>
+  <div style="font-size:18px;color:#0d0d0d;font-weight:600;">{{ outcome }}</div>
+</div>
+<p style="margin:0 0 12px;color:#555;font-size:14px;">
+  <strong style="color:#0d0d0d;">{{ total_count }}</strong> tracked sources predicted this on narve.ai.
+  <strong style="color:#0d0d0d;">{{ correct_count }}</strong> were correct.
+</p>
+<div style="margin:24px 0 0;">
+  <a href="{{ market_url }}" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:10px 20px;border-radius:6px;font-weight:500;text-decoration:none;font-size:13px;">View on Polymarket →</a>
+</div>
+{% endblock %}

@@ -1,30 +1,171 @@
-/* Gateway — Notion/Wispr design tokens lifted from stock-dashboard */
+/* Gateway — Monochrome dual-theme (light default, dark on toggle) */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-:root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --surface-hover: #22252f;
-  --border: #2a2d3a;
-  --border-light: #232636;
-  --text-primary: #f0f0f0;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
-  --accent: #6366f1;
-  --accent-light: rgba(99, 102, 241, 0.12);
-  --accent-2: #8b5cf6;
-  --green: #10b981;
-  --green-bg: rgba(16, 185, 129, 0.10);
-  --red: #ef4444;
-  --red-bg: rgba(239, 68, 68, 0.10);
-  --amber: #f59e0b;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.20);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.30);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.40);
+html { color-scheme: light dark; }
+
+/* ============================================
+   LIGHT THEME — DEFAULT — STRICT MONOCHROME
+   ============================================ */
+:root,
+:root[data-theme="light"] {
+
+  /* Backgrounds — 7 levels */
+  --bg-void:    #f0f0f0;
+  --bg-base:    #ffffff;
+  --bg-surface: #fafafa;
+  --bg-raised:  #f5f5f5;
+  --bg-overlay: #efefef;
+  --bg-float:   #ffffff;
+  --bg-inset:   #f2f2f2;
+
+  /* Borders — 4 levels */
+  --border-ghost:   #ebebeb;
+  --border-subtle:  #e0e0e0;
+  --border-default: #cccccc;
+  --border-strong:  #b0b0b0;
+
+  /* Text — 5 levels */
+  --text-primary:    #0d0d0d;
+  --text-secondary:  #4a4a4a;
+  --text-tertiary:   #888888;
+  --text-quaternary: #bbbbbb;
+  --text-inverse:    #ffffff;
+
+  /* Interactive */
+  --interactive-bg:          #0d0d0d;
+  --interactive-text:        #ffffff;
+  --interactive-hover:       #1f1f1f;
+  --interactive-ghost:       rgba(0, 0, 0, 0.04);
+  --interactive-ghost-hover: rgba(0, 0, 0, 0.08);
+
+  /* Semantic — strictly monochrome */
+  --semantic-high:        #0d0d0d;
+  --semantic-high-bg:     rgba(0, 0, 0, 0.06);
+  --semantic-high-border: rgba(0, 0, 0, 0.20);
+  --semantic-mid:         #555555;
+  --semantic-mid-bg:      rgba(0, 0, 0, 0.03);
+  --semantic-mid-border:  rgba(0, 0, 0, 0.12);
+  --semantic-low:         #aaaaaa;
+  --semantic-low-bg:      rgba(0, 0, 0, 0.02);
+  --semantic-low-border:  rgba(0, 0, 0, 0.08);
+  --semantic-none:        #cccccc;
+  --semantic-none-bg:     rgba(0, 0, 0, 0.015);
+  --semantic-none-border: rgba(0, 0, 0, 0.06);
+
+  /* Error — monochrome only */
+  --error-text:   #1a1a1a;
+  --error-bg:     rgba(0, 0, 0, 0.05);
+  --error-border: rgba(0, 0, 0, 0.18);
+
+  /* Shadows — black on light */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.09), 0 2px 4px rgba(0,0,0,0.05);
+  --shadow-lg:    0 12px 32px rgba(0,0,0,0.11), 0 4px 8px rgba(0,0,0,0.07);
+  --shadow-float: 0 20px 60px rgba(0,0,0,0.14);
+
+  /* Toggle */
+  --toggle-bg:     #f0f0f0;
+  --toggle-border: #cccccc;
+  --toggle-text:   #555555;
+
+  /* Radius */
   --radius: 16px;
-  --radius-sm: 10px;
+  --radius-sm: 6px;
   --radius-xs: 6px;
+
+  /* Spacing */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+  --space-9: 96px; --space-10: 128px;
+
+  /* ── Back-compat aliases — old names resolve to new ones ── */
+  --bg:            var(--bg-base);
+  --surface:       var(--bg-surface);
+  --surface-hover: var(--bg-raised);
+  --border:        var(--border-default);
+  --border-light:  var(--border-subtle);
+  --text-muted:    var(--text-tertiary);
+  --accent:        var(--interactive-bg);
+  --accent-light:  var(--interactive-ghost);
+  --accent-2:      var(--interactive-hover);
+  --cta-bg:        var(--interactive-bg);
+  --cta-text:      var(--interactive-text);
+  --cta-hover-bg:  var(--interactive-hover);
+  --green:         var(--semantic-high);
+  --green-bg:      var(--semantic-high-bg);
+  --red:           var(--semantic-low);
+  --red-bg:        var(--semantic-low-bg);
+  --amber:         var(--semantic-mid);
+}
+
+/* ============================================
+   DARK THEME — USER CHOICE — STRICT MONOCHROME
+   ============================================ */
+:root[data-theme="dark"] {
+
+  /* Backgrounds — 7 levels */
+  --bg-void:    #080808;
+  --bg-base:    #0d0d0d;
+  --bg-surface: #111111;
+  --bg-raised:  #161616;
+  --bg-overlay: #1a1a1a;
+  --bg-float:   #1f1f1f;
+  --bg-inset:   #242424;
+
+  /* Borders — 4 levels */
+  --border-ghost:   #141414;
+  --border-subtle:  #1f1f1f;
+  --border-default: #2a2a2a;
+  --border-strong:  #383838;
+
+  /* Text — 5 levels */
+  --text-primary:    #f0f0f0;
+  --text-secondary:  #909090;
+  --text-tertiary:   #555555;
+  --text-quaternary: #333333;
+  --text-inverse:    #0d0d0d;
+
+  /* Interactive */
+  --interactive-bg:          #f0f0f0;
+  --interactive-text:        #0d0d0d;
+  --interactive-hover:       #d4d4d4;
+  --interactive-ghost:       rgba(240, 240, 240, 0.06);
+  --interactive-ghost-hover: rgba(240, 240, 240, 0.10);
+
+  /* Semantic — strictly monochrome */
+  --semantic-high:        #e0e0e0;
+  --semantic-high-bg:     rgba(255, 255, 255, 0.08);
+  --semantic-high-border: rgba(255, 255, 255, 0.20);
+  --semantic-mid:         #888888;
+  --semantic-mid-bg:      rgba(255, 255, 255, 0.04);
+  --semantic-mid-border:  rgba(255, 255, 255, 0.10);
+  --semantic-low:         #444444;
+  --semantic-low-bg:      rgba(255, 255, 255, 0.02);
+  --semantic-low-border:  rgba(255, 255, 255, 0.06);
+  --semantic-none:        #2a2a2a;
+  --semantic-none-bg:     rgba(255, 255, 255, 0.015);
+  --semantic-none-border: rgba(255, 255, 255, 0.04);
+
+  /* Error — monochrome only */
+  --error-text:   #e0e0e0;
+  --error-bg:     rgba(255, 255, 255, 0.06);
+  --error-border: rgba(255, 255, 255, 0.15);
+
+  /* Shadows — black on dark (deeper) */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.6);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.4);
+  --shadow-lg:    0 12px 32px rgba(0,0,0,0.6), 0 4px 8px rgba(0,0,0,0.5);
+  --shadow-float: 0 20px 60px rgba(0,0,0,0.7);
+
+  /* Toggle */
+  --toggle-bg:     #1a1a1a;
+  --toggle-border: #2a2a2a;
+  --toggle-text:   #909090;
+
+  /* Aliases are inherited from :root and automatically resolve per-theme
+     because they point to the base names (--bg-base, --interactive-bg, etc.)
+     which are redefined above. No need to restate them here. */
 }
 
 * {
@@ -35,26 +176,33 @@
 
 html, body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
   font-size: 15px;
   line-height: 1.5;
 }
 
-a { color: var(--accent); text-decoration: none; transition: color 0.15s ease; }
-a:hover { text-decoration: underline; }
+::selection {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--text-primary);
+}
+
+a { color: var(--text-secondary); text-decoration: none; transition: color 0.15s ease; }
+a:hover { color: var(--text-primary); text-decoration: none; }
+a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
 
 ::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
 
 /* ── Header ─────────────────────────────────────────────────────── */
 
 .gw-header {
-  background: rgba(15, 17, 23, 0.88);
+  background: rgba(13, 13, 13, 0.88);
   backdrop-filter: saturate(180%) blur(16px);
   -webkit-backdrop-filter: saturate(180%) blur(16px);
   border-bottom: 1px solid var(--border);
@@ -70,20 +218,22 @@ a:hover { text-decoration: underline; }
 .gw-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  font-family: 'Inter', -apple-system, sans-serif;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 15px;
+  letter-spacing: -0.03em;
 }
 
 .gw-brand-logo {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: var(--cta-bg);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--cta-text);
   font-weight: 700;
   font-size: 14px;
 }
@@ -159,11 +309,11 @@ a:hover { text-decoration: underline; }
   width: 48px;
   height: 48px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: var(--cta-bg);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--cta-text);
   font-weight: 700;
   font-size: 22px;
   margin-bottom: 24px;
@@ -215,8 +365,8 @@ a:hover { text-decoration: underline; }
   padding: 12px 16px;
   border: none;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  background: var(--cta-bg);
+  color: var(--cta-text);
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -262,7 +412,6 @@ a:hover { text-decoration: underline; }
   transition: transform 0.15s, box-shadow 0.2s;
   position: relative;
   overflow: hidden;
-  --accent: #6366f1;
 }
 
 .dash-card::before {
@@ -349,7 +498,7 @@ a:hover { text-decoration: underline; }
 
 .cta-open {
   background: var(--accent);
-  color: white;
+  color: var(--cta-text);
 }
 
 .cta-open:hover {
@@ -439,7 +588,6 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   border: 1px solid transparent;
   transition: transform 0.1s, box-shadow 0.2s, background 0.15s;
-  --accent: #6366f1;
 }
 
 .btn:hover {
@@ -449,7 +597,7 @@ a:hover { text-decoration: underline; }
 
 .btn-primary {
   background: var(--accent);
-  color: white;
+  color: var(--cta-text);
 }
 
 .btn-primary-outline {
@@ -490,8 +638,8 @@ a:hover { text-decoration: underline; }
 
 .landing-body {
   background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(139, 92, 246, 0.10), transparent 60%),
-    radial-gradient(900px 500px at 10% 10%, rgba(99, 102, 241, 0.08), transparent 60%),
+    radial-gradient(1200px 600px at 80% -10%, rgba(255, 255, 255, 0.03), transparent 60%),
+    radial-gradient(900px 500px at 10% 10%, rgba(255, 255, 255, 0.02), transparent 60%),
     var(--bg);
 }
 
@@ -529,8 +677,8 @@ a:hover { text-decoration: underline; }
 .landing-nav-cta {
   padding: 9px 18px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white !important;
+  background: var(--cta-bg);
+  color: var(--cta-text) !important;
   font-weight: 600;
   transition: transform 0.1s, box-shadow 0.2s;
 }
@@ -571,7 +719,7 @@ a:hover { text-decoration: underline; }
 }
 
 .landing-gradient {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 60%, #ec4899 100%);
+  background: var(--cta-bg);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -597,8 +745,8 @@ a:hover { text-decoration: underline; }
 .landing-primary-cta {
   padding: 14px 28px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  background: var(--cta-bg);
+  color: var(--cta-text);
   font-weight: 600;
   font-size: 15px;
   transition: transform 0.1s, box-shadow 0.2s;
@@ -639,7 +787,7 @@ a:hover { text-decoration: underline; }
   height: 8px;
   border-radius: 50%;
   background: var(--green);
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
 }
 
 .landing-section {
@@ -707,7 +855,6 @@ a:hover { text-decoration: underline; }
   padding: 24px;
   position: relative;
   overflow: hidden;
-  --accent: #6366f1;
   transition: transform 0.2s, box-shadow 0.2s;
 }
 
@@ -773,8 +920,8 @@ a:hover { text-decoration: underline; }
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  background: var(--cta-bg);
+  color: var(--cta-text);
   font-weight: 700;
   font-size: 16px;
   display: flex;
@@ -820,17 +967,19 @@ a:hover { text-decoration: underline; }
 
 .auth-body {
   background:
-    radial-gradient(900px 500px at 80% 20%, rgba(139, 92, 246, 0.08), transparent 60%),
-    radial-gradient(700px 400px at 10% 90%, rgba(99, 102, 241, 0.08), transparent 60%),
+    radial-gradient(900px 500px at 80% 20%, rgba(255, 255, 255, 0.02), transparent 60%),
+    radial-gradient(700px 400px at 10% 90%, rgba(255, 255, 255, 0.02), transparent 60%),
     var(--bg);
 }
 
 .auth-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  font-family: 'Inter', -apple-system, sans-serif;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 15px;
+  letter-spacing: -0.03em;
   color: var(--text-primary);
   text-decoration: none !important;
   margin-bottom: 28px;
@@ -957,9 +1106,8 @@ a:hover { text-decoration: underline; }
 .settings-actions .btn-primary {
   padding: 12px 24px;
   font-size: 14px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: var(--cta-bg);
   border: none;
-  --accent: #6366f1;
 }
 
 .settings-hints {
@@ -1001,8 +1149,8 @@ a:hover { text-decoration: underline; }
   display: inline-block;
   padding: 16px 40px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  background: var(--cta-bg);
+  color: var(--cta-text);
   font-weight: 600;
   font-size: 16px;
   text-decoration: none;
@@ -1109,6 +1257,146 @@ a:hover { text-decoration: underline; }
 }
 
 .mobile-close-btn svg { width: 24px; height: 24px; }
+
+/* ── Smooth theme transitions ───────────────────────────────────── */
+
+body,
+body * {
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.12s ease,
+    box-shadow 0.18s ease;
+}
+
+/* Suppress transition where it causes jank or visual glitches */
+input, textarea, select,
+code, pre, canvas, img, svg,
+[data-no-transition] { transition: none !important; }
+
+/* Suppress all transitions during page load to prevent flash */
+html.theme-loading * { transition: none !important; }
+
+/* ── Theme toggle button ────────────────────────────────────────── */
+
+/* Subtle corner toggle — intentionally understated. Low opacity until
+ * the cursor is near it, so it never competes with page content. */
+#theme-toggle {
+  position: fixed;
+  bottom: 18px;
+  left: 14px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  opacity: 0.35;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.2s ease, border-color 0.18s ease, color 0.18s ease, transform 0.1s ease;
+}
+
+#theme-toggle:hover {
+  opacity: 1;
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+}
+
+#theme-toggle:active { transform: scale(0.94); }
+
+#theme-toggle:focus-visible {
+  opacity: 1;
+  outline: 1px solid var(--text-tertiary);
+  outline-offset: 2px;
+}
+
+#theme-toggle-icon {
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  #theme-toggle {
+    bottom: 12px;
+    left: 10px;
+  }
+}
+
+@media print {
+  #theme-toggle { display: none !important; }
+}
+
+/* ── Semantic utility classes ───────────────────────────────────── */
+
+/* Credibility scores */
+.cred-high    { color: var(--semantic-high); }
+.cred-mid     { color: var(--semantic-mid); }
+.cred-low     { color: var(--semantic-low); }
+.cred-unrated { color: var(--semantic-none); font-style: italic; }
+
+/* EV scores */
+.ev-positive { color: var(--semantic-high); font-weight: 600; }
+.ev-negative { color: var(--semantic-low); font-weight: 400; }
+.ev-neutral  { color: var(--semantic-mid); }
+
+/* Risk badges */
+.risk-flagged {
+  color: var(--semantic-low);
+  background: var(--semantic-low-bg);
+  border: 1px solid var(--semantic-low-border);
+}
+.risk-clean {
+  color: var(--semantic-high);
+  background: var(--semantic-high-bg);
+  border: 1px solid var(--semantic-high-border);
+}
+
+/* Status badges */
+.status-active {
+  color: var(--semantic-high);
+  background: var(--semantic-high-bg);
+  border: 1px solid var(--semantic-high-border);
+}
+.status-inactive {
+  color: var(--semantic-none);
+  background: var(--semantic-none-bg);
+  border: 1px solid var(--semantic-none-border);
+}
+.status-warning {
+  color: var(--semantic-mid);
+  background: var(--semantic-mid-bg);
+  border: 1px solid var(--semantic-mid-border);
+}
+
+/* Error states */
+.error-text { color: var(--error-text); }
+.error-banner {
+  color: var(--error-text);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+}
+
+/* Probability display */
+.prob-market        { color: var(--text-tertiary); }
+.prob-betyc         { color: var(--text-primary); font-weight: 600; }
+.prob-edge-positive { color: var(--semantic-high); }
+.prob-edge-negative { color: var(--semantic-low); }
+.prob-edge-neutral  { color: var(--text-tertiary); }
+
+/* Tier badges */
+.tier-trader     { color: var(--text-secondary); background: var(--bg-inset); border: 1px solid var(--border-default); }
+.tier-pro        { color: var(--text-primary);   background: var(--bg-raised); border: 1px solid var(--border-strong); }
+.tier-enterprise { color: var(--interactive-text); background: var(--interactive-bg); }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
 

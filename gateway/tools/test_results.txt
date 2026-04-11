@@ -1,0 +1,1080 @@
+/Users/shocakarel/Library/Python/3.9/lib/python/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts ==============================
+collecting ... collected 478 items
+
+tests/test_2fa_db.py::TestMigration006Schema::test_new_tables_exist PASSED [  0%]
+tests/test_2fa_db.py::TestMigration006Schema::test_schema_version_006_applied PASSED [  0%]
+tests/test_2fa_db.py::TestMigration006Schema::test_sessions_has_2fa_columns PASSED [  0%]
+tests/test_2fa_db.py::TestMigration006Schema::test_users_has_2fa_columns PASSED [  0%]
+tests/test_2fa_db.py::TestBackupCodeHelpers::test_store_and_consume_roundtrip FAILED [  1%]
+tests/test_2fa_db.py::TestBackupCodeHelpers::test_used_code_cannot_be_reused FAILED [  1%]
+tests/test_2fa_db.py::TestBackupCodeHelpers::test_wrong_code_rejected FAILED [  1%]
+tests/test_2fa_db.py::TestSession2FAFlag::test_default_unverified_then_marked FAILED [  1%]
+tests/test_2fa_db.py::TestSession2FAFlag::test_pending_totp_secret_roundtrip FAILED [  1%]
+tests/test_2fa_db.py::TestAuditLogDB::test_csv_export FAILED             [  2%]
+tests/test_2fa_db.py::TestAuditLogDB::test_filters FAILED                [  2%]
+tests/test_2fa_db.py::TestAuditLogDB::test_insert_and_query FAILED       [  2%]
+tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_with_2fa_unverified_session_redirects_to_verify FAILED [  2%]
+tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_with_verified_session_reaches_admin FAILED [  2%]
+tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_without_2fa_redirects_to_setup FAILED [  3%]
+tests/test_2fa_http.py::TestAdminTwoFactorGate::test_regular_user_not_affected_by_2fa_gate FAILED [  3%]
+tests/test_2fa_totp.py::TestTOTPRoundtrip::test_build_qr_returns_data_uri PASSED [  3%]
+tests/test_2fa_totp.py::TestTOTPRoundtrip::test_build_uri_contains_issuer PASSED [  3%]
+tests/test_2fa_totp.py::TestTOTPRoundtrip::test_encrypt_decrypt_roundtrip PASSED [  3%]
+tests/test_2fa_totp.py::TestTOTPRoundtrip::test_generate_secret_is_base32 PASSED [  4%]
+tests/test_2fa_totp.py::TestTOTPRoundtrip::test_verify_known_vector PASSED [  4%]
+tests/test_2fa_totp.py::TestTOTPRoundtrip::test_verify_malformed_rejected PASSED [  4%]
+tests/test_2fa_totp.py::TestTOTPRoundtrip::test_verify_wrong_code_rejected PASSED [  4%]
+tests/test_2fa_totp.py::TestBackupCodeFormat::test_format_is_xxxx_xxxx PASSED [  5%]
+tests/test_2fa_totp.py::TestBackupCodeFormat::test_generate_returns_eight_unique PASSED [  5%]
+tests/test_2fa_totp.py::TestBackupCodeFormat::test_hash_contains_required_fields PASSED [  5%]
+tests/test_2fa_totp.py::TestEmailOTP::test_generate_six_digits PASSED    [  5%]
+tests/test_2fa_totp.py::TestEmailOTP::test_hash_verify_roundtrip PASSED  [  5%]
+tests/test_account_deletion.py::TestSoftDelete::test_deletion_cancels_subscriptions PASSED [  6%]
+tests/test_account_deletion.py::TestSoftDelete::test_deletion_request_sets_timestamps PASSED [  6%]
+tests/test_account_deletion.py::TestSoftDelete::test_deletion_revokes_sessions PASSED [  6%]
+tests/test_account_deletion.py::TestRecoveryWindow::test_cancel_deletion_clears_scheduled_for PASSED [  6%]
+tests/test_account_deletion.py::TestHardDeleteJob::test_hard_delete_anonymises_and_sets_is_deleted PASSED [  6%]
+tests/test_account_deletion.py::TestHardDeleteJob::test_hard_delete_skips_cancelled_requests PASSED [  7%]
+tests/test_analytics.py::TestAnalyticsDb::test_get_analytics_features PASSED [  7%]
+tests/test_analytics.py::TestAnalyticsDb::test_get_analytics_revenue_returns_breakdown PASSED [  7%]
+tests/test_analytics.py::TestAnalyticsDb::test_get_analytics_users_growth_series PASSED [  7%]
+tests/test_analytics.py::TestAnalyticsDb::test_ip_hash_never_raw_ip FAILED [  7%]
+tests/test_analytics.py::TestAnalyticsDb::test_newsletter_signup_event_counted PASSED [  8%]
+tests/test_analytics.py::TestAnalyticsDb::test_record_event PASSED       [  8%]
+tests/test_audit_log.py::TestLogAction::test_never_raises_on_db_failure PASSED [  8%]
+tests/test_audit_log.py::TestLogAction::test_persists_request_metadata PASSED [  8%]
+tests/test_audit_log.py::TestLogAction::test_snapshot_user_missing PASSED [  8%]
+tests/test_audit_log.py::TestLogAction::test_snapshot_user_returns_dict PASSED [  9%]
+tests/test_audit_log.py::TestFilterKwargs::test_empty_query_yields_empty_kwargs PASSED [  9%]
+tests/test_audit_log.py::TestFilterKwargs::test_parse_filters PASSED     [  9%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_category_credibility PASSED [  9%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_category_credibility_shown_where_available PASSED [ 10%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_force_refresh_requires_pro_tier PASSED [ 10%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_list_all_credibilities PASSED [ 10%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_recompute_all_returns_count PASSED [ 10%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_snapshots_stored PASSED [ 10%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_unrated_source_returns_none PASSED [ 11%]
+tests/test_credibility_dashboard.py::TestCredibilityEngine::test_upsert_and_get_source_credibility PASSED [ 11%]
+tests/test_credibility_dashboard.py::TestCredibilityDisplayLogic::test_high_credibility_styling PASSED [ 11%]
+tests/test_credibility_dashboard.py::TestCredibilityDisplayLogic::test_low_credibility_styling PASSED [ 11%]
+tests/test_credibility_dashboard.py::TestCredibilityDisplayLogic::test_medium_credibility_styling PASSED [ 11%]
+tests/test_csrf.py::TestCSRFTokenGeneration::test_token_is_urlsafe PASSED [ 12%]
+tests/test_csrf.py::TestCSRFTokenGeneration::test_token_length PASSED    [ 12%]
+tests/test_csrf.py::TestCSRFTokenGeneration::test_tokens_are_unique PASSED [ 12%]
+tests/test_csrf.py::TestCSRFValidation::test_expired_session_token_invalid PASSED [ 12%]
+tests/test_csrf.py::TestCSRFValidation::test_fresh_session_token_valid PASSED [ 12%]
+tests/test_csrf.py::TestCSRFValidation::test_matching_cookie_is_valid PASSED [ 13%]
+tests/test_csrf.py::TestCSRFValidation::test_mismatched_cookie_is_invalid PASSED [ 13%]
+tests/test_csrf.py::TestCSRFValidation::test_missing_token_is_invalid PASSED [ 13%]
+tests/test_csrf.py::TestCSRFValidation::test_no_reference_is_invalid PASSED [ 13%]
+tests/test_csrf.py::TestCSRFValidation::test_session_token_mismatch_invalid PASSED [ 14%]
+tests/test_csrf.py::TestCSRFValidation::test_session_token_preferred_over_cookie PASSED [ 14%]
+tests/test_csrf.py::TestCSRFHiddenField::test_hidden_field_contains_token PASSED [ 14%]
+tests/test_csrf.py::TestCSRFHiddenField::test_hidden_field_escapes_html PASSED [ 14%]
+tests/test_csrf.py::TestCSRFConstants::test_cookie_name PASSED           [ 14%]
+tests/test_csrf.py::TestCSRFConstants::test_form_field PASSED            [ 15%]
+tests/test_csrf.py::TestCSRFConstants::test_header_name PASSED           [ 15%]
+tests/test_csrf.py::TestCSRFConstants::test_rotation_seconds PASSED      [ 15%]
+tests/test_csrf.py::TestCSRFMiddlewareExemptions::test_health_is_exempt PASSED [ 15%]
+tests/test_csrf.py::TestCSRFMiddlewareExemptions::test_scraper_api_is_exempt PASSED [ 15%]
+tests/test_csrf.py::TestCSRFMiddlewareExemptions::test_stripe_webhook_is_exempt PASSED [ 16%]
+tests/test_dpa_and_cookies.py::TestDPAPage::test_dpa_contains_title PASSED [ 16%]
+tests/test_dpa_and_cookies.py::TestDPAPage::test_dpa_does_not_list_supabase PASSED [ 16%]
+tests/test_dpa_and_cookies.py::TestDPAPage::test_dpa_is_public_path PASSED [ 16%]
+tests/test_dpa_and_cookies.py::TestDPAPage::test_dpa_lists_real_sub_processors PASSED [ 16%]
+tests/test_dpa_and_cookies.py::TestDPAPage::test_dpa_returns_200 PASSED  [ 17%]
+tests/test_dpa_and_cookies.py::TestPrivacyCookiesNotice::test_privacy_links_to_dpa PASSED [ 17%]
+tests/test_dpa_and_cookies.py::TestPrivacyCookiesNotice::test_privacy_lists_real_cookies PASSED [ 17%]
+tests/test_dpa_and_cookies.py::TestPrivacyCookiesNotice::test_privacy_mentions_essential_only PASSED [ 17%]
+tests/test_email_system.py::TestRenderer::test_base_extension PASSED     [ 17%]
+tests/test_email_system.py::TestRenderer::test_for_loop PASSED           [ 18%]
+tests/test_email_system.py::TestRenderer::test_html_escape PASSED        [ 18%]
+tests/test_email_system.py::TestRenderer::test_text_fallback PASSED      [ 18%]
+tests/test_email_system.py::TestEmailServiceDryRun::test_dry_run_send_returns_true PASSED [ 18%]
+tests/test_email_system.py::TestEmailServiceDryRun::test_dry_run_template_send PASSED [ 19%]
+tests/test_email_system.py::TestUnsubscribeTokens::test_invalid_token_returns_none PASSED [ 19%]
+tests/test_email_system.py::TestUnsubscribeTokens::test_tampered_token_rejected PASSED [ 19%]
+tests/test_email_system.py::TestUnsubscribeTokens::test_token_is_signed PASSED [ 19%]
+tests/test_email_system.py::TestUnsubscribeTokens::test_unsubscribe_applies_to_user PASSED [ 19%]
+tests/test_email_system.py::TestTemplatesHaveUnsubscribeFooter::test_token_delivery_has_no_unsubscribe_when_context_omitted PASSED [ 20%]
+tests/test_email_system.py::TestTemplatesHaveUnsubscribeFooter::test_weekly_digest_has_unsubscribe PASSED [ 20%]
+tests/test_feature_routes.py::TestTermsAndPrivacy::test_privacy_public_and_renders PASSED [ 20%]
+tests/test_feature_routes.py::TestTermsAndPrivacy::test_terms_public_and_renders PASSED [ 20%]
+tests/test_feature_routes.py::TestRobotsAndSitemap::test_robots_txt PASSED [ 20%]
+tests/test_feature_routes.py::TestRobotsAndSitemap::test_sitemap_xml_renders_live_when_no_file PASSED [ 21%]
+tests/test_feature_routes.py::TestUnsubscribe::test_unsubscribe_invalid_token_still_200 PASSED [ 21%]
+tests/test_feature_routes.py::TestUnsubscribe::test_unsubscribe_page_renders_even_without_token PASSED [ 21%]
+tests/test_feature_routes.py::TestPasswordResetFlow::test_forgot_password_always_returns_ok PASSED [ 21%]
+tests/test_feature_routes.py::TestPasswordResetFlow::test_reset_page_with_invalid_token_shows_error PASSED [ 21%]
+tests/test_feature_routes.py::TestWaitlistPosition::test_position_lookup_missing_email_400 PASSED [ 22%]
+tests/test_feature_routes.py::TestWaitlistPosition::test_position_lookup_unknown_email_404 PASSED [ 22%]
+tests/test_feature_routes.py::TestAccountDeletion::test_cancel_delete_requires_auth PASSED [ 22%]
+tests/test_feature_routes.py::TestAccountDeletion::test_delete_requires_authentication PASSED [ 22%]
+tests/test_feature_routes.py::TestAccountDeletion::test_delete_requires_confirm_word PASSED [ 23%]
+tests/test_feature_routes.py::TestSourceProfile::test_rated_source_renders_with_seo_tags PASSED [ 23%]
+tests/test_feature_routes.py::TestSourceProfile::test_unrated_source_returns_404 PASSED [ 23%]
+tests/test_feature_routes.py::TestJobMonitoringGates::test_jobs_recent_requires_admin PASSED [ 23%]
+tests/test_feature_routes.py::TestJobMonitoringGates::test_jobs_status_requires_admin PASSED [ 23%]
+tests/test_feedback.py::TestFeedbackDb::test_count_open_feedback PASSED  [ 24%]
+tests/test_feedback.py::TestFeedbackDb::test_create_feedback_returns_id PASSED [ 24%]
+tests/test_feedback.py::TestFeedbackDb::test_filter_by_status PASSED     [ 24%]
+tests/test_feedback.py::TestFeedbackDb::test_list_feedback_includes_user_email PASSED [ 24%]
+tests/test_feedback.py::TestFeedbackDb::test_update_status_sets_resolved_at PASSED [ 24%]
+tests/test_gifts.py::TestGiftsDb::test_create_gift_returns_id PASSED     [ 25%]
+tests/test_gifts.py::TestGiftsDb::test_enterprise_config_persisted PASSED [ 25%]
+tests/test_gifts.py::TestGiftsDb::test_intelligence_addon_active_via_gift PASSED [ 25%]
+tests/test_gifts.py::TestGiftsDb::test_list_active_gifts_excludes_revoked PASSED [ 25%]
+tests/test_gifts.py::TestGiftsDb::test_revoke_gift_marks_revoked PASSED  [ 25%]
+tests/test_gifts.py::TestGiftsDb::test_user_subscription_tier_admin_is_pro PASSED [ 26%]
+tests/test_health.py::TestHealthEndpoint::test_health_503_when_database_unreachable PASSED [ 26%]
+tests/test_health.py::TestHealthEndpoint::test_health_bypasses_gate_middleware PASSED [ 26%]
+tests/test_health.py::TestHealthEndpoint::test_health_checks_includes_database PASSED [ 26%]
+tests/test_health.py::TestHealthEndpoint::test_health_degraded_when_non_critical_check_fails PASSED [ 26%]
+tests/test_health.py::TestHealthEndpoint::test_health_environment_field PASSED [ 27%]
+tests/test_health.py::TestHealthEndpoint::test_health_has_all_required_fields PASSED [ 27%]
+tests/test_health.py::TestHealthEndpoint::test_health_is_never_cached PASSED [ 27%]
+tests/test_health.py::TestHealthEndpoint::test_health_returns_200_when_ok PASSED [ 27%]
+tests/test_health.py::TestHealthEndpoint::test_health_uptime_is_non_negative PASSED [ 28%]
+tests/test_health.py::TestStaticCacheBusting::test_static_url_different_files_different_hashes PASSED [ 28%]
+tests/test_health.py::TestStaticCacheBusting::test_static_url_hash_is_deterministic PASSED [ 28%]
+tests/test_health.py::TestStaticCacheBusting::test_static_url_hashes_existing_file PASSED [ 28%]
+tests/test_health.py::TestStaticCacheBusting::test_static_url_returns_unhashed_for_missing_file PASSED [ 28%]
+tests/test_health.py::TestStaticCacheHeaders::test_static_css_has_immutable_cache_header PASSED [ 29%]
+tests/test_health.py::TestStaticCacheHeaders::test_static_vary_accept_encoding PASSED [ 29%]
+tests/test_http_auth.py::TestPublicLegalPages::test_privacy_renders PASSED [ 29%]
+tests/test_http_auth.py::TestPublicLegalPages::test_terms_in_public_paths PASSED [ 29%]
+tests/test_http_auth.py::TestPublicLegalPages::test_terms_renders PASSED [ 29%]
+tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_feedback_requires_admin FAILED [ 30%]
+tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_gifts_requires_admin FAILED [ 30%]
+tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_sentry_requires_admin FAILED [ 30%]
+tests/test_http_auth.py::TestAdminAuthGates::test_analytics_features_requires_admin FAILED [ 30%]
+tests/test_http_auth.py::TestAdminAuthGates::test_analytics_prerelease_requires_admin FAILED [ 30%]
+tests/test_http_auth.py::TestAdminAuthGates::test_analytics_revenue_requires_admin FAILED [ 31%]
+tests/test_http_auth.py::TestAdminAuthGates::test_analytics_users_requires_admin FAILED [ 31%]
+tests/test_http_auth.py::TestAdminAuthGatesWithRegularUser::test_regular_user_blocked_from_analytics FAILED [ 31%]
+tests/test_http_auth.py::TestAdminAuthGatesWithRegularUser::test_regular_user_blocked_from_gifts FAILED [ 31%]
+tests/test_http_auth.py::TestIntelligenceAuthGates::test_unauthenticated_intelligence_blocked FAILED [ 32%]
+tests/test_http_auth.py::TestIntelligenceAuthGates::test_user_with_addon_can_list FAILED [ 32%]
+tests/test_http_auth.py::TestIntelligenceAuthGates::test_user_without_addon_blocked_list FAILED [ 32%]
+tests/test_http_auth.py::TestOnboardingRedirect::test_completed_user_not_redirected PASSED [ 32%]
+tests/test_http_auth.py::TestOnboardingRedirect::test_new_user_redirected_to_onboarding FAILED [ 32%]
+tests/test_http_auth.py::TestOnboardingRedirect::test_onboarding_page_redirects_completed_user_back_out FAILED [ 33%]
+tests/test_http_auth.py::TestFeedbackAuthGate::test_unauthenticated_feedback_blocked PASSED [ 33%]
+tests/test_intelligence.py::TestIntelligenceConversations::test_append_message_increments_count PASSED [ 33%]
+tests/test_intelligence.py::TestIntelligenceConversations::test_count_messages_today PASSED [ 33%]
+tests/test_intelligence.py::TestIntelligenceConversations::test_create_conversation_returns_id PASSED [ 33%]
+tests/test_intelligence.py::TestIntelligenceConversations::test_delete_conversation_cascades PASSED [ 34%]
+tests/test_intelligence.py::TestIntelligenceConversations::test_first_user_message_becomes_title PASSED [ 34%]
+tests/test_intelligence.py::TestIntelligenceConversations::test_history_limited_to_last_20 PASSED [ 34%]
+tests/test_intelligence.py::TestIntelligenceConversations::test_user_isolation PASSED [ 34%]
+tests/test_intelligence.py::TestContextBuilder::test_best_bets_query_includes_recent_predictions PASSED [ 34%]
+tests/test_intelligence.py::TestContextBuilder::test_category_query_loads_category_predictions PASSED [ 35%]
+tests/test_intelligence.py::TestContextBuilder::test_context_includes_user_profile PASSED [ 35%]
+tests/test_intelligence.py::TestContextBuilder::test_handle_query_loads_source_profile PASSED [ 35%]
+tests/test_intelligence.py::TestIntelligenceAddonAccess::test_set_intelligence_addon_active PASSED [ 35%]
+tests/test_intelligence.py::TestIntelligenceAddonAccess::test_set_intelligence_addon_inactive PASSED [ 35%]
+tests/test_intelligence.py::TestIntelligenceAddonAccess::test_user_without_addon_returns_false PASSED [ 36%]
+tests/test_job_queue.py::TestJobRegistry::test_backend_is_in_process PASSED [ 36%]
+tests/test_job_queue.py::TestJobRegistry::test_known_jobs_are_registered PASSED [ 36%]
+tests/test_job_queue.py::TestEnqueueAndAudit::test_enqueue_writes_audit_row PASSED [ 36%]
+tests/test_job_queue.py::TestEnqueueAndAudit::test_failing_job_retries_then_records_error PASSED [ 37%]
+tests/test_job_queue.py::TestEnqueueAndAudit::test_retry_job_enqueues_again PASSED [ 37%]
+tests/test_job_queue.py::TestEnqueueAndAudit::test_retry_unknown_job_returns_false PASSED [ 37%]
+tests/test_log_admin.py::AdminLogsTestCase::test_errors_empty_buffer PASSED [ 37%]
+tests/test_log_admin.py::AdminLogsTestCase::test_errors_groups_by_message PASSED [ 37%]
+tests/test_log_admin.py::AdminLogsTestCase::test_errors_requires_admin PASSED [ 38%]
+tests/test_log_admin.py::AdminLogsTestCase::test_live_level_filter PASSED [ 38%]
+tests/test_log_admin.py::AdminLogsTestCase::test_live_limit_clamped PASSED [ 38%]
+tests/test_log_admin.py::AdminLogsTestCase::test_live_non_admin_user_rejected PASSED [ 38%]
+tests/test_log_admin.py::AdminLogsTestCase::test_live_reports_logtail_status PASSED [ 38%]
+tests/test_log_admin.py::AdminLogsTestCase::test_live_requires_admin PASSED [ 39%]
+tests/test_log_admin.py::AdminLogsTestCase::test_live_returns_ring_buffer PASSED [ 39%]
+tests/test_log_admin.py::AdminLogsTestCase::test_search_empty_query PASSED [ 39%]
+tests/test_log_admin.py::AdminLogsTestCase::test_search_requires_admin PASSED [ 39%]
+tests/test_log_admin.py::AdminLogsTestCase::test_search_substring PASSED [ 39%]
+tests/test_logging.py::TestStructuredFormatter::test_allowlist_not_scrubbed PASSED [ 40%]
+tests/test_logging.py::TestStructuredFormatter::test_case_insensitive_scrubbing PASSED [ 40%]
+tests/test_logging.py::TestStructuredFormatter::test_context_cleared_between_requests PASSED [ 40%]
+tests/test_logging.py::TestStructuredFormatter::test_emits_valid_json PASSED [ 40%]
+tests/test_logging.py::TestStructuredFormatter::test_exception_info_captured PASSED [ 41%]
+tests/test_logging.py::TestStructuredFormatter::test_extra_fields_included PASSED [ 41%]
+tests/test_logging.py::TestStructuredFormatter::test_non_serialisable_extra_is_stringified PASSED [ 41%]
+tests/test_logging.py::TestStructuredFormatter::test_password_scrubbed PASSED [ 41%]
+tests/test_logging.py::TestStructuredFormatter::test_request_context_added PASSED [ 41%]
+tests/test_logging.py::TestStructuredFormatter::test_token_scrubbed PASSED [ 42%]
+tests/test_logging.py::TestSecurityLogFilter::test_only_security_passes PASSED [ 42%]
+tests/test_logging.py::TestRingBuffer::test_clear PASSED                 [ 42%]
+tests/test_logging.py::TestRingBuffer::test_contains_filter PASSED       [ 42%]
+tests/test_logging.py::TestRingBuffer::test_keeps_last_n PASSED          [ 42%]
+tests/test_logging.py::TestRingBuffer::test_level_filter PASSED          [ 43%]
+tests/test_logging.py::TestConfigureLogging::test_creates_logs_directory PASSED [ 43%]
+tests/test_logging.py::TestConfigureLogging::test_force_rebuilds PASSED  [ 43%]
+tests/test_logging.py::TestConfigureLogging::test_idempotent PASSED      [ 43%]
+tests/test_logging.py::TestConfigureLogging::test_missing_logtail_token_does_not_crash PASSED [ 43%]
+tests/test_logging.py::TestNoPrintInProductionCode::test_no_print_statements PASSED [ 44%]
+tests/test_logout.py::TestLogoutDbLayer::test_revoke_by_token_flips_revoked_flag PASSED [ 44%]
+tests/test_logout.py::TestLogoutDbLayer::test_revoke_unknown_token_returns_false PASSED [ 44%]
+tests/test_logout.py::TestLogoutDbLayer::test_revoked_session_cannot_be_used PASSED [ 44%]
+tests/test_logout.py::TestLogoutHttpSurface::test_legacy_get_logout_exists_and_redirects PASSED [ 44%]
+tests/test_logout.py::TestLogoutHttpSurface::test_logout_endpoint_exists PASSED [ 45%]
+tests/test_logout.py::TestLogoutHttpSurface::test_post_logout_without_session_returns_ok PASSED [ 45%]
+tests/test_logout.py::TestPostLogoutAccess::test_dashboard_access_after_revoke_is_blocked PASSED [ 45%]
+tests/test_market_resolution.py::TestMarketViewTracking::test_view_row_created PASSED [ 45%]
+tests/test_market_resolution.py::TestResolutionJob::test_job_batches_with_more_flag PASSED [ 46%]
+tests/test_market_resolution.py::TestResolutionJob::test_job_does_not_double_notify PASSED [ 46%]
+tests/test_market_resolution.py::TestResolutionJob::test_job_notifies_all_viewers_and_flags_them PASSED [ 46%]
+tests/test_market_resolution.py::TestResolutionJob::test_job_skips_deleted_users PASSED [ 46%]
+tests/test_markets.py::TestUnifiedMarkets::test_filter_by_category PASSED [ 46%]
+tests/test_markets.py::TestUnifiedMarkets::test_filter_by_search PASSED  [ 47%]
+tests/test_markets.py::TestUnifiedMarkets::test_filter_by_source PASSED  [ 47%]
+tests/test_markets.py::TestUnifiedMarkets::test_normalise_kalshi_basic PASSED [ 47%]
+tests/test_markets.py::TestUnifiedMarkets::test_normalise_kalshi_missing_ticker PASSED [ 47%]
+tests/test_markets.py::TestUnifiedMarkets::test_normalise_kalshi_settled PASSED [ 47%]
+tests/test_markets.py::TestUnifiedMarkets::test_normalise_polymarket_basic PASSED [ 48%]
+tests/test_markets.py::TestUnifiedMarkets::test_normalise_polymarket_missing_slug PASSED [ 48%]
+tests/test_markets.py::TestUnifiedMarkets::test_normalise_polymarket_resolved PASSED [ 48%]
+tests/test_markets.py::TestUnifiedMarkets::test_sort_by_ev PASSED        [ 48%]
+tests/test_markets.py::TestUnifiedMarkets::test_sort_by_volume PASSED    [ 48%]
+tests/test_markets.py::TestEncryption::test_decrypt_handles_plaintext_gracefully PASSED [ 49%]
+tests/test_markets.py::TestEncryption::test_encrypt_decrypt_roundtrip PASSED [ 49%]
+tests/test_markets.py::TestDatabaseModels::test_delete_credential PASSED [ 49%]
+tests/test_markets.py::TestDatabaseModels::test_delete_nonexistent_returns_false PASSED [ 49%]
+tests/test_markets.py::TestDatabaseModels::test_get_all_credentials PASSED [ 50%]
+tests/test_markets.py::TestDatabaseModels::test_kalshi_token_stored_as_given PASSED [ 50%]
+tests/test_markets.py::TestDatabaseModels::test_list_bet_history PASSED  [ 50%]
+tests/test_markets.py::TestDatabaseModels::test_record_bet PASSED        [ 50%]
+tests/test_markets.py::TestDatabaseModels::test_upsert_kalshi_credential PASSED [ 50%]
+tests/test_markets.py::TestDatabaseModels::test_upsert_polymarket_credential PASSED [ 51%]
+tests/test_markets.py::TestSecurityRules::test_negative_bet_amount_rejected PASSED [ 51%]
+tests/test_markets.py::TestSecurityRules::test_unified_market_to_dict_has_no_secrets PASSED [ 51%]
+tests/test_markets.py::TestPolymarketTokenIds::test_clob_token_ids_missing_returns_none PASSED [ 51%]
+tests/test_markets.py::TestPolymarketTokenIds::test_clob_token_ids_parsed_from_json_string PASSED [ 51%]
+tests/test_markets.py::TestPolymarketTokenIds::test_neg_risk_flag_parsed PASSED [ 52%]
+tests/test_markets.py::TestKalshiServiceAuth::test_get_service_token_returns_none_without_creds PASSED [ 52%]
+tests/test_markets.py::TestKalshiServiceAuth::test_service_auth_disabled_when_no_creds PASSED [ 52%]
+tests/test_markets.py::TestKalshiServiceAuth::test_service_auth_initialised_with_creds PASSED [ 52%]
+tests/test_migrations.py::TestMigrationDiscovery::test_discover_finds_all_migrations PASSED [ 52%]
+tests/test_migrations.py::TestMigrationDiscovery::test_migrations_are_sorted PASSED [ 53%]
+tests/test_migrations.py::TestUpgradeToHead::test_idempotent PASSED      [ 53%]
+tests/test_migrations.py::TestUpgradeToHead::test_migration_002_creates_unsubscribe_table PASSED [ 53%]
+tests/test_migrations.py::TestUpgradeToHead::test_migration_004_adds_waitlist_columns PASSED [ 53%]
+tests/test_migrations.py::TestUpgradeToHead::test_migration_005_adds_deletion_fields PASSED [ 53%]
+tests/test_migrations.py::TestUpgradeToHead::test_schema_version_table_populated PASSED [ 54%]
+tests/test_onboarding.py::TestOnboardingDb::test_complete_is_idempotent PASSED [ 54%]
+tests/test_onboarding.py::TestOnboardingDb::test_complete_onboarding_sets_flag PASSED [ 54%]
+tests/test_onboarding.py::TestOnboardingDb::test_initial_status_not_completed PASSED [ 54%]
+tests/test_onboarding.py::TestOnboardingDb::test_save_categories PASSED  [ 55%]
+tests/test_onboarding.py::TestOnboardingDb::test_save_notifications PASSED [ 55%]
+tests/test_password_reset.py::TestCreatePasswordReset::test_expiry_1_hour PASSED [ 55%]
+tests/test_password_reset.py::TestCreatePasswordReset::test_token_stored_as_hash PASSED [ 55%]
+tests/test_password_reset.py::TestLookupReset::test_lookup_by_hash_works PASSED [ 55%]
+tests/test_password_reset.py::TestLookupReset::test_lookup_legacy_plaintext_fallback PASSED [ 56%]
+tests/test_password_reset.py::TestLookupReset::test_lookup_rejects_expired_token PASSED [ 56%]
+tests/test_password_reset.py::TestLookupReset::test_lookup_rejects_used_token PASSED [ 56%]
+tests/test_password_reset.py::TestSessionInvalidationOnReset::test_jwt_invalidated_before_bumped PASSED [ 56%]
+tests/test_password_reset.py::TestTokenReuseProtection::test_used_flag_blocks_second_claim PASSED [ 56%]
+tests/test_pricing.py::TestPricingPageContent::test_addon_monthly_gbp PASSED [ 57%]
+tests/test_pricing.py::TestPricingPageContent::test_addon_monthly_usd PASSED [ 57%]
+tests/test_pricing.py::TestPricingPageContent::test_all_ctas_link_to_enquire PASSED [ 57%]
+tests/test_pricing.py::TestPricingPageContent::test_currency_note PASSED [ 57%]
+tests/test_pricing.py::TestPricingPageContent::test_pro_annual_gbp PASSED [ 57%]
+tests/test_pricing.py::TestPricingPageContent::test_pro_annual_usd PASSED [ 58%]
+tests/test_pricing.py::TestPricingPageContent::test_pro_monthly_gbp PASSED [ 58%]
+tests/test_pricing.py::TestPricingPageContent::test_pro_monthly_usd PASSED [ 58%]
+tests/test_pricing.py::TestPricingPageContent::test_save_15_percent PASSED [ 58%]
+tests/test_pricing.py::TestPricingPageContent::test_trader_annual_gbp PASSED [ 58%]
+tests/test_pricing.py::TestPricingPageContent::test_trader_annual_usd PASSED [ 59%]
+tests/test_pricing.py::TestPricingPageContent::test_trader_monthly_gbp PASSED [ 59%]
+tests/test_pricing.py::TestPricingPageContent::test_trader_monthly_usd PASSED [ 59%]
+tests/test_pricing.py::TestLandingPricingContent::test_currency_note PASSED [ 59%]
+tests/test_pricing.py::TestLandingPricingContent::test_pro_price_displayed PASSED [ 60%]
+tests/test_pricing.py::TestLandingPricingContent::test_trader_price_displayed PASSED [ 60%]
+tests/test_pricing.py::TestSubscribePagePrices::test_pro_annual_1836 PASSED [ 60%]
+tests/test_pricing.py::TestSubscribePagePrices::test_pro_monthly_180 PASSED [ 60%]
+tests/test_pricing.py::TestSubscribePagePrices::test_trader_annual_765 PASSED [ 60%]
+tests/test_pricing.py::TestSubscribePagePrices::test_trader_monthly_75 PASSED [ 61%]
+tests/test_pricing.py::TestSubscribePagePrices::test_usd_amounts PASSED  [ 61%]
+tests/test_pricing.py::TestPlanDefs::test_plan_defs_values PASSED        [ 61%]
+tests/test_pricing.py::TestPlanDefs::test_trading_addon_prices PASSED    [ 61%]
+tests/test_pricing.py::TestStripeStub::test_create_checkout_session_raises PASSED [ 61%]
+tests/test_pricing.py::TestStripeStub::test_create_portal_session_raises PASSED [ 62%]
+tests/test_pricing.py::TestStripeStub::test_handle_webhook_raises PASSED [ 62%]
+tests/test_probability.py::TestBetycProbability::test_category_credibility_preferred_over_global PASSED [ 62%]
+tests/test_probability.py::TestBetycProbability::test_confidence_high PASSED [ 62%]
+tests/test_probability.py::TestBetycProbability::test_confidence_low PASSED [ 62%]
+tests/test_probability.py::TestBetycProbability::test_confidence_medium PASSED [ 63%]
+tests/test_probability.py::TestBetycProbability::test_credibility_weighting PASSED [ 63%]
+tests/test_probability.py::TestBetycProbability::test_directional_no_conversion PASSED [ 63%]
+tests/test_probability.py::TestBetycProbability::test_directional_yes_conversion PASSED [ 63%]
+tests/test_probability.py::TestBetycProbability::test_edge_delta_negative PASSED [ 64%]
+tests/test_probability.py::TestBetycProbability::test_edge_delta_positive PASSED [ 64%]
+tests/test_probability.py::TestBetycProbability::test_no_predictions_insufficient_data PASSED [ 64%]
+tests/test_probability.py::TestBetycProbability::test_result_clamped_to_bounds PASSED [ 64%]
+tests/test_probability.py::TestBetycProbability::test_single_source_with_explicit_probability PASSED [ 64%]
+tests/test_protected_routes.py::TestProtectedRoutes::test_admin_redirects_to_token PASSED [ 65%]
+tests/test_protected_routes.py::TestProtectedRoutes::test_dashboards_redirects_to_token PASSED [ 65%]
+tests/test_protected_routes.py::TestProtectedRoutes::test_login_direct_redirects_to_token PASSED [ 65%]
+tests/test_protected_routes.py::TestProtectedRoutes::test_register_direct_redirects_to_token PASSED [ 65%]
+tests/test_protected_routes.py::TestProtectedRoutes::test_saved_redirects_to_token PASSED [ 65%]
+tests/test_protected_routes.py::TestProtectedRoutes::test_settings_redirects_to_token PASSED [ 66%]
+tests/test_protected_routes.py::TestPublicPathsAllowedSet::test_public_paths_do_not_include_dashboard_or_admin PASSED [ 66%]
+tests/test_protected_routes.py::TestPublicPathsAllowedSet::test_public_paths_include_token_flow PASSED [ 66%]
+tests/test_protected_routes.py::TestNoLoginRedirectsRemain::test_server_features_has_no_login_auth_bounces PASSED [ 66%]
+tests/test_protected_routes.py::TestNoLoginRedirectsRemain::test_server_py_has_no_login_redirects PASSED [ 66%]
+tests/test_rate_limiting.py::TestSlidingWindowRateLimiter::test_allows_under_limit PASSED [ 67%]
+tests/test_rate_limiting.py::TestSlidingWindowRateLimiter::test_denies_over_limit PASSED [ 67%]
+tests/test_rate_limiting.py::TestSlidingWindowRateLimiter::test_different_keys_dont_interfere PASSED [ 67%]
+tests/test_rate_limiting.py::TestSlidingWindowRateLimiter::test_remaining_decrements PASSED [ 67%]
+tests/test_rate_limiting.py::TestSlidingWindowRateLimiter::test_window_expires PASSED [ 67%]
+tests/test_rate_limiting.py::TestGetClientIP::test_cloudflare_header PASSED [ 68%]
+tests/test_rate_limiting.py::TestGetClientIP::test_direct_connection PASSED [ 68%]
+tests/test_rate_limiting.py::TestGetClientIP::test_no_client PASSED      [ 68%]
+tests/test_rate_limiting.py::TestGetClientIP::test_x_forwarded_for PASSED [ 68%]
+tests/test_rate_limiting.py::TestRateLimitDecorator::test_decorator_allows_under_limit PASSED [ 69%]
+tests/test_rate_limiting.py::TestRateLimitDecorator::test_decorator_denies_over_limit PASSED [ 69%]
+tests/test_rate_limiting.py::TestIsRateLimitedWrapper::test_allows_first_calls PASSED [ 69%]
+tests/test_rate_limiting.py::TestIsRateLimitedWrapper::test_denies_over_limit PASSED [ 69%]
+tests/test_rate_limiting.py::TestRateLimitDisabled::test_disabled_via_env PASSED [ 69%]
+tests/test_security_headers.py::TestSecurityHeaders::test_csp_contains_stripe FAILED [ 70%]
+tests/test_security_headers.py::TestSecurityHeaders::test_csp_frame_ancestors_none PASSED [ 70%]
+tests/test_security_headers.py::TestSecurityHeaders::test_csp_no_unsafe_eval PASSED [ 70%]
+tests/test_security_headers.py::TestSecurityHeaders::test_headers_constant_exists PASSED [ 70%]
+tests/test_security_headers.py::TestSecurityHeaders::test_permissions_policy PASSED [ 70%]
+tests/test_security_headers.py::TestSecurityHeaders::test_referrer_policy PASSED [ 71%]
+tests/test_security_headers.py::TestSecurityHeaders::test_xframe_options_deny PASSED [ 71%]
+tests/test_security_headers.py::TestSecurityHeaders::test_xss_protection FAILED [ 71%]
+tests/test_security_headers.py::TestSecurityLogger::test_configure_security_logging_creates_logs_dir PASSED [ 71%]
+tests/test_security_headers.py::TestSecurityLogger::test_log_csrf_failure PASSED [ 71%]
+tests/test_security_headers.py::TestSecurityLogger::test_log_rate_limit_hit PASSED [ 72%]
+tests/test_security_headers.py::TestSecurityLogger::test_log_suspicious_activity PASSED [ 72%]
+tests/test_security_headers.py::TestSecurityIntegration::test_csrf_js_file_exists PASSED [ 72%]
+tests/test_security_headers.py::TestSecurityIntegration::test_security_module_imports PASSED [ 72%]
+tests/test_security_headers.py::TestSecurityIntegration::test_server_imports_security_modules FAILED [ 73%]
+tests/test_sentry.py::TestScrubSensitiveData::test_no_crash_on_minimal_event PASSED [ 73%]
+tests/test_sentry.py::TestScrubSensitiveData::test_strips_authorization_header PASSED [ 73%]
+tests/test_sentry.py::TestScrubSensitiveData::test_strips_card_field PASSED [ 73%]
+tests/test_sentry.py::TestScrubSensitiveData::test_strips_cookies PASSED [ 73%]
+tests/test_sentry.py::TestScrubSensitiveData::test_strips_csrf_and_cookie_headers PASSED [ 74%]
+tests/test_sentry.py::TestScrubSensitiveData::test_strips_password_field PASSED [ 74%]
+tests/test_sentry.py::TestScrubSensitiveData::test_strips_token_and_secret_fields PASSED [ 74%]
+tests/test_sentry.py::TestInitSentry::test_returns_false_with_blank_dsn PASSED [ 74%]
+tests/test_sentry.py::TestInitSentry::test_returns_false_without_dsn PASSED [ 74%]
+tests/test_sentry.py::TestSetUserContext::test_does_not_crash_when_sentry_not_loaded PASSED [ 75%]
+tests/test_session_cookies.py::TestSessionCookieAttributes::test_session_cookie_has_7_day_max_age PASSED [ 75%]
+tests/test_session_cookies.py::TestSessionCookieAttributes::test_session_cookie_is_httponly_secure_strict PASSED [ 75%]
+tests/test_session_cookies.py::TestPendingTokenCookieAttributes::test_pending_token_cookie_has_30_min_max_age PASSED [ 75%]
+tests/test_session_cookies.py::TestPendingTokenCookieAttributes::test_pending_token_cookie_is_not_httponly PASSED [ 75%]
+tests/test_session_cookies.py::TestPendingTokenCookieAttributes::test_pending_token_value_is_signed PASSED [ 76%]
+tests/test_session_cookies.py::TestSessionStoredAsHashNotRaw::test_raw_token_never_appears_in_db PASSED [ 76%]
+tests/test_session_cookies.py::TestSessionValidationAttachesToRequestState::test_middleware_attaches_user_to_request_state PASSED [ 76%]
+tests/test_session_cookies.py::TestSessionValidationExpired::test_expired_session_returns_none PASSED [ 76%]
+tests/test_session_cookies.py::TestSessionValidationRevoked::test_revoked_session_returns_none PASSED [ 76%]
+tests/test_session_cookies.py::TestSessionLastActiveUpdated::test_last_active_bumps_forward PASSED [ 77%]
+tests/test_session_cookies.py::TestRotateSessionHelper::test_rotate_session_on_unknown_token_returns_none PASSED [ 77%]
+tests/test_session_cookies.py::TestRotateSessionHelper::test_rotate_session_rejects_wrong_user_id PASSED [ 77%]
+tests/test_session_cookies.py::TestRotateSessionHelper::test_rotate_session_revokes_old_and_issues_new PASSED [ 77%]
+tests/test_sessions_management.py::TestActiveSessionsList::test_list_excludes_other_users PASSED [ 78%]
+tests/test_sessions_management.py::TestActiveSessionsList::test_list_returns_only_active_sessions PASSED [ 78%]
+tests/test_sessions_management.py::TestRevokeSingleSession::test_cannot_revoke_another_users_session PASSED [ 78%]
+tests/test_sessions_management.py::TestRevokeSingleSession::test_revoke_by_id_works PASSED [ 78%]
+tests/test_sessions_management.py::TestRevokeAllOthers::test_bulk_revoke_keeps_current_session PASSED [ 78%]
+tests/test_sessions_management.py::TestRevokeAllOthers::test_bulk_revoke_on_single_session_returns_zero PASSED [ 79%]
+tests/test_sessions_management.py::TestMaxFiveSessions::test_max_is_5 PASSED [ 79%]
+tests/test_sessions_management.py::TestMaxFiveSessions::test_sixth_login_revokes_oldest PASSED [ 79%]
+tests/test_source_profiles.py::TestSourceProfileGating::test_rated_source_returns_200 PASSED [ 79%]
+tests/test_source_profiles.py::TestSourceProfileGating::test_unknown_source_returns_404 PASSED [ 79%]
+tests/test_source_profiles.py::TestSourceProfileGating::test_unrated_source_returns_404 PASSED [ 80%]
+tests/test_source_profiles.py::TestSEOTags::test_canonical_url_present PASSED [ 80%]
+tests/test_source_profiles.py::TestSEOTags::test_meta_description_includes_score_and_accuracy PASSED [ 80%]
+tests/test_source_profiles.py::TestSEOTags::test_opengraph_tags_present PASSED [ 80%]
+tests/test_source_profiles.py::TestSEOTags::test_robots_index_follow PASSED [ 80%]
+tests/test_source_profiles.py::TestSEOTags::test_schema_org_person_json_ld PASSED [ 81%]
+tests/test_source_profiles.py::TestSitemap::test_sitemap_excludes_unrated_sources PASSED [ 81%]
+tests/test_source_profiles.py::TestSitemap::test_sitemap_includes_rated_sources PASSED [ 81%]
+tests/test_source_profiles.py::TestSitemap::test_sitemap_includes_static_pages PASSED [ 81%]
+tests/test_source_profiles.py::TestSitemap::test_sitemap_xml_headers PASSED [ 82%]
+tests/test_source_profiles.py::TestRobotsTxt::test_robots_allows_sources PASSED [ 82%]
+tests/test_source_profiles.py::TestRobotsTxt::test_robots_disallows_admin_and_api PASSED [ 82%]
+tests/test_token_first_auth.py::TestTokenPageIsPublic::test_token_page_no_register_link PASSED [ 82%]
+tests/test_token_first_auth.py::TestTokenPageIsPublic::test_token_page_renders PASSED [ 82%]
+tests/test_token_first_auth.py::TestValidateToken::test_invalid_token PASSED [ 83%]
+tests/test_token_first_auth.py::TestValidateToken::test_valid_claimed_token_returns_email_hint PASSED [ 83%]
+tests/test_token_first_auth.py::TestValidateToken::test_valid_unclaimed_token_sets_pending_cookie PASSED [ 83%]
+tests/test_token_first_auth.py::TestRegisterAndLoginPages::test_invite_legacy_redirects_to_token PASSED [ 83%]
+tests/test_token_first_auth.py::TestRegisterAndLoginPages::test_login_redirects_to_token_without_pending PASSED [ 83%]
+tests/test_token_first_auth.py::TestRegisterAndLoginPages::test_register_redirects_to_token_without_pending PASSED [ 84%]
+tests/test_token_first_auth.py::TestRegisterAndLoginPages::test_signup_legacy_redirects_to_token PASSED [ 84%]
+tests/test_token_first_auth.py::TestHardenedSessionDbLayer::test_max_5_sessions_per_user_revokes_oldest PASSED [ 84%]
+tests/test_token_first_auth.py::TestHardenedSessionDbLayer::test_revoke_all_other_keeps_current PASSED [ 84%]
+tests/test_token_first_auth.py::TestHardenedSessionDbLayer::test_session_token_stored_as_sha256 PASSED [ 84%]
+tests/test_token_first_auth.py::TestHardenedSessionDbLayer::test_validate_rejects_expired PASSED [ 85%]
+tests/test_token_first_auth.py::TestHardenedSessionDbLayer::test_validate_rejects_revoked PASSED [ 85%]
+tests/test_token_first_auth.py::TestHardenedSessionDbLayer::test_validate_returns_row_and_updates_last_active PASSED [ 85%]
+tests/test_token_first_auth.py::TestCookieHelpers::test_pending_token_is_signed PASSED [ 85%]
+tests/test_token_first_auth.py::TestCookieHelpers::test_tampered_pending_token_rejected PASSED [ 85%]
+tests/test_token_first_auth.py::TestGateVsTokenSeparation::test_gate_is_distinct_from_token PASSED [ 86%]
+tests/test_token_first_auth.py::TestGateVsTokenSeparation::test_gate_still_uses_site_access_token PASSED [ 86%]
+tests/test_token_first_auth.py::TestLoginNoDirectAccess::test_login_direct_navigation_bounces PASSED [ 86%]
+tests/test_token_first_auth.py::TestLoginNoDirectAccess::test_register_direct_navigation_bounces PASSED [ 86%]
+tests/test_topics.py::TestTopicOperations::test_analysis_not_rerun_within_30_min PASSED [ 87%]
+tests/test_topics.py::TestTopicOperations::test_create_topic PASSED      [ 87%]
+tests/test_topics.py::TestTopicOperations::test_delete_topic_cascades PASSED [ 87%]
+tests/test_topics.py::TestTopicOperations::test_due_topics_picked_up PASSED [ 87%]
+tests/test_topics.py::TestTopicOperations::test_list_topics PASSED       [ 87%]
+tests/test_topics.py::TestTopicOperations::test_max_10_topics_enforced PASSED [ 88%]
+tests/test_topics.py::TestTopicOperations::test_save_and_get_analysis PASSED [ 88%]
+tests/test_topics.py::TestTopicOperations::test_topic_predictions_linked PASSED [ 88%]
+tests/test_topics.py::TestTopicOperations::test_update_topic_pull PASSED [ 88%]
+tests/test_topics.py::TestTraderCannotAccessSignalSearch::test_signal_search_page_exists PASSED [ 88%]
+tests/test_topics.py::TestTraderCannotAccessSignalSearch::test_signal_search_requires_pro PASSED [ 89%]
+tests/test_trading_addon.py::TestTradingAddon::test_activate_addon PASSED [ 89%]
+tests/test_trading_addon.py::TestTradingAddon::test_addon_default_inactive PASSED [ 89%]
+tests/test_trading_addon.py::TestTradingAddon::test_admin_always_has_trading_addon PASSED [ 89%]
+tests/test_trading_addon.py::TestTradingAddon::test_deactivate_addon PASSED [ 89%]
+tests/test_trading_addon.py::TestTradingAddon::test_expired_addon_returns_inactive PASSED [ 90%]
+tests/test_trading_addon.py::TestTradingAddon::test_has_trading_addon_false_by_default PASSED [ 90%]
+tests/test_trading_addon.py::TestTradingAddon::test_has_trading_addon_true_when_active PASSED [ 90%]
+tests/test_trading_addon.py::TestTradingAddon::test_locked_state_shows_correct_pricing PASSED [ 90%]
+tests/test_trading_addon.py::TestTradingAddon::test_settings_template_has_billing_section PASSED [ 91%]
+tests/test_user_features.py::TestGlobalSearch::test_empty_query_returns_empty_list_not_error PASSED [ 91%]
+tests/test_user_features.py::TestGlobalSearch::test_fts_sanitize_escapes_quotes PASSED [ 91%]
+tests/test_user_features.py::TestGlobalSearch::test_fts_sanitize_rejects_empty PASSED [ 91%]
+tests/test_user_features.py::TestGlobalSearch::test_highlight_wraps_match_in_mark_tags PASSED [ 91%]
+tests/test_user_features.py::TestGlobalSearch::test_markets_fts_survives_price_updates PASSED [ 92%]
+tests/test_user_features.py::TestGlobalSearch::test_markets_search_with_question_text PASSED [ 92%]
+tests/test_user_features.py::TestGlobalSearch::test_predictions_search_returns_relevant_result PASSED [ 92%]
+tests/test_user_features.py::TestGlobalSearch::test_prefix_wildcard_matches_partial PASSED [ 92%]
+tests/test_user_features.py::TestGlobalSearch::test_search_across_multiple_rows PASSED [ 92%]
+tests/test_user_features.py::TestGlobalSearch::test_sources_search PASSED [ 93%]
+tests/test_user_features.py::TestGlobalSearch::test_special_characters_do_not_crash PASSED [ 93%]
+tests/test_user_features.py::TestSavedPredictions::test_cannot_save_nonexistent_prediction PASSED [ 93%]
+tests/test_user_features.py::TestSavedPredictions::test_duplicate_save_returns_same_id PASSED [ 93%]
+tests/test_user_features.py::TestSavedPredictions::test_notes_update PASSED [ 93%]
+tests/test_user_features.py::TestSavedPredictions::test_resolved_filter PASSED [ 94%]
+tests/test_user_features.py::TestSavedPredictions::test_save_creates_row PASSED [ 94%]
+tests/test_user_features.py::TestSavedPredictions::test_unsave_removes_row PASSED [ 94%]
+tests/test_user_features.py::TestSavedPredictions::test_user_isolation PASSED [ 94%]
+tests/test_user_features.py::TestSourceFollowing::test_credibility_joined_in_list PASSED [ 94%]
+tests/test_user_features.py::TestSourceFollowing::test_duplicate_follow_idempotent PASSED [ 95%]
+tests/test_user_features.py::TestSourceFollowing::test_follow_creates_row PASSED [ 95%]
+tests/test_user_features.py::TestSourceFollowing::test_followed_handles_set_helper PASSED [ 95%]
+tests/test_user_features.py::TestSourceFollowing::test_unfollow PASSED   [ 95%]
+tests/test_user_features.py::TestSourceFollowing::test_update_preferences PASSED [ 96%]
+tests/test_user_features.py::TestSourceFollowing::test_user_isolation PASSED [ 96%]
+tests/test_user_features.py::TestHistoricalOddsChart::test_empty_markers_for_market_with_no_predictions PASSED [ 96%]
+tests/test_user_features.py::TestHistoricalOddsChart::test_history_limit_bounds_response_size PASSED [ 96%]
+tests/test_user_features.py::TestHistoricalOddsChart::test_history_ordered_ascending PASSED [ 96%]
+tests/test_user_features.py::TestHistoricalOddsChart::test_latest_snapshot PASSED [ 97%]
+tests/test_user_features.py::TestHistoricalOddsChart::test_prediction_markers_include_market_price_at_time PASSED [ 97%]
+tests/test_user_features.py::TestHistoricalOddsChart::test_snapshot_at_time_returns_closest_prior PASSED [ 97%]
+tests/test_waitlist.py::TestPositionAssignment::test_positions_are_sequential PASSED [ 97%]
+tests/test_waitlist.py::TestPositionAssignment::test_referral_code_is_8_chars_alnum PASSED [ 97%]
+tests/test_waitlist.py::TestPositionAssignment::test_referral_codes_are_unique_across_signups PASSED [ 98%]
+tests/test_waitlist.py::TestReferralBump::test_display_position_never_goes_below_1 PASSED [ 98%]
+tests/test_waitlist.py::TestReferralBump::test_referrer_display_position_decreases_by_5 PASSED [ 98%]
+tests/test_waitlist.py::TestReferralTracking::test_referral_count_for_code PASSED [ 98%]
+tests/test_waitlist.py::TestReferralTracking::test_referred_by_code_stored PASSED [ 98%]
+tests/test_weekly_digest.py::TestWeeklyDigestBatch::test_digest_template_has_unsubscribe_link_context PASSED [ 99%]
+tests/test_weekly_digest.py::TestWeeklyDigestBatch::test_job_registered_and_cron_scheduled PASSED [ 99%]
+tests/test_weekly_digest.py::TestWeeklyDigestBatch::test_sends_to_user_with_active_pro PASSED [ 99%]
+tests/test_weekly_digest.py::TestWeeklyDigestBatch::test_skips_users_who_unsubscribed_from_digest PASSED [ 99%]
+tests/test_weekly_digest.py::TestWeeklyDigestBatch::test_skips_users_without_active_subscription PASSED [100%]
+
+=================================== FAILURES ===================================
+____________ TestBackupCodeHelpers.test_store_and_consume_roundtrip ____________
+tests/test_2fa_db.py:102: in test_store_and_consume_roundtrip
+    db.store_backup_codes(self.uid, hashed)
+db.py:2811: in store_backup_codes
+    c.execute(
+E   sqlite3.OperationalError: no such column: backup_codes
+____________ TestBackupCodeHelpers.test_used_code_cannot_be_reused _____________
+tests/test_2fa_db.py:112: in test_used_code_cannot_be_reused
+    db.store_backup_codes(self.uid, hashed)
+db.py:2811: in store_backup_codes
+    c.execute(
+E   sqlite3.OperationalError: no such column: backup_codes
+________________ TestBackupCodeHelpers.test_wrong_code_rejected ________________
+tests/test_2fa_db.py:121: in test_wrong_code_rejected
+    db.store_backup_codes(self.uid, hashed)
+db.py:2811: in store_backup_codes
+    c.execute(
+E   sqlite3.OperationalError: no such column: backup_codes
+____________ TestSession2FAFlag.test_default_unverified_then_marked ____________
+tests/test_2fa_db.py:134: in test_default_unverified_then_marked
+    self.assertFalse(db.session_two_fa_verified(token))
+db.py:2957: in session_two_fa_verified
+    row = c.execute(
+E   sqlite3.OperationalError: no such column: two_fa_verified
+____________ TestSession2FAFlag.test_pending_totp_secret_roundtrip _____________
+tests/test_2fa_db.py:140: in test_pending_totp_secret_roundtrip
+    self.assertIsNone(db.get_pending_totp_secret(token))
+db.py:2984: in get_pending_totp_secret
+    row = c.execute(
+E   sqlite3.OperationalError: no such column: pending_totp_secret
+________________________ TestAuditLogDB.test_csv_export ________________________
+tests/test_2fa_db.py:190: in test_csv_export
+    db.insert_audit_log(
+db.py:3023: in insert_audit_log
+    cur = c.execute(
+E   sqlite3.OperationalError: no such table: audit_log
+_________________________ TestAuditLogDB.test_filters __________________________
+tests/test_2fa_db.py:175: in test_filters
+    db.insert_audit_log(
+db.py:3023: in insert_audit_log
+    cur = c.execute(
+E   sqlite3.OperationalError: no such table: audit_log
+_____________________ TestAuditLogDB.test_insert_and_query _____________________
+tests/test_2fa_db.py:154: in test_insert_and_query
+    row_id = db.insert_audit_log(
+db.py:3023: in insert_audit_log
+    cur = c.execute(
+E   sqlite3.OperationalError: no such table: audit_log
+_ TestAdminTwoFactorGate.test_admin_with_2fa_unverified_session_redirects_to_verify _
+tests/test_2fa_http.py:81: in test_admin_with_2fa_unverified_session_redirects_to_verify
+    db.set_user_2fa_method(self.admin_id, "email_otp", None)
+db.py:2770: in set_user_2fa_method
+    c.execute(
+E   sqlite3.OperationalError: no such column: two_fa_method
+____ TestAdminTwoFactorGate.test_admin_with_verified_session_reaches_admin _____
+tests/test_2fa_http.py:93: in test_admin_with_verified_session_reaches_admin
+    db.set_user_2fa_method(self.admin_id, "email_otp", None)
+db.py:2770: in set_user_2fa_method
+    c.execute(
+E   sqlite3.OperationalError: no such column: two_fa_method
+_______ TestAdminTwoFactorGate.test_admin_without_2fa_redirects_to_setup _______
+tests/test_2fa_http.py:69: in test_admin_without_2fa_redirects_to_setup
+    db.disable_user_2fa(self.admin_id)
+db.py:2788: in disable_user_2fa
+    c.execute(
+E   sqlite3.OperationalError: no such column: two_fa_method
+______ TestAdminTwoFactorGate.test_regular_user_not_affected_by_2fa_gate _______
+tests/test_2fa_http.py:108: in test_regular_user_not_affected_by_2fa_gate
+    db.mark_session_two_fa_verified(token)  # pretend verified
+db.py:2942: in mark_session_two_fa_verified
+    c.execute(
+E   sqlite3.OperationalError: no such column: two_fa_verified
+__________________ TestAnalyticsDb.test_ip_hash_never_raw_ip ___________________
+tests/test_analytics.py:56: in test_ip_hash_never_raw_ip
+    from server import _hash_ip
+E   ImportError: cannot import name '_hash_ip' from 'server' (/Users/shocakarel/Habbig/gateway/tests/../server.py)
+---------------------------- Captured stdout setup -----------------------------
+{"timestamp": "2026-04-10T02:06:02.679705+00:00", "level": "ERROR", "service": "app", "environment": "production", "logger": "asyncio", "message": "Task was destroyed but it is pending!\ntask: <Task pending name='Task-3' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...108bb26d0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>", "version": "1.0.0"}
+{"timestamp": "2026-04-10T02:06:02.680033+00:00", "level": "ERROR", "service": "app", "environment": "production", "logger": "asyncio", "message": "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x108bb26d0>()]>>", "version": "1.0.0"}
+------------------------------ Captured log setup ------------------------------
+ERROR    asyncio:base_events.py:1738 Task was destroyed but it is pending!
+task: <Task pending name='Task-3' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...108bb26d0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>
+ERROR    asyncio:base_events.py:1738 Task was destroyed but it is pending!
+task: <Task pending name='Task-2' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x108bb26d0>()]>>
+__________ TestAdminAuthGates.test_admin_api_feedback_requires_admin ___________
+tests/test_http_auth.py:130: in test_admin_api_feedback_requires_admin
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+____________ TestAdminAuthGates.test_admin_api_gifts_requires_admin ____________
+tests/test_http_auth.py:122: in test_admin_api_gifts_requires_admin
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+___________ TestAdminAuthGates.test_admin_api_sentry_requires_admin ____________
+tests/test_http_auth.py:126: in test_admin_api_sentry_requires_admin
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+__________ TestAdminAuthGates.test_analytics_features_requires_admin ___________
+tests/test_http_auth.py:118: in test_analytics_features_requires_admin
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+_________ TestAdminAuthGates.test_analytics_prerelease_requires_admin __________
+tests/test_http_auth.py:106: in test_analytics_prerelease_requires_admin
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+___________ TestAdminAuthGates.test_analytics_revenue_requires_admin ___________
+tests/test_http_auth.py:114: in test_analytics_revenue_requires_admin
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+____________ TestAdminAuthGates.test_analytics_users_requires_admin ____________
+tests/test_http_auth.py:110: in test_analytics_users_requires_admin
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+__ TestAdminAuthGatesWithRegularUser.test_regular_user_blocked_from_analytics __
+tests/test_http_auth.py:145: in test_regular_user_blocked_from_analytics
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+____ TestAdminAuthGatesWithRegularUser.test_regular_user_blocked_from_gifts ____
+tests/test_http_auth.py:150: in test_regular_user_blocked_from_gifts
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+_____ TestIntelligenceAuthGates.test_unauthenticated_intelligence_blocked ______
+tests/test_http_auth.py:165: in test_unauthenticated_intelligence_blocked
+    self.assertIn(r.status_code, (401, 403))
+E   AssertionError: 404 not found in (401, 403)
+___________ TestIntelligenceAuthGates.test_user_with_addon_can_list ____________
+tests/test_http_auth.py:177: in test_user_with_addon_can_list
+    self.assertEqual(r.status_code, 200)
+E   AssertionError: 404 != 200
+________ TestIntelligenceAuthGates.test_user_without_addon_blocked_list ________
+tests/test_http_auth.py:170: in test_user_without_addon_blocked_list
+    self.assertEqual(r.status_code, 403)
+E   AssertionError: 404 != 403
+________ TestOnboardingRedirect.test_new_user_redirected_to_onboarding _________
+tests/test_http_auth.py:199: in test_new_user_redirected_to_onboarding
+    self.assertEqual(r.status_code, 302)
+E   AssertionError: 200 != 302
+_ TestOnboardingRedirect.test_onboarding_page_redirects_completed_user_back_out _
+tests/test_http_auth.py:215: in test_onboarding_page_redirects_completed_user_back_out
+    self.assertEqual(r.status_code, 302)
+E   AssertionError: 404 != 302
+_________________ TestSecurityHeaders.test_csp_contains_stripe _________________
+tests/test_security_headers.py:44: in test_csp_contains_stripe
+    self.assertIn("js.stripe.com", server.CSP)
+E   AssertionError: 'js.stripe.com' not found in "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+___________________ TestSecurityHeaders.test_xss_protection ____________________
+tests/test_security_headers.py:31: in test_xss_protection
+    self.assertEqual(server.SECURITY_HEADERS["X-XSS-Protection"], "1; mode=block")
+E   AssertionError: '0' != '1; mode=block'
+E   - 0
+E   + 1; mode=block
+_________ TestSecurityIntegration.test_server_imports_security_modules _________
+tests/test_security_headers.py:159: in test_server_imports_security_modules
+    self.assertTrue(hasattr(server, "configure_security_logging"))
+E   AssertionError: False is not true
+=============================== warnings summary ===============================
+server.py:370
+  /Users/shocakarel/Habbig/gateway/tests/../server.py:370: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+../../Library/Python/3.9/lib/python/site-packages/fastapi/applications.py:4495
+../../Library/Python/3.9/lib/python/site-packages/fastapi/applications.py:4495
+  /Users/shocakarel/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+server.py:432
+  /Users/shocakarel/Habbig/gateway/tests/../server.py:432: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+tests/test_analytics.py::TestAnalyticsDb::test_ip_hash_never_raw_ip
+  /Users/shocakarel/Library/Python/3.9/lib/python/site-packages/pluggy/_callers.py:95: RuntimeWarning: coroutine 'send_email_job' was never awaited
+    args = [caller_kwargs[argname] for argname in hook_impl.argnames]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_feature_routes.py: 1 warning
+tests/test_health.py: 1 warning
+tests/test_http_auth.py: 7 warnings
+tests/test_log_admin.py: 12 warnings
+tests/test_logout.py: 1 warning
+tests/test_token_first_auth.py: 3 warnings
+  /Users/shocakarel/Library/Python/3.9/lib/python/site-packages/httpx/_client.py:812: DeprecationWarning: Setting per-request cookies=<...> is being deprecated, because the expected behaviour on cookie persistence is ambiguous. Set cookies directly on the client instance instead.
+    warnings.warn(message, DeprecationWarning)
+
+tests/test_log_admin.py::AdminLogsTestCase::test_errors_empty_buffer
+  /Users/shocakarel/Habbig/gateway/db.py:1128: RuntimeWarning: coroutine '_test_hello' was never awaited
+    row = c.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_onboarding.py::TestOnboardingDb::test_complete_is_idempotent
+  /Users/shocakarel/Habbig/gateway/db.py:300: RuntimeWarning: coroutine 'send_email_job' was never awaited
+    for row in c.execute("SELECT id FROM newsletter_subscribers WHERE referral_code IS NULL OR referral_code = ''").fetchall():
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_onboarding.py::TestOnboardingDb::test_complete_is_idempotent
+  /Users/shocakarel/Habbig/gateway/db.py:300: RuntimeWarning: coroutine 'send_market_resolution_notifications' was never awaited
+    for row in c.execute("SELECT id FROM newsletter_subscribers WHERE referral_code IS NULL OR referral_code = ''").fetchall():
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_weekly_digest.py::TestWeeklyDigestBatch::test_skips_users_who_unsubscribed_from_digest
+  /Users/shocakarel/Habbig/gateway/db.py:2634: RuntimeWarning: coroutine 'send_email_job' was never awaited
+    subs = c.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_2fa_db.py::TestBackupCodeHelpers::test_store_and_consume_roundtrip
+FAILED tests/test_2fa_db.py::TestBackupCodeHelpers::test_used_code_cannot_be_reused
+FAILED tests/test_2fa_db.py::TestBackupCodeHelpers::test_wrong_code_rejected
+FAILED tests/test_2fa_db.py::TestSession2FAFlag::test_default_unverified_then_marked
+FAILED tests/test_2fa_db.py::TestSession2FAFlag::test_pending_totp_secret_roundtrip
+FAILED tests/test_2fa_db.py::TestAuditLogDB::test_csv_export - sqlite3.Operat...
+FAILED tests/test_2fa_db.py::TestAuditLogDB::test_filters - sqlite3.Operation...
+FAILED tests/test_2fa_db.py::TestAuditLogDB::test_insert_and_query - sqlite3....
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_with_2fa_unverified_session_redirects_to_verify
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_with_verified_session_reaches_admin
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_without_2fa_redirects_to_setup
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_regular_user_not_affected_by_2fa_gate
+FAILED tests/test_analytics.py::TestAnalyticsDb::test_ip_hash_never_raw_ip - ...
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_feedback_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_gifts_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_sentry_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_features_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_prerelease_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_revenue_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_users_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGatesWithRegularUser::test_regular_user_blocked_from_analytics
+FAILED tests/test_http_auth.py::TestAdminAuthGatesWithRegularUser::test_regular_user_blocked_from_gifts
+FAILED tests/test_http_auth.py::TestIntelligenceAuthGates::test_unauthenticated_intelligence_blocked
+FAILED tests/test_http_auth.py::TestIntelligenceAuthGates::test_user_with_addon_can_list
+FAILED tests/test_http_auth.py::TestIntelligenceAuthGates::test_user_without_addon_blocked_list
+FAILED tests/test_http_auth.py::TestOnboardingRedirect::test_new_user_redirected_to_onboarding
+FAILED tests/test_http_auth.py::TestOnboardingRedirect::test_onboarding_page_redirects_completed_user_back_out
+FAILED tests/test_security_headers.py::TestSecurityHeaders::test_csp_contains_stripe
+FAILED tests/test_security_headers.py::TestSecurityHeaders::test_xss_protection
+FAILED tests/test_security_headers.py::TestSecurityIntegration::test_server_imports_security_modules
+================= 30 failed, 448 passed, 34 warnings in 22.98s =================
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2081' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296eb0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2081' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296eb0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+sys:1: RuntimeWarning: coroutine 'send_email_job' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2078' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296eb0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2078' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296eb0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2079' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...1092965e0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2079' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...1092965e0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2080' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296c10>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2080' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296c10>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2086' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296040>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2086' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296040>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2083' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296040>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2083' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296040>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2087' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296220>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2087' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...109296220>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2084' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296220>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2084' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296220>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2088' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...1092961c0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2088' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...1092961c0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2085' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x1092961c0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2085' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x1092961c0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2076' coro=<InProcessBackend._run() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:168> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x1092965e0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2076' coro=<InProcessBackend._run() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:168> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x1092965e0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2077' coro=<InProcessBackend._run() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:168> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296c10>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/handlers.py", line 189, in shouldRollover
+    self.stream = self._open()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1175, in _open
+    return open(self.baseFilename, self.mode, encoding=self.encoding,
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/xn/s7cnytpx3cj1clcg62vfl5w00000gn/T/tmp6r5rfzdx/logs/app.log'
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2077' coro=<InProcessBackend._run() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:168> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109296c10>()]>>"
+Arguments: ()

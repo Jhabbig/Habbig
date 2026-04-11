@@ -3,80 +3,247 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign in — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Welcome back — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <style>
-    .auth-error:empty { display: none; }
-    .auth-success:empty { display: none; }
-    .auth-success {
-      background: var(--green-bg);
-      color: var(--green);
-      border: 1px solid var(--green);
+    body {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      margin: 0;
+    }
+    .login-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text-primary);
+      margin-bottom: 32px;
+    }
+    .login-brand img { width: 26px; height: 26px; filter: invert(1); border-radius: 5px; }
+    .login-brand span { font-family: var(--font-ui); font-weight: 600; font-size: 18px; letter-spacing: -0.03em; }
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 40px 36px;
+      box-shadow: var(--shadow-md);
+    }
+    .login-title {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      margin: 0 0 8px;
+      color: var(--text-primary);
+    }
+    .login-sub { font-size: 13px; color: var(--text-secondary); margin: 0 0 24px; }
+    .login-form { display: flex; flex-direction: column; gap: 14px; }
+    .login-form label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .login-input {
+      width: 100%;
+      padding: 12px 14px;
+      background: var(--bg-raised);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      font-family: inherit;
+      box-sizing: border-box;
+      transition: all 0.15s;
+    }
+    .login-input:focus {
+      outline: none;
+      border-color: var(--text-primary);
+      box-shadow: 0 0 0 3px var(--interactive-ghost);
+    }
+    .login-input[readonly] {
+      background: var(--bg-overlay);
+      color: var(--text-secondary);
+      cursor: not-allowed;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .login-field-error {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      min-height: 14px;
+    }
+    .login-hint {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin: 4px 0 0;
+    }
+    .label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .label-row a {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-decoration: none;
+    }
+    .label-row a:hover { color: var(--text-primary); text-decoration: underline; }
+    .label-row label { margin-bottom: 0; }
+    .pw-wrap { position: relative; }
+    .pw-wrap .login-input { padding-right: 44px; }
+    .pw-toggle {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-tertiary);
+      padding: 4px;
+      line-height: 0;
+    }
+    .pw-toggle:hover { color: var(--text-primary); }
+    .pw-toggle svg { width: 18px; height: 18px; }
+    .login-btn {
+      width: 100%;
+      padding: 14px 16px;
+      background: var(--text-primary);
+      color: var(--interactive-text);
+      border: 1px solid var(--text-primary);
+      border-radius: var(--radius-md);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-top: 8px;
+    }
+    .login-btn:hover:not(:disabled) { background: var(--interactive-hover); }
+    .login-btn:disabled { opacity: 0.65; cursor: wait; }
+    .login-success {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border-default);
       border-radius: var(--radius-sm);
       padding: 10px 14px;
-      font-size: 13px;
-      margin-bottom: 8px;
-    }
-    .token-display {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
-      letter-spacing: 0.04em;
-      background: var(--surface-hover);
-      color: var(--text-muted);
-      cursor: not-allowed;
+      color: var(--text-primary);
+      margin-bottom: 14px;
     }
-    .email-hint {
-      display: inline-block;
-      margin-top: 6px;
-      font-size: 13px;
-      color: var(--accent);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
-    .email-hint:empty { display: none; }
+    .login-success:empty { display: none; }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
-<body class="auth-body">
-  <div class="auth-wrap">
-    <a href="/" class="auth-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
-    </a>
+<body>
+  <a href="/" class="login-brand">
+    <img src="/_gateway_static/img/logo.png" alt="narve.ai">
+    <span>narve.ai</span>
+  </a>
 
-    <div class="auth-card">
-      <div class="auth-title">Welcome back</div>
-      <div class="auth-sub">Sign in to access your dashboards.</div>
+  <div class="login-card">
+    <h1 class="login-title">Welcome back</h1>
+    <p class="login-sub">Sign in to access your dashboards.</p>
 
-      <form class="auth-form" method="post" action="/login">
-        {{ raw_token_section }}
+    <div class="login-success" id="success-msg">{{ raw_success }}</div>
 
-        <label for="identifier">Username or Email</label>
-        <input id="identifier" type="text" name="identifier" required autocomplete="username" autofocus
-               placeholder="Enter your username or email">
+    <form class="login-form" id="login-form" onsubmit="return submitLogin(event)">
+      {{ raw_csrf_field }}
 
-        <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <label for="email">Email address</label>
+        <input class="login-input" id="email" name="email" type="text" readonly
+               value="{{ email_hint }}">
+        <div class="login-hint">This account is linked to your token.</div>
+      </div>
+
+      <div>
+        <div class="label-row">
           <label for="password">Password</label>
-          <a href="/forgot-password" style="font-size:12px;color:var(--accent);text-decoration:none">Forgot password?</a>
+          <a href="/forgot-password">Forgot password?</a>
         </div>
-        <input id="password" type="password" name="password" required autocomplete="current-password">
-
-        <button type="submit" class="auth-submit">Sign in</button>
-      </form>
-
-      {{ raw_success }}
-      <div class="auth-error">{{ error }}</div>
-
-      <div style="text-align:center;margin-top:12px">
-        <a href="/forgot-password" style="font-size:13px;color:var(--text-muted);text-decoration:none">Forgot your password?</a>
+        <div class="pw-wrap">
+          <input class="login-input" id="password" name="password" type="password"
+                 required autocomplete="current-password" autofocus>
+          <button class="pw-toggle" type="button" onclick="togglePw()" aria-label="Show password">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          </button>
+        </div>
+        <div class="login-field-error" id="pw-err">{{ error }}</div>
       </div>
 
-      <div class="auth-footer">
-        {{ raw_footer_link }}
-      </div>
-    </div>
-
-    <div class="auth-reassure">
-      Need an account? Contact the admin for an invite token, then use it at the <a href="/gate">gate</a>.
-    </div>
+      <button class="login-btn" id="login-btn" type="submit">Sign in</button>
+    </form>
   </div>
+
+<script>
+function togglePw() {
+  var input = document.getElementById('password');
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+function getCsrf() {
+  return (document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/) || [])[1] || '';
+}
+
+function submitLogin(ev) {
+  ev.preventDefault();
+  var btn = document.getElementById('login-btn');
+  var err = document.getElementById('pw-err');
+  err.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+
+  fetch('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrf() },
+    body: JSON.stringify({
+      password: document.getElementById('password').value,
+    }),
+  }).then(function(r) {
+    return r.json().then(function(d){ return { ok: r.ok, status: r.status, data: d }; });
+  }).then(function(res) {
+    if (res.ok && res.data && res.data.success) {
+      if (res.data.requires_2fa) {
+        window.location.href = '/auth/2fa';
+      } else {
+        window.location.href = '/dashboards';
+      }
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+    if (res.status === 403) {
+      err.textContent = 'This token is linked to a different account.';
+    } else {
+      err.textContent = (res.data && res.data.error) || 'Incorrect password.';
+    }
+  }).catch(function() {
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+    err.textContent = 'Network error. Try again.';
+  });
+
+  return false;
+}
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

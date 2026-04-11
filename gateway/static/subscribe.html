@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Subscribe — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Subscribe — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <style>
     .sub-page { min-height: 100vh; background: var(--bg); padding: 32px 24px 80px; }
     .sub-container { max-width: 480px; margin: 0 auto; }
@@ -19,20 +19,20 @@
     .sub-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
     .sub-plan { background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-sm); padding: 20px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; position: relative; }
     .sub-plan:hover { border-color: var(--text-muted); }
-    .sub-plan.selected { border-color: var(--accent); box-shadow: 0 0 16px rgba(99, 102, 241, 0.1); }
+    .sub-plan.selected { border-color: var(--accent); box-shadow: 0 0 16px var(--interactive-ghost); }
     .sub-plan-name { font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
     .sub-plan-price { font-size: 24px; font-weight: 700; color: var(--text-primary); }
     .sub-plan-price span { font-size: 13px; font-weight: 400; color: var(--text-muted); }
-    .sub-plan-popular { position: absolute; top: -10px; right: 12px; background: var(--accent); color: white; font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 12px; }
+    .sub-plan-popular { position: absolute; top: -10px; right: 12px; background: var(--accent); color: var(--bg-base); font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 12px; }
 
     /* Interval toggle */
     .sub-interval { display: flex; background: var(--surface-hover); border-radius: var(--radius-sm); padding: 3px; margin-bottom: 24px; }
     .sub-interval-btn { flex: 1; padding: 10px; text-align: center; font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer; border-radius: 8px; transition: all 0.2s; border: none; background: none; font-family: inherit; min-height: 44px; }
-    .sub-interval-btn.active { background: var(--accent); color: white; }
+    .sub-interval-btn.active { background: var(--accent); color: var(--bg-base); }
 
     /* Form */
     .sub-label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; margin-top: 16px; }
-    .sub-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: #1e2130; color: var(--text-primary); transition: border-color 0.15s; outline: none; }
+    .sub-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: var(--bg-overlay); color: var(--text-primary); transition: border-color 0.15s; outline: none; }
     .sub-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
 
     /* Summary */
@@ -41,7 +41,7 @@
     .sub-summary-total { font-weight: 600; color: var(--text-primary); font-size: 15px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
 
     /* Submit */
-    .sub-submit { width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm); background: linear-gradient(135deg, var(--accent), #8b5cf6); color: white; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.1s, box-shadow 0.2s; min-height: 48px; margin-top: 8px; }
+    .sub-submit { width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm); background: var(--cta-bg); color: var(--bg-base); font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.1s, box-shadow 0.2s; min-height: 48px; margin-top: 8px; }
     .sub-submit:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 
     /* Token reveal */
@@ -52,14 +52,17 @@
     .sub-token-icon svg { width: 32px; height: 32px; color: var(--green); }
     .sub-token-heading { font-size: 22px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
     .sub-token-sub { font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.6; }
-    .sub-token-warning { background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: var(--radius-sm); padding: 16px; margin-bottom: 24px; }
-    .sub-token-warning-title { font-size: 14px; font-weight: 700; color: #f59e0b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .sub-token-warning { background: var(--interactive-ghost); border: 1px solid var(--interactive-ghost-hover); border-radius: var(--radius-sm); padding: 16px; margin-bottom: 24px; }
+    .sub-token-warning-title { font-size: 14px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
     .sub-token-warning-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-    .sub-token-display { background: #1e2130; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px; margin-bottom: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 18px; color: var(--accent); letter-spacing: 0.04em; user-select: all; word-break: break-all; }
-    .sub-token-copy { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border-radius: var(--radius-sm); background: var(--accent); color: white; border: none; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 24px; min-height: 44px; }
+    .sub-token-display { background: var(--bg-overlay); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px; margin-bottom: 16px; font-family: var(--font-mono); font-size: 18px; color: var(--accent); letter-spacing: 0.04em; user-select: all; word-break: break-all; }
+    .sub-token-copy { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border-radius: var(--radius-sm); background: var(--accent); color: var(--bg-base); border: none; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 24px; min-height: 44px; }
     .sub-token-next { display: block; color: var(--text-muted); font-size: 13px; text-decoration: none; margin-top: 16px; }
     .sub-token-next:hover { color: var(--text-primary); text-decoration: none; }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
 <div class="sub-page">
@@ -72,19 +75,19 @@
 
     <!-- CHECKOUT FORM -->
     <div id="checkout-form">
-      <h1 class="sub-title">Subscribe to Habbig</h1>
+      <h1 class="sub-title">Subscribe to narve.ai</h1>
       <p class="sub-desc">Select your plan and complete your purchase. You'll receive a unique access token immediately.</p>
 
       <!-- Plan selector -->
       <div class="sub-plans">
         <div class="sub-plan selected" id="plan-trader" onclick="selectPlan('trader')">
           <div class="sub-plan-name">Trader</div>
-          <div class="sub-plan-price" id="price-trader">&pound;49<span>/mo</span></div>
+          <div class="sub-plan-price" id="price-trader">&pound;75 / $99<span>/mo</span></div>
         </div>
         <div class="sub-plan" id="plan-pro" onclick="selectPlan('pro')" style="position:relative">
           <div class="sub-plan-popular">Popular</div>
           <div class="sub-plan-name">Pro</div>
-          <div class="sub-plan-price" id="price-pro">&pound;149<span>/mo</span></div>
+          <div class="sub-plan-price" id="price-pro">&pound;180 / $229<span>/mo</span></div>
         </div>
       </div>
 
@@ -106,7 +109,7 @@
           <div class="sub-summary-row sub-summary-total"><span>Total</span><span id="sum-total">&pound;49/month</span></div>
         </div>
 
-        <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:var(--radius-sm);padding:12px 14px;margin:16px 0 8px;font-size:12px;color:#f59e0b;line-height:1.5">
+        <div style="background:var(--interactive-ghost);border:1px solid var(--interactive-ghost);border-radius:var(--radius-sm);padding:12px 14px;margin:16px 0 8px;font-size:12px;color:var(--text-secondary);line-height:1.5">
           <strong>Double-check your email address.</strong> Your access token will be sent to this email. If it's wrong, you won't receive your login credentials.
         </div>
 
@@ -124,8 +127,8 @@
         <div class="sub-token-sub">Your subscription is active. Here is your access token.</div>
 
         <div class="sub-token-warning">
-          <div class="sub-token-warning-title">WRITE THIS DOWN AND DON'T LOSE IT</div>
-          <div class="sub-token-warning-text">This is your access token. You need it every time you log in. It <strong>cannot be recovered</strong> if lost. Copy it now and store it somewhere safe. A copy has also been sent to your email — make sure you entered your email correctly, otherwise you will not receive it.</div>
+          <div class="sub-token-warning-title">SAVE YOUR TOKEN</div>
+          <div class="sub-token-warning-text">This is your access token. You'll use it once to create your account — after that you'll sign in with your email and password. Keep it safe in case you ever need to recover your account. A copy has also been sent to your email.</div>
         </div>
 
         <div class="sub-token-display" id="token-value">—</div>
@@ -135,7 +138,7 @@
           <span id="copy-text">Copy Token</span>
         </button>
 
-        <a href="/gate" class="sub-token-next">Continue to login &rarr;</a>
+        <a href="/token" class="sub-token-next">Continue to login &rarr;</a>
       </div>
     </div>
 
@@ -143,12 +146,17 @@
 </div>
 
 <script>
+function getCsrf() {
+  var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 var selectedPlan = 'trader';
 var selectedInterval = 'monthly';
 
 var prices = {
-  trader: { monthly: 49, annual: 399, monthly_label: '49', annual_label: '399' },
-  pro: { monthly: 149, annual: 1199, monthly_label: '149', annual_label: '1,199' }
+  trader: { monthly: 75, annual: 765, monthly_label: '75', annual_label: '765', monthly_usd: '99', annual_usd: '999' },
+  pro: { monthly: 180, annual: 1836, monthly_label: '180', annual_label: '1,836', monthly_usd: '229', annual_usd: '1,999' }
 };
 
 // Read query params
@@ -174,8 +182,8 @@ function setInt(interval) {
 
   // Update price displays
   var suffix = interval === 'annual' ? '/yr' : '/mo';
-  document.getElementById('price-trader').innerHTML = '&pound;' + prices.trader[interval + '_label'] + '<span>' + suffix + '</span>';
-  document.getElementById('price-pro').innerHTML = '&pound;' + prices.pro[interval + '_label'] + '<span>' + suffix + '</span>';
+  document.getElementById('price-trader').innerHTML = '&pound;' + prices.trader[interval + '_label'] + ' / $' + prices.trader[interval + '_usd'] + '<span>' + suffix + '</span>';
+  document.getElementById('price-pro').innerHTML = '&pound;' + prices.pro[interval + '_label'] + ' / $' + prices.pro[interval + '_usd'] + '<span>' + suffix + '</span>';
   updateSummary();
 }
 
@@ -186,9 +194,10 @@ function updateSummary() {
   var amount = p[selectedInterval + '_label'];
   var period = selectedInterval === 'monthly' ? '/month' : '/year';
 
+  var usdAmount = p[selectedInterval + '_usd'];
   document.getElementById('sum-plan').textContent = label;
   document.getElementById('sum-interval').textContent = intLabel;
-  document.getElementById('sum-total').innerHTML = '&pound;' + amount + period;
+  document.getElementById('sum-total').innerHTML = '&pound;' + amount + ' / $' + usdAmount + period;
 }
 
 function submitCheckout(e) {
@@ -202,7 +211,7 @@ function submitCheckout(e) {
 
   fetch('/api/subscribe', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
     body: JSON.stringify({ email: email, plan: selectedPlan, interval: selectedInterval })
   })
   .then(function(r) { return r.json(); })
@@ -233,5 +242,6 @@ function copyToken() {
   });
 }
 </script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

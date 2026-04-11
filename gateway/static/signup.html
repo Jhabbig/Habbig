@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Create account — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Create account — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <style>
     .auth-error:empty { display: none; }
     .req-list { margin-top: 10px; display: none; }
@@ -14,16 +14,16 @@
       align-items: center;
       gap: 8px;
       font-size: 12px;
-      color: var(--text-muted);
+      color: var(--text-tertiary);
       padding: 3px 0;
       transition: color 0.15s;
     }
-    .req-item.met { color: var(--green); }
+    .req-item.met { color: var(--positive); }
     .req-icon {
       width: 16px;
       height: 16px;
       border-radius: 50%;
-      border: 1.5px solid var(--border);
+      border: 1.5px solid var(--border-default);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -31,18 +31,18 @@
       transition: border-color 0.15s, background 0.15s;
     }
     .req-item.met .req-icon {
-      border-color: var(--green);
-      background: var(--green-bg);
+      border-color: var(--positive);
+      background: var(--interactive-ghost);
     }
     .req-icon svg { width: 10px; height: 10px; opacity: 0; transition: opacity 0.15s; }
     .req-item.met .req-icon svg { opacity: 1; }
     .field-valid {
-      border-color: var(--green) !important;
-      box-shadow: 0 0 0 3px var(--green-bg) !important;
+      border-color: var(--positive) !important;
+      box-shadow: 0 0 0 3px var(--interactive-ghost) !important;
     }
     .field-invalid {
-      border-color: var(--red) !important;
-      box-shadow: 0 0 0 3px var(--red-bg) !important;
+      border-color: var(--text-secondary) !important;
+      box-shadow: 0 0 0 3px var(--interactive-ghost) !important;
     }
     .field-hint {
       font-size: 11px;
@@ -50,15 +50,23 @@
       display: none;
     }
     .field-hint.visible { display: block; }
-    .field-hint.valid { color: var(--green); }
-    .field-hint.invalid { color: var(--red); }
+    .field-hint.valid { color: var(--positive); }
+    .field-hint.invalid { color: var(--text-secondary); }
+    .pw-wrap { position: relative; }
+    .pw-wrap input { padding-right: 44px; }
+    .pw-toggle { position: absolute; right: 10px; top: 14px; background: none; border: none; cursor: pointer; color: var(--text-tertiary); padding: 4px; line-height: 0; }
+    .pw-toggle:hover { color: var(--text-primary); }
+    .pw-toggle svg { width: 18px; height: 18px; }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body class="auth-body">
   <div class="auth-wrap">
     <a href="/" class="auth-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:24px;height:24px;filter:invert(1);border-radius:4px">
+      <span>narve.ai</span>
     </a>
 
     <div class="auth-card">
@@ -66,6 +74,7 @@
       <div class="auth-sub">No credit card required to sign up.</div>
 
       <form class="auth-form" method="post" action="/signup" id="signup-form">
+        {{ raw_csrf_field }}
         <input type="hidden" name="invite_token" value="{{ invite_token }}">
 
         <div>
@@ -84,7 +93,13 @@
 
         <div>
           <label for="password">Password</label>
-          <input id="password" type="password" name="password" required autocomplete="new-password" minlength="12">
+          <div class="pw-wrap">
+            <input id="password" type="password" name="password" required autocomplete="new-password" minlength="12">
+            <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="Show password">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+              <svg style="display:none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
+            </button>
+          </div>
           <div class="req-list" id="pw-reqs">
             <div class="req-item" id="req-length">
               <span class="req-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></span>
@@ -110,6 +125,11 @@
         </div>
 
         <button type="submit" class="auth-submit" id="submit-btn">Create account</button>
+        <p style="font-size:11px;color:var(--text-tertiary);text-align:center;margin:14px 0 0;line-height:1.5">
+          By creating an account you agree to our
+          <a href="/terms" style="color:var(--text-secondary);text-decoration:underline">Terms</a>
+          and <a href="/privacy" style="color:var(--text-secondary);text-decoration:underline">Privacy Policy</a>.
+        </p>
       </form>
 
       <div class="auth-error">{{ error }}</div>
@@ -239,6 +259,13 @@
     }
   });
 })();
+function togglePw(btn) {
+  var input = btn.parentElement.querySelector('input');
+  var svgs = btn.querySelectorAll('svg');
+  if (input.type === 'password') { input.type = 'text'; svgs[0].style.display = 'none'; svgs[1].style.display = ''; }
+  else { input.type = 'password'; svgs[0].style.display = ''; svgs[1].style.display = 'none'; }
+}
 </script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

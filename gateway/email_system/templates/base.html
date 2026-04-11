@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>narve.ai</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0d0d0d;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e0e0e0;border-radius:8px;max-width:560px;">
+
+        <!-- Header -->
+        <tr><td style="padding:32px 40px 24px;border-bottom:1px solid #ebebeb;">
+          <span style="font-size:16px;font-weight:600;color:#0d0d0d;letter-spacing:-0.04em;">narve.ai</span>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:32px 40px;color:#0d0d0d;font-size:14px;line-height:1.6;">
+          {{ content }}
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:24px 40px;border-top:1px solid #ebebeb;">
+          <p style="margin:0;font-size:11px;color:#aaaaaa;line-height:1.6;">
+            narve.ai · Prediction market intelligence<br>
+            {% if unsubscribe_url %}
+            <a href="{{ unsubscribe_url }}" style="color:#aaaaaa;text-decoration:underline;">Unsubscribe</a> ·
+            {% endif %}
+            <a href="https://narve.ai/privacy" style="color:#aaaaaa;text-decoration:underline;">Privacy Policy</a> ·
+            <a href="https://narve.ai/terms" style="color:#aaaaaa;text-decoration:underline;">Terms</a>
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>

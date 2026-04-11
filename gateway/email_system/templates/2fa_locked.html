@@ -1,0 +1,26 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Suspicious activity on your narve.ai account</h1>
+<p style="margin:0 0 8px;color:#555;">Hi {{ display_name }},</p>
+<p style="margin:0 0 16px;color:#555;">
+  We detected 5 failed two-factor verification attempts on your narve.ai account.
+  As a precaution, 2FA verification has been temporarily locked for 15 minutes.
+</p>
+
+<div style="margin:20px 0;padding:16px 20px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;font-size:13px;color:#555;">
+  <div><strong style="color:#0d0d0d;">When:</strong> {{ when }}</div>
+  <div><strong style="color:#0d0d0d;">IP address:</strong> {{ ip_address }}</div>
+</div>
+
+<p style="margin:16px 0 0;color:#555;">
+  <strong style="color:#0d0d0d;">If this was you</strong> — just wait 15 minutes and try again with the correct code.
+</p>
+<p style="margin:8px 0 0;color:#555;">
+  <strong style="color:#0d0d0d;">If this was NOT you</strong> — your password may be compromised.
+  We recommend you <a href="https://narve.ai/forgot-password" style="color:#0d0d0d;">reset your password</a> immediately.
+</p>
+
+<p style="margin:24px 0 0;color:#aaaaaa;font-size:11px;line-height:1.6;">
+  This is a one-time security notice. We do not track your sign-in activity beyond
+  what is required to detect abuse.
+</p>
+{% endblock %}

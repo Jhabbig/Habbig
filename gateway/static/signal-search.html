@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Signal Search — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <style>
+    .ss-container { max-width: 900px; margin: 0 auto; }
+    .ss-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+    .ss-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .ss-add-btn { padding: 10px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; background: var(--cta-bg); color: var(--interactive-text); border: none; cursor: pointer; }
+    .ss-topics { display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px; }
+    .ss-topic { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .ss-topic-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .ss-topic-name { font-size: 18px; font-weight: 600; }
+    .ss-topic-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 16px; margin-bottom: 16px; }
+    .ss-topic-actions { display: flex; gap: 8px; }
+    .ss-topic-actions button { padding: 6px 14px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); transition: all 0.15s; }
+    .ss-topic-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .ss-topic-actions .ss-pull { border-color: var(--accent); color: var(--accent); }
+    .ss-topic-actions .ss-delete { border-color: var(--red); color: var(--red); }
+    .ss-analysis { margin-top: 16px; padding: 16px; background: var(--surface-hover); border-radius: var(--radius-sm); }
+    .ss-analysis-toggle { font-size: 13px; color: var(--accent); cursor: pointer; font-weight: 500; }
+    .ss-analysis-body { display: none; margin-top: 12px; }
+    .ss-analysis-body.open { display: block; }
+    .ss-signal { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .ss-signal-bullish { background: var(--interactive-ghost); color: var(--positive); }
+    .ss-signal-bearish { background: var(--interactive-ghost); color: var(--text-secondary); }
+    .ss-signal-mixed { background: var(--interactive-ghost); color: var(--text-secondary); }
+    .ss-signal-unclear { background: var(--surface-hover); color: var(--text-muted); }
+    .ss-confidence { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
+    .ss-empty { text-align: center; padding: 64px 24px; color: var(--text-muted); }
+    .ss-empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
+
+    /* Modal */
+    .ss-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 999; align-items: center; justify-content: center; padding: 24px; }
+    .ss-modal-overlay.open { display: flex; }
+    .ss-modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; max-width: 480px; width: 100%; }
+    .ss-modal-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; }
+    .ss-modal label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin: 16px 0 6px; }
+    .ss-modal input, .ss-modal select { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--bg-overlay); color: var(--text-primary); }
+    .ss-modal input:focus, .ss-modal select:focus { outline: none; border-color: var(--accent); }
+    .ss-modal-actions { display: flex; gap: 12px; margin-top: 24px; }
+    .ss-modal-actions button { flex: 1; padding: 12px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer; }
+    .ss-modal-save { background: var(--cta-bg); color: var(--interactive-text); border: none; }
+    .ss-modal-cancel { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+  </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:24px;height:24px;filter:invert(1);border-radius:4px">
+      <span>narve.ai</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards">Dashboards</a>
+      <a href="/signal-search" class="active">Signal Search</a>
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      {{ raw_admin_link }}
+      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>{{ raw_nav_role }}
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+
+  <main class="gw-main">
+    <div class="ss-container">
+      <div class="ss-header">
+        <div>
+          <h1 class="ss-title">Signal Search</h1>
+          <p style="font-size:13px;color:var(--text-secondary);margin-top:4px">Save topics, auto-pull X posts, extract predictions with AI analysis.</p>
+        </div>
+        <button class="ss-add-btn" onclick="openModal()">+ Add Topic</button>
+      </div>
+
+      <div id="topics-container" class="ss-topics">
+        <div class="ss-empty" id="empty-state">
+          <div class="ss-empty-icon">&#x1F50D;</div>
+          <div style="font-size:16px;font-weight:600;margin-bottom:8px">No topics yet</div>
+          <div style="font-size:13px">Add your first topic to start tracking predictions from X.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Add Topic Modal -->
+  <div class="ss-modal-overlay" id="add-modal" onclick="if(event.target===this)closeModal()">
+    <div class="ss-modal">
+      <div class="ss-modal-title">Add Topic</div>
+      <label for="topic-name">Topic name</label>
+      <input type="text" id="topic-name" placeholder="e.g. US Elections 2026">
+      <label for="topic-keywords">Keywords (comma separated)</label>
+      <input type="text" id="topic-keywords" placeholder="e.g. election, senate, congress">
+      <label for="topic-schedule">Auto-pull schedule</label>
+      <select id="topic-schedule">
+        <option value="60">Every hour</option>
+        <option value="30">Every 30 minutes</option>
+        <option value="360">Every 6 hours</option>
+        <option value="1440">Daily</option>
+      </select>
+      <div class="ss-modal-actions">
+        <button class="ss-modal-cancel" onclick="closeModal()">Cancel</button>
+        <button class="ss-modal-save" onclick="saveTopic()">Save Topic</button>
+      </div>
+    </div>
+  </div>
+
+{{ raw_sitemap }}
+<script>
+function openModal() { document.getElementById('add-modal').classList.add('open'); }
+function closeModal() { document.getElementById('add-modal').classList.remove('open'); }
+
+function saveTopic() {
+  var name = document.getElementById('topic-name').value.trim();
+  var kw = document.getElementById('topic-keywords').value.trim();
+  var schedule = parseInt(document.getElementById('topic-schedule').value);
+  if (!name || !kw) { alert('Name and keywords required'); return; }
+  var keywords = kw.split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+  fetch('/api/topics', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name, keywords: keywords, schedule_minutes: schedule })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    closeModal();
+    loadTopics();
+  });
+}
+
+function deleteTopic(id) {
+  if (!confirm('Delete this topic and all its data?')) return;
+  fetch('/api/topics/' + id, { method: 'DELETE' })
+    .then(function() { loadTopics(); });
+}
+
+function pullTopic(id) {
+  fetch('/api/topics/' + id + '/pull', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function() { loadTopics(); });
+}
+
+function toggleAnalysis(el) {
+  var body = el.nextElementSibling;
+  body.classList.toggle('open');
+  el.textContent = body.classList.contains('open') ? 'Hide AI analysis' : 'Show AI analysis';
+}
+
+// Build a topic card using DOM APIs only. textContent escapes everything,
+// so attacker-controlled topic names / keywords cannot inject script.
+function buildTopicCard(t) {
+  var card = document.createElement('div');
+  card.className = 'ss-topic';
+
+  var head = document.createElement('div');
+  head.className = 'ss-topic-head';
+  var name = document.createElement('div');
+  name.className = 'ss-topic-name';
+  name.textContent = t.name;
+  head.appendChild(name);
+
+  var actions = document.createElement('div');
+  actions.className = 'ss-topic-actions';
+  var pullBtn = document.createElement('button');
+  pullBtn.className = 'ss-pull';
+  pullBtn.textContent = 'Pull now';
+  pullBtn.addEventListener('click', function() { pullTopic(t.id); });
+  var delBtn = document.createElement('button');
+  delBtn.className = 'ss-delete';
+  delBtn.textContent = 'Delete';
+  delBtn.addEventListener('click', function() { deleteTopic(t.id); });
+  actions.appendChild(pullBtn);
+  actions.appendChild(delBtn);
+  head.appendChild(actions);
+  card.appendChild(head);
+
+  var meta = document.createElement('div');
+  meta.className = 'ss-topic-meta';
+  var ago = t.last_pulled_at
+    ? Math.round((Date.now() / 1000 - t.last_pulled_at) / 60) + ' min ago'
+    : 'Never';
+  var kwSpan = document.createElement('span');
+  // .join uses textContent path — safe because keywords are also assigned via textContent
+  kwSpan.textContent = 'Keywords: ' + (Array.isArray(t.keywords) ? t.keywords.join(', ') : '');
+  var ageSpan = document.createElement('span');
+  ageSpan.textContent = 'Last pulled: ' + ago;
+  var postsSpan = document.createElement('span');
+  postsSpan.textContent = 'Posts: ' + (t.posts_found_total | 0);
+  var predSpan = document.createElement('span');
+  predSpan.textContent = 'Predictions: ' + (t.predictions_extracted_total | 0);
+  meta.appendChild(kwSpan);
+  meta.appendChild(ageSpan);
+  meta.appendChild(postsSpan);
+  meta.appendChild(predSpan);
+  card.appendChild(meta);
+
+  var analysis = document.createElement('div');
+  analysis.className = 'ss-analysis';
+  var toggle = document.createElement('span');
+  toggle.className = 'ss-analysis-toggle';
+  toggle.textContent = 'Show AI analysis';
+  toggle.addEventListener('click', function() { toggleAnalysis(toggle); });
+  var body = document.createElement('div');
+  body.className = 'ss-analysis-body';
+  body.id = 'analysis-' + (t.id | 0);
+  body.textContent = 'Loading...';
+  analysis.appendChild(toggle);
+  analysis.appendChild(body);
+  card.appendChild(analysis);
+
+  return card;
+}
+
+function loadTopics() {
+  fetch('/api/topics').then(function(r) { return r.json(); }).then(function(data) {
+    var container = document.getElementById('topics-container');
+    var empty = document.getElementById('empty-state');
+    // Clear existing children safely.
+    while (container.firstChild) container.removeChild(container.firstChild);
+    if (!data.topics || data.topics.length === 0) {
+      container.appendChild(empty);
+      empty.style.display = '';
+      return;
+    }
+    data.topics.forEach(function(t) {
+      container.appendChild(buildTopicCard(t));
+    });
+  });
+}
+
+loadTopics();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

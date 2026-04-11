@@ -1,0 +1,92 @@
+name: Tests
+
+# Runs on every push and pull request. Any failure blocks merge via branch
+# protection. Intentionally matched to the real stack: SQLite + pytest, no
+# PostgreSQL / Redis / Alembic containers.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Match the server's Python version.
+      PYTHON_VERSION: "3.12"
+      # Never run with real production flags in CI.
+      PRODUCTION: ""
+      # A 48+ char gate token so startup validation is happy.
+      SITE_ACCESS_TOKEN: "ci_token_48_chars_aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      # Email stays in dry-run mode so tests never hit a real SMTP server.
+      EMAIL_DRY_RUN: "true"
+      # Blank Sentry DSN = sentry disabled, no network calls in tests.
+      SENTRY_DSN: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Python syntax check
+        run: |
+          python -c "import ast; ast.parse(open('server.py').read())"
+          python -c "import ast; ast.parse(open('db.py').read())"
+          for f in backend/markets/*.py; do
+              python -c "import ast; ast.parse(open('$f').read())"
+          done
+
+      - name: JavaScript syntax check (trade.js)
+        run: |
+          if [ -f static/trade.js ]; then
+              node -e "new Function(require('fs').readFileSync('static/trade.js','utf8'))"
+          fi
+
+      - name: Run tests
+        run: python -m pytest tests/ -x -q --tb=short
+
+      - name: Scan for hardcoded secrets
+        # Block if obvious secret patterns appear in source. Excludes
+        # .env.example, docs, and the workflow file itself.
+        run: |
+          set +e
+          MATCHES=$(grep -rInE \
+              "sk_live_|AKIA[0-9A-Z]{16}|password.*=.*['\"][^'\"]{8,}['\"]|whsec_[A-Za-z0-9]{20,}" \
+              --include="*.py" --include="*.js" --include="*.sh" \
+              --exclude-dir=".git" \
+              --exclude-dir="node_modules" \
+              --exclude-dir=".github" \
+              --exclude="*.example" \
+              --exclude="*.md" \
+              .)
+          if [ -n "$MATCHES" ]; then
+              echo "✗ Potential hardcoded secrets found:"
+              echo "$MATCHES"
+              exit 1
+          fi
+          echo "✓ No hardcoded secrets found"
+
+      - name: Verify /health endpoint is registered
+        # Quick import-time check: the route must exist in the OpenAPI-free
+        # app router. Catches accidental decorator removal.
+        run: |
+          python -c "
+          import server
+          paths = [r.path for r in server.app.routes if hasattr(r, 'path')]
+          assert '/health' in paths, f'/health route missing — found: {sorted(paths)[:20]}'
+          print('✓ /health registered')
+          "

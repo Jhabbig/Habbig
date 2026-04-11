@@ -1,0 +1,114 @@
+name: Deploy to Production
+
+# Manual trigger only. The workflow refuses to run if:
+#   - the "confirm" input is not literally "deploy"
+#   - staging /health is not returning 200
+#
+# Required GitHub secrets:
+#   PROD_SSH_HOST    - Tailscale hostname or public IP of the server
+#   PROD_SSH_USER    - SSH user (julianhabbig)
+#   PROD_SSH_KEY     - private key matching an ~/.ssh/authorized_keys entry
+#   PROD_SSH_PORT    - (optional) SSH port, defaults to 22
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'deploy' to confirm production deployment"
+        required: true
+        default: ""
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify confirm input
+        if: ${{ github.event.inputs.confirm != 'deploy' }}
+        run: |
+          echo "✗ Must type 'deploy' exactly to confirm"
+          exit 1
+
+      - name: Verify staging is healthy
+        run: |
+          STATUS=$(curl -sS -o /tmp/health.json -w '%{http_code}' https://staging.narve.ai/health)
+          if [ "$STATUS" != "200" ]; then
+              echo "✗ staging not healthy (HTTP $STATUS) — fix staging first"
+              cat /tmp/health.json || true
+              exit 1
+          fi
+          JSON_STATUS=$(python3 -c "import json; print(json.load(open('/tmp/health.json'))['status'])")
+          if [ "$JSON_STATUS" = "error" ]; then
+              echo "✗ staging health status is 'error'"
+              cat /tmp/health.json
+              exit 1
+          fi
+          echo "✓ staging healthy (status=$JSON_STATUS)"
+
+  deploy-production:
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy production via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          port: ${{ secrets.PROD_SSH_PORT || 22 }}
+          command_timeout: 5m
+          script: |
+            set -e
+            cd ~/Habbig/gateway
+            PREVIOUS_HEAD=$(git rev-parse HEAD)
+            echo "rollback_ref=$PREVIOUS_HEAD" >> /tmp/last_deploy_ref
+
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+
+            if [ ! -f ~/.gateway_env ]; then
+                echo '✗ ~/.gateway_env missing on host'
+                exit 1
+            fi
+            set -a
+            . ~/.gateway_env
+            set +a
+
+            fuser -k 7000/tcp 2>/dev/null || true
+            sleep 2
+            nohup env PRODUCTION=1 python3 -m uvicorn server:app \
+                --host 127.0.0.1 \
+                --port 7000 \
+                > /tmp/gateway.log 2>&1 &
+            sleep 4
+            pgrep -f 'uvicorn server:app.*7000' >/dev/null || {
+                echo '✗ production uvicorn failed to start'
+                tail -30 /tmp/gateway.log
+                echo "ROLLBACK: git checkout $PREVIOUS_HEAD && restart"
+                exit 1
+            }
+
+      - name: Verify production /health
+        run: |
+          sleep 5
+          STATUS=$(curl -sS -o /tmp/health.json -w '%{http_code}' https://narve.ai/health)
+          if [ "$STATUS" != "200" ]; then
+              echo "✗ production returned HTTP $STATUS"
+              cat /tmp/health.json || true
+              echo ""
+              echo "🚨 IMMEDIATE ACTION: bash scripts/rollback.sh"
+              exit 1
+          fi
+          python3 -m json.tool /tmp/health.json
+          echo "✓ production deployed and healthy"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "🚨 Production deployment FAILED"
+          echo "Run: bash scripts/rollback.sh"

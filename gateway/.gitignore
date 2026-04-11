@@ -1,0 +1,51 @@
+# Environment / secrets
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+
+# Databases (auth, scraper, sessions)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+auth.db
+scraper.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Logs
+*.log
+/tmp/gateway.log
+/tmp/*.log
+nohup.out
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Change queue tool — local state only
+tools/change_queue.json
+tools/change_log.json

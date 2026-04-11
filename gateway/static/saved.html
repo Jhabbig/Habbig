@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Saved — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    <!-- ── Sidebar ──────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+          </svg>
+          Dashboards
+        </a>
+        <a href="/saved" class="nav-item active">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 2v12l5-3 5 3V2z"/>
+          </svg>
+          Saved
+        </a>
+        <a href="/billing" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="14" height="10" rx="2"/><line x1="1" y1="7" x2="15" y2="7"/>
+          </svg>
+          Billing
+        </a>
+        <a href="/settings" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2"/>
+          </svg>
+          Settings
+        </a>
+        {{ raw_admin_link }}
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
+      </a>
+    </aside>
+
+    <!-- ── Main content ─────────────────────────────────────────── -->
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Saved</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Saved predictions</h1>
+        <p class="page-subtitle">Predictions you're tracking. See which sources you trust most when markets resolve.</p>
+        <div class="filter-bar" style="margin-top:16px">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="active">Active</button>
+          <button class="filter-btn" data-filter="correct">Resolved correct</button>
+          <button class="filter-btn" data-filter="incorrect">Resolved incorrect</button>
+        </div>
+      </div>
+
+      <div class="content-area">
+        <div id="saved-body">
+          <div class="empty-state" id="saved-loading">
+            <div class="empty-state-title">Loading…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Saved</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
+  </div>
+
+<script>
+(function(){
+  // Avatar initial
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av) {
+    var u = av.getAttribute('data-username');
+    av.textContent = u ? u.charAt(0).toUpperCase() : '?';
+  }
+
+  var body = document.getElementById('saved-body');
+  var currentFilter = 'all';
+
+  function esc(s){
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(m){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m];
+    });
+  }
+
+  function fmtDate(ts){
+    if (!ts) return '—';
+    var d = new Date(ts * 1000);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  }
+
+  function statusLabel(p){
+    if (!p.resolved) return '<span class="status-item">—</span>';
+    if (p.resolved_correct) return '<span class="cred-score high">✓ correct</span>';
+    return '<span class="cred-score low">✗ incorrect</span>';
+  }
+
+  function credScore(c){
+    if (c === null || c === undefined) return '<span class="cred-score unrated">unrated</span>';
+    var cls = c >= 0.7 ? 'high' : (c >= 0.5 ? 'mid' : 'low');
+    return '<span class="cred-score ' + cls + '">' + (c).toFixed(2) + '</span>';
+  }
+
+  function renderRows(items){
+    if (!items.length){
+      body.innerHTML = '<div class="empty-state">'
+        + '<div class="empty-state-title">No saved predictions yet.</div>'
+        + '<div class="empty-state-body">When you find a prediction you want to track over time, tap the bookmark icon. Resolved ones will show up here with their outcomes so you can see which sources you trust most.</div>'
+        + '</div>';
+      return;
+    }
+    var html = '<table class="db-table"><thead><tr>'
+      + '<th>Saved</th>'
+      + '<th>Prediction</th>'
+      + '<th>Source</th>'
+      + '<th>Credibility</th>'
+      + '<th>Status</th>'
+      + '<th>Notes</th>'
+      + '<th></th>'
+      + '</tr></thead><tbody>';
+    items.forEach(function(it){
+      var p = it.prediction;
+      html += '<tr data-pid="' + p.id + '">'
+        + '<td class="db-cell-data">' + esc(fmtDate(it.saved_at)) + '</td>'
+        + '<td class="db-cell-primary" title="' + esc(p.content) + '">' + esc(p.content) + '</td>'
+        + '<td class="db-cell-source"><span class="source-handle">@' + esc(p.source_handle) + '</span></td>'
+        + '<td>' + credScore(p.credibility) + '</td>'
+        + '<td>' + statusLabel(p) + '</td>'
+        + '<td class="db-cell-data" style="max-width:200px">' + esc(it.notes || '') + '</td>'
+        + '<td><button class="btn-ghost unsave-btn" data-pid="' + p.id + '">Remove</button></td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+
+    body.querySelectorAll('.unsave-btn').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        var pid = btn.getAttribute('data-pid');
+        fetch('/api/saved/' + pid, {method:'DELETE', headers:{'X-CSRF-Token': getCsrf()}})
+          .then(function(r){ return r.json(); })
+          .then(function(){ load(); });
+      });
+    });
+  }
+
+  function getCsrf(){
+    var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function load(){
+    body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Loading…</div></div>';
+    fetch('/api/saved?resolved=' + encodeURIComponent(currentFilter))
+      .then(function(r){ return r.json(); })
+      .then(function(d){ renderRows(d.items || []); })
+      .catch(function(){
+        body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Failed to load.</div><div class="empty-state-body">Refresh to retry.</div></div>';
+      });
+  }
+
+  document.querySelectorAll('.filter-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.filter-btn').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentFilter = btn.getAttribute('data-filter');
+      load();
+    });
+  });
+
+  load();
+})();
+</script>
+{{ raw_sitemap }}
+<script src="/_gateway_static/user-features.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

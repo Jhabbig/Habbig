@@ -1,0 +1,31 @@
+FAILED tests/test_2fa_db.py::TestBackupCodeHelpers::test_store_and_consume_roundtrip
+FAILED tests/test_2fa_db.py::TestBackupCodeHelpers::test_used_code_cannot_be_reused
+FAILED tests/test_2fa_db.py::TestBackupCodeHelpers::test_wrong_code_rejected
+FAILED tests/test_2fa_db.py::TestSession2FAFlag::test_default_unverified_then_marked
+FAILED tests/test_2fa_db.py::TestSession2FAFlag::test_pending_totp_secret_roundtrip
+FAILED tests/test_2fa_db.py::TestAuditLogDB::test_csv_export - sqlite3.Operat...
+FAILED tests/test_2fa_db.py::TestAuditLogDB::test_filters - sqlite3.Operation...
+FAILED tests/test_2fa_db.py::TestAuditLogDB::test_insert_and_query - sqlite3....
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_with_2fa_unverified_session_redirects_to_verify
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_with_verified_session_reaches_admin
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_admin_without_2fa_redirects_to_setup
+FAILED tests/test_2fa_http.py::TestAdminTwoFactorGate::test_regular_user_not_affected_by_2fa_gate
+FAILED tests/test_analytics.py::TestAnalyticsDb::test_ip_hash_never_raw_ip - ...
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_feedback_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_gifts_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_admin_api_sentry_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_features_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_prerelease_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_revenue_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGates::test_analytics_users_requires_admin
+FAILED tests/test_http_auth.py::TestAdminAuthGatesWithRegularUser::test_regular_user_blocked_from_analytics
+FAILED tests/test_http_auth.py::TestAdminAuthGatesWithRegularUser::test_regular_user_blocked_from_gifts
+FAILED tests/test_http_auth.py::TestIntelligenceAuthGates::test_unauthenticated_intelligence_blocked
+FAILED tests/test_http_auth.py::TestIntelligenceAuthGates::test_user_with_addon_can_list
+FAILED tests/test_http_auth.py::TestIntelligenceAuthGates::test_user_without_addon_blocked_list
+FAILED tests/test_http_auth.py::TestOnboardingRedirect::test_new_user_redirected_to_onboarding
+FAILED tests/test_http_auth.py::TestOnboardingRedirect::test_onboarding_page_redirects_completed_user_back_out
+FAILED tests/test_log_admin.py::AdminLogsTestCase::test_errors_empty_buffer
+FAILED tests/test_security_headers.py::TestSecurityHeaders::test_csp_contains_stripe
+FAILED tests/test_security_headers.py::TestSecurityHeaders::test_xss_protection
+FAILED tests/test_security_headers.py::TestSecurityIntegration::test_server_imports_security_modules

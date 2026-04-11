@@ -1,0 +1,19 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">New enquiry</h1>
+<p style="margin:0 0 20px;color:#555;">A new enquiry was submitted on the narve.ai landing page.</p>
+<table cellpadding="0" cellspacing="0" style="width:100%;margin:16px 0;border-collapse:collapse">
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px 4px 0 0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em;width:80px">Email</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-left:0;border-radius:0 4px 0 0;font-size:14px;color:#0d0d0d;">{{ enquiry_email }}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em">Role</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;font-size:14px;color:#0d0d0d;">{{ job_title }}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;border-radius:0 0 0 4px;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em;vertical-align:top">Message</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;border-radius:0 0 4px 0;font-size:14px;color:#0d0d0d;white-space:pre-wrap;line-height:1.5">{{ message }}</td>
+  </tr>
+</table>
+<p style="margin:20px 0 0;color:#555;font-size:13px;">Reply directly to this email to respond to the sender.</p>
+{% endblock %}

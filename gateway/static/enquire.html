@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Request Access — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Request Access — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="stylesheet" href="/_gateway_static/scroll-animations.css">
   <style>
     .enq-page {
       min-height: 100vh;
@@ -71,7 +72,7 @@
       width: 100%;
       padding: 14px 16px;
       min-height: 48px;
-      background: #1e2130;
+      background: var(--bg-overlay);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       font-family: inherit;
@@ -98,7 +99,7 @@
       cursor: pointer;
       padding-right: 44px;
     }
-    .enq-select option { background: #1e2130; color: var(--text-primary); }
+    .enq-select option { background: var(--bg-overlay); color: var(--text-primary); }
     .enq-select-chevron {
       position: absolute;
       right: 16px;
@@ -141,7 +142,7 @@
     .enq-api-error {
       padding: 12px 16px;
       background: var(--red-bg);
-      border: 1px solid rgba(239, 68, 68, 0.25);
+      border: 1px solid var(--interactive-ghost);
       border-radius: var(--radius-sm);
       color: var(--red);
       font-size: 13px;
@@ -170,8 +171,8 @@
       min-height: 48px;
       border: none;
       border-radius: var(--radius-sm);
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      color: white;
+      background: var(--cta-bg);
+      color: var(--bg-base);
       font-family: inherit;
       font-size: 15px;
       font-weight: 600;
@@ -195,7 +196,7 @@
       width: 16px;
       height: 16px;
       border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: white;
+      border-top-color: var(--text-primary);
       border-radius: 50%;
       animation: spin 0.6s linear infinite;
     }
@@ -249,6 +250,9 @@
       .enq-page { padding: 20px 16px 48px; }
     }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
 <div class="enq-page">
@@ -313,7 +317,7 @@
 
       <!-- API error banner -->
       <div class="enq-api-error" id="api-error">
-        <span id="api-error-text">Something went wrong. Please try again or email us directly at enquiries@habbig.com.</span>
+        <span id="api-error-text">Something went wrong. Please try again or email us directly at enquiries@narve.ai.</span>
         <button type="button" class="enq-api-error-close" onclick="document.getElementById('api-error').classList.remove('visible')" aria-label="Dismiss">
           <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
@@ -345,6 +349,11 @@
 </div>
 
 <script>
+function getCsrf() {
+  var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 (function() {
   const form = document.getElementById('enquiry-form');
   const emailInput = document.getElementById('enq-email');
@@ -422,7 +431,7 @@
     try {
       const resp = await fetch('/api/enquire', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
         body: JSON.stringify({ email, job_title: role, message }),
       });
       if (!resp.ok) {
@@ -440,5 +449,7 @@
   });
 })();
 </script>
+<script src="/_gateway_static/scroll-animations.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

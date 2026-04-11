@@ -3,193 +3,206 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ dashboard_name }} — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>{{ dashboard_name }} — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <style>
     .preview-hero {
       text-align: center;
-      padding: 80px 32px 60px;
+      padding: var(--sp-8) var(--sp-6) var(--sp-7);
       max-width: 720px;
       margin: 0 auto;
     }
 
     .preview-hero-dot {
-      width: 14px;
-      height: 14px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
-      background: {{ accent }};
+      background: var(--text-tertiary);
       display: inline-block;
-      margin-right: 8px;
+      margin-right: var(--sp-2);
       vertical-align: middle;
-      box-shadow: 0 0 0 4px {{ accent }}20;
+      box-shadow: 0 0 0 3px rgba(240,240,240,0.06);
     }
 
     .preview-hero-name {
+      font-family: var(--font-display);
       font-size: clamp(36px, 5vw, 52px);
-      font-weight: 700;
+      font-weight: 500;
       letter-spacing: -0.03em;
       line-height: 1.1;
-      margin-bottom: 16px;
+      margin-bottom: var(--sp-4);
       display: inline;
       vertical-align: middle;
+      color: var(--text-primary);
     }
 
     .preview-tagline {
-      font-size: 18px;
-      color: var(--text-secondary);
-      line-height: 1.6;
-      margin-top: 16px;
-      margin-bottom: 36px;
+      font-size: 1.05rem;
+      color: var(--text-tertiary);
+      line-height: 1.7;
+      margin-top: var(--sp-4);
+      margin-bottom: var(--sp-6);
     }
 
     .preview-pricing {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 20px;
-      margin-bottom: 36px;
+      gap: var(--sp-5);
+      margin-bottom: var(--sp-6);
       flex-wrap: wrap;
     }
 
     .preview-price-box {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      padding: 16px 24px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border-ghost);
+      border-radius: var(--radius-md);
+      padding: var(--sp-4) var(--sp-5);
       text-align: center;
       min-width: 140px;
     }
 
     .preview-price-amount {
-      font-size: 28px;
-      font-weight: 700;
+      font-family: var(--font-mono);
+      font-size: 1.6rem;
+      font-weight: 500;
       letter-spacing: -0.02em;
       color: var(--text-primary);
-      font-variant-numeric: tabular-nums;
     }
 
     .preview-price-period {
-      font-size: 13px;
-      color: var(--text-muted);
+      font-size: 0.75rem;
+      color: var(--text-tertiary);
       margin-top: 2px;
+      font-family: var(--font-mono);
     }
 
     .preview-price-save {
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--green);
-      background: var(--green-bg);
-      padding: 2px 8px;
-      border-radius: 10px;
-      margin-top: 6px;
+      font-size: 0.65rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      background: var(--interactive-ghost);
+      border: 1px solid var(--border-subtle);
+      padding: 2px var(--sp-2);
+      border-radius: var(--radius-full);
+      margin-top: var(--sp-1);
       display: inline-block;
+      font-family: var(--font-mono);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
 
     .preview-price-divider {
-      font-size: 13px;
-      color: var(--text-muted);
-      font-weight: 500;
+      font-size: 0.75rem;
+      color: var(--text-tertiary);
+      font-weight: 400;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
 
     .preview-cta-primary {
       display: inline-block;
-      padding: 16px 40px;
+      padding: var(--sp-4) var(--sp-6);
       border-radius: var(--radius-sm);
-      background: linear-gradient(135deg, {{ accent }}, {{ accent }}cc);
-      color: white;
-      font-weight: 600;
-      font-size: 16px;
+      background: var(--interactive-bg);
+      color: var(--interactive-text);
+      font-weight: 500;
+      font-size: 0.95rem;
       text-decoration: none;
-      transition: transform 0.1s, box-shadow 0.2s;
-      margin-bottom: 16px;
+      transition: background var(--duration-fast);
+      margin-bottom: var(--sp-4);
     }
 
     .preview-cta-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px {{ accent }}40;
+      background: var(--interactive-hover);
       text-decoration: none;
     }
 
     .preview-back {
       display: block;
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-top: 8px;
+      font-size: 0.75rem;
+      color: var(--text-tertiary);
+      margin-top: var(--sp-2);
     }
 
-    .preview-back:hover {
-      color: var(--text-secondary);
-    }
+    .preview-back:hover { color: var(--text-secondary); }
 
     /* Features grid */
     .preview-features-section {
       max-width: 960px;
       margin: 0 auto;
-      padding: 0 32px 72px;
+      padding: 0 var(--sp-6) var(--sp-8);
     }
 
     .preview-section-label {
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 0.65rem;
+      font-weight: 500;
       text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: {{ accent }};
+      letter-spacing: 0.1em;
+      color: var(--text-tertiary);
       text-align: center;
-      margin-bottom: 12px;
+      margin-bottom: var(--sp-3);
+      font-family: var(--font-mono);
     }
 
     .preview-section-title {
+      font-family: var(--font-display);
       font-size: clamp(24px, 3.5vw, 36px);
-      font-weight: 700;
-      letter-spacing: -0.02em;
+      font-weight: 500;
+      letter-spacing: -0.025em;
       text-align: center;
-      margin-bottom: 48px;
+      margin-bottom: var(--sp-7);
+      color: var(--text-primary);
     }
 
     .preview-features-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 20px;
+      gap: var(--sp-3);
     }
 
     .preview-feature-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 28px 24px;
-      transition: transform 0.15s, box-shadow 0.2s;
+      background: var(--bg-raised);
+      border: 1px solid var(--border-ghost);
+      border-radius: var(--radius-md);
+      padding: var(--sp-5);
+      transition: border-color var(--duration-default), box-shadow var(--duration-default);
     }
 
     .preview-feature-card:hover {
-      transform: translateY(-3px);
-      box-shadow: var(--shadow-md);
+      border-color: var(--border-subtle);
+      box-shadow: var(--shadow-sm);
     }
 
     .preview-feature-icon {
-      font-size: 28px;
-      margin-bottom: 14px;
+      font-size: 1.6rem;
+      margin-bottom: var(--sp-3);
       line-height: 1;
+      opacity: 0.7;
     }
 
     .preview-feature-title {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 8px;
+      font-family: var(--font-display);
+      font-size: 1rem;
+      font-weight: 500;
+      margin-bottom: var(--sp-2);
       letter-spacing: -0.01em;
+      color: var(--text-primary);
     }
 
     .preview-feature-desc {
-      font-size: 14px;
-      color: var(--text-secondary);
-      line-height: 1.55;
+      font-size: 0.85rem;
+      color: var(--text-tertiary);
+      line-height: 1.6;
     }
 
     /* Includes section */
     .preview-includes-section {
       max-width: 720px;
       margin: 0 auto;
-      padding: 72px 32px;
-      border-top: 1px solid var(--border);
+      padding: var(--sp-8) var(--sp-6);
+      border-top: 1px solid var(--border-ghost);
     }
 
     .preview-includes-list {
@@ -197,24 +210,25 @@
       padding: 0;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 14px;
+      gap: var(--sp-3);
     }
 
     .preview-includes-item {
       display: flex;
       align-items: flex-start;
-      gap: 12px;
-      font-size: 14px;
-      color: var(--text-secondary);
-      line-height: 1.55;
+      gap: var(--sp-3);
+      font-size: 0.85rem;
+      color: var(--text-tertiary);
+      line-height: 1.6;
     }
 
     .preview-includes-check {
       flex-shrink: 0;
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
-      background: {{ accent }}18;
+      background: var(--interactive-ghost);
+      border: 1px solid var(--border-subtle);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -222,115 +236,200 @@
     }
 
     .preview-includes-check svg {
-      width: 12px;
-      height: 12px;
-      color: {{ accent }};
+      width: 10px;
+      height: 10px;
+      color: var(--text-secondary);
     }
 
     /* Bottom CTA */
     .preview-bottom-cta {
       text-align: center;
-      padding: 72px 32px 80px;
-      background: var(--surface);
-      border-top: 1px solid var(--border);
+      padding: var(--sp-8) var(--sp-6);
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-ghost);
     }
 
     .preview-bottom-price {
-      font-size: 15px;
-      color: var(--text-secondary);
-      margin-bottom: 24px;
+      font-size: 0.9rem;
+      color: var(--text-tertiary);
+      margin-bottom: var(--sp-5);
     }
 
     .preview-bottom-price strong {
       color: var(--text-primary);
-      font-weight: 600;
+      font-weight: 500;
+      font-family: var(--font-mono);
     }
 
     .preview-contact {
       display: block;
-      margin-top: 16px;
-      font-size: 13px;
-      color: var(--text-muted);
+      margin-top: var(--sp-4);
+      font-size: 0.75rem;
+      color: var(--text-tertiary);
     }
 
     @media (max-width: 720px) {
-      .preview-hero { padding: 48px 20px 40px; }
-      .preview-features-section { padding: 0 20px 48px; }
-      .preview-includes-section { padding: 48px 20px; }
-      .preview-bottom-cta { padding: 48px 20px 56px; }
-      .preview-pricing { flex-direction: column; gap: 12px; }
+      .preview-hero { padding: var(--sp-7) var(--sp-4) var(--sp-6); }
+      .preview-features-section { padding: 0 var(--sp-4) var(--sp-6); }
+      .preview-includes-section { padding: var(--sp-6) var(--sp-4); }
+      .preview-bottom-cta { padding: var(--sp-6) var(--sp-4); }
+      .preview-pricing { flex-direction: column; gap: var(--sp-3); }
       .preview-price-divider { display: none; }
       .preview-features-grid { grid-template-columns: 1fr; }
       .preview-includes-list { grid-template-columns: 1fr; }
     }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <header class="gw-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
-    </div>
-    <nav class="gw-nav">
-      <a href="/dashboards">Dashboards</a>
-      <a href="/billing">Billing</a>
-      <a href="/settings">Settings</a>
-      {{ raw_admin_link }}
-      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
-      <a href="/logout">Sign out</a>
-    </nav>
-  </header>
+  <div class="app-shell">
 
-  <!-- Hero -->
-  <section class="preview-hero">
-    <div>
-      <span class="preview-hero-dot"></span>
-      <h1 class="preview-hero-name">{{ dashboard_name }}</h1>
-    </div>
-    <p class="preview-tagline">{{ tagline }}</p>
-
-    <div class="preview-pricing">
-      <div class="preview-price-box">
-        <div class="preview-price-amount">{{ monthly_price }}</div>
-        <div class="preview-price-period">per month</div>
+    <!-- ── Sidebar ──────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        <span class="sidebar-logo-text">narve.ai</span>
       </div>
-      <div class="preview-price-divider">or</div>
-      <div class="preview-price-box">
-        <div class="preview-price-amount">{{ annual_price }}</div>
-        <div class="preview-price-period">per year</div>
-        <div class="preview-price-save">Save {{ annual_savings }}%</div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+
+        <a href="/dashboards" class="nav-item active">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/>
+            <rect x="9.5" y="1.5" width="5" height="5" rx="1"/>
+            <rect x="1.5" y="9.5" width="5" height="5" rx="1"/>
+            <rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+          </svg>
+          Dashboards
+        </a>
+
+        <a href="/billing" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="14" height="10" rx="2"/>
+            <line x1="1" y1="7" x2="15" y2="7"/>
+          </svg>
+          Billing
+        </a>
+
+        <a href="/settings" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="2.5"/>
+            <path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85"/>
+          </svg>
+          Settings
+        </a>
+
+        <span class="sidebar-injected" data-icon="shield">{{ raw_admin_link }}</span>
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
+      </a>
+    </aside>
+
+    <!-- ── Main content ─────────────────────────────────────────── -->
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">Dashboards</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">{{ dashboard_name }}</span>
+      </div>
+
+      <div class="content-area" style="padding:0">
+
+        <!-- Hero -->
+        <section class="preview-hero">
+          <div>
+            <span class="preview-hero-dot"></span>
+            <h1 class="preview-hero-name">{{ dashboard_name }}</h1>
+          </div>
+          <p class="preview-tagline">{{ tagline }}</p>
+
+          <div class="preview-pricing">
+            <div class="preview-price-box">
+              <div class="preview-price-amount">{{ monthly_price }}</div>
+              <div class="preview-price-period">per month</div>
+            </div>
+            <div class="preview-price-divider">or</div>
+            <div class="preview-price-box">
+              <div class="preview-price-amount">{{ annual_price }}</div>
+              <div class="preview-price-period">per year</div>
+              <div class="preview-price-save">Save {{ annual_savings }}%</div>
+            </div>
+          </div>
+
+          <a class="preview-cta-primary" href="/billing?dashboard={{ dashboard_key }}">Subscribe Now</a>
+          <a class="preview-back" href="/dashboards">&larr; Back to all dashboards</a>
+        </section>
+
+        <!-- Features -->
+        <section class="preview-features-section">
+          <div class="preview-section-label">What you get</div>
+          <div class="preview-section-title">Built for an edge, not just a dashboard.</div>
+          <div class="preview-features-grid">
+            {{ raw_features_html }}
+          </div>
+        </section>
+
+        <!-- What's included -->
+        <section class="preview-includes-section">
+          <div class="preview-section-label">Included in your subscription</div>
+          <div class="preview-section-title">Everything you need, nothing you don't.</div>
+          <ul class="preview-includes-list">
+            {{ raw_includes_html }}
+          </ul>
+        </section>
+
+        <!-- Bottom CTA -->
+        <section class="preview-bottom-cta">
+          <div class="preview-bottom-price">
+            Starting at <strong>{{ monthly_price }}/month</strong> &mdash; cancel any time.
+          </div>
+          <a class="preview-cta-primary" href="/billing?dashboard={{ dashboard_key }}">Subscribe to {{ dashboard_name }}</a>
+          <a class="preview-contact" href="mailto:julian@narve.ai">Questions? Get in touch</a>
+        </section>
+
       </div>
     </div>
 
-    <a class="preview-cta-primary" href="/billing?dashboard={{ dashboard_key }}">Subscribe Now</a>
-    <a class="preview-back" href="/dashboards">&larr; Back to all dashboards</a>
-  </section>
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <footer class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">{{ dashboard_name }}</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </footer>
 
-  <!-- Features -->
-  <section class="preview-features-section">
-    <div class="preview-section-label">What you get</div>
-    <div class="preview-section-title">Built for an edge, not just a dashboard.</div>
-    <div class="preview-features-grid">
-      {{ raw_features_html }}
-    </div>
-  </section>
+  </div>
 
-  <!-- What's included -->
-  <section class="preview-includes-section">
-    <div class="preview-section-label">Included in your subscription</div>
-    <div class="preview-section-title">Everything you need, nothing you don't.</div>
-    <ul class="preview-includes-list">
-      {{ raw_includes_html }}
-    </ul>
-  </section>
+<script>
+(function(){
+  /* Avatar initial */
+  var av=document.querySelector('.sidebar-user-avatar[data-username]');
+  if(av){var u=av.getAttribute('data-username');av.textContent=u?u.charAt(0).toUpperCase():'?';}
 
-  <!-- Bottom CTA -->
-  <section class="preview-bottom-cta">
-    <div class="preview-bottom-price">
-      Starting at <strong>{{ monthly_price }}/month</strong> &mdash; cancel any time.
-    </div>
-    <a class="preview-cta-primary" href="/billing?dashboard={{ dashboard_key }}">Subscribe to {{ dashboard_name }}</a>
-    <a class="preview-contact" href="mailto:julian@habbig.com">Questions? Get in touch</a>
-  </section>
+  /* Upgrade server-injected links (raw_admin_link) */
+  var icons={
+    shield:'<svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L2.5 4v4c0 3.5 2.3 5.7 5.5 6.5 3.2-.8 5.5-3 5.5-6.5V4L8 1.5z"/></svg>'
+  };
+  document.querySelectorAll('.sidebar-injected').forEach(function(wrap){
+    var a=wrap.querySelector('a');
+    if(!a){wrap.style.display='none';return;}
+    var iconKey=wrap.getAttribute('data-icon')||'';
+    a.className='nav-item';
+    if(icons[iconKey])a.insertAdjacentHTML('afterbegin',icons[iconKey]);
+    wrap.replaceWith(a);
+  });
+})();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

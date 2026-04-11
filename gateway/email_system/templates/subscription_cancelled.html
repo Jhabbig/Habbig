@@ -1,0 +1,8 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your narve.ai subscription has ended</h1>
+<p style="margin:0 0 20px;color:#555;">Your access expired on <strong style="color:#0d0d0d;">{{ period_end_date }}</strong>.</p>
+<div style="margin:24px 0;">
+  <a href="{{ app_url }}/pricing" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Resubscribe →</a>
+</div>
+<p style="margin:24px 0 0;color:#555;font-size:13px;">We'd love to have you back.</p>
+{% endblock %}

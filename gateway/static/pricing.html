@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pricing — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Pricing — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="stylesheet" href="/_gateway_static/scroll-animations.css">
   <style>
     .pr-page { min-height: 100vh; background: var(--bg); padding: 0 24px 80px; }
     .pr-container { max-width: 1100px; margin: 0 auto; }
@@ -20,14 +21,14 @@
     .pr-toggle-label.active { color: var(--text-primary); }
     .pr-toggle { position: relative; width: 52px; height: 28px; background: var(--border); border-radius: 14px; cursor: pointer; transition: background 0.3s; flex-shrink: 0; }
     .pr-toggle.on { background: var(--accent); }
-    .pr-toggle-dot { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; background: white; border-radius: 50%; transition: transform 0.3s; }
+    .pr-toggle-dot { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; background: var(--interactive-bg); border-radius: 50%; transition: transform 0.3s; }
     .pr-toggle.on .pr-toggle-dot { transform: translateX(24px); }
 
     /* Cards grid */
     .pr-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 80px; }
     .pr-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px 28px; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
-    .pr-card.featured { border-color: var(--accent); box-shadow: 0 0 24px rgba(99, 102, 241, 0.08); }
-    .pr-popular { position: absolute; top: -12px; right: 20px; background: var(--accent); color: white; font-size: 11px; font-weight: 600; padding: 4px 14px; border-radius: 20px; letter-spacing: 0.04em; }
+    .pr-card.featured { border-color: var(--accent); box-shadow: 0 0 24px var(--interactive-ghost); }
+    .pr-popular { position: absolute; top: -12px; right: 20px; background: var(--accent); color: var(--bg-base); font-size: 11px; font-weight: 600; padding: 4px 14px; border-radius: 20px; letter-spacing: 0.04em; }
     .pr-tier { font-size: 20px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
     .pr-tagline { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 24px; min-height: 40px; }
     .pr-price { margin-bottom: 4px; }
@@ -35,7 +36,7 @@
     .pr-currency { font-size: 20px; font-weight: 500; }
     .pr-period { font-size: 14px; color: var(--text-muted); font-weight: 400; }
     .pr-custom-price { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
-    .pr-savings { display: inline-block; font-size: 11px; font-weight: 600; color: var(--green); background: rgba(16, 185, 129, 0.10); padding: 3px 10px; border-radius: 12px; margin-bottom: 24px; }
+    .pr-savings { display: inline-block; font-size: 11px; font-weight: 600; color: var(--green); background: var(--interactive-ghost); padding: 3px 10px; border-radius: 12px; margin-bottom: 24px; }
     .pr-savings-hidden { visibility: hidden; }
     .pr-divider { height: 1px; background: var(--border); margin: 24px 0; }
     .pr-features { list-style: none; padding: 0; margin: 0 0 auto; flex: 1; }
@@ -47,7 +48,7 @@
     .pr-cta:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); text-decoration: none; }
     .pr-cta-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
     .pr-cta-outline:hover { background: var(--accent-light); }
-    .pr-cta-filled { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: white; border: none; }
+    .pr-cta-filled { background: var(--cta-bg); color: var(--bg-base); border: none; }
 
     /* Comparison table */
     .pr-comp-title { font-size: 28px; font-weight: 700; color: var(--text-primary); text-align: center; margin-bottom: 40px; letter-spacing: -0.02em; }
@@ -63,7 +64,7 @@
     .pr-comp tr:nth-child(even) td:first-child { background: var(--surface); }
     .pr-comp-section td { font-weight: 600; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; background: var(--surface) !important; border-bottom: 1px solid var(--border); padding: 10px 20px; }
     .pr-yes { color: var(--accent); }
-    .pr-no { color: #f87171; opacity: 0.5; }
+    .pr-no { color: var(--text-tertiary); opacity: 0.5; }
     .pr-comp-cta { margin-top: 8px; }
     .pr-comp-cta a { font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; }
     .pr-comp-cta a:hover { text-decoration: underline; }
@@ -92,6 +93,9 @@
       .pr-amount { font-size: 36px; }
     }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
 <div class="pr-page">
@@ -116,30 +120,31 @@
     </div>
 
     <!-- ===== PRICING CARDS ===== -->
-    <div class="pr-cards">
+    <div class="pr-cards stagger">
 
       <!-- Trader -->
       <div class="pr-card">
         <div class="pr-tier">Trader</div>
         <div class="pr-tagline">For active traders getting started with signal intelligence</div>
         <div class="pr-price">
-          <span class="pr-amount"><span class="pr-currency">&pound;</span><span class="price-val" data-monthly="49" data-annual="399">49</span></span>
-          <span class="pr-period price-period">/month</span>
+          <span class="pr-amount"><span class="pr-currency">&pound;</span><span class="price-val" data-monthly="75" data-annual="765">75</span> <span style="font-size:20px;font-weight:500;color:var(--text-muted)">/ $</span><span class="price-val-usd" data-monthly="99" data-annual="999">99</span></span>
+          <span class="pr-period price-period">per month</span>
         </div>
-        <div class="pr-savings pr-savings-hidden annual-savings" data-text="Save &pound;189/yr">Save &pound;189/yr</div>
+        <div class="pr-savings pr-savings-hidden annual-savings">Save 15%</div>
         <div class="pr-divider"></div>
         <ul class="pr-features">
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 30-day data window</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Top 10 markets tracked</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 1-month source history</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Global credibility scores</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Best bets feed (top 5)</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Basic prediction feed with filters</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Full prediction feed (30-day window)</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Best bets panel (top 5)</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Source credibility scores (global only)</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 10 markets tracked</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Probability % on all bets (market + Narve + edge)</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Trading add-on available separately</li>
           <li><svg class="pr-cross" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> <span class="pr-excluded">Per-category credibility breakdown</span></li>
           <li><svg class="pr-cross" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> <span class="pr-excluded">Source spectrum view</span></li>
+          <li><svg class="pr-cross" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> <span class="pr-excluded">Signal Search (AI)</span></li>
           <li><svg class="pr-cross" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> <span class="pr-excluded">Push notifications</span></li>
-          <li><svg class="pr-cross" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> <span class="pr-excluded">Unlimited markets</span></li>
         </ul>
+        <!-- /subscribe issues a signup token; Stripe Checkout will replace this later. -->
         <a href="/subscribe?plan=trader" class="pr-cta pr-cta-outline plan-cta" data-plan="trader">Get Started</a>
       </div>
 
@@ -149,21 +154,22 @@
         <div class="pr-tier">Pro</div>
         <div class="pr-tagline">For serious traders who want the full edge</div>
         <div class="pr-price">
-          <span class="pr-amount"><span class="pr-currency">&pound;</span><span class="price-val" data-monthly="149" data-annual="1,199">149</span></span>
-          <span class="pr-period price-period">/month</span>
+          <span class="pr-amount"><span class="pr-currency">&pound;</span><span class="price-val" data-monthly="180" data-annual="1,836">180</span> <span style="font-size:20px;font-weight:500;color:var(--text-muted)">/ $</span><span class="price-val-usd" data-monthly="229" data-annual="1,999">229</span></span>
+          <span class="pr-period price-period">per month</span>
         </div>
-        <div class="pr-savings pr-savings-hidden annual-savings" data-text="Save &pound;589/yr">Save &pound;589/yr</div>
+        <div class="pr-savings pr-savings-hidden annual-savings">Save 15%</div>
         <div class="pr-divider"></div>
         <ul class="pr-features">
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Everything in Trader</li>
           <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 6-month data window</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Unlimited markets tracked</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 6-month source history</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Full per-category credibility breakdown</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Best bets feed (top 10, full detail)</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Full source spectrum view</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Push notifications for high-EV bets</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Priority pipeline access (5-min head start)</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Unlimited markets</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Per-category credibility breakdown</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Best bets (top 10, full detail)</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Signal Search (max 10 topics, Claude AI analysis)</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Push notifications &middot; Force credibility refresh</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Trading add-on available separately</li>
         </ul>
+        <!-- /subscribe issues a signup token; Stripe Checkout will replace this later. -->
         <a href="/subscribe?plan=pro" class="pr-cta pr-cta-filled plan-cta" data-plan="pro">Get Started</a>
       </div>
 
@@ -179,25 +185,43 @@
         <ul class="pr-features">
           <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Everything in Pro</li>
           <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Full historical data (unlimited)</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> API access</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Custom integrations</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Dedicated support</li>
-          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Priced per use case</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> API access &middot; Custom integrations</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Unlimited Signal Search topics</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Trading add-on included</li>
+          <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Human onboarding &middot; Dedicated support</li>
         </ul>
         <a href="/enquire" class="pr-cta pr-cta-outline">Contact Us</a>
       </div>
     </div>
 
+    <!-- Trading Add-on -->
+    <div style="max-width:420px;margin:0 auto 80px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;text-align:center">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:8px">Add-on</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text-primary);margin-bottom:6px">Trading Access</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;line-height:1.5">Real-time Polymarket &amp; Kalshi markets, order placement, and portfolio tracking. Available to Trader and Pro subscribers.</div>
+      <div style="font-size:32px;font-weight:700;color:var(--text-primary);margin-bottom:4px">
+        <span style="font-size:16px">&pound;</span><span class="price-val" data-monthly="25" data-annual="255">25</span>
+        <span style="font-size:18px;font-weight:500;color:var(--text-muted)">/ $</span><span class="price-val-usd" data-monthly="29" data-annual="299">29</span>
+        <span style="font-size:14px;font-weight:400;color:var(--text-muted)" class="price-period">per month</span>
+      </div>
+      <div class="pr-savings pr-savings-hidden annual-savings" style="margin-bottom:16px">Save 15%</div>
+      <!-- Trading add-on is managed from /billing once a user has a Trader/Pro plan. -->
+      <a href="/billing" style="display:inline-block;padding:10px 28px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;transition:background 0.15s" onmouseenter="this.style.background='var(--interactive-ghost)'" onmouseleave="this.style.background='transparent'">Add Trading Access</a>
+    </div>
+
+    <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:-60px;margin-bottom:80px">Prices shown in GBP and USD. Charged in GBP. USD shown for reference.</div>
+
     <!-- ===== COMPARISON TABLE ===== -->
     <h2 class="pr-comp-title">Feature comparison</h2>
-    <div class="pr-comp-wrap">
+    <div class="pr-comp-wrap reveal-fade">
       <table class="pr-comp">
         <thead>
           <tr>
             <th></th>
-            <th>Trader<div class="pr-comp-cta"><a href="/subscribe?plan=trader">Get Started</a></div></th>
-            <th>Pro<div class="pr-comp-cta"><a href="/subscribe?plan=pro">Get Started</a></div></th>
-            <th>Enterprise<div class="pr-comp-cta"><a href="/enquire">Contact Us</a></div></th>
+            <!-- /subscribe issues a signup token; Stripe Checkout will replace this later. -->
+            <th>Trader<div style="font-size:11px;color:var(--text-muted);font-weight:400">&pound;75 / $99 /mo</div><div class="pr-comp-cta"><a href="/subscribe?plan=trader">Get Started</a></div></th>
+            <th>Pro<div style="font-size:11px;color:var(--text-muted);font-weight:400">&pound;180 / $229 /mo</div><div class="pr-comp-cta"><a href="/subscribe?plan=pro">Get Started</a></div></th>
+            <th>Enterprise<div style="font-size:11px;color:var(--text-muted);font-weight:400">Custom</div><div class="pr-comp-cta"><a href="/enquire">Contact Us</a></div></th>
           </tr>
         </thead>
         <tbody>
@@ -206,11 +230,17 @@
           <tr><td>Source history</td><td>1 month</td><td>6 months</td><td>Unlimited</td></tr>
           <tr><td>Markets tracked</td><td>10</td><td>Unlimited</td><td>Unlimited</td></tr>
           <tr class="pr-comp-section"><td colspan="4">Intelligence</td></tr>
-          <tr><td>Best bets feed</td><td>Top 5</td><td>Top 10</td><td>Top 10</td></tr>
+          <tr><td>Best bets feed</td><td>Top 5</td><td>Top 10 (full detail)</td><td>Top 10 (full detail)</td></tr>
           <tr><td>Credibility scores</td><td>Global only</td><td>Global + per-category</td><td>Global + per-category</td></tr>
+          <tr><td>Probability % (market + Narve + edge)</td><td class="pr-yes">&check;</td><td class="pr-yes">&check;</td><td class="pr-yes">&check;</td></tr>
           <tr><td>Source spectrum view</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td><td class="pr-yes">&check;</td></tr>
+          <tr><td>Force credibility refresh</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td><td class="pr-yes">&check;</td></tr>
+          <tr><td>Signal Search (AI)</td><td class="pr-no">&times;</td><td>10 topics</td><td>Unlimited</td></tr>
           <tr><td>Push notifications</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td><td class="pr-yes">&check;</td></tr>
-          <tr><td>Priority pipeline access</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td><td class="pr-yes">&check;</td></tr>
+          <tr class="pr-comp-section"><td colspan="4">Trading (Add-on &pound;25/$29/mo)</td></tr>
+          <tr><td>Markets tab (Polymarket + Kalshi)</td><td colspan="3" style="text-align:center;font-size:12px;color:var(--text-secondary)">Available as &pound;25/$29/mo add-on &middot; Included with Enterprise</td></tr>
+          <tr><td>Portfolio tracking</td><td colspan="3" style="text-align:center;font-size:12px;color:var(--text-secondary)">Requires Trading add-on</td></tr>
+          <tr><td>Order placement</td><td colspan="3" style="text-align:center;font-size:12px;color:var(--text-secondary)">Requires Trading add-on</td></tr>
           <tr class="pr-comp-section"><td colspan="4">Platform</td></tr>
           <tr><td>API access</td><td class="pr-no">&times;</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td></tr>
           <tr><td>Custom integrations</td><td class="pr-no">&times;</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td></tr>
@@ -221,7 +251,7 @@
 
     <!-- ===== FAQ ===== -->
     <h2 class="pr-faq-title">Frequently asked questions</h2>
-    <div class="pr-faq">
+    <div class="pr-faq stagger">
       <div class="pr-faq-item">
         <div class="pr-faq-q" onclick="toggleFaq(this)">
           How does the token system work?
@@ -262,11 +292,19 @@
           Can I use this on desktop and mobile?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </div>
-        <div class="pr-faq-a"><p>Yes. The app is available on iOS and macOS via the App Store. It's the same subscription across both platforms.</p></div>
+        <div class="pr-faq-a"><p>Yes. narve.ai is a web app that works on any device with a browser — desktop, tablet, or phone. No download required. Your subscription works everywhere you sign in.</p></div>
       </div>
     </div>
 
   </div>
+
+  <p style="text-align:center;font-size:11px;color:var(--text-muted);max-width:560px;margin:24px auto 0;line-height:1.6">
+    All subscriptions subject to our
+    <a href="/terms" style="color:var(--text-secondary)">Terms of Service</a>.
+    See our <a href="/privacy" style="color:var(--text-secondary)">Privacy Policy</a>
+    and <a href="/dpa" style="color:var(--text-secondary)">Data Processing Agreement</a>.
+    Prices in GBP. USD shown for reference.
+  </p>
 </div>
 
 <script>
@@ -294,18 +332,22 @@ function updatePrices() {
   document.querySelectorAll('.price-val').forEach(function(el) {
     el.textContent = isAnnual ? el.dataset.annual : el.dataset.monthly;
   });
+  document.querySelectorAll('.price-val-usd').forEach(function(el) {
+    el.textContent = isAnnual ? el.dataset.annual : el.dataset.monthly;
+  });
   document.querySelectorAll('.price-period').forEach(function(el) {
-    el.textContent = isAnnual ? '/year' : '/month';
+    el.textContent = isAnnual ? 'per year' : 'per month';
   });
   document.querySelectorAll('.annual-savings').forEach(function(el) {
     el.classList.toggle('pr-savings-hidden', !isAnnual);
   });
 
-  // Update CTA links
+  // Update plan CTAs so the chosen interval is forwarded to /subscribe.
+  // Stripe Checkout will replace /subscribe later.
   var interval = isAnnual ? 'annual' : 'monthly';
-  document.querySelectorAll('.plan-cta').forEach(function(el) {
-    var plan = el.dataset.plan;
-    if (plan) el.href = '/subscribe?plan=' + plan + '&interval=' + interval;
+  document.querySelectorAll('.plan-cta').forEach(function(a) {
+    var plan = a.dataset.plan;
+    if (plan) a.setAttribute('href', '/subscribe?plan=' + plan + '&interval=' + interval);
   });
 }
 
@@ -318,5 +360,7 @@ function toggleFaq(el) {
   if (!wasOpen) item.classList.add('open');
 }
 </script>
+<script src="/_gateway_static/scroll-animations.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

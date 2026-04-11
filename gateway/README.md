@@ -106,6 +106,31 @@ See **`DEPLOY_HABBIG.md`** for the full step-by-step checklist. Short version:
 |---|---|---|
 | `PRODUCTION` | unset | When set to `1`/`true`, disables the localhost dev bypass **and** flips session cookies to `secure=True` (requires HTTPS). **Always set this on the live server.** |
 | `GATEWAY_COOKIE_SECRET` | unset | Reserved for future signed-cookie use. Currently only checked for presence in production startup logs. Recommended: `openssl rand -hex 32`. |
+| `ENVIRONMENT` | `production` | Tag used by Sentry events to separate `production` / `staging` / `development`. |
+| `APP_VERSION` | `1.0.0` | Release tag attached to Sentry events for source-map and regression tracking. |
+| `LEGAL_EMAIL` | `legal@narve.ai` | Rendered on `/terms`. |
+| `PRIVACY_EMAIL` | `privacy@narve.ai` | Rendered on `/privacy`. |
+| `SUPPORT_EMAIL` | `support@narve.ai` | Rendered on `/terms`. |
+| `FEEDBACK_EMAIL` | unset | If set, every new feedback submission logs a notification line addressed to this inbox. Wire to SMTP later. |
+| `ANALYTICS_ENABLED` | `true` | Set to `false` to disable server-side event recording (page views still 200 but no DB writes). |
+| `ANTHROPIC_API_KEY` | unset | Required for Signal Search **and** the Intelligence assistant. Pages render a graceful error message when missing. |
+| `SENTRY_DSN` | unset | Backend Sentry DSN. **Keep secret.** When unset, Sentry init is a no-op. |
+| `SENTRY_DSN_PUBLIC` | unset | Frontend Sentry DSN — use a separate Sentry project so a leaked public key cannot read backend errors. |
+| `SENTRY_AUTH_TOKEN` | unset | Optional. Enables the "recent errors" widget on the admin **System Health** tab via the Sentry REST API. |
+| `SENTRY_ORG` / `SENTRY_PROJECT` | unset | Required by the recent-errors widget — pass your Sentry org slug and the project slug for `narve-backend`. |
+| `SENTRY_DASHBOARD_URL` | unset | Direct link rendered on the System Health tab. |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Performance trace sample rate. |
+| `SENTRY_PROFILES_SAMPLE_RATE` | `0.1` | Profiling sample rate. |
+
+### Sentry setup (one-time)
+
+1. Create an account at sentry.io.
+2. Create **two** projects: `narve-backend` (Python/FastAPI) and `narve-frontend` (Browser JavaScript).
+3. Copy the backend DSN into `SENTRY_DSN` and the frontend DSN into `SENTRY_DSN_PUBLIC`.
+4. (Optional) Generate an auth token at sentry.io/settings/auth-tokens/ with `project:read` scope and set `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` so the admin **System Health** tab can show recent errors inline.
+5. Restart the gateway. The startup log line `Sentry initialised platform=backend` confirms it's wired up.
+
+The same `SENTRY_DSN` can also be set on the scraper service — `scraper/main.py` calls `init_sentry(platform="scraper")` and tags every twitter/truthsocial run with `scraper_platform` so you can filter errors by source.
 
 ## Adding a new dashboard
 
@@ -187,4 +212,100 @@ Good if your partner only needs to SSH in and tweak things directly.
 For anything beyond a trusted co-founder, prefer **Option A** — GitHub gives
 you commit history, code review, and easy rollback. Use Option B only for
 quick one-off admin tasks.
+
+## Logging & observability (BetterStack Logtail)
+
+All three services (`app`, `scraper`, `worker`) emit **structured JSON logs**
+via the centralised `logging_config.py` module. Logs go to three places:
+
+1. **BetterStack Logtail** (cloud — searchable, 30 day retention on the $25
+   Starter plan, beautiful live tail)
+2. **Local rotating files** under `./logs/{service}.log` (backup, tails with
+   `tail -f` if BetterStack is down)
+3. **In-process ring buffer** — the last ~500 records, served by the admin
+   panel's "Logs" tab for quick debugging without leaving the site
+
+Security events (CSRF failures, rate-limit hits, suspicious activity) are
+also mirrored to `./logs/security.log` so they can be greped independently.
+
+### One-time BetterStack setup
+
+1. Create a free account at [betterstack.com/logtail](https://betterstack.com/logtail)
+   (1 GB/month, 3-day retention — enough for dev and early launch).
+   Upgrade to the $25 Starter plan for 5 GB/month and 30-day retention before
+   the real launch.
+2. Create **three Sources**, one per service:
+   - `narve-app`
+   - `narve-scraper`
+   - `narve-worker`
+3. Copy each Source Token into `.env`:
+   ```bash
+   LOGTAIL_TOKEN_APP=xxxxxxxxxxxxxxxxxxxxxxxx
+   LOGTAIL_TOKEN_SCRAPER=xxxxxxxxxxxxxxxxxxxxxxxx
+   LOGTAIL_TOKEN_WORKER=xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+4. Install the Python client:
+   ```bash
+   pip install logtail-python
+   ```
+5. Restart all three services. You should see fresh records in BetterStack
+   within ~30 seconds. If nothing arrives, check:
+   - The `SERVICE_NAME` env var matches the token suffix
+     (`SERVICE_NAME=app` → `LOGTAIL_TOKEN_APP`)
+   - `logtail-python` is importable (`python3 -c "import logtail"`)
+   - The admin-panel **Logs** tab shows the "BetterStack connected" badge
+
+### Alerts to configure in BetterStack
+
+Create these five alerts after the sources are collecting logs:
+
+| Alert                  | Trigger                                                   | Channel         |
+| ---------------------- | --------------------------------------------------------- | --------------- |
+| **Error spike**        | >10 ERROR logs in 5 minutes                               | email + SMS     |
+| **Pipeline stale**     | No `"Pipeline completed"` log in 20 minutes               | email           |
+| **Scraper failing**    | >3 `"Scrape failed"` in 1 hour                            | email           |
+| **Auth attack**        | >20 `csrf_failure` or `rate_limit_hit` events in 5 min    | email + SMS     |
+| **Worker job failure** | >5 failed jobs in 1 hour                                  | email           |
+
+BetterStack supports querying by any structured field, e.g.
+`level:ERROR AND service:scraper` or `event:csrf_failure AND ip:1.2.3.4`.
+
+### Required env vars
+
+```ini
+# .env
+SERVICE_NAME=app                    # set per service (app | scraper | worker)
+ENVIRONMENT=production              # production | dev
+LOG_LEVEL=INFO                      # DEBUG | INFO | WARNING | ERROR
+LOGTAIL_TOKEN_APP=
+LOGTAIL_TOKEN_SCRAPER=
+LOGTAIL_TOKEN_WORKER=
+# LOG_RING_CAPACITY=500             # optional — admin-panel ring size
+```
+
+`SERVICE_NAME` should be set by the systemd unit / docker-compose block for
+each process — never share an env file that hard-codes `SERVICE_NAME=app`
+between services, or the scraper's logs will land in the app source.
+
+### Admin panel Logs tab
+
+Admins can tail live logs from `/admin` → **Logs** tab without leaving the
+site. The tab supports:
+
+- **Live tail** — last 100 records, auto-refreshing every 5s
+- **Errors (last 24h)** — ERROR-level records grouped by message similarity
+- **Filters** — level, service, free-text search
+
+The panel reads from the in-process ring buffer only — for deeper searches or
+long retention, click the "View in BetterStack →" link (shown when a token
+is configured).
+
+### Never log these fields
+
+The `StructuredFormatter` automatically redacts any `extra={}` key whose name
+contains one of: `password`, `secret`, `token`, `key`, `authorization`,
+`auth`, `cookie`, `session`, `jwt`, `bearer`, `card`, `cvv`, `cvc`, `ssn`,
+`pin`, `api_key`. A small allow-list exists for benign ID-ish fields
+(`token_id`, `request_id`, `user_id`). When in doubt, don't pass the value
+at all — the redaction is a safety net, not a policy.
 

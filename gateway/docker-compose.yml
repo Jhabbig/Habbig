@@ -1,0 +1,122 @@
+# Reference Docker Compose for narve.ai — optional.
+#
+# The production deployment at narve.ai runs directly via `nohup uvicorn`
+# on a Tailscale Ubuntu box (see DEPLOY_HABBIG.md), so this file is not
+# required for day-to-day operation. It exists so that:
+#
+#   1. Operators who prefer containers have a working starting point.
+#   2. The logging volume-mount and env-var pattern is documented in one
+#      place — copy the `environment:` / `volumes:` / `logging:` blocks
+#      into your systemd service (as `Environment=…`) or run-script if
+#      you don't want to use docker.
+#
+# Usage:
+#   cp .env.example .env       # fill in values
+#   docker compose up -d
+#
+# Logs land in two places:
+#   - BetterStack Logtail (if LOGTAIL_TOKEN_* is set)
+#   - ./logs/{app,scraper,worker}.log rotating files (mounted here)
+
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: narve-app:latest
+    env_file: .env
+    environment:
+      SERVICE_NAME: app
+      LOGTAIL_TOKEN_APP: ${LOGTAIL_TOKEN_APP:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Point the gateway at the in-cluster Redis so it enqueues into the
+      # same ARQ queue the worker container drains. Unset REDIS_HOST and
+      # the gateway falls back to its in-process backend (fine for dev).
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./logs:/app/logs
+      - ./auth.db:/app/auth.db
+    depends_on:
+      - redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    restart: unless-stopped
+
+  scraper:
+    build:
+      context: .
+      dockerfile: scraper/Dockerfile
+    image: narve-scraper:latest
+    env_file: .env
+    environment:
+      SERVICE_NAME: scraper
+      LOGTAIL_TOKEN_SCRAPER: ${LOGTAIL_TOKEN_SCRAPER:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./logs:/app/logs
+      - ./scraper/stealth:/app/scraper/stealth
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: narve-app:latest  # reuses the app image
+    command: ["arq", "jobs.worker.WorkerSettings"]
+    env_file: .env
+    environment:
+      SERVICE_NAME: worker
+      LOGTAIL_TOKEN_WORKER: ${LOGTAIL_TOKEN_WORKER:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+    volumes:
+      - ./logs:/app/logs
+      - ./auth.db:/app/auth.db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    depends_on:
+      - app
+      - redis
+    restart: unless-stopped
+
+  # Redis backs the ARQ job queue (Feature 10). The gateway falls back to an
+  # in-process asyncio backend if REDIS_HOST is unset, so this service is
+  # only required when you want cross-process retry / cron durability.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+volumes:
+  redis_data:

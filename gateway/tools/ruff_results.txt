@@ -1,0 +1,575 @@
+F401 [*] `auth.cookies.PENDING_TOKEN_COOKIE` imported but unused
+  --> auth/guards.py:27:5
+   |
+26 | from auth.cookies import (
+27 |     PENDING_TOKEN_COOKIE,
+   |     ^^^^^^^^^^^^^^^^^^^^
+28 |     SESSION_COOKIE,
+29 |     read_pending_token,
+   |
+help: Remove unused import: `auth.cookies.PENDING_TOKEN_COOKIE`
+
+E402 Module level import not at top of file
+    --> db.py:2736:1
+     |
+2734 | # Rate limiting for 2FA attempts uses the persistent rate_limits table.
+2735 |
+2736 | import json as _json_2fa
+     | ^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+
+F401 [*] `json` imported but unused
+  --> email_system/service.py:16:8
+   |
+14 | from __future__ import annotations
+15 |
+16 | import json
+   |        ^^^^
+17 | import logging
+18 | import os
+   |
+help: Remove unused import: `json`
+
+F401 [*] `json` imported but unused
+  --> jobs/email_jobs.py:85:20
+   |
+83 |     import datetime as _dt
+84 |     import time as _time
+85 |     import json as _json
+   |                    ^^^^^
+86 |
+87 |     now = int(_time.time())
+   |
+help: Remove unused import: `json`
+
+F401 [*] `fastapi.Request` imported but unused
+  --> security/csrf.py:27:21
+   |
+25 | from typing import Optional
+26 |
+27 | from fastapi import Request
+   |                     ^^^^^^^
+28 | from fastapi.responses import JSONResponse
+29 | from starlette.middleware.base import BaseHTTPMiddleware
+   |
+help: Remove unused import: `fastapi.Request`
+
+F401 [*] `os` imported but unused
+  --> security/logger.py:13:8
+   |
+11 | import json
+12 | import logging
+13 | import os
+   |        ^^
+14 | import time
+15 | from pathlib import Path
+   |
+help: Remove unused import: `os`
+
+F401 [*] `typing.Optional` imported but unused
+  --> security/two_factor.py:18:20
+   |
+16 | import logging
+17 | import secrets
+18 | from typing import Optional
+   |                    ^^^^^^^^
+19 |
+20 | log = logging.getLogger("gateway.two_factor")
+   |
+help: Remove unused import: `typing.Optional`
+
+F401 [*] `logging` imported but unused
+  --> server.py:26:8
+   |
+24 | import html
+25 | import json
+26 | import logging
+   |        ^^^^^^^
+27 | import os
+28 | import re
+   |
+help: Remove unused import: `logging`
+
+E402 Module level import not at top of file
+   --> server.py:266:1
+    |
+264 |   # the gateway uses LOGTAIL_TOKEN_APP if BetterStack is configured.
+265 |   os.environ.setdefault("SERVICE_NAME", "app")
+266 | / from logging_config import (
+267 | |     configure_logging,
+268 | |     get_logger,
+269 | |     set_request_context,
+270 | |     clear_request_context,
+271 | |     ring_buffer as _log_ring_buffer,
+272 | |     is_logtail_configured,
+273 | |     SERVICE_NAME as _LOG_SERVICE_NAME,
+274 | | )
+    | |_^
+275 |   configure_logging(base_dir=BASE_DIR)
+276 |   log = get_logger("gateway")
+    |
+
+E402 Module level import not at top of file
+   --> server.py:339:1
+    |
+337 | # ── Global exception handler — never expose stack traces ───────────────────
+338 |
+339 | from starlette.requests import Request as StarletteRequest
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+340 | from starlette.responses import Response as StarletteResponse
+    |
+
+E402 Module level import not at top of file
+   --> server.py:340:1
+    |
+339 | from starlette.requests import Request as StarletteRequest
+340 | from starlette.responses import Response as StarletteResponse
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+F401 [*] `starlette.responses.Response` imported but unused
+   --> server.py:340:45
+    |
+339 | from starlette.requests import Request as StarletteRequest
+340 | from starlette.responses import Response as StarletteResponse
+    |                                             ^^^^^^^^^^^^^^^^^
+    |
+help: Remove unused import: `starlette.responses.Response`
+
+E402 Module level import not at top of file
+   --> server.py:343:1
+    |
+343 | from json import JSONDecodeError as _JSONDecodeError
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+344 | from fastapi.exceptions import RequestValidationError as _RequestValidationError
+    |
+
+E402 Module level import not at top of file
+   --> server.py:344:1
+    |
+343 | from json import JSONDecodeError as _JSONDecodeError
+344 | from fastapi.exceptions import RequestValidationError as _RequestValidationError
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+E402 Module level import not at top of file
+   --> server.py:520:1
+    |
+518 | # ── Security headers middleware ──────────────────────────────────────────────
+519 |
+520 | from starlette.middleware.base import BaseHTTPMiddleware
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+521 | from collections import defaultdict
+    |
+
+E402 Module level import not at top of file
+   --> server.py:521:1
+    |
+520 | from starlette.middleware.base import BaseHTTPMiddleware
+521 | from collections import defaultdict
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+522 |
+523 | SECURITY_HEADERS = {
+    |
+
+E402 Module level import not at top of file
+    --> server.py:1136:1
+     |
+1134 | # middleware or handler logs.
+1135 |
+1136 | import uuid as _uuid
+     | ^^^^^^^^^^^^^^^^^^^^
+     |
+
+E731 Do not assign a `lambda` expression, use a `def`
+    --> server.py:2989:5
+     |
+2987 |         return RedirectResponse("/token", status_code=302)
+2988 |
+2989 |     err_banner = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2990 |     ok_banner = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
+     |
+help: Rewrite `err_banner` as a `def`
+
+E731 Do not assign a `lambda` expression, use a `def`
+    --> server.py:2990:5
+     |
+2989 |     err_banner = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
+2990 |     ok_banner = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2991 |
+2992 |     if (
+     |
+help: Rewrite `ok_banner` as a `def`
+
+F841 Local variable `ip` is assigned to but never used
+    --> server.py:3463:5
+     |
+3461 |         return JSONResponse({"error": "Invalid email"}, status_code=400)
+3462 |
+3463 |     ip = _get_client_ip(request)
+     |     ^^
+3464 |     # Same per-email bucket as the signup endpoint so position checks count
+3465 |     # against the email's daily cap too.
+     |
+help: Remove assignment to unused variable `ip`
+
+F841 Local variable `cur_action` is assigned to but never used
+    --> server.py:4563:5
+     |
+4561 |         for a in sorted(_audit.ALL_ACTIONS)
+4562 |     )
+4563 |     cur_action = filters.get("action") or ""
+     |     ^^^^^^^^^^
+4564 |     cur_target = filters.get("target_type") or ""
+4565 |     cur_admin = filters.get("admin_user_id") or ""
+     |
+help: Remove assignment to unused variable `cur_action`
+
+F841 Local variable `user` is assigned to but never used
+    --> server.py:4634:5
+     |
+4632 | @app.get("/admin/audit-log/export.csv")
+4633 | async def admin_audit_log_csv(request: Request):
+4634 |     user = _require_admin_user(request)
+     |     ^^^^
+4635 |     from security import audit as _audit
+4636 |     filters = _audit.filter_to_query_kwargs(request.query_params)
+     |
+help: Remove assignment to unused variable `user`
+
+F541 [*] f-string without any placeholders
+    --> server.py:4752:13
+     |
+4750 |         # TODO: Replace /enquire with Stripe add-on checkout when payments configured
+4751 |         billing_html += (
+4752 |             f'<div style="font-size:12px;color:var(--green)">Active</div></div>'
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4753 |             f'<a href="/enquire" style="font-size:12px;color:var(--text-muted);text-decoration:none">Contact to manage</a>'
+4754 |         )
+     |
+help: Remove extraneous `f` prefix
+
+F541 [*] f-string without any placeholders
+    --> server.py:4753:13
+     |
+4751 |         billing_html += (
+4752 |             f'<div style="font-size:12px;color:var(--green)">Active</div></div>'
+4753 |             f'<a href="/enquire" style="font-size:12px;color:var(--text-muted);text-decoration:none">Contact to manage</a>'
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4754 |         )
+4755 |     else:
+     |
+help: Remove extraneous `f` prefix
+
+F541 [*] f-string without any placeholders
+    --> server.py:4757:13
+     |
+4755 |     else:
+4756 |         billing_html += (
+4757 |             f'<div style="font-size:12px;color:var(--text-muted)">Not active</div></div>'
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4758 |             # TODO: Replace /enquire with Stripe add-on checkout when payments configured
+4759 |             f'<a href="/enquire" style="font-size:12px;color:var(--accent);text-decoration:none;font-weight:600">Add &pound;25/mo</a…
+     |
+help: Remove extraneous `f` prefix
+
+F541 [*] f-string without any placeholders
+    --> server.py:4759:13
+     |
+4757 | …     f'<div style="font-size:12px;color:var(--text-muted)">Not active</div></div>'
+4758 | …     # TODO: Replace /enquire with Stripe add-on checkout when payments configured
+4759 | …     f'<a href="/enquire" style="font-size:12px;color:var(--accent);text-decoration:none;font-weight:600">Add &pound;25/mo</a>'
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4760 | … )
+4761 | …ling_html += '</div></div></div>'
+     |
+help: Remove extraneous `f` prefix
+
+E402 Module level import not at top of file
+    --> server.py:4905:1
+     |
+4903 | # trade.js calls them from within each dashboard.
+4904 |
+4905 | from backend.markets.polymarket_client import PolymarketClient
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4906 | from backend.markets.kalshi_client import KalshiClient
+4907 | from backend.markets import unified_markets
+     |
+
+E402 Module level import not at top of file
+    --> server.py:4906:1
+     |
+4905 | from backend.markets.polymarket_client import PolymarketClient
+4906 | from backend.markets.kalshi_client import KalshiClient
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4907 | from backend.markets import unified_markets
+4908 | from backend.markets.portfolio_aggregator import get_combined_portfolio, get_combined_orders
+     |
+
+E402 Module level import not at top of file
+    --> server.py:4907:1
+     |
+4905 | from backend.markets.polymarket_client import PolymarketClient
+4906 | from backend.markets.kalshi_client import KalshiClient
+4907 | from backend.markets import unified_markets
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4908 | from backend.markets.portfolio_aggregator import get_combined_portfolio, get_combined_orders
+4909 | from backend.markets.encryption import encrypt_token, decrypt_token
+     |
+
+E402 Module level import not at top of file
+    --> server.py:4908:1
+     |
+4906 | from backend.markets.kalshi_client import KalshiClient
+4907 | from backend.markets import unified_markets
+4908 | from backend.markets.portfolio_aggregator import get_combined_portfolio, get_combined_orders
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4909 | from backend.markets.encryption import encrypt_token, decrypt_token
+     |
+
+E402 Module level import not at top of file
+    --> server.py:4909:1
+     |
+4907 | from backend.markets import unified_markets
+4908 | from backend.markets.portfolio_aggregator import get_combined_portfolio, get_combined_orders
+4909 | from backend.markets.encryption import encrypt_token, decrypt_token
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4910 |
+4911 | POLY_CLIENT = PolymarketClient(
+     |
+
+F841 Local variable `user` is assigned to but never used
+    --> server.py:4965:5
+     |
+4963 |     limit: int = 20,
+4964 | ):
+4965 |     user = _require_markets_user(request)
+     |     ^^^^
+4966 |     # Clamp pagination params to prevent division by zero and negative indexing
+4967 |     if limit < 1 or limit > 100:
+     |
+help: Remove assignment to unused variable `user`
+
+F841 Local variable `user` is assigned to but never used
+    --> server.py:4990:5
+     |
+4988 | @app.get("/api/markets/unified/{market_id:path}")
+4989 | async def api_market_detail(request: Request, market_id: str):
+4990 |     user = _require_markets_user(request)
+     |     ^^^^
+4991 |     market = await unified_markets.fetch_single_market(
+4992 |         POLY_CLIENT, KALSHI_CLIENT, market_id, cache_ttl=120,
+     |
+help: Remove assignment to unused variable `user`
+
+F841 Local variable `user` is assigned to but never used
+    --> server.py:5001:5
+     |
+4999 | @app.get("/api/markets/search")
+5000 | async def api_markets_search(request: Request, q: str = ""):
+5001 |     user = _require_markets_user(request)
+     |     ^^^^
+5002 |     if not q or len(q) < 2:
+5003 |         return JSONResponse({"markets": []})
+     |
+help: Remove assignment to unused variable `user`
+
+F401 [*] `asyncio` imported but unused
+  --> server_features.py:13:8
+   |
+11 | from __future__ import annotations
+12 |
+13 | import asyncio
+   |        ^^^^^^^
+14 | import datetime as _dt
+15 | import hashlib
+   |
+help: Remove unused import: `asyncio`
+
+F401 [*] `json` imported but unused
+  --> server_features.py:18:8
+   |
+16 | import hmac as _hmac
+17 | import html as _html
+18 | import json
+   |        ^^^^
+19 | import logging
+20 | import os
+   |
+help: Remove unused import: `json`
+
+F401 [*] `logging` imported but unused
+  --> server_features.py:19:8
+   |
+17 | import html as _html
+18 | import json
+19 | import logging
+   |        ^^^^^^^
+20 | import os
+21 | import secrets
+   |
+help: Remove unused import: `logging`
+
+F401 [*] `urllib.parse.urlencode` imported but unused
+  --> server_features.py:24:26
+   |
+22 | import time
+23 | from typing import Optional
+24 | from urllib.parse import urlencode
+   |                          ^^^^^^^^^
+25 |
+26 | from fastapi import HTTPException, Request, Form
+   |
+help: Remove unused import: `urllib.parse.urlencode`
+
+F401 [*] `server.set_session_cookie` imported but unused
+  --> server_features.py:36:5
+   |
+34 |     current_user,
+35 |     _get_client_ip,
+36 |     set_session_cookie,
+   |     ^^^^^^^^^^^^^^^^^^
+37 |     clear_session_cookie,
+38 |     _validate_password,
+   |
+help: Remove unused import
+
+F401 [*] `server.IS_PRODUCTION` imported but unused
+  --> server_features.py:40:5
+   |
+38 |     _validate_password,
+39 |     COOKIE_NAME,
+40 |     IS_PRODUCTION,
+   |     ^^^^^^^^^^^^^
+41 |     log,
+42 | )
+   |
+help: Remove unused import
+
+F541 [*] f-string without any placeholders
+   --> server_features.py:113:12
+    |
+111 |           "all": "all marketing + digest emails",
+112 |       }.get(type, "marketing emails")
+113 |       body = f"""<!DOCTYPE html><html><head><meta charset='utf-8'>
+    |  ____________^
+114 | | <title>Unsubscribed — narve.ai</title>
+115 | | <link rel='stylesheet' href='/_gateway_static/gateway.css?v=5'>
+116 | | <style>body{{background:var(--bg-base);color:var(--text-primary);display:flex;align-items:center;justify-content:center;min-height:10…
+117 | | .card{{max-width:440px;padding:48px 40px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:12px;text-…
+118 | | h1{{font-family:var(--font-display);font-size:28px;margin:0 0 16px;letter-spacing:-0.02em}}
+119 | | p{{color:var(--text-secondary);font-size:14px;line-height:1.6}}
+120 | | a{{color:var(--text-primary)}}</style></head><body><div class='card'>"""
+    | |________________________________________________________________________^
+121 |       if row:
+122 |           body += f"<h1>Unsubscribed.</h1><p>You have been removed from {scope_label}.</p>"
+    |
+help: Remove extraneous `f` prefix
+
+F841 Local variable `ip` is assigned to but never used
+   --> server_features.py:160:5
+    |
+158 |     """Always returns 200. Never reveals whether the email exists."""
+159 |     email = (email or "").strip().lower()
+160 |     ip = _get_client_ip(request)
+    |     ^^
+161 |     if not email or "@" not in email:
+162 |         return JSONResponse({"ok": True})
+    |
+help: Remove assignment to unused variable `ip`
+
+F841 Local variable `sub_id` is assigned to but never used
+   --> server_features.py:348:13
+    |
+346 |                 (email, int(time.time()), next_pos, next_pos, code, ref),
+347 |             )
+348 |             sub_id = cur.lastrowid
+    |             ^^^^^^
+349 |
+350 |     # If they came through a ref link, move the referrer up by 5 positions.
+    |
+help: Remove assignment to unused variable `sub_id`
+
+F841 Local variable `user` is assigned to but never used
+   --> server_features.py:779:5
+    |
+777 |     Limit is clamped to [1, 50] to bound the response size.
+778 |     """
+779 |     user = _require_auth(request)
+    |     ^^^^
+780 |     q = (q or "").strip()
+781 |     if not q:
+    |
+help: Remove assignment to unused variable `user`
+
+E402 Module level import not at top of file
+    --> server_features.py:1118:1
+     |
+1116 |   # Every login/register writes to BOTH so legacy helpers keep running.
+1117 |
+1118 | / from auth.cookies import (
+1119 | |     PENDING_TOKEN_COOKIE,
+1120 | |     SESSION_COOKIE,
+1121 | |     PENDING_TOKEN_TTL,
+1122 | |     set_pending_token_cookie,
+1123 | |     clear_pending_token_cookie,
+1124 | |     read_pending_token,
+1125 | |     set_session_cookie_hardened,
+1126 | |     clear_session_cookie_hardened,
+1127 | | )
+     | |_^
+1128 |   from auth.guards import (
+1129 |       read_hardened_session,
+     |
+
+F401 [*] `auth.cookies.PENDING_TOKEN_COOKIE` imported but unused
+    --> server_features.py:1119:5
+     |
+1118 | from auth.cookies import (
+1119 |     PENDING_TOKEN_COOKIE,
+     |     ^^^^^^^^^^^^^^^^^^^^
+1120 |     SESSION_COOKIE,
+1121 |     PENDING_TOKEN_TTL,
+     |
+help: Remove unused import
+
+F401 [*] `auth.cookies.PENDING_TOKEN_TTL` imported but unused
+    --> server_features.py:1121:5
+     |
+1119 |     PENDING_TOKEN_COOKIE,
+1120 |     SESSION_COOKIE,
+1121 |     PENDING_TOKEN_TTL,
+     |     ^^^^^^^^^^^^^^^^^
+1122 |     set_pending_token_cookie,
+1123 |     clear_pending_token_cookie,
+     |
+help: Remove unused import
+
+E402 Module level import not at top of file
+    --> server_features.py:1128:1
+     |
+1126 |       clear_session_cookie_hardened,
+1127 |   )
+1128 | / from auth.guards import (
+1129 | |     read_hardened_session,
+1130 | |     require_pending_token,
+1131 | |     require_hardened_session,
+1132 | | )
+     | |_^
+     |
+
+F401 [*] `auth.guards.require_hardened_session` imported but unused
+    --> server_features.py:1131:5
+     |
+1129 |     read_hardened_session,
+1130 |     require_pending_token,
+1131 |     require_hardened_session,
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^
+1132 | )
+     |
+help: Remove unused import: `auth.guards.require_hardened_session`
+
+Found 49 errors.
+[*] 22 fixable with the `--fix` option (11 hidden fixes can be enabled with the `--unsafe-fixes` option).

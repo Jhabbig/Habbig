@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Support Ticket — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Support Ticket — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <style>
     .sup-page { min-height: 100vh; background: var(--bg); padding: 32px 24px 64px; }
     .sup-container { max-width: 520px; margin: 0 auto; }
@@ -15,12 +15,12 @@
     .sup-desc { font-size: 14px; color: var(--text-secondary); margin-bottom: 32px; line-height: 1.6; }
     .sup-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
     .sup-label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
-    .sup-input, .sup-textarea, .sup-select { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: #1e2130; color: var(--text-primary); outline: none; transition: border-color 0.15s; }
+    .sup-input, .sup-textarea, .sup-select { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: var(--bg-overlay); color: var(--text-primary); outline: none; transition: border-color 0.15s; }
     .sup-input:focus, .sup-textarea:focus, .sup-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
     .sup-textarea { min-height: 140px; resize: vertical; line-height: 1.6; }
     .sup-select { appearance: none; -webkit-appearance: none; cursor: pointer; }
     .sup-field { margin-bottom: 20px; }
-    .sup-submit { width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm); background: linear-gradient(135deg, var(--accent), #8b5cf6); color: white; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.1s, box-shadow 0.2s; min-height: 48px; margin-top: 8px; }
+    .sup-submit { width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm); background: var(--cta-bg); color: var(--bg-base); font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.1s, box-shadow 0.2s; min-height: 48px; margin-top: 8px; }
     .sup-submit:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
     .sup-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
     .sup-error { font-size: 12px; color: var(--red); margin-bottom: 12px; display: none; }
@@ -28,9 +28,12 @@
     .sup-success { display: none; text-align: center; padding: 48px 0; animation: fadeIn 0.4s ease-out; }
     .sup-success.visible { display: block; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-    .sup-success-icon { width: 64px; height: 64px; border-radius: 50%; background: rgba(16, 185, 129, 0.10); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
+    .sup-success-icon { width: 64px; height: 64px; border-radius: 50%; background: var(--interactive-ghost); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
     .sup-success-icon svg { width: 32px; height: 32px; color: var(--green); }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
 <div class="sup-page">
@@ -80,6 +83,11 @@
 </div>
 
 <script>
+function getCsrf() {
+  var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 function submitSupport(e) {
   e.preventDefault();
   var email = document.getElementById('sup-email').value.trim();
@@ -94,7 +102,7 @@ function submitSupport(e) {
 
   fetch('/api/support-ticket', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
     body: JSON.stringify({ email: email, message: '[' + category + '] ' + message })
   })
   .then(function(r) { return r.json(); })
@@ -117,5 +125,6 @@ function submitSupport(e) {
   });
 }
 </script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

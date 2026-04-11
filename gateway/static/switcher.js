@@ -1,5 +1,5 @@
 /**
- * Habbig Dashboard Switcher + Theme System (v2)
+ * Narve Dashboard Switcher + Theme System (v2)
  * ──────────────────────────────────────────────
  * Two UI components, both Shadow DOM-isolated:
  *   1. Persistent top header bar (navigation, dashboard dropdown, themes, user)
@@ -11,7 +11,7 @@
  *   window.__hbSwitcher = {
  *     dashboards: [{ key, subdomain, display_name, accent }, ...],
  *     current: "crypto",
- *     domain: "habbig.com",
+ *     domain: "narve.ai",
  *     username: "julian"   // optional, falls back to "User"
  *   }
  */
@@ -403,10 +403,10 @@
   brand.href = apexUrl('/dashboards');
   var brandMark = document.createElement('span');
   brandMark.className = 'hb-brand-mark';
-  brandMark.textContent = 'H';
+  brandMark.textContent = 'N';
   var brandText = document.createElement('span');
   brandText.className = 'hb-brand-text';
-  brandText.textContent = 'Habbig';
+  brandText.textContent = 'Narve';
   brand.appendChild(brandMark);
   brand.appendChild(brandText);
   bar.appendChild(brand);

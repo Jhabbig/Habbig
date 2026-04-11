@@ -3,39 +3,126 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboards — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Dashboards — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="stylesheet" href="/_gateway_static/scroll-animations.css">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <header class="gw-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Habbig</span>
-    </div>
-    <nav class="gw-nav">
-      <a href="/dashboards" class="active">Dashboards</a>
-      <a href="/billing">Billing</a>
-      <a href="/settings">Settings</a>
-      {{ raw_admin_link }}
-      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
-      <a href="/logout">Sign out</a>
-    </nav>
-  </header>
+  <div class="app-shell">
 
-  <main class="gw-main">
-    <div class="hub-hero">
-      <div class="hub-hero-eyebrow">Your dashboards</div>
-      <h1 class="gw-page-title">Pick where you want to go.</h1>
-      <p class="gw-page-sub">
-        Every card below is its own dashboard with its own subscription. Active
-        ones open in a new tab. Locked ones jump straight to billing.
-        <a href="/settings">Set a default</a> to skip this page next time.
-      </p>
+    <!-- ── Sidebar ──────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+
+        <a href="/dashboards" class="nav-item active">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/>
+            <rect x="9.5" y="1.5" width="5" height="5" rx="1"/>
+            <rect x="1.5" y="9.5" width="5" height="5" rx="1"/>
+            <rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+          </svg>
+          Dashboards
+        </a>
+
+        <span class="sidebar-injected" data-icon="search">{{ raw_signal_search_link }}</span>
+        <span class="sidebar-injected" data-icon="bolt">{{ raw_intelligence_link }}</span>
+
+        <a href="/billing" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="14" height="10" rx="2"/>
+            <line x1="1" y1="7" x2="15" y2="7"/>
+          </svg>
+          Billing
+        </a>
+
+        <a href="/settings" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="2.5"/>
+            <path d="M13.3 9.7a1.2 1.2 0 0 0 .2 1.3l.1.1a1.4 1.4 0 1 1-2 2l-.1-.1a1.2 1.2 0 0 0-1.3-.2 1.2 1.2 0 0 0-.7 1.1v.2a1.4 1.4 0 1 1-2.8 0v-.1a1.2 1.2 0 0 0-.8-1.1 1.2 1.2 0 0 0-1.3.2l-.1.1a1.4 1.4 0 1 1-2-2l.1-.1a1.2 1.2 0 0 0 .2-1.3 1.2 1.2 0 0 0-1.1-.7h-.2a1.4 1.4 0 1 1 0-2.8h.1a1.2 1.2 0 0 0 1.1-.8 1.2 1.2 0 0 0-.2-1.3l-.1-.1a1.4 1.4 0 1 1 2-2l.1.1a1.2 1.2 0 0 0 1.3.2h.1a1.2 1.2 0 0 0 .7-1.1v-.2a1.4 1.4 0 1 1 2.8 0v.1a1.2 1.2 0 0 0 .7 1.1 1.2 1.2 0 0 0 1.3-.2l.1-.1a1.4 1.4 0 1 1 2 2l-.1.1a1.2 1.2 0 0 0-.2 1.3v.1a1.2 1.2 0 0 0 1.1.7h.2a1.4 1.4 0 1 1 0 2.8h-.1a1.2 1.2 0 0 0-1.1.7z"/>
+          </svg>
+          Settings
+        </a>
+
+        <span class="sidebar-injected" data-icon="shield">{{ raw_admin_link }}</span>
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
+      </a>
+    </aside>
+
+    <!-- ── Main content ─────────────────────────────────────────── -->
+    <div class="main-content">
+      <div class="breadcrumb">
+        <span class="breadcrumb-item">Home</span>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Dashboards</span>
+      </div>
+
+      <div class="page-header" style="position:relative">
+        {{ raw_credits_badge }}
+        <h1 class="page-title">Pick where you want to go.</h1>
+        <p class="page-subtitle">
+          Active dashboards open in a new tab. Locked ones can be unlocked from billing.
+          <a href="/settings">Set a default</a> to skip this page next time.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div class="dash-grid stagger">
+          {{ dashboard_cards }}
+        </div>
+      </div>
     </div>
 
-    <div class="dash-grid">
-      {{ dashboard_cards }}
-    </div>
-  </main>
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <footer class="status-bar">
+      <span class="status-item">narve.ai</span>
+      <span class="status-item"><a href="/terms" style="color:inherit;text-decoration:none">Terms</a></span>
+      <span class="status-item"><a href="/privacy" style="color:inherit;text-decoration:none">Privacy</a></span>
+      <span class="status-item"><a href="/dpa" style="color:inherit;text-decoration:none">DPA</a></span>
+      <span class="status-item"><a href="/support" style="color:inherit;text-decoration:none">Support</a></span>
+      <span class="status-item" style="margin-left:auto">v3</span>
+    </footer>
+
+  </div>
+
+{{ raw_sitemap }}
+<script>
+(function(){
+  /* Avatar initial */
+  var av=document.querySelector('.sidebar-user-avatar[data-username]');
+  if(av){var u=av.getAttribute('data-username');av.textContent=u?u.charAt(0).toUpperCase():'?';}
+
+  /* Upgrade server-injected links (raw_admin_link, raw_signal_search_link, raw_intelligence_link) */
+  var icons={
+    shield:'<svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L2.5 4v4c0 3.5 2.3 5.7 5.5 6.5 3.2-.8 5.5-3 5.5-6.5V4L8 1.5z"/></svg>',
+    search:'<svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.5"/><line x1="10.2" y1="10.2" x2="14" y2="14"/></svg>',
+    bolt:'<svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1L3 9h5l-1 6 6-8H8z"/></svg>'
+  };
+  document.querySelectorAll('.sidebar-injected').forEach(function(wrap){
+    var a=wrap.querySelector('a');
+    if(!a){wrap.style.display='none';return;}
+    var iconKey=wrap.getAttribute('data-icon')||'';
+    a.className='nav-item';
+    if(icons[iconKey])a.insertAdjacentHTML('afterbegin',icons[iconKey]);
+    wrap.replaceWith(a);
+  });
+})();
+</script>
+<script src="/_gateway_static/scroll-animations.js" defer></script>
+<script src="/_gateway_static/user-features.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

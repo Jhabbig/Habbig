@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enter access token — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <style>
+    body {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      margin: 0;
+    }
+    .token-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text-primary);
+      margin-bottom: 40px;
+    }
+    .token-brand img { width: 26px; height: 26px; filter: invert(1); border-radius: 5px; }
+    .token-brand span { font-family: var(--font-ui); font-weight: 600; font-size: 18px; letter-spacing: -0.03em; }
+    .token-card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 40px 36px;
+      box-shadow: var(--shadow-md);
+    }
+    .token-title {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      margin: 0 0 8px;
+      color: var(--text-primary);
+    }
+    .token-sub {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin: 0 0 28px;
+      line-height: 1.55;
+    }
+    .token-form { display: flex; flex-direction: column; gap: 14px; }
+    .token-input {
+      width: 100%;
+      padding: 14px 16px;
+      background: var(--bg-raised);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.02em;
+      transition: all 0.15s;
+      box-sizing: border-box;
+    }
+    .token-input:focus {
+      outline: none;
+      border-color: var(--text-primary);
+      box-shadow: 0 0 0 3px var(--interactive-ghost);
+    }
+    .token-input.error {
+      border-color: var(--text-secondary);
+      animation: shake 0.4s cubic-bezier(.36, .07, .19, .97);
+    }
+    @keyframes shake {
+      10%, 90% { transform: translateX(-1px); }
+      20%, 80% { transform: translateX(2px); }
+      30%, 50%, 70% { transform: translateX(-4px); }
+      40%, 60% { transform: translateX(4px); }
+    }
+    .token-btn {
+      width: 100%;
+      padding: 14px 16px;
+      background: var(--text-primary);
+      color: var(--interactive-text);
+      border: 1px solid var(--text-primary);
+      border-radius: var(--radius-md);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .token-btn:hover:not(:disabled) { background: var(--interactive-hover); }
+    .token-btn:disabled { opacity: 0.65; cursor: wait; }
+    .token-spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: var(--interactive-text);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .token-error {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin: 8px 0 0;
+      min-height: 16px;
+    }
+    .token-footer {
+      margin-top: 28px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      text-align: center;
+      line-height: 1.6;
+    }
+    .token-footer a { color: var(--text-secondary); text-decoration: underline; }
+  </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <a href="/" class="token-brand">
+    <img src="/_gateway_static/img/logo.png" alt="narve.ai">
+    <span>narve.ai</span>
+  </a>
+
+  <div class="token-card">
+    <h1 class="token-title">Enter your access token</h1>
+    <p class="token-sub">Tokens are issued on purchase. Need one? <a href="/pricing" style="color:var(--text-primary);text-decoration:underline">View pricing</a> or <a href="/support" style="color:var(--text-primary);text-decoration:underline">contact support</a>.</p>
+
+    <form class="token-form" id="token-form" onsubmit="return handleSubmit(event)">
+      {{ raw_csrf_field }}
+      <input
+        class="token-input"
+        id="token-input"
+        type="text"
+        name="token"
+        placeholder="Access token"
+        autocomplete="off"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        autofocus
+        required
+      >
+      <button class="token-btn" id="token-btn" type="submit">Continue</button>
+      <div class="token-error" id="token-error"></div>
+    </form>
+  </div>
+
+  <p class="token-footer">
+    narve.ai is invite-only. <a href="/pricing">Get a token</a> · <a href="/support">Need help?</a>
+  </p>
+
+<script>
+function handleSubmit(ev) {
+  ev.preventDefault();
+  var input = document.getElementById('token-input');
+  var btn = document.getElementById('token-btn');
+  var err = document.getElementById('token-error');
+  var token = input.value.trim();
+  if (!token) return false;
+
+  err.textContent = '';
+  input.classList.remove('error');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="token-spinner"></span>Checking...';
+
+  var csrf = (document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/) || [])[1] || '';
+
+  fetch('/auth/validate-token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-csrf-token': csrf
+    },
+    body: JSON.stringify({ token: token })
+  })
+    .then(function(r) {
+      if (r.status === 429) {
+        return { tooMany: true };
+      }
+      return r.json().then(function(d) { return { ok: r.ok, data: d }; });
+    })
+    .then(function(res) {
+      btn.disabled = false;
+      btn.textContent = 'Continue';
+      if (res.tooMany) {
+        err.textContent = 'Too many attempts. Wait 60 seconds.';
+        input.classList.add('error');
+        return;
+      }
+      if (!res.ok || !res.data || !res.data.valid) {
+        err.textContent = 'Invalid or revoked token.';
+        input.classList.add('error');
+        return;
+      }
+      // Valid — the server has already set the pending_token cookie.
+      // Redirect based on claimed status.
+      if (res.data.claimed) {
+        window.location.href = '/login';
+      } else {
+        window.location.href = '/register';
+      }
+    })
+    .catch(function() {
+      btn.disabled = false;
+      btn.textContent = 'Continue';
+      err.textContent = 'Network error. Try again.';
+      input.classList.add('error');
+    });
+
+  return false;
+}
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

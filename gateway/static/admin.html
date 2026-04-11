@@ -3,153 +3,632 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin — Habbig</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <title>Admin — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <style>
-    .admin-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+    .admin-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: 32px; }
     .admin-tab { padding: 12px 24px; font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; background: none; border-top: none; border-left: none; border-right: none; }
     .admin-tab:hover { color: var(--text-primary); }
-    .admin-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+    .admin-tab.active { color: var(--text-primary); border-bottom-color: var(--text-primary); }
     .admin-panel { display: none; }
     .admin-panel.active { display: block; }
     .token-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; letter-spacing: 0.04em; }
-    .admin-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-    .admin-row { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border-light); transition: background 0.15s; }
+    .admin-list { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); overflow: hidden; }
+    .admin-row { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border-ghost); transition: background 0.15s; }
     .admin-row:last-child { border-bottom: none; }
-    .admin-row:hover { background: var(--surface-hover); }
+    .admin-row:hover { background: var(--bg-overlay); }
     .admin-row-info { flex: 1; min-width: 0; }
     .admin-row-main { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-    .admin-row-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 12px; flex-wrap: wrap; }
+    .admin-row-meta { font-size: 12px; color: var(--text-tertiary); display: flex; gap: 12px; flex-wrap: wrap; }
     .admin-row-actions { display: flex; gap: 8px; margin-left: 16px; flex-shrink: 0; }
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
-    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
-    .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 8px; }
+    .stat-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px; }
+    .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-tertiary); margin-bottom: 8px; }
     .stat-value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
     .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; }
-    .filter-btn { padding: 6px 14px; font-size: 12px; font-weight: 500; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
-    .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
-    .filter-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .filter-btn { padding: 6px 14px; font-size: 12px; font-weight: 500; border-radius: 20px; border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
+    .filter-btn:hover { border-color: var(--text-primary); color: var(--text-primary); }
+    .filter-btn.active { background: var(--text-primary); color: var(--interactive-text); border-color: var(--text-primary); }
     .generate-form { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 24px; }
-    .generate-form input { flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--surface); color: var(--text-primary); }
-    .generate-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
-    .new-token-banner { background: var(--green-bg); border: 1px solid var(--green); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
-    .new-token-banner .token-mono { font-size: 15px; color: var(--green); user-select: all; }
-    .quota-bar { width: 100%; height: 6px; background: var(--border-light); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+    .generate-form input { flex: 1; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: 14px; background: var(--bg-surface); color: var(--text-primary); }
+    .generate-form input:focus { outline: none; border-color: var(--text-primary); box-shadow: 0 0 0 3px var(--interactive-ghost); }
+    .new-token-banner { background: var(--interactive-ghost); border: 1px solid var(--positive); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
+    .new-token-banner .token-mono { font-size: 15px; color: var(--positive); user-select: all; }
+    .quota-bar { width: 100%; height: 6px; background: var(--border-ghost); border-radius: 3px; margin-top: 8px; overflow: hidden; }
     .quota-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
   </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <header class="gw-header">
-    <div class="gw-brand">
-      <div class="gw-brand-logo">H</div>
-      <span>Admin Panel</span>
-    </div>
-    <nav class="gw-nav">
-      <a href="/dashboards">Dashboards</a>
-      <a href="/billing">Billing</a>
-      <a href="/settings">Settings</a>
-      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
-      <a href="/logout">Sign out</a>
-    </nav>
-  </header>
+  <div class="app-shell">
 
-  <div class="gw-main">
-    <h1 class="gw-page-title" style="margin-bottom:24px">Hello, {{ username }}!</h1>
-
-    <div class="admin-tabs">
-      <button class="admin-tab active" onclick="switchTab('tokens')">Tokens</button>
-      <button class="admin-tab" onclick="switchTab('users')">Users</button>
-      <button class="admin-tab" onclick="switchTab('enquiries')">Enquiries</button>
-      <button class="admin-tab" onclick="switchTab('revenue')">Revenue</button>
-      <button class="admin-tab" onclick="switchTab('stats')">Stats</button>
-    </div>
-
-    <!-- ======== TOKENS ======== -->
-    <div id="panel-tokens" class="admin-panel active">
-      {{ raw_new_token_banner }}
-
-      <form class="generate-form" method="post" action="/admin/tokens/generate">
-        <input type="text" name="note" placeholder="Note (optional) — e.g. For John, Stripe #123">
-        <button type="submit" class="btn btn-primary" style="white-space:nowrap">+ Generate Token</button>
-      </form>
-
-      <div class="filter-bar">
-        <button class="filter-btn active" onclick="filterTokens('all',this)">All</button>
-        <button class="filter-btn" onclick="filterTokens('unclaimed',this)">Active</button>
-        <button class="filter-btn" onclick="filterTokens('claimed',this)">Claimed</button>
-        <button class="filter-btn" onclick="filterTokens('revoked',this)">Revoked</button>
+    <!-- ── Sidebar ──────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        <span class="sidebar-logo-text">narve.ai</span>
       </div>
 
-      <div class="admin-list">
-        {{ raw_token_rows }}
-      </div>
-    </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
 
-    <!-- ======== USERS ======== -->
-    <div id="panel-users" class="admin-panel">
-      <!-- Mass action bar -->
-      <div id="bulk-bar" style="display:none;margin-bottom:16px;padding:12px 18px;background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius-sm);align-items:center;gap:12px;flex-wrap:wrap">
-        <span style="font-size:13px;color:var(--text-primary);font-weight:500" id="bulk-count">0 selected</span>
-        <div style="display:flex;gap:8px;margin-left:auto">
-          <button type="submit" form="bulk-form" name="bulk_action" value="promote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Promote selected users to admin?')">Promote</button>
-          <button type="submit" form="bulk-form" name="bulk_action" value="demote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Demote selected users?')">Demote</button>
-          <button type="submit" form="bulk-form" name="bulk_action" value="suspend" class="btn btn-danger" style="font-size:11px" onclick="return confirm('Suspend selected users?')">Suspend</button>
-          <button type="submit" form="bulk-form" name="bulk_action" value="unsuspend" class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)" onclick="return confirm('Unsuspend selected users?')">Unsuspend</button>
+        <a href="/dashboards" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/>
+            <rect x="9.5" y="1.5" width="5" height="5" rx="1"/>
+            <rect x="1.5" y="9.5" width="5" height="5" rx="1"/>
+            <rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+          </svg>
+          Dashboards
+        </a>
+
+        <a href="/billing" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="3" width="13" height="10" rx="1.5"/>
+            <line x1="1.5" y1="6.5" x2="14.5" y2="6.5"/>
+          </svg>
+          Billing
+        </a>
+
+        <a href="/settings" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="2.5"/>
+            <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.1 3.1l1.1 1.1M11.8 11.8l1.1 1.1M3.1 12.9l1.1-1.1M11.8 4.2l1.1-1.1"/>
+          </svg>
+          Settings
+        </a>
+
+        <a href="/admin" class="nav-item active">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 1L1.5 4.5v3c0 4.5 3 7 6.5 8.5 3.5-1.5 6.5-4 6.5-8.5v-3L8 1z"/>
+          </svg>
+          Admin
+        </a>
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar">{{ username | first | upper }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
+      </a>
+    </aside>
+
+    <!-- ── Main content ─────────────────────────────────────────── -->
+    <div class="main-content">
+      <div class="breadcrumb">
+        <span class="breadcrumb-item">narve.ai</span>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Admin</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Hello, {{ username }}!</h1>
+      </div>
+
+      <div class="content-area">
+        <div class="admin-tabs">
+          <button class="admin-tab active" onclick="switchTab('tokens')">Tokens</button>
+          <button class="admin-tab" onclick="switchTab('users')">Users</button>
+          <button class="admin-tab" onclick="switchTab('enquiries')">Enquiries</button>
+          <button class="admin-tab" onclick="switchTab('feedback')">Feedback {{ raw_feedback_badge }}</button>
+          {{ raw_revenue_tab }}
+          <button class="admin-tab" onclick="switchTab('analytics')">Analytics</button>
+          <button class="admin-tab" onclick="switchTab('gifts')">Gifts</button>
+          <button class="admin-tab" onclick="switchTab('scraper')">Scraper</button>
+          <button class="admin-tab" onclick="switchTab('system')">System Health</button>
+          <button class="admin-tab" onclick="switchTab('logs')">Logs</button>
+          <button class="admin-tab" onclick="switchTab('jobs')">Jobs</button>
+          <button class="admin-tab" onclick="switchTab('stats')">Stats</button>
         </div>
-      </div>
 
-      <div style="margin-bottom:12px">
-        <input type="text" id="user-search" placeholder="Search users by name or email..." oninput="searchUsers(this.value)"
-          style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:var(--surface);color:var(--text-primary);outline:none;margin-bottom:12px"
-          onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-light)'"
-          onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
-        <div style="display:flex;align-items:center;gap:8px">
-          <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px">
-            <input type="checkbox" id="select-all" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer"> Select all
-          </label>
-          <span style="font-size:12px;color:var(--text-muted);margin-left:auto">Click a user to expand actions</span>
+        <!-- ======== TOKENS ======== -->
+        <div id="panel-tokens" class="admin-panel active">
+          {{ raw_new_token_banner }}
+
+          <form class="generate-form" method="post" action="/admin/tokens/generate">
+            {{ raw_csrf_field }}
+            <input type="text" name="note" placeholder="Note (optional) — e.g. For John, Stripe #123">
+            <button type="submit" class="btn btn-primary" style="white-space:nowrap">+ Generate Token</button>
+          </form>
+
+          <div class="filter-bar">
+            <button class="filter-btn active" onclick="filterTokens('all',this)">All</button>
+            <button class="filter-btn" onclick="filterTokens('unclaimed',this)">Active</button>
+            <button class="filter-btn" onclick="filterTokens('claimed',this)">Claimed</button>
+            <button class="filter-btn" onclick="filterTokens('revoked',this)">Revoked</button>
+          </div>
+
+          <div class="admin-list">
+            {{ raw_token_rows }}
+          </div>
         </div>
-      </div>
 
-      <form id="bulk-form" method="post" action="/admin/users/bulk">
-        <div class="admin-list">
-          {{ raw_user_rows }}
+        <!-- ======== USERS ======== -->
+        <div id="panel-users" class="admin-panel">
+          <!-- Mass action bar -->
+          <div id="bulk-bar" style="display:none;margin-bottom:16px;padding:12px 18px;background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius-sm);align-items:center;gap:12px;flex-wrap:wrap">
+            <span style="font-size:13px;color:var(--text-primary);font-weight:500" id="bulk-count">0 selected</span>
+            <div style="display:flex;gap:8px;margin-left:auto">
+              <button type="submit" form="bulk-form" name="bulk_action" value="promote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Promote selected users to admin?')">Promote</button>
+              <button type="submit" form="bulk-form" name="bulk_action" value="demote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Demote selected users?')">Demote</button>
+              <button type="submit" form="bulk-form" name="bulk_action" value="suspend" class="btn btn-danger" style="font-size:11px" onclick="return confirm('Suspend selected users?')">Suspend</button>
+              <button type="submit" form="bulk-form" name="bulk_action" value="unsuspend" class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)" onclick="return confirm('Unsuspend selected users?')">Unsuspend</button>
+              <button type="submit" form="bulk-form" name="bulk_action" value="delete" class="btn btn-danger" style="font-size:11px;background:var(--red);color:white;border-color:var(--red)" onclick="return confirm('PERMANENTLY DELETE selected users? This cannot be undone.')">Delete</button>
+            </div>
+          </div>
+
+          <div style="margin-bottom:12px">
+            <input type="text" id="user-search" placeholder="Search users by name or email..." oninput="searchUsers(this.value)"
+              style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:var(--surface);color:var(--text-primary);outline:none;margin-bottom:12px"
+              onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-light)'"
+              onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
+            <div style="display:flex;align-items:center;gap:8px">
+              <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:6px">
+                <input type="checkbox" id="select-all" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer"> Select all
+              </label>
+              <span style="font-size:12px;color:var(--text-muted);margin-left:auto">Click a user to expand actions</span>
+            </div>
+          </div>
+
+          <form id="bulk-form" method="post" action="/admin/users/bulk">
+            {{ raw_csrf_field }}
+            <div class="admin-list">
+              {{ raw_user_rows }}
+            </div>
+          </form>
         </div>
-      </form>
+
+        <!-- ======== ENQUIRIES ======== -->
+        <div id="panel-enquiries" class="admin-panel">
+          <div class="filter-bar" style="margin-bottom:16px">
+            <button class="filter-btn active" onclick="filterEnquiries('all',this)">All</button>
+            <button class="filter-btn" onclick="filterEnquiries('enquiry',this)">Enquiries</button>
+            <button class="filter-btn" onclick="filterEnquiries('ticket',this)">Support Tickets</button>
+          </div>
+          <div class="admin-list">
+            {{ raw_enquiry_rows }}
+          </div>
+        </div>
+
+        <!-- ======== REVENUE ======== -->
+        <div id="panel-revenue" class="admin-panel">
+          {{ raw_revenue_content }}
+        </div>
+
+        <!-- ======== SCRAPER ======== -->
+        <div id="panel-scraper" class="admin-panel">
+          <div id="scraper-loading" style="text-align:center;padding:48px 0;color:var(--text-tertiary)">Loading scraper status...</div>
+          <div id="scraper-content" style="display:none">
+
+            <!-- Status cards -->
+            <div class="stat-grid" style="margin-bottom:24px">
+              <div class="stat-card">
+                <div class="stat-label">Twitter</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <span id="sc-tw-dot" style="width:8px;height:8px;border-radius:50%;background:var(--text-tertiary)"></span>
+                  <span id="sc-tw-session" style="font-size:13px">--</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-tertiary)">
+                  Last run: <span id="sc-tw-last">--</span><br>
+                  Posts today: <span id="sc-tw-posts">0</span><br>
+                  Next run: <span id="sc-tw-next">--</span>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:12px">
+                  <button class="btn btn-primary-outline" style="font-size:11px" onclick="scraperTrigger('twitter_scrape')">Trigger now</button>
+                  <button class="btn btn-primary-outline" style="font-size:11px" id="sc-tw-pause-btn" onclick="scraperTogglePause('twitter_scrape',this)">Pause</button>
+                </div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">TruthSocial</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <span id="sc-ts-dot" style="width:8px;height:8px;border-radius:50%;background:var(--text-tertiary)"></span>
+                  <span id="sc-ts-session" style="font-size:13px">--</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-tertiary)">
+                  Last run: <span id="sc-ts-last">--</span><br>
+                  Posts today: <span id="sc-ts-posts">0</span><br>
+                  Next run: <span id="sc-ts-next">--</span>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:12px">
+                  <button class="btn btn-primary-outline" style="font-size:11px" onclick="scraperTrigger('truthsocial_scrape')">Trigger now</button>
+                  <button class="btn btn-primary-outline" style="font-size:11px" id="sc-ts-pause-btn" onclick="scraperTogglePause('truthsocial_scrape',this)">Pause</button>
+                </div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Transmission</div>
+                <div style="font-size:28px;font-weight:700" id="sc-untx-count">0</div>
+                <div style="font-size:12px;color:var(--text-tertiary)">untransmitted posts</div>
+                <div style="margin-top:12px">
+                  <button class="btn btn-primary-outline" style="font-size:11px" onclick="scraperTrigger('retry_transmission')">Retry now</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Scheduler jobs -->
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Scheduler Jobs</h3>
+            <div class="admin-list" style="margin-bottom:24px" id="sc-jobs-list">
+              <div style="text-align:center;padding:24px;color:var(--text-tertiary);font-size:13px">No jobs loaded</div>
+            </div>
+
+            <!-- Keywords -->
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Keywords</h3>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-tertiary)">Twitter</span>
+                  <button class="btn btn-primary-outline" style="font-size:10px;padding:3px 10px" onclick="scraperAddKeyword('twitter')">+ Add</button>
+                </div>
+                <div id="sc-kw-twitter" class="admin-list" style="font-size:13px"></div>
+              </div>
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-tertiary)">TruthSocial</span>
+                  <button class="btn btn-primary-outline" style="font-size:10px;padding:3px 10px" onclick="scraperAddKeyword('truthsocial')">+ Add</button>
+                </div>
+                <div id="sc-kw-truthsocial" class="admin-list" style="font-size:13px"></div>
+              </div>
+            </div>
+
+            <!-- Recent runs -->
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Recent Runs</h3>
+            <div class="admin-list" id="sc-runs-list">
+              <div style="text-align:center;padding:24px;color:var(--text-tertiary);font-size:13px">No runs loaded</div>
+            </div>
+
+            <!-- Sessions -->
+            <h3 style="font-size:14px;font-weight:600;margin:24px 0 12px">Sessions</h3>
+            <div class="admin-list" id="sc-sessions-list">
+              <div style="text-align:center;padding:24px;color:var(--text-tertiary);font-size:13px">No sessions loaded</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======== STATS ======== -->
+        <div id="panel-stats" class="admin-panel">
+          <div class="stat-grid">
+            {{ raw_stat_cards }}
+          </div>
+        </div>
+
+        <!-- ======== FEEDBACK ======== -->
+        <div id="panel-feedback" class="admin-panel">
+          <div class="filter-bar">
+            <button class="filter-btn active" onclick="filterFeedback('all', this)">All</button>
+            <button class="filter-btn" onclick="filterFeedback('open', this)">Open</button>
+            <button class="filter-btn" onclick="filterFeedback('in_progress', this)">In progress</button>
+            <button class="filter-btn" onclick="filterFeedback('resolved', this)">Resolved</button>
+            <button class="filter-btn" onclick="filterFeedback('closed', this)">Closed</button>
+          </div>
+          <div id="feedback-list" class="admin-list">
+            <div class="admin-row"><div class="admin-row-info">Loading feedback…</div></div>
+          </div>
+        </div>
+
+        <!-- ======== ANALYTICS ======== -->
+        <div id="panel-analytics" class="admin-panel">
+          <div class="filter-bar">
+            <button class="filter-btn active" onclick="setAnalyticsPeriod('7d', this)">Last 7 days</button>
+            <button class="filter-btn" onclick="setAnalyticsPeriod('30d', this)">Last 30 days</button>
+            <button class="filter-btn" onclick="setAnalyticsPeriod('all', this)">All time</button>
+          </div>
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-card"><div class="stat-label">Unique visitors</div><div class="stat-value" id="an-visitors">—</div></div>
+            <div class="stat-card"><div class="stat-label">Page views</div><div class="stat-value" id="an-pageviews">—</div></div>
+            <div class="stat-card"><div class="stat-label">Newsletter signups</div><div class="stat-value" id="an-newsletter">—</div></div>
+            <div class="stat-card"><div class="stat-label">Gate entries</div><div class="stat-value" id="an-gate">—</div></div>
+            <div class="stat-card"><div class="stat-label">Gate successes</div><div class="stat-value" id="an-gate-ok">—</div></div>
+          </div>
+          <h3 style="font-size:13px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.08em;margin:32px 0 12px">User growth</h3>
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-card"><div class="stat-label">Total users</div><div class="stat-value" id="an-users-total">—</div></div>
+            <div class="stat-card"><div class="stat-label">Active this week</div><div class="stat-value" id="an-users-week">—</div></div>
+            <div class="stat-card"><div class="stat-label">Active this month</div><div class="stat-value" id="an-users-month">—</div></div>
+            <div class="stat-card"><div class="stat-label">Churn this month</div><div class="stat-value" id="an-churn">—</div></div>
+          </div>
+          <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-lg);padding:24px;margin-bottom:24px">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-tertiary);margin-bottom:12px">Cumulative user growth</div>
+            <svg id="an-users-chart" width="100%" height="180" viewBox="0 0 600 180" style="overflow:visible"></svg>
+          </div>
+          <h3 style="font-size:13px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.08em;margin:32px 0 12px">Revenue</h3>
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-card"><div class="stat-label">MRR (estimated)</div><div class="stat-value" id="an-mrr">—</div></div>
+            <div class="stat-card"><div class="stat-label">ARR (estimated)</div><div class="stat-value" id="an-arr">—</div></div>
+            <div class="stat-card"><div class="stat-label">Active subs</div><div class="stat-value" id="an-subs-active">—</div></div>
+          </div>
+          <div id="an-subs-breakdown" class="admin-list" style="margin-bottom:24px"></div>
+          <h3 style="font-size:13px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.08em;margin:32px 0 12px">Feature usage (last 30 days)</h3>
+          <div class="stat-grid">
+            <div class="stat-card"><div class="stat-label">Feed views</div><div class="stat-value" id="an-feed">—</div></div>
+            <div class="stat-card"><div class="stat-label">Best bets views</div><div class="stat-value" id="an-bestbets">—</div></div>
+            <div class="stat-card"><div class="stat-label">Source views</div><div class="stat-value" id="an-sources">—</div></div>
+            <div class="stat-card"><div class="stat-label">Market detail views</div><div class="stat-value" id="an-markets">—</div></div>
+            <div class="stat-card"><div class="stat-label">Signal Search runs</div><div class="stat-value" id="an-signal">—</div></div>
+            <div class="stat-card"><div class="stat-label">Credibility refreshes</div><div class="stat-value" id="an-cred">—</div></div>
+            <div class="stat-card"><div class="stat-label">Bets placed</div><div class="stat-value" id="an-bets">—</div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:24px">
+            <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-lg);padding:20px">
+              <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-tertiary);margin-bottom:12px">Top markets</div>
+              <div id="an-top-markets" style="font-size:12px;color:var(--text-secondary)">—</div>
+            </div>
+            <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-lg);padding:20px">
+              <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-tertiary);margin-bottom:12px">Top sources</div>
+              <div id="an-top-sources" style="font-size:12px;color:var(--text-secondary)">—</div>
+            </div>
+            <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-lg);padding:20px">
+              <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-tertiary);margin-bottom:12px">Top keywords</div>
+              <div id="an-top-keywords" style="font-size:12px;color:var(--text-secondary)">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======== GIFTS ======== -->
+        <div id="panel-gifts" class="admin-panel">
+          <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">
+            Gift subscriptions, add-ons, and enterprise plans to any user. Use the Users tab to gift to a specific user, or manage existing gifts here.
+          </p>
+          <div id="gifts-list" class="admin-list">
+            <div class="admin-row"><div class="admin-row-info">Loading gifts…</div></div>
+          </div>
+        </div>
+
+        <!-- ======== SYSTEM HEALTH ======== -->
+        <div id="panel-system" class="admin-panel">
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="stat-label">Sentry status</div>
+              <div class="stat-value" id="sentry-status">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Errors (last 24h)</div>
+              <div class="stat-value" id="sentry-count">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Environment</div>
+              <div class="stat-value" id="sentry-env" style="font-size:20px">—</div>
+            </div>
+          </div>
+          <div style="margin-top:24px">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-tertiary);margin-bottom:8px">Recent errors</div>
+            <div id="sentry-recent" class="admin-list">
+              <div class="admin-row"><div class="admin-row-info">Loading…</div></div>
+            </div>
+            <div style="margin-top:16px">
+              <a id="sentry-dashboard-link" href="#" target="_blank" rel="noopener" style="font-size:13px;color:var(--text-primary);text-decoration:none">View all errors in Sentry →</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======== LOGS ======== -->
+        <div id="panel-logs" class="admin-panel">
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+            <select id="log-level" style="padding:6px 10px;font-size:12px;background:var(--surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px">
+              <option value="">All levels</option>
+              <option value="INFO">INFO+</option>
+              <option value="WARNING">WARNING+</option>
+              <option value="ERROR">ERROR only</option>
+            </select>
+            <select id="log-service" style="padding:6px 10px;font-size:12px;background:var(--surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px">
+              <option value="all">All services</option>
+              <option value="app">app</option>
+              <option value="scraper">scraper</option>
+              <option value="worker">worker</option>
+            </select>
+            <input id="log-q" type="search" placeholder="Search…" style="padding:6px 10px;font-size:12px;background:var(--surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px;min-width:200px">
+            <button onclick="refreshLogs()" class="btn btn-primary-outline" style="font-size:12px">Refresh</button>
+            <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+              <input id="log-autorefresh" type="checkbox" checked> Auto-refresh (5s)
+            </label>
+            <span id="log-logtail-status" style="font-size:11px;color:var(--text-tertiary);margin-left:auto"></span>
+          </div>
+
+          <div style="display:flex;gap:12px;margin-bottom:16px">
+            <button onclick="showLogView('live')" class="btn btn-primary-outline" id="log-btn-live" style="font-size:12px">Live tail</button>
+            <button onclick="showLogView('errors')" class="btn btn-primary-outline" id="log-btn-errors" style="font-size:12px">Errors (last 24h)</button>
+          </div>
+
+          <div id="log-content" class="admin-list" style="font-family:ui-monospace,Menlo,monospace;font-size:11px;max-height:70vh;overflow-y:auto">
+            <div class="admin-row"><div class="admin-row-info">Loading…</div></div>
+          </div>
+        </div>
+
+        <!-- ======== JOBS ======== -->
+        <div id="panel-jobs" class="admin-panel">
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+            <select id="job-filter" onchange="refreshJobs()" style="padding:6px 10px;font-size:12px;background:var(--surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px">
+              <option value="">All statuses</option>
+              <option value="queued">Queued</option>
+              <option value="running">Running</option>
+              <option value="complete">Complete</option>
+              <option value="failed">Failed</option>
+            </select>
+            <button onclick="refreshJobs()" class="btn btn-primary-outline" style="font-size:12px">Refresh</button>
+            <span id="job-backend" style="font-size:11px;color:var(--text-tertiary);margin-left:auto"></span>
+          </div>
+
+          <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+            <div class="stat-card"><div class="stat-label">Queued</div><div class="stat-value" id="job-stat-queued">—</div></div>
+            <div class="stat-card"><div class="stat-label">Running</div><div class="stat-value" id="job-stat-running">—</div></div>
+            <div class="stat-card"><div class="stat-label">Complete (24h)</div><div class="stat-value" id="job-stat-complete">—</div></div>
+            <div class="stat-card"><div class="stat-label">Failed (24h)</div><div class="stat-value" id="job-stat-failed">—</div></div>
+          </div>
+
+          <div id="job-list" class="admin-list" style="font-size:12px">
+            <div class="admin-row"><div class="admin-row-info">Loading…</div></div>
+          </div>
+        </div>
+
+      </div>
     </div>
 
-    <!-- ======== ENQUIRIES ======== -->
-    <div id="panel-enquiries" class="admin-panel">
-      <div class="filter-bar" style="margin-bottom:16px">
-        <button class="filter-btn active" onclick="filterEnquiries('all',this)">All</button>
-        <button class="filter-btn" onclick="filterEnquiries('enquiry',this)">Enquiries</button>
-        <button class="filter-btn" onclick="filterEnquiries('ticket',this)">Support Tickets</button>
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <footer class="status-bar">
+      <div class="status-item">
+        <div class="status-dot running"></div>
+        narve.ai
       </div>
-      <div class="admin-list">
-        {{ raw_enquiry_rows }}
-      </div>
-    </div>
+      <div class="status-separator"></div>
+      <div class="status-item">Admin</div>
+      <div class="status-spacer"></div>
+      <div class="status-item"><a href="/logout" style="color:inherit;text-decoration:none">Sign out</a></div>
+    </footer>
 
-    <!-- ======== REVENUE ======== -->
-    <div id="panel-revenue" class="admin-panel">
-      {{ raw_revenue_content }}
-    </div>
-
-    <!-- ======== STATS ======== -->
-    <div id="panel-stats" class="admin-panel">
-      <div class="stat-grid">
-        {{ raw_stat_cards }}
-      </div>
-    </div>
   </div>
 
 <script>
 function switchTab(name) {
   document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('panel-' + name).classList.add('active');
-  event.target.classList.add('active');
+  var panel = document.getElementById('panel-' + name);
+  if (panel) panel.classList.add('active');
+  if (event && event.target) event.target.classList.add('active');
+  // Lazy-load per-tab data on first view.
+  if (name === 'system' && !window._sentryLoaded) { loadSentry(); window._sentryLoaded = true; }
+  if (name === 'feedback' && !window._feedbackLoaded) { loadFeedback('all'); window._feedbackLoaded = true; }
+  if (name === 'analytics' && !window._analyticsLoaded) { setAnalyticsPeriod('7d'); window._analyticsLoaded = true; }
+  if (name === 'gifts' && !window._giftsLoaded) { loadGifts(); window._giftsLoaded = true; }
+  if (name === 'logs' && !window._logsLoaded) { showLogView('live'); window._logsLoaded = true; }
+  // Stop auto-refresh when leaving the logs tab.
+  if (name !== 'logs' && window._logAutoTimer) { clearInterval(window._logAutoTimer); window._logAutoTimer = null; }
 }
+
+// ── Logs tab ─────────────────────────────────────────────────────────────
+window._logView = 'live';  // 'live' or 'errors'
+
+function showLogView(view) {
+  window._logView = view;
+  var live = document.getElementById('log-btn-live');
+  var err  = document.getElementById('log-btn-errors');
+  if (live) live.style.borderColor = view === 'live' ? 'var(--text-primary)' : '';
+  if (err)  err.style.borderColor  = view === 'errors' ? 'var(--text-primary)' : '';
+  refreshLogs();
+  startLogAutoRefresh();
+}
+
+function startLogAutoRefresh() {
+  if (window._logAutoTimer) clearInterval(window._logAutoTimer);
+  var cb = document.getElementById('log-autorefresh');
+  if (cb && cb.checked) {
+    window._logAutoTimer = setInterval(refreshLogs, 5000);
+  }
+}
+
+async function refreshLogs() {
+  var level   = document.getElementById('log-level').value;
+  var service = document.getElementById('log-service').value;
+  var q       = document.getElementById('log-q').value;
+  var content = document.getElementById('log-content');
+  var params  = new URLSearchParams();
+  if (level)   params.set('level', level);
+  if (service) params.set('service', service);
+  if (q)       params.set('q', q);
+  params.set('limit', '100');
+
+  var endpoint = window._logView === 'errors' ? '/admin/logs/errors' : '/admin/logs/live';
+  try {
+    var resp = await fetch(endpoint + '?' + params.toString(), {credentials: 'include'});
+    if (!resp.ok) {
+      // Escape body before insertion — XSS hardening, even though the body
+      // comes from our own API, an attacker-influenced error string should
+      // never become live HTML.
+      var body = (await resp.text()).slice(0, 200);
+      content.innerHTML = '<div class="admin-row"><div class="admin-row-info">HTTP ' + resp.status + ' — ' + _escape(body) + '</div></div>';
+      return;
+    }
+    var data = await resp.json();
+    var statusEl = document.getElementById('log-logtail-status');
+    if (statusEl) {
+      statusEl.textContent = data.logtail_configured
+        ? 'BetterStack connected'
+        : 'BetterStack not configured — ring buffer only';
+    }
+    if (window._logView === 'errors') {
+      renderErrorGroups(data.groups || []);
+    } else {
+      renderLiveRecords((data.records || []).slice().reverse());
+    }
+  } catch (e) {
+    content.innerHTML = '<div class="admin-row"><div class="admin-row-info">Failed to fetch logs: ' + _escape(e && e.message ? e.message : String(e)) + '</div></div>';
+  }
+}
+
+function _escape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function _levelColor(lvl) {
+  if (lvl === 'ERROR' || lvl === 'CRITICAL') return '#ef4444';
+  if (lvl === 'WARNING') return '#f59e0b';
+  if (lvl === 'INFO') return 'var(--text-secondary)';
+  return 'var(--text-tertiary)';
+}
+
+function renderLiveRecords(records) {
+  var content = document.getElementById('log-content');
+  if (!records.length) {
+    content.innerHTML = '<div class="admin-row"><div class="admin-row-info">No records.</div></div>';
+    return;
+  }
+  var html = '';
+  records.forEach(function (r) {
+    var ts   = _escape((r.timestamp || '').replace('T', ' ').slice(0, 19));
+    var lvl  = _escape(r.level || '');
+    var svc  = _escape(r.service || '');
+    var lg   = _escape(r.logger || '');
+    var msg  = _escape(r.message || '');
+    var rid  = r.request_id ? ' req=' + _escape(r.request_id) : '';
+    var uid  = r.user_id ? ' user=' + _escape(r.user_id) : '';
+    html +=
+      '<div class="admin-row" style="align-items:flex-start">' +
+        '<div class="admin-row-info">' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+            '<span style="color:var(--text-tertiary)">' + ts + '</span>' +
+            '<span style="color:' + _levelColor(r.level) + ';font-weight:600">' + lvl + '</span>' +
+            '<span style="color:var(--text-secondary)">[' + svc + ']</span>' +
+            '<span style="color:var(--text-tertiary)">' + lg + '</span>' +
+          '</div>' +
+          '<div style="margin-top:4px">' + msg + '</div>' +
+          '<div style="color:var(--text-tertiary);font-size:10px;margin-top:2px">' + rid + uid + '</div>' +
+        '</div>' +
+      '</div>';
+  });
+  content.innerHTML = html;
+}
+
+function renderErrorGroups(groups) {
+  var content = document.getElementById('log-content');
+  if (!groups.length) {
+    content.innerHTML = '<div class="admin-row"><div class="admin-row-info">No errors in the ring buffer.</div></div>';
+    return;
+  }
+  var html = '';
+  groups.forEach(function (g) {
+    var first = _escape((g.first_seen || '').replace('T', ' ').slice(0, 19));
+    var last  = _escape((g.last_seen  || '').replace('T', ' ').slice(0, 19));
+    html +=
+      '<div class="admin-row" style="align-items:flex-start">' +
+        '<div class="admin-row-info">' +
+          '<div style="display:flex;gap:8px;align-items:center">' +
+            '<span style="color:#ef4444;font-weight:700">×' + g.count + '</span>' +
+            '<span style="color:var(--text-secondary)">[' + _escape(g.service || '') + ']</span>' +
+            '<span style="color:var(--text-tertiary)">' + _escape(g.logger || '') + '</span>' +
+          '</div>' +
+          '<div style="margin-top:4px">' + _escape(g.message || '') + '</div>' +
+          '<div style="color:var(--text-tertiary);font-size:10px;margin-top:2px">first=' + first + ' last=' + last + '</div>' +
+        '</div>' +
+      '</div>';
+  });
+  content.innerHTML = html;
+}
+
+// Auto-refresh checkbox toggles the 5s interval on/off.
+document.addEventListener('DOMContentLoaded', function () {
+  var cb = document.getElementById('log-autorefresh');
+  if (cb) cb.addEventListener('change', startLogAutoRefresh);
+});
 
 function filterTokens(status, btn) {
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -219,6 +698,565 @@ function toggleUserDetail(el) {
     if (e.target.classList.contains('user-check')) updateBulkBar();
   });
 })();
+
+// ── Scraper panel ──────────────────────────────────────────────
+var _scraperLoaded = false;
+var _csrfToken = (document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/) || [])[1] || '';
+
+function _scraperFetch(method, path, body) {
+  var opts = {method: method, headers: {'Content-Type': 'application/json'}};
+  if (_csrfToken) opts.headers['x-csrf-token'] = _csrfToken;
+  if (body) opts.body = JSON.stringify(body);
+  return fetch('/api/scraper' + path, opts).then(function(r) { return r.json(); });
+}
+
+function _timeAgo(iso) {
+  if (!iso) return '--';
+  var d = new Date(iso), now = new Date(), s = Math.floor((now - d) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + ' min ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+function _timeUntil(iso) {
+  if (!iso) return '--';
+  var d = new Date(iso), now = new Date(), s = Math.floor((d - now) / 1000);
+  if (s < 0) return 'now';
+  if (s < 60) return 'in ' + s + 's';
+  if (s < 3600) return 'in ' + Math.floor(s / 60) + ' min';
+  return 'in ' + Math.floor(s / 3600) + 'h';
+}
+
+function scraperLoadAll() {
+  Promise.all([
+    _scraperFetch('GET', '/status'),
+    _scraperFetch('GET', '/scheduler/status'),
+    _scraperFetch('GET', '/keywords'),
+    _scraperFetch('GET', '/runs?limit=20'),
+    _scraperFetch('GET', '/sessions')
+  ]).then(function(res) {
+    var status = res[0], sched = res[1], kw = res[2], runs = res[3], sessions = res[4];
+    document.getElementById('scraper-loading').style.display = 'none';
+    document.getElementById('scraper-content').style.display = 'block';
+
+    // Handle scraper unreachable
+    if (status.error) {
+      document.getElementById('scraper-loading').style.display = 'block';
+      document.getElementById('scraper-loading').textContent = 'Scraper service unreachable';
+      document.getElementById('scraper-content').style.display = 'none';
+      return;
+    }
+
+    _renderStatus(status);
+    _renderJobs(sched, status);
+    _renderKeywords(kw);
+    _renderRuns(runs);
+    _renderSessions(sessions);
+  }).catch(function() {
+    document.getElementById('scraper-loading').textContent = 'Scraper service unreachable';
+  });
+}
+
+function _renderStatus(s) {
+  var tw = s.twitter || {}, ts = s.truthsocial || {};
+  document.getElementById('sc-tw-dot').style.background = tw.available ? 'var(--positive)' : 'var(--negative)';
+  document.getElementById('sc-tw-session').textContent = tw.session_valid ? 'Session valid' : 'No session';
+  document.getElementById('sc-tw-last').textContent = _timeAgo(tw.last_successful_run);
+  document.getElementById('sc-tw-posts').textContent = tw.posts_collected_today || 0;
+  document.getElementById('sc-ts-dot').style.background = ts.available ? 'var(--positive)' : 'var(--negative)';
+  document.getElementById('sc-ts-session').textContent = ts.session_valid ? 'Session valid' : 'Public only';
+  document.getElementById('sc-ts-last').textContent = _timeAgo(ts.last_successful_run);
+  document.getElementById('sc-ts-posts').textContent = ts.posts_collected_today || 0;
+  document.getElementById('sc-untx-count').textContent = s.untransmitted_count || 0;
+}
+
+function _renderJobs(sched, status) {
+  var jobs = (sched && sched.jobs) || [];
+  if (!jobs.length) return;
+  var html = '';
+  // Find next runs from status for display
+  jobs.forEach(function(j) {
+    var paused = j.paused;
+    var badge = paused
+      ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(245,158,11,0.12);color:#f59e0b">Paused</span>'
+      : '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,0.12);color:#22c55e">Running</span>';
+    html += '<div class="admin-row">'
+      + '<div class="admin-row-info"><div class="admin-row-main">'
+      + '<span style="font-weight:500;font-size:13px">' + j.id + '</span> ' + badge
+      + '</div><div class="admin-row-meta">'
+      + (j.interval_minutes ? j.interval_minutes + ' min interval' : '') + ' &middot; Next: ' + _timeUntil(j.next_run)
+      + '</div></div>'
+      + '<div class="admin-row-actions">'
+      + '<button class="btn btn-primary-outline" style="font-size:11px" onclick="scraperTogglePause(\'' + j.id + '\',this)">' + (paused ? 'Resume' : 'Pause') + '</button>'
+      + '<button class="btn btn-primary-outline" style="font-size:11px" onclick="scraperTrigger(\'' + j.id + '\')">Trigger</button>'
+      + '<button class="btn btn-primary-outline" style="font-size:11px" onclick="scraperEditInterval(\'' + j.id + '\',' + (j.interval_minutes || 20) + ')">Edit interval</button>'
+      + '</div></div>';
+  });
+  document.getElementById('sc-jobs-list').innerHTML = html;
+}
+
+function _renderKeywords(kw) {
+  ['twitter', 'truthsocial'].forEach(function(p) {
+    var list = (kw && kw[p]) || [];
+    var el = document.getElementById('sc-kw-' + p);
+    if (!list.length) { el.innerHTML = '<div style="padding:12px 16px;font-size:12px;color:var(--text-tertiary)">No keywords</div>'; return; }
+    var html = '';
+    list.forEach(function(k) {
+      html += '<div class="admin-row" style="padding:8px 16px">'
+        + '<span style="font-size:13px">' + k + '</span>'
+        + '<button style="background:none;border:none;color:var(--negative);cursor:pointer;font-size:14px;padding:2px 6px" onclick="scraperRemoveKeyword(\'' + p + '\',\'' + k.replace(/'/g, "\\'") + '\')">&times;</button>'
+        + '</div>';
+    });
+    el.innerHTML = html;
+  });
+}
+
+function _renderRuns(runs) {
+  if (!runs || !runs.length) return;
+  var html = '';
+  runs.forEach(function(r) {
+    var ok = !r.error;
+    var badge = ok
+      ? '<span style="color:var(--positive)">&#10003;</span>'
+      : '<span style="color:var(--negative)" title="' + (r.error || '').substring(0,80) + '">&#10007;</span>';
+    html += '<div class="admin-row" style="padding:10px 16px">'
+      + '<div class="admin-row-info"><div class="admin-row-main" style="margin-bottom:2px">'
+      + '<span style="font-size:12px;font-weight:500;text-transform:capitalize">' + r.platform + '</span>'
+      + '<span style="font-size:12px;color:var(--text-tertiary)">' + (r.keyword || '').substring(0,30) + '</span>'
+      + '</div><div class="admin-row-meta">'
+      + _timeAgo(r.started_at) + ' &middot; '
+      + r.posts_found + ' found &middot; ' + r.posts_new + ' new &middot; ' + r.posts_transmitted + ' tx'
+      + (r.duration_seconds ? ' &middot; ' + r.duration_seconds.toFixed(1) + 's' : '')
+      + '</div></div>'
+      + '<div class="admin-row-actions">' + badge + '</div>'
+      + '</div>';
+  });
+  document.getElementById('sc-runs-list').innerHTML = html;
+}
+
+function _renderSessions(sessions) {
+  if (!sessions || !sessions.length) {
+    document.getElementById('sc-sessions-list').innerHTML = '<div style="padding:16px;font-size:12px;color:var(--text-tertiary);text-align:center">No sessions configured</div>';
+    return;
+  }
+  var html = '';
+  sessions.forEach(function(s) {
+    var badge = s.valid
+      ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,0.12);color:#22c55e">Valid</span>'
+      : '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(239,68,68,0.12);color:#ef4444">Invalid</span>';
+    html += '<div class="admin-row" style="padding:10px 16px">'
+      + '<div class="admin-row-info"><div class="admin-row-main" style="margin-bottom:2px">'
+      + '<span style="font-size:13px;font-weight:500;text-transform:capitalize">' + s.platform + '</span> ' + badge
+      + '</div><div class="admin-row-meta">'
+      + 'Created ' + _timeAgo(s.created_at)
+      + (s.last_used_at ? ' &middot; Last used ' + _timeAgo(s.last_used_at) : '')
+      + '</div></div>'
+      + '<div class="admin-row-actions">'
+      + '<button class="btn btn-danger" style="font-size:11px" onclick="scraperResetSession(\'' + s.platform + '\')">Reset session</button>'
+      + '</div></div>';
+  });
+  document.getElementById('sc-sessions-list').innerHTML = html;
+}
+
+function scraperTrigger(jobId) {
+  _scraperFetch('POST', '/scheduler/' + jobId + '/trigger').then(function() { scraperLoadAll(); });
+}
+
+function scraperTogglePause(jobId, btn) {
+  var isPaused = btn.textContent.trim() === 'Resume';
+  var action = isPaused ? 'resume' : 'pause';
+  _scraperFetch('POST', '/scheduler/' + jobId + '/' + action).then(function() { scraperLoadAll(); });
+}
+
+function scraperEditInterval(jobId, current) {
+  var val = prompt('New interval in minutes for ' + jobId + ':', current);
+  if (!val || isNaN(val) || val < 1) return;
+  _scraperFetch('PATCH', '/scheduler/' + jobId + '/interval', {interval_minutes: parseInt(val)}).then(function() { scraperLoadAll(); });
+}
+
+function scraperAddKeyword(platform) {
+  var kw = prompt('Add keyword for ' + platform + ':');
+  if (!kw || !kw.trim()) return;
+  _scraperFetch('POST', '/keywords', {platform: platform, keyword: kw.trim()}).then(function() { scraperLoadAll(); });
+}
+
+function scraperRemoveKeyword(platform, keyword) {
+  if (!confirm('Remove keyword "' + keyword + '" from ' + platform + '?')) return;
+  _scraperFetch('DELETE', '/keywords/' + platform + '/' + encodeURIComponent(keyword)).then(function() { scraperLoadAll(); });
+}
+
+function scraperResetSession(platform) {
+  if (!confirm('Reset ' + platform + ' session? You will need to re-login manually on the server.')) return;
+  _scraperFetch('POST', '/sessions/reset/' + platform).then(function() { scraperLoadAll(); });
+}
+
+// Load scraper data when tab is first activated
+var _origSwitchTab = switchTab;
+switchTab = function(name) {
+  _origSwitchTab(name);
+  if (name === 'scraper' && !_scraperLoaded) {
+    _scraperLoaded = true;
+    scraperLoadAll();
+  }
+  if (name === 'jobs') {
+    refreshJobs();
+  }
+};
+
+// ── Jobs tab (Feature 10) ────────────────────────────────────
+function refreshJobs() {
+  var filter = (document.getElementById('job-filter') || {}).value || '';
+  // Worker status (backend + registered jobs)
+  fetch('/admin/api/jobs/status').then(function(r){return r.json();}).then(function(data) {
+    var badge = document.getElementById('job-backend');
+    if (badge) badge.textContent = 'Backend: ' + (data.backend || 'unknown') +
+      ' · ' + (data.registered_jobs || []).length + ' jobs registered · ' +
+      (data.cron_jobs || 0) + ' cron';
+  }).catch(function(){});
+  // Recent jobs
+  var url = '/admin/api/jobs/recent?limit=100' + (filter ? '&status=' + encodeURIComponent(filter) : '');
+  fetch(url).then(function(r){return r.json();}).then(function(data) {
+    var jobs = data.jobs || [];
+    var counts = { queued: 0, running: 0, complete: 0, failed: 0 };
+    var now = Math.floor(Date.now() / 1000);
+    jobs.forEach(function(j) {
+      if (j.status === 'queued') counts.queued++;
+      else if (j.status === 'running') counts.running++;
+      else if (j.status === 'complete' && j.enqueued_at > now - 86400) counts.complete++;
+      else if (j.status === 'failed' && j.enqueued_at > now - 86400) counts.failed++;
+    });
+    document.getElementById('job-stat-queued').textContent = counts.queued;
+    document.getElementById('job-stat-running').textContent = counts.running;
+    document.getElementById('job-stat-complete').textContent = counts.complete;
+    document.getElementById('job-stat-failed').textContent = counts.failed;
+    var list = document.getElementById('job-list');
+    if (!jobs.length) {
+      list.innerHTML = '<div class="admin-row"><div class="admin-row-info">No jobs.</div></div>';
+      return;
+    }
+    list.innerHTML = jobs.map(function(j) {
+      var statusColor = { queued: '#aaa', running: '#8cf', complete: '#0d0', failed: '#f44' }[j.status] || '#999';
+      var duration = j.duration_ms ? (j.duration_ms + 'ms') : '—';
+      var error = j.error ? ('<div style="color:#f66;font-size:11px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all">' +
+        (j.error.length > 240 ? j.error.slice(0, 240) + '…' : j.error) + '</div>') : '';
+      var retryBtn = j.status === 'failed'
+        ? '<button onclick="retryJob(' + j.id + ')" class="btn btn-primary-outline" style="font-size:11px">Retry</button>'
+        : '';
+      return '<div class="admin-row">' +
+        '<div class="admin-row-info">' +
+          '<div class="admin-row-main"><strong>' + (j.name || '') + '</strong> ' +
+            '<span style="color:' + statusColor + ';font-weight:600">· ' + j.status + '</span>' +
+          '</div>' +
+          '<div class="admin-row-meta">' +
+            '<span>' + (j.enqueued_at_human || '') + '</span>' +
+            '<span>attempts ' + (j.attempts || 0) + '/' + (j.max_attempts || 3) + '</span>' +
+            '<span>' + duration + '</span>' +
+          '</div>' +
+          error +
+        '</div>' +
+        '<div class="admin-row-actions">' + retryBtn + '</div>' +
+      '</div>';
+    }).join('');
+  }).catch(function() {
+    document.getElementById('job-list').innerHTML =
+      '<div class="admin-row"><div class="admin-row-info">Failed to load jobs.</div></div>';
+  });
+}
+
+function retryJob(id) {
+  if (!confirm('Retry job #' + id + '?')) return;
+  var csrf = (document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/) || [])[1] || '';
+  fetch('/admin/api/jobs/' + id + '/retry', {
+    method: 'POST',
+    headers: { 'x-csrf-token': csrf }
+  }).then(function(r){return r.json();}).then(function(){ refreshJobs(); });
+}
+
+// ── System Health (Sentry) ──────────────────────────────────
+function loadSentry() {
+  fetch('/admin/api/sentry').then(function(r){ return r.json(); }).then(function(data) {
+    var statusEl = document.getElementById('sentry-status');
+    if (!data.enabled) { statusEl.textContent = 'Not configured'; statusEl.style.fontSize = '18px'; return; }
+    statusEl.textContent = data.error ? 'Partial' : 'Active';
+    statusEl.style.fontSize = '20px';
+    document.getElementById('sentry-count').textContent = String(data.count_24h || 0);
+    var envEl = document.getElementById('sentry-env');
+    envEl.textContent = (window.__SENTRY_CONFIG__ && window.__SENTRY_CONFIG__.environment) || 'production';
+    var link = document.getElementById('sentry-dashboard-link');
+    if (data.dashboard_url) link.href = data.dashboard_url;
+    var list = document.getElementById('sentry-recent');
+    list.innerHTML = '';
+    if (!data.recent || !data.recent.length) {
+      list.innerHTML = '<div class="admin-row"><div class="admin-row-info">' + (data.error ? data.error : 'No errors in the last 24 hours.') + '</div></div>';
+      return;
+    }
+    data.recent.forEach(function(err) {
+      var row = document.createElement('div');
+      row.className = 'admin-row';
+      row.innerHTML = '<div class="admin-row-info"><div class="admin-row-main">' + (err.title || 'Unknown') + '</div><div class="admin-row-meta"><span>' + (err.level || 'error') + '</span><span>' + (err.last_seen || '') + '</span></div></div><div class="admin-row-actions"><a href="' + (err.permalink || '#') + '" target="_blank" rel="noopener" class="btn btn-ghost">View</a></div>';
+      list.appendChild(row);
+    });
+  }).catch(function(){
+    var statusEl = document.getElementById('sentry-status');
+    if (statusEl) { statusEl.textContent = 'Error'; statusEl.style.fontSize = '18px'; }
+  });
+}
+
+// ── Feedback ───────────────────────────────────────────────
+function loadFeedback(filter) {
+  var q = filter && filter !== 'all' ? ('?status=' + encodeURIComponent(filter)) : '';
+  fetch('/admin/api/feedback' + q).then(function(r){ return r.json(); }).then(function(data) {
+    var list = document.getElementById('feedback-list');
+    list.innerHTML = '';
+    if (!data.items || !data.items.length) {
+      list.innerHTML = '<div class="admin-row"><div class="admin-row-info">No feedback submissions yet.</div></div>';
+      return;
+    }
+    data.items.forEach(function(item) {
+      var row = document.createElement('div');
+      row.className = 'admin-row feedback-row';
+      row.dataset.status = item.status;
+      var prio = item.priority ? '<span style="padding:2px 8px;border-radius:10px;background:var(--bg-raised);font-size:11px">' + item.priority + '</span>' : '';
+      row.innerHTML =
+        '<div class="admin-row-info" onclick="this.querySelector(\'.feedback-body\').style.display=this.querySelector(\'.feedback-body\').style.display===\'none\'?\'block\':\'none\'" style="cursor:pointer">' +
+          '<div class="admin-row-main">' +
+            '<strong>' + escapeHtml(item.type) + '</strong> ' + prio +
+            ' <span style="color:var(--text-tertiary)">· ' + escapeHtml(item.user_email || 'anonymous') + ' · ' + escapeHtml(item.user_tier || 'none') + '</span>' +
+          '</div>' +
+          '<div class="admin-row-meta"><span>' + escapeHtml(item.page_url || '') + '</span><span>' + escapeHtml(item.created_at_human || '') + '</span><span>Status: ' + escapeHtml(item.status) + '</span></div>' +
+          '<div class="feedback-body" style="display:none;margin-top:10px;padding:12px;background:var(--bg-raised);border-radius:6px;white-space:pre-wrap;font-size:13px">' + escapeHtml(item.message || '') +
+            (item.screenshot_url ? '<div style="margin-top:8px"><a href="' + escapeHtml(item.screenshot_url) + '" target="_blank">Screenshot</a></div>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="admin-row-actions">' +
+          '<select onchange="updateFeedbackStatus(' + item.id + ', this.value)" style="padding:4px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px">' +
+            ['open','in_progress','resolved','closed'].map(function(s){return '<option value="'+s+'"'+(s===item.status?' selected':'')+'>'+s+'</option>';}).join('') +
+          '</select>' +
+        '</div>';
+      list.appendChild(row);
+    });
+  });
+}
+
+function filterFeedback(status, btn) {
+  btn.parentElement.querySelectorAll('.filter-btn').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  loadFeedback(status);
+}
+
+function updateFeedbackStatus(id, status) {
+  fetch('/admin/api/feedback/' + id, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'x-csrf-token': _csrfToken},
+    body: JSON.stringify({status: status})
+  });
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+}
+
+// ── Analytics ──────────────────────────────────────────────
+var _analyticsPeriod = '7d';
+function setAnalyticsPeriod(period, btn) {
+  _analyticsPeriod = period;
+  if (btn) {
+    btn.parentElement.querySelectorAll('.filter-btn').forEach(function(b){b.classList.remove('active');});
+    btn.classList.add('active');
+  }
+  loadAnalyticsAll();
+}
+
+function loadAnalyticsAll() {
+  var p = '?period=' + _analyticsPeriod;
+  fetch('/admin/analytics/prerelease' + p).then(function(r){return r.json();}).then(function(d) {
+    document.getElementById('an-visitors').textContent = fmtNum(d.unique_visitors);
+    document.getElementById('an-pageviews').textContent = fmtNum(d.page_views);
+    document.getElementById('an-newsletter').textContent = fmtNum(d.newsletter_signups);
+    document.getElementById('an-gate').textContent = fmtNum(d.gate_entries);
+    document.getElementById('an-gate-ok').textContent = fmtNum(d.gate_successes);
+  });
+  fetch('/admin/analytics/users' + p).then(function(r){return r.json();}).then(function(d) {
+    document.getElementById('an-users-total').textContent = fmtNum(d.total_users);
+    document.getElementById('an-users-week').textContent = fmtNum(d.active_week);
+    document.getElementById('an-users-month').textContent = fmtNum(d.active_month);
+    document.getElementById('an-churn').textContent = fmtNum(d.churn_month);
+    drawUsersChart(d.growth_series || []);
+  });
+  fetch('/admin/analytics/revenue' + p).then(function(r){return r.json();}).then(function(d) {
+    document.getElementById('an-mrr').textContent = '£' + fmtNum(d.mrr);
+    document.getElementById('an-arr').textContent = '£' + fmtNum(d.arr);
+    document.getElementById('an-subs-active').textContent = fmtNum(d.subs_active);
+    var brk = document.getElementById('an-subs-breakdown');
+    brk.innerHTML = '';
+    (d.breakdown || []).forEach(function(row) {
+      var el = document.createElement('div');
+      el.className = 'admin-row';
+      el.innerHTML = '<div class="admin-row-info"><div class="admin-row-main">' + escapeHtml(row.label) + '</div></div><div class="admin-row-actions">' + fmtNum(row.count) + ' · £' + fmtNum(row.mrr_gbp) + '/mo</div>';
+      brk.appendChild(el);
+    });
+  });
+  fetch('/admin/analytics/features' + p).then(function(r){return r.json();}).then(function(d) {
+    document.getElementById('an-feed').textContent = fmtNum(d.feed_views);
+    document.getElementById('an-bestbets').textContent = fmtNum(d.bestbets_views);
+    document.getElementById('an-sources').textContent = fmtNum(d.source_views);
+    document.getElementById('an-markets').textContent = fmtNum(d.market_views);
+    document.getElementById('an-signal').textContent = fmtNum(d.signal_runs);
+    document.getElementById('an-cred').textContent = fmtNum(d.cred_refreshes);
+    document.getElementById('an-bets').textContent = fmtNum(d.bets_placed);
+    document.getElementById('an-top-markets').innerHTML = (d.top_markets || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + m.count + '</span>';}).join('<br>') || '—';
+    document.getElementById('an-top-sources').innerHTML = (d.top_sources || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + m.count + '</span>';}).join('<br>') || '—';
+    document.getElementById('an-top-keywords').innerHTML = (d.top_keywords || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + m.count + '</span>';}).join('<br>') || '—';
+  });
+}
+
+function drawUsersChart(series) {
+  var svg = document.getElementById('an-users-chart');
+  if (!svg) return;
+  svg.innerHTML = '';
+  if (!series.length) return;
+  var w = 600, h = 180, pad = 24;
+  var maxY = Math.max.apply(null, series.map(function(d){return d.count;})) || 1;
+  var stepX = (w - pad * 2) / Math.max(series.length - 1, 1);
+  var points = series.map(function(d, i) {
+    var x = pad + i * stepX;
+    var y = h - pad - (d.count / maxY) * (h - pad * 2);
+    return x + ',' + y;
+  }).join(' ');
+  svg.innerHTML =
+    '<polyline points="' + points + '" fill="none" stroke="#f0f0f0" stroke-width="2"/>' +
+    series.map(function(d, i) {
+      var x = pad + i * stepX;
+      var y = h - pad - (d.count / maxY) * (h - pad * 2);
+      return '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#f0f0f0"/>';
+    }).join('') +
+    '<text x="' + pad + '" y="' + (h - 6) + '" font-size="10" fill="#909090">' + (series[0] && series[0].date || '') + '</text>' +
+    '<text x="' + (w - pad - 60) + '" y="' + (h - 6) + '" font-size="10" fill="#909090">' + (series[series.length - 1] && series[series.length - 1].date || '') + '</text>';
+}
+
+function fmtNum(n) {
+  if (n == null) return '—';
+  n = Number(n);
+  if (isNaN(n)) return '—';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace('.0','') + 'k';
+  return String(Math.round(n));
+}
+
+// ── Gifts ──────────────────────────────────────────────────
+function loadGifts() {
+  fetch('/admin/api/gifts').then(function(r){return r.json();}).then(function(data) {
+    var list = document.getElementById('gifts-list');
+    list.innerHTML = '';
+    if (!data.gifts || !data.gifts.length) {
+      list.innerHTML = '<div class="admin-row"><div class="admin-row-info">No active gifted subscriptions.</div></div>';
+      return;
+    }
+    data.gifts.forEach(function(g) {
+      var row = document.createElement('div');
+      row.className = 'admin-row';
+      var ends = g.is_permanent ? 'Permanent' : (g.ends_at_human || '—');
+      row.innerHTML = '<div class="admin-row-info"><div class="admin-row-main">' + escapeHtml(g.user_email) + ' · ' + escapeHtml(g.subscription_type) + '</div><div class="admin-row-meta"><span>Ends: ' + escapeHtml(ends) + '</span><span>Granted by: ' + escapeHtml(g.granted_by_email || '—') + '</span></div></div><div class="admin-row-actions"><button class="btn btn-ghost" onclick="revokeGift(' + g.id + ')">Revoke</button></div>';
+      list.appendChild(row);
+    });
+  });
+}
+
+function revokeGift(id) {
+  if (!confirm('Revoke this gift? The user will lose access immediately.')) return;
+  fetch('/admin/gifts/' + id + '/revoke', {
+    method: 'DELETE',
+    headers: {'x-csrf-token': _csrfToken}
+  }).then(function(){ loadGifts(); });
+}
+
+// ── Gift modal (opened from users tab) ──────────────────────
+function openGiftModal(userId, displayName) {
+  var modal = document.getElementById('gift-modal');
+  if (!modal) { createGiftModal(); modal = document.getElementById('gift-modal'); }
+  document.getElementById('gift-user-id').value = userId;
+  document.getElementById('gift-user-name').textContent = displayName;
+  modal.style.display = 'flex';
+}
+function closeGiftModal() {
+  var m = document.getElementById('gift-modal');
+  if (m) m.style.display = 'none';
+}
+function createGiftModal() {
+  var modal = document.createElement('div');
+  modal.id = 'gift-modal';
+  modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;align-items:center;justify-content:center;padding:24px';
+  modal.innerHTML =
+    '<div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:12px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">' +
+    '<h3 style="margin:0 0 16px;font-size:18px">Gift subscription to <span id="gift-user-name"></span></h3>' +
+    '<form id="gift-form" onsubmit="submitGift(event)">' +
+    '<input type="hidden" id="gift-user-id">' +
+    '<div style="margin-bottom:14px"><label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:6px">Subscription type</label>' +
+    '<select id="gift-type" onchange="onGiftTypeChange()" style="width:100%;padding:8px;background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border-default);border-radius:6px">' +
+    '<option value="trader_monthly">Trader Monthly</option>' +
+    '<option value="trader_annual">Trader Annual</option>' +
+    '<option value="pro_monthly">Pro Monthly</option>' +
+    '<option value="pro_annual">Pro Annual</option>' +
+    '<option value="enterprise">Enterprise — Custom</option>' +
+    '<option value="trading_addon">Trading Add-on</option>' +
+    '<option value="intelligence_addon">Intelligence Add-on</option>' +
+    '</select></div>' +
+    '<div style="margin-bottom:14px"><label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:6px">Duration</label>' +
+    '<select id="gift-duration" style="width:100%;padding:8px;background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border-default);border-radius:6px">' +
+    '<option value="1m">1 month</option>' +
+    '<option value="3m">3 months</option>' +
+    '<option value="6m">6 months</option>' +
+    '<option value="1y">1 year</option>' +
+    '<option value="permanent">Permanent</option>' +
+    '</select></div>' +
+    '<div id="gift-enterprise-opts" style="display:none;padding:14px;background:var(--bg-raised);border-radius:8px;margin-bottom:14px">' +
+    '<div style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px">Enterprise options</div>' +
+    '<div style="margin-bottom:10px"><label style="font-size:12px;display:block;margin-bottom:4px">Max API calls per day</label><input id="gift-ent-api" type="number" value="1000" style="width:100%;padding:6px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px"></div>' +
+    '<div style="margin-bottom:10px"><label style="font-size:12px;display:block;margin-bottom:4px">Max topics</label><input id="gift-ent-topics" type="number" value="10" style="width:100%;padding:6px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px"></div>' +
+    '<div style="margin-bottom:10px"><label style="font-size:12px"><input type="checkbox" id="gift-ent-trading"> Include trading add-on</label></div>' +
+    '<div style="margin-bottom:10px"><label style="font-size:12px"><input type="checkbox" id="gift-ent-intelligence"> Include Intelligence add-on</label></div>' +
+    '<div style="margin-bottom:10px"><label style="font-size:12px;display:block;margin-bottom:4px">API rate limit</label><select id="gift-ent-ratelimit" style="width:100%;padding:6px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px"><option value="standard">Standard</option><option value="high">High</option><option value="unlimited">Unlimited</option></select></div>' +
+    '</div>' +
+    '<div style="margin-bottom:14px"><label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:6px">Internal notes</label>' +
+    '<textarea id="gift-notes" rows="2" style="width:100%;padding:8px;background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border-default);border-radius:6px" placeholder="e.g. Press partnership, bug bounty"></textarea></div>' +
+    '<div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" onclick="closeGiftModal()" class="btn btn-ghost">Cancel</button><button type="submit" class="btn btn-primary">Confirm gift</button></div>' +
+    '</form></div>';
+  document.body.appendChild(modal);
+}
+function onGiftTypeChange() {
+  var t = document.getElementById('gift-type').value;
+  document.getElementById('gift-enterprise-opts').style.display = (t === 'enterprise') ? 'block' : 'none';
+}
+function submitGift(ev) {
+  ev.preventDefault();
+  var type = document.getElementById('gift-type').value;
+  var body = {
+    subscription_type: type,
+    duration: document.getElementById('gift-duration').value,
+    internal_notes: document.getElementById('gift-notes').value
+  };
+  if (type === 'enterprise') {
+    body.enterprise_config = {
+      max_api_calls_per_day: parseInt(document.getElementById('gift-ent-api').value || '1000', 10),
+      max_topics: parseInt(document.getElementById('gift-ent-topics').value || '10', 10),
+      trading_addon_included: document.getElementById('gift-ent-trading').checked,
+      intelligence_addon_included: document.getElementById('gift-ent-intelligence').checked,
+      api_rate_limit: document.getElementById('gift-ent-ratelimit').value,
+      allowed_features: 'all'
+    };
+  }
+  var uid = document.getElementById('gift-user-id').value;
+  fetch('/admin/users/' + uid + '/gift', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'x-csrf-token': _csrfToken},
+    body: JSON.stringify(body)
+  }).then(function(r){
+    if (r.ok) { closeGiftModal(); alert('Gifted.'); loadGifts(); }
+    else { r.text().then(function(t){ alert('Failed: ' + t); }); }
+  });
+}
 </script>
+<script src="/_gateway_static/user-features.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

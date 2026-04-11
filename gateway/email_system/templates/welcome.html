@@ -1,0 +1,14 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Welcome, {{ display_name }}.</h1>
+<p style="margin:0 0 20px;color:#555;">Your account is active on the <strong style="color:#0d0d0d;">{{ tier }}</strong> plan.</p>
+<p style="margin:0 0 8px;color:#555;">Here's what to do next:</p>
+<ul style="margin:0 0 24px;padding-left:20px;color:#555;">
+  <li style="margin-bottom:6px;">Go to your feed — new predictions every 5 minutes</li>
+  <li style="margin-bottom:6px;">Check Best Bets for high-EV opportunities</li>
+  <li style="margin-bottom:6px;">Add a Signal Search topic to track specific markets</li>
+</ul>
+<div style="margin:24px 0;">
+  <a href="{{ app_url }}/dashboards" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Go to dashboard →</a>
+</div>
+<p style="margin:24px 0 0;color:#555;font-size:13px;">If you have questions, reply to this email.</p>
+{% endblock %}

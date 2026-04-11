@@ -1,0 +1,4 @@
+/Users/shocakarel/Habbig/gateway/email_system/service.py:7:  3. SMTP_HOST set             → plain SMTP (aiosmtplib or sync fallback)
+/Users/shocakarel/Habbig/gateway/email_system/service.py:18:import smtplib
+/Users/shocakarel/Habbig/gateway/email_system/service.py:159:            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10) as server:
+/Users/shocakarel/Habbig/gateway/jobs/email_jobs.py:5:it, and calls EmailService.send(). Failures retry up to 3x with backoff.

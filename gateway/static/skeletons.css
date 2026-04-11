@@ -1,0 +1,106 @@
+/* Loading skeleton shimmer — auto-injected into every HTML page.
+ *
+ * Use the `.skeleton` base class plus one of the shape modifiers:
+ *   .skeleton-text / .skeleton-text-sm / .skeleton-text-lg
+ *   .skeleton-circle  .skeleton-badge  .skeleton-bar
+ *
+ * Data-fetching views should show a skeleton block while loading, then
+ * swap to real content via the `.skeleton-fade-out` / `.content-fade-in`
+ * classes below.
+ */
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-raised) 25%,
+    var(--bg-overlay) 50%,
+    var(--bg-raised) 75%
+  );
+  background-size: 800px 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+:root[data-theme="dark"] .skeleton,
+body[data-theme="dark"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-raised) 25%,
+    rgba(255, 255, 255, 0.04) 50%,
+    var(--bg-raised) 75%
+  );
+  background-size: 800px 100%;
+}
+
+.skeleton-text    { height: 14px; border-radius: 3px; }
+.skeleton-text-sm { height: 11px; border-radius: 3px; }
+.skeleton-text-lg { height: 18px; border-radius: 3px; }
+.skeleton-circle  { border-radius: 50%; }
+.skeleton-badge   { height: 20px; border-radius: 9999px; width: 60px; }
+.skeleton-bar     { height: 4px; border-radius: 9999px; }
+
+.skeleton-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.skeleton-row > td {
+  padding: 12px 14px !important;
+}
+
+.skeleton-fade-out {
+  animation: skeleton-fade-out 0.2s ease forwards;
+  pointer-events: none;
+}
+
+.content-fade-in {
+  animation: content-fade-in 0.3s ease forwards;
+}
+
+@keyframes skeleton-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes content-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .skeleton-fade-out,
+  .content-fade-in {
+    animation: none !important;
+    background: var(--bg-raised);
+  }
+}
+
+/* Error state helper — shown when fetch fails, not on slow responses. */
+.skeleton-error {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.skeleton-error button {
+  margin-left: 8px;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.skeleton-error button:hover { border-color: var(--text-primary); }

@@ -1,0 +1,9 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Payment failed — action required</h1>
+<p style="margin:0 0 20px;color:#555;">Your recent payment for narve.ai failed.</p>
+<p style="margin:0 0 20px;color:#555;">Your access continues while Stripe retries automatically. Please update your payment method to avoid interruption.</p>
+<div style="margin:24px 0;">
+  <a href="{{ app_url }}/billing" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Update payment method →</a>
+</div>
+<p style="margin:24px 0 0;color:#555;font-size:13px;">If you need help, reply to this email.</p>
+{% endblock %}

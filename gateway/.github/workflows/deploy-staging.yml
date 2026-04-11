@@ -1,0 +1,78 @@
+name: Deploy to Staging
+
+# Automatic on push to main (and only after test.yml passes).
+# Deploys to the staging uvicorn on port 7001 on the Tailscale host.
+#
+# Required GitHub secrets:
+#   STAGING_SSH_HOST   - Tailscale hostname or public IP of the server
+#   STAGING_SSH_USER   - SSH user (julianhabbig)
+#   STAGING_SSH_KEY    - private key matching an ~/.ssh/authorized_keys entry
+#   STAGING_SSH_PORT   - (optional) SSH port, defaults to 22
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  deploy-staging:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy staging via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+          command_timeout: 5m
+          script: |
+            set -e
+            cd ~/Habbig/gateway
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+
+            # Load staging env
+            if [ ! -f ~/.gateway_env_staging ]; then
+                echo '✗ ~/.gateway_env_staging missing on host'
+                exit 1
+            fi
+            set -a
+            . ~/.gateway_env_staging
+            set +a
+
+            # Restart staging uvicorn on port 7001
+            fuser -k 7001/tcp 2>/dev/null || true
+            sleep 2
+            nohup python3 -m uvicorn server:app \
+                --host 127.0.0.1 \
+                --port 7001 \
+                > /tmp/gateway_staging.log 2>&1 &
+            sleep 4
+            pgrep -f 'uvicorn server:app.*7001' >/dev/null || {
+                echo '✗ staging uvicorn failed to start'
+                tail -30 /tmp/gateway_staging.log
+                exit 1
+            }
+
+      - name: Verify staging /health
+        run: |
+          sleep 5
+          STATUS=$(curl -sS -o /tmp/health.json -w '%{http_code}' https://staging.narve.ai/health)
+          if [ "$STATUS" != "200" ]; then
+              echo "✗ staging returned HTTP $STATUS"
+              cat /tmp/health.json || true
+              exit 1
+          fi
+          python3 -m json.tool /tmp/health.json
+          echo "✓ staging deployed and healthy"

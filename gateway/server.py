@@ -4,10 +4,10 @@ Polymarket Dashboard Gateway
 ============================
 Single entry point for all dashboards. Routes by subdomain:
 
-    habbig.com              → apex (login, signup, "my dashboards", billing)
-    <subdomain>.habbig.com  → reverse-proxied to the matching local dashboard
+    narve.ai              → apex (login, signup, "my dashboards", billing)
+    <subdomain>.narve.ai  → reverse-proxied to the matching local dashboard
 
-Session cookie is scoped to `.habbig.com` so one login covers every subdomain.
+Session cookie is scoped to `.narve.ai` so one login covers every subdomain.
 Per-request subscription check gates access to each dashboard.
 
 Environment variables:
@@ -20,9 +20,9 @@ Environment variables:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import html
 import json
-import logging
 import os
 import re
 import secrets
@@ -39,6 +39,17 @@ from fastapi.staticfiles import StaticFiles
 
 import db
 
+# Declarative rate-limit decorator used by a few admin/log endpoints. Lives
+# in security/rate_limiter.py so it can be shared across modules. Falls back
+# to a no-op if the subpackage is missing so the main module still imports.
+try:
+    from security.rate_limiter import rate_limit
+except ImportError:
+    def rate_limit(*args, **kwargs):
+        def deco(fn):
+            return fn
+        return deco
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 BASE_DIR = Path(__file__).parent
@@ -49,11 +60,41 @@ with open(CONFIG_PATH) as f:
     CONFIG = json.load(f)
 
 DOMAIN: str = CONFIG["domain"]
+# Optional aliases so the gateway can serve more than one apex at once
+# (needed during the habbig.com → narve.ai rebrand). Configured via
+# ``"domain_aliases": ["narve.ai", ...]`` in config.json. DOMAIN remains
+# the canonical/default apex used when no request context is available.
+_RAW_ALIASES = CONFIG.get("domain_aliases", []) or []
+ALLOWED_DOMAINS: tuple[str, ...] = tuple(
+    dict.fromkeys([DOMAIN.lower(), *[a.lower() for a in _RAW_ALIASES]])
+)
 GATEWAY_PORT: int = CONFIG["gateway_port"]
 DASHBOARDS: dict = CONFIG["dashboards"]
 
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
+
+
+def _request_host(request: Request) -> str:
+    """Lowercased host header without port."""
+    return request.headers.get("host", "").split(":")[0].lower()
+
+
+def _request_apex(request: Request) -> Optional[str]:
+    """Return the apex domain from ALLOWED_DOMAINS that matches this request.
+
+    Used anywhere we need to route back to the apex the user actually came
+    from (cookie Domain, /gate redirect, dashboard subdomain links). Returns
+    None for unknown hosts so callers can decide whether to fall back to
+    the default DOMAIN or treat the request as untrusted.
+    """
+    host = _request_host(request)
+    if not host:
+        return None
+    for apex in ALLOWED_DOMAINS:
+        if host == apex or host.endswith("." + apex):
+            return apex
+    return None
 
 # Rich preview content for each dashboard's /preview/<key> product page.
 DASHBOARD_PREVIEWS = {
@@ -190,35 +231,48 @@ DASHBOARD_PREVIEWS = {
 IS_PRODUCTION: bool = os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
 
 COOKIE_NAME = "pm_gateway_session"
-# Leading dot makes the cookie apply to every subdomain.
-# Computed per-request below to support both production (.habbig.com) and
-# local testing (*.localhost) — the browser rejects the Domain attribute when
-# it doesn't match the actual request host, so we inspect each request.
-PROD_COOKIE_DOMAIN = f".{DOMAIN}" if "." in DOMAIN and DOMAIN != "localhost" else None
+GATE_COOKIE_NAME = "narve_gate_access"
+GATE_COOKIE_TTL = 7 * 86400  # 7 days
+SITE_ACCESS_TOKEN = os.environ.get("SITE_ACCESS_TOKEN", "")
+
+# Leading dot on the resolved Domain attribute makes the cookie apply to
+# every subdomain of the matched apex — computed per-request so we can serve
+# multiple apexes (habbig.com + narve.ai) from a single gateway without
+# leaking cookies between them.
 
 
 def cookie_domain_for(request: Request) -> Optional[str]:
     """Return the Domain attribute to use for Set-Cookie for this request.
 
     Rules:
-      * If the request host ends in the configured DOMAIN → use .DOMAIN so the
-        cookie applies across subdomains in production.
+      * If the request host matches (or is a subdomain of) one of
+        ALLOWED_DOMAINS → return ``.<matched_apex>`` so the cookie applies
+        across every subdomain of that apex (and only that apex — cookies
+        never leak between habbig.com and narve.ai).
       * If the request host is localhost or *.localhost → return None so the
         browser stores the cookie for the exact host (works for preview/dev).
-      * Otherwise → None (safest fallback).
+      * Otherwise → None (safest fallback; browser scopes to exact host).
     """
-    host = request.headers.get("host", "").split(":")[0].lower()
-    if not host:
-        return None
-    if host == DOMAIN or host.endswith("." + DOMAIN):
-        return PROD_COOKIE_DOMAIN
+    apex = _request_apex(request)
+    if apex and "." in apex and apex != "localhost":
+        return f".{apex}"
     return None
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] gateway: %(message)s",
+# ── Logging ──────────────────────────────────────────────────────────────
+# Centralised structured-JSON logging. SERVICE_NAME defaults to "app" so
+# the gateway uses LOGTAIL_TOKEN_APP if BetterStack is configured.
+os.environ.setdefault("SERVICE_NAME", "app")
+from logging_config import (
+    configure_logging,
+    get_logger,
+    set_request_context,
+    clear_request_context,
+    ring_buffer as _log_ring_buffer,
+    is_logtail_configured,
+    SERVICE_NAME as _LOG_SERVICE_NAME,
 )
-log = logging.getLogger("gateway")
+configure_logging(base_dir=BASE_DIR)
+log = get_logger("gateway")
 
 # Simple but defensible email regex (no attempt to RFC 5322; just common cases).
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
@@ -227,11 +281,85 @@ EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 def is_valid_email(s: str) -> bool:
     return bool(EMAIL_RE.match(s)) and len(s) <= 254
 
+
+# ── Input length caps ────────────────────────────────────────────────────────
+#
+# Upper bounds on every free-text Form/JSON field the gateway accepts. The
+# 1 MB request-body limit in SecurityHeadersMiddleware is a backstop, not a
+# primary defense — fields smaller than the body cap but still absurdly long
+# (a 500 KB "username", a 900 KB "topic name") would otherwise flow into SQL,
+# templates, or log lines. Reject at the handler edge with a clean 400.
+
+FIELD_MAX = {
+    "username": 20,
+    "email": 254,
+    "password": 256,
+    "invite_token": 64,
+    "reset_token": 128,
+    "topic_name": 100,
+    "topic_keyword": 50,
+    "support_subject": 200,
+    "support_body": 5000,
+    "enquiry_message": 5000,
+    "enquiry_name": 100,
+    "feedback_body": 5000,
+    "display_name": 100,
+    "bio": 500,
+    "url": 500,
+    "generic": 1000,
+}
+
+
+def _bounded(value, max_len: int, name: str = "field") -> str:
+    """Strip and length-check a free-text field. 400s on overflow.
+
+    Used at the top of handlers so every oversized field turns into a clean
+    validation error instead of reaching the DB / template / logs."""
+    s = (value or "").strip()
+    if len(s) > max_len:
+        raise HTTPException(status_code=400, detail=f"{name} exceeds maximum length")
+    return s
+
+
 # ── App setup ─────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Polymarket Gateway", docs_url=None, redoc_url=None, openapi_url=None)
 
+# Application metadata for /health and RUNBOOK tooling.
+APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
+APP_ENVIRONMENT = os.environ.get("ENVIRONMENT", "production" if IS_PRODUCTION else "dev")
+APP_START_TIME = time.time()
+
 db.init_db()
+
+
+# ── Global exception handler — never expose stack traces ───────────────────
+
+from starlette.requests import Request as StarletteRequest
+
+
+from json import JSONDecodeError as _JSONDecodeError
+from fastapi.exceptions import RequestValidationError as _RequestValidationError
+
+
+@app.exception_handler(_JSONDecodeError)
+async def _json_decode_exception_handler(request: StarletteRequest, exc: _JSONDecodeError):
+    """Reject malformed JSON cleanly with 400 instead of a 500 crash."""
+    return JSONResponse({"error": "Malformed JSON body"}, status_code=400)
+
+
+@app.exception_handler(_RequestValidationError)
+async def _validation_exception_handler(request: StarletteRequest, exc: _RequestValidationError):
+    """Generic 400 for any FastAPI/Pydantic validation failure. Field detail
+    goes to the log only, never to the client."""
+    log.info("Request validation failed on %s %s: %s", request.method, request.url.path, exc.errors())
+    return JSONResponse({"error": "Invalid request"}, status_code=400)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: StarletteRequest, exc: Exception):
+    log.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 # Persistent httpx client for upstream proxying (connection pooling).
 HTTP_CLIENT: Optional[httpx.AsyncClient] = None
@@ -246,24 +374,148 @@ async def _startup():
     log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
     if IS_PRODUCTION and not os.environ.get("GATEWAY_COOKIE_SECRET"):
         log.warning("PRODUCTION=1 but GATEWAY_COOKIE_SECRET is unset — reserved for future signed-cookie use; not fatal.")
+    if IS_PRODUCTION and not SITE_ACCESS_TOKEN:
+        log.error("FATAL: PRODUCTION=1 but SITE_ACCESS_TOKEN is unset — refusing to start.")
+        raise RuntimeError("SITE_ACCESS_TOKEN must be set in production")
+    if IS_PRODUCTION and SITE_ACCESS_TOKEN and len(SITE_ACCESS_TOKEN) < 32:
+        log.error("FATAL: SITE_ACCESS_TOKEN is too short (%d chars) — refusing to start.", len(SITE_ACCESS_TOKEN))
+        raise RuntimeError("SITE_ACCESS_TOKEN must be at least 32 characters")
     # Auto-generate first admin invite token if none exist
     tokens = db.list_invite_tokens()
     if not tokens:
         first_token = db.create_invite_token("Auto-generated admin token")
         log.info("=" * 50)
-        log.info("  FIRST ADMIN INVITE TOKEN: %s", first_token)
+        log.info("  FIRST ADMIN INVITE TOKEN: %s... (query DB for full value)", first_token[:12])
         log.info("=" * 50)
+
+    # Run versioned migrations before anything else hits the DB.
+    try:
+        import migrations as _migrations
+        _migrations.upgrade_to_head()
+    except Exception as e:
+        log.exception("migration upgrade failed at startup: %s", e)
+
+    # If any user has TOTP enabled, the Fernet encryption key MUST be
+    # configured — otherwise we can't decrypt existing secrets and those
+    # admins would be locked out. Fail fast with a clear error.
+    try:
+        with db.conn() as _c:
+            _totp_row = _c.execute(
+                "SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 1"
+            ).fetchone()
+            _totp_users = int(_totp_row["n"] if _totp_row else 0)
+        if _totp_users > 0 and not os.environ.get("CREDENTIALS_ENCRYPTION_KEY"):
+            log.error(
+                "FATAL: %d users have TOTP enabled but CREDENTIALS_ENCRYPTION_KEY "
+                "is unset. Existing TOTP secrets cannot be decrypted. Refusing to start.",
+                _totp_users,
+            )
+            if IS_PRODUCTION:
+                raise RuntimeError(
+                    "CREDENTIALS_ENCRYPTION_KEY required: existing TOTP secrets cannot be decrypted"
+                )
+    except RuntimeError:
+        raise
+    except Exception as e:
+        log.warning("startup totp/encryption-key check failed: %s", e)
+
+    # Start the background job queue (in-process by default).
+    try:
+        from jobs import start_worker as _start_worker
+        await _start_worker()
+    except Exception as e:
+        log.exception("job queue start failed: %s", e)
 
 
 @app.on_event("shutdown")
 async def _shutdown():
     if HTTP_CLIENT:
         await HTTP_CLIENT.aclose()
+    # Close market API clients to prevent connection leaks
+    try:
+        await POLY_CLIENT.close()
+    except Exception:
+        pass
+    try:
+        await KALSHI_CLIENT.close()
+    except Exception:
+        pass
+    # Stop the job queue so cron loops exit cleanly.
+    try:
+        from jobs import stop_worker as _stop_worker
+        await _stop_worker()
+    except Exception:
+        pass
 
 
 # Static files for apex pages (CSS, JS, images).
+# We wrap StaticFiles with a subclass that adds long-lived Cache-Control
+# headers so Cloudflare's edge and the client browser both cache aggressively.
+# Cache-busting is achieved via content-hash query strings (see static_url()).
+
+
+class _CachedStaticFiles(StaticFiles):
+    """StaticFiles that attaches Cache-Control + Vary headers to every response.
+
+    The 30-day TTL with `immutable` matches Cloudflare's cache rules for
+    /_gateway_static/* in CLOUDFLARE_CHANGES.md. Clients bust the cache by
+    appending a content-hash query string, never by changing the path.
+    """
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        # Only decorate successful hits — don't cache 404s.
+        if resp.status_code == 200:
+            resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+            resp.headers["Vary"] = "Accept-Encoding"
+        return resp
+
+
 if STATIC_DIR.exists():
-    app.mount("/_gateway_static", StaticFiles(directory=str(STATIC_DIR)), name="gateway_static")
+    app.mount(
+        "/_gateway_static",
+        _CachedStaticFiles(directory=str(STATIC_DIR)),
+        name="gateway_static",
+    )
+
+
+# ── Static asset cache-busting ──────────────────────────────────────────────
+# `static_url("css/main.css")` returns "/_gateway_static/css/main.css?v=abc12345"
+# where the hash is the first 8 chars of the MD5 of the file contents.
+# The hash is computed once per file per process-lifetime and cached in memory,
+# so repeated template renders don't re-read files from disk.
+#
+# Usage in templates: replace `/_gateway_static/gateway.css?v=3` literal with a
+# `{{ static_url('gateway.css') }}` substitution handled by render_page().
+
+_static_hash_cache: dict[str, str] = {}
+
+
+def static_url(path: str) -> str:
+    """Return a content-hashed URL for a static asset under /_gateway_static/.
+
+    If the file can't be read (missing, permissions), return the unhashed
+    URL so the page still renders — a stale cache is better than a 500.
+    """
+    rel = path.lstrip("/")
+    cached = _static_hash_cache.get(rel)
+    if cached is not None:
+        return f"/_gateway_static/{rel}?v={cached}"
+    try:
+        full = STATIC_DIR / rel
+        if full.is_file():
+            import hashlib as _hl
+            # Content-addressable cache key only — not a security hash.
+            # `usedforsecurity=False` silences bandit B324 and is correct:
+            # MD5 collision resistance is irrelevant for a ?v= cachebuster.
+            digest = _hl.md5(
+                full.read_bytes(), usedforsecurity=False
+            ).hexdigest()[:8]
+            _static_hash_cache[rel] = digest
+            return f"/_gateway_static/{rel}?v={digest}"
+    except Exception as exc:
+        log.debug("static_url hash failed for %s: %s", rel, exc)
+    return f"/_gateway_static/{rel}"
 
 
 # ── Security headers middleware ──────────────────────────────────────────────
@@ -274,7 +526,9 @@ from collections import defaultdict
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "X-XSS-Protection": "1; mode=block",
+    # Deprecated — the legacy XSS auditor it referenced can itself
+    # introduce XSS via universal-XSS bugs. Modern OWASP guidance is 0.
+    "X-XSS-Protection": "0",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "Cross-Origin-Opener-Policy": "same-origin",
@@ -284,38 +538,434 @@ if IS_PRODUCTION:
 
 CSP = "; ".join([
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    # js.stripe.com is required for the Stripe.js checkout integration —
+    # without it the browser blocks Stripe Elements with a CSP violation.
+    "script-src 'self' 'unsafe-inline' https://js.stripe.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
-    "connect-src 'self' https:",
-    "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
+    # connect-src must allow https://api.stripe.com so Stripe Elements can
+    # talk to its tokenisation API.
+    "connect-src 'self' https: https://api.stripe.com",
+    # Stripe checkout opens an iframe from js.stripe.com / hooks.stripe.com.
+    "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com https://js.stripe.com https://hooks.stripe.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
 ])
 
 
+MAX_REQUEST_BODY = 1_048_576  # 1MB
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        # Reject oversized requests
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_REQUEST_BODY:
+            return JSONResponse({"error": "Request too large"}, status_code=413)
         response = await call_next(request)
         for header, value in SECURITY_HEADERS.items():
             response.headers[header] = value
         response.headers["Content-Security-Policy"] = CSP
+        # Prevent Cloudflare from caching HTML responses
+        ct = response.headers.get("content-type", "")
+        if "text/html" in ct:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
 
 
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+# ── Staging subdomain proxy ─────────────────────────────────────────────────
+# The production gateway on port 7000 transparently forwards requests with
+# Host: staging.narve.ai to the staging uvicorn on port 7001. This lets us
+# run staging on the same host without a dedicated DNS record, Cloudflare
+# Tunnel ingress edit, or sudo access — the existing *.narve.ai wildcard
+# already points traffic at port 7000, and this middleware re-routes any
+# staging.* requests to the dedicated staging process.
+#
+# Isolation preserved:
+#   - Different process (staging is its own uvicorn on 7001)
+#   - Different SQLite database (GATEWAY_DB_PATH=auth-staging.db)
+#   - Different SITE_ACCESS_TOKEN and CREDENTIALS_ENCRYPTION_KEY
+#   - Different environment name, different email mode (dry_run)
+#
+# Isolation NOT preserved:
+#   - Same host, same disk, same cloudflared tunnel
+#   - Prod's StagingProxyMiddleware runs first for staging traffic, but only
+#     passes through — gate/CSRF/rate-limit run inside the staging process.
+
+STAGING_BACKEND_URL = os.environ.get("STAGING_BACKEND_URL", "http://127.0.0.1:7001")
+STAGING_HOST_PREFIX = "staging."
+
+_STAGING_HOP_BY_HOP = frozenset({
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade", "host",
+    "content-length",  # httpx recomputes
+})
+
+
+_STAGING_CLIENT: Optional[httpx.AsyncClient] = None
+
+
+class StagingProxyMiddleware(BaseHTTPMiddleware):
+    """Forward Host: staging.* requests to the staging uvicorn on 7001.
+
+    Registered as the outermost middleware so staging traffic never hits the
+    production gate / CSRF / rate-limit logic in this process — the staging
+    process applies those independently with its own config.
+
+    If the staging backend is unreachable we return 502 rather than falling
+    back to prod, because silently leaking staging traffic into production
+    data would defeat the whole point of staging.
+    """
+
+    async def dispatch(self, request, call_next):
+        # Only the PRODUCTION process acts as a host-header proxy. If the
+        # staging process (environment=staging) also tried to forward
+        # staging.* traffic, it would loop back into itself because the
+        # staging uvicorn listens on the upstream port we're forwarding to.
+        if APP_ENVIRONMENT == "staging":
+            return await call_next(request)
+
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        if not host.startswith(STAGING_HOST_PREFIX):
+            return await call_next(request)
+
+        path = request.url.path
+        if request.url.query:
+            path = f"{path}?{request.url.query}"
+        upstream_url = f"{STAGING_BACKEND_URL}{path}"
+
+        fwd_headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in _STAGING_HOP_BY_HOP
+        }
+        fwd_headers["X-Forwarded-Host"] = host
+        fwd_headers["X-Forwarded-Proto"] = "https"
+        fwd_headers["X-Forwarded-For"] = _get_client_ip(request)
+        # Preserve the original Host so the staging process sees the real
+        # client-visible hostname for cookie scoping / Set-Cookie Domain.
+        fwd_headers["Host"] = host
+
+        body = await request.body()
+
+        global _STAGING_CLIENT
+        if _STAGING_CLIENT is None or _STAGING_CLIENT.is_closed:
+            _STAGING_CLIENT = httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0, connect=3.0),
+                follow_redirects=False,
+            )
+
+        try:
+            upstream = await _STAGING_CLIENT.request(
+                request.method,
+                upstream_url,
+                headers=fwd_headers,
+                content=body,
+            )
+        except httpx.ConnectError:
+            log.warning("staging proxy: backend %s unreachable", STAGING_BACKEND_URL)
+            return JSONResponse(
+                {"error": "staging backend unreachable"},
+                status_code=502,
+                headers={"X-Staging-Proxy": "connect-failed"},
+            )
+        except httpx.RequestError as exc:
+            log.warning("staging proxy request error: %s", exc)
+            return JSONResponse(
+                {"error": "staging backend error"},
+                status_code=502,
+                headers={"X-Staging-Proxy": "request-error"},
+            )
+
+        resp_headers = {
+            k: v for k, v in upstream.headers.items()
+            if k.lower() not in _STAGING_HOP_BY_HOP
+        }
+        resp_headers["X-Staging-Proxy"] = "hit"
+        return Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            headers=resp_headers,
+        )
+
+
+app.add_middleware(StagingProxyMiddleware)
+
+
+# ── CSRF protection (double-submit cookie) ────────────────────────────────
+
+CSRF_COOKIE_NAME = "_csrf"
+CSRF_FORM_FIELD = "_csrf"
+CSRF_HEADER_NAME = "x-csrf-token"
+_CSRF_TOKEN_LENGTH = 32
+
+# Routes that skip CSRF validation (public GET-only, static files, proxied)
+_CSRF_SKIP_PREFIXES = ("/_gateway_static", "/ws")
+
+# POST endpoints exempt from CSRF because they have no user session to anchor
+# a CSRF token to (called from public unauthenticated pages). These are still
+# protected by per-IP rate limiting + email format validation.
+_CSRF_EXEMPT_POSTS = frozenset({
+    "/api/newsletter",
+    # Invite-token bootstrap endpoint (token-first auth flow). Called from
+    # /token before any session exists to anchor a CSRF token against.
+    # Still protected by per-IP rate limiting (10 attempts / minute).
+    "/auth/validate-token",
+})
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return the narve.ai logo as the root-level favicon.
+
+    Browsers hit /favicon.ico automatically for every tab. We short-circuit
+    to static/img/logo.png (PNG is fine — modern browsers don't require ICO).
+    """
+    from fastapi.responses import FileResponse
+    logo_path = STATIC_DIR / "img" / "logo.png"
+    if logo_path.exists():
+        return FileResponse(
+            logo_path,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=604800"},
+        )
+    raise HTTPException(status_code=404)
+
+
+# Note: /token, /register, /login, /auth/validate-token etc. are handled
+# by server_features.py (token-first flow at lines 1135+). Don't add stubs
+# here — they'd shadow the real handlers via FastAPI's first-match routing.
+
+
+def _generate_csrf_token() -> str:
+    return secrets.token_urlsafe(_CSRF_TOKEN_LENGTH)
+
+
+def _set_csrf_cookie(response, token: str, request) -> None:
+    domain = cookie_domain_for(request) if IS_PRODUCTION else None
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        token,
+        max_age=86400,
+        httponly=False,       # JS needs to read this for API calls
+        samesite="lax",
+        secure=IS_PRODUCTION,
+        path="/",
+        **({"domain": domain} if domain else {}),
+    )
+
+
+def _validate_csrf(request, submitted_token: str | None) -> bool:
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+    if not cookie_token or not submitted_token:
+        return False
+    return hmac.compare_digest(cookie_token, submitted_token)
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """Double-submit cookie CSRF protection.
+
+    - On GET requests to HTML pages: ensures _csrf cookie is set.
+    - On POST requests: validates the submitted token (form field or header)
+      matches the cookie value.
+    - Skips static files, WebSocket, and reverse-proxied subdomain routes.
+    """
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+
+        # Skip CSRF for static/ws paths
+        if any(path.startswith(p) for p in _CSRF_SKIP_PREFIXES):
+            return await call_next(request)
+
+        # Skip for subdomain-proxied requests (they have their own auth).
+        # Any request whose host is a subdomain of one of the allowed
+        # apexes (habbig.com, narve.ai, …) is considered proxied.
+        if IS_PRODUCTION:
+            host = _request_host(request)
+            if host and any(host != apex and host.endswith("." + apex) for apex in ALLOWED_DOMAINS):
+                return await call_next(request)
+
+        # Exempt public POST endpoints that don't have a session to anchor to
+        if request.method == "POST" and path in _CSRF_EXEMPT_POSTS:
+            return await call_next(request)
+
+        if request.method == "POST":
+            # Extract token from form field or header
+            content_type = request.headers.get("content-type", "")
+            submitted_token = None
+
+            if "application/json" in content_type:
+                submitted_token = request.headers.get(CSRF_HEADER_NAME)
+            elif "application/x-www-form-urlencoded" in content_type:
+                # Parse body manually to avoid consuming it before FastAPI
+                from urllib.parse import parse_qs
+                body = await request.body()
+                parsed = parse_qs(body.decode("utf-8", errors="replace"))
+                submitted_token = parsed.get(CSRF_FORM_FIELD, [None])[0]
+
+            # Origin/Referer check as secondary defense. Compare against the
+            # request's Host header rather than the configured DOMAIN — that
+            # way a multi-domain front (habbig.com + narve.ai) still validates
+            # cleanly without hardcoding each alias. Cross-origin POSTs are
+            # rejected; same-origin POSTs (including subdomains sharing the
+            # same apex) pass through.
+            origin = request.headers.get("origin")
+            if origin and IS_PRODUCTION:
+                from urllib.parse import urlparse
+                parsed_origin = urlparse(origin)
+                req_host = request.headers.get("host", "").split(":")[0].lower()
+                origin_host = (parsed_origin.hostname or "").lower()
+                if origin_host and req_host:
+                    # Extract the apex (last two labels) for both; a subdomain
+                    # of the same apex is still "same site".
+                    def _apex(h: str) -> str:
+                        parts = h.split(".")
+                        return ".".join(parts[-2:]) if len(parts) >= 2 else h
+                    if origin_host != req_host and _apex(origin_host) != _apex(req_host):
+                        return JSONResponse({"error": "Invalid origin"}, status_code=403)
+
+            if not _validate_csrf(request, submitted_token):
+                return JSONResponse({"error": "CSRF validation failed"}, status_code=403)
+
+        # Pre-generate CSRF token for first-visit GET requests so render_page
+        # and the cookie use the same token.
+        if request.method == "GET" and not request.cookies.get(CSRF_COOKIE_NAME):
+            request.state.csrf_token = _generate_csrf_token()
+
+        response = await call_next(request)
+
+        # Set CSRF cookie on GET HTML responses if not present
+        csrf_token = getattr(request.state, "csrf_token", None)
+        if csrf_token:
+            ct = response.headers.get("content-type", "")
+            if "text/html" in ct:
+                _set_csrf_cookie(response, csrf_token, request)
+
+        return response
+
+
+app.add_middleware(CSRFMiddleware)
+
+
+def _csrf_field(request) -> str:
+    """Return a hidden CSRF input field for server-generated forms."""
+    token = request.cookies.get(CSRF_COOKIE_NAME) or _generate_csrf_token()
+    return f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{html.escape(token)}">'
+
+
+
+# ── Pre-release gate middleware ────────────────────────────────────────────
+
+# Routes that are fully public (no gate cookie needed)
+_PUBLIC_PATHS = frozenset({
+    "/", "/gate", "/health",
+    # Token-first auth entry points (public because they bootstrap the flow)
+    "/token", "/register", "/login", "/invite", "/signup",
+    "/auth/validate-token", "/auth/register", "/auth/login", "/auth/logout",
+    "/auth/forgot-password", "/auth/reset-password",
+    "/forgot-password", "/reset-password",
+    # Legal + marketing
+    "/terms", "/privacy", "/dpa",
+    "/unsubscribe",
+    # Public API endpoints called from the prerelease page
+    "/api/newsletter", "/api/newsletter/position",
+    "/sitemap.xml", "/robots.txt",
+    "/favicon.ico",
+    "/.well-known/security.txt",
+})
+_PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/")
+
+
+class GateMiddleware(BaseHTTPMiddleware):
+    """Redirect to /gate if the request lacks a valid gate access cookie.
+
+    Only / (pre-release) and /gate are public. Everything else requires
+    the site access cookie. In production, an unset SITE_ACCESS_TOKEN
+    is a fatal misconfiguration (startup refuses to launch); the runtime
+    check here is a belt-and-braces fail-closed guard. Dev/localhost
+    (PRODUCTION=0) with no token falls through for convenience.
+    """
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        # Static + pre-release root stay reachable even on misconfig.
+        if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+            return await call_next(request)
+        if not SITE_ACCESS_TOKEN:
+            if IS_PRODUCTION:
+                # Fail closed: refuse to serve anything behind the gate.
+                return JSONResponse(
+                    {"error": "Site gate not configured"}, status_code=503
+                )
+            return await call_next(request)
+        if request.cookies.get(GATE_COOKIE_NAME) == "granted":
+            return await call_next(request)
+        # Subdomains share the cookie with their own apex (Domain=.<apex>),
+        # so bounce the visitor to the apex gate they actually came from —
+        # never cross-redirect habbig.com ↔ narve.ai.
+        if IS_PRODUCTION:
+            apex = _request_apex(request)
+            host = _request_host(request)
+            if apex and host and host != apex:
+                return RedirectResponse(f"https://{apex}/gate", status_code=302)
+        return RedirectResponse("/gate", status_code=302)
+
+
+app.add_middleware(GateMiddleware)
+
+
+# Session middleware — reads the hardened narve_session cookie, attaches
+# request.state.user on every request. Registered AFTER GateMiddleware so
+# the gate bounces public visitors without a DB hit. Guarded so the gateway
+# still boots if the auth package is missing (the legacy session cookie
+# path still works).
+try:
+    from auth.middleware import SessionMiddleware as _HardenedSessionMiddleware  # noqa: E402
+    app.add_middleware(_HardenedSessionMiddleware)
+except Exception as _exc:  # pragma: no cover
+    log.warning("hardened session middleware unavailable: %s", _exc)
+
+
 # ── Rate limiting ────────────────────────────────────────────────────────────
+#
+# Two backends:
+#
+# * In-memory (default) — thread-safe per-process dict. Fine for single-worker
+#   uvicorn, which is how the gateway is currently deployed.
+# * Redis (optional, enabled by setting REDIS_URL) — cross-worker / cross-host
+#   shared counters using sorted-set sliding windows. Needed the moment you
+#   ever run `--workers N > 1`, otherwise the effective limit becomes
+#   `N * configured_limit` because each worker has its own dict.
+#
+# The Redis path is best-effort: a connection error falls back to the in-memory
+# dict rather than failing open (which would disable rate limiting entirely)
+# or failing closed (which would take the site offline). Errors are logged.
 
 _rate_store: dict[str, list[float]] = defaultdict(list)
 _RATE_WINDOW = 300
 _RATE_MAX_LOGIN = 10
 _RATE_MAX_SIGNUP = 5
 _RATE_MAX_FORGOT = 3
+_RATE_MAX_ENQUIRE = 5
+_RATE_MAX_SUPPORT = 5
+_RATE_MAX_SUBSCRIBE = 10
 _rate_last_cleanup = 0.0
+
+# Optional Redis backend.
+_REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+_redis_client = None
+if _REDIS_URL:
+    try:
+        import redis as _redis_mod
+        _redis_client = _redis_mod.from_url(_REDIS_URL, socket_timeout=1.0)
+        _redis_client.ping()
+        log.info("Rate limiter: Redis backend connected (%s)", _REDIS_URL.split("@")[-1])
+    except Exception as exc:
+        log.warning("Rate limiter: REDIS_URL set but connection failed (%s); using in-memory fallback", exc)
+        _redis_client = None
 
 
 def _rate_cleanup():
@@ -324,18 +974,45 @@ def _rate_cleanup():
     if now - _rate_last_cleanup < 60:
         return
     _rate_last_cleanup = now
-    cutoff = now - _RATE_WINDOW
+    cutoff = now - 3600  # Clean entries older than 1 hour (max window)
     stale = [k for k, v in _rate_store.items() if not v or v[-1] < cutoff]
     for k in stale:
         del _rate_store[k]
 
 
-def _is_rate_limited(ip: str, endpoint: str, limit: int) -> bool:
+def _is_rate_limited_redis(key: str, limit: int, window: int) -> Optional[bool]:
+    """Sliding-window check via Redis sorted set. Returns None on Redis error
+    so the caller can fall back to the in-memory path."""
+    try:
+        now = time.time()
+        redis_key = f"rl:{key}"
+        pipe = _redis_client.pipeline()
+        pipe.zremrangebyscore(redis_key, 0, now - window)
+        pipe.zadd(redis_key, {f"{now}:{secrets.token_hex(4)}": now})
+        pipe.zcard(redis_key)
+        pipe.expire(redis_key, window + 10)
+        _, _, count, _ = pipe.execute()
+        return count > limit
+    except Exception as exc:
+        log.warning("Redis rate-limit check failed for %s: %s", key, exc)
+        return None
+
+
+def _is_rate_limited(key: str, limit: int, window: int = _RATE_WINDOW) -> bool:
+    """Check if *key* has exceeded *limit* hits within *window* seconds.
+
+    Uses Redis if configured and reachable; otherwise falls back to the
+    per-process in-memory sliding window.
+    """
+    if _redis_client is not None:
+        redis_result = _is_rate_limited_redis(key, limit, window)
+        if redis_result is not None:
+            return redis_result
+        # Fall through to in-memory on Redis error.
     _rate_cleanup()
     now = time.time()
-    key = f"{ip}:{endpoint}"
     timestamps = _rate_store[key]
-    cutoff = now - _RATE_WINDOW
+    cutoff = now - window
     while timestamps and timestamps[0] < cutoff:
         timestamps.pop(0)
     if len(timestamps) >= limit:
@@ -344,14 +1021,72 @@ def _is_rate_limited(ip: str, endpoint: str, limit: int) -> bool:
     return False
 
 
+# ── Account lockout ──────────────────────────────────────────────────────────
+
+_login_failures: dict[str, list[float]] = defaultdict(list)
+_LOCKOUT_THRESHOLD = 5
+_LOCKOUT_WINDOW = 900          # 15 minutes — short-term lockout
+_IDENT_CEILING_THRESHOLD = 30  # Absolute ceiling on failures per identifier
+_IDENT_CEILING_WINDOW = 86400  # ...within 24 hours
+
+
+def _is_account_locked(identifier: str) -> bool:
+    """Return True if *identifier* is currently locked out.
+
+    Two independent caps stack:
+    - Short-term: 5 failures in 15 minutes — normal per-session lockout.
+    - Long-term ceiling: 30 failures in 24 hours — blocks distributed
+      brute-force attacks that rotate IPs to evade the short-term lockout.
+
+    Keying on the identifier (not the pair with IP) intentionally allows a
+    remote attacker to lock the victim out of their own account. That's the
+    cost of defending against a slow botnet; acceptable here because reset
+    is available via email.
+    """
+    key = identifier.lower()
+    now = time.time()
+    timestamps = _login_failures[key]
+    # Prune anything older than the wider ceiling window.
+    cutoff_long = now - _IDENT_CEILING_WINDOW
+    while timestamps and timestamps[0] < cutoff_long:
+        timestamps.pop(0)
+    if len(timestamps) >= _IDENT_CEILING_THRESHOLD:
+        return True
+    # Short-term window is a suffix of the long list.
+    cutoff_short = now - _LOCKOUT_WINDOW
+    short_count = sum(1 for t in timestamps if t >= cutoff_short)
+    return short_count >= _LOCKOUT_THRESHOLD
+
+
+def _record_login_failure(identifier: str) -> None:
+    _login_failures[identifier.lower()].append(time.time())
+
+
+def _clear_login_failures(identifier: str) -> None:
+    _login_failures.pop(identifier.lower(), None)
+
+
+# Only these direct peers are allowed to set client-identification headers.
+# The gateway listens on 127.0.0.1 behind a Cloudflare Tunnel, so legitimate
+# traffic always arrives from loopback. Anything else is either the user's
+# own machine in dev mode or a bypass attempt — in both cases we must refuse
+# to trust cf-connecting-ip / x-forwarded-for, otherwise an attacker who
+# reaches the gateway off-tunnel can forge arbitrary source IPs and evade
+# every rate limit and audit log entry in this module.
+_TRUSTED_PROXY_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
 def _get_client_ip(request: Request) -> str:
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    peer = (request.client.host if request.client else "") or ""
+    if peer in _TRUSTED_PROXY_HOSTS:
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            # Leftmost entry is the original client per XFF convention.
+            return xff.split(",")[0].strip()
+    return peer or "unknown"
 
 
 RATE_LIMITED_RESPONSE = HTMLResponse(
@@ -361,6 +1096,103 @@ RATE_LIMITED_RESPONSE = HTMLResponse(
 )
 
 
+# ── Global per-IP rate limit ─────────────────────────────────────────────────
+#
+# Catches every endpoint (not just the handful of routes with inline
+# _is_rate_limited calls) so a single IP cannot scrape unmetered GETs or
+# hammer un-decorated APIs. Runs BEFORE CSRF/Gate so a flooding attacker is
+# throttled before any other middleware does meaningful work.
+#
+# Static assets and the health probe are exempt — a single page load pulls
+# several files and a 600/min cap would penalise normal browsing.
+#
+# Tunable via GLOBAL_RATE_LIMIT_PER_MIN env var. Starlette runs middleware
+# in reverse-add order, so this add_middleware call must come AFTER the
+# existing ones (SecurityHeaders/CSRF/Gate) to run FIRST.
+
+GLOBAL_RATE_LIMIT_PER_MIN = int(os.environ.get("GLOBAL_RATE_LIMIT_PER_MIN", "600"))
+
+_GLOBAL_RL_SKIP_PREFIXES = ("/_gateway_static", "/ws")
+_GLOBAL_RL_SKIP_PATHS = frozenset({"/health"})
+
+
+class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        if path in _GLOBAL_RL_SKIP_PATHS or any(path.startswith(p) for p in _GLOBAL_RL_SKIP_PREFIXES):
+            return await call_next(request)
+        ip = _get_client_ip(request)
+        if _is_rate_limited(f"global:{ip}", GLOBAL_RATE_LIMIT_PER_MIN, 60):
+            return JSONResponse(
+                {"error": "Rate limit exceeded. Slow down."},
+                status_code=429,
+                headers={"Retry-After": "60"},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(GlobalRateLimitMiddleware)
+
+
+# ── Logging context middleware ───────────────────────────────────────────────
+#
+# Attaches a short request_id and (when resolvable) the user_id to every log
+# record emitted during the request. Added LAST so it sits at the top of the
+# middleware stack — that guarantees the context is set before any other
+# middleware or handler logs.
+
+import uuid as _uuid
+
+
+class LoggingContextMiddleware(BaseHTTPMiddleware):
+    """Attach request_id (and best-effort user_id) to logging context."""
+
+    async def dispatch(self, request, call_next):
+        request_id = _uuid.uuid4().hex[:8]
+        user_id: Optional[int] = None
+
+        # Best-effort user_id lookup from the session cookie. We deliberately
+        # do NOT validate the session freshness here — handlers still enforce
+        # auth. This is only for log correlation.
+        try:
+            session_cookie = request.cookies.get(COOKIE_NAME)
+            if session_cookie:
+                session = db.get_session(session_cookie)
+                if session:
+                    user_id = session["user_id"]
+        except Exception:
+            pass
+
+        set_request_context(request_id, user_id=user_id)
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            clear_request_context()
+
+
+app.add_middleware(LoggingContextMiddleware)
+
+
+# ── Shared auth rate limit ───────────────────────────────────────────────────
+#
+# Every auth POST (gate/invite/login/signup/forgot-password/reset-password)
+# checks a single shared "auth:<ip>" bucket at 5 attempts per 15 minutes.
+# Shared across routes so an attacker cannot multiply attempts by rotating
+# between auth endpoints. Sits ON TOP of the existing per-route
+# _is_rate_limited calls and the account lockout — all three stack.
+
+AUTH_RATE_LIMIT_COUNT = 5
+AUTH_RATE_LIMIT_WINDOW = 900  # 15 minutes
+
+
+def _auth_rate_limited(ip: str) -> bool:
+    """True if this IP has exceeded 5 auth attempts in the last 15 minutes
+    (across any auth route)."""
+    return _is_rate_limited(f"auth:{ip}", AUTH_RATE_LIMIT_COUNT, AUTH_RATE_LIMIT_WINDOW)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -368,19 +1200,35 @@ def get_subdomain(request: Request) -> Optional[str]:
     """Extract the subdomain portion of the Host header.
 
     Examples:
-        yourdomain.tld        → ""    (apex)
-        crypto.yourdomain.tld → "crypto"
+        habbig.com            → ""       (apex)
+        narve.ai              → ""       (apex, alias)
+        crypto.habbig.com     → "crypto"
+        crypto.narve.ai       → "crypto"
+        staging.narve.ai      → ""       (environment alias, treated as apex)
         localhost             → ""
         crypto.localhost      → "crypto"
+
+    ``staging.*`` is deliberately treated as an apex, not a dashboard
+    subdomain. The staging uvicorn runs the same codebase as production
+    and needs every handler (the `/` prerelease page, /login, /gate, etc.)
+    to behave as if it were serving the main apex. If we returned
+    ``"staging"`` here, every call site that does ``if sub: proxy_request``
+    would try to reverse-proxy to a nonexistent dashboard and bounce the
+    user to https://narve.ai/, defeating the whole point of staging.
     """
-    host = request.headers.get("host", "").split(":")[0].lower()
+    host = _request_host(request)
     if not host or host == "localhost":
         return ""
-    # Strip the configured base domain
-    if host == DOMAIN:
-        return ""
-    if host.endswith("." + DOMAIN):
-        return host[: -(len(DOMAIN) + 1)]
+    # Strip any configured apex (DOMAIN + aliases)
+    for apex in ALLOWED_DOMAINS:
+        if host == apex:
+            return ""
+        if host.endswith("." + apex):
+            sub = host[: -(len(apex) + 1)]
+            # Environment aliases (staging, preview, …) behave as the apex.
+            if sub == "staging":
+                return ""
+            return sub
     # Localhost subdomain testing: crypto.localhost → "crypto"
     if host.endswith(".localhost"):
         return host[: -len(".localhost")]
@@ -434,6 +1282,20 @@ def current_user(request: Request) -> Optional[dict]:
     ``.get()`` and ``["key"]`` uniformly. Keys:
         user_id, email, is_admin, _dev_bypass (optional)
     """
+    # Prefer the hardened session cookie (narve_session) — attached by
+    # SessionMiddleware at request.state.user. Falls back to the legacy
+    # pm_gateway_session cookie so existing routes keep working during the
+    # rollout window.
+    hardened = getattr(getattr(request, "state", None), "user", None)
+    if hardened:
+        return {
+            "user_id": hardened["user_id"],
+            "username": hardened["username"],
+            "email": hardened["email"],
+            "is_admin": hardened["is_admin"],
+            "is_super_admin": hardened["is_super_admin"],
+            "admin_level": hardened["admin_level"],
+        }
     token = request.cookies.get(COOKIE_NAME)
     if token:
         session = db.get_session(token)
@@ -492,6 +1354,40 @@ def clear_session_cookie(response: Response, request: Request) -> None:
     response.delete_cookie(**kwargs)
 
 
+def has_gate_access(request: Request) -> bool:
+    """Check if the request has a valid gate access cookie.
+
+    In production, an unset token means the site is misconfigured —
+    never treat a request as "past the gate" in that case.
+    """
+    if not SITE_ACCESS_TOKEN:
+        return not IS_PRODUCTION
+    return request.cookies.get(GATE_COOKIE_NAME) == "granted"
+
+
+def set_gate_cookie(response: Response, request: Request) -> None:
+    kwargs = dict(
+        key=GATE_COOKIE_NAME,
+        value="granted",
+        max_age=GATE_COOKIE_TTL,
+        httponly=True,
+        samesite="strict",
+        secure=IS_PRODUCTION,
+        path="/",
+    )
+    domain = cookie_domain_for(request)
+    if domain:
+        kwargs["domain"] = domain
+    response.set_cookie(**kwargs)
+
+
+def require_gate(request: Request) -> Optional[Response]:
+    """Return a redirect to /gate if the request lacks gate access, else None."""
+    if has_gate_access(request):
+        return None
+    return RedirectResponse("/gate", status_code=302)
+
+
 def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
     """Check if a subscription is truly active (status + not expired)."""
     if is_admin:
@@ -506,7 +1402,7 @@ def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
     return True
 
 
-def render_page(name: str, **context) -> HTMLResponse:
+def render_page(name: str, request=None, **context) -> HTMLResponse:
     """Tiny templating: load static/<name>.html and do {{ key }} substitution.
 
     Keys prefixed with ``raw_`` are inserted verbatim (used for pre-escaped
@@ -516,9 +1412,34 @@ def render_page(name: str, **context) -> HTMLResponse:
     """
     path = STATIC_DIR / f"{name}.html"
     page = path.read_text()
-    # Auto-fill empty raw_admin_link if not provided (prevents {{ raw_admin_link }} showing)
+    # Replace {{ static: <path> }} tokens with content-hashed URLs. This is
+    # done before normal key substitution so templates can use concise syntax
+    # like `<link rel="stylesheet" href="{{ static: gateway.css }}">` without
+    # an entry in the context dict for every asset.
+    page = re.sub(
+        r"\{\{\s*static:\s*([^}\s]+)\s*\}\}",
+        lambda m: static_url(m.group(1)),
+        page,
+    )
+    # Auto-inject CSRF hidden field
+    if request is not None:
+        csrf_token = request.cookies.get(CSRF_COOKIE_NAME) or getattr(request.state, "csrf_token", None) or _generate_csrf_token()
+        context["raw_csrf_field"] = f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{html.escape(csrf_token)}">'
+    if "raw_csrf_field" not in context:
+        context["raw_csrf_field"] = ""
+    # Auto-fill empty raw_admin_link and raw_role_badge if not provided
     if "raw_admin_link" not in context:
         context["raw_admin_link"] = ""
+    if "raw_nav_role" not in context:
+        context["raw_nav_role"] = ""
+    if "raw_role_badge" not in context:
+        context["raw_role_badge"] = ""
+    if "raw_sitemap" not in context:
+        context["raw_sitemap"] = ""
+    # Auto-inject sitemap if _user context has admin flag
+    if context.get("_is_admin") and not context["raw_sitemap"]:
+        context["raw_sitemap"] = _sitemap_html()
+    context.pop("_is_admin", None)
     raw_keys = {"dashboard_cards", "billing_rows"}
     for key, value in context.items():
         placeholder = "{{ " + key + " }}"
@@ -526,34 +1447,266 @@ def render_page(name: str, **context) -> HTMLResponse:
             page = page.replace(placeholder, str(value))
         else:
             page = page.replace(placeholder, html.escape(str(value)))
+    # Auto-inject CSRF hidden field into all <form method="post"> tags
+    csrf_field = context.get("raw_csrf_field", "")
+    if csrf_field:
+        page = re.sub(
+            r'(<form[^>]*method="post"[^>]*>)',
+            r'\1' + csrf_field,
+            page
+        )
+    # Auto-inject skeleton CSS (Feature 4) + skeleton JS library. Pages that
+    # don't use them ignore the <link>/<script>; pages that need data loaders
+    # can call `window.narveSkel.show(...)` without wiring anything.
+    skel_injection = (
+        '<link rel="stylesheet" href="/_gateway_static/skeletons.css">\n'
+        '<script src="/_gateway_static/skeletons.js" defer></script>'
+    )
+    if "skeletons.js" not in page:
+        lower = page.lower()
+        head_idx = lower.rfind("</head>")
+        if head_idx != -1:
+            page = page[:head_idx] + skel_injection + "\n" + page[head_idx:]
     return HTMLResponse(page)
+
+
+def _role_badge(user: dict) -> str:
+    """Return a small role badge span for the nav bar."""
+    level = user.get("is_admin") or 0
+    if level >= 2:
+        return '<span style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;background:rgba(245,158,11,0.12);color:#f59e0b;margin-left:6px">SUPER ADMIN</span>'
+    elif level == 1:
+        return '<span style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;background:var(--accent-light);color:var(--accent);margin-left:6px">ADMIN</span>'
+    return ""
+
+
+def _sitemap_html() -> str:
+    """Build the Dev — Sitemap button + modal HTML for admin users."""
+    routes = [
+        ("Public", [
+            ("/", "Pre-release page", "Public"),
+            ("/gate", "Site access gate", "Public"),
+        ]),
+        ("Landing & Auth", [
+            ("/landing", "Marketing landing page", "Gate"),
+            ("/pricing", "Plan pricing", "Gate"),
+            ("/enquire", "Enterprise contact", "Gate"),
+            ("/subscribe", "Checkout flow", "Gate"),
+            ("/support", "Support ticket", "Gate"),
+            ("/token", "Invite token gate (entry point)", "Public"),
+            ("/register", "Create account (requires pending_token)", "Gated"),
+            ("/login", "Sign in (requires pending_token)", "Gated"),
+            ("/forgot-password", "Reset password", "Gate"),
+        ]),
+        ("Dashboards", [
+            ("/dashboards", "Dashboard hub", "Logged in"),
+            ("/billing", "Manage subscriptions", "Logged in"),
+            ("/profile", "User profile", "Logged in"),
+            ("/settings", "Default dashboard", "Logged in"),
+        ] + [
+            (f"https://{cfg['subdomain']}.{DOMAIN}", cfg["display_name"], "Subscription")
+            for k, cfg in DASHBOARDS.items()
+        ]),
+        ("Admin", [
+            ("/admin", "Admin panel", "Admin"),
+            ("/admin/tokens/generate", "Generate token", "Admin"),
+            ("/admin/users/bulk", "Bulk user actions", "Admin"),
+        ]),
+        ("API", [
+            ("/api/newsletter", "Newsletter signup", "Public"),
+            ("/api/enquire", "Submit enquiry", "Gate"),
+            ("/api/subscribe", "Checkout API", "Gate"),
+            ("/api/support-ticket", "Support ticket API", "Gate"),
+        ]),
+    ]
+    rows = ""
+    for section, items in routes:
+        rows += f'<div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;padding:12px 0 6px;border-bottom:1px solid var(--border);margin-top:8px">{section}</div>'
+        for path, desc, access in items:
+            color = {"Public": "var(--green)", "Gate": "var(--accent)", "Logged in": "var(--text-secondary)", "Subscription": "var(--amber)", "Admin": "var(--red)"}.get(access, "var(--text-muted)")
+            rows += (
+                f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px">'
+                f'<div><a href="{html.escape(path)}" style="color:var(--accent);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-decoration:none" '
+                f'onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">{html.escape(path)}</a>'
+                f'<span style="color:var(--text-muted);margin-left:8px">{html.escape(desc)}</span></div>'
+                f'<span style="font-size:10px;font-weight:600;color:{color}">{access}</span></div>'
+            )
+
+    return (
+        '<div id="sitemap-btn" onclick="document.getElementById(\'sitemap-modal\').style.display=\'flex\'" '
+        'style="position:fixed;bottom:20px;left:20px;background:#f3f4f6;border:1px solid #e5e7eb;'
+        'border-radius:999px;padding:6px 14px;font-size:0.75rem;font-weight:500;color:#6b7280;'
+        'cursor:pointer;z-index:9998;transition:opacity 0.15s">'
+        'Dev &mdash; Sitemap</div>'
+        '<div id="sitemap-modal" onclick="if(event.target===this)this.style.display=\'none\'" '
+        'style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;'
+        'align-items:center;justify-content:center;padding:24px">'
+        '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;'
+        'max-width:480px;width:100%;max-height:70vh;overflow-y:auto;padding:24px;position:relative">'
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+        '<div style="font-size:18px;font-weight:500;color:var(--text-primary);font-family:Jost,sans-serif">Site Map</div>'
+        '<button onclick="document.getElementById(\'sitemap-modal\').style.display=\'none\'" '
+        'style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:20px">&times;</button></div>'
+        f'{rows}'
+        '</div></div>'
+        '<script>document.addEventListener("keydown",function(e){if(e.key==="Escape")document.getElementById("sitemap-modal").style.display="none"});</script>'
+    )
+
+
+# ── Health check ─────────────────────────────────────────────────────────────
+# Public endpoint used by Cloudflare Health Checks, load balancers, and the
+# uptime monitor in RUNBOOK.md. Returns structured JSON describing the status
+# of every critical dependency.
+#
+# Status semantics:
+#   ok       → all checks passed, app is fully functional
+#   degraded → some non-critical checks failed but app still serves requests
+#              (returned with HTTP 200 so it doesn't trigger LB removal)
+#   error    → a critical dependency is down (returned with HTTP 503)
+
+
+def _check_database() -> tuple[str, Optional[str]]:
+    """Cheap liveness ping on the SQLite auth.db. Returns (status, err)."""
+    try:
+        with db.conn() as c:
+            row = c.execute("SELECT 1").fetchone()
+            if row and row[0] == 1:
+                return "ok", None
+            return "error", "unexpected result from SELECT 1"
+    except Exception as exc:  # pragma: no cover - defensive
+        return "error", str(exc)[:200]
+
+
+def _check_static_dir() -> tuple[str, Optional[str]]:
+    """Verify the static directory is mounted and readable."""
+    try:
+        if STATIC_DIR.exists() and STATIC_DIR.is_dir():
+            return "ok", None
+        return "error", f"static dir missing: {STATIC_DIR}"
+    except Exception as exc:
+        return "error", str(exc)[:200]
+
+
+def _check_dashboards() -> tuple[str, Optional[str]]:
+    """Report whether the configured dashboards have target ports defined.
+
+    We don't actively probe each downstream — that would turn the health check
+    into a fan-out storm under load. We just verify the config is loaded.
+    """
+    if not DASHBOARDS:
+        return "error", "no dashboards configured"
+    return "ok", None
+
+
+def _check_email_dry_run() -> str:
+    """Report whether email is in dry-run mode (staging) or live (prod)."""
+    if os.environ.get("EMAIL_DRY_RUN", "").lower() in ("1", "true", "yes", "on"):
+        return "dry_run"
+    smtp_user = os.environ.get("SMTP_USER", "")
+    return "ok" if smtp_user else "unconfigured"
+
+
+def _check_encryption_key() -> tuple[str, Optional[str]]:
+    """Verify the Fernet key is set when encryption-sensitive features are active."""
+    key = os.environ.get("CREDENTIALS_ENCRYPTION_KEY", "")
+    if not key:
+        return ("error", "CREDENTIALS_ENCRYPTION_KEY not set") if IS_PRODUCTION else ("unconfigured", None)
+    return "ok", None
+
+
+def _check_site_access_token() -> tuple[str, Optional[str]]:
+    """In production the gate token must be set and long enough."""
+    if not IS_PRODUCTION:
+        return "ok", None
+    if not SITE_ACCESS_TOKEN:
+        return "error", "SITE_ACCESS_TOKEN not set"
+    if len(SITE_ACCESS_TOKEN) < 32:
+        return "error", f"SITE_ACCESS_TOKEN too short ({len(SITE_ACCESS_TOKEN)} chars)"
+    return "ok", None
+
+
+@app.get("/health", include_in_schema=False)
+async def health_check():
+    """Structured health report. Exposed publicly, no auth, no rate limit."""
+    import datetime as _dt
+
+    checks: dict = {}
+    errors: list[str] = []
+
+    db_status, db_err = _check_database()
+    checks["database"] = db_status
+    if db_err:
+        errors.append(f"database: {db_err}")
+
+    static_status, static_err = _check_static_dir()
+    checks["static"] = static_status
+    if static_err:
+        errors.append(f"static: {static_err}")
+
+    dash_status, dash_err = _check_dashboards()
+    checks["dashboards"] = dash_status
+    if dash_err:
+        errors.append(f"dashboards: {dash_err}")
+
+    enc_status, enc_err = _check_encryption_key()
+    checks["encryption"] = enc_status
+    if enc_err:
+        errors.append(f"encryption: {enc_err}")
+
+    gate_status, gate_err = _check_site_access_token()
+    checks["gate"] = gate_status
+    if gate_err:
+        errors.append(f"gate: {gate_err}")
+
+    checks["email"] = _check_email_dry_run()
+
+    # Critical checks — any error here downgrades the whole report to "error"
+    # and returns HTTP 503. Non-critical warnings only flip to "degraded".
+    critical = {"database", "gate"}
+    critical_failed = any(
+        checks[k] == "error" for k in critical if k in checks
+    )
+    any_error = any(v == "error" for v in checks.values())
+
+    if critical_failed:
+        status = "error"
+        http_status = 503
+    elif any_error:
+        status = "degraded"
+        http_status = 200
+    else:
+        status = "ok"
+        http_status = 200
+
+    payload = {
+        "status": status,
+        "version": APP_VERSION,
+        "environment": APP_ENVIRONMENT,
+        "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "uptime_seconds": int(time.time() - APP_START_TIME),
+        "checks": checks,
+    }
+    if errors and not IS_PRODUCTION:
+        # Only reveal the specific failure strings outside production.
+        payload["errors"] = errors
+
+    return JSONResponse(
+        payload,
+        status_code=http_status,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 # ── Apex routes (login / signup / my dashboards / billing) ────────────────────
 
 
 @app.get("/", response_class=HTMLResponse)
-async def apex_root(request: Request):
+async def prerelease_page(request: Request):
+    """Public pre-release page — no auth, no gate cookie needed."""
     sub = get_subdomain(request)
     if sub:
-        # Subdomain request — delegate to the proxy handler below.
         return await proxy_request(request, "/")
-
-    user = current_user(request)
-    if not user:
-        # Logged-out visitors see the marketing / onboarding landing page so
-        # they understand what the product is before we ask for an email.
-        return _render_landing()
-
-    # Logged-in: honor the user's configured default dashboard if they have
-    # an active subscription for it. Otherwise fall through to the hub.
-    pref = db.get_default_dashboard(user["user_id"])
-    if pref and pref in DASHBOARDS and db.has_active_subscription(user["user_id"], pref):
-        return RedirectResponse(
-            f"https://{DOMAIN}/" if False else f"https://{DASHBOARDS[pref]['subdomain']}.{DOMAIN}/",
-            status_code=302,
-        )
-    return RedirectResponse("/dashboards", status_code=302)
+    return render_page("prerelease", request=request)
 
 
 def _render_landing() -> HTMLResponse:
@@ -577,12 +1730,48 @@ def _render_landing() -> HTMLResponse:
     )
 
 
+@app.get("/landing", response_class=HTMLResponse)
+async def landing_page(request: Request):
+    """Marketing landing page — the old homepage, now at /landing."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/landing")
+    return _render_landing()
+
+
+# ── Vulnerability disclosure (RFC 9116) ──────────────────────────────────────
+#
+# Publishes a contact address for security researchers so reports reach the
+# right inbox instead of getting lost in /support. Expires is required and
+# should be refreshed annually. The route is in _PUBLIC_PATHS so the gate
+# doesn't swallow it.
+_SECURITY_TXT_CONTACT = os.environ.get("SECURITY_TXT_CONTACT", "mailto:security@narve.ai")
+_SECURITY_TXT_EXPIRES = os.environ.get("SECURITY_TXT_EXPIRES", "2027-04-08T00:00:00Z")
+
+
+@app.get("/.well-known/security.txt")
+async def security_txt(request: Request):
+    body = (
+        f"Contact: {_SECURITY_TXT_CONTACT}\n"
+        f"Expires: {_SECURITY_TXT_EXPIRES}\n"
+        "Preferred-Languages: en\n"
+        "Policy: https://narve.ai/security\n"
+    )
+    return Response(content=body, media_type="text/plain; charset=utf-8")
+
+
+# ── Site-wide access gate ────────────────────────────────────────────────────
+
+
 @app.get("/gate", response_class=HTMLResponse)
 async def gate_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/gate")
-    return render_page("gate", error="")
+    # Already past the gate? Go to landing.
+    if has_gate_access(request):
+        return RedirectResponse("/landing", status_code=302)
+    return render_page("gate", request=request, error="")
 
 
 @app.post("/gate")
@@ -590,27 +1779,40 @@ async def gate_submit(request: Request, token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/gate")
-    token = token.strip()
+    if _auth_rate_limited(_get_client_ip(request)):
+        return RATE_LIMITED_RESPONSE
+    token = _bounded(token, FIELD_MAX["invite_token"], "token")
     if not token:
-        return render_page("gate", error="Please enter an invite token.")
-    invite = db.get_invite_token(token)
-    if not invite or invite["status"] == "revoked":
-        return render_page("gate", error="Invalid or revoked token.")
-    if invite["status"] == "claimed":
-        email_hint = db.mask_email(invite["claimed_by_email"] or "")
-        return render_page(
-            "login", error="",
-            raw_token_section=_login_token_section(invite["token"], email_hint),
-            raw_footer_link='<a href="/gate">Use a different token</a>',
-            raw_success="",
-        )
-    # Unclaimed — go to signup, pre-fill email if token has a target_email
-    target_email = ""
-    try:
-        target_email = invite["target_email"] or ""
-    except (IndexError, KeyError):
-        pass
-    return render_page("signup", error="", invite_token=invite["token"], email=target_email)
+        return render_page("gate", request=request, error="Invalid token.")
+    if not SITE_ACCESS_TOKEN:
+        return render_page("gate", request=request, error="Gate not configured. Contact admin.")
+    if not hmac.compare_digest(token, SITE_ACCESS_TOKEN):
+        return render_page("gate", request=request, error="Invalid token.")
+    # Correct — set gate cookie and redirect to landing
+    response = RedirectResponse("/landing", status_code=302)
+    set_gate_cookie(response, request)
+    return response
+
+
+# ── Invite token entry (old gate, moved here) ───────────────────────────────
+
+
+@app.get("/invite", response_class=HTMLResponse)
+async def invite_page(request: Request):
+    """Legacy alias — the invite-token entry point is now /token."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/invite")
+    return RedirectResponse("/token", status_code=302)
+
+
+@app.post("/invite")
+async def invite_submit(request: Request, token: str = Form("")):
+    """Legacy alias — POST /invite is replaced by POST /auth/validate-token."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/invite")
+    return RedirectResponse("/token", status_code=302)
 
 
 def _login_token_section(invite_token: str, email_hint: str) -> str:
@@ -627,77 +1829,421 @@ def _login_token_section(invite_token: str, email_hint: str) -> str:
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    """Token-first login: requires a valid `pending_token` cookie.
+
+    If the user is already authenticated → go to /dashboard.
+    If no pending_token cookie → back to /token.
+    If the token is unclaimed → send them to /register instead.
+    Otherwise render login.html with the email pre-populated from the
+    invite token's linked account.
+    """
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
-    user = current_user(request)
-    if user:
+
+    # Already logged in? Straight to dashboard.
+    from auth.guards import read_hardened_session
+    if read_hardened_session(request) or current_user(request):
         return RedirectResponse("/dashboards", status_code=302)
+
+    # Must have come through /token
+    from auth.cookies import read_pending_token
+    raw_token = read_pending_token(request)
+    if not raw_token:
+        return RedirectResponse("/token", status_code=302)
+
+    invite = db.get_invite_token(raw_token)
+    if not invite or invite["status"] == "revoked":
+        return RedirectResponse("/token", status_code=302)
+    if invite["status"] != "claimed":
+        # Unclaimed token → account creation flow
+        return RedirectResponse("/register", status_code=302)
+
+    email_hint = db.mask_email(invite["claimed_by_email"] or "") if invite["claimed_by_email"] else ""
+    query_success = request.query_params.get("reset")
+    success_html = ""
+    if query_success == "success":
+        success_html = "Password updated. Please sign in with your new password."
     return render_page(
-        "login", error="",
-        raw_token_section="",
-        raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
-        raw_success="",
+        "login",
+        request=request,
+        error="",
+        email_hint=email_hint,
+        raw_success=success_html,
     )
 
 
 @app.post("/login")
-async def login_submit(request: Request, identifier: str = Form(""), password: str = Form(...), invite_token: str = Form("")):
+async def login_submit(request: Request):
+    """Legacy POST /login form — replaced by POST /auth/login (JSON).
+
+    Any client still posting to this path is routed back to /token so
+    they re-enter through the token-first flow.
+    """
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
+    return RedirectResponse("/token", status_code=302)
 
-    ip = _get_client_ip(request)
-    if _is_rate_limited(ip, "login", _RATE_MAX_LOGIN):
-        return RATE_LIMITED_RESPONSE
 
-    invite_token = invite_token.strip()
-    identifier = identifier.strip()
+# ── Two-factor authentication ────────────────────────────────────────────────
 
-    def _render_login_error(msg: str):
-        """Re-render login page with error, preserving mode (token vs standalone)."""
-        if invite_token:
-            invite = db.get_invite_token(invite_token)
-            email_hint = db.mask_email(invite["claimed_by_email"] or "") if invite else ""
-            return render_page(
-                "login", error=msg,
-                raw_token_section=_login_token_section(invite_token, email_hint),
-                raw_footer_link='<a href="/gate">Use a different token</a>',
-                raw_success="",
+
+async def _issue_email_otp(user_id: int, email: str, ip: str) -> None:
+    """Generate, store, and email a fresh 6-digit OTP to the user.
+
+    Rate-limited to one send per minute per user via the persistent bucket
+    (`2fa_send:{user_id}`). If the rate limit has been tripped, this function
+    returns silently (the previous code is still valid).
+    """
+    from security import two_factor as _tf
+    if not _tf.can_resend_email_otp(user_id):
+        return
+    code = _tf.generate_email_otp()
+    h, salt = _tf.hash_email_otp(code)
+    db.insert_email_otp(user_id, h, salt, ip or "", _tf.EMAIL_OTP_TTL_SECONDS)
+    _tf.mark_email_otp_sent(user_id)
+
+    # Fire-and-forget email delivery
+    try:
+        from email_system.service import EmailService
+        svc = EmailService()
+        await svc.send_template(
+            to=email,
+            template="2fa_email_otp",
+            context={
+                "display_name": email.split("@")[0],
+                "code": code,
+                "expires_in": "10 minutes",
+            },
+        )
+    except Exception as e:
+        log.warning("email OTP send failed for user=%s: %s", email, e)
+
+
+def _safe_json_2fa_body(body) -> dict:
+    """Accept either JSON body or form data for 2FA verify routes."""
+    if isinstance(body, dict):
+        return body
+    return {}
+
+
+@app.get("/auth/2fa", response_class=HTMLResponse)
+async def auth_2fa_page(request: Request):
+    """Verification page shown after login for users with 2FA enabled."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+    if user.get("_dev_bypass"):
+        return RedirectResponse("/dashboards", status_code=302)
+    status = db.get_user_2fa_status(user["user_id"])
+    if not status or not status["two_fa_method"]:
+        return RedirectResponse("/auth/2fa/setup", status_code=302)
+    # Already verified? Skip the page entirely.
+    token = request.cookies.get(COOKIE_NAME) or ""
+    if db.session_two_fa_verified(token):
+        return RedirectResponse("/dashboards", status_code=302)
+
+    method = status["two_fa_method"]
+    masked = db.mask_email(user["email"]) if hasattr(db, "mask_email") else user["email"]
+    return render_page(
+        "auth_2fa",
+        request=request,
+        method=method,
+        masked_email=masked,
+        error="",
+    )
+
+
+@app.get("/auth/2fa/setup", response_class=HTMLResponse)
+async def auth_2fa_setup_page(request: Request):
+    """First-time 2FA enrollment wizard."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+    if user.get("_dev_bypass"):
+        return RedirectResponse("/dashboards", status_code=302)
+    status = db.get_user_2fa_status(user["user_id"])
+    already_enabled = bool(status and status["two_fa_method"])
+    return render_page(
+        "auth_2fa_setup",
+        request=request,
+        already_enabled="1" if already_enabled else "",
+        current_method=(status["two_fa_method"] if status else "") or "",
+        user_email=user["email"],
+    )
+
+
+@app.get("/api/auth/2fa/status")
+async def api_2fa_status(request: Request):
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    status = db.get_user_2fa_status(user["user_id"])
+    method = (status["two_fa_method"] if status else None) or None
+    remaining = db.count_remaining_backup_codes(user["user_id"]) if method else 0
+    setup_at = (status["totp_setup_at"] if status else None) if method == "totp" else None
+    verified_at = status["two_fa_verified_at"] if status else None
+    return JSONResponse({
+        "enabled": bool(method),
+        "method": method,
+        "backup_codes_remaining": remaining,
+        "setup_at": setup_at,
+        "last_verified_at": verified_at,
+    })
+
+
+@app.get("/api/auth/2fa/totp/setup")
+async def api_2fa_totp_setup(request: Request):
+    """Generate a fresh TOTP secret, stash it on the session, return QR."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from security import two_factor as _tf
+    token = request.cookies.get(COOKIE_NAME) or ""
+    if not token:
+        raise HTTPException(status_code=401, detail="No active session")
+    secret = _tf.generate_totp_secret()
+    encrypted = _tf.encrypt_totp_secret(secret)
+    db.set_pending_totp_secret(token, encrypted)
+    uri = _tf.build_totp_uri(secret, user["email"])
+    qr = _tf.build_qr_data_uri(uri)
+    return JSONResponse({
+        "qr_data_uri": qr,
+        "manual_entry_key": secret,
+        "issuer": _tf.TOTP_ISSUER,
+        "account": user["email"],
+    })
+
+
+@app.post("/api/auth/2fa/totp/verify-setup")
+async def api_2fa_totp_verify_setup(request: Request, code: str = Form("")):
+    """Confirm the 6-digit code, enable TOTP, return backup codes exactly once."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from security import two_factor as _tf
+    token = request.cookies.get(COOKIE_NAME) or ""
+    encrypted = db.get_pending_totp_secret(token)
+    if not encrypted:
+        return JSONResponse(
+            {"error": "Setup session expired. Please restart."},
+            status_code=400,
+        )
+    secret = _tf.decrypt_totp_secret(encrypted)
+    if not _tf.verify_totp_code(secret, code):
+        return JSONResponse({"error": "Invalid code. Try again."}, status_code=400)
+
+    # Commit: persist encrypted secret, enable method, generate backup codes.
+    db.set_user_2fa_method(user["user_id"], "totp", encrypted)
+    db.clear_pending_totp_secret(token)
+    codes = _tf.generate_backup_codes()
+    hashed = _tf.hash_backup_codes(codes)
+    db.store_backup_codes(user["user_id"], hashed)
+    db.mark_session_two_fa_verified(token)
+
+    try:
+        if user["is_admin"]:
+            from security import audit as _audit
+            _audit.log_action(
+                admin_user_id=user["user_id"],
+                admin_email=user["email"],
+                action=_audit.AuditAction.ADMIN_2FA_SETUP,
+                request=request,
+                notes="totp",
             )
-        return render_page(
-            "login", error=msg,
-            raw_token_section="",
-            raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
-            raw_success="",
+    except Exception:
+        pass
+
+    return JSONResponse({
+        "success": True,
+        "backup_codes": codes,  # plaintext — shown ONCE
+        "message": "TOTP enabled. Save these backup codes somewhere safe.",
+    })
+
+
+@app.post("/api/auth/2fa/email/enable")
+async def api_2fa_email_enable(request: Request):
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from security import two_factor as _tf
+    db.set_user_2fa_method(user["user_id"], "email_otp", None)
+    codes = _tf.generate_backup_codes()
+    hashed = _tf.hash_backup_codes(codes)
+    db.store_backup_codes(user["user_id"], hashed)
+    token = request.cookies.get(COOKIE_NAME) or ""
+    db.mark_session_two_fa_verified(token)
+
+    try:
+        if user["is_admin"]:
+            from security import audit as _audit
+            _audit.log_action(
+                admin_user_id=user["user_id"],
+                admin_email=user["email"],
+                action=_audit.AuditAction.ADMIN_2FA_SETUP,
+                request=request,
+                notes="email_otp",
+            )
+    except Exception:
+        pass
+
+    return JSONResponse({"success": True, "backup_codes": codes, "method": "email_otp"})
+
+
+@app.post("/api/auth/2fa/verify")
+async def api_2fa_verify(
+    request: Request,
+    code: str = Form(""),
+    method: str = Form(""),
+):
+    """Verify a 2FA code during login. Accepts TOTP, email OTP, or backup code."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from security import two_factor as _tf
+    ip = _get_client_ip(request)
+
+    if _tf.is_2fa_locked(user["user_id"], ip):
+        return JSONResponse(
+            {"error": "Too many attempts. Locked for 15 minutes."},
+            status_code=429,
         )
 
-    if not identifier:
-        return _render_login_error("Please enter your username or email.")
+    status = db.get_user_2fa_status(user["user_id"])
+    if not status or not status["two_fa_method"]:
+        return JSONResponse({"error": "2FA not enabled"}, status_code=400)
 
-    user = db.get_user_by_email_or_username(identifier)
+    user_method = status["two_fa_method"]
+    success = False
+    chosen_method = (method or user_method).strip().lower()
+
+    if chosen_method == "backup_code":
+        success = db.consume_backup_code(user["user_id"], code)
+    elif chosen_method == "totp" and user_method == "totp":
+        encrypted = status["totp_secret"]
+        if encrypted:
+            secret = _tf.decrypt_totp_secret(encrypted)
+            success = _tf.verify_totp_code(secret, code)
+    elif chosen_method == "email_otp" and user_method == "email_otp":
+        otp_row = db.get_active_email_otp(user["user_id"])
+        if otp_row:
+            if _tf.verify_email_otp_code(code, otp_row["code_hash"], otp_row["code_salt"]):
+                db.mark_email_otp_used(otp_row["id"])
+                success = True
+
+    _tf.record_2fa_attempt(user["user_id"], chosen_method, success, ip)
+    if success:
+        token = request.cookies.get(COOKIE_NAME) or ""
+        db.mark_session_two_fa_verified(token)
+        return JSONResponse({"verified": True, "redirect": "/dashboards"})
+
+    return JSONResponse({"error": "Invalid code"}, status_code=403)
+
+
+@app.post("/api/auth/2fa/email/resend")
+async def api_2fa_email_resend(request: Request):
+    user = current_user(request)
     if not user:
-        log.warning("Failed login: account not found for identifier=%s ip=%s", identifier, request.client.host if request.client else "unknown")
-        return _render_login_error("Account not found.")
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from security import two_factor as _tf
+    if not _tf.can_resend_email_otp(user["user_id"]):
+        return JSONResponse(
+            {"error": "Please wait before requesting another code."},
+            status_code=429,
+        )
+    try:
+        await _issue_email_otp(user["user_id"], user["email"], _get_client_ip(request))
+    except Exception as e:
+        log.warning("email OTP resend failed for user=%s: %s", user["email"], e)
+        return JSONResponse({"error": "Failed to send code"}, status_code=500)
+    return JSONResponse({"success": True})
 
-    # If token provided (gate flow), enforce token-to-user binding
-    if invite_token:
-        invite = db.get_invite_token(invite_token)
-        if not invite or invite["status"] != "claimed":
-            return render_page("gate", error="Invalid or expired token. Please enter your invite token again.")
-        if invite["claimed_by_user_id"] != user["id"]:
-            return _render_login_error("This token does not belong to that account.")
 
-    if user["suspended"]:
-        return _render_login_error("This account has been suspended.")
-    if not db.verify_password(password, user["password_hash"], user["password_salt"]):
-        log.warning("Failed login: wrong password for user=%s ip=%s", user["username"] or user["email"], request.client.host if request.client else "unknown")
-        return _render_login_error("Invalid password.")
+@app.post("/api/auth/2fa/disable")
+async def api_2fa_disable(request: Request, code: str = Form("")):
+    """Disable 2FA. Requires a fresh TOTP/email OTP verification in the same call."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from security import two_factor as _tf
+    ip = _get_client_ip(request)
+    if _tf.is_2fa_locked(user["user_id"], ip):
+        return JSONResponse({"error": "Too many attempts"}, status_code=429)
 
-    token = db.create_session(user["id"])
-    response = RedirectResponse("/dashboards", status_code=302)
-    set_session_cookie(response, token, request)
-    return response
+    status = db.get_user_2fa_status(user["user_id"])
+    if not status or not status["two_fa_method"]:
+        return JSONResponse({"error": "2FA not enabled"}, status_code=400)
+
+    method = status["two_fa_method"]
+    verified = False
+    if method == "totp" and status["totp_secret"]:
+        secret = _tf.decrypt_totp_secret(status["totp_secret"])
+        verified = _tf.verify_totp_code(secret, code)
+    elif method == "email_otp":
+        otp_row = db.get_active_email_otp(user["user_id"])
+        if otp_row and _tf.verify_email_otp_code(code, otp_row["code_hash"], otp_row["code_salt"]):
+            db.mark_email_otp_used(otp_row["id"])
+            verified = True
+
+    if not verified:
+        _tf.record_2fa_attempt(user["user_id"], method, False, ip)
+        return JSONResponse({"error": "Invalid code"}, status_code=403)
+
+    db.disable_user_2fa(user["user_id"])
+    _tf.record_2fa_attempt(user["user_id"], method, True, ip)
+
+    try:
+        if user["is_admin"]:
+            from security import audit as _audit
+            _audit.log_action(
+                admin_user_id=user["user_id"],
+                admin_email=user["email"],
+                action=_audit.AuditAction.ADMIN_2FA_DISABLE,
+                request=request,
+                notes=f"was_{method}",
+            )
+    except Exception:
+        pass
+
+    return JSONResponse({"success": True})
+
+
+@app.post("/api/auth/2fa/backup-codes")
+async def api_2fa_regenerate_backup_codes(request: Request, code: str = Form("")):
+    """Regenerate the 8 backup codes. Requires fresh 2FA verification in this call."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from security import two_factor as _tf
+    ip = _get_client_ip(request)
+    if _tf.is_2fa_locked(user["user_id"], ip):
+        return JSONResponse({"error": "Too many attempts"}, status_code=429)
+
+    status = db.get_user_2fa_status(user["user_id"])
+    if not status or not status["two_fa_method"]:
+        return JSONResponse({"error": "2FA not enabled"}, status_code=400)
+
+    method = status["two_fa_method"]
+    verified = False
+    if method == "totp" and status["totp_secret"]:
+        secret = _tf.decrypt_totp_secret(status["totp_secret"])
+        verified = _tf.verify_totp_code(secret, code)
+    elif method == "email_otp":
+        otp_row = db.get_active_email_otp(user["user_id"])
+        if otp_row and _tf.verify_email_otp_code(code, otp_row["code_hash"], otp_row["code_salt"]):
+            db.mark_email_otp_used(otp_row["id"])
+            verified = True
+
+    if not verified:
+        _tf.record_2fa_attempt(user["user_id"], method, False, ip)
+        return JSONResponse({"error": "Invalid code"}, status_code=403)
+
+    _tf.record_2fa_attempt(user["user_id"], method, True, ip)
+    codes = _tf.generate_backup_codes()
+    hashed = _tf.hash_backup_codes(codes)
+    db.store_backup_codes(user["user_id"], hashed)
+    return JSONResponse({"success": True, "backup_codes": codes})
 
 
 @app.get("/forgot-password", response_class=HTMLResponse)
@@ -705,7 +2251,7 @@ async def forgot_password_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/forgot-password")
-    return render_page("forgot-password", error="", success="")
+    return render_page("forgot-password", request=request, error="", success="")
 
 
 @app.post("/forgot-password")
@@ -714,35 +2260,63 @@ async def forgot_password_submit(request: Request, invite_token: str = Form(""),
     if sub:
         return await proxy_request(request, "/forgot-password")
 
-    invite_token = invite_token.strip()
-    email = email.strip().lower()
+    if _auth_rate_limited(_get_client_ip(request)):
+        return RATE_LIMITED_RESPONSE
+
+    invite_token = _bounded(invite_token, FIELD_MAX["invite_token"], "invite_token")
+    email = _bounded(email, FIELD_MAX["email"], "email").lower()
+    if len(new_password) > FIELD_MAX["password"] or len(confirm_password) > FIELD_MAX["password"]:
+        return render_page("forgot-password", request=request, error="Invalid token or email.", success="")
+
+    # Per-email rate limiting (3 reset attempts per email per hour, persistent).
+    # Prevents an attacker from spamming reset attempts on a single victim's
+    # account from many different IPs. The bucket is shared with any other
+    # password-reset endpoint (key: "email:{email}:forgot") so an attacker
+    # can't bypass the limit by alternating between endpoints.
+    #
+    # We only consume the bucket for syntactically-valid emails so random
+    # garbage doesn't pollute the rate-limit table.
+    ip = _get_client_ip(request)
+    if email and is_valid_email(email):
+        if _is_rate_limited(f"email:{email}:forgot", 3, 3600):
+            log.warning(
+                "Password reset rate-limited for email=%s ip=%s",
+                db.mask_email(email), ip,
+            )
+            # Generic error: don't reveal whether the rate limit was hit
+            # vs. some other validation failure.
+            return render_page(
+                "forgot-password", request=request,
+                error="Too many password reset attempts. Please wait and try again later.",
+                success="",
+            )
 
     # Validate token exists and is claimed
     invite = db.get_invite_token(invite_token) if invite_token else None
     if not invite or invite["status"] != "claimed":
-        return render_page("forgot-password", error="Invalid or unclaimed token.", success="")
+        return render_page("forgot-password", request=request, error="Invalid or unclaimed token.", success="")
 
     # Verify email matches the token's linked account
     if invite["claimed_by_email"] != email:
-        log.warning("Password reset: email mismatch for token. Provided: %s", email)
-        return render_page("forgot-password", error="Email does not match the account linked to this token.", success="")
+        log.warning("Password reset: email mismatch for token. Provided: %s", db.mask_email(email))
+        return render_page("forgot-password", request=request, error="Email does not match the account linked to this token.", success="")
 
     # Find the user
     user = db.get_user_by_id(invite["claimed_by_user_id"])
     if not user:
-        return render_page("forgot-password", error="Account not found.", success="")
+        return render_page("forgot-password", request=request, error="Account not found.", success="")
     if user["suspended"]:
         return RedirectResponse("/suspended", status_code=302)
 
     # Validate passwords match
     if new_password != confirm_password:
-        return render_page("forgot-password", error="Passwords don't match.", success="")
+        return render_page("forgot-password", request=request, error="Passwords don't match.", success="")
 
     # Validate password strength
     if len(new_password) < 12:
-        return render_page("forgot-password", error="Password must be at least 12 characters.", success="")
+        return render_page("forgot-password", request=request, error="Password must be at least 12 characters.", success="")
     if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
-        return render_page("forgot-password", error="Password must include uppercase, lowercase, number, and special character.", success="")
+        return render_page("forgot-password", request=request, error="Password must include uppercase, lowercase, number, and special character.", success="")
 
     # Update password
     pwd_hash, salt = db._hash_password(new_password)
@@ -754,62 +2328,28 @@ async def forgot_password_submit(request: Request, invite_token: str = Form(""),
         c.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
 
     log.info("Password reset for user %s (id=%d) via token", user["username"] or user["email"], user["id"])
-    return render_page("forgot-password", error="", success="Password reset successfully. All sessions have been logged out. You can now sign in with your new password.")
+    return render_page("forgot-password", request=request, error="", success="Password reset successfully. All sessions have been logged out. You can now sign in with your new password.")
 
 
 @app.get("/signup", response_class=HTMLResponse)
 async def signup_page(request: Request):
+    """Legacy alias — registration now happens at /register (requires pending_token)."""
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
-    # Direct access without a token — redirect to gate
-    return RedirectResponse("/gate", status_code=302)
+    return RedirectResponse("/token", status_code=302)
 
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
 
 
 @app.post("/signup")
-async def signup_submit(request: Request, username: str = Form(""), email: str = Form(...), password: str = Form(...), invite_token: str = Form("")):
+async def signup_submit(request: Request):
+    """Legacy POST /signup — replaced by POST /auth/register (JSON, requires pending_token)."""
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
-
-    invite_token = invite_token.strip()
-    invite = db.get_invite_token(invite_token) if invite_token else None
-    if not invite or invite["status"] != "unclaimed":
-        return render_page("gate", error="Invalid or already used invite token. Please enter a valid token.")
-
-    username = username.strip()
-    email = (email or "").lower().strip()
-
-    if not username or not USERNAME_RE.match(username):
-        return render_page("signup", error="Username must be 3\u201320 characters: letters, numbers, underscores only.", invite_token=invite_token, email=email)
-    if db.get_user_by_username(username):
-        return render_page("signup", error="That username is already taken.", invite_token=invite_token, email=email)
-    if not is_valid_email(email):
-        return render_page("signup", error="Enter a valid email address.", invite_token=invite_token, email=email)
-    if len(password) < 12:
-        return render_page("signup", error="Password must be at least 12 characters.", invite_token=invite_token, email=email)
-    if len(password) > 256:
-        return render_page("signup", error="Password is too long.", invite_token=invite_token, email=email)
-    if not re.search(r"[A-Z]", password):
-        return render_page("signup", error="Password must contain at least one uppercase letter.", invite_token=invite_token, email=email)
-    if not re.search(r"[a-z]", password):
-        return render_page("signup", error="Password must contain at least one lowercase letter.", invite_token=invite_token, email=email)
-    if not re.search(r"[0-9]", password):
-        return render_page("signup", error="Password must contain at least one number.", invite_token=invite_token, email=email)
-    if not re.search(r"[^A-Za-z0-9]", password):
-        return render_page("signup", error="Password must contain at least one special character.", invite_token=invite_token, email=email)
-    if db.get_user_by_email(email):
-        return render_page("signup", error="An account with that email already exists.", invite_token=invite_token, email=email)
-    user_id = db.create_user(email, password, username=username)
-    if not db.claim_invite_token(invite_token, user_id, email):
-        return render_page("gate", error="This token was just claimed by someone else. Please use a different token.")
-    token = db.create_session(user_id)
-    response = RedirectResponse("/dashboards", status_code=302)
-    set_session_cookie(response, token, request)
-    return response
+    return RedirectResponse("/token", status_code=302)
 
 
 @app.get("/logout")
@@ -817,10 +2357,42 @@ async def logout(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/logout")
+    # Capture the user BEFORE deleting the session so we can audit admin logout
+    user = current_user(request)
     token = request.cookies.get(COOKIE_NAME)
     if token:
         db.delete_session(token)
-    response = RedirectResponse("/gate", status_code=302)
+    # Also revoke the hardened session cookie if present.
+    try:
+        from auth.cookies import SESSION_COOKIE as _HARDENED_COOKIE
+        from auth.cookies import clear_session_cookie_hardened, clear_pending_token_cookie
+        hardened_raw = request.cookies.get(_HARDENED_COOKIE)
+        if hardened_raw:
+            db.revoke_user_session_by_token(hardened_raw)
+    except Exception:
+        pass
+    try:
+        if user and user.get("is_admin") and not user.get("_dev_bypass"):
+            from security import audit as _audit
+            _audit.log_action(
+                admin_user_id=user.get("user_id"),
+                admin_email=user.get("email"),
+                action=_audit.AuditAction.ADMIN_LOGOUT,
+                request=request,
+            )
+    except Exception:
+        pass
+    response = RedirectResponse("/token", status_code=302)
+    try:
+        clear_session_cookie_hardened(response, request)
+        clear_pending_token_cookie(response, request)
+    except Exception:
+        pass
+    # Rotate CSRF token on logout so the next session on this browser starts
+    # with a fresh secret. Without this, a token captured earlier remains
+    # valid until its TTL expires and could be replayed by the next user
+    # signing in on the same machine.
+    _set_csrf_cookie(response, _generate_csrf_token(), request)
     clear_session_cookie(response, request)
     return response
 
@@ -832,29 +2404,34 @@ async def my_dashboards(request: Request):
         return await proxy_request(request, "/dashboards")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
-    any_active_sub = any(s["status"] == "active" for s in subs.values())
+    now = int(time.time())
+    pinfo = _user_plan_info(user, subs, now)
     local_mode = is_local_host(request)
+    # Dashboard cards link to <sub>.<apex> on whichever apex the user is
+    # currently browsing, so a visitor on narve.ai stays on narve.ai.
+    apex = _request_apex(request) or DOMAIN
     cards_html = []
     for key, cfg in DASHBOARDS.items():
-        has_sub = _is_sub_active(subs.get(key), is_admin_user) or any_active_sub
+        has_sub = _is_sub_active(subs.get(key), is_admin_user)
+        # Pro plan or admin unlocks everything
+        if pinfo["plan"] == "pro" or is_admin_user:
+            has_sub = True
         active_badge = (
             '<span class="badge badge-active">Active</span>' if has_sub
             else '<span class="badge badge-locked">Locked</span>'
         )
         if has_sub:
-            # Local dev: link directly to the dashboard's own port so click-through
-            # works without DNS/Cloudflare. Production: use the configured subdomain.
             if local_mode:
                 open_url = f"http://localhost:{cfg['target']}"
             else:
-                open_url = f"https://{cfg['subdomain']}.{DOMAIN}"
+                open_url = f"https://{cfg['subdomain']}.{apex}"
             cta = f'<a class="card-cta cta-open" href="{open_url}" target="_blank">Open →</a>'
         else:
-            cta = f'<a class="card-cta cta-sub" href="/preview/{key}">Learn More</a>'
+            cta = f'<a class="card-cta cta-sub" href="/billing?dashboard={key}" style="background:var(--accent);color:white;border-color:var(--accent)">Unlock</a>'
 
         cards_html.append(f"""
         <div class="dash-card" style="--accent: {cfg['accent']}">
@@ -864,17 +2441,224 @@ async def my_dashboards(request: Request):
           </div>
           <div class="dash-card-title">{cfg['display_name']}</div>
           <div class="dash-card-desc">{cfg['description']}</div>
-          <div class="dash-card-price">${cfg['monthly_cents']/100:.2f}/mo · ${cfg['annual_cents']/100:.2f}/yr</div>
+          <div class="dash-card-price">&pound;{cfg['monthly_cents']/100:.0f}/mo &middot; &pound;{cfg['annual_cents']/100:.0f}/yr</div>
           <div class="dash-card-foot">{cta}</div>
         </div>
         """)
 
+    # Credits badge
+    credits_badge = ""
+    if is_admin_user:
+        credits_badge = '<div style="position:absolute;top:0;right:0;background:var(--accent-light);color:var(--accent);font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">All Access</div>'
+    elif pinfo["plan"] == "pro":
+        credits_badge = '<div style="position:absolute;top:0;right:0;background:var(--green-bg);color:var(--green);font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">Pro — All Unlocked</div>'
+    elif pinfo["plan"] == "trader":
+        used = pinfo["active_count"]
+        total = PLAN_DEFS["trader"]["credits"]
+        remaining = total - used
+        badge_color = "var(--green)" if remaining > 0 else "var(--amber)"
+        badge_bg = "var(--green-bg)" if remaining > 0 else "rgba(245,158,11,0.10)"
+        credits_badge = f'<div style="position:absolute;top:0;right:0;background:{badge_bg};color:{badge_color};font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">Trader — {remaining}/{total} credits left</div>'
+    else:
+        credits_badge = '<div style="position:absolute;top:0;right:0;background:var(--surface-hover);color:var(--text-muted);font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">No plan — <a href="/billing" style="color:var(--accent)">Subscribe</a></div>'
+
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    # Signal Search link for Pro users
+    signal_link = ""
+    if pinfo["plan"] == "pro" or is_admin_user:
+        signal_link = '<a href="/signal-search">Signal Search</a>'
     return render_page(
-        "dashboards",
+        "dashboards", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         dashboard_cards="".join(cards_html),
+        raw_credits_badge=credits_badge,
+        raw_signal_search_link=signal_link,
         raw_admin_link=admin_link,
+        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+    )
+
+
+# Plan definitions — Trader gets 3 dashboard credits, Pro gets all
+PLAN_DEFS = {
+    "trader": {"label": "Trader", "credits": 3, "monthly": 75, "annual": 765, "monthly_usd": 99, "annual_usd": 999},
+    "pro": {"label": "Pro", "credits": len(DASHBOARDS), "monthly": 180, "annual": 1836, "monthly_usd": 229, "annual_usd": 1999},
+}
+TRADING_ADDON = {"label": "Trading Access", "monthly": 25, "annual": 255, "monthly_usd": 29, "annual_usd": 299}
+
+
+def _user_plan_info(user: dict, subs: dict, now: int) -> dict:
+    """Determine the user's current plan tier and active dashboard count."""
+    if not isinstance(subs, dict):
+        subs = {}
+    is_admin = bool(user.get("is_admin"))
+    active_keys = []
+    plan_name = None
+    interval = None
+    expires_at = None
+    downgrading = False
+
+    # Check if any dashboard sub is marked as downgrading
+    for s in subs.values():
+        if s and (s["plan"] or "").startswith("pro_downgrading"):
+            downgrading = True
+            break
+
+    # Check __plan__ sentinel first (Trader plan marker)
+    plan_sub = subs.get("__plan__")
+    if plan_sub and plan_sub["status"] == "active" and (not plan_sub["expires_at"] or plan_sub["expires_at"] > now):
+        raw = plan_sub["plan"] or ""
+        if raw.startswith("trader"):
+            plan_name = "trader"
+        elif raw.startswith("pro"):
+            plan_name = "pro"
+        if "_annual" in raw:
+            interval = "annual"
+        elif "_monthly" in raw:
+            interval = "monthly"
+        expires_at = plan_sub["expires_at"]
+
+    for key in DASHBOARDS:
+        s = subs.get(key)
+        if _is_sub_active(s, is_admin):
+            active_keys.append(key)
+            # Infer plan from dashboard subs — Pro always wins over Trader
+            if s:
+                raw = s["plan"] or ""
+                if raw.startswith("pro") and plan_name != "pro":
+                    plan_name = "pro"
+                    if "_annual" in raw:
+                        interval = "annual"
+                    elif "_monthly" in raw:
+                        interval = "monthly"
+                    expires_at = s["expires_at"]
+                elif raw.startswith("trader") and not plan_name:
+                    plan_name = "trader"
+                    if "_annual" in raw:
+                        interval = "annual"
+                    elif "_monthly" in raw:
+                        interval = "monthly"
+                    expires_at = s["expires_at"]
+    return {
+        "plan": plan_name,
+        "interval": interval,
+        "active_keys": active_keys,
+        "active_count": len(active_keys),
+        "expires_at": expires_at,
+        "is_admin": is_admin,
+        "downgrading": downgrading,
+    }
+
+
+def _build_plan_card(pinfo: dict) -> str:
+    """Build the plan summary card HTML for the billing page."""
+    import datetime as _dt
+    plan = pinfo["plan"]
+    is_admin = pinfo["is_admin"]
+
+    if is_admin and not plan:
+        return (
+            '<div class="billing-plan-card">'
+            '<div class="billing-plan-header">'
+            '<span class="billing-plan-name">Admin Access</span>'
+            '<span class="billing-plan-badge billing-plan-badge-admin">ADMIN</span>'
+            '</div>'
+            '<div class="billing-plan-desc">Full access to all dashboards via admin privileges.</div>'
+            '</div>'
+        )
+
+    if not plan:
+        return (
+            '<div class="billing-plan-card">'
+            '<div class="billing-plan-header">'
+            '<span class="billing-plan-name">No Active Plan</span>'
+            '</div>'
+            '<div class="billing-plan-desc">You don\'t have an active subscription. Choose a plan below to unlock dashboards.</div>'
+            '<div class="billing-upgrade-row">'
+            '<form method="post" action="/billing/subscribe">'
+            '<input type="hidden" name="plan" value="trader"><input type="hidden" name="interval" value="monthly">'
+            '<button type="submit" class="billing-upgrade-btn billing-upgrade-primary">Subscribe to Trader — &pound;75/$99/mo</button>'
+            '</form>'
+            '<form method="post" action="/billing/subscribe">'
+            '<input type="hidden" name="plan" value="pro"><input type="hidden" name="interval" value="monthly">'
+            '<button type="submit" class="billing-upgrade-btn billing-upgrade-outline">Subscribe to Pro — &pound;180/$229/mo</button>'
+            '</form>'
+            '<a href="/enquire" class="billing-upgrade-btn" style="line-height:24px;background:transparent;border:1px solid var(--text-muted);color:var(--text-secondary)">Enterprise — Contact Sales</a>'
+            '</div>'
+            '</div>'
+        )
+
+    pdef = PLAN_DEFS.get(plan, PLAN_DEFS["trader"])
+    interval = pinfo["interval"] or "monthly"
+    price = pdef["annual"] if interval == "annual" else pdef["monthly"]
+    period = "/yr" if interval == "annual" else "/mo"
+    credits_label = "All dashboards" if plan == "pro" else f'{pdef["credits"]} dashboard credits'
+    used = pinfo["active_count"]
+    total = pdef["credits"]
+
+    expires_str = ""
+    if pinfo["expires_at"]:
+        expires_str = f' &middot; Renews {_dt.datetime.fromtimestamp(pinfo["expires_at"], tz=_dt.timezone.utc).strftime("%d %b %Y")}'
+
+    upgrade_row = ""
+    if plan == "trader":
+        upgrade_row = (
+            '<div class="billing-upgrade-row">'
+            '<form method="post" action="/billing/subscribe">'
+            '<input type="hidden" name="plan" value="pro"><input type="hidden" name="interval" value="monthly">'
+            '<button type="submit" class="billing-upgrade-btn billing-upgrade-primary">Upgrade to Pro — &pound;180/$229/mo</button>'
+            '</form>'
+            '<a href="/enquire" class="billing-upgrade-btn billing-upgrade-outline" style="line-height:24px">Upgrade to Enterprise — Contact Sales</a>'
+            '</div>'
+        )
+    elif plan == "pro":
+        downgrade_btn = ""
+        if pinfo.get("downgrading"):
+            import datetime as _dtx
+            end_str = _dtx.datetime.fromtimestamp(pinfo["expires_at"], tz=_dtx.timezone.utc).strftime("%d %b %Y") if pinfo["expires_at"] else "end of period"
+            downgrade_btn = (
+                f'<div style="font-size:13px;color:var(--amber);background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);'
+                f'border-radius:var(--radius-sm);padding:10px 14px;margin-top:8px">'
+                f'Downgrading to Trader on <strong>{end_str}</strong>. You keep Pro access until then.</div>'
+            )
+        else:
+            downgrade_btn = (
+                '<form method="post" action="/billing/subscribe">'
+                '<input type="hidden" name="plan" value="trader"><input type="hidden" name="interval" value="monthly">'
+                '<button type="submit" class="billing-upgrade-btn billing-upgrade-danger" '
+                'onclick="return confirm(\'Downgrade to Trader? You\\\'ll keep Pro access until the end of your billing period, then switch to 3 dashboard credits.\')">Downgrade to Trader</button>'
+                '</form>'
+            )
+        upgrade_row = (
+            '<div class="billing-upgrade-row">'
+            '<a href="/enquire" class="billing-upgrade-btn billing-upgrade-outline" style="line-height:24px">Upgrade to Enterprise — Contact Sales</a>'
+            f'{downgrade_btn}'
+            '</div>'
+        )
+
+    credits_bar = ""
+    if plan == "trader":
+        pct = min(100, int(used / total * 100)) if total else 0
+        bar_color = "var(--green)" if used < total else "var(--amber)"
+        credits_bar = (
+            f'<div style="margin-top:16px">'
+            f'<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:6px">'
+            f'<span>Credits used</span><span>{used} / {total}</span></div>'
+            f'<div style="height:6px;background:var(--surface-hover);border-radius:3px;overflow:hidden">'
+            f'<div style="height:100%;width:{pct}%;background:{bar_color};border-radius:3px;transition:width 0.3s"></div>'
+            f'</div></div>'
+        )
+
+    return (
+        f'<div class="billing-plan-card">'
+        f'<div class="billing-plan-header">'
+        f'<span class="billing-plan-name">{pdef["label"]} Plan</span>'
+        f'<span class="billing-plan-badge billing-plan-badge-active">ACTIVE</span>'
+        f'</div>'
+        f'<div class="billing-plan-desc">{credits_label}{expires_str}</div>'
+        f'<div class="billing-plan-price">&pound;{price}{period}</div>'
+        f'{credits_bar}'
+        f'{upgrade_row}'
+        f'</div>'
     )
 
 
@@ -882,8 +2666,6 @@ async def my_dashboards(request: Request):
 async def billing_page(request: Request, dashboard: Optional[str] = None):
     sub = get_subdomain(request)
     if sub:
-        # Safely forward the validated dashboard key via urlencode to prevent
-        # query string injection from user input.
         if dashboard and dashboard in DASHBOARDS:
             forwarded_path = "/billing?" + urlencode({"dashboard": dashboard})
         else:
@@ -891,7 +2673,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         return await proxy_request(request, forwarded_path)
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
     if dashboard and dashboard not in DASHBOARDS:
         dashboard = None
@@ -899,6 +2681,10 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
     now = int(time.time())
+
+    pinfo = _user_plan_info(user, subs, now)
+    plan_card = _build_plan_card(pinfo)
+
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
@@ -913,16 +2699,35 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
             status_label = '<span style="color:var(--red)">Cancelled</span>'
         else:
             status_label = '<span style="color:var(--text-muted)">Not subscribed</span>'
-        monthly_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
-        )
-        annual_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual ${cfg["annual_cents"]/100:.2f}</button>'
-        )
-        cancel_btn = (
-            f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>'
-            if is_active and not is_admin_user else ""
-        )
+
+        # For Trader plan: show Add button only (credits can't be removed)
+        action_btns = ""
+        if is_admin_user:
+            action_btns = ""  # admins have full access already
+        elif pinfo["plan"] == "pro":
+            if is_active:
+                action_btns = '<span style="font-size:12px;color:var(--green)">Included in Pro</span>'
+            else:
+                action_btns = '<span style="font-size:12px;color:var(--green)">Included in Pro</span>'
+        elif pinfo["plan"] == "trader":
+            if is_active:
+                action_btns = '<span style="font-size:12px;color:var(--green)">Credit used</span>'
+            elif pinfo["active_count"] < PLAN_DEFS["trader"]["credits"]:
+                action_btns = (
+                    f'<form method="post" action="/billing">'
+                    f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Add</button>'
+                    f'</form>'
+                )
+            else:
+                action_btns = '<span style="font-size:12px;color:var(--text-muted)">No credits left</span>'
+        else:
+            # No plan — individual subscribe buttons
+            action_btns = (
+                f'<form method="post" action="/billing">'
+                f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Subscribe</button>'
+                f'</form>'
+            )
+
         highlight = ' style="outline: 2px solid var(--accent); outline-offset: 2px;"' if dashboard == key else ""
         rows_html.append(f"""
         <div class="billing-row" data-key="{key}"{highlight}>
@@ -934,22 +2739,30 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
             </div>
           </div>
           <div class="billing-row-status">{status_label}</div>
-          <div class="billing-row-actions">
-            <form method="post" action="/billing">
-              {monthly_btn}
-              {annual_btn}
-              {cancel_btn}
-            </form>
-          </div>
+          <div class="billing-row-actions">{action_btns}</div>
         </div>
         """)
 
+    # Dynamic access description
+    if is_admin_user:
+        access_desc = "Full access to all dashboards via admin privileges."
+    elif pinfo["plan"] == "pro":
+        access_desc = "All dashboards are included with your Pro subscription."
+    elif pinfo["plan"] == "trader":
+        remaining = max(0, PLAN_DEFS["trader"]["credits"] - pinfo["active_count"])
+        access_desc = f'You have <strong>{remaining}</strong> of <strong>{PLAN_DEFS["trader"]["credits"]}</strong> dashboard credits remaining. Use the Add button to choose which dashboards to unlock.'
+    else:
+        access_desc = "Subscribe to a plan above to unlock dashboards."
+
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
-        "billing",
+        "billing", request=request,
         email=user["email"], username=user.get("username", user["email"]),
+        raw_plan_card=plan_card,
+        raw_access_desc=access_desc,
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
+        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
     )
 
 
@@ -960,24 +2773,34 @@ async def billing_action(request: Request, action: str = Form(...)):
         return await proxy_request(request, "/billing")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
-    # Placeholder checkout: no real payment. Stripe hook lives here later.
     parts = action.split(":")
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    now = int(time.time())
+    pinfo = _user_plan_info(user, subs, now)
+
     if parts[0] == "sub" and len(parts) == 3:
         _, key, plan = parts
         if key in DASHBOARDS and plan in ("monthly", "annual"):
+            # For Trader: check credit limit before adding
+            if pinfo["plan"] == "trader":
+                if pinfo["active_count"] >= PLAN_DEFS["trader"]["credits"]:
+                    return RedirectResponse("/billing", status_code=302)
+            # Get duration from the plan sentinel if trader
             duration = 30 if plan == "monthly" else 365
+            plan_prefix = pinfo["plan"] or "standalone"
             db.upsert_subscription(
                 user_id=user["user_id"],
                 dashboard_key=key,
-                plan=plan,
+                plan=f"{plan_prefix}_{plan}",
                 duration_days=duration,
-                source="placeholder",
+                source=f"billing_{plan_prefix}",
             )
+    # Cancel only allowed for non-trader plans (trader credits are permanent)
     elif parts[0] == "cancel" and len(parts) == 2:
         _, key = parts
-        if key in DASHBOARDS:
+        if key in DASHBOARDS and pinfo["plan"] != "trader":
             db.cancel_subscription(user["user_id"], key)
 
     return RedirectResponse("/billing", status_code=302)
@@ -985,23 +2808,62 @@ async def billing_action(request: Request, action: str = Form(...)):
 
 @app.post("/billing/subscribe")
 async def billing_subscribe(request: Request, plan: str = Form(""), interval: str = Form("monthly")):
-    """Subscribe the logged-in user directly — no token or email needed."""
+    """Subscribe the logged-in user — Trader gets 3 credits, Pro gets all."""
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
     if plan not in ("trader", "pro"):
         return RedirectResponse("/billing", status_code=302)
-    # Subscribe to ALL dashboards
     duration = 30 if interval == "monthly" else 365
-    for key in DASHBOARDS:
-        db.upsert_subscription(
-            user_id=user["user_id"],
-            dashboard_key=key,
-            plan=f"{plan}_{interval}",
-            duration_days=duration,
-            source=f"billing_{plan}",
-        )
-    log.info("User %s subscribed to %s (%s) — all dashboards unlocked", user.get("username", user["email"]), plan, interval)
+    if plan == "pro":
+        # Pro unlocks everything — clear old trader sentinel + old subs
+        with db.conn() as c:
+            c.execute("DELETE FROM subscriptions WHERE user_id = ? AND dashboard_key = '__plan__'", (user["user_id"],))
+        # Subscribe to ALL dashboards as pro
+        for key in DASHBOARDS:
+            db.upsert_subscription(
+                user_id=user["user_id"],
+                dashboard_key=key,
+                plan=f"pro_{interval}",
+                duration_days=duration,
+                source="billing_pro",
+            )
+    else:
+        # Trader plan — check if downgrading from Pro
+        subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+        now = int(time.time())
+        current_pinfo = _user_plan_info(user, subs, now)
+
+        if current_pinfo["plan"] == "pro" and current_pinfo["expires_at"]:
+            # Downgrade: keep Pro access until current period ends, then switch
+            # Mark all Pro subs with a "downgrading" flag in plan name
+            with db.conn() as c:
+                c.execute(
+                    "UPDATE subscriptions SET plan = 'pro_downgrading' "
+                    "WHERE user_id = ? AND dashboard_key != '__plan__' AND status = 'active'",
+                    (user["user_id"],),
+                )
+            # Create Trader sentinel starting when Pro expires
+            pro_end = current_pinfo["expires_at"]
+            trader_duration = 30 if interval == "monthly" else 365
+            with db.conn() as c:
+                c.execute(
+                    "INSERT OR REPLACE INTO subscriptions "
+                    "(user_id, dashboard_key, plan, status, started_at, expires_at, source) "
+                    "VALUES (?, '__plan__', ?, 'active', ?, ?, 'downgrade')",
+                    (user["user_id"], f"trader_{interval}", pro_end, pro_end + trader_duration * 86400),
+                )
+            log.info("User %s scheduled downgrade from Pro to Trader at %d", user.get("username", user["email"]), pro_end)
+        else:
+            # Fresh Trader subscription
+            db.upsert_subscription(
+                user_id=user["user_id"],
+                dashboard_key="__plan__",
+                plan=f"trader_{interval}",
+                duration_days=duration,
+                source="billing_trader",
+            )
+    log.info("User %s subscribed to %s (%s)", user.get("username", user["email"]), plan, interval)
     return RedirectResponse("/billing", status_code=302)
 
 
@@ -1016,7 +2878,7 @@ async def preview_page(request: Request, dashboard_key: str):
 
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
     if dashboard_key not in DASHBOARDS:
         return RedirectResponse("/dashboards", status_code=302)
@@ -1065,7 +2927,7 @@ async def preview_page(request: Request, dashboard_key: str):
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
 
     return render_page(
-        "preview",
+        "preview", request=request,
         dashboard_name=cfg["display_name"],
         dashboard_key=dashboard_key,
         tagline=preview.get("tagline", cfg["description"]),
@@ -1077,6 +2939,7 @@ async def preview_page(request: Request, dashboard_key: str):
         raw_features_html="".join(features_html_parts),
         raw_includes_html="".join(includes_html_parts),
         raw_admin_link=admin_link,
+        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
     )
 
 
@@ -1100,8 +2963,10 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         "avatar_letter": avatar,
         "joined": joined,
         "raw_role_badge": role_badge,
+        "raw_nav_role": _role_badge(user),
         "raw_admin_link": admin_link,
         "raw_banner": banner,
+        "_is_admin": user.get("is_admin"),
     }
 
 
@@ -1112,8 +2977,8 @@ async def profile_page(request: Request):
         return await proxy_request(request, "/profile")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
-    return render_page("profile", **_profile_context(user))
+        return RedirectResponse("/token", status_code=302)
+    return render_page("profile", request=request, **_profile_context(user))
 
 
 @app.post("/profile/password")
@@ -1123,30 +2988,37 @@ async def profile_change_password(request: Request, current_password: str = Form
         return await proxy_request(request, "/profile/password")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
     db_user = db.get_user_by_id(user["user_id"])
     if not db_user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
     err_banner = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
     ok_banner = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
 
+    if (
+        len(current_password) > FIELD_MAX["password"]
+        or len(new_password) > FIELD_MAX["password"]
+        or len(confirm_password) > FIELD_MAX["password"]
+    ):
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Password is too long.")))
+
     if not db.verify_password(current_password, db_user["password_hash"], db_user["password_salt"]):
-        return render_page("profile", **_profile_context(user, err_banner("Current password is incorrect.")))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Current password is incorrect.")))
     if new_password != confirm_password:
-        return render_page("profile", **_profile_context(user, err_banner("New passwords don't match.")))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("New passwords don't match.")))
     if len(new_password) < 12:
-        return render_page("profile", **_profile_context(user, err_banner("Password must be at least 12 characters.")))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must be at least 12 characters.")))
     if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
-        return render_page("profile", **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character.")))
+        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character.")))
 
     pwd_hash, salt = db._hash_password(new_password)
     with db.conn() as c:
         c.execute("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", (pwd_hash, salt, user["user_id"]))
 
     log.info("User %s changed their password", user.get("username", user["email"]))
-    return render_page("profile", **_profile_context(user, ok_banner("Password changed successfully.")))
+    return render_page("profile", request=request, **_profile_context(user, ok_banner("Password changed successfully.")))
 
 
 # ── Password reset ─────────────────────────────────────────────────────────
@@ -1169,80 +3041,61 @@ def _validate_password(password: str) -> Optional[str]:
     return None
 
 
-@app.get("/forgot-password", response_class=HTMLResponse)
-async def forgot_password_page(request: Request):
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/forgot-password")
-    return render_page("forgot-password", error="", raw_success="")
+def _reset_token_hash(raw: str) -> str:
+    """SHA-256 hash the reset token for at-rest storage (Feature 2).
+
+    Matches server_features._hash_reset_token so either code path can
+    validate tokens produced by the other.
+    """
+    import hashlib as _h
+    return _h.sha256(raw.encode()).hexdigest()
 
 
-@app.post("/forgot-password")
-async def forgot_password_submit(request: Request, email: str = Form("")):
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/forgot-password")
+# Per-deployment salt so the same raw IP hashes to a different value
+# across deploys — protects against rainbow-table attacks if the analytics
+# DB is exfiltrated. Falls back to a fixed value in tests so the helper is
+# deterministic without environment setup.
+_IP_HASH_SALT = os.environ.get("IP_HASH_SALT", "narve.ai/analytics/v1")
 
-    ip = _get_client_ip(request)
-    if _is_rate_limited(ip, "forgot", _RATE_MAX_FORGOT):
-        return RATE_LIMITED_RESPONSE
 
-    email = email.lower().strip()
+def _hash_ip(raw_ip: str) -> str:
+    """Return a SHA-256 hex digest of the salted client IP.
 
-    # Always show success — don't reveal whether the email exists.
-    success_msg = (
-        '<div class="auth-success">If an account with that email exists, '
-        'we\'ve sent a password reset link. Check your inbox.</div>'
-    )
+    Used as the `ip_hash` column on analytics_events so we can count unique
+    visitors without ever persisting the raw IP. The salt is a constant per
+    deployment, so the same visitor reliably hashes to the same value within
+    a deployment but cannot be correlated across deployments — and the
+    output is never reversible to the original IP.
+    """
+    if not raw_ip:
+        return ""
+    import hashlib as _h
+    return _h.sha256(f"{_IP_HASH_SALT}:{raw_ip}".encode()).hexdigest()
 
-    if not email or not is_valid_email(email):
-        return render_page("forgot-password", error="Please enter a valid email address.", raw_success="")
 
-    user = db.get_user_by_email(email)
-    if user:
-        reset_token = db.create_password_reset(user["id"])
-        # Determine the reset link based on the current request host.
-        host = request.headers.get("host", DOMAIN)
-        scheme = "https" if IS_PRODUCTION else request.url.scheme
-        reset_link = f"{scheme}://{host}/reset-password?token={reset_token}"
-        log.info("Password reset requested for %s", email)
+def _lookup_reset(token: str):
+    """Find a non-used, non-expired reset row by raw token.
 
-        # Send email if SMTP is configured
-        smtp_user = os.environ.get("SMTP_USER", "")
-        smtp_pass = os.environ.get("SMTP_PASS", "")
-        if smtp_user and smtp_pass:
-            try:
-                import smtplib
-                from email.mime.text import MIMEText
-
-                smtp_host = os.environ.get("SMTP_HOST", "localhost")
-                smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-
-                body_text = (
-                    f"Hi,\n\n"
-                    f"A password reset was requested for your Habbig account.\n\n"
-                    f"Click the link below to set a new password:\n"
-                    f"{reset_link}\n\n"
-                    f"This link expires in 1 hour.\n\n"
-                    f"If you did not request this, you can safely ignore this email.\n"
-                )
-                msg = MIMEText(body_text)
-                msg["Subject"] = "Password Reset \u2014 Habbig"
-                msg["From"] = smtp_user
-                msg["To"] = email
-
-                with smtplib.SMTP(smtp_host, smtp_port) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                    server.sendmail(smtp_user, [email], msg.as_string())
-                log.info("Password reset email sent to %s", email)
-            except Exception as exc:
-                log.error("Failed to send password reset email: %s", exc)
-        else:
-            # No SMTP configured — log the link so the admin can relay it.
-            log.info("SMTP not configured. Reset link for %s: %s", email, reset_link)
-
-    return render_page("forgot-password", error="", raw_success=success_msg)
+    Checks `token_hash` first (Feature 2 hardening) and falls back to the
+    legacy plaintext `token` column so old outstanding links still work
+    during the rollover window.
+    """
+    if not token:
+        return None
+    th = _reset_token_hash(token)
+    now = int(time.time())
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT * FROM password_resets WHERE token_hash = ? AND used = 0 "
+            "AND (invalidated IS NULL OR invalidated = 0) AND expires_at > ?",
+            (th, now),
+        ).fetchone()
+        if row:
+            return row
+        return c.execute(
+            "SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > ?",
+            (token, now),
+        ).fetchone()
 
 
 @app.get("/reset-password", response_class=HTMLResponse)
@@ -1251,15 +3104,15 @@ async def reset_password_page(request: Request, token: str = ""):
     if sub:
         return await proxy_request(request, "/reset-password")
 
-    token = token.strip()
-    reset = db.get_password_reset(token) if token else None
+    token = _bounded(token, FIELD_MAX["reset_token"], "token")
+    reset = _lookup_reset(token)
     if not reset:
         return render_page(
-            "forgot-password",
+            "forgot-password", request=request,
             error="This reset link is invalid or has expired. Please request a new one.",
             raw_success="",
         )
-    return render_page("reset-password", token=token, error="", raw_success="")
+    return render_page("reset-password", request=request, token=token, error="", raw_success="")
 
 
 @app.post("/reset-password")
@@ -1273,37 +3126,64 @@ async def reset_password_submit(
     if sub:
         return await proxy_request(request, "/reset-password")
 
-    token = token.strip()
-    reset = db.get_password_reset(token) if token else None
+    if _auth_rate_limited(_get_client_ip(request)):
+        return RATE_LIMITED_RESPONSE
+    token = _bounded(token, FIELD_MAX["reset_token"], "token")
+    if len(new_password) > FIELD_MAX["password"] or len(confirm_password) > FIELD_MAX["password"]:
+        return render_page("reset-password", request=request, token=token, error="Password is too long.", raw_success="")
+    reset = _lookup_reset(token)
     if not reset:
         return render_page(
-            "forgot-password",
+            "forgot-password", request=request,
             error="This reset link is invalid or has expired. Please request a new one.",
             raw_success="",
         )
 
     if new_password != confirm_password:
-        return render_page("reset-password", token=token, error="Passwords don't match.", raw_success="")
+        return render_page("reset-password", request=request, token=token, error="Passwords don't match.", raw_success="")
 
     pwd_err = _validate_password(new_password)
     if pwd_err:
-        return render_page("reset-password", token=token, error=pwd_err, raw_success="")
+        return render_page("reset-password", request=request, token=token, error=pwd_err, raw_success="")
 
-    # Update the user's password.
+    # Atomically claim the reset row by id. Race-safe under concurrent clicks.
+    now = int(time.time())
+    with db.conn() as c:
+        cur = c.execute(
+            "UPDATE password_resets SET used = 1, used_from_ip = ? WHERE id = ? AND used = 0",
+            (_get_client_ip(request), reset["id"]),
+        )
+        if cur.rowcount == 0:
+            return render_page(
+                "forgot-password", request=request,
+                error="This reset link has already been used.",
+                raw_success="",
+            )
+
     pwd_hash, salt = db._hash_password(new_password)
     with db.conn() as c:
+        # Also bump jwt_invalidated_before so any already-issued session cookie
+        # from before the reset is rejected by the middleware (Feature 2).
         c.execute(
-            "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
-            (pwd_hash, salt, reset["user_id"]),
+            "UPDATE users SET password_hash = ?, password_salt = ?, jwt_invalidated_before = ? WHERE id = ?",
+            (pwd_hash, salt, now, reset["user_id"]),
         )
-    db.use_password_reset(token)
+
+    # Revoke all existing sessions for this user — email reset is the
+    # recovery flow for compromised credentials, so any active cookie
+    # elsewhere must be killed. User lands on /login and signs in fresh.
+    try:
+        with db.conn() as c:
+            c.execute("DELETE FROM sessions WHERE user_id = ?", (reset["user_id"],))
+    except Exception as exc:
+        log.error("Failed to revoke sessions after reset for user_id=%d: %s", reset["user_id"], exc)
 
     user = db.get_user_by_id(reset["user_id"])
     log.info("Password reset completed for user %s", user["email"] if user else reset["user_id"])
 
     # Redirect to login with a success indicator.
     return render_page(
-        "login",
+        "login", request=request,
         error="",
         raw_token_section="",
         raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
@@ -1319,7 +3199,7 @@ async def enquire_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/enquire")
-    return render_page("enquire")
+    return render_page("enquire", request=request)
 
 
 @app.post("/api/enquire")
@@ -1327,6 +3207,9 @@ async def api_enquire(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/api/enquire")
+    ip = _get_client_ip(request)
+    if _is_rate_limited(f"{ip}:enquire", _RATE_MAX_ENQUIRE):
+        return JSONResponse({"error": "Too many requests"}, status_code=429)
     try:
         body = await request.json()
     except Exception:
@@ -1336,6 +3219,8 @@ async def api_enquire(request: Request):
     job_title = (body.get("job_title") or "").strip()
     message = (body.get("message") or "").strip()
 
+    if len(email) > FIELD_MAX["email"] or len(job_title) > FIELD_MAX["enquiry_name"] or len(message) > FIELD_MAX["enquiry_message"]:
+        return JSONResponse({"error": "One or more fields exceed maximum length"}, status_code=400)
     if not email or not EMAIL_RE.match(email):
         return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
     if not job_title:
@@ -1348,49 +3233,362 @@ async def api_enquire(request: Request):
     db.create_enquiry(email, job_title, message)
     log.info("New enquiry from %s (%s)", email, job_title)
 
-    # Optional: send email notification if ENQUIRY_EMAIL is set
+    # Notification email — enqueued via the job queue (Feature 10) so the
+    # request returns immediately and failures retry automatically.
     enquiry_email = os.environ.get("ENQUIRY_EMAIL")
     if enquiry_email:
         try:
-            import smtplib
-            from email.mime.text import MIMEText
-            smtp_host = os.environ.get("SMTP_HOST", "localhost")
-            smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-            smtp_user = os.environ.get("SMTP_USER", "")
-            smtp_pass = os.environ.get("SMTP_PASS", "")
-
-            body_text = (
-                f"New enquiry from the Habbig landing page.\n\n"
-                f"Email: {email}\n"
-                f"Role: {job_title}\n\n"
-                f"Message:\n{message}\n"
+            from jobs.email_jobs import enqueue_email
+            await enqueue_email(
+                to=enquiry_email,
+                template="enquiry_notification",
+                context={
+                    "enquiry_email": email,
+                    "job_title": job_title,
+                    "message": message,
+                    "app_url": os.environ.get("APP_URL", "https://narve.ai"),
+                },
+                tags=["enquiry", "transactional"],
             )
-            msg = MIMEText(body_text)
-            msg["Subject"] = "New Enquiry \u2014 Habbig"
-            msg["From"] = smtp_user or enquiry_email
-            msg["To"] = enquiry_email
-
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                if smtp_user and smtp_pass:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                server.sendmail(msg["From"], [enquiry_email], msg.as_string())
-            log.info("Enquiry notification email sent to %s", enquiry_email)
+            log.info("Enquiry notification enqueued for %s", enquiry_email)
         except Exception as exc:
-            log.error("Failed to send enquiry email: %s", exc)
+            log.error("Failed to enqueue enquiry email: %s", exc)
 
     return JSONResponse({"success": True})
+
+
+# ── Pricing / Subscribe / Support / Suspended ────────────────────────────────
+
+
+@app.get("/pricing", response_class=HTMLResponse)
+async def pricing_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/pricing")
+    return render_page("pricing", request=request)
+
+
+@app.get("/subscribe", response_class=HTMLResponse)
+async def subscribe_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/subscribe")
+    return render_page("subscribe", request=request)
+
+
+@app.post("/api/subscribe")
+async def api_subscribe(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/subscribe")
+    ip = _get_client_ip(request)
+    if _is_rate_limited(f"{ip}:subscribe", _RATE_MAX_SUBSCRIBE):
+        return JSONResponse({"error": "Too many requests"}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    email = (body.get("email") or "").strip().lower()
+    plan = (body.get("plan") or "").strip()
+    interval = (body.get("interval") or "monthly").strip()
+
+    if len(email) > FIELD_MAX["email"] or len(plan) > 32 or len(interval) > 16:
+        return JSONResponse({"error": "Invalid request"}, status_code=400)
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
+    if plan not in ("trader", "pro"):
+        return JSONResponse({"error": "Invalid plan"}, status_code=400)
+    if interval not in ("monthly", "annual"):
+        return JSONResponse({"error": "Invalid interval"}, status_code=400)
+
+    # Generate an invite token for the new subscriber
+    token = db.create_invite_token(
+        note=f"Subscription: {plan} ({interval})",
+        target_email=email,
+    )
+    log.info("Subscription checkout: %s -> %s (%s), token generated", email, plan, interval)
+    return JSONResponse({"token": token})
+
+
+@app.get("/support", response_class=HTMLResponse)
+async def support_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/support")
+    return render_page("support", request=request)
+
+
+@app.post("/api/support-ticket")
+async def api_support_ticket(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/support-ticket")
+    ip = _get_client_ip(request)
+    if _is_rate_limited(f"{ip}:support", _RATE_MAX_SUPPORT):
+        return JSONResponse({"error": "Too many requests"}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    email = (body.get("email") or "").strip().lower()
+    message = (body.get("message") or "").strip()
+
+    if len(email) > FIELD_MAX["email"]:
+        return JSONResponse({"error": "Email too long"}, status_code=400)
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
+    if len(message) < 10:
+        return JSONResponse({"error": "Please write at least 10 characters"}, status_code=400)
+    if len(message) > 2000:
+        return JSONResponse({"error": "Message is too long (2000 characters max)"}, status_code=400)
+
+    db.create_enquiry(email, "Support Ticket", message)
+    log.info("Support ticket from %s", email)
+    return JSONResponse({"success": True})
+
+
+@app.get("/suspended", response_class=HTMLResponse)
+async def suspended_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/suspended")
+    return render_page("suspended", request=request)
+
+
+# ── Newsletter signup (pre-release waitlist) ─────────────────────────────
+# The /prerelease page's "Notify me" form posts here. We store the email,
+# assign a referral code, compute a waitlist position, and return the
+# result as JSON so the frontend can show the number + share link.
+#
+# Rate limiting is layered:
+#   - Per-IP:    5 signups per hour    (prevents a single origin spamming)
+#   - Per-email: 3 position-checks + 1 new signup per day (the unique index
+#                on the email column is the real "you can only sign up once"
+#                guard — the per-email rate limit just prevents enumerating
+#                positions by repeatedly POSTing different addresses)
+#   - Global:    100 signups per hour (soft cap to flag bursts in logs)
+
+_NEWSLETTER_RATE_MAX = 5              # per-IP new signups per hour
+_NEWSLETTER_RATE_WINDOW = 3600        # 1 hour window
+_NEWSLETTER_EMAIL_RATE_MAX = 5        # per-email attempts per day
+_NEWSLETTER_EMAIL_RATE_WINDOW = 86400 # 24 hour window
+_NEWSLETTER_GLOBAL_MAX = 100          # global signups per hour (alarm threshold)
+
+
+async def _read_newsletter_body(request: Request) -> dict:
+    """Accept either form-urlencoded OR JSON. The prerelease form posts
+    urlencoded (because it's a plain <form> submit rewritten as fetch with
+    URLSearchParams), but keep the JSON path so curl tests and API clients
+    still work."""
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/x-www-form-urlencoded" in ctype or "multipart/form-data" in ctype:
+        form = await request.form()
+        return {
+            "email": form.get("email", ""),
+            "ref": form.get("ref", ""),
+        }
+    # Fallback: treat the body as JSON. request.json() raises on non-JSON.
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except (_JSONDecodeError, ValueError, Exception):
+        return {}
+
+
+def _build_share_url(request: Request, referral_code: str) -> str:
+    """Build the absolute share URL the frontend displays.
+
+    We want the copied link to land on the same environment the visitor
+    came from. Priority:
+      1. If the request host is `staging.<apex>` (or any known non-apex
+         subdomain we serve the landing page from), keep the full host so
+         staging testers don't get bounced into production.
+      2. Otherwise, fall back to the matching apex from ALLOWED_DOMAINS.
+      3. Last resort, use the canonical DOMAIN.
+    """
+    host = _request_host(request)
+    apex = _request_apex(request)
+    if host and apex and host != apex:
+        # Preserve explicit subdomains (staging.narve.ai, etc.)
+        return f"https://{host}/?ref={referral_code}"
+    return f"https://{apex or DOMAIN}/?ref={referral_code}"
+
+
+@app.post("/api/newsletter")
+async def api_newsletter(request: Request):
+    body = await _read_newsletter_body(request)
+
+    email = str(body.get("email") or "").strip().lower()
+    ref = str(body.get("ref") or "").strip() or None
+
+    # Clean validation, never leak DB details.
+    if not email or len(email) > FIELD_MAX["email"] or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Please enter a valid email address."}, status_code=400)
+
+    ip = _get_client_ip(request)
+
+    # Per-IP rate limit (new signups from the same network).
+    if _is_rate_limited(f"{ip}:newsletter", _NEWSLETTER_RATE_MAX, _NEWSLETTER_RATE_WINDOW):
+        return JSONResponse(
+            {"error": "Too many signup attempts from your network. Try again in an hour."},
+            status_code=429,
+        )
+
+    # Per-email rate limit (prevents enumerating positions by POSTing
+    # different addresses repeatedly, and stops a bad actor from using
+    # someone else's email to burn their attempts).
+    if _is_rate_limited(
+        f"newsletter_email:{email}", _NEWSLETTER_EMAIL_RATE_MAX, _NEWSLETTER_EMAIL_RATE_WINDOW
+    ):
+        return JSONResponse(
+            {"error": "Too many attempts for this email. Try again tomorrow."},
+            status_code=429,
+        )
+
+    # Global soft cap — doesn't block, just warns loudly so we can react
+    # if someone's running a script against us at scale.
+    if _is_rate_limited("newsletter_global", _NEWSLETTER_GLOBAL_MAX, _NEWSLETTER_RATE_WINDOW):
+        log.warning(
+            "newsletter signup global cap hit (>%d/hr) — possible spam run ip=%s",
+            _NEWSLETTER_GLOBAL_MAX, ip,
+        )
+
+    try:
+        result = db.subscribe_newsletter(email, source="prerelease", referred_by=ref)
+    except Exception as exc:
+        log.exception("subscribe_newsletter failed for email=%s: %s", db.mask_email(email), exc)
+        return JSONResponse({"error": "Could not save your signup. Try again."}, status_code=500)
+
+    share_url = _build_share_url(request, result["referral_code"])
+    log.info(
+        "newsletter signup ip=%s email=%s position=%d is_new=%s ref=%s",
+        ip, db.mask_email(email), result["position"],
+        result["is_new"], result["referred_by"] or "-",
+    )
+    return JSONResponse({
+        "success": True,
+        "is_new": result["is_new"],
+        "position": result["position"],
+        "referral_code": result["referral_code"],
+        "share_url": share_url,
+    })
+
+
+@app.get("/api/newsletter/position")
+async def api_newsletter_position(request: Request, email: str = ""):
+    """Return the current waitlist position for an existing subscriber.
+
+    Used by the prerelease page when a visitor returns via their own
+    share link — we want to show them the current number, not assume
+    their browser still has the sessionStorage we set at signup.
+    """
+    email = (email or "").strip().lower()
+    if not email or len(email) > FIELD_MAX["email"] or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Invalid email"}, status_code=400)
+
+    # Same per-email bucket as the signup endpoint so position checks count
+    # against the email's daily cap too.
+    if _is_rate_limited(
+        f"newsletter_email:{email}", _NEWSLETTER_EMAIL_RATE_MAX, _NEWSLETTER_EMAIL_RATE_WINDOW
+    ):
+        return JSONResponse({"error": "Too many attempts. Try again tomorrow."}, status_code=429)
+
+    result = db.get_newsletter_position(email)
+    if not result:
+        # Don't reveal whether the email exists — return a generic 404 shape.
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    share_url = _build_share_url(request, result["referral_code"])
+    return JSONResponse({
+        "success": True,
+        "position": result["position"],
+        "referral_code": result["referral_code"],
+        "share_url": share_url,
+    })
 
 
 # ── Admin panel ──────────────────────────────────────────────────────────────
 
 
-def _require_admin_user(request: Request) -> dict:
-    """Return the current user dict if admin, otherwise raise 403."""
+def _two_fa_redirect(request: Request, user: dict) -> Optional[Response]:
+    """Return a RedirectResponse if the user needs to complete 2FA, else None.
+
+    Rules:
+      - Dev bypass (`_dev_bypass=True`) is always allowed — localhost only.
+      - If the user has no 2FA method configured, redirect to setup (grace
+        period for existing admins from before this feature shipped).
+      - If the user has 2FA configured but the current session's
+        `two_fa_verified` flag is 0, redirect to the verification page.
+    """
+    if user.get("_dev_bypass"):
+        return None
+    try:
+        status = db.get_user_2fa_status(user["user_id"])
+    except Exception:
+        status = None
+    if not status or not status["two_fa_method"]:
+        return RedirectResponse("/auth/2fa/setup", status_code=303)
+    token = request.cookies.get(COOKIE_NAME) or ""
+    if not db.session_two_fa_verified(token):
+        return RedirectResponse("/auth/2fa", status_code=303)
+    return None
+
+
+def _require_admin_user(request: Request, *, page: bool = False):
+    """Return the current user dict if admin.
+
+    If *page* is True, returns None (caller should render 403 page) or a
+    RedirectResponse (caller should return it directly) when 2FA is required.
+    If *page* is False, raises HTTPException(403) for POST/API routes or
+    303 for 2FA redirects.
+
+    For state-changing admin requests (POST/PUT/PATCH/DELETE), additionally
+    enforces a per-admin-email rate limit so a compromised admin credential
+    cannot be used to mass-mutate users/grants/tokens. Keying on the admin
+    email (not IP) defends against an attacker rotating IPs via VPN.
+    """
     user = current_user(request)
     if not user or not user.get("is_admin"):
+        if page:
+            return None
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    # 2FA enforcement: admin accounts must have a method configured AND the
+    # current session must be freshly verified. Dev bypass skips this so
+    # localhost development keeps working.
+    two_fa_redirect = _two_fa_redirect(request, user)
+    if two_fa_redirect is not None:
+        if page:
+            return two_fa_redirect  # caller must detect and return this
+        # For API / POST routes, raise a 303 that the browser will follow
+        raise HTTPException(
+            status_code=303,
+            detail="Two-factor verification required",
+            headers={"Location": two_fa_redirect.headers.get("location", "/auth/2fa")},
+        )
+
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        # 30 mutations per 5 minutes per admin. Generous for normal panel
+        # work; tight enough to bound damage from a stolen credential.
+        key = f"admin_mut:{user.get('email') or user.get('user_id')}"
+        if _is_rate_limited(key, 30, 300):
+            log.warning("Admin rate limit tripped for %s on %s", user.get("email"), request.url.path)
+            raise HTTPException(status_code=429, detail="Too many admin actions. Slow down.")
     return user
+
+
+def _denied_response(request: Request) -> Response:
+    """Return the 403 page for non-admin users, or redirect to gate."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    resp = render_page("403", request=request)
+    resp.status_code = 403
+    return resp
 
 
 def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict:
@@ -1518,6 +3716,27 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
             )
 
+            # Trading add-on toggle (admin+)
+            trading_status = db.get_trading_addon_status(u["id"])
+            if trading_status["active"]:
+                detail_extra += (
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-top:8px">'
+                    f'<span style="font-size:12px;color:var(--green);font-weight:600">Trading Add-on: Active</span>'
+                    f'<form method="post" action="/admin/users/{u["id"]}/trading-addon" onclick="event.stopPropagation()">'
+                    f'<input type="hidden" name="active" value="0">'
+                    f'<button class="btn btn-danger" style="font-size:11px">Deactivate</button></form>'
+                    f'</div>'
+                )
+            else:
+                detail_extra += (
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-top:8px">'
+                    f'<span style="font-size:12px;color:var(--text-muted)">Trading Add-on: Inactive</span>'
+                    f'<form method="post" action="/admin/users/{u["id"]}/trading-addon" onclick="event.stopPropagation()">'
+                    f'<input type="hidden" name="active" value="1">'
+                    f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Activate</button></form>'
+                    f'</div>'
+                )
+
             # Grant subscription (super admin only)
             if is_super:
                 detail_extra += (
@@ -1526,6 +3745,15 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                     f'<select name="dashboard_key" {sel_style}>{dash_opts}</select>'
                     f'<select name="plan" {sel_style}><option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
                     f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button></form>'
+                )
+
+            # Delete user (super admin only)
+            if is_super:
+                detail_extra += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/delete" onclick="event.stopPropagation()" '
+                    f'onsubmit="return confirm(\'Permanently delete {uname}? This removes their account, sessions, and subscriptions. This cannot be undone.\')" '
+                    f'style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'
+                    f'<button class="btn btn-danger" style="font-size:11px">Delete User Permanently</button></form>'
                 )
         else:
             actions = '<span style="font-size:12px;color:var(--text-muted)">Insufficient permissions</span>'
@@ -1573,13 +3801,22 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
             f'</div></div>'
         )
 
+    # Revenue tab only for super admins (level >= 2)
+    if caller_level >= 2:
+        revenue_tab = '<button class="admin-tab" onclick="switchTab(\'revenue\')">Revenue</button>'
+        revenue_content = _build_revenue_content()
+    else:
+        revenue_tab = ""
+        revenue_content = '<div style="text-align:center;padding:48px 0;color:var(--text-muted)">Super admin access required.</div>'
+
     return {
         "raw_token_rows": "".join(token_rows) or '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No tokens yet.</div></div></div>',
         "raw_user_rows": "".join(user_rows),
         "raw_stat_cards": stat_cards,
         "raw_new_token_banner": new_token_banner,
         "raw_enquiry_rows": _build_enquiry_rows(),
-        "raw_revenue_content": _build_revenue_content(),
+        "raw_revenue_tab": revenue_tab,
+        "raw_revenue_content": revenue_content,
     }
 
 
@@ -1740,18 +3977,34 @@ def _build_revenue_content() -> str:
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
-    user = _require_admin_user(request)
+    user = _require_admin_user(request, page=True)
+    if user is None:
+        return _denied_response(request)
+    if isinstance(user, Response):
+        return user  # 2FA setup or verification redirect
     ctx = _build_admin_context(caller_level=user.get("admin_level", 1))
-    return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
+    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"), **ctx)
 
 
 @app.post("/admin/tokens/generate")
 async def admin_generate_token(request: Request, note: str = Form(""), target_email: str = Form("")):
     user = _require_admin_user(request)
     new_token = db.create_invite_token(note.strip(), target_email=target_email.strip())
-    log.info("Admin %s generated invite token: %s (target: %s)", user["email"], new_token, target_email.strip() or "none")
+    log.info("Admin %s generated invite token: %s... (target: %s)", user["email"], new_token[:8], target_email.strip() or "none")
+    try:
+        from security import audit as _audit
+        _audit.log_action(
+            admin_user_id=user["user_id"], admin_email=user["email"],
+            action=_audit.AuditAction.TOKEN_GENERATE,
+            target_type="token", target_id=new_token[:8],
+            target_description=(target_email.strip() or note.strip() or None),
+            after={"note": note.strip(), "target_email": target_email.strip()},
+            request=request,
+        )
+    except Exception:
+        pass
     ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1))
-    return render_page("admin", email=user["email"], username=user.get("username", user["email"]), **ctx)
+    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"), **ctx)
 
 
 @app.post("/admin/tokens/revoke")
@@ -1759,6 +4012,16 @@ async def admin_revoke_token(request: Request, token_id: int = Form(0)):
     user = _require_admin_user(request)
     db.revoke_invite_token(token_id)
     log.info("Admin %s revoked token id=%d", user["email"], token_id)
+    try:
+        from security import audit as _audit
+        _audit.log_action(
+            admin_user_id=user["user_id"], admin_email=user["email"],
+            action=_audit.AuditAction.TOKEN_REVOKE,
+            target_type="token", target_id=token_id,
+            request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1767,7 +4030,20 @@ async def admin_promote(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    from security import audit as _audit
+    before = _audit.snapshot_user(user_id)
     db.set_user_admin(user_id, True)
+    after = _audit.snapshot_user(user_id)
+    try:
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_PROMOTE_ADMIN,
+            target_type="user", target_id=user_id,
+            target_description=(before or {}).get("email") if before else None,
+            before=before, after=after, request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1776,7 +4052,20 @@ async def admin_demote(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    from security import audit as _audit
+    before = _audit.snapshot_user(user_id)
     db.set_user_admin(user_id, False)
+    after = _audit.snapshot_user(user_id)
+    try:
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_DEMOTE_ADMIN,
+            target_type="user", target_id=user_id,
+            target_description=(before or {}).get("email") if before else None,
+            before=before, after=after, request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1785,8 +4074,21 @@ async def admin_suspend(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    from security import audit as _audit
+    before = _audit.snapshot_user(user_id)
     db.set_user_suspended(user_id, True)
+    after = _audit.snapshot_user(user_id)
     log.info("Admin %s suspended user id=%d", admin.get("email"), user_id)
+    try:
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_SUSPEND,
+            target_type="user", target_id=user_id,
+            target_description=(before or {}).get("email") if before else None,
+            before=before, after=after, request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1795,8 +4097,21 @@ async def admin_unsuspend(request: Request, user_id: int):
     admin = _require_admin_user(request)
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    from security import audit as _audit
+    before = _audit.snapshot_user(user_id)
     db.set_user_suspended(user_id, False)
+    after = _audit.snapshot_user(user_id)
     log.info("Admin %s unsuspended user id=%d", admin.get("email"), user_id)
+    try:
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_UNSUSPEND,
+            target_type="user", target_id=user_id,
+            target_description=(before or {}).get("email") if before else None,
+            before=before, after=after, request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1819,9 +4134,142 @@ async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
         target_email=email,
     )
     db.mark_enquiry_read(enquiry_id)
-    log.info("Admin %s created token %s for enquiry %d (%s)", admin["email"], new_token, enquiry_id, email)
+    log.info("Admin %s created token %s... for enquiry %d (%s)", admin["email"], new_token[:8], enquiry_id, email)
     ctx = _build_admin_context(new_token_str=new_token, caller_level=admin.get("admin_level", 1))
-    return render_page("admin", email=admin["email"], username=admin.get("username", admin["email"]), **ctx)
+    return render_page("admin", request=request, email=admin["email"], username=admin.get("username", admin["email"]), raw_nav_role=_role_badge(admin), _is_admin=admin.get("is_admin"), **ctx)
+
+
+# ── Admin: Logs section ───────────────────────────────────────────────────
+#
+# Three endpoints back the admin "Logs" tab. All read from the in-memory ring
+# buffer populated by logging_config.configure_logging() so queries are cheap
+# and do not hit disk.
+
+
+def _parse_log_query(request: Request) -> dict:
+    """Extract common log-filter params from query string."""
+    try:
+        limit = int(request.query_params.get("limit", "50") or 50)
+    except ValueError:
+        limit = 50
+    return {
+        "level": (request.query_params.get("level") or "").upper() or None,
+        "service": request.query_params.get("service") or None,
+        "q": request.query_params.get("q") or None,
+        "limit": max(1, min(limit, 500)),
+    }
+
+
+@app.get("/admin/logs/live")
+async def admin_logs_live(request: Request):
+    """Return the most recent structured log records from the ring buffer.
+
+    Query params:
+      level   INFO|WARNING|ERROR — minimum level (default: all)
+      service app|scraper|worker|all — filter by service name
+      q       substring search inside the JSON payload
+      limit   1-500 (default 50)
+    """
+    admin = _require_admin_user(request)
+    if _is_rate_limited(f"admin_logs_live:{admin['email']}", 120, 60):
+        return JSONResponse(
+            {"error": "Log tail polled too frequently."},
+            status_code=429,
+            headers={"Retry-After": "60"},
+        )
+    params = _parse_log_query(request)
+    records = _log_ring_buffer.snapshot(
+        level=params["level"],
+        service=params["service"],
+        contains=params["q"],
+        limit=params["limit"],
+    )
+    return JSONResponse({
+        "records": records,
+        "count": len(records),
+        "capacity": _log_ring_buffer.capacity,
+        "logtail_configured": is_logtail_configured(),
+        "service": _LOG_SERVICE_NAME,
+    })
+
+
+@app.get("/admin/logs/errors")
+async def admin_logs_errors(request: Request):
+    """Return ERROR-level records grouped by (logger, message)."""
+    admin = _require_admin_user(request)
+    if _is_rate_limited(f"admin_logs_errors:{admin['email']}", 60, 60):
+        return JSONResponse(
+            {"error": "Error log polled too frequently."},
+            status_code=429,
+            headers={"Retry-After": "60"},
+        )
+    records = _log_ring_buffer.snapshot(level="ERROR", limit=500)
+
+    grouped: dict = {}
+    for rec in records:
+        logger_name = rec.get("logger", "unknown")
+        msg = (rec.get("message") or "")[:200]
+        key = (logger_name, msg)
+        if key not in grouped:
+            grouped[key] = {
+                "logger": logger_name,
+                "message": msg,
+                "service": rec.get("service"),
+                "count": 0,
+                "first_seen": rec.get("timestamp"),
+                "last_seen": rec.get("timestamp"),
+                "sample": rec,
+            }
+        g = grouped[key]
+        g["count"] += 1
+        ts = rec.get("timestamp")
+        if ts:
+            if not g["first_seen"] or ts < g["first_seen"]:
+                g["first_seen"] = ts
+            if not g["last_seen"] or ts > g["last_seen"]:
+                g["last_seen"] = ts
+
+    groups = sorted(grouped.values(),
+                    key=lambda g: g["last_seen"] or "",
+                    reverse=True)
+    return JSONResponse({
+        "groups": groups,
+        "total_errors": sum(g["count"] for g in groups),
+        "distinct_errors": len(groups),
+    })
+
+
+@app.get("/admin/logs/search")
+async def admin_logs_search(request: Request):
+    """Free-text substring search over the ring buffer.
+
+    For richer queries (regex, multi-day retention) use BetterStack directly.
+    """
+    admin = _require_admin_user(request)
+    if _is_rate_limited(f"admin_logs_search:{admin['email']}", 30, 60):
+        return JSONResponse(
+            {"error": "Log search rate limit reached."},
+            status_code=429,
+            headers={"Retry-After": "60"},
+        )
+    params = _parse_log_query(request)
+    try:
+        limit = int(request.query_params.get("limit", "100") or 100)
+    except ValueError:
+        limit = 100
+    limit = max(1, min(limit, 500))
+    records = _log_ring_buffer.snapshot(
+        level=params["level"],
+        service=params["service"],
+        contains=params["q"],
+        limit=limit,
+    )
+    return JSONResponse({
+        "records": records,
+        "count": len(records),
+        "query": params["q"] or "",
+        "logtail_configured": is_logtail_configured(),
+    })
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:
@@ -1850,8 +4298,22 @@ async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
     admin = _require_super_admin(request)
     if level < 0 or level > 2:
         raise HTTPException(status_code=400, detail="Invalid role level")
+    from security import audit as _audit
+    before = _audit.snapshot_user(user_id)
     db.set_user_role(user_id, level)
+    after = _audit.snapshot_user(user_id)
     log.info("Super admin %s set user %d role to %d", admin["email"], user_id, level)
+    try:
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_ROLE_CHANGE,
+            target_type="user", target_id=user_id,
+            target_description=(before or {}).get("email"),
+            before=before, after=after, request=request,
+            notes=f"level={level}",
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1866,9 +4328,22 @@ async def admin_change_email(request: Request, user_id: int, new_email: str = Fo
     existing = db.get_user_by_email(new_email)
     if existing and existing["id"] != user_id:
         raise HTTPException(status_code=400, detail="Email already in use")
+    from security import audit as _audit
+    before = _audit.snapshot_user(user_id)
     with db.conn() as c:
         c.execute("UPDATE users SET email = ? WHERE id = ?", (new_email, user_id))
+    after = _audit.snapshot_user(user_id)
     log.info("Super admin %s changed email for user %d to %s", admin["email"], user_id, new_email)
+    try:
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_EMAIL_CHANGE,
+            target_type="user", target_id=user_id,
+            target_description=new_email,
+            before=before, after=after, request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1881,6 +4356,17 @@ async def admin_revoke_user_token(request: Request, user_id: int):
     if user and user["invite_token_id"]:
         db.revoke_invite_token(user["invite_token_id"])
     log.info("Super admin %s revoked token for user %d", admin["email"], user_id)
+    try:
+        from security import audit as _audit
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.TOKEN_REVOKE,
+            target_type="user", target_id=user_id,
+            target_description=user["email"] if user else None,
+            request=request, notes="revoke_from_user",
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1896,7 +4382,18 @@ async def admin_new_token_for_user(request: Request, user_id: int):
     db.claim_invite_token(new_token, user_id, user["email"])
     with db.conn() as c:
         c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?", (new_token, user_id))
-    log.info("Super admin %s generated new token %s for user %d", admin["email"], new_token, user_id)
+    log.info("Super admin %s generated new token %s... for user %d", admin["email"], new_token[:8], user_id)
+    try:
+        from security import audit as _audit
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.TOKEN_GENERATE,
+            target_type="user", target_id=user_id,
+            target_description=user["email"],
+            request=request, notes="replacement_token",
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -1914,15 +4411,95 @@ async def admin_grant_subscription(request: Request, user_id: int, dashboard_key
         source="admin_grant",
     )
     log.info("Super admin %s granted %s (%s) to user id=%d", admin["email"], dashboard_key, plan, user_id)
+    try:
+        from security import audit as _audit
+        target_user = db.get_user_by_id(user_id)
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_GIFT_SUBSCRIPTION,
+            target_type="user", target_id=user_id,
+            target_description=target_user["email"] if target_user else None,
+            after={"dashboard_key": dashboard_key, "plan": plan, "duration_days": duration},
+            request=request,
+        )
+    except Exception:
+        pass
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/trading-addon")
+async def admin_toggle_trading_addon(request: Request, user_id: int, active: int = Form(0)):
+    admin = _require_admin_user(request)
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    # Default to 30 days from now when activating
+    period_end = int(time.time()) + 30 * 86400 if active else None
+    db.set_trading_addon(user_id, bool(active), period_end)
+    log.info("Admin %s set trading_addon=%s for user id=%d", admin["email"], bool(active), user_id)
+    try:
+        from security import audit as _audit
+        target_user = db.get_user_by_id(user_id)
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_TRADING_ADDON,
+            target_type="user", target_id=user_id,
+            target_description=target_user["email"] if target_user else None,
+            after={"active": bool(active), "period_end": period_end},
+            request=request,
+        )
+    except Exception:
+        pass
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/delete")
+async def admin_delete_user(request: Request, user_id: int):
+    admin = _require_super_admin(request)
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Cannot delete another super admin
+    target_level = user["is_admin"] or 0
+    if target_level >= 2:
+        raise HTTPException(status_code=403, detail="Cannot delete a super admin")
+    from security import audit as _audit
+    before = _audit.snapshot_user(user_id)
+    with db.conn() as c:
+        c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    log.info("Super admin %s deleted user id=%d (%s)", admin["email"], user_id, user["email"])
+    try:
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_DELETE_COMPLETED,
+            target_type="user", target_id=user_id,
+            target_description=user["email"],
+            before=before, after=None, request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
 
 
 @app.post("/admin/users/bulk")
 async def admin_bulk_users(request: Request):
     admin = _require_admin_user(request)
+    # Rate limit admin bulk operations: 10 per admin per 5 minutes
+    if _is_rate_limited(f"admin_bulk:{admin['email']}", 10):
+        return RedirectResponse("/admin", status_code=302)
     form = await request.form()
     action = form.get("bulk_action", "")
-    user_ids = [int(uid) for uid in form.getlist("user_ids") if uid.isdigit() and int(uid) != 1]
+    # form.getlist returns Union[str, UploadFile]; user_ids must be string
+    # digits only — guarding the type prevents an attacker uploading a file
+    # named "user_ids" from crashing the handler with AttributeError on
+    # .isdigit().
+    user_ids = [
+        int(uid) for uid in form.getlist("user_ids")
+        if isinstance(uid, str) and uid.isdigit() and int(uid) != 1
+    ]
     if not user_ids or not action:
         return RedirectResponse("/admin", status_code=302)
     for uid in user_ids:
@@ -1936,8 +4513,168 @@ async def admin_bulk_users(request: Request):
             db.set_user_suspended(uid, True)
         elif action == "unsuspend":
             db.set_user_suspended(uid, False)
+        elif action == "delete" and (admin.get("admin_level") or 0) >= 2:
+            target = db.get_user_by_id(uid)
+            if target and (target["is_admin"] or 0) < 2:
+                with db.conn() as c:
+                    c.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
+                    c.execute("DELETE FROM subscriptions WHERE user_id = ?", (uid,))
+                    c.execute("DELETE FROM users WHERE id = ?", (uid,))
     log.info("Admin %s bulk %s %d users: %s", admin["email"], action, len(user_ids), user_ids)
+    try:
+        from security import audit as _audit
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action=_audit.AuditAction.USER_BULK_ACTION,
+            target_type="user", target_id=None,
+            target_description=f"{len(user_ids)} users",
+            after={"action": action, "user_ids": user_ids},
+            request=request,
+        )
+    except Exception:
+        pass
     return RedirectResponse("/admin", status_code=302)
+
+
+# ── Admin: Audit log ─────────────────────────────────────────────────────────
+
+
+@app.get("/admin/audit-log", response_class=HTMLResponse)
+async def admin_audit_log_page(request: Request):
+    user = _require_admin_user(request, page=True)
+    if user is None:
+        return _denied_response(request)
+    if isinstance(user, Response):
+        return user  # 2FA redirect
+    from security import audit as _audit
+    try:
+        page = max(1, int(request.query_params.get("page") or "1"))
+    except ValueError:
+        page = 1
+    filters = _audit.filter_to_query_kwargs(request.query_params)
+    rows, total = db.query_audit_log(page=page, page_size=50, **filters)
+
+    import datetime as _dt
+    import json as _json
+
+    def _render_row(r):
+        ts = _dt.datetime.fromtimestamp(r["timestamp"], tz=_dt.timezone.utc)
+        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S UTC")
+        label = _audit.ACTION_LABELS.get(r["action"], r["action"])
+        email = html.escape(r["admin_email"] or "—")
+        target = html.escape(r["target_description"] or r["target_id"] or r["target_type"] or "—")
+        ip = html.escape(r["ip_address"] or "—")
+        before = r["before_state"] or ""
+        after = r["after_state"] or ""
+        details = ""
+        if before or after:
+            try:
+                b_pretty = _json.dumps(_json.loads(before), indent=2) if before else ""
+                a_pretty = _json.dumps(_json.loads(after), indent=2) if after else ""
+            except Exception:
+                b_pretty, a_pretty = before, after
+            details = (
+                "<details style='margin-top:6px'><summary style='cursor:pointer;color:var(--text-secondary);font-size:11px'>diff</summary>"
+                f"<pre style='font-size:11px;color:var(--text-secondary);max-height:300px;overflow:auto'>before: {html.escape(b_pretty)}\n\nafter: {html.escape(a_pretty)}</pre>"
+                "</details>"
+            )
+        return (
+            f'<tr>'
+            f'<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">{ts_str}</td>'
+            f'<td>{email}</td>'
+            f'<td><span class="badge">{html.escape(label)}</span></td>'
+            f'<td>{target}</td>'
+            f'<td style="font-family:var(--font-mono);font-size:11px">{ip}</td>'
+            f'<td>{details}</td>'
+            f'</tr>'
+        )
+
+    table_rows = "".join(_render_row(r) for r in rows) or '<tr><td colspan="6" style="text-align:center;color:var(--text-tertiary);padding:24px">No audit entries match your filters.</td></tr>'
+
+    # Filter form
+    action_opts = "<option value=''>All actions</option>" + "".join(
+        f'<option value="{a}"{" selected" if filters.get("action") == a else ""}>{html.escape(_audit.ACTION_LABELS.get(a, a))}</option>'
+        for a in sorted(_audit.ALL_ACTIONS)
+    )
+    cur_target = filters.get("target_type") or ""
+    cur_admin = filters.get("admin_user_id") or ""
+    cur_from = request.query_params.get("from") or ""
+    cur_to = request.query_params.get("to") or ""
+
+    filters_html = (
+        '<form method="get" action="/admin/audit-log" class="audit-filters" '
+        'style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:16px">'
+        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">Action<select name="action" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px;min-width:180px">{action_opts}</select></label>'
+        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">Target type<input type="text" name="target_type" value="{html.escape(cur_target)}" placeholder="user / token / …" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px;width:140px"></label>'
+        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">Admin ID<input type="text" name="admin_id" value="{html.escape(str(cur_admin))}" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px;width:80px"></label>'
+        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">From<input type="date" name="from" value="{html.escape(cur_from)}" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px"></label>'
+        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">To<input type="date" name="to" value="{html.escape(cur_to)}" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px"></label>'
+        '<button type="submit" class="btn">Filter</button>'
+        '<a href="/admin/audit-log" class="btn" style="text-decoration:none">Reset</a>'
+        f'<a href="/admin/audit-log/export.csv?{request.url.query}" class="btn" style="text-decoration:none">Download CSV</a>'
+        '</form>'
+    )
+
+    # Pagination
+    pages = max(1, (total + 49) // 50)
+    qs_base = {k: v for k, v in request.query_params.items() if k != "page"}
+    def _link(p):
+        qs = dict(qs_base, page=str(p))
+        return "/admin/audit-log?" + "&".join(f"{k}={html.escape(v)}" for k, v in qs.items())
+    pagination = (
+        f'<div style="margin-top:16px;display:flex;gap:12px;align-items:center;color:var(--text-secondary);font-size:12px">'
+        f'Page {page} of {pages} &middot; {total} entries'
+    )
+    if page > 1:
+        pagination += f' &middot; <a href="{_link(page-1)}">← Prev</a>'
+    if page < pages:
+        pagination += f' &middot; <a href="{_link(page+1)}">Next →</a>'
+    pagination += '</div>'
+
+    body = (
+        '<div style="padding:24px">'
+        '<h2 style="font-family:var(--font-display);font-size:22px;margin:0 0 16px">Audit Log</h2>'
+        f'{filters_html}'
+        '<div style="overflow:auto;border:1px solid var(--border-default);border-radius:8px">'
+        '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+        '<thead><tr style="background:var(--bg-surface);color:var(--text-secondary);text-align:left">'
+        '<th style="padding:10px 12px">Timestamp</th>'
+        '<th style="padding:10px 12px">Admin</th>'
+        '<th style="padding:10px 12px">Action</th>'
+        '<th style="padding:10px 12px">Target</th>'
+        '<th style="padding:10px 12px">IP</th>'
+        '<th style="padding:10px 12px">Details</th>'
+        '</tr></thead>'
+        f'<tbody>{table_rows}</tbody>'
+        '</table></div>'
+        f'{pagination}'
+        '<p style="margin-top:24px;font-size:11px;color:var(--text-tertiary)">Audit log is append-only. Entries cannot be deleted or edited.</p>'
+        '</div>'
+    )
+
+    return render_page(
+        "audit_log",
+        request=request,
+        email=user["email"],
+        username=user.get("username", user["email"]),
+        raw_nav_role=_role_badge(user),
+        _is_admin=user.get("is_admin"),
+        raw_body=body,
+        total_entries=str(total),
+    )
+
+
+@app.get("/admin/audit-log/export.csv")
+async def admin_audit_log_csv(request: Request):
+    _require_admin_user(request)  # auth side effect; user dict not needed below
+    from security import audit as _audit
+    filters = _audit.filter_to_query_kwargs(request.query_params)
+    csv_text = db.export_audit_log_csv(**filters)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="narve-audit-log.csv"'},
+    )
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -1950,7 +4687,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         return await proxy_request(request, "/settings")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
     current_pref = db.get_default_dashboard(user["user_id"]) or ""
     # Subscriptions the user has access to (admins get everything).
@@ -1977,23 +4714,230 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         )
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+
+    # Connected market accounts section
+    market_conns = _get_market_connections(user["user_id"])
+    mc_html = (
+        '<div class="settings-card" style="margin-top:24px">'
+        '<div class="settings-section">'
+        '<div class="settings-section-title">Connected Accounts</div>'
+        '<div class="settings-section-desc">Connect your Polymarket wallet and Kalshi account to trade directly from any dashboard.</div>'
+    )
+    # Kalshi
+    if market_conns["kalshi"]["connected"]:
+        mc_html += (
+            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
+            '<div><div style="font-weight:600;font-size:14px">Kalshi</div>'
+            f'<div style="font-size:12px;color:var(--text-muted)">Member: {html.escape(market_conns["kalshi"]["member_id"] or "")}</div></div>'
+            '<form method="post" action="/settings/disconnect/kalshi">'
+            '<button type="submit" class="btn btn-danger" style="font-size:12px" onclick="return confirm(\'Disconnect Kalshi account?\')">Disconnect</button>'
+            '</form></div>'
+        )
+    else:
+        mc_html += (
+            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
+            '<div><div style="font-weight:600;font-size:14px">Kalshi</div>'
+            '<div style="font-size:12px;color:var(--text-muted)">Not connected</div></div>'
+            '<span style="font-size:12px;color:var(--text-muted)">Connect from any dashboard\'s Markets tab</span>'
+            '</div>'
+        )
+    # Polymarket
+    if market_conns["polymarket"]["connected"]:
+        addr = market_conns["polymarket"]["address"] or ""
+        addr_display = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else addr
+        mc_html += (
+            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0">'
+            '<div><div style="font-weight:600;font-size:14px">Polymarket</div>'
+            f'<div style="font-size:12px;color:var(--text-muted)">Wallet: {html.escape(addr_display)}</div></div>'
+            '<form method="post" action="/settings/disconnect/polymarket">'
+            '<button type="submit" class="btn btn-danger" style="font-size:12px" onclick="return confirm(\'Disconnect Polymarket wallet?\')">Disconnect</button>'
+            '</form></div>'
+        )
+    else:
+        mc_html += (
+            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0">'
+            '<div><div style="font-weight:600;font-size:14px">Polymarket</div>'
+            '<div style="font-size:12px;color:var(--text-muted)">Not connected</div></div>'
+            '<span style="font-size:12px;color:var(--text-muted)">Connect from any dashboard\'s Markets tab</span>'
+            '</div>'
+        )
+    mc_html += '</div></div>'
+
+    # Billing / subscription section
+    subs_dict = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    now_ts = int(time.time())
+    pinfo = _user_plan_info(user, subs_dict, now_ts)
+    trading_status = db.get_trading_addon_status(user["user_id"])
+
+    billing_html = (
+        '<div class="settings-card" style="margin-top:24px">'
+        '<div class="settings-section">'
+        '<div class="settings-section-title">Subscription</div>'
+        f'<div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
+        f'<div><div style="font-weight:600;font-size:14px">Plan</div>'
+        f'<div style="font-size:12px;color:var(--text-muted)">{(pinfo["plan"] or "none").title()}</div></div>'
+        f'<span style="font-size:12px;color:var(--green);font-weight:600">Active</span>'
+        f'</div>'
+        f'<div style="display:flex;justify-content:space-between;padding:12px 0">'
+        f'<div><div style="font-weight:600;font-size:14px">Trading Access</div>'
+    )
+    if trading_status["active"]:
+        # TODO: Replace /enquire with Stripe add-on checkout when payments configured
+        billing_html += (
+            '<div style="font-size:12px;color:var(--green)">Active</div></div>'
+            '<a href="/enquire" style="font-size:12px;color:var(--text-muted);text-decoration:none">Contact to manage</a>'
+        )
+    else:
+        billing_html += (
+            '<div style="font-size:12px;color:var(--text-muted)">Not active</div></div>'
+            # TODO: Replace /enquire with Stripe add-on checkout when payments configured
+            '<a href="/enquire" style="font-size:12px;color:var(--accent);text-decoration:none;font-weight:600">Add &pound;25/mo</a>'
+        )
+    billing_html += '</div></div></div>'
+
+    # Security (2FA) section
+    sec_status = db.get_user_2fa_status(user["user_id"])
+    two_fa_method = (sec_status["two_fa_method"] if sec_status else None) or None
+    remaining = db.count_remaining_backup_codes(user["user_id"]) if two_fa_method else 0
+    last_verified = sec_status["two_fa_verified_at"] if sec_status else None
+    import datetime as _dt_sec
+    last_verified_str = (
+        _dt_sec.datetime.fromtimestamp(last_verified, tz=_dt_sec.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        if last_verified else "Never"
+    )
+    method_label = {
+        "totp": "Authenticator app (TOTP)",
+        "email_otp": "Email one-time code",
+    }.get(two_fa_method or "", "Not configured")
+
+    if two_fa_method:
+        sec_body = (
+            f'<div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
+            f'<div><div style="font-weight:600;font-size:14px">Method</div>'
+            f'<div style="font-size:12px;color:var(--text-muted)">{html.escape(method_label)}</div></div>'
+            f'<span style="font-size:12px;color:var(--green);font-weight:600">Enabled</span></div>'
+            f'<div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
+            f'<div><div style="font-weight:600;font-size:14px">Last verified</div>'
+            f'<div style="font-size:12px;color:var(--text-muted)">{last_verified_str}</div></div></div>'
+            f'<div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
+            f'<div><div style="font-weight:600;font-size:14px">Backup codes</div>'
+            f'<div style="font-size:12px;color:var(--text-muted)">{remaining} of 8 remaining</div></div></div>'
+            '<div style="display:flex;gap:8px;padding:16px 0 0;flex-wrap:wrap">'
+            '<a href="/auth/2fa/setup" class="btn">Change method</a>'
+            '<a href="/auth/2fa/setup?regen=1" class="btn">Regenerate backup codes</a>'
+            '<a href="/auth/2fa/setup?disable=1" class="btn btn-danger">Disable 2FA</a>'
+            '</div>'
+        )
+    else:
+        sec_body = (
+            '<div style="padding:12px 0;color:var(--text-secondary);font-size:13px;line-height:1.55">'
+            'Two-factor authentication adds a second verification step at login. '
+            'Admin accounts are required to enable 2FA before accessing the admin panel.'
+            '</div>'
+            '<div style="padding:16px 0 0"><a href="/auth/2fa/setup" class="btn btn-primary">Enable 2FA</a></div>'
+        )
+
+    sessions_html = (
+        '<div class="settings-card" style="margin-top:24px">'
+        '<div class="settings-section">'
+        '<div class="settings-section-title">Active sessions</div>'
+        '<div class="settings-section-desc">Every device where your account is signed in.</div>'
+        '<div id="sessions-list" style="margin-top:12px;font-size:13px;color:var(--text-secondary)">Loading sessions…</div>'
+        '<div style="padding:16px 0 0">'
+        '<button type="button" id="sign-out-others-btn" class="btn">Sign out all other sessions</button>'
+        '</div>'
+        '</div></div>'
+        '<script>'
+        '(function(){'
+        'var list=document.getElementById("sessions-list");'
+        'var btn=document.getElementById("sign-out-others-btn");'
+        'function csrf(){var m=document.cookie.match(/(?:^|;\\\\s*)_csrf=([^;]*)/);return m?decodeURIComponent(m[1]):"";}'
+        'function load(){fetch("/api/auth/sessions").then(function(r){return r.json();}).then(function(d){'
+        'if(!d.sessions||!d.sessions.length){list.textContent="No active sessions.";return;}'
+        'list.innerHTML=d.sessions.map(function(s){'
+        'var label=(s.browser||"Unknown")+" \u00b7 "+(s.os||"Unknown");'
+        'var cur=s.is_current?"<span style=\\"margin-left:8px;padding:2px 8px;border-radius:9999px;background:var(--interactive-ghost);color:var(--text-primary);font-size:11px\\">Current</span>":"";'
+        'var last=new Date(s.last_active_at*1000).toLocaleString();'
+        'var act=s.is_current?"":("<button class=\\"btn btn-ghost\\" onclick=\\"revokeSession("+s.id+")\\">Revoke</button>");'
+        'return "<div style=\\"display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)\\">"+'
+        '"<div><div style=\\"color:var(--text-primary);font-weight:500\\">"+label+cur+"</div>"+'
+        '"<div style=\\"font-size:11px;color:var(--text-tertiary);margin-top:2px\\">Last active: "+last+"</div></div>"+'
+        '"<div>"+act+"</div></div>";'
+        '}).join("");}).catch(function(){list.textContent="Failed to load sessions.";});}'
+        'window.revokeSession=function(id){if(!confirm("Revoke this session?"))return;'
+        'fetch("/api/auth/sessions/"+id,{method:"DELETE",headers:{"x-csrf-token":csrf()}}).then(load);};'
+        'btn.addEventListener("click",function(){if(!confirm("Sign out of every other session?"))return;'
+        'fetch("/api/auth/sessions",{method:"DELETE",headers:{"x-csrf-token":csrf()}}).then(load);});'
+        'load();'
+        '})();'
+        '</script>'
+    )
+
+    security_html = (
+        '<div class="settings-card" style="margin-top:24px">'
+        '<div class="settings-section">'
+        '<div class="settings-section-title">Security</div>'
+        '<div class="settings-section-desc">Two-factor authentication and account security.</div>'
+        f'{sec_body}'
+        '</div></div>'
+        f'{sessions_html}'
+    )
+
+    # Environmental impact preferences (Feature 008)
+    env_prefs = db.get_user_env_preferences(user["user_id"])
+    env_show_checked = "checked" if env_prefs.get("show") else ""
+    _env_unit = env_prefs.get("unit", "co2_mt")
+    env_unit_flags = {
+        "env_unit_co2_mt": "selected" if _env_unit == "co2_mt" else "",
+        "env_unit_trees": "selected" if _env_unit == "trees" else "",
+        "env_unit_cars": "selected" if _env_unit == "cars" else "",
+        "env_unit_homes": "selected" if _env_unit == "homes" else "",
+        "env_unit_flights": "selected" if _env_unit == "flights" else "",
+    }
+
     return render_page(
-        "settings",
+        "settings", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         raw_options="".join(option_html),
         raw_saved_banner=saved_banner,
+        raw_market_connections=mc_html,
+        raw_billing_section=billing_html,
+        raw_security_section=security_html,
         raw_admin_link=admin_link,
+        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+        env_show_checked=env_show_checked,
+        **env_unit_flags,
     )
 
 
+@app.post("/settings/disconnect/{source}")
+async def settings_disconnect_market(request: Request, source: str):
+    """Disconnect a market account from settings page."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, f"/settings/disconnect/{source}")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+    if source in ("polymarket", "kalshi"):
+        db.delete_market_credential(user["user_id"], source)
+        log.info("User %s disconnected %s from settings", user.get("username"), source)
+    return RedirectResponse("/settings", status_code=302)
+
+
 @app.post("/settings")
-async def settings_save(request: Request, default_dashboard: str = Form("")):
+async def settings_save(
+    request: Request,
+    default_dashboard: str = Form(""),
+    env_show: str = Form(""),
+    env_unit: str = Form("co2_mt"),
+):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/settings")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/gate", status_code=302)
+        return RedirectResponse("/token", status_code=302)
 
     # Blank → clear preference. Otherwise must be a real dashboard key the
     # user has access to (admin bypasses the subscription check).
@@ -2005,13 +4949,573 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
             return RedirectResponse("/settings", status_code=302)
 
     db.set_default_dashboard(user["user_id"], key)
+
+    # Environmental impact preferences (Feature 008). The checkbox sends
+    # env_show=1 when ticked and is absent from the form data when unticked,
+    # so any non-empty value is treated as True. Bad units silently fall
+    # back to the default rather than 400-ing the whole settings POST.
+    show = bool(env_show.strip())
+    unit = env_unit.strip().lower() or "co2_mt"
+    if unit not in db.ENV_VALID_UNITS:
+        unit = "co2_mt"
+    try:
+        db.set_user_env_preferences(user["user_id"], show=show, unit=unit)
+    except Exception as exc:
+        log.warning("settings_save: env prefs failed for %d: %s", user["user_id"], exc)
+
     return RedirectResponse("/settings?saved=1", status_code=302)
+
+
+# ── Markets API (unified Polymarket + Kalshi) ────────────────────────────────
+# These routes are handled by the gateway on ALL hosts (including subdomains).
+# trade.js calls them from within each dashboard.
+
+from backend.markets.polymarket_client import PolymarketClient
+from backend.markets.kalshi_client import KalshiClient
+from backend.markets import unified_markets
+from backend.markets.portfolio_aggregator import get_combined_portfolio, get_combined_orders
+from backend.markets.encryption import encrypt_token, decrypt_token
+
+POLY_CLIENT = PolymarketClient(
+    gamma_base=os.environ.get("POLYMARKET_GAMMA_API", "https://gamma-api.polymarket.com"),
+    clob_base=os.environ.get("POLYMARKET_CLOB_API", "https://clob.polymarket.com"),
+)
+KALSHI_CLIENT = KalshiClient(
+    base_url=os.environ.get("KALSHI_API_BASE", "https://trading-api.kalshi.com/trade-api/v2"),
+    service_email=os.environ.get("KALSHI_SERVICE_EMAIL") or None,
+    service_password=os.environ.get("KALSHI_SERVICE_PASSWORD") or None,
+)
+MARKETS_CACHE_TTL = max(60, min(3600, int(os.environ.get("MARKETS_CACHE_TTL", "300"))))
+
+
+def _require_markets_user(request: Request) -> dict:
+    """Require authenticated user with active Trading Add-on for markets access."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    # Admin bypasses all checks
+    if user.get("is_admin"):
+        return user
+    # Require trading add-on (separate from base subscription)
+    if not db.has_trading_addon(user["user_id"]):
+        raise HTTPException(status_code=403, detail="Trading Add-on required. Contact us to add trading access.")
+    return user
+
+
+def _get_market_connections(user_id: int) -> dict:
+    """Get user's market platform connection status."""
+    creds = db.get_all_market_credentials(user_id)
+    result = {
+        "polymarket": {"connected": False, "address": None},
+        "kalshi": {"connected": False, "member_id": None, "balance": None},
+    }
+    for c in creds:
+        if c["source"] == "polymarket" and c["polymarket_wallet_address"]:
+            result["polymarket"]["connected"] = True
+            result["polymarket"]["address"] = c["polymarket_wallet_address"]
+        elif c["source"] == "kalshi" and c["kalshi_token"]:
+            result["kalshi"]["connected"] = True
+            result["kalshi"]["member_id"] = c["kalshi_member_id"]
+    return result
+
+
+# Market data (public data, but requires Tier 1+ auth)
+@app.get("/api/markets/unified")
+async def api_markets_unified(
+    request: Request,
+    category: str = "",
+    search: str = "",
+    sort: str = "volume",
+    source: str = "",
+    page: int = 1,
+    limit: int = 20,
+    env_relevant: int = 0,
+):
+    _require_markets_user(request)  # auth + add-on check; user dict not used below
+    # Clamp pagination params to prevent division by zero and negative indexing
+    if limit < 1 or limit > 100:
+        limit = 20
+    if page < 1:
+        page = 1
+    markets = await unified_markets.fetch_unified_markets(
+        POLY_CLIENT, KALSHI_CLIENT, cache_ttl=MARKETS_CACHE_TTL,
+    )
+    filtered = unified_markets.filter_markets(
+        markets, category=category, source=source, search=search, sort=sort,
+    )
+    # env_relevant filter — only return markets that have a cached env analysis
+    # marked is_relevant=True. Reads from the cache only; never triggers Claude
+    # generation during list pagination.
+    env_relevant_ids: set[str] = set()
+    if env_relevant:
+        try:
+            top = db.list_top_environmental_impacts(limit=200)
+            env_relevant_ids = {row["market_id"] for row in top}
+        except Exception as exc:
+            log.warning("env_relevant filter failed, returning unfiltered: %s", exc)
+            env_relevant_ids = set()
+        if env_relevant_ids:
+            filtered = [m for m in filtered if m.id in env_relevant_ids]
+    total = len(filtered)
+    start = (page - 1) * limit
+    page_markets = filtered[start:start + limit]
+    market_dicts = [m.to_dict() for m in page_markets]
+    # When env_relevant filter is active, decorate each row with a small
+    # is_env_relevant flag so downstream UIs can render a leaf badge without
+    # a second roundtrip per market.
+    if env_relevant_ids:
+        for md in market_dicts:
+            md["is_env_relevant"] = md.get("id") in env_relevant_ids
+    return JSONResponse({
+        "markets": market_dicts,
+        "total": total,
+        "page": page,
+        "pages": max(1, (total + limit - 1) // limit),
+    })
+
+
+# ── Edge scoring & false consensus (F4, F5) ─────────────────────────────────
+# IMPORTANT: These must be registered BEFORE the /{market_id:path} catch-all
+# to prevent FastAPI from consuming "top-edge" or "false-consensus" as a
+# market_id path parameter.
+
+
+@app.get("/api/markets/top-edge")
+async def api_markets_top_edge(
+    request: Request,
+    limit: int = 20,
+    min_sources: int = 1,
+    category: str = "",
+):
+    """Markets with the largest absolute edge between credibility-weighted
+    intelligence and the current market price. The core value proposition
+    of narve.ai — "where is the crowd most wrong?"
+    """
+    _require_authenticated(request)
+    limit = max(1, min(50, limit))
+    markets = await unified_markets.fetch_unified_markets(
+        POLY_CLIENT, KALSHI_CLIENT, cache_ttl=MARKETS_CACHE_TTL,
+    )
+    active = [m for m in markets if m.status == "active"]
+    enriched = unified_markets.enrich_markets_with_intelligence(active)
+    with_edge = [
+        m for m in enriched
+        if m.betyc_ev_score is not None and m.betyc_prediction_count >= min_sources
+    ]
+    if category:
+        with_edge = [m for m in with_edge if m.category == category]
+    with_edge.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
+    return JSONResponse({
+        "markets": [m.to_dict() for m in with_edge[:limit]],
+        "total": len(with_edge),
+    })
+
+
+@app.get("/api/markets/false-consensus")
+async def api_markets_false_consensus(request: Request, limit: int = 20):
+    """Markets where a high market price (>80% or <20%) disagrees strongly
+    with credibility-weighted intelligence (divergence > 15 points).
+    These are the highest-conviction contrarian bets.
+    """
+    _require_authenticated(request)
+    limit = max(1, min(50, limit))
+    markets = await unified_markets.fetch_unified_markets(
+        POLY_CLIENT, KALSHI_CLIENT, cache_ttl=MARKETS_CACHE_TTL,
+    )
+    active = [m for m in markets if m.status == "active"]
+    enriched = unified_markets.enrich_markets_with_intelligence(active)
+    fc_markets = [m for m in enriched if m.false_consensus]
+    fc_markets.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
+    return JSONResponse({
+        "markets": [m.to_dict() for m in fc_markets[:limit]],
+        "total": len(fc_markets),
+    })
+
+
+@app.get("/api/markets/unified/{market_id:path}")
+async def api_market_detail(request: Request, market_id: str):
+    user = _require_markets_user(request)
+    market = await unified_markets.fetch_single_market(
+        POLY_CLIENT, KALSHI_CLIENT, market_id, cache_ttl=120,
+    )
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+    payload = market.to_dict()
+    # If the caller is Pro+ AND has env preferences enabled AND a cached
+    # env analysis exists, merge it into the response under environmental_impact.
+    # This is non-breaking: clients that don't know about the field ignore it,
+    # and we never block on Claude generation here — only return cached data.
+    try:
+        is_pro = bool(user.get("is_admin"))
+        if not is_pro:
+            _subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+            _pinfo = _user_plan_info(user, _subs, int(time.time()))
+            is_pro = _pinfo.get("plan") == "pro"
+        if is_pro:
+            prefs = db.get_user_env_preferences(user["user_id"])
+            if prefs.get("show"):
+                cached = db.get_environmental_impact(market_id)
+                if cached:
+                    from intelligence import environmental as _env
+                    env_payload = _env._row_to_payload(cached)
+                    env_payload = _env.apply_user_unit_preference(env_payload, prefs.get("unit", "co2_mt"))
+                    payload["environmental_impact"] = env_payload
+    except Exception as exc:
+        log.warning("env merge into market detail failed for %s: %s", market_id, exc)
+    return JSONResponse(payload)
+
+
+@app.get("/api/markets/search")
+async def api_markets_search(request: Request, q: str = ""):
+    _require_markets_user(request)  # auth + add-on check; user dict not used below
+    if not q or len(q) < 2:
+        return JSONResponse({"markets": []})
+    markets = await unified_markets.fetch_unified_markets(
+        POLY_CLIENT, KALSHI_CLIENT, cache_ttl=MARKETS_CACHE_TTL,
+    )
+    filtered = unified_markets.filter_markets(markets, search=q)
+    return JSONResponse({"markets": [m.to_dict() for m in filtered[:20]]})
+
+
+# Account connections
+@app.post("/api/markets/connect/kalshi")
+async def api_connect_kalshi(request: Request):
+    user = _require_markets_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+    email = (body.get("email") or "").strip()
+    password = body.get("password", "")
+    if not email or not password:
+        return JSONResponse({"error": "Email and password are required"}, status_code=400)
+
+    result = await KALSHI_CLIENT.login(email, password)
+    if "error" in result:
+        status_code = result.get("status_code", 400)
+        return JSONResponse({"error": result["error"]}, status_code=status_code)
+
+    # Store encrypted token — NEVER store the password
+    encrypted = encrypt_token(result["token"])
+    db.upsert_market_credential(
+        user["user_id"], "kalshi",
+        kalshi_token=encrypted,
+        kalshi_member_id=result["member_id"],
+    )
+    log.info("User %s connected Kalshi account (member: %s)", user.get("username"), result["member_id"])
+
+    # Fetch balance
+    balance_data = await KALSHI_CLIENT.get_balance(result["token"])
+    balance = float(balance_data.get("balance", 0)) / 100.0 if "error" not in balance_data else None
+
+    return JSONResponse({
+        "connected": True,
+        "member_id": result["member_id"],
+        "balance": balance,
+    })
+
+
+@app.post("/api/markets/connect/polymarket")
+async def api_connect_polymarket(request: Request):
+    user = _require_markets_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+    address = (body.get("wallet_address") or "").strip()
+    if not address or len(address) < 10:
+        return JSONResponse({"error": "Valid wallet address required"}, status_code=400)
+    db.upsert_market_credential(
+        user["user_id"], "polymarket",
+        polymarket_wallet_address=address,
+    )
+    log.info("User %s connected Polymarket wallet %s", user.get("username"), address[:10] + "...")
+    return JSONResponse({"connected": True, "address": address})
+
+
+@app.delete("/api/markets/connect/{source}")
+async def api_disconnect_market(request: Request, source: str):
+    user = _require_markets_user(request)
+    if source not in ("polymarket", "kalshi"):
+        raise HTTPException(status_code=400, detail="Invalid source")
+    db.delete_market_credential(user["user_id"], source)
+    log.info("User %s disconnected %s", user.get("username"), source)
+    return JSONResponse({"disconnected": True})
+
+
+@app.get("/api/markets/connections")
+async def api_market_connections(request: Request):
+    user = _require_markets_user(request)
+    return JSONResponse(_get_market_connections(user["user_id"]))
+
+
+# Trading
+@app.post("/api/markets/bet/kalshi")
+async def api_bet_kalshi(request: Request):
+    user = _require_markets_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    ticker = (body.get("ticker") or "").strip()
+    side = (body.get("side") or "").strip().lower()
+    amount_usd = float(body.get("amount_usd", 0))
+    order_type = (body.get("type") or "market").strip().lower()
+    price = body.get("price")
+
+    if not ticker:
+        return JSONResponse({"error": "Ticker required"}, status_code=400)
+    if side not in ("yes", "no"):
+        return JSONResponse({"error": "Side must be 'yes' or 'no'"}, status_code=400)
+    if amount_usd <= 0:
+        return JSONResponse({"error": "Amount must be positive"}, status_code=400)
+    if amount_usd > 25000:
+        return JSONResponse({"error": "Amount exceeds maximum"}, status_code=400)
+
+    cred = db.get_market_credential(user["user_id"], "kalshi")
+    if not cred or not cred["kalshi_token"]:
+        return JSONResponse({"error": "Connect your Kalshi account first"}, status_code=400)
+
+    token = decrypt_token(cred["kalshi_token"])
+    db.update_market_credential_last_used(user["user_id"], "kalshi")
+
+    # Validate balance
+    balance_data = await KALSHI_CLIENT.get_balance(token)
+    if "error" in balance_data:
+        if balance_data.get("error") == "token_expired":
+            return JSONResponse({"error": "Kalshi session expired — please reconnect"}, status_code=401)
+        return JSONResponse({"error": balance_data["error"]}, status_code=400)
+
+    balance_cents = balance_data.get("balance", 0)
+    if amount_usd * 100 > balance_cents:
+        return JSONResponse({"error": f"Insufficient balance (${balance_cents / 100:.2f} available)"}, status_code=400)
+
+    count = max(1, int(amount_usd))  # Kalshi uses contract counts
+    # Coerce price to float — client may send int, float, or numeric string.
+    # Clamp to Kalshi's valid range (1-99 cents) and reject garbage.
+    price_cents = None
+    if order_type == "limit" and price is not None:
+        try:
+            price_float = float(price)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Invalid limit price"}, status_code=400)
+        if not (0 < price_float < 1):
+            return JSONResponse({"error": "Limit price must be between 0 and 1"}, status_code=400)
+        price_cents = max(1, min(99, int(round(price_float * 100))))
+
+    result = await KALSHI_CLIENT.place_order(
+        token,
+        ticker=ticker,
+        side=side,
+        order_type=order_type,
+        count=count,
+        price=price_cents,
+    )
+
+    if "error" in result:
+        if result.get("error") == "token_expired":
+            return JSONResponse({"error": "Kalshi session expired — please reconnect"}, status_code=401)
+        return JSONResponse({"error": result["error"]}, status_code=400)
+
+    # Record in history
+    db.record_bet(
+        user["user_id"], "kalshi", result.get("order_id", ""),
+        f"kalshi:{ticker}", ticker, side, amount_usd,
+        price or 0, result.get("status", "submitted"),
+    )
+
+    return JSONResponse({
+        "order_id": result.get("order_id", ""),
+        "status": result.get("status", "submitted"),
+        "filled": result.get("filled", 0),
+    })
+
+
+@app.post("/api/markets/bet/polymarket")
+async def api_bet_polymarket(request: Request):
+    user = _require_markets_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    market_id = (body.get("market_id") or "").strip()
+    side = (body.get("side") or "").strip().lower()
+    amount_usdc = float(body.get("amount_usdc", 0))
+    signed_order = body.get("signed_order")
+    owner = (body.get("owner") or "").strip()
+
+    if not market_id:
+        return JSONResponse({"error": "Market ID required"}, status_code=400)
+    if side not in ("yes", "no"):
+        return JSONResponse({"error": "Side must be 'yes' or 'no'"}, status_code=400)
+    if amount_usdc <= 0:
+        return JSONResponse({"error": "Amount must be positive"}, status_code=400)
+    if amount_usdc > 100000:
+        return JSONResponse({"error": "Amount exceeds maximum"}, status_code=400)
+    if not signed_order or not isinstance(signed_order, dict):
+        return JSONResponse({"error": "Signed order required (sign with your wallet)"}, status_code=400)
+
+    # Validate signed_order structure — must include all CTF Exchange Order fields
+    required_fields = {
+        "salt", "maker", "signer", "taker", "tokenId",
+        "makerAmount", "takerAmount", "expiration", "nonce",
+        "feeRateBps", "side", "signatureType", "signature",
+    }
+    missing = required_fields - set(signed_order.keys())
+    if missing:
+        return JSONResponse(
+            {"error": f"Signed order missing fields: {', '.join(sorted(missing))}"},
+            status_code=400,
+        )
+
+    cred = db.get_market_credential(user["user_id"], "polymarket")
+    if not cred or not cred["polymarket_wallet_address"]:
+        return JSONResponse({"error": "Connect your Polymarket wallet first"}, status_code=400)
+
+    # Security: signer/maker MUST match the connected wallet — prevents user A
+    # from submitting orders signed by user B's wallet.
+    connected_addr = (cred["polymarket_wallet_address"] or "").lower()
+    signer_addr = str(signed_order.get("signer", "")).lower()
+    maker_addr = str(signed_order.get("maker", "")).lower()
+    if signer_addr != connected_addr or maker_addr != connected_addr:
+        log.warning(
+            "Polymarket bet rejected: signer/maker %s/%s does not match connected %s for user %s",
+            signer_addr[:10], maker_addr[:10], connected_addr[:10], user.get("username"),
+        )
+        return JSONResponse(
+            {"error": "Signed order wallet does not match your connected wallet"},
+            status_code=403,
+        )
+
+    db.update_market_credential_last_used(user["user_id"], "polymarket")
+
+    # Polymarket CLOB expects {order, owner, orderType} envelope
+    clob_payload = {
+        "order": signed_order,
+        "owner": owner or connected_addr,
+        "orderType": body.get("order_type", "GTC"),
+    }
+
+    result = await POLY_CLIENT.submit_order(clob_payload)
+
+    if "error" in result:
+        return JSONResponse({"error": result["error"]}, status_code=400)
+
+    db.record_bet(
+        user["user_id"], "polymarket", result.get("orderID", result.get("id", "")),
+        market_id, market_id, side, amount_usdc, 0, "submitted",
+    )
+
+    return JSONResponse({
+        "order_id": result.get("orderID", result.get("id", "")),
+        "status": "submitted",
+    })
+
+
+# Polymarket CTF Exchange contract (Polygon mainnet)
+# https://github.com/Polymarket/ctf-exchange
+POLY_EXCHANGE_ADDRESS = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+POLY_NEG_RISK_EXCHANGE_ADDRESS = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
+POLY_CHAIN_ID = 137
+POLY_DOMAIN_NAME = "Polymarket CTF Exchange"
+POLY_DOMAIN_VERSION = "1"
+
+
+@app.get("/api/markets/poly/order-params/{market_id:path}")
+async def api_poly_order_params(request: Request, market_id: str):
+    """Return the EIP-712 order parameters the client needs to sign a Polymarket order.
+
+    The client uses these to construct an EIP-712 typed data object and sign it
+    with eth_signTypedData_v4 via MetaMask. The signed order is then POSTed
+    to /api/markets/bet/polymarket for submission to the CLOB.
+    """
+    user = _require_markets_user(request)
+
+    if not market_id.startswith("poly:"):
+        raise HTTPException(status_code=400, detail="Only Polymarket markets supported")
+
+    market = await unified_markets.fetch_single_market(
+        POLY_CLIENT, KALSHI_CLIENT, market_id, cache_ttl=120,
+    )
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+
+    if not market.poly_yes_token_id or not market.poly_no_token_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Market missing CLOB token IDs — cannot place orders on this market",
+        )
+
+    cred = db.get_market_credential(user["user_id"], "polymarket")
+    if not cred or not cred["polymarket_wallet_address"]:
+        raise HTTPException(status_code=400, detail="Connect your Polymarket wallet first")
+
+    exchange = POLY_NEG_RISK_EXCHANGE_ADDRESS if market.poly_neg_risk else POLY_EXCHANGE_ADDRESS
+
+    return JSONResponse({
+        "market_id": market_id,
+        "yes_token_id": market.poly_yes_token_id,
+        "no_token_id": market.poly_no_token_id,
+        "yes_price": market.yes_price,
+        "no_price": market.no_price,
+        "neg_risk": market.poly_neg_risk,
+        "maker_address": cred["polymarket_wallet_address"],
+        "exchange": exchange,
+        "chain_id": POLY_CHAIN_ID,
+        "domain_name": POLY_DOMAIN_NAME,
+        "domain_version": POLY_DOMAIN_VERSION,
+        "fee_rate_bps": 0,
+    })
+
+
+@app.get("/api/markets/portfolio")
+async def api_markets_portfolio(request: Request):
+    user = _require_markets_user(request)
+    creds = db.get_all_market_credentials(user["user_id"])
+
+    poly_address = None
+    kalshi_token = None
+    for c in creds:
+        if c["source"] == "polymarket":
+            poly_address = c["polymarket_wallet_address"]
+        elif c["source"] == "kalshi" and c["kalshi_token"]:
+            kalshi_token = decrypt_token(c["kalshi_token"])
+
+    portfolio = await get_combined_portfolio(
+        POLY_CLIENT, KALSHI_CLIENT,
+        polymarket_address=poly_address,
+        kalshi_token=kalshi_token,
+    )
+    return JSONResponse(portfolio)
+
+
+@app.get("/api/markets/orders")
+async def api_markets_orders(request: Request):
+    user = _require_markets_user(request)
+    creds = db.get_all_market_credentials(user["user_id"])
+
+    poly_address = None
+    kalshi_token = None
+    for c in creds:
+        if c["source"] == "polymarket":
+            poly_address = c["polymarket_wallet_address"]
+        elif c["source"] == "kalshi" and c["kalshi_token"]:
+            kalshi_token = decrypt_token(c["kalshi_token"])
+
+    orders = await get_combined_orders(
+        POLY_CLIENT, KALSHI_CLIENT,
+        polymarket_address=poly_address,
+        kalshi_token=kalshi_token,
+    )
+    return JSONResponse({"orders": orders})
 
 
 # ── Switcher injection ────────────────────────────────────────────────────────
 
 
-def _switcher_snippet(dashboard_key: str, user_id: int) -> str:
+def _switcher_snippet(dashboard_key: str, user_id: int, apex: str = "") -> str:
     """Build the <script> tags that configure and load the dashboard switcher."""
     items = []
     for k, c in DASHBOARDS.items():
@@ -2025,11 +5529,30 @@ def _switcher_snippet(dashboard_key: str, user_id: int) -> str:
     # Get username for the header bar
     user_row = db.get_user_by_id(user_id)
     username = user_row["username"] if user_row and "username" in user_row.keys() else ""
+
+    # Determine plan tier for Markets tab gating
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user_id)}
+    user_dict = {
+        "user_id": user_id,
+        "is_admin": bool(user_row["is_admin"]) if user_row else False,
+    }
+    pinfo = _user_plan_info(user_dict, subs, int(time.time()))
+    plan_tier = pinfo["plan"] or "none"
+    has_markets_access = db.has_trading_addon(user_id)
+
+    # Get market connections
+    connections = _get_market_connections(user_id)
+
     cfg_json = json.dumps({
         "dashboards": items,
         "current": dashboard_key,
-        "domain": DOMAIN,
+        "domain": apex or DOMAIN,
         "username": username,
+        "markets": {
+            "enabled": has_markets_access,
+            "plan": plan_tier,
+            "connections": connections,
+        },
     })
     return (
         f'<script>window.__hbSwitcher={cfg_json};</script>'
@@ -2038,7 +5561,7 @@ def _switcher_snippet(dashboard_key: str, user_id: int) -> str:
     )
 
 
-def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int) -> bytes:
+def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, apex: str = "") -> bytes:
     """Inject the switcher into HTML responses (before </body>)."""
     if "text/html" not in (content_type or ""):
         return content
@@ -2046,7 +5569,7 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int) 
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return content
-    snippet = _switcher_snippet(key, user_id)
+    snippet = _switcher_snippet(key, user_id, apex=apex)
     # Case-insensitive replace; inject once before </body>
     lower = text.lower()
     idx = lower.rfind("</body>")
@@ -2062,23 +5585,27 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int) 
 
 async def proxy_request(request: Request, forced_path: Optional[str] = None) -> Response:
     """Reverse-proxy the current request to the backend matching its subdomain."""
+    # Route everything back to the apex the visitor actually came from
+    # (habbig.com / narve.ai / …). Falling back to DOMAIN only protects
+    # against entirely unknown hosts.
+    apex = _request_apex(request) or DOMAIN
     sub = get_subdomain(request)
     key = SUBDOMAIN_TO_KEY.get(sub)
     if not key:
         # Unknown subdomain — redirect to apex.
-        return RedirectResponse(f"https://{DOMAIN}/", status_code=302)
+        return RedirectResponse(f"https://{apex}/", status_code=302)
 
     dash_cfg = DASHBOARDS[key]
 
     # 1. Require login.
     user = current_user(request)
     if not user:
-        return RedirectResponse(f"https://{DOMAIN}/gate", status_code=302)
+        return RedirectResponse(f"https://{apex}/gate", status_code=302)
 
     # 2. Require active subscription.
     if not db.has_active_subscription(user["user_id"], key):
         return RedirectResponse(
-            f"https://{DOMAIN}/billing?dashboard={key}",
+            f"https://{apex}/billing?dashboard={key}",
             status_code=302,
         )
 
@@ -2142,12 +5669,14 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop
     }
 
-    # Inject dashboard switcher into HTML responses.
+    # Inject dashboard switcher into HTML responses. Pass apex so the
+    # switcher builds subdomain URLs for whichever apex the user came from.
     body = _inject_switcher(
         upstream.content,
         upstream.headers.get("content-type", ""),
         key,
         user["user_id"],
+        apex=apex,
     )
     # Update Content-Length since injection may have changed the body size.
     if body is not upstream.content:
@@ -2159,6 +5688,486 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         status_code=upstream.status_code,
         headers=resp_headers,
     )
+
+
+
+# ── Credibility API ──────────────────────────────────────────────────────────
+
+
+def _require_authenticated(request: Request) -> dict:
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def _require_pro_user(request: Request) -> dict:
+    user = _require_authenticated(request)
+    if user.get("is_admin"):
+        return user
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    now = int(time.time())
+    pinfo = _user_plan_info(user, subs, now)
+    if pinfo["plan"] != "pro":
+        raise HTTPException(status_code=403, detail="Pro tier required")
+    return user
+
+
+@app.get("/api/credibility/{source_handle}")
+async def api_get_credibility(request: Request, source_handle: str):
+    _require_authenticated(request)
+    cred = db.get_source_credibility(source_handle)
+    if not cred:
+        return JSONResponse({"source_handle": source_handle, "global_credibility": None, "status": "unknown"})
+    cats = db.get_all_category_credibilities(source_handle)
+    snaps = db.get_credibility_snapshots(source_handle, 5)
+    return JSONResponse({
+        "source_handle": source_handle,
+        "global_credibility": cred["global_credibility"],
+        "accuracy_unlocked": bool(cred["accuracy_unlocked"]),
+        "decay_weighted_accuracy": cred["decay_weighted_accuracy"],
+        "total_predictions": cred["total_predictions"],
+        "correct_predictions": cred["correct_predictions"],
+        "categories": [
+            {"category": c["category"], "credibility": c["category_credibility"],
+             "prediction_count": c["prediction_count"]}
+            for c in cats
+        ],
+        "snapshots": [{"credibility": s["global_credibility"], "at": s["snapshot_at"]} for s in snaps],
+    })
+
+
+@app.get("/api/credibility/{source_handle}/calibration")
+async def api_get_calibration(request: Request, source_handle: str):
+    """Calibration data for a source (F9).
+
+    Returns the calibration score and per-bucket data showing how well
+    the source's stated probabilities match actual outcomes.
+    """
+    _require_authenticated(request)
+    cal = db.get_source_calibration(source_handle)
+    if not cal:
+        return JSONResponse({
+            "source_handle": source_handle,
+            "calibration": None,
+            "status": "insufficient_data",
+        })
+    return JSONResponse({
+        "source_handle": source_handle,
+        "calibration": cal,
+    })
+
+
+@app.post("/api/credibility/refresh")
+async def api_credibility_refresh(request: Request):
+    user = _require_pro_user(request)
+    # Force-refresh recomputes EVERY source's credibility — expensive. Cap
+    # at 2 per 5 minutes per user so a single Pro user cannot DoS the engine.
+    if _is_rate_limited(f"cred_refresh:{user['user_id']}", limit=2, window=300):
+        return JSONResponse(
+            {"error": "Credibility refresh available once every 5 minutes."},
+            status_code=429,
+            headers={"Retry-After": "300"},
+        )
+    count = db.recompute_all_credibilities()
+    log.info("User %s triggered credibility refresh, recomputed %d sources", user.get("username"), count)
+    return JSONResponse({"recomputed": count, "timestamp": int(time.time())})
+
+
+# ── Backtesting API (F13) ────────────────────────────────────────────────────
+
+
+@app.post("/api/backtests")
+async def api_create_backtest(request: Request):
+    """Submit a backtest job. Returns backtest_id to poll for results."""
+    user = _require_pro_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    import json as _json
+    params = {
+        "min_credibility": float(body.get("min_credibility", 0.5)),
+        "min_edge": float(body.get("min_edge", 0.05)),
+        "category": body.get("category") or None,
+        "bet_sizing": body.get("bet_sizing", "flat"),
+        "bankroll": float(body.get("bankroll", 10000)),
+        "max_bet_pct": float(body.get("max_bet_pct", 0.1)),
+    }
+
+    now = int(time.time())
+    with db.conn() as c:
+        cur = c.execute(
+            "INSERT INTO backtests (user_id, params, status, created_at) VALUES (?, ?, 'pending', ?)",
+            (user["user_id"], _json.dumps(params), now),
+        )
+        backtest_id = cur.lastrowid
+
+    # Run as a background job
+    from jobs import enqueue_job
+    await enqueue_job("run_backtest", backtest_id=backtest_id)
+
+    return JSONResponse({"backtest_id": backtest_id, "status": "pending"})
+
+
+@app.get("/api/backtests/{backtest_id}")
+async def api_get_backtest(request: Request, backtest_id: int):
+    """Get backtest results. Poll until status=completed."""
+    user = _require_pro_user(request)
+    import json as _json
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT * FROM backtests WHERE id = ? AND user_id = ?",
+            (backtest_id, user["user_id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    result = _json.loads(row["result"]) if row["result"] else None
+    return JSONResponse({
+        "backtest_id": row["id"],
+        "status": row["status"],
+        "params": _json.loads(row["params"]),
+        "result": result,
+        "created_at": row["created_at"],
+        "completed_at": row["completed_at"],
+    })
+
+
+# ── Retrospective API (F6) ───────────────────────────────────────────────────
+
+
+@app.get("/api/markets/{market_id:path}/retrospective")
+async def api_market_retrospective(request: Request, market_id: str):
+    """Get the post-resolution retrospective for a resolved market.
+
+    Returns the Claude-generated analysis of how narve.ai's intelligence
+    performed, including which sources called it correctly and which were wrong.
+    """
+    _require_authenticated(request)
+    from intelligence.retrospective import _get_cached
+    retro = _get_cached(market_id)
+    if not retro:
+        return JSONResponse({"retrospective": None, "market_id": market_id})
+    return JSONResponse({"retrospective": retro, "market_id": market_id})
+
+
+# ── Probability API ──────────────────────────────────────────────────────────
+
+
+@app.get("/api/markets/{market_id:path}/probability")
+async def api_market_probability(request: Request, market_id: str):
+    _require_authenticated(request)
+    predictions = db.get_predictions_for_market(market_id)
+    pred_dicts = [
+        {
+            "source_handle": p["source_handle"],
+            "direction": p["direction"],
+            "predicted_probability": p["predicted_probability"],
+            "global_credibility": p["global_credibility"],
+            "category_credibility": p["category_credibility"] if "category_credibility" in p.keys() else None,
+            "accuracy_unlocked": bool(p["accuracy_unlocked"]) if p["accuracy_unlocked"] is not None else False,
+        }
+        for p in predictions
+    ]
+    result = db.calculate_betyc_probability(pred_dicts)
+    market = await unified_markets.fetch_single_market(POLY_CLIENT, KALSHI_CLIENT, market_id, cache_ttl=120)
+    market_yes = market.yes_price if market else None
+    if market_yes is not None and result["betyc_yes_probability"] is not None:
+        result["betyc_edge"] = round(result["betyc_yes_probability"] - market_yes, 4)
+    result["market_yes_price"] = market_yes
+    result["contributing_sources"] = [
+        {"handle": p["source_handle"], "credibility": p.get("global_credibility"),
+         "predicted_probability": p.get("predicted_probability"),
+         "category_credibility": p.get("category_credibility")}
+        for p in pred_dicts
+    ]
+    return JSONResponse(result)
+
+
+# ── Environmental Impact API (Pro feature) ──────────────────────────────────
+#
+# Claude-generated CO2 analysis of prediction market outcomes. See
+# intelligence/environmental.py and migrations/008_environmental_impact.py.
+# Lazy generation, 24h cache, force-refresh capped at 5/day/user.
+
+from intelligence import environmental as _env_module
+
+
+def _serialize_env_payload(payload: dict, unit: str = "co2_mt") -> dict:
+    """Render an env payload for API output, applying the user's unit preference."""
+    return _env_module.apply_user_unit_preference(payload, unit)
+
+
+# IMPORTANT: register /api/markets/environmental/top BEFORE the
+# /{market_id:path}/environmental pattern, otherwise the :path converter is
+# greedy and would swallow "environmental/top" as a market_id.
+@app.get("/api/markets/environmental/top")
+async def api_environmental_top(request: Request, limit: int = 20):
+    user = _require_pro_user(request)
+    limit = max(1, min(50, int(limit)))
+    rows = db.list_top_environmental_impacts(limit=limit)
+    prefs = db.get_user_env_preferences(user["user_id"])
+    unit = prefs.get("unit", "co2_mt")
+    impacts = []
+    for row in rows:
+        payload = _env_module._row_to_payload(row)
+        impacts.append(_serialize_env_payload(payload, unit))
+    return JSONResponse({"impacts": impacts, "as_of": int(time.time()), "count": len(impacts)})
+
+
+@app.get("/api/markets/{market_id:path}/environmental")
+async def api_market_environmental(request: Request, market_id: str):
+    user = _require_pro_user(request)
+    market = await unified_markets.fetch_single_market(
+        POLY_CLIENT, KALSHI_CLIENT, market_id, cache_ttl=120,
+    )
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+    payload = await _env_module.generate_environmental_impact(market, force=False)
+    prefs = db.get_user_env_preferences(user["user_id"])
+    return JSONResponse(_serialize_env_payload(payload, prefs.get("unit", "co2_mt")))
+
+
+@app.post("/api/markets/{market_id:path}/environmental/refresh")
+async def api_market_environmental_refresh(request: Request, market_id: str):
+    user = _require_pro_user(request)
+    # Per-user rate limit: 5 force-refreshes per 24h. Stops a curious user
+    # from running up the Claude bill exploring the same market repeatedly.
+    if _is_rate_limited(f"env_refresh:{user['user_id']}", 5, 86400):
+        return JSONResponse(
+            {"error": "Force-refresh limit reached (5 per day). The cached analysis is still available via GET."},
+            status_code=429,
+            headers={"Retry-After": "86400"},
+        )
+    market = await unified_markets.fetch_single_market(
+        POLY_CLIENT, KALSHI_CLIENT, market_id, cache_ttl=120,
+    )
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+    payload = await _env_module.generate_environmental_impact(market, force=True)
+    prefs = db.get_user_env_preferences(user["user_id"])
+    log.info("Pro user %s force-refreshed env analysis for %s", user.get("email"), market_id)
+    return JSONResponse(_serialize_env_payload(payload, prefs.get("unit", "co2_mt")))
+
+
+@app.patch("/api/user/preferences/environmental")
+async def api_user_env_preferences(request: Request):
+    user = _require_authenticated(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+    show = bool(body.get("show_environmental_impact", True))
+    unit = (body.get("preferred_unit") or "co2_mt").strip().lower()
+    if unit not in db.ENV_VALID_UNITS:
+        return JSONResponse(
+            {"error": f"preferred_unit must be one of {sorted(db.ENV_VALID_UNITS)}"},
+            status_code=400,
+        )
+    try:
+        db.set_user_env_preferences(user["user_id"], show=show, unit=unit)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "show_environmental_impact": show,
+        "preferred_unit": unit,
+    })
+
+
+# ── Signal Search API (Pro feature) ──────────────────────────────────────────
+
+
+@app.get("/api/topics")
+async def api_list_topics(request: Request):
+    user = _require_pro_user(request)
+    import json as _json
+    topics = db.list_topics(user["user_id"])
+    return JSONResponse({
+        "topics": [
+            {"id": t["id"], "name": t["name"],
+             "keywords": _json.loads(t["keywords"]) if t["keywords"] else [],
+             "schedule_minutes": t["schedule_minutes"],
+             "last_pulled_at": t["last_pulled_at"],
+             "posts_found_total": t["posts_found_total"],
+             "predictions_extracted_total": t["predictions_extracted_total"],
+             "is_active": bool(t["is_active"])}
+            for t in topics
+        ]
+    })
+
+
+@app.post("/api/topics")
+async def api_create_topic(request: Request):
+    user = _require_pro_user(request)
+    count = db.count_user_topics(user["user_id"])
+    if count >= 10:
+        return JSONResponse({"error": "Maximum 10 topics allowed for Pro tier"}, status_code=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+    name = (body.get("name") or "").strip()
+    keywords = body.get("keywords", [])
+    try:
+        schedule = int(body.get("schedule_minutes", 60))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "schedule_minutes must be an integer"}, status_code=400)
+    if not name:
+        return JSONResponse({"error": "Topic name required"}, status_code=400)
+    if len(name) > FIELD_MAX["topic_name"]:
+        return JSONResponse({"error": f"Topic name exceeds {FIELD_MAX['topic_name']} characters"}, status_code=400)
+    if not keywords or not isinstance(keywords, list):
+        return JSONResponse({"error": "Keywords required (array)"}, status_code=400)
+    if len(keywords) > 20:
+        return JSONResponse({"error": "Maximum 20 keywords per topic"}, status_code=400)
+    # Coerce, strip, and length-cap each keyword. Drop empties. Reject any
+    # non-string element so attackers can't smuggle objects/arrays through.
+    cleaned_kw = []
+    for k in keywords:
+        if not isinstance(k, str):
+            return JSONResponse({"error": "Keywords must be strings"}, status_code=400)
+        ks = k.strip()
+        if not ks:
+            continue
+        if len(ks) > FIELD_MAX["topic_keyword"]:
+            return JSONResponse({"error": f"Keyword exceeds {FIELD_MAX['topic_keyword']} characters"}, status_code=400)
+        cleaned_kw.append(ks)
+    if not cleaned_kw:
+        return JSONResponse({"error": "At least one non-empty keyword is required"}, status_code=400)
+    keywords = cleaned_kw
+    if schedule not in (30, 60, 360, 1440):
+        return JSONResponse({"error": "Schedule must be 30, 60, 360, or 1440 minutes"}, status_code=400)
+    topic_id = db.create_topic(user["user_id"], name, keywords, schedule)
+    log.info("User %s created topic '%s' (id=%d)", user.get("username"), name, topic_id)
+    return JSONResponse({"id": topic_id, "name": name})
+
+
+@app.delete("/api/topics/{topic_id}")
+async def api_delete_topic(request: Request, topic_id: int):
+    user = _require_pro_user(request)
+    topic = db.get_topic(topic_id)
+    if not topic or topic["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    db.delete_topic(topic_id)
+    return JSONResponse({"deleted": True})
+
+
+@app.post("/api/topics/{topic_id}/pull")
+async def api_topic_pull(request: Request, topic_id: int):
+    user = _require_pro_user(request)
+    topic = db.get_topic(topic_id)
+    if not topic or topic["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    # Manual topic pulls trigger an upstream scrape — costly. Cap at 2
+    # pulls per 30 minutes per (user, topic) pair so a single user cannot
+    # spam the scraper or drain Anthropic API credits.
+    rl_key = f"topic_pull:{user['user_id']}:{topic_id}"
+    if _is_rate_limited(rl_key, limit=2, window=1800):
+        return JSONResponse(
+            {"error": "Topics can be manually pulled once every 30 minutes."},
+            status_code=429,
+            headers={"Retry-After": "1800"},
+        )
+    db.update_topic_pull(topic_id, posts_found=0, predictions_extracted=0)
+    return JSONResponse({"pulled": True, "topic_id": topic_id})
+
+
+@app.get("/api/topics/{topic_id}/predictions")
+async def api_topic_predictions(request: Request, topic_id: int):
+    user = _require_pro_user(request)
+    topic = db.get_topic(topic_id)
+    if not topic or topic["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    preds = db.get_topic_predictions(topic_id)
+    return JSONResponse({
+        "predictions": [
+            {"id": p["id"], "source_handle": p["source_handle"], "content": p["content"],
+             "category": p["category"], "direction": p["direction"],
+             "predicted_probability": p["predicted_probability"],
+             "global_credibility": p["global_credibility"],
+             "category_credibility": p["category_credibility"] if "category_credibility" in p.keys() else None,
+             "accuracy_unlocked": bool(p["accuracy_unlocked"]) if p["accuracy_unlocked"] is not None else False}
+            for p in preds
+        ]
+    })
+
+
+@app.get("/api/topics/{topic_id}/analysis")
+async def api_topic_analysis(request: Request, topic_id: int):
+    user = _require_pro_user(request)
+    topic = db.get_topic(topic_id)
+    if not topic or topic["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    analysis = db.get_latest_topic_analysis(topic_id)
+    if not analysis:
+        return JSONResponse({"analysis": None})
+    import json as _json
+    return JSONResponse({
+        "analysis": {
+            "signal_direction": analysis["signal_direction"],
+            "summary": analysis["summary"],
+            "top_signals": _json.loads(analysis["top_signals"]) if analysis["top_signals"] else [],
+            "contradictions": _json.loads(analysis["contradictions"]) if analysis["contradictions"] else [],
+            "relevant_markets": _json.loads(analysis["relevant_markets"]) if analysis["relevant_markets"] else [],
+            "confidence": analysis["confidence"],
+            "confidence_reason": analysis["confidence_reason"],
+            "generated_at": analysis["generated_at"],
+        }
+    })
+
+
+# ── Signal Search page ───────────────────────────────────────────────────────
+
+
+@app.get("/signal-search", response_class=HTMLResponse)
+async def signal_search_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/signal-search")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+    if not user.get("is_admin"):
+        subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+        pinfo = _user_plan_info(user, subs, int(time.time()))
+        if pinfo["plan"] != "pro":
+            return RedirectResponse("/billing", status_code=302)
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    return render_page(
+        "signal-search",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+    )
+
+
+
+# Register feature routes (Features 1-10). Imported late so every helper
+# in this module (current_user, render_page, CSRF, rate-limit, etc.) is
+# already defined when server_features.py binds to them. Guarded so the
+# main gateway still boots even if the features module is missing or
+# broken — crashing the whole server because a feature file is absent
+# would be a bad trade.
+# ── Developer API v1 (F12) ────────────────────────────────────────────────
+try:
+    from api_v1 import router as _api_v1_router
+    app.include_router(_api_v1_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("api_v1 router failed to mount: %s", _exc)
+
+try:
+    import server_features  # noqa: F401,E402
+    # If server.py is being re-executed (e.g. via importlib.reload in tests),
+    # the cached server_features module still references the OLD `app` and
+    # its routes are missing from the new app. Force a reload so the
+    # @app.get/@app.post decorators bind to the live FastAPI instance.
+    import sys as _sys
+    if "server_features" in _sys.modules:
+        import importlib as _importlib
+        _importlib.reload(_sys.modules["server_features"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("server_features import failed: %s — continuing without it", _exc)
 
 
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.
@@ -2179,19 +6188,62 @@ async def catch_all(request: Request, full_path: str):
 
 @app.websocket("/{full_path:path}")
 async def websocket_proxy(ws: WebSocket, full_path: str):
-    # Extract subdomain from headers (WebSocket Request doesn't expose it the same way).
+    # Extract subdomain from headers (WebSocket Request doesn't expose it the
+    # same way). Iterate ALLOWED_DOMAINS so habbig.com and narve.ai subdomains
+    # both resolve correctly.
     host = ws.headers.get("host", "").split(":")[0].lower()
     sub = ""
-    if host == DOMAIN:
-        sub = ""
-    elif host.endswith("." + DOMAIN):
-        sub = host[: -(len(DOMAIN) + 1)]
-    elif host.endswith(".localhost"):
+    matched = False
+    for apex in ALLOWED_DOMAINS:
+        if host == apex:
+            matched = True
+            break
+        if host.endswith("." + apex):
+            sub = host[: -(len(apex) + 1)]
+            matched = True
+            break
+    if not matched and host.endswith(".localhost"):
         sub = host[: -len(".localhost")]
 
     key = SUBDOMAIN_TO_KEY.get(sub)
     if not key:
         await ws.close(code=1008, reason="Unknown subdomain")
+        return
+
+    # Origin check — WebSocket upgrades are NOT protected by the HTTP CSRF
+    # middleware (no form body to cover). Without this, a malicious site could
+    # open a cross-origin WS to a subdomain, the browser would attach the
+    # user's session cookie automatically, and the attacker would hijack the
+    # authenticated stream. Validate Origin against the configured apex list.
+    if IS_PRODUCTION:
+        origin = (ws.headers.get("origin") or "").lower().strip()
+        if origin:
+            from urllib.parse import urlparse as _urlparse
+            parsed = _urlparse(origin)
+            origin_host = (parsed.hostname or "").lower()
+            allowed = False
+            for apex in ALLOWED_DOMAINS:
+                if origin_host == apex or origin_host.endswith("." + apex):
+                    allowed = True
+                    break
+            if not allowed:
+                log.warning("ws origin rejected: origin=%s host=%s", origin, host)
+                await ws.close(code=1008, reason="Cross-origin upgrade denied")
+                return
+        else:
+            # No Origin header in production is suspicious — browsers always
+            # send one for cross-origin or same-origin WS. Reject rather than
+            # fail-open, since legitimate clients always include it.
+            log.warning("ws missing origin header from host=%s", host)
+            await ws.close(code=1008, reason="Missing origin")
+            return
+
+    # Gate cookie check — the HTTP GateMiddleware enforces this for requests,
+    # but WS upgrades bypass HTTP middleware entirely. An attacker with a
+    # session cookie but no gate cookie could otherwise open a dashboard WS
+    # while the site is still in pre-release.
+    if SITE_ACCESS_TOKEN and ws.cookies.get(GATE_COOKIE_NAME) != "granted":
+        await ws.close(code=1008, reason="Gate access required")
         return
 
     # Auth check via cookie (with dev-bypass for localhost).

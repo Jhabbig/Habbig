@@ -1,0 +1,95 @@
+[main]	INFO	profile include tests: None
+[main]	INFO	profile exclude tests: None
+[main]	INFO	cli include tests: None
+[main]	INFO	cli exclude tests: None
+[main]	INFO	running on Python 3.9.6
+Run started:2026-04-10 02:10:18.869556
+
+Test results:
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html
+   Location: ./db.py:842:8
+841	    sql = (
+842	        "SELECT sp.id AS saved_id, sp.saved_at, sp.notes, sp.notified_on_resolution, "
+843	        "p.id AS prediction_id, p.content, p.source_handle, p.category, "
+844	        "p.market_id, p.direction, p.predicted_probability, p.source_url, "
+845	        "p.extracted_at, p.resolved, p.resolved_correct, p.resolved_at, "
+846	        "sc.global_credibility, sc.accuracy_unlocked "
+847	        "FROM saved_predictions sp "
+848	        "JOIN predictions p ON p.id = sp.prediction_id "
+849	        "LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
+850	        f"WHERE {' AND '.join(where)} "
+851	        f"ORDER BY {order}"
+852	    )
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html
+   Location: ./db.py:3082:12
+3081	        total_row = c.execute(
+3082	            f"SELECT COUNT(*) AS n FROM audit_log{where_sql}", tuple(params)
+3083	        ).fetchone()
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html
+   Location: ./db.py:3086:12
+3085	        rows = c.execute(
+3086	            f"SELECT * FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+3087	            tuple(params) + (page_size, offset),
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html
+   Location: ./db.py:3123:12
+3122	        rows = c.execute(
+3123	            f"SELECT * FROM audit_log{where_sql} ORDER BY timestamp DESC",
+3124	            tuple(params),
+
+--------------------------------------------------
+>> Issue: [B324:hashlib] Use of weak MD5 hash for security. Consider usedforsecurity=False
+   Severity: High   Confidence: High
+   CWE: CWE-327 (https://cwe.mitre.org/data/definitions/327.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.6/plugins/b324_hashlib.html
+   Location: ./server.py:510:21
+509	            import hashlib as _hl
+510	            digest = _hl.md5(full.read_bytes()).hexdigest()[:8]
+511	            _static_hash_cache[rel] = digest
+
+--------------------------------------------------
+>> Issue: [B104:hardcoded_bind_all_interfaces] Possible binding to all interfaces.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-605 (https://cwe.mitre.org/data/definitions/605.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.6/plugins/b104_hardcoded_bind_all_interfaces.html
+   Location: ./server.py:5924:13
+5923	        "server:app",
+5924	        host="0.0.0.0",
+5925	        port=GATEWAY_PORT,
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 11751
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 49
+		Medium: 5
+		High: 1
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 1
+		Medium: 13
+		High: 41
+Files skipped (0):

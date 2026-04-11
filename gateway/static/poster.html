@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Something's coming — narve.ai</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: #fafafa; color: #0d0d0d; font-family: 'Inter', -apple-system, sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(ellipse 120% 90% at 10% 15%, rgba(0,0,0,0.04), transparent),
+        radial-gradient(ellipse 100% 80% at 90% 80%, rgba(0,0,0,0.03), transparent),
+        radial-gradient(ellipse 90% 100% at 50% 50%, rgba(0,0,0,0.02), transparent);
+      animation: meshMove 40s ease-in-out infinite alternate;
+    }
+    @keyframes meshMove {
+      0% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(-30px, 20px) scale(1.05); }
+      66% { transform: translate(20px, -15px) scale(0.97); }
+      100% { transform: translate(-10px, 10px) scale(1.02); }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .p-hero { text-align: center; padding: 32px; max-width: 720px; }
+
+    .p-line1 {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: #0d0d0d;
+      animation: fadeUp 0.8s ease-out 0.3s both;
+    }
+    .p-line2 {
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: #0d0d0d;
+      margin-top: 0.05em;
+      animation: fadeUp 0.8s ease-out 0.8s both;
+    }
+    .p-line2-serif { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; font-weight: 400; }
+
+    .p-sub {
+      font-family: 'Inter', sans-serif;
+      font-weight: 400;
+      font-size: 1.05rem;
+      letter-spacing: 0.1em;
+      color: #999999;
+      margin-top: 3rem;
+      animation: fadeUp 0.8s ease-out 1.3s both;
+    }
+
+    .p-tagline {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      font-size: 1rem;
+      color: #666666;
+      margin-top: 1.5rem;
+      line-height: 1.6;
+      max-width: 420px;
+      animation: fadeUp 0.8s ease-out 1.6s both;
+    }
+
+    .p-logo-corner {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      animation: fadeUp 0.8s ease-out 1.9s both;
+    }
+    .p-logo-corner img { width: 32px; height: 32px; border-radius: 5px; }
+    .p-logo-corner span {
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 1rem;
+      letter-spacing: -0.04em;
+      color: #0d0d0d;
+    }
+
+    .p-download {
+      position: fixed;
+      top: 28px;
+      right: 28px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #0d0d0d;
+      background: none;
+      border: 1px solid #d4d4d4;
+      border-radius: 6px;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: background 0.15s;
+      z-index: 10;
+    }
+    .p-download:hover { background: #eeeeee; }
+  </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <button class="p-download" onclick="downloadPoster()">Download PNG</button>
+
+  <canvas id="particles" style="position:fixed;inset:0;z-index:-1;pointer-events:none"></canvas>
+
+  <div class="p-hero">
+    <div class="p-line1">Something's</div>
+    <div class="p-line2">
+      <span class="p-line2-serif">coming.</span>
+    </div>
+    <div class="p-sub">coming soon.</div>
+    <div class="p-tagline">Prediction markets decoded — dashboards built for edge.</div>
+  </div>
+
+  <div class="p-logo-corner">
+    <img src="/_gateway_static/img/logo.png" alt="narve.ai">
+    <span>narve.ai</span>
+  </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var canvas = document.getElementById('particles');
+  var ctx = canvas.getContext('2d');
+  var particles = [];
+  var count = 80;
+
+  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+
+  for (var i = 0; i < count; i++) {
+    particles.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: 1 + Math.random() * 0.5,
+      vx: (Math.random() - 0.5) * 0.4 + (Math.random() > 0.5 ? 0.1 : -0.1),
+      vy: (Math.random() - 0.5) * 0.4 + (Math.random() > 0.5 ? 0.1 : -0.1)
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = canvas.width;
+      if (p.x > canvas.width) p.x = 0;
+      if (p.y < 0) p.y = canvas.height;
+      if (p.y > canvas.height) p.y = 0;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    requestAnimationFrame(draw);
+  }
+  draw();
+});
+
+function downloadPoster() {
+  var btn = document.querySelector('.p-download');
+  btn.style.display = 'none';
+
+  // Wait for animations to settle
+  setTimeout(function() {
+    var w = 3000;
+    var h = 4000;
+    var c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    var ctx = c.getContext('2d');
+
+    // Background
+    ctx.fillStyle = '#fafafa';
+    ctx.fillRect(0, 0, w, h);
+
+    // Subtle gradient flares
+    var g1 = ctx.createRadialGradient(w * 0.1, h * 0.15, 0, w * 0.1, h * 0.15, w * 0.6);
+    g1.addColorStop(0, 'rgba(0,0,0,0.04)');
+    g1.addColorStop(1, 'transparent');
+    ctx.fillStyle = g1;
+    ctx.fillRect(0, 0, w, h);
+
+    var g2 = ctx.createRadialGradient(w * 0.9, h * 0.8, 0, w * 0.9, h * 0.8, w * 0.5);
+    g2.addColorStop(0, 'rgba(0,0,0,0.03)');
+    g2.addColorStop(1, 'transparent');
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, w, h);
+
+    // Particles
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.10)';
+    for (var i = 0; i < 80; i++) {
+      var px = Math.random() * w;
+      var py = Math.random() * h;
+      var pr = 2.5 + Math.random() * 2;
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Text
+    ctx.fillStyle = '#0d0d0d';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // "Something's"
+    ctx.font = '300 160px Inter, -apple-system, sans-serif';
+    ctx.fillText("Something's", w / 2, h * 0.40);
+
+    // "coming." in italic serif
+    ctx.font = 'italic 400 160px "Instrument Serif", Georgia, serif';
+    ctx.fillText("coming.", w / 2, h * 0.47);
+
+    // "coming soon."
+    ctx.fillStyle = '#999999';
+    ctx.font = '400 36px Inter, sans-serif';
+    ctx.fillText("coming soon.", w / 2, h * 0.55);
+
+    // Tagline
+    ctx.fillStyle = '#666666';
+    ctx.font = '300 30px Inter, sans-serif';
+    ctx.fillText("Prediction markets decoded — dashboards built for edge.", w / 2, h * 0.60);
+
+    // Logo image only — bottom-right corner
+    var logo = new Image();
+    logo.crossOrigin = 'anonymous';
+    logo.onload = function() {
+      ctx.drawImage(logo, w - 120, h - 120, 72, 72);
+      var link = document.createElement('a');
+      link.download = 'narve-poster.png';
+      link.href = c.toDataURL('image/png');
+      link.click();
+      btn.style.display = '';
+    };
+    logo.onerror = function() {
+      var link = document.createElement('a');
+      link.download = 'narve-poster.png';
+      link.href = c.toDataURL('image/png');
+      link.click();
+      btn.style.display = '';
+    };
+    logo.src = '/_gateway_static/img/logo.png';
+  }, 300);
+}
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

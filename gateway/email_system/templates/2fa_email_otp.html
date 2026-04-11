@@ -1,0 +1,22 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your narve.ai sign-in code</h1>
+<p style="margin:0 0 8px;color:#555;">Hi {{ display_name }},</p>
+<p style="margin:0 0 20px;color:#555;">
+  Use the code below to finish signing in to your narve.ai account.
+</p>
+
+<div style="margin:24px 0;text-align:center;">
+  <div style="display:inline-block;padding:18px 28px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:32px;font-weight:600;letter-spacing:0.5em;color:#0d0d0d;">
+    {{ code }}
+  </div>
+</div>
+
+<p style="margin:24px 0 8px;color:#555;font-size:13px;">
+  This code expires in {{ expires_in }}. It can only be used once.
+</p>
+
+<p style="margin:0 0 0;color:#aaaaaa;font-size:12px;line-height:1.6;">
+  If you didn't try to sign in, someone may be trying to access your account.
+  You can <a href="https://narve.ai/forgot-password" style="color:#0d0d0d;">reset your password</a> now, or contact support.
+</p>
+{% endblock %}

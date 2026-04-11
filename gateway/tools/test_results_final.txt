@@ -1,0 +1,337 @@
+/Users/shocakarel/Library/Python/3.9/lib/python/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+....................................................................ss.. [ 12%]
+..............s......sss................................................ [ 24%]
+........................................................................ [ 36%]
+..............sssssssssssssss........................................... [ 49%]
+........................................................................ [ 61%]
+........................................................................ [ 73%]
+........................................................................ [ 86%]
+.............F.......................................................... [ 98%]
+........                                                                 [100%]
+=================================== FAILURES ===================================
+__________ TestGateVsTokenSeparation.test_gate_is_distinct_from_token __________
+
+self = <tests.test_token_first_auth.TestGateVsTokenSeparation testMethod=test_gate_is_distinct_from_token>
+
+    def test_gate_is_distinct_from_token(self):
+        # Both routes exist and resolve to different handlers.
+        paths = {r.path for r in server.app.routes if hasattr(r, "path")}
+        self.assertIn("/gate", paths)
+>       self.assertIn("/token", paths)
+E       AssertionError: '/token' not found in {'/api/auth/2fa/disable', '/subscribe', '/.well-known/security.txt', '/admin', '/api/markets/portfolio', '/favicon.ico', '/api/enquire', '/admin/logs/search', '/api/markets/environmental/top', '/settings/disconnect/{source}', '/admin/users/{user_id}/demote', '/login', '/admin/users/{user_id}/grant', '/admin/logs/errors', '/support', '/api/topics/{topic_id}/analysis', '/signup', '/api/user/preferences/environmental', '/suspended', '/admin/tokens/revoke', '/admin/users/{user_id}/unsuspend', '/admin/users/{user_id}/delete', '/api/markets/bet/kalshi', '/preview/{dashboard_key}', '/', '/profile', '/api/markets/{market_id:path}/environmental', '/admin/audit-log', '/admin/users/{user_id}/revoke-token', '/profile/password', '/api/newsletter', '/api/auth/2fa/email/resend', '/api/topics/{topic_id}/predictions', '/invite', '/dashboards', '/api/topics/{topic_id}/pull', '/health', '/api/auth/2fa/backup-codes', '/api/markets/orders', '/api/auth/2fa/totp/verify-setup', '/signal-search', '/api/newsletter/position', '/logout', '/enquire', '/landing', '/api/markets/{market_id:path}/environmental/refresh', '/billing', '/api/subscribe', '/api/topics', '/admin/users/{user_id}/suspend', '/admin/enquiries/{enquiry_id}/read', '/api/support-ticket', '/admin/users/{user_id}/new-token', '/admin/logs/live', '/admin/users/{user_id}/email', '/api/markets/connect/polymarket', '/api/markets/connect/{source}', '/gate', '/auth/2fa', '/api/credibility/{source_handle}', '/reset-password', '/auth/2fa/setup', '/api/auth/2fa/verify', '/admin/tokens/generate', '/api/markets/poly/order-params/{market_id:path}', '/api/auth/2fa/status', '/admin/users/{user_id}/trading-addon', '/api/topics/{topic_id}', '/admin/users/{user_id}/promote', '/admin/users/bulk', '/settings', '/api/markets/search', '/api/markets/{market_id:path}/probability', '/api/markets/connect/kalshi', '/pricing', '/api/auth/2fa/totp/setup', '/api/markets/connections', '/api/credibility/refresh', '/{full_path:path}', '/api/markets/bet/polymarket', '/billing/subscribe', '/forgot-password', '/admin/audit-log/export.csv', '/_gateway_static', '/api/auth/2fa/email/enable', '/admin/enquiries/{enquiry_id}/create-token', '/api/markets/unified', '/api/markets/unified/{market_id:path}', '/admin/users/{user_id}/role'}
+
+tests/test_token_first_auth.py:232: AssertionError
+=============================== warnings summary ===============================
+server.py:368
+  /Users/shocakarel/Habbig/gateway/tests/../server.py:368: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+../../Library/Python/3.9/lib/python/site-packages/fastapi/applications.py:4495: 2 warnings
+tests/test_newsletter.py: 10 warnings
+  /Users/shocakarel/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+server.py:430
+  /Users/shocakarel/Habbig/gateway/tests/../server.py:430: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+tests/test_2fa_http.py: 4 warnings
+tests/test_auth_flow.py: 22 warnings
+tests/test_feature_routes.py: 1 warning
+tests/test_health.py: 1 warning
+tests/test_log_admin.py: 12 warnings
+tests/test_logout.py: 1 warning
+tests/test_token_first_auth.py: 3 warnings
+  /Users/shocakarel/Library/Python/3.9/lib/python/site-packages/httpx/_client.py:812: DeprecationWarning: Setting per-request cookies=<...> is being deprecated, because the expected behaviour on cookie persistence is ambiguous. Set cookies directly on the client instance instead.
+    warnings.warn(message, DeprecationWarning)
+
+tests/test_account_deletion.py::TestHardDeleteJob::test_hard_delete_skips_cancelled_requests
+  /Users/shocakarel/Habbig/gateway/tests/../jobs/pipeline_jobs.py:50: RuntimeWarning: coroutine 'send_email_job' was never awaited
+    with db.conn() as c:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_log_admin.py::AdminLogsTestCase::test_errors_empty_buffer
+  /Users/shocakarel/Library/Python/3.9/lib/python/site-packages/anyio/_backends/_asyncio.py:805: RuntimeWarning: coroutine '_test_hello' was never awaited
+    def task_done(_task: asyncio.Task) -> None:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_newsletter.py::TestNewsletterFormEncoding::test_empty_email_400
+  /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/importlib/__init__.py:169: RuntimeWarning: coroutine 'send_email_job' was never awaited
+    _bootstrap._exec(spec, module)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_newsletter.py::TestNewsletterFormEncoding::test_empty_email_400
+  /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/importlib/__init__.py:169: RuntimeWarning: coroutine 'send_market_resolution_notifications' was never awaited
+    _bootstrap._exec(spec, module)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_newsletter.py::TestNewsletterFormEncoding::test_empty_email_400
+tests/test_newsletter.py::TestNewsletterIdempotencyAndPositions::test_duplicate_email_idempotent
+tests/test_newsletter.py::TestNewsletterReferralFlow::test_invalid_ref_silently_ignored
+tests/test_newsletter.py::TestNewsletterPositionEndpoint::test_position_lookup_existing_email
+tests/test_newsletter.py::TestNewsletterRateLimits::test_429_response_includes_friendly_error
+  /Users/shocakarel/Habbig/gateway/server.py:368: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+tests/test_newsletter.py::TestNewsletterFormEncoding::test_empty_email_400
+tests/test_newsletter.py::TestNewsletterIdempotencyAndPositions::test_duplicate_email_idempotent
+tests/test_newsletter.py::TestNewsletterReferralFlow::test_invalid_ref_silently_ignored
+tests/test_newsletter.py::TestNewsletterPositionEndpoint::test_position_lookup_existing_email
+tests/test_newsletter.py::TestNewsletterRateLimits::test_429_response_includes_friendly_error
+  /Users/shocakarel/Habbig/gateway/server.py:430: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_token_first_auth.py::TestGateVsTokenSeparation::test_gate_is_distinct_from_token
+1 failed, 562 passed, 21 skipped, 72 warnings in 28.35s
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4701' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d83c6d0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+sys:1: RuntimeWarning: coroutine 'send_email_job' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4698' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d83c6d0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4699' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d83c970>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4700' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d83cc40>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4706' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d839d30>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4703' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d839d30>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4707' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d838970>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4704' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d838970>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4708' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d838340>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4705' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d838340>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4713' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d8380a0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4710' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d8380a0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4714' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d9404c0>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4711' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d9404c0>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4715' coro=<send_email_job() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/email_jobs.py:27> cb=[_release_waiter(<Future pendi...10d940550>()]>)() at /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py:416]>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4712' coro=<InProcessBackend._run() done, defined at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:155> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d940550>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4696' coro=<InProcessBackend._run() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:168> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d83c970>()]>>"
+Arguments: ()
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py", line 1086, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1764, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 1738, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-4697' coro=<InProcessBackend._run() running at /Users/shocakarel/Habbig/gateway/tests/../jobs/backend.py:168> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x10d83cc40>()]>>"
+Arguments: ()
