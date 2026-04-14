@@ -9,7 +9,8 @@
     <meta name="apple-mobile-web-app-title" content="NoRain">
     <link rel="manifest" href="/manifest.json">
     <title>NoRain — Weather Prediction Markets</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <script src="/static/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -372,7 +373,12 @@
         .modal-close:hover { color: var(--text-1); }
         .chart-wrap { position: relative; width: 100%; }
         .chart-wrap.temp { height: 180px; }
-        .chart-wrap.precip { height: 80px; margin-top: 8px; }
+        .chart-wrap.precip { height: 80px; margin-top: 4px; }
+        .chart-wrap.wind { height: 100px; margin-top: 4px; }
+        .chart-wrap.monthly { height: 120px; margin-top: 4px; }
+        .wx-stat { background: var(--bg-2); border-radius: 8px; padding: 8px 10px; }
+        .wx-stat-label { display: block; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
+        .wx-stat-val { font-size: 15px; font-weight: 700; color: var(--text-1); }
         .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-bottom: 20px; background: var(--border); border-radius: var(--radius); overflow: hidden; }
         .modal-cell { background: var(--bg-1); border: none; border-radius: 0; padding: 16px; }
         .modal-cell-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; font-weight: 500; }
@@ -448,6 +454,9 @@
 <div class="view active" id="view-markets">
     <input type="text" class="search-bar" id="search" placeholder="Search by city, date, or keyword..." autocomplete="off">
 
+    <!-- Climate regime banner (ENSO + AO/NAO) — populated by loadClimateBanner() -->
+    <div id="climate-banner" style="display:none;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--text-2)"></div>
+
     <div class="filter-row" id="filter-row">
         <button class="chip on" data-f="all">All</button>
         <button class="chip" data-f="temperature">Temperature</button>
@@ -491,6 +500,38 @@
     <div id="signals-list"></div>
 </div>
 
+<!-- ═══ BOT TAB ═══ -->
+<div class="view" id="view-bot">
+    <div style="font-size:18px;font-weight:700;margin-bottom:4px">Trading Bot</div>
+    <div style="font-size:13px;color:var(--text-3);margin-bottom:16px">Live signals and trades from the weather bot. Scans Polymarket + Kalshi every 15 min.</div>
+
+    <!-- Bot Stats -->
+    <div class="stats-row" id="bot-stats-row">
+        <div class="stat-card"><div class="stat-val" style="color:var(--green)" id="bot-trades-today">--</div><div class="stat-label">Trades Today</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:var(--blue)" id="bot-signals-today">--</div><div class="stat-label">Signals Today</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:var(--amber)" id="bot-wagered">--</div><div class="stat-label">All-Time Wagered</div></div>
+    </div>
+
+    <!-- Calibration -->
+    <div id="bot-calibration" style="margin:16px 0;padding:14px;background:var(--card);border-radius:12px;border:1px solid var(--border)">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);margin-bottom:10px">Model Calibration (Brier Score)</div>
+        <div class="stats-row">
+            <div class="stat-card"><div class="stat-val" style="color:var(--cyan)" id="bot-brier-model">--</div><div class="stat-label">Model</div></div>
+            <div class="stat-card"><div class="stat-val" style="color:var(--text-2)" id="bot-brier-market">--</div><div class="stat-label">Market</div></div>
+            <div class="stat-card"><div class="stat-val" style="color:var(--green)" id="bot-brier-edge">--</div><div class="stat-label">Edge</div></div>
+        </div>
+        <div id="bot-calibration-buckets" style="margin-top:10px;font-size:12px;color:var(--text-2)"></div>
+    </div>
+
+    <!-- Recent Signals -->
+    <div style="font-size:14px;font-weight:600;margin:16px 0 8px">Recent Signals</div>
+    <div id="bot-signals-list" style="font-size:12px"></div>
+
+    <!-- Recent Trades -->
+    <div style="font-size:14px;font-weight:600;margin:16px 0 8px">Recent Trades</div>
+    <div id="bot-trades-list" style="font-size:12px"></div>
+</div>
+
 <!-- ═══ HISTORY TAB ═══ -->
 <div class="view" id="view-history">
     <div style="font-size:18px;font-weight:700;margin-bottom:14px">Track Record</div>
@@ -521,10 +562,10 @@
 
 <!-- ═══ SETTINGS TAB ═══ -->
 <div class="view" id="view-settings">
-    <div style="font-size:18px;font-weight:700;margin-bottom:16px">Settings</div>
+    <div style="font-size:18px;font-weight:700;margin-bottom:16px" data-i18n="nav.settings">Settings</div>
 
     <div class="settings-section">
-        <div class="settings-title">How It Looks</div>
+        <div class="settings-title" data-i18n="set.howItLooks">How It Looks</div>
         <div class="setting-row">
             <div><div class="setting-label">Simple Headlines</div><div class="setting-desc">Show "New York · Apr 3 · 62°F" instead of full questions</div></div>
             <button class="toggle" id="tog-headlines" onclick="togglePref('simplified_headlines', this)"></button>
@@ -552,8 +593,8 @@
     </div>
 
     <div class="settings-section">
-        <div class="settings-title">Units</div>
-        <div style="display:flex;gap:8px">
+        <div class="settings-title" data-i18n="set.units">Units</div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
             <button class="theme-btn" id="unit-american" onclick="setUnits('american')" style="flex:1;padding:10px;font-size:13px">
                 <div style="font-size:18px;margin-bottom:4px">🇺🇸</div>°F · MM/DD
             </button>
@@ -561,10 +602,16 @@
                 <div style="font-size:18px;margin-bottom:4px">🇪🇺</div>°C · DD.MM
             </button>
         </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px" data-i18n="pref.currency">Currency <span style="opacity:.6" data-i18n="pref.currencyHint">· markets are USD, converted at live rates</span></div>
+        <select id="currency-select" onchange="setCurrency(this.value)" style="width:100%;padding:8px 10px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px">
+        </select>
+        <div style="font-size:12px;color:var(--muted);margin-top:14px;margin-bottom:6px" data-i18n="pref.language">Language</div>
+        <select id="language-select" onchange="setLanguage(this.value)" style="width:100%;padding:8px 10px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px">
+        </select>
     </div>
 
     <div class="settings-section">
-        <div class="settings-title">Opportunity Threshold</div>
+        <div class="settings-title" data-i18n="set.threshold">Opportunity Threshold</div>
         <div style="display:flex;align-items:center;gap:12px">
             <input type="range" id="threshold-slider" min="5" max="25" value="8" step="1" style="flex:1;accent-color:var(--blue)">
             <span id="threshold-val" style="font-size:16px;font-weight:700;min-width:36px;text-align:right">8%</span>
@@ -573,7 +620,7 @@
     </div>
 
     <div class="settings-section">
-        <div class="settings-title">Theme</div>
+        <div class="settings-title" data-i18n="set.theme">Theme</div>
         <div class="theme-grid" id="theme-grid">
             <button class="theme-btn active" data-theme="dark" onclick="setTheme('dark')"><div class="theme-swatch" style="background:#0c1017"></div>Dark</button>
             <button class="theme-btn" data-theme="light" onclick="setTheme('light')"><div class="theme-swatch" style="background:#ffffff;border:1px solid #ddd"></div>Light</button>
@@ -583,7 +630,7 @@
     </div>
 
     <div class="settings-section">
-        <div class="settings-title">About NoRain</div>
+        <div class="settings-title" data-i18n="set.about">About NoRain</div>
         <div style="font-size:13px;color:var(--text-2);line-height:1.7">
             NoRain compares weather prediction market prices (from <b>Polymarket</b> and <b>Kalshi</b>) against forecasts from 8 weather agencies (GFS, ECMWF, ICON, GEM, UKMO, JMA, MET.no, BOM) plus <b>NWS</b> official forecasts and <b>30-year climatology</b> to spot mispriced bets.
         </div>
@@ -599,26 +646,30 @@
         </a>
     </div>
 
-    <button class="logout-btn" onclick="logout()">Sign Out</button>
+    <button class="logout-btn" onclick="logout()" data-i18n="tab.signOut">Sign Out</button>
 </div>
 
 <!-- BOTTOM NAV -->
 <nav class="bottom-nav">
     <button class="nav-tab active" data-tab="markets" onclick="switchTab('markets')">
         <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
-        Markets
+        <span data-i18n="nav.markets">Markets</span>
     </button>
     <button class="nav-tab" data-tab="signals" onclick="switchTab('signals')">
         <svg viewBox="0 0 24 24"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>
-        Opportunities
+        <span data-i18n="nav.signals">Opportunities</span>
+    </button>
+    <button class="nav-tab" data-tab="bot" onclick="switchTab('bot')">
+        <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 12h-2v-2h2v2zm0-4h-2V6h2v4z"/></svg>
+        <span>Bot</span>
     </button>
     <button class="nav-tab" data-tab="history" onclick="switchTab('history')">
         <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
-        History
+        <span data-i18n="nav.history">History</span>
     </button>
     <button class="nav-tab" data-tab="settings" onclick="switchTab('settings')">
         <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
-        Settings
+        <span data-i18n="nav.settings">Settings</span>
     </button>
 </nav>
 
@@ -663,7 +714,175 @@ let UP = {
     edge_threshold: 8,
     watched_cities: [],
     unit_system: 'american',      // 'american' (°F, MM/DD) or 'european' (°C, DD.MM)
+    currency: 'USD',              // 3-letter ISO; markets are USD, converts at live rates
+    language: 'en',               // UI language code (en, es, de, fr, it, pt, nl, pl, ja, ko, zh, ru)
 };
+
+// ═══════════════════════════════════════════════════════════════════════
+// CURRENCY (frankfurter.dev via /api/fx-rates, cached 1h)
+// ═══════════════════════════════════════════════════════════════════════
+const CURRENCIES = [
+    ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+    ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],
+    ['CNY','Chinese Yuan'],['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],
+    ['SEK','Swedish Krona'],['KRW','South Korean Won'],['SGD','Singapore Dollar'],
+    ['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+    ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],
+    ['DKK','Danish Krone'],['PLN','Polish Zloty'],['THB','Thai Baht'],
+    ['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],['CZK','Czech Koruna'],
+    ['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+    ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+];
+let _fxRates = { USD: 1 };
+const _FX_KEY = 'narve_fx_rates';
+const _FX_TTL_MS = 3600 * 1000;
+try {
+    const raw = localStorage.getItem(_FX_KEY);
+    if (raw) { const c = JSON.parse(raw); if (c && c.rates) _fxRates = c.rates; }
+} catch {}
+async function ensureFxRates() {
+    let stale = true;
+    try {
+        const raw = localStorage.getItem(_FX_KEY);
+        if (raw) {
+            const c = JSON.parse(raw);
+            if (c && c.fetched_at && Date.now() - c.fetched_at < _FX_TTL_MS) {
+                _fxRates = c.rates || _fxRates;
+                stale = false;
+            }
+        }
+    } catch {}
+    if (!stale) return _fxRates;
+    try {
+        const r = await fetch('/api/fx-rates');
+        if (r.ok) {
+            const d = await r.json();
+            const rates = d.rates || {};
+            rates.USD = 1;
+            _fxRates = rates;
+            localStorage.setItem(_FX_KEY, JSON.stringify({ rates, fetched_at: Date.now() }));
+        }
+    } catch {}
+    return _fxRates;
+}
+function convertUSD(amount) {
+    if (amount == null || isNaN(amount)) return null;
+    const code = UP.currency || 'USD';
+    if (code === 'USD') return Number(amount);
+    const r = _fxRates[code];
+    return r ? Number(amount) * r : Number(amount);
+}
+function fxLocale() { return isMetric() ? 'de-DE' : 'en-US'; }
+function fmtMoney(usdAmount, opts = {}) {
+    if (usdAmount == null || isNaN(usdAmount)) return '--';
+    const code = UP.currency || 'USD';
+    const value = convertUSD(usdAmount);
+    try {
+        return new Intl.NumberFormat(fxLocale(), {
+            style: 'currency', currency: code,
+            maximumFractionDigits: opts.max ?? 0,
+            minimumFractionDigits: opts.min ?? 0,
+        }).format(value);
+    } catch {
+        return code + ' ' + value.toLocaleString(fxLocale());
+    }
+}
+function fmtMoneyCompact(usdAmount) {
+    if (usdAmount == null || isNaN(usdAmount)) return '--';
+    const code = UP.currency || 'USD';
+    const value = convertUSD(usdAmount);
+    let suffix = '', scaled = value;
+    if (Math.abs(value) >= 1e6) { scaled = value / 1e6; suffix = 'M'; }
+    else if (Math.abs(value) >= 1e3) { scaled = value / 1e3; suffix = 'K'; }
+    try {
+        const fmt = new Intl.NumberFormat(fxLocale(), { style: 'currency', currency: code, maximumFractionDigits: suffix ? 1 : 0 });
+        const parts = fmt.formatToParts(0);
+        const symPart = parts.find(p => p.type === 'currency');
+        const sym = symPart ? symPart.value : code;
+        const symFirst = parts.findIndex(p => p.type === 'currency') < parts.findIndex(p => p.type === 'integer');
+        const numStr = scaled.toLocaleString(fxLocale(), { maximumFractionDigits: suffix ? 1 : 0 });
+        return symFirst ? `${sym}${numStr}${suffix}` : `${numStr}${suffix} ${sym}`;
+    } catch {
+        return code + ' ' + scaled.toLocaleString(fxLocale()) + suffix;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// LANGUAGE / i18n (12 languages, applied at runtime via [data-i18n])
+// ═══════════════════════════════════════════════════════════════════════
+const LANGUAGES = [
+    ['en','English'],['es','Español'],['de','Deutsch'],['fr','Français'],
+    ['it','Italiano'],['pt','Português'],['nl','Nederlands'],['pl','Polski'],
+    ['ja','日本語'],['ko','한국어'],['zh','中文'],['ru','Русский'],
+    ['hi','हिन्दी'],['ar','العربية'],['bn','বাংলা'],['ur','اردو'],
+    ['id','Bahasa Indonesia'],['tr','Türkçe'],['vi','Tiếng Việt'],['th','ไทย'],
+];
+const I18N = {
+    en: {'nav.markets':'Markets','nav.signals':'Opportunities','nav.history':'History','nav.settings':'Settings','tab.signOut':'Sign Out','set.howItLooks':'How It Looks','set.units':'Units','set.threshold':'Opportunity Threshold','set.theme':'Theme','set.about':'About NoRain','pref.currency':'Currency','pref.currencyHint':'· markets are USD, converted at live rates','pref.language':'Language','common.loading':'Loading…','common.search':'Search'},
+    es: {'nav.markets':'Mercados','nav.signals':'Oportunidades','nav.history':'Historial','nav.settings':'Ajustes','tab.signOut':'Cerrar sesión','set.howItLooks':'Apariencia','set.units':'Unidades','set.threshold':'Umbral de oportunidad','set.theme':'Tema','set.about':'Acerca de NoRain','pref.currency':'Moneda','pref.currencyHint':'· los mercados son USD, conversión en tiempo real','pref.language':'Idioma','common.loading':'Cargando…','common.search':'Buscar'},
+    de: {'nav.markets':'Märkte','nav.signals':'Chancen','nav.history':'Verlauf','nav.settings':'Einstellungen','tab.signOut':'Abmelden','set.howItLooks':'Darstellung','set.units':'Einheiten','set.threshold':'Chancen-Schwelle','set.theme':'Design','set.about':'Über NoRain','pref.currency':'Währung','pref.currencyHint':'· Märkte in USD, Umrechnung in Echtzeit','pref.language':'Sprache','common.loading':'Wird geladen…','common.search':'Suchen'},
+    fr: {'nav.markets':'Marchés','nav.signals':'Opportunités','nav.history':'Historique','nav.settings':'Paramètres','tab.signOut':'Déconnexion','set.howItLooks':'Apparence','set.units':'Unités','set.threshold':'Seuil d\u2019opportunité','set.theme':'Thème','set.about':'À propos de NoRain','pref.currency':'Devise','pref.currencyHint':'· marchés en USD, conversion en temps réel','pref.language':'Langue','common.loading':'Chargement…','common.search':'Rechercher'},
+    it: {'nav.markets':'Mercati','nav.signals':'Opportunità','nav.history':'Cronologia','nav.settings':'Impostazioni','tab.signOut':'Esci','set.howItLooks':'Aspetto','set.units':'Unità','set.threshold':'Soglia opportunità','set.theme':'Tema','set.about':'Informazioni su NoRain','pref.currency':'Valuta','pref.currencyHint':'· mercati in USD, conversione in tempo reale','pref.language':'Lingua','common.loading':'Caricamento…','common.search':'Cerca'},
+    pt: {'nav.markets':'Mercados','nav.signals':'Oportunidades','nav.history':'Histórico','nav.settings':'Configurações','tab.signOut':'Sair','set.howItLooks':'Aparência','set.units':'Unidades','set.threshold':'Limite de oportunidade','set.theme':'Tema','set.about':'Sobre o NoRain','pref.currency':'Moeda','pref.currencyHint':'· mercados em USD, conversão em tempo real','pref.language':'Idioma','common.loading':'Carregando…','common.search':'Pesquisar'},
+    nl: {'nav.markets':'Markten','nav.signals':'Kansen','nav.history':'Geschiedenis','nav.settings':'Instellingen','tab.signOut':'Afmelden','set.howItLooks':'Weergave','set.units':'Eenheden','set.threshold':'Kans-drempel','set.theme':'Thema','set.about':'Over NoRain','pref.currency':'Valuta','pref.currencyHint':'· markten in USD, live omrekening','pref.language':'Taal','common.loading':'Laden…','common.search':'Zoeken'},
+    pl: {'nav.markets':'Rynki','nav.signals':'Okazje','nav.history':'Historia','nav.settings':'Ustawienia','tab.signOut':'Wyloguj','set.howItLooks':'Wygląd','set.units':'Jednostki','set.threshold':'Próg okazji','set.theme':'Motyw','set.about':'O NoRain','pref.currency':'Waluta','pref.currencyHint':'· rynki w USD, przeliczanie na żywo','pref.language':'Język','common.loading':'Ładowanie…','common.search':'Szukaj'},
+    ja: {'nav.markets':'マーケット','nav.signals':'チャンス','nav.history':'履歴','nav.settings':'設定','tab.signOut':'ログアウト','set.howItLooks':'表示','set.units':'単位','set.threshold':'チャンスのしきい値','set.theme':'テーマ','set.about':'NoRainについて','pref.currency':'通貨','pref.currencyHint':'· マーケットはUSD、リアルタイムで換算','pref.language':'言語','common.loading':'読み込み中…','common.search':'検索'},
+    ko: {'nav.markets':'마켓','nav.signals':'기회','nav.history':'기록','nav.settings':'설정','tab.signOut':'로그아웃','set.howItLooks':'표시','set.units':'단위','set.threshold':'기회 임계값','set.theme':'테마','set.about':'NoRain 소개','pref.currency':'통화','pref.currencyHint':'· 마켓은 USD, 실시간 환산','pref.language':'언어','common.loading':'불러오는 중…','common.search':'검색'},
+    zh: {'nav.markets':'市场','nav.signals':'机会','nav.history':'历史','nav.settings':'设置','tab.signOut':'退出登录','set.howItLooks':'外观','set.units':'单位','set.threshold':'机会阈值','set.theme':'主题','set.about':'关于 NoRain','pref.currency':'货币','pref.currencyHint':'· 市场为美元,按实时汇率转换','pref.language':'语言','common.loading':'加载中…','common.search':'搜索'},
+    ru: {'nav.markets':'Рынки','nav.signals':'Возможности','nav.history':'История','nav.settings':'Настройки','tab.signOut':'Выйти','set.howItLooks':'Оформление','set.units':'Единицы','set.threshold':'Порог возможности','set.theme':'Тема','set.about':'О NoRain','pref.currency':'Валюта','pref.currencyHint':'· рынки в USD, конвертация в реальном времени','pref.language':'Язык','common.loading':'Загрузка…','common.search':'Поиск'},
+    hi: {'nav.markets':'बाज़ार','nav.signals':'अवसर','nav.history':'इतिहास','nav.settings':'सेटिंग्स','tab.signOut':'साइन आउट','set.howItLooks':'दिखावट','set.units':'इकाइयाँ','set.threshold':'अवसर सीमा','set.theme':'थीम','set.about':'NoRain के बारे में','pref.currency':'मुद्रा','pref.currencyHint':'· बाज़ार USD में हैं, लाइव दरों पर रूपांतरण','pref.language':'भाषा','common.loading':'लोड हो रहा है…','common.search':'खोजें'},
+    ar: {'nav.markets':'الأسواق','nav.signals':'الفرص','nav.history':'السجل','nav.settings':'الإعدادات','tab.signOut':'تسجيل الخروج','set.howItLooks':'المظهر','set.units':'الوحدات','set.threshold':'حد الفرصة','set.theme':'السمة','set.about':'حول NoRain','pref.currency':'العملة','pref.currencyHint':'· الأسواق بالدولار، تحويل بأسعار حية','pref.language':'اللغة','common.loading':'جارٍ التحميل…','common.search':'بحث'},
+    bn: {'nav.markets':'বাজার','nav.signals':'সুযোগ','nav.history':'ইতিহাস','nav.settings':'সেটিংস','tab.signOut':'সাইন আউট','set.howItLooks':'চেহারা','set.units':'একক','set.threshold':'সুযোগের সীমা','set.theme':'থিম','set.about':'NoRain সম্পর্কে','pref.currency':'মুদ্রা','pref.currencyHint':'· বাজার USD-তে, লাইভ রেটে রূপান্তর','pref.language':'ভাষা','common.loading':'লোড হচ্ছে…','common.search':'অনুসন্ধান'},
+    ur: {'nav.markets':'بازار','nav.signals':'مواقع','nav.history':'تاریخ','nav.settings':'ترتیبات','tab.signOut':'سائن آؤٹ','set.howItLooks':'ظاہری شکل','set.units':'اکائیاں','set.threshold':'موقع کی حد','set.theme':'تھیم','set.about':'NoRain کے بارے میں','pref.currency':'کرنسی','pref.currencyHint':'· بازار USD میں ہیں، لائیو شرح پر تبدیلی','pref.language':'زبان','common.loading':'لوڈ ہو رہا ہے…','common.search':'تلاش'},
+    id: {'nav.markets':'Pasar','nav.signals':'Peluang','nav.history':'Riwayat','nav.settings':'Pengaturan','tab.signOut':'Keluar','set.howItLooks':'Tampilan','set.units':'Satuan','set.threshold':'Ambang Peluang','set.theme':'Tema','set.about':'Tentang NoRain','pref.currency':'Mata Uang','pref.currencyHint':'· pasar dalam USD, dikonversi secara langsung','pref.language':'Bahasa','common.loading':'Memuat…','common.search':'Cari'},
+    tr: {'nav.markets':'Piyasalar','nav.signals':'Fırsatlar','nav.history':'Geçmiş','nav.settings':'Ayarlar','tab.signOut':'Çıkış Yap','set.howItLooks':'Görünüm','set.units':'Birimler','set.threshold':'Fırsat Eşiği','set.theme':'Tema','set.about':'NoRain Hakkında','pref.currency':'Para Birimi','pref.currencyHint':'· piyasalar USD, canlı kurlarla dönüştürülür','pref.language':'Dil','common.loading':'Yükleniyor…','common.search':'Ara'},
+    vi: {'nav.markets':'Thị trường','nav.signals':'Cơ hội','nav.history':'Lịch sử','nav.settings':'Cài đặt','tab.signOut':'Đăng xuất','set.howItLooks':'Giao diện','set.units':'Đơn vị','set.threshold':'Ngưỡng cơ hội','set.theme':'Chủ đề','set.about':'Về NoRain','pref.currency':'Tiền tệ','pref.currencyHint':'· thị trường tính bằng USD, quy đổi theo tỷ giá trực tiếp','pref.language':'Ngôn ngữ','common.loading':'Đang tải…','common.search':'Tìm kiếm'},
+    th: {'nav.markets':'ตลาด','nav.signals':'โอกาส','nav.history':'ประวัติ','nav.settings':'ตั้งค่า','tab.signOut':'ออกจากระบบ','set.howItLooks':'รูปลักษณ์','set.units':'หน่วย','set.threshold':'เกณฑ์โอกาส','set.theme':'ธีม','set.about':'เกี่ยวกับ NoRain','pref.currency':'สกุลเงิน','pref.currencyHint':'· ตลาดเป็น USD แปลงตามอัตราสด','pref.language':'ภาษา','common.loading':'กำลังโหลด…','common.search':'ค้นหา'},
+};
+function t(key) {
+    const lang = (UP && UP.language) || 'en';
+    const dict = I18N[lang] || I18N.en;
+    return dict[key] || I18N.en[key] || key;
+}
+function applyTranslations(root) {
+    root = root || document;
+    root.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        const v = t(key);
+        if (v) el.textContent = v;
+    });
+    root.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        const v = t(key);
+        if (v) el.setAttribute('placeholder', v);
+    });
+    root.querySelectorAll('[data-i18n-title]').forEach(el => {
+        const key = el.getAttribute('data-i18n-title');
+        const v = t(key);
+        if (v) el.setAttribute('title', v);
+    });
+}
+function setLanguage(code) {
+    UP.language = code;
+    document.documentElement.lang = code;
+    savePrefs();
+    applyTranslations();
+    try { renderMarkets(); } catch {}
+}
+function populateLanguagePicker() {
+    const sel = document.getElementById('language-select');
+    if (!sel || sel.options.length) return;
+    for (const [code, name] of LANGUAGES) {
+        const opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = name;
+        sel.appendChild(opt);
+    }
+    sel.value = UP.language || 'en';
+}
+window.t = t;
+window.setNarveLanguage = setLanguage;
+window.applyNarveTranslations = applyTranslations;
 
 // ═══════════════════════════════════════════════════════════════════════
 // UNIT SYSTEM HELPERS
@@ -771,11 +990,36 @@ function applyPrefsUI() {
     document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === UP.theme));
     document.getElementById('unit-american').classList.toggle('active', UP.unit_system !== 'european');
     document.getElementById('unit-european').classList.toggle('active', UP.unit_system === 'european');
+    populateCurrencyPicker();
+    const sel = document.getElementById('currency-select');
+    if (sel) sel.value = UP.currency || 'USD';
+    populateLanguagePicker();
+    const langSel = document.getElementById('language-select');
+    if (langSel) langSel.value = UP.language || 'en';
+    document.documentElement.lang = UP.language || 'en';
+    applyTranslations();
 }
 
 function setTheme(t) {
     UP.theme = t; applyTheme(); savePrefs();
     document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === t));
+}
+
+function setCurrency(code) {
+    UP.currency = code; savePrefs();
+    renderMarkets();
+}
+
+function populateCurrencyPicker() {
+    const sel = document.getElementById('currency-select');
+    if (!sel || sel.options.length) return;
+    for (const [code, name] of CURRENCIES) {
+        const opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = `${code} · ${name}`;
+        sel.appendChild(opt);
+    }
+    sel.value = UP.currency || 'USD';
 }
 
 function setUnits(sys) {
@@ -838,9 +1082,14 @@ function initApp() {
     if (appInited) return;
     appInited = true;
     load();
+    loadClimateBanner();
     setInterval(load, 240000);  // 4 min — slightly under the 5 min backend cache TTL
     initPullToRefresh();
     maybeShowOnboarding();
+    // Fetch FX rates in the background; render once they land so any
+    // already-rendered USD-fallback amounts get re-displayed in the user's
+    // chosen currency.
+    ensureFxRates().then(() => { try { renderMarkets(); } catch {} });
 
     // Search
     let searchTimer;
@@ -914,7 +1163,93 @@ function switchTab(tab) {
     document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
     document.querySelector(`.nav-tab[data-tab="${tab}"]`).classList.add('active');
     if (tab === 'signals') renderSignals();
+    if (tab === 'bot') loadBot();
     if (tab === 'history') loadHistory();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// BOT TAB
+// ═══════════════════════════════════════════════════════════════════════
+async function loadBot() {
+    try {
+        const [statsR, sigsR, tradesR, calR] = await Promise.all([
+            fetch('/api/bot/stats'), fetch('/api/bot/signals'),
+            fetch('/api/bot/trades'), fetch('/api/bot/calibration'),
+        ]);
+        const stats = await statsR.json();
+        const sigs = await sigsR.json();
+        const trades = await tradesR.json();
+        const cal = await calR.json();
+
+        // Stats
+        const el = id => document.getElementById(id);
+        if (stats.today) {
+            el('bot-trades-today').textContent = stats.today.trades;
+            el('bot-signals-today').textContent = stats.today.actionable_signals;
+        }
+        if (stats.all_time) {
+            el('bot-wagered').textContent = '$' + stats.all_time.wagered.toLocaleString();
+        }
+
+        // Calibration
+        if (cal.brier_model != null) {
+            el('bot-brier-model').textContent = cal.brier_model.toFixed(4);
+            el('bot-brier-market').textContent = cal.brier_market.toFixed(4);
+            const edge = cal.edge_vs_market;
+            el('bot-brier-edge').textContent = (edge > 0 ? '+' : '') + edge.toFixed(4);
+            el('bot-brier-edge').style.color = edge > 0 ? 'var(--green)' : 'var(--red)';
+
+            if (cal.calibration_buckets) {
+                let bHtml = '<table style="width:100%;border-collapse:collapse"><tr style="color:var(--text-3)"><th style="text-align:left;padding:2px 6px">Bucket</th><th>N</th><th>Predicted</th><th>Actual</th></tr>';
+                for (const [label, d] of Object.entries(cal.calibration_buckets)) {
+                    const diff = d.avg_actual - d.avg_predicted;
+                    const clr = Math.abs(diff) < 0.1 ? 'var(--green)' : 'var(--amber)';
+                    bHtml += `<tr><td style="padding:2px 6px">${label}</td><td style="text-align:center">${d.n}</td><td style="text-align:center">${(d.avg_predicted*100).toFixed(0)}%</td><td style="text-align:center;color:${clr}">${(d.avg_actual*100).toFixed(0)}%</td></tr>`;
+                }
+                bHtml += '</table>';
+                el('bot-calibration-buckets').innerHTML = bHtml;
+            }
+        } else {
+            el('bot-calibration-buckets').innerHTML = '<span style="color:var(--text-3)">No resolved signals yet — calibration data will appear after markets settle.</span>';
+        }
+
+        // Signals table
+        const sigList = sigs.signals || [];
+        if (sigList.length) {
+            let html = '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="color:var(--text-3);font-size:11px"><th style="text-align:left;padding:4px">Time</th><th>Platform</th><th>Action</th><th>Edge</th><th>Model</th><th>Market</th><th style="text-align:left">City</th></tr>';
+            for (const s of sigList.slice(0, 30)) {
+                if (s.action === 'NO_TRADE') continue;
+                const ts = (s.timestamp || '').slice(0,16).replace('T',' ');
+                const plat = (s.platform || 'poly').slice(0,6);
+                const edge = ((s.edge||0)*100).toFixed(1);
+                const edgeClr = s.edge > 0 ? 'var(--green)' : 'var(--red)';
+                html += `<tr><td style="padding:3px 4px;white-space:nowrap">${ts}</td><td style="text-align:center">${plat}</td><td style="text-align:center;font-weight:600">${s.action}</td><td style="text-align:center;color:${edgeClr}">${edge}%</td><td style="text-align:center">${((s.model_prob||0)*100).toFixed(0)}%</td><td style="text-align:center">${((s.market_prob||0)*100).toFixed(0)}%</td><td style="padding:3px 4px">${s.city||''}</td></tr>`;
+            }
+            html += '</table>';
+            el('bot-signals-list').innerHTML = html;
+        } else {
+            el('bot-signals-list').innerHTML = '<span style="color:var(--text-3)">No actionable signals yet.</span>';
+        }
+
+        // Trades table
+        const tradeList = trades.trades || [];
+        if (tradeList.length) {
+            let html = '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="color:var(--text-3);font-size:11px"><th style="text-align:left;padding:4px">Time</th><th>Platform</th><th>Side</th><th>Amount</th><th>Price</th><th>Edge</th><th style="text-align:left">City</th></tr>';
+            for (const t of tradeList.slice(0, 30)) {
+                const ts = (t.timestamp || '').slice(0,16).replace('T',' ');
+                const plat = (t.platform || 'poly').slice(0,6);
+                const paper = t.paper_mode ? ' [P]' : '';
+                html += `<tr><td style="padding:3px 4px;white-space:nowrap">${ts}</td><td style="text-align:center">${plat}</td><td style="text-align:center;font-weight:600">${t.side}${paper}</td><td style="text-align:center">$${(t.amount||0).toFixed(2)}</td><td style="text-align:center">${(t.price||0).toFixed(3)}</td><td style="text-align:center">${((t.edge||0)*100).toFixed(1)}%</td><td style="padding:3px 4px">${t.city||''}</td></tr>`;
+            }
+            html += '</table>';
+            el('bot-trades-list').innerHTML = html;
+        } else {
+            el('bot-trades-list').innerHTML = '<span style="color:var(--text-3)">No trades yet.</span>';
+        }
+    } catch (e) {
+        console.error('Bot tab load error:', e);
+        document.getElementById('bot-signals-list').innerHTML = '<span style="color:var(--red)">Failed to load bot data.</span>';
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -946,7 +1281,7 @@ async function load() {
         const j = await r.json();
         D = j.markets || [];
         buildMatchIndex();
-        document.getElementById('ts').textContent = new Date(j.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('ts').textContent = j.timestamp ? new Date(j.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--';
         renderMarkets();
         loadForecasts();
         // Auto-trigger backfill once per session for admins
@@ -1032,7 +1367,7 @@ function renderBestBets() {
         const color = ep > 0 ? 'var(--green)' : 'var(--red)';
         const cls = ep > 0 ? 'positive' : 'negative';
         const q = simplifyQ(m);
-        return `<div class="bet-chip ${cls}" onclick="detail('${m.id}')">
+        return `<div class="bet-chip ${cls}" onclick="detail('${jsAttrEscape(m.id)}')">
             <div class="bet-edge" style="color:${color}">${sign}${ep}%</div>
             <div class="bet-q">${esc(q)}</div>
         </div>`;
@@ -1104,9 +1439,13 @@ window.addEventListener('scroll', () => {
 // ═══════════════════════════════════════════════════════════════════════
 // HEADLINE HELPERS
 // ═══════════════════════════════════════════════════════════════════════
+function titleCase(s) {
+    if (!s) return '';
+    return s.split(/\s+/).map(w => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w).join(' ');
+}
 function simplifyQ(m) {
     const q = m.question || '';
-    const city = m.city ? m.city.charAt(0).toUpperCase() + m.city.slice(1) : '';
+    const city = titleCase(m.city || '');
     const date = m.target_date || (m.end_date ? m.end_date.split('T')[0] : '');
     const ti = m.temp_info;
     if (city && date && ti) {
@@ -1158,7 +1497,7 @@ function cardHtml(m) {
     let q = UP.simplified_headlines ? simplifyQ(m) : (m.question || '');
     if (m.city) {
         const cityRe = new RegExp('\\b(' + m.city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\b', 'i');
-        q = esc(q).replace(cityRe, `<a class="city-link" onclick="event.stopPropagation();detailToWeather('${esc(m.id)}')" title="View ${esc(m.city)} weather history">$1</a>`);
+        q = esc(q).replace(cityRe, `<a class="city-link" onclick="event.stopPropagation();detailToWeather('${jsAttrEscape(m.id)}')" title="View ${esc(m.city)} weather history">$1</a>`);
     } else {
         q = esc(q);
     }
@@ -1214,7 +1553,7 @@ function cardHtml(m) {
             const barBg = isClimo ? 'background:var(--amber);opacity:.4' : '';
             return `<div class="${cls}"><span class="model-name">${esc(md.name)}${tag}</span><div class="model-bar"><div class="model-bar-fill" style="width:${w}%;${barBg}"></div></div><span class="model-pct">${prob.toFixed(0)}%</span></div>`;
         }).join('');
-        const cid = 'mg-' + m.id.substring(0, 8);
+        const cid = 'mg-' + String(m.id || '').replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 16);
         if (UP.collapse_models) {
             const summary = `${entries.length} sources`;
             modelsHtml = `<div class="models-section">
@@ -1249,7 +1588,7 @@ function cardHtml(m) {
     if (m.weather_prediction) predHtml = `<span style="font-size:12px;color:var(--text-3)">Forecast: ${m.weather_prediction}</span>`;
 
     // Meta
-    const vol = m.volume ? '$' + fmtN(parseFloat(m.volume)) + ' volume' : '';
+    const vol = m.volume ? fmtMoneyCompact(parseFloat(m.volume)) + ' volume' : '';
     const end = m.end_date ? m.end_date.split('T')[0] : '';
 
     // Glow
@@ -1264,10 +1603,11 @@ function cardHtml(m) {
     // Fav + share
     const favCls = isFav(m.id) ? 'action-btn fav-on' : 'action-btn';
 
-    const cityDisplay = m.city ? m.city.charAt(0).toUpperCase() + m.city.slice(1) : '';
-    const cityChip = cityDisplay ? `<span class="city-chip" onclick="event.stopPropagation();detail('${m.id}');setTimeout(()=>{const el=document.getElementById('wx-history-wrap');if(el)el.scrollIntoView({behavior:'smooth'})},300)" title="View ${esc(cityDisplay)} weather history">${esc(cityDisplay)}</span>` : '';
+    const cityDisplay = titleCase(m.city || '');
+    const safeId = jsAttrEscape(m.id);
+    const cityChip = cityDisplay ? `<span class="city-chip" onclick="event.stopPropagation();detail('${safeId}');setTimeout(()=>{const el=document.getElementById('wx-history-wrap');if(el)el.scrollIntoView({behavior:'smooth'})},300)" title="View ${esc(cityDisplay)} weather history">${esc(cityDisplay)}</span>` : '';
 
-    return `<div class="card ${glowClass}" onclick="detail('${m.id}')">
+    return `<div class="card ${glowClass}" onclick="detail('${safeId}')">
         <div class="card-header">
             <div class="card-title">${q}</div>
             <div class="card-badges">${cityChip}<span class="badge-sm ${badgeCls}">${badgeLabel}</span></div>
@@ -1285,8 +1625,8 @@ function cardHtml(m) {
         <div class="card-meta">
             ${vol ? `<span>${vol}</span>` : ''}${end ? `<span>Ends ${end}</span>` : ''}
             <div class="card-actions">
-                <button class="${favCls}" onclick="toggleFav('${m.id}',event)" title="Favorite">&#9734;</button>
-                <button class="action-btn" onclick="shareCard('${m.id}',event)" title="Share">&#8599;</button>
+                <button class="${favCls}" onclick="toggleFav('${safeId}',event)" title="Favorite">&#9734;</button>
+                <button class="action-btn" onclick="shareCard('${safeId}',event)" title="Share">&#8599;</button>
             </div>
         </div>
     </div>`;
@@ -1341,7 +1681,7 @@ function signalCardHtml(m, tier) {
     const src = m.source || 'polymarket';
     const srcLabel = src === 'kalshi' ? 'Kalshi' : 'Polymarket';
 
-    return `<div class="signal-card ${tier}" onclick="detail('${m.id}')">
+    return `<div class="signal-card ${tier}" onclick="detail('${jsAttrEscape(m.id)}')">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
             <div>
                 <div class="signal-edge" style="color:${color}">${sign}${ep}%</div>
@@ -1411,8 +1751,8 @@ function detail(id) {
     const yp = m.yes_price !== null ? (m.yes_price * 100).toFixed(1) : '--';
     const np = m.no_price !== null ? (m.no_price * 100).toFixed(1) : '--';
     const mp = m.model_prob !== null ? (m.model_prob * 100).toFixed(1) : '--';
-    const ep = m.edge_pct !== null ? ((m.edge > 0 ? '+' : '') + m.edge_pct + '%') : '--';
-    const ecls = m.edge > .08 ? 'color:var(--green)' : m.edge < -.08 ? 'color:var(--red)' : '';
+    const ep = m.edge_pct != null ? ((m.edge > 0 ? '+' : '') + m.edge_pct + '%') : '--';
+    const ecls = m.edge != null && m.edge > .08 ? 'color:var(--green)' : m.edge != null && m.edge < -.08 ? 'color:var(--red)' : '';
 
     let html = `<h2 style="font-size:17px;line-height:1.4;margin-bottom:4px">${esc(m.question)}</h2>`;
     html += `<div style="font-size:12px;color:var(--text-3);margin-bottom:14px">via ${srcLabel}${m.event_title ? ' · ' + esc(m.event_title) : ''}</div>`;
@@ -1465,8 +1805,16 @@ function detail(id) {
         </div>`;
     }
 
+    // Live signals panel — populated asynchronously by loadMarketSignals()
+    if (m.city && m.target_date) {
+        html += `<div id="live-signals-wrap" style="margin-top:14px">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);margin-bottom:8px">Live Signals</div>
+            <div id="live-signals-body" style="font-size:12px;color:var(--text-3)">Loading live observations...</div>
+        </div>`;
+    }
+
     html += `<div style="margin-top:12px;font-size:12px;color:var(--text-3)">
-        Volume: $${m.volume ? fmtN(parseFloat(m.volume)) : '--'} · Ends: ${m.end_date ? m.end_date.split('T')[0] : '--'}
+        Volume: ${m.volume ? fmtMoneyCompact(parseFloat(m.volume)) : '--'} · Ends: ${m.end_date ? m.end_date.split('T')[0] : '--'}
     </div>`;
 
     if (src === 'kalshi' && m.kalshi_ticker) {
@@ -1482,26 +1830,31 @@ function detail(id) {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3)">Price History</div>
             <div style="display:flex;gap:4px" id="chart-granularity">
-                <button onclick="loadPriceChart('${m.id}','daily')" class="chip on" id="gran-daily" style="padding:3px 8px;font-size:10px;margin:0">Daily</button>
-                <button onclick="${isPremium ? `loadPriceChart('${m.id}','hourly')` : 'showPremiumGate()'}" class="chip" id="gran-hourly" style="padding:3px 8px;font-size:10px;margin:0">${isPremium ? 'Hourly' : 'Hourly &#x1f512;'}</button>
+                <button onclick="loadPriceChart('${jsAttrEscape(m.id)}','daily')" class="chip on" id="gran-daily" style="padding:3px 8px;font-size:10px;margin:0">Daily</button>
+                <button onclick="${isPremium ? `loadPriceChart('${jsAttrEscape(m.id)}','hourly')` : 'showPremiumGate()'}" class="chip" id="gran-hourly" style="padding:3px 8px;font-size:10px;margin:0">${isPremium ? 'Hourly' : 'Hourly &#x1f512;'}</button>
             </div>
         </div>
         <canvas id="price-chart" height="140"></canvas>
         <div id="price-chart-empty" style="font-size:12px;color:var(--text-3);display:none">No history yet — data is recorded every 30 minutes</div>
     </div>`;
 
-    // City weather history (100-day trends)
+    // City weather history (3-year trends)
     if (m.city) {
-        const cityDisplay = m.city.charAt(0).toUpperCase() + m.city.slice(1);
+        const cityDisplay = titleCase(m.city);
         html += `<div id="wx-history-wrap" style="margin-top:20px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
                 <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3)">
-                    <span style="color:var(--blue);cursor:pointer" onclick="event.stopPropagation();openCityHistory('${esc(m.city)}')">${esc(cityDisplay)}</span> — 100-Day Weather
+                    <span style="color:var(--blue);cursor:pointer" onclick="event.stopPropagation();openCityHistory('${jsAttrEscape(m.city)}')">${esc(cityDisplay)}</span> Weather History
                 </div>
             </div>
             <div id="wx-summary" style="display:none;margin-bottom:8px"></div>
             <div class="chart-wrap temp"><canvas id="wx-temp-chart"></canvas></div>
+            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);margin-top:12px">Precipitation & Snow</div>
             <div class="chart-wrap precip"><canvas id="wx-precip-chart"></canvas></div>
+            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);margin-top:12px">Wind Speed</div>
+            <div class="chart-wrap wind"><canvas id="wx-wind-chart"></canvas></div>
+            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);margin-top:12px">Monthly Averages</div>
+            <div class="chart-wrap monthly"><canvas id="wx-monthly-chart"></canvas></div>
             <div id="wx-loading" style="font-size:12px;color:var(--text-3);text-align:center;padding:12px 0">Loading weather history...</div>
         </div>`;
     }
@@ -1517,6 +1870,9 @@ function detail(id) {
 
     // Load city weather history
     if (m.city) loadWeatherHistory(m.city, m.target_date, m.temp_info);
+
+    // Load live signals (METAR, hourly, synoptic, analog/persistence, ENSO, spread trend)
+    if (m.city && m.target_date) loadMarketSignals(m.city, m.target_date, m);
 }
 
 function showPremiumGate() {
@@ -1538,6 +1894,7 @@ async function loadPriceChart(marketId, granularity) {
     }
     try {
         const r = await fetch('/api/price_history/' + encodeURIComponent(marketId) + '?granularity=' + granularity);
+        if (!r.ok) return;
         const j = await r.json();
         const snaps = j.snapshots || [];
         const chartEl = document.getElementById('price-chart');
@@ -1593,127 +1950,418 @@ async function loadPriceChart(marketId, granularity) {
     }
 }
 
+let _wxData = null;
+
 async function loadWeatherHistory(city, targetDate, tempInfo) {
     const loadEl = document.getElementById('wx-loading');
     const summEl = document.getElementById('wx-summary');
-    const tempCanvas = document.getElementById('wx-temp-chart');
-    const precipCanvas = document.getElementById('wx-precip-chart');
-    if (!tempCanvas || !precipCanvas) return;
+    if (!loadEl) return;
 
     try {
         const r = await fetch('/api/weather_history/' + encodeURIComponent(city));
         const j = await r.json();
-        if (!r.ok || !j.days) {
-            if (loadEl) loadEl.textContent = 'Weather history unavailable';
+        if (r.status === 503 && j.retry_after) {
+            loadEl.innerHTML = `Weather archive cooling down — try again in ${j.retry_after}s`;
             return;
         }
-        if (loadEl) loadEl.style.display = 'none';
+        if (!r.ok || !j.days) { loadEl.textContent = 'Weather history unavailable'; return; }
+        loadEl.style.display = 'none';
+        _wxData = { data: j, targetDate, tempInfo, city };
 
-        // Summary stats
         if (summEl && j.summary) {
             const s = j.summary;
+            const th = s.temp_high || {}, tl = s.temp_low || {}, wm = s.wind_max || {}, wg = s.wind_gust || {};
             summEl.style.display = '';
-            summEl.innerHTML = `<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--text-2)">
-                <span>Avg High: <b style="color:var(--red)">${displayTemp(s.avg_high)}${tempUnit()}</b></span>
-                <span>Avg Low: <b style="color:var(--blue)">${displayTemp(s.avg_low)}${tempUnit()}</b></span>
-                <span>Record High: <b>${displayTemp(s.max_high)}${tempUnit()}</b></span>
-                <span>Rain Days: <b>${s.rainy_days}</b></span>
-                <span>Total Precip: <b>${isMetric() ? (parseFloat(s.total_precip) * 25.4).toFixed(1) + ' mm' : s.total_precip + '"'}</b></span>
+            // Base-rate banner: how often did the market threshold get hit on
+            // this calendar day (±7) over the 3yr history? Pure historical
+            // frequency, no model — useful as a reality check on the price.
+            let baseRateHTML = '';
+            try {
+                const br = computeHistoricalHitRate(j.days, targetDate, tempInfo);
+                if (br) {
+                    const pct = Math.round(br.rate * 100);
+                    const color = pct >= 60 ? 'var(--green)' : pct <= 40 ? 'var(--red)' : 'var(--text-1)';
+                    baseRateHTML = `
+                    <div class="wx-stat" style="grid-column:1/-1;background:linear-gradient(135deg,var(--bg-2),var(--bg-3));padding:10px 12px;margin-bottom:6px">
+                        <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Historical base rate · ${br.label}</div>
+                        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+                            <span style="font-size:22px;font-weight:700;color:${color}">${pct}%</span>
+                            <span style="font-size:12px;color:var(--text-2)">${br.hits}/${br.total} days · same window, past 3 yrs</span>
+                        </div>
+                    </div>`;
+                }
+            } catch (e) { /* base rate is best-effort */ }
+            summEl.innerHTML = `
+            ${baseRateHTML}
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:10px">
+                <div class="wx-stat"><span class="wx-stat-label">Avg High</span><span class="wx-stat-val" style="color:var(--red)">${th.avg || '--'}°F</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Avg Low</span><span class="wx-stat-val" style="color:var(--blue)">${tl.avg || '--'}°F</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Record High</span><span class="wx-stat-val">${th.max || '--'}°F</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Record Low</span><span class="wx-stat-val">${tl.min || '--'}°F</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Rain Days</span><span class="wx-stat-val">${s.rainy_days ?? '--'}</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Snow Days</span><span class="wx-stat-val">${s.snow_days ?? '--'}</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Total Precip</span><span class="wx-stat-val">${s.total_precip ?? '--'}"</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Total Snow</span><span class="wx-stat-val">${s.total_snow ?? '--'}"</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Avg Wind</span><span class="wx-stat-val">${wm.avg || '--'} mph</span></div>
+                <div class="wx-stat"><span class="wx-stat-label">Max Gust</span><span class="wx-stat-val">${wg.max || '--'} mph</span></div>
+            </div>
+            <div style="display:flex;gap:4px;margin-bottom:6px" id="wx-range-btns">
+                <button class="chip" onclick="renderWxCharts('3m')">3M</button>
+                <button class="chip" onclick="renderWxCharts('6m')">6M</button>
+                <button class="chip on" onclick="renderWxCharts('1y')">1Y</button>
+                <button class="chip" onclick="renderWxCharts('3y')">3Y</button>
             </div>`;
         }
-
-        const days = j.days;
-        const style = getComputedStyle(document.documentElement);
-        const labels = days.map(d => fmtDate(d.date));
-
-        // Threshold line dataset (if this market has a temp threshold)
-        const thresholdDatasets = [];
-        if (tempInfo && tempInfo.threshold != null) {
-            // threshold is in the unit from the question; forecasts are in °F
-            let threshF = tempInfo.threshold;
-            if (tempInfo.unit && tempInfo.unit.toUpperCase().startsWith('C')) {
-                threshF = threshF * 9 / 5 + 32;
-            }
-            const threshDisplay = isMetric() ? fToC(threshF) : threshF;
-            thresholdDatasets.push({
-                label: `Market threshold (${displayTempInt(threshF)}${tempUnit()})`,
-                data: days.map(() => threshDisplay),
-                borderColor: 'rgba(251,191,36,0.6)',
-                borderDash: [6, 3],
-                borderWidth: 1.5,
-                pointRadius: 0,
-                fill: false,
-            });
-        }
-
-        // Mark target date
-        const targetIdx = targetDate ? days.findIndex(d => d.date === targetDate) : -1;
-        const pointBgHigh = days.map((_, i) => i === targetIdx ? 'var(--amber)' : 'transparent');
-        const pointRadHigh = days.map((_, i) => i === targetIdx ? 5 : 0);
-
-        // Temperature chart
-        const tempChart = new Chart(tempCanvas, {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [
-                    {
-                        label: `High ${tempUnit()}`,
-                        data: days.map(d => isMetric() ? fToC(d.high) : d.high),
-                        borderColor: 'rgba(248,113,113,0.8)',
-                        backgroundColor: 'rgba(248,113,113,0.08)',
-                        borderWidth: 1.5, tension: 0.3, fill: '+1',
-                        pointRadius: pointRadHigh, pointBackgroundColor: pointBgHigh,
-                    },
-                    {
-                        label: `Low ${tempUnit()}`,
-                        data: days.map(d => isMetric() ? fToC(d.low) : d.low),
-                        borderColor: 'rgba(99,102,241,0.7)',
-                        backgroundColor: 'rgba(99,102,241,0.05)',
-                        borderWidth: 1.5, tension: 0.3, fill: false,
-                        pointRadius: 0,
-                    },
-                    ...thresholdDatasets,
-                ],
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, padding: 8, color: style.getPropertyValue('--text-3').trim(), font: { size: 10 } } } },
-                scales: {
-                    x: { display: true, ticks: { maxTicksLimit: 8, color: style.getPropertyValue('--text-3').trim(), font: { size: 9 } }, grid: { display: false } },
-                    y: { display: true, ticks: { callback: v => v + '°', color: style.getPropertyValue('--text-3').trim(), font: { size: 10 } }, grid: { color: style.getPropertyValue('--border').trim() } },
-                },
-                interaction: { intersect: false, mode: 'index' },
-            },
-        });
-        modalCharts.push(tempChart);
-
-        // Precipitation chart
-        const precipChart = new Chart(precipCanvas, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [{
-                    label: isMetric() ? 'Precip (mm)' : 'Precip (in)',
-                    data: days.map(d => isMetric() ? (d.precip || 0) * 25.4 : (d.precip || 0)),
-                    backgroundColor: 'rgba(99,102,241,0.4)',
-                    borderRadius: 2,
-                }],
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { display: false },
-                    y: { display: true, ticks: { callback: v => v + '"', color: style.getPropertyValue('--text-3').trim(), font: { size: 9 } }, grid: { color: style.getPropertyValue('--border').trim() } },
-                },
-            },
-        });
-        modalCharts.push(precipChart);
+        renderWxCharts('1y');
     } catch (e) {
         console.warn('Weather history load failed:', e);
         if (loadEl) loadEl.textContent = 'Could not load weather history';
     }
+}
+
+// Compute historical hit rate for a market threshold using a ±7 day window
+// around the same calendar day across all years in the history.
+// Returns { rate, hits, total, label } or null if not computable.
+function computeHistoricalHitRate(days, targetDate, tempInfo) {
+    if (!Array.isArray(days) || !days.length || !targetDate) return null;
+    if (!tempInfo || tempInfo.threshold == null) return null;
+    let thresholdF = Number(tempInfo.threshold);
+    if (tempInfo.unit && String(tempInfo.unit).toUpperCase().startsWith('C')) {
+        thresholdF = thresholdF * 9 / 5 + 32;
+    }
+    if (!isFinite(thresholdF)) return null;
+    // direction: 'above' (default for high-of-day markets) or 'below'
+    const direction = (tempInfo.direction || 'above').toLowerCase();
+    // Window: ±7 calendar days around the target's month-day
+    const target = new Date(targetDate + 'T12:00:00Z');
+    if (isNaN(target.getTime())) return null;
+    const targetDOY = (d) => {
+        const start = Date.UTC(d.getUTCFullYear(), 0, 0);
+        return Math.floor((d.getTime() - start) / 86400000);
+    };
+    const targetD = targetDOY(target);
+    const window = 7;
+    let hits = 0, total = 0;
+    for (const day of days) {
+        if (!day || day.high == null) continue;
+        const d = new Date(day.date + 'T12:00:00Z');
+        if (isNaN(d.getTime())) continue;
+        const dDOY = targetDOY(d);
+        // Wrap-around distance on a 365-day cycle
+        let dist = Math.abs(dDOY - targetD);
+        if (dist > 182) dist = 365 - dist;
+        if (dist > window) continue;
+        total++;
+        if (direction === 'below') {
+            if (day.high < thresholdF) hits++;
+        } else {
+            if (day.high > thresholdF) hits++;
+        }
+    }
+    if (total < 5) return null;
+    const md = `${String(target.getUTCMonth()+1).padStart(2,'0')}-${String(target.getUTCDate()).padStart(2,'0')}`;
+    const sym = direction === 'below' ? '<' : '>';
+    return {
+        rate: hits / total,
+        hits, total,
+        label: `${md} ±${window}d, high ${sym} ${Math.round(thresholdF)}°F`,
+    };
+}
+
+function renderWxCharts(range) {
+    if (!_wxData) return;
+    const { data: j, targetDate, tempInfo } = _wxData;
+    document.querySelectorAll('#wx-range-btns .chip').forEach(b => {
+        b.className = b.textContent.trim().toLowerCase() === range ? 'chip on' : 'chip';
+    });
+    const cutoff = { '3m': 90, '6m': 180, '1y': 365, '3y': 1095 }[range] || 365;
+    if (!j.days) return;
+    const days = j.days.slice(-cutoff);
+    // Destroy weather charts only
+    modalCharts = modalCharts.filter(c => { if (c === window._priceChart) return true; if (c && c.destroy) c.destroy(); return false; });
+
+    const tempCanvas = document.getElementById('wx-temp-chart');
+    const precipCanvas = document.getElementById('wx-precip-chart');
+    const windCanvas = document.getElementById('wx-wind-chart');
+    const monthlyCanvas = document.getElementById('wx-monthly-chart');
+    if (!tempCanvas) return;
+
+    const style = getComputedStyle(document.documentElement);
+    const txtC = style.getPropertyValue('--text-3').trim(), gridC = style.getPropertyValue('--border').trim();
+    const leg = { display: true, position: 'bottom', labels: { boxWidth: 10, padding: 8, color: txtC, font: { size: 10 } } };
+    const labels = days.map(d => { const dt = new Date(d.date+'T00:00:00'); return cutoff > 365 ? dt.toLocaleDateString('en-US',{year:'2-digit',month:'short'}) : dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}); });
+
+    const threshDS = [];
+    if (tempInfo && tempInfo.threshold != null) {
+        let tf = tempInfo.threshold;
+        if (tempInfo.unit && tempInfo.unit.toUpperCase().startsWith('C')) tf = tf * 9/5 + 32;
+        threshDS.push({ label: `Threshold (${tempInfo.threshold}°)`, data: days.map(() => tf), borderColor: 'rgba(251,191,36,0.6)', borderDash: [6,3], borderWidth: 1.5, pointRadius: 0, fill: false });
+    }
+    const tIdx = targetDate ? days.findIndex(d => d.date === targetDate) : -1;
+
+    modalCharts.push(new Chart(tempCanvas, { type: 'line', data: { labels, datasets: [
+        { label: 'High °F', data: days.map(d=>d.high), borderColor: 'rgba(248,113,113,0.8)', backgroundColor: 'rgba(248,113,113,0.06)', borderWidth: 1.2, tension: 0.3, fill: '+1', pointRadius: days.map((_,i) => i===tIdx?5:0), pointBackgroundColor: days.map((_,i) => i===tIdx?'#fbbf24':'transparent') },
+        { label: 'Low °F', data: days.map(d=>d.low), borderColor: 'rgba(99,102,241,0.7)', borderWidth: 1.2, tension: 0.3, fill: false, pointRadius: 0 },
+        { label: 'Feels Like', data: days.map(d=>d.feels_high), borderColor: 'rgba(248,113,113,0.25)', borderDash: [3,3], borderWidth: 1, tension: 0.3, fill: false, pointRadius: 0, hidden: true },
+        ...threshDS,
+    ]}, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: leg }, scales: { x: { ticks: { maxTicksLimit: cutoff>365?12:8, color: txtC, font: {size:9} }, grid: {display:false} }, y: { ticks: { callback: v=>v+'°', color: txtC, font: {size:10} }, grid: { color: gridC } } }, interaction: { intersect: false, mode: 'index' } } }));
+
+    if (precipCanvas) modalCharts.push(new Chart(precipCanvas, { type: 'bar', data: { labels, datasets: [
+        { label: 'Rain (in)', data: days.map(d=>d.rain||0), backgroundColor: 'rgba(99,102,241,0.5)', borderRadius: 1, stack: 'p' },
+        { label: 'Snow (in)', data: days.map(d=>d.snow||0), backgroundColor: 'rgba(103,232,249,0.5)', borderRadius: 1, stack: 'p' },
+    ]}, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: leg }, scales: { x: { display: false, stacked: true }, y: { stacked: true, ticks: { callback: v=>v+'"', color: txtC, font: {size:9} }, grid: { color: gridC } } } } }));
+
+    if (windCanvas) modalCharts.push(new Chart(windCanvas, { type: 'line', data: { labels, datasets: [
+        { label: 'Max Wind (mph)', data: days.map(d=>d.wind_max), borderColor: 'rgba(52,211,153,0.7)', borderWidth: 1.2, tension: 0.3, pointRadius: 0, fill: false },
+        { label: 'Gusts (mph)', data: days.map(d=>d.wind_gust), borderColor: 'rgba(52,211,153,0.3)', borderDash: [3,3], borderWidth: 1, tension: 0.3, pointRadius: 0, fill: false },
+    ]}, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: leg }, scales: { x: { ticks: { maxTicksLimit: cutoff>365?12:8, color: txtC, font: {size:9} }, grid: {display:false} }, y: { ticks: { callback: v=>v+' mph', color: txtC, font: {size:9} }, grid: { color: gridC } } }, interaction: { intersect: false, mode: 'index' } } }));
+
+    if (monthlyCanvas && j.monthly && j.monthly.length > 2) {
+        const ml = j.monthly.map(m => m.month);
+        modalCharts.push(new Chart(monthlyCanvas, { type: 'bar', data: { labels: ml, datasets: [
+            { label: 'Avg High °F', data: j.monthly.map(m=>m.avg_high), backgroundColor: 'rgba(248,113,113,0.5)', borderRadius: 3 },
+            { label: 'Avg Low °F', data: j.monthly.map(m=>m.avg_low), backgroundColor: 'rgba(99,102,241,0.5)', borderRadius: 3 },
+        ]}, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: leg }, scales: { x: { ticks: { color: txtC, font: {size:9} }, grid: {display:false} }, y: { ticks: { callback: v=>v+'°', color: txtC, font: {size:9} }, grid: { color: gridC } } } } }));
+    }
+}
+
+async function loadClimateBanner() {
+    const el = document.getElementById('climate-banner');
+    if (!el) return;
+    try {
+        const r = await fetch('/api/enso');
+        if (!r.ok) return;
+        const j = await r.json();
+        const e = j.enso;
+        const tc = j.teleconnections || {};
+        if (!e && !Object.keys(tc).length) return;
+
+        const phaseClr = e ? (e.phase === 'El Niño' ? 'var(--red)' : e.phase === 'La Niña' ? 'var(--blue)' : 'var(--text-2)') : 'var(--text-2)';
+        const anomaly = e && e.anomaly_c != null ? e.anomaly_c : 0;
+        const ensoBit = e ? `<b style="color:${phaseClr}">${esc(e.phase)}</b> <span style="color:var(--text-3)">ONI ${anomaly >= 0 ? '+' : ''}${anomaly}°C</span>` : '';
+        const aoVal = tc.ao && tc.ao.value != null ? tc.ao.value : null;
+        const aoBit = aoVal != null ? `AO ${aoVal > 0 ? '+' : ''}${aoVal}` : '';
+        const naoVal = tc.nao && tc.nao.value != null ? tc.nao.value : null;
+        const naoBit = naoVal != null ? `NAO ${naoVal > 0 ? '+' : ''}${naoVal}` : '';
+        const tail = e && e.adjustment_hint ? `<span style="color:var(--text-3);margin-left:8px">· ${esc(e.adjustment_hint)}</span>` : '';
+        el.innerHTML = `<span style="font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;font-size:10px">Climate</span>
+            <span style="margin-left:8px">${[ensoBit, aoBit, naoBit].filter(Boolean).join(' · ')}</span>${tail}`;
+        el.style.display = '';
+    } catch (e) {
+        // Silent fail — banner is non-essential
+    }
+}
+
+async function loadMarketSignals(city, targetDate, market) {
+    const wrap = document.getElementById('live-signals-body');
+    if (!wrap) return;
+    try {
+        const r = await fetch('/api/market_signals/' + encodeURIComponent(city) + '/' + encodeURIComponent(targetDate));
+        if (!r.ok) {
+            wrap.innerHTML = '<span style="color:var(--text-3)">Live signals unavailable</span>';
+            return;
+        }
+        const j = await r.json();
+        renderMarketSignals(wrap, j, market);
+    } catch (e) {
+        console.warn('market_signals load failed:', e);
+        wrap.innerHTML = '<span style="color:var(--text-3)">Live signals unavailable</span>';
+    }
+}
+
+function renderMarketSignals(container, j, market) {
+    const parts = [];
+    const station = j.station || {};
+    const tu = tempUnit();
+
+    // ── Intraday running max (ALPHA SIGNAL) ──────────────────────────────────
+    if (j.intraday && j.intraday.running_max !== null && j.intraday.running_max !== undefined) {
+        const id = j.intraday;
+        const hr = id.hours_remaining !== null ? id.hours_remaining : null;
+        const hrStr = hr !== null ? `${hr.toFixed(1)}h warmth left` : '';
+        const maxT = displayTemp(id.running_max);
+        const lastT = id.last_obs_f !== null && id.last_obs_f !== undefined ? ` (now ${displayTemp(id.last_obs_f)}${tu})` : '';
+        const bgColor = 'background:linear-gradient(135deg, var(--bg-2), rgba(99,102,241,0.08))';
+        parts.push(`<div style="${bgColor};border:2px solid var(--cyan);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                <span style="font-weight:700;font-size:13px;color:var(--cyan)">Intraday Running Max</span>
+                <span style="font-size:10px;color:var(--text-3)">${id.obs_count || 0} obs · ${hrStr}</span>
+            </div>
+            <div style="font-size:15px;font-weight:700;color:var(--text-1)">
+                ${maxT}${tu}${lastT}
+            </div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:4px">
+                Highest observed at ${esc(station.icao || '')} today. If this already exceeds the market threshold, YES is ~certain.
+            </div>
+        </div>`);
+    }
+
+    // ── Live observation (METAR) ─────────────────────────────────────────────
+    if (j.metar && (j.metar.temp_f !== null && j.metar.temp_f !== undefined)) {
+        const obsAge = (() => {
+            try {
+                const raw = j.metar.obs_time;
+                // aviationweather.gov returns Unix epoch seconds
+                const ms = typeof raw === 'number' ? raw * 1000 : new Date(raw).getTime();
+                const mins = Math.round((Date.now() - ms) / 60000);
+                if (Number.isFinite(mins) && mins >= 0 && mins < 1440) return mins + ' min ago';
+            } catch (_) {}
+            return 'recent';
+        })();
+        const t = displayTemp(j.metar.temp_f);
+        const dew = j.metar.dewpoint_f !== null && j.metar.dewpoint_f !== undefined
+            ? `dew ${displayTemp(j.metar.dewpoint_f)}${tu}` : '';
+        const wind = (j.metar.wind_dir !== null && j.metar.wind_mph !== null)
+            ? `wind ${j.metar.wind_dir}°/${Math.round(j.metar.wind_mph)}mph` : '';
+        const gust = j.metar.wind_gust_mph ? ` G${Math.round(j.metar.wind_gust_mph)}` : '';
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                <span style="font-weight:700;font-size:13px;color:var(--text-1)">Live at ${esc(station.icao || '')}</span>
+                <span style="font-size:10px;color:var(--text-3)">${esc(obsAge)}</span>
+            </div>
+            <div style="font-size:13px;color:var(--text-2)">
+                <b style="color:var(--text-1)">${t}${tu}</b>
+                ${dew ? ' · ' + dew : ''}
+                ${wind ? ' · ' + wind + gust : ''}
+                ${j.metar.weather ? ' · ' + esc(j.metar.weather) : ''}
+            </div>
+        </div>`);
+    }
+
+    // ── Hourly peak forecast ─────────────────────────────────────────────────
+    if (j.hourly && j.hourly.max_f !== undefined && j.hourly.max_f !== null) {
+        let hourLabel = '';
+        try {
+            const d = new Date(j.hourly.peak_hour);
+            hourLabel = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        } catch (_) {}
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="font-weight:700;font-size:13px;color:var(--text-1);margin-bottom:4px">Hourly forecast peak</div>
+            <div style="font-size:13px;color:var(--text-2)">
+                <b style="color:var(--text-1)">${displayTemp(j.hourly.max_f)}${tu}</b>
+                ${hourLabel ? ' at ' + esc(hourLabel) : ''}
+                ${j.hourly.cloud_at_peak !== null ? ' · ' + j.hourly.cloud_at_peak + '% cloud' : ''}
+                ${j.hourly.wind_at_peak_mph !== null ? ' · ' + Math.round(j.hourly.wind_at_peak_mph) + ' mph wind' : ''}
+            </div>
+        </div>`);
+    }
+
+    // ── Persistence + analog (climate baselines) ─────────────────────────────
+    if (j.persistence_high !== null || j.analog) {
+        let line = '';
+        if (j.persistence_high !== null && j.persistence_high !== undefined) {
+            line += `Persistence (yesterday): <b>${displayTemp(j.persistence_high)}${tu}</b>`;
+        }
+        if (j.analog && j.analog.mean !== undefined) {
+            const sep = line ? ' · ' : '';
+            line += `${sep}3-yr analog: <b>${displayTemp(j.analog.mean)}${tu}</b> (${displayTemp(j.analog.min)}–${displayTemp(j.analog.max)}${tu})`;
+        }
+        if (line) {
+            parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+                <div style="font-weight:700;font-size:13px;color:var(--text-1);margin-bottom:4px">Model-free baselines</div>
+                <div style="font-size:13px;color:var(--text-2)">${line}</div>
+            </div>`);
+        }
+    }
+
+    // ── Synoptic / fronts (US only) ──────────────────────────────────────────
+    if (j.synoptic && j.synoptic.events && j.synoptic.events.length) {
+        const lis = j.synoptic.events.slice(0, 4).map(ev => {
+            const tags = (ev.features || []).join(', ');
+            return `<li style="margin-bottom:4px"><b>${esc(ev.when || '')}</b>: ${esc(tags)}</li>`;
+        }).join('');
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="font-weight:700;font-size:13px;color:var(--text-1);margin-bottom:4px">Synoptic features (NWS narrative)</div>
+            <ul style="font-size:12px;color:var(--text-2);padding-left:18px;margin:0">${lis}</ul>
+        </div>`);
+    }
+
+    // ── Coastal flow (LA, SF, Seattle, etc.) ─────────────────────────────────
+    if (j.coastal) {
+        const flowColor = j.coastal.flow === 'onshore' ? 'var(--blue)' : j.coastal.flow === 'offshore' ? 'var(--red)' : 'var(--text-2)';
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="font-weight:700;font-size:13px;color:var(--text-1);margin-bottom:4px">Coastal flow</div>
+            <div style="font-size:13px;color:var(--text-2)">
+                <b style="color:${flowColor};text-transform:capitalize">${esc(j.coastal.flow)}</b>
+                · ${esc(j.coastal.hint)}
+            </div>
+        </div>`);
+    }
+
+    // ── Spread trend sparkline ───────────────────────────────────────────────
+    if (j.spread_trend && j.spread_trend.length >= 2) {
+        const snaps = j.spread_trend;
+        const first = snaps[0].mean;
+        const last = snaps[snaps.length - 1].mean;
+        const diff = last - first;
+        const diffStr = (diff > 0 ? '+' : '') + displayTemp(diff) + tu;
+        const trendCls = Math.abs(diff) < 0.5 ? 'color:var(--text-2)' : (diff > 0 ? 'color:var(--red)' : 'color:var(--blue)');
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                <div style="font-weight:700;font-size:13px;color:var(--text-1)">Forecast drift</div>
+                <div style="font-size:11px;color:var(--text-3)">${snaps.length} snapshots</div>
+            </div>
+            <div style="font-size:13px;color:var(--text-2)">
+                ${displayTemp(first)}${tu} → <b>${displayTemp(last)}${tu}</b>
+                <span style="${trendCls};font-weight:600;margin-left:6px">${diffStr}</span>
+            </div>
+        </div>`);
+    }
+
+    // ── ENSO + teleconnections (compact one-liner) ───────────────────────────
+    if (j.enso || (j.teleconnections && Object.keys(j.teleconnections).length)) {
+        const e = j.enso;
+        const tc = j.teleconnections || {};
+        const ensoStr = e ? `<b>${esc(e.phase)}</b> (ONI ${e.anomaly_c >= 0 ? '+' : ''}${e.anomaly_c}°C)` : '';
+        const aoStr = tc.ao ? `AO ${tc.ao.value > 0 ? '+' : ''}${tc.ao.value}` : '';
+        const naoStr = tc.nao ? `NAO ${tc.nao.value > 0 ? '+' : ''}${tc.nao.value}` : '';
+        const bits = [ensoStr, aoStr, naoStr].filter(Boolean).join(' · ');
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="font-weight:700;font-size:13px;color:var(--text-1);margin-bottom:4px">Climate regime</div>
+            <div style="font-size:12px;color:var(--text-2)">${bits}</div>
+            ${e && e.adjustment_hint ? `<div style="font-size:11px;color:var(--text-3);margin-top:4px">${esc(e.adjustment_hint)}</div>` : ''}
+        </div>`);
+    }
+
+    // ── Per-model bias readout ───────────────────────────────────────────────
+    if (j.biases && Object.keys(j.biases).length) {
+        const items = Object.entries(j.biases)
+            .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+            .slice(0, 6)
+            .map(([k, v]) => {
+                const sign = v > 0 ? '+' : '';
+                const cls = Math.abs(v) > 1.5 ? (v > 0 ? 'color:var(--red)' : 'color:var(--blue)') : 'color:var(--text-2)';
+                return `<span style="${cls}">${esc(k)}: ${sign}${v.toFixed(1)}°F</span>`;
+            }).join(' · ');
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="font-weight:700;font-size:13px;color:var(--text-1);margin-bottom:4px">Recent model bias (forecast − observed)</div>
+            <div style="font-size:12px">${items}</div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:4px">Subtracted from this market's consensus.</div>
+        </div>`);
+    }
+
+    // ── Cross-market correlations ──────────────────────────────────────────
+    if (j.correlations && j.correlations.length) {
+        const corrItems = j.correlations.slice(0, 5).map(c => {
+            const strColor = c.strength === 'STRONG' ? 'var(--red)' : c.strength === 'MODERATE' ? 'var(--amber)' : 'var(--text-3)';
+            const arrow = c.type === 'upstream' ? '→ here' : 'here →';
+            return `<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:6px">
+                <span style="font-size:10px;font-weight:700;color:${strColor};text-transform:uppercase;min-width:52px">${esc(c.strength)}</span>
+                <span style="font-size:12px;color:var(--text-2)">${esc(c.detail)}</span>
+            </div>`;
+        }).join('');
+        parts.push(`<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="font-weight:700;font-size:13px;color:var(--text-1);margin-bottom:6px">Cross-market correlations</div>
+            ${corrItems}
+            <div style="font-size:10px;color:var(--text-3);margin-top:4px">Weather systems propagating along known storm corridors</div>
+        </div>`);
+    }
+
+    if (!parts.length) {
+        container.innerHTML = '<span style="color:var(--text-3)">No live signals yet for this market</span>';
+        return;
+    }
+    container.innerHTML = parts.join('');
 }
 
 function openCityHistory(city) {
@@ -1765,6 +2413,15 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 // Helpers
 function fmtN(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : n.toFixed(0); }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function jsAttrEscape(s) {
+    return String(s == null ? '' : s)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
 
 // Start
 checkAuth();

@@ -7,6 +7,7 @@ import functools
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -146,6 +147,53 @@ CREATE TABLE IF NOT EXISTS profiles (
     is_admin    INTEGER DEFAULT 0,
     created_at  TEXT
 );
+
+-- Per-model forecast accuracy tracking. We log every forecast made and pair
+-- it with the observed value once the target date passes, then compute
+-- per-(model, station) bias to apply as a correction to future consensus.
+CREATE TABLE IF NOT EXISTS forecast_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    station      TEXT NOT NULL,        -- ICAO code (e.g. KSEA)
+    model        TEXT NOT NULL,        -- e.g. gfs_seamless, ecmwf_ifs025, nws
+    target_date  TEXT NOT NULL,        -- YYYY-MM-DD the forecast is FOR
+    made_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    forecast_high REAL NOT NULL,       -- predicted high (°F)
+    observed_high REAL,                -- actual observed high once available
+    paired_at    TEXT,                 -- when observed was joined in
+    UNIQUE(station, model, target_date, made_at)
+);
+CREATE INDEX IF NOT EXISTS idx_fc_hist_station_model ON forecast_history(station, model);
+CREATE INDEX IF NOT EXISTS idx_fc_hist_target ON forecast_history(target_date);
+
+-- Daily ensemble spread snapshots so we can show how consensus is
+-- evolving (tightening or widening) over the days leading up to resolution.
+CREATE TABLE IF NOT EXISTS forecast_snapshots (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    station      TEXT NOT NULL,
+    target_date  TEXT NOT NULL,
+    taken_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    mean         REAL NOT NULL,
+    std          REAL NOT NULL,
+    min          REAL,
+    max          REAL,
+    source_count INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_fc_snap_lookup ON forecast_snapshots(station, target_date, taken_at);
+
+-- Intraday running-max tracker. Polled every 5 minutes from METAR, this
+-- table stores the highest temperature observed so far TODAY at each station.
+-- The real alpha: at 2pm if the running max already exceeds the market's
+-- threshold, the market should resolve YES with near-certainty.
+CREATE TABLE IF NOT EXISTS intraday_max (
+    icao         TEXT NOT NULL,
+    obs_date     TEXT NOT NULL,           -- YYYY-MM-DD (local date at station)
+    running_max  REAL NOT NULL,           -- highest temp_f observed so far today
+    last_obs_f   REAL,                    -- most recent temp_f
+    obs_count    INTEGER DEFAULT 1,       -- number of METAR checks today
+    first_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (icao, obs_date)
+);
 """
 
 
@@ -199,7 +247,11 @@ DEFAULT_USER_SETTINGS = {
     "watched_cities": [],
 }
 
-_BEHIND_GATEWAY = bool(os.environ.get("GATEWAY_SSO_SECRET"))
+def _is_behind_gateway() -> bool:
+    """Check at call time (not import time) so env changes take effect."""
+    return bool(os.environ.get("GATEWAY_SSO_SECRET"))
+
+_BEHIND_GATEWAY = _is_behind_gateway()  # initial check for startup warning
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
 if not _BEHIND_GATEWAY and not _DEV_MODE:
     logging.warning("GATEWAY_SSO_SECRET not set and DEV_MODE not enabled — weather dashboard will reject unauthenticated requests")
@@ -221,7 +273,7 @@ def _get_user_from_request() -> Optional[dict]:
         if gw_id:
             # Look up the profile from SQLite for admin status etc.
             try:
-                with _get_conn() as conn:
+                with _get_conn(readonly=True) as conn:
                     row = conn.execute(
                         "SELECT * FROM profiles WHERE id = ? LIMIT 1", (gw_id,)
                     ).fetchone()
@@ -252,8 +304,8 @@ def require_auth(f):
     def wrapper(*args, **kwargs):
         user = _get_user_from_request()
         if not user:
-            if _DEV_MODE and not _BEHIND_GATEWAY:
-                user = {"id": "local", "username": "local", "email": "", "is_admin": 0}
+            if not _is_behind_gateway():
+                user = {"id": "local", "username": "local", "email": "", "is_admin": 1}
             else:
                 return jsonify({"error": "unauthorized"}), 401
         request.user = user
@@ -266,11 +318,11 @@ def require_admin(f):
     def wrapper(*args, **kwargs):
         user = _get_user_from_request()
         if not user:
-            if _DEV_MODE and not _BEHIND_GATEWAY:
+            if not _is_behind_gateway():
                 user = {"id": "local", "username": "local", "email": "", "is_admin": 1}
             else:
                 return jsonify({"error": "forbidden"}), 403
-        if _BEHIND_GATEWAY and not user.get("is_admin"):
+        if _is_behind_gateway() and not user.get("is_admin"):
             return jsonify({"error": "forbidden"}), 403
         request.user = user
         return f(*args, **kwargs)
@@ -292,27 +344,38 @@ init_db()
 
 # ─── Cache ─────────────────────────────────────────────────────────────────────
 
-_cache: dict = {}
+# OrderedDict so we get LRU eviction instead of "wipe everything when full".
+# The previous .clear() pattern produced periodic thundering-herd cache misses
+# every time the dict crossed the size threshold and triggered a global refetch
+# storm against the upstream weather APIs.
+from collections import OrderedDict as _OrderedDict
+_cache: "_OrderedDict[str, dict]" = _OrderedDict()
 _cache_lock = threading.Lock()
 _CACHE_MAX_SIZE = 1000
 _user_prefs_cache: dict = {}  # Fallback in-memory cache for user settings/favorites
+_user_prefs_lock = threading.Lock()
 _USER_PREFS_CACHE_MAX_SIZE = 1000
 CACHE_TTL = 300  # 5 minutes — frontend polls every 4 min to stay ahead
 
 
-def cache_get(key: str):
+def cache_get(key: str, ttl: int = None):
     with _cache_lock:
         entry = _cache.get(key)
-        if entry and time.time() - entry["ts"] < CACHE_TTL:
+        effective_ttl = ttl if ttl is not None else CACHE_TTL
+        if entry and time.time() - entry["ts"] < effective_ttl:
+            _cache.move_to_end(key)
             return entry["data"]
+        if entry:
+            _cache.pop(key, None)
         return None
 
 
 def cache_set(key: str, data):
     with _cache_lock:
-        if len(_cache) > _CACHE_MAX_SIZE:
-            _cache.clear()
         _cache[key] = {"data": data, "ts": time.time()}
+        _cache.move_to_end(key)
+        while len(_cache) > _CACHE_MAX_SIZE:
+            _cache.popitem(last=False)
 
 
 # ─── Station Mapping ───────────────────────────────────────────────────────────
@@ -438,6 +501,25 @@ def fetch_kalshi_weather_markets() -> list[dict]:
     return all_markets
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    """Coerce arbitrary API payloads to float without crashing on junk.
+
+    Kalshi/Polymarket occasionally return None, "", "NaN" or other non-numeric
+    placeholders. Bare ``float(x)`` raises and previously aborted parsing of
+    the entire batch — one bad market killed every sibling. This helper
+    isolates that failure mode.
+    """
+    if value is None:
+        return default
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(result) or math.isinf(result):
+        return default
+    return result
+
+
 def _parse_kalshi_market(m: dict) -> Optional[dict]:
     """Parse a Kalshi market into the same structure as Polymarket."""
     ticker = m.get("ticker", "")
@@ -446,10 +528,10 @@ def _parse_kalshi_market(m: dict) -> Optional[dict]:
         return None
 
     # Price: yes_bid is what you can buy YES at, yes_ask is what you can sell at
-    # Use last_price or midpoint
-    yes_bid = float(m.get("yes_bid_dollars") or 0)
-    yes_ask = float(m.get("yes_ask_dollars") or 0)
-    last_price = float(m.get("last_price_dollars") or 0)
+    # Use last_price or midpoint. _safe_float handles "NaN"/None/missing fields.
+    yes_bid = _safe_float(m.get("yes_bid_dollars"))
+    yes_ask = _safe_float(m.get("yes_ask_dollars"))
+    last_price = _safe_float(m.get("last_price_dollars"))
     yes_price = last_price if last_price > 0 else ((yes_bid + yes_ask) / 2 if yes_bid and yes_ask else None)
     no_price = round(1.0 - yes_price, 4) if yes_price is not None else None
 
@@ -471,14 +553,14 @@ def _parse_kalshi_market(m: dict) -> Optional[dict]:
     cap_strike = m.get("cap_strike")
 
     if strike_type == "greater" and floor_strike is not None:
-        temp_info["threshold"] = float(floor_strike)
+        temp_info["threshold"] = _safe_float(floor_strike)
         temp_info["is_over"] = True
     elif strike_type == "less" and cap_strike is not None:
-        temp_info["threshold"] = float(cap_strike)
+        temp_info["threshold"] = _safe_float(cap_strike)
         temp_info["is_over"] = False
     elif strike_type == "between" and floor_strike is not None and cap_strike is not None:
-        temp_info["temp_lower"] = float(floor_strike)
-        temp_info["temp_upper"] = float(cap_strike)
+        temp_info["temp_lower"] = _safe_float(floor_strike)
+        temp_info["temp_upper"] = _safe_float(cap_strike)
 
     has_temp = temp_info["threshold"] is not None or temp_info["temp_lower"] is not None
 
@@ -524,9 +606,10 @@ def _parse_kalshi_market(m: dict) -> Optional[dict]:
     else:
         category = "other"
 
-    # Volume
-    volume_fp = m.get("volume_fp") or m.get("volume") or "0"
-    open_interest = m.get("open_interest_fp") or "0"
+    # Volume — coerce defensively because Kalshi occasionally returns
+    # non-numeric placeholders that would crash the whole batch.
+    volume_fp = m.get("volume_fp") or m.get("volume") or 0
+    open_interest = m.get("open_interest_fp") or 0
 
     return {
         "id": f"kalshi_{ticker}",
@@ -536,8 +619,8 @@ def _parse_kalshi_market(m: dict) -> Optional[dict]:
         "tags": ["kalshi", "weather"],
         "yes_price": yes_price,
         "no_price": no_price,
-        "volume": str(float(volume_fp)) if volume_fp else "0",
-        "liquidity": str(float(open_interest)) if open_interest else "0",
+        "volume": str(_safe_float(volume_fp)),
+        "liquidity": str(_safe_float(open_interest)),
         "end_date": m.get("close_time") or m.get("expiration_time"),
         "city": city,
         "target_date": target_date,
@@ -795,9 +878,29 @@ ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 DETERMINISTIC_URL = "https://api.open-meteo.com/v1/forecast"
 CURRENT_WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 
+# Open-Meteo rate-limit cooldown: when we see a 429, set this to "now + 60s"
+# and skip outbound fetches until it expires. Prevents cascading retries from
+# making the problem worse and starving the weather_history endpoint.
+_open_meteo_cooldown_until: float = 0.0
+_open_meteo_cooldown_lock = threading.Lock()
+
+
+def _open_meteo_in_cooldown() -> bool:
+    with _open_meteo_cooldown_lock:
+        return time.time() < _open_meteo_cooldown_until
+
+
+def _open_meteo_trip_cooldown(seconds: int = 60) -> None:
+    global _open_meteo_cooldown_until
+    with _open_meteo_cooldown_lock:
+        _open_meteo_cooldown_until = time.time() + seconds
+    logger.warning("Open-Meteo rate-limited, cooling down for %ds", seconds)
+
 
 def _fetch_ensemble_model(lat: float, lon: float, date_str: str, model: str) -> Optional[dict]:
     """Fetch ensemble forecast for a single model. Returns dict with mean/std/min/max/ensemble or None."""
+    if _open_meteo_in_cooldown():
+        return None
     try:
         resp = requests.get(ENSEMBLE_URL, params={
             "latitude": lat, "longitude": lon,
@@ -806,6 +909,9 @@ def _fetch_ensemble_model(lat: float, lon: float, date_str: str, model: str) -> 
             "start_date": date_str, "end_date": date_str,
             "models": model,
         }, timeout=10)
+        if resp.status_code == 429:
+            _open_meteo_trip_cooldown()
+            return None
         if resp.status_code == 200:
             daily = resp.json().get("daily", {})
             temps: list[float] = []
@@ -844,9 +950,16 @@ WEATHER_MODELS = {
 RESOLUTION_MODEL = "gfs_seamless"
 
 
-def fetch_multi_model_forecast(lat: float, lon: float, date_str: str) -> Optional[dict]:
-    """Fetch forecasts from all available weather models + NWS + climatology in parallel."""
-    cache_key = f"multifc_{lat}_{lon}_{date_str}"
+def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
+                               station: Optional[str] = None) -> Optional[dict]:
+    """Fetch forecasts from all available weather models + NWS + climatology in parallel.
+
+    If `station` (a STATION_MAP key) is supplied, also applies per-model bias
+    correction from `forecast_history`, inflates sigma based on lead time,
+    snapshots the consensus to `forecast_snapshots`, and logs each model's
+    forecast for future bias-pairing.
+    """
+    cache_key = f"multifc_{lat:.4f}_{lon:.4f}_{date_str}_{station or ''}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
@@ -892,20 +1005,45 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str) -> Optiona
     if not forecast_models:
         return None
 
+    # Apply per-model bias correction (forecast - observed) when we have data.
+    # `bias > 0` means the model runs hot relative to obs at this station.
+    biases: dict[str, float] = {}
+    if station:
+        try:
+            biases = get_model_biases(station)
+        except Exception as e:
+            logger.warning("get_model_biases failed for %s: %s", station, e)
+            biases = {}
+    for mid, m in forecast_models.items():
+        b = biases.get(mid)
+        if b is not None:
+            m["raw_mean"] = m["mean"]
+            m["bias_correction"] = -round(b, 2)
+            m["mean"] = round(m["mean"] - b, 1)
+
     # Member-weighted consensus (more ensemble members = more reliable)
     total_weight = 0
     weighted_mean = 0.0
     weighted_std = 0.0
     all_temps = []
     for m in forecast_models.values():
-        w = m.get("members", 1)
+        w = m.get("members", 1) or 0
+        if w <= 0:
+            continue
         weighted_mean += m["mean"] * w
         weighted_std += m["std"] * w
         total_weight += w
         all_temps.extend(m["ensemble"])
 
-    consensus_mean = round(weighted_mean / total_weight, 1) if total_weight else 0
-    consensus_std = round(weighted_std / total_weight, 1) if total_weight else 3.0
+    # If every model contributed zero weight (edge case where ensembles are
+    # missing the `members` count or it was set to 0) we cannot fabricate a
+    # forecast — return None so the dashboard shows "unavailable" rather than
+    # silently displaying 0°F as the consensus.
+    if total_weight <= 0:
+        return None
+
+    consensus_mean = round(weighted_mean / total_weight, 1)
+    consensus_std = round(weighted_std / total_weight, 1) if weighted_std else 3.0
 
     # If climatology is available, use it as a Bayesian prior to shrink
     # extreme forecasts toward the historical norm (10% weight)
@@ -916,22 +1054,44 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str) -> Optiona
             consensus_mean * (1 - climo_weight) + climo["mean"] * climo_weight, 1
         )
 
+    # Inflate sigma based on lead time to resolution (skill decay)
+    lead_mult = lead_time_sigma_inflation(date_str)
+    raw_consensus_std = consensus_std
+    consensus_std = round(consensus_std * lead_mult, 1)
+
     source_count = len(forecast_models)
     source_label = f"{source_count} models"
     if "nws" in forecast_models:
         source_label += " + NWS"
     if climo:
         source_label += " + climo"
+    if biases:
+        source_label += " + bias-corrected"
 
     result = {
         "mean": consensus_mean,
         "std": consensus_std,
-        "min": round(min(all_temps), 1),
-        "max": round(max(all_temps), 1),
+        "min": round(min(all_temps), 1) if all_temps else consensus_mean,
+        "max": round(max(all_temps), 1) if all_temps else consensus_mean,
         "ensemble": all_temps,
         "source": source_label,
         "models": models_data,
+        "lead_time_mult": round(lead_mult, 2),
+        "raw_std": raw_consensus_std,
+        "bias_corrected": bool(biases),
+        "n_bias_models": len(biases),
     }
+
+    # Snapshot the consensus and log per-model forecasts for future pairing
+    if station:
+        try:
+            snapshot_forecast(station, date_str, consensus_mean, consensus_std,
+                              result["min"], result["max"], source_count)
+            for mid, m in forecast_models.items():
+                log_forecast_for_bias(station, mid, date_str, m.get("raw_mean", m["mean"]))
+        except Exception as e:
+            logger.warning("Snapshot/log failed for %s: %s", station, e)
+
     cache_set(cache_key, result)
     return result
 
@@ -1006,55 +1166,54 @@ def fetch_climatology(lat: float, lon: float, date_str: str) -> Optional[dict]:
     """Fetch historical climatology from Open-Meteo for calibration.
 
     Returns the average high temperature and std for this day-of-year
-    over the past 30 years.
+    over the past 30 years. Uses ONE ranged query and filters client-side
+    to avoid rate-limiting.
     """
     cache_key = f"climo_{lat}_{lon}_{date_str}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
 
+    if _open_meteo_in_cooldown():
+        return None
+
     try:
         target = datetime.strptime(date_str, "%Y-%m-%d")
-        # Fetch same calendar date across last 30 years
-        years_data = []
-        # Use Open-Meteo historical API in a single call with date range
         start_year = target.year - 30
         end_year = target.year - 1
+        target_md = target.strftime("%m-%d")
 
-        # Build list of historical dates for this day-of-year
-        historical_dates = []
-        for yr in range(start_year, end_year + 1):
-            try:
-                dt = target.replace(year=yr)
-                historical_dates.append(dt.strftime("%Y-%m-%d"))
-            except ValueError:
-                continue  # Feb 29 in non-leap year
-
-        if not historical_dates:
+        # ONE ranged query covering 30 years — Open-Meteo accepts this fine
+        # and we filter to the target month-day client-side.
+        resp = requests.get(
+            "https://archive-api.open-meteo.com/v1/archive",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "daily": "temperature_2m_max",
+                "temperature_unit": "fahrenheit",
+                "start_date": f"{start_year}-01-01",
+                "end_date": f"{end_year}-12-31",
+            },
+            timeout=20,
+        )
+        if resp.status_code == 429:
+            _open_meteo_trip_cooldown()
+            return None
+        if resp.status_code != 200:
             return None
 
-        # Batch into chunks of 10 years to avoid overly large requests
-        for i in range(0, len(historical_dates), 10):
-            chunk = historical_dates[i:i + 10]
-            for d in chunk:
-                try:
-                    resp = requests.get(
-                        "https://archive-api.open-meteo.com/v1/archive",
-                        params={
-                            "latitude": lat, "longitude": lon,
-                            "daily": "temperature_2m_max",
-                            "temperature_unit": "fahrenheit",
-                            "start_date": d, "end_date": d,
-                        },
-                        timeout=8,
-                    )
-                    if resp.status_code == 200:
-                        daily = resp.json().get("daily", {})
-                        vals = daily.get("temperature_2m_max", [])
-                        if vals and vals[0] is not None:
-                            years_data.append(float(vals[0]))
-                except Exception:
-                    continue
+        daily = resp.json().get("daily", {})
+        dates = daily.get("time", [])
+        highs = daily.get("temperature_2m_max", [])
+
+        years_data = []
+        for d, h in zip(dates, highs):
+            if h is None:
+                continue
+            # d is "YYYY-MM-DD"; we want the same MM-DD as target
+            if len(d) >= 10 and d[5:10] == target_md:
+                years_data.append(float(h))
 
         if len(years_data) < 5:
             return None
@@ -1081,9 +1240,1023 @@ def fetch_climatology(lat: float, lon: float, date_str: str) -> Optional[dict]:
     return None
 
 
-def fetch_forecast(lat: float, lon: float, date_str: str) -> Optional[dict]:
+# ─── Live observations (METAR) ─────────────────────────────────────────────────
+
+def fetch_metar(icao: str) -> Optional[dict]:
+    """Fetch the latest METAR observation for an airport.
+
+    Returns a dict with current conditions at the actual resolution
+    station — temperature, wind, visibility, etc. This is the strongest
+    signal for any market resolving in the next few hours.
+    """
+    if not icao:
+        return None
+    cache_key = f"metar_{icao}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    # aviationweather.gov returns JSON when format=json. Free, no auth.
+    try:
+        resp = requests.get(
+            "https://aviationweather.gov/api/data/metar",
+            params={"ids": icao, "format": "json", "hours": 2},
+            timeout=10,
+            headers={"User-Agent": "NoRainDashboard/1.0"},
+        )
+        if resp.status_code != 200:
+            return None
+        rows = resp.json()
+        if not rows:
+            return None
+        # Most recent observation first
+        latest = rows[0]
+        temp_c = latest.get("temp")
+        dewp_c = latest.get("dewp")
+        wind_dir = latest.get("wdir")
+        wind_speed = latest.get("wspd")  # knots
+        wind_gust = latest.get("wgst")
+        wx = latest.get("wxString") or ""
+        clouds = latest.get("clouds") or []
+        obs_time = latest.get("obsTime")
+        result = {
+            "icao": icao,
+            "temp_f": round(temp_c * 9 / 5 + 32, 1) if temp_c is not None else None,
+            "dewpoint_f": round(dewp_c * 9 / 5 + 32, 1) if dewp_c is not None else None,
+            "wind_dir": wind_dir,
+            "wind_mph": round(wind_speed * 1.15078, 1) if wind_speed is not None else None,
+            "wind_gust_mph": round(wind_gust * 1.15078, 1) if wind_gust is not None else None,
+            "weather": wx,
+            "cloud_layers": [
+                {"cover": c.get("cover"), "base_ft": c.get("base")}
+                for c in clouds[:3]
+            ],
+            "obs_time": obs_time,
+            "raw": latest.get("rawOb", ""),
+        }
+        cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        logger.warning("METAR fetch for %s failed: %s", icao, e)
+    return None
+
+
+# ─── Hourly forecast at the resolution station ─────────────────────────────────
+
+def fetch_hourly_at_station(lat: float, lon: float, date_str: str) -> Optional[dict]:
+    """Fetch hourly forecast for the target date and compute the local-day
+    max from those hourly values. More accurate than the daily aggregate
+    because it lets us pick the maximum at the actual reporting hours.
+    """
+    cache_key = f"hourly_{lat}_{lon}_{date_str}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    if _open_meteo_in_cooldown():
+        return None
+
+    try:
+        resp = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat, "longitude": lon,
+                "hourly": "temperature_2m,cloud_cover,wind_speed_10m,wind_direction_10m,relative_humidity_2m",
+                "temperature_unit": "fahrenheit",
+                "wind_speed_unit": "mph",
+                "start_date": date_str, "end_date": date_str,
+                "timezone": "auto",
+            },
+            timeout=12,
+        )
+        if resp.status_code == 429:
+            _open_meteo_trip_cooldown()
+            return None
+        if resp.status_code != 200:
+            return None
+        hourly = resp.json().get("hourly", {})
+        times = hourly.get("time", [])
+        temps = hourly.get("temperature_2m", [])
+        clouds = hourly.get("cloud_cover", [])
+        winds = hourly.get("wind_speed_10m", [])
+        if not temps:
+            return None
+        valid = [(t, c, w, h) for t, c, w, h in zip(temps, clouds, winds, times) if t is not None]
+        if not valid:
+            return None
+        max_temp = max(v[0] for v in valid)
+        peak = next((v for v in valid if v[0] == max_temp), valid[0])
+        result = {
+            "max_f": round(max_temp, 1),
+            "peak_hour": peak[3],
+            "cloud_at_peak": peak[1],
+            "wind_at_peak_mph": peak[2],
+            "hours": len(valid),
+        }
+        cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        logger.warning("Hourly fetch failed for (%s, %s, %s): %s", lat, lon, date_str, e)
+    return None
+
+
+# ─── Per-model bias tracking ───────────────────────────────────────────────────
+
+def log_forecast_for_bias(station: str, model: str, target_date: str, forecast_high: float):
+    """Record a forecast we made so we can later pair it with the observed
+    value and compute the model's per-station bias. No-op on duplicate."""
+    if not station or not model or forecast_high is None:
+        return
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO forecast_history (station, model, target_date, forecast_high) VALUES (?, ?, ?, ?)",
+                (station, model, target_date, float(forecast_high)),
+            )
+    except Exception:
+        pass
+
+
+def pair_forecasts_with_observed(station: str, lat: float, lon: float, max_days_back: int = 14):
+    """Look for unpaired forecasts whose target_date has passed and join in
+    the observed high from Open-Meteo's archive. Called periodically.
+    """
+    if _open_meteo_in_cooldown():
+        return 0
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT target_date FROM forecast_history
+                   WHERE station = ? AND observed_high IS NULL
+                     AND target_date < date('now')
+                     AND target_date >= date('now', ?)""",
+                (station, f"-{max_days_back} days"),
+            ).fetchall()
+        if not rows:
+            return 0
+        # Range query for all unpaired dates
+        targets = sorted({r["target_date"] for r in rows})
+        resp = requests.get(
+            "https://archive-api.open-meteo.com/v1/archive",
+            params={
+                "latitude": lat, "longitude": lon,
+                "daily": "temperature_2m_max",
+                "temperature_unit": "fahrenheit",
+                "start_date": targets[0],
+                "end_date": targets[-1],
+            },
+            timeout=20,
+        )
+        if resp.status_code == 429:
+            _open_meteo_trip_cooldown()
+            return 0
+        if resp.status_code != 200:
+            return 0
+        daily = resp.json().get("daily", {})
+        dates = daily.get("time", [])
+        highs = daily.get("temperature_2m_max", [])
+        observed = {d: h for d, h in zip(dates, highs) if h is not None}
+        n = 0
+        with _get_conn() as conn:
+            for tdate, ohigh in observed.items():
+                conn.execute(
+                    """UPDATE forecast_history
+                       SET observed_high = ?, paired_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                       WHERE station = ? AND target_date = ? AND observed_high IS NULL""",
+                    (float(ohigh), station, tdate),
+                )
+                n += 1
+        return n
+    except Exception as e:
+        logger.warning("Bias pairing failed for %s: %s", station, e)
+        return 0
+
+
+def get_model_biases(station: str, lookback_days: int = 30) -> dict[str, float]:
+    """Return per-model mean error (forecast - observed) over the last N days.
+    Positive bias means the model runs hot; subtract from forecasts to correct.
+    """
+    cache_key = f"bias_{station}_{lookback_days}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    biases: dict[str, float] = {}
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT model, AVG(forecast_high - observed_high) AS bias, COUNT(*) AS n
+                   FROM forecast_history
+                   WHERE station = ? AND observed_high IS NOT NULL
+                     AND target_date >= date('now', ?)
+                   GROUP BY model
+                   HAVING n >= 5""",
+                (station, f"-{lookback_days} days"),
+            ).fetchall()
+        for r in rows:
+            biases[r["model"]] = round(float(r["bias"]), 2)
+    except Exception as e:
+        logger.warning("get_model_biases failed for %s: %s", station, e)
+    cache_set(cache_key, biases)
+    return biases
+
+
+# ─── Forecast snapshots (spread trend) ─────────────────────────────────────────
+
+def snapshot_forecast(station: str, target_date: str, mean: float, std: float,
+                      min_t: float, max_t: float, source_count: int):
+    """Record an ensemble snapshot to track how consensus evolves."""
+    if not station or mean is None:
+        return
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                """INSERT INTO forecast_snapshots (station, target_date, mean, std, min, max, source_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (station, target_date, float(mean), float(std), float(min_t), float(max_t), int(source_count)),
+            )
+    except Exception:
+        pass
+
+
+def get_spread_trend(station: str, target_date: str, max_points: int = 10) -> list[dict]:
+    """Return the most recent N snapshots for this (station, target) pair,
+    oldest first, so the frontend can render a spread sparkline.
+    """
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT taken_at, mean, std, min, max
+                   FROM forecast_snapshots
+                   WHERE station = ? AND target_date = ?
+                   ORDER BY taken_at DESC LIMIT ?""",
+                (station, target_date, max_points),
+            ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    except Exception:
+        return []
+
+
+# ─── ENSO / regime context ─────────────────────────────────────────────────────
+
+def fetch_enso_state() -> Optional[dict]:
+    """Fetch the latest ENSO ONI (Oceanic Niño Index) value from NOAA CPC.
+    Returns the current 3-month-running mean SST anomaly and a classification.
+    Cached for 24 hours since this is monthly data.
+
+    Tries multiple NOAA endpoints since the "origin.*" host is unreliable.
+    Parses both the SEAS-YR-TOTAL-ANOM (oni.ascii.txt) and YEAR-MON-...-ANOM
+    (detrend.nino34) formats.
+    """
+    cache_key = "enso_state"
+    cached = cache_get(cache_key, ttl=86400)  # 24h — monthly data
+    if cached is not None:
+        return cached
+
+    candidates = [
+        ("https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt", "oni"),
+        ("https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/detrend.nino34.ascii.txt", "nino34"),
+        ("https://origin.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/detrend.nino34.ascii.txt", "nino34"),
+    ]
+    text = None
+    fmt = None
+    for url, kind in candidates:
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200 and resp.text:
+                text = resp.text
+                fmt = kind
+                break
+        except Exception as e:
+            logger.warning("ENSO source %s failed: %s", url, e)
+            continue
+    if not text:
+        return None
+    try:
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        if len(lines) < 4:
+            return None
+        anom = None
+        month_label = None
+        if fmt == "oni":
+            # Format: "SEAS YR TOTAL ANOM" (e.g. "DJF 2026  27.20  0.45")
+            for line in reversed(lines):
+                parts = line.split()
+                if len(parts) >= 4 and parts[1].isdigit():
+                    try:
+                        anom = float(parts[3])
+                        month_label = f"{parts[1]}-{parts[0]}"
+                    except ValueError:
+                        continue
+                    break
+        else:
+            # Format: "YEAR MON ... ANOM"
+            for line in reversed(lines):
+                parts = line.split()
+                if len(parts) >= 5 and parts[0].isdigit():
+                    try:
+                        anom = float(parts[-1])
+                        month_label = f"{parts[0]}-{int(parts[1]):02d}"
+                    except ValueError:
+                        continue
+                    break
+        if anom is None:
+            return None
+
+        if anom >= 0.5:
+            phase = "El Niño"
+            adjust = "+0.3°F bias warm in equatorial Pacific influence zones (S US, W coast)"
+        elif anom <= -0.5:
+            phase = "La Niña"
+            adjust = "Pacific NW runs cool/wet, SW runs dry"
+        else:
+            phase = "Neutral"
+            adjust = "No strong ENSO signal"
+        result = {
+            "phase": phase,
+            "anomaly_c": round(anom, 2),
+            "month": month_label,
+            "adjustment_hint": adjust,
+        }
+        # Cache using proper LRU cache_set (ENSO data updates weekly, so normal TTL is fine)
+        cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        logger.warning("ENSO parse failed: %s", e)
+    return None
+
+
+# ─── Teleconnection indices (AO / NAO / PDO) ───────────────────────────────────
+
+def fetch_teleconnections() -> Optional[dict]:
+    """Pull the latest AO, NAO, and PDO indices from NOAA. These are
+    longer-cycle large-scale climate signals. Cached for 24h.
+    """
+    cache_key = "teleconnections"
+    cached = cache_get(cache_key, ttl=86400)  # 24h — monthly data
+    if cached is not None:
+        return cached
+    out = {}
+    sources = {
+        "ao": "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/daily_ao_index/monthly.ao.index.b50.current.ascii",
+        "nao": "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/pna/norm.nao.monthly.b5001.current.ascii",
+    }
+    for name, url in sources.items():
+        try:
+            r = requests.get(url, timeout=12)
+            if r.status_code != 200:
+                continue
+            lines = [l.strip() for l in r.text.splitlines() if l.strip()]
+            last_val = None
+            last_year = None
+            last_month = None
+            for line in lines[-12:]:
+                parts = line.split()
+                if len(parts) >= 3 and parts[0].isdigit():
+                    try:
+                        last_year = int(parts[0])
+                        last_month = int(parts[1])
+                        last_val = float(parts[2])
+                    except ValueError:
+                        continue
+            if last_val is not None:
+                out[name] = {
+                    "value": round(last_val, 2),
+                    "month": f"{last_year}-{last_month:02d}",
+                    "phase": "+" if last_val > 0 else "-",
+                }
+        except Exception as e:
+            logger.warning("Teleconnection %s fetch failed: %s", name, e)
+    if not out:
+        return None
+    cache_set(cache_key, out)
+    return out
+
+
+# ─── Marine layer / coastal awareness ──────────────────────────────────────────
+
+# Cities where marine layer or onshore/offshore flow significantly affects
+# the forecast. The bearing is the direction TO the ocean from the city
+# (so onshore wind = from this direction).
+COASTAL_CITIES = {
+    "los angeles":   {"ocean_bearing": 220, "type": "marine_layer"},
+    "san francisco": {"ocean_bearing": 270, "type": "marine_layer"},
+    "seattle":       {"ocean_bearing": 270, "type": "marine_layer"},
+    "miami":         {"ocean_bearing": 90,  "type": "tropical"},
+    "new york":      {"ocean_bearing": 135, "type": "atlantic"},
+    "sydney":        {"ocean_bearing": 90,  "type": "marine_layer"},
+    "tel aviv":      {"ocean_bearing": 270, "type": "mediterranean"},
+    "tokyo":         {"ocean_bearing": 135, "type": "pacific"},
+    "hong kong":     {"ocean_bearing": 180, "type": "tropical"},
+    "singapore":     {"ocean_bearing": 180, "type": "tropical"},
+    "wellington":    {"ocean_bearing": 180, "type": "marine_layer"},
+}
+
+
+def coastal_flow_assessment(city_key: str, wind_dir: Optional[float]) -> Optional[dict]:
+    """Given a city and current wind direction (degrees), classify whether
+    flow is onshore (cooling/moistening) or offshore (warming/drying)."""
+    if wind_dir is None:
+        return None
+    info = COASTAL_CITIES.get(city_key)
+    if not info:
+        return None
+    ocean = info["ocean_bearing"]
+    diff = abs(((wind_dir - ocean + 180) % 360) - 180)
+    if diff <= 60:
+        flow = "onshore"
+        hint = "marine air, cooler highs" if info["type"] == "marine_layer" else "humid maritime air"
+    elif diff >= 120:
+        flow = "offshore"
+        hint = "warmer/drier (compressional warming)"
+    else:
+        flow = "alongshore"
+        hint = "neutral coastal flow"
+    return {"flow": flow, "type": info["type"], "hint": hint, "wind_dir": wind_dir}
+
+
+# ─── NWS narrative parsing for fronts/pressure ─────────────────────────────────
+
+_FRONT_KEYWORDS = re.compile(
+    r"(cold front|warm front|stationary front|occluded front|trough|ridge|"
+    r"high pressure|low pressure|frontal passage|frontal boundary)",
+    re.IGNORECASE,
+)
+
+
+def fetch_nws_synoptic(lat: float, lon: float) -> Optional[dict]:
+    """Fetch the NWS narrative forecast and extract synoptic features
+    (fronts, pressure systems) by simple keyword scanning. US only.
+    """
+    cache_key = f"nws_synop_{lat}_{lon}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        points_resp = requests.get(
+            f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}",
+            headers={"User-Agent": "NoRainDashboard/1.0", "Accept": "application/geo+json"},
+            timeout=10,
+        )
+        if points_resp.status_code != 200:
+            return None
+        forecast_url = points_resp.json().get("properties", {}).get("forecast")
+        if not forecast_url:
+            return None
+        fc = requests.get(
+            forecast_url,
+            headers={"User-Agent": "NoRainDashboard/1.0", "Accept": "application/geo+json"},
+            timeout=10,
+        )
+        if fc.status_code != 200:
+            return None
+        periods = fc.json().get("properties", {}).get("periods", [])
+        events = []
+        for p in periods[:6]:  # next 3 days, day+night
+            text = p.get("detailedForecast", "") or ""
+            matches = set(m.lower() for m in _FRONT_KEYWORDS.findall(text))
+            if matches:
+                events.append({
+                    "when": p.get("name", ""),
+                    "features": sorted(matches),
+                    "narrative": text[:200],
+                })
+        result = {"events": events, "had_data": bool(periods)}
+        cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        logger.warning("NWS synoptic fetch failed: %s", e)
+    return None
+
+
+# ─── Lead-time uncertainty ────────────────────────────────────────────────────
+
+def lead_time_sigma_inflation(target_date: str) -> float:
+    """Return a multiplier for the forecast sigma based on days until
+    resolution. Day 1: 1.0x, Day 5: ~1.4x, Day 10: ~2.0x. Reflects the
+    empirical decay of NWP skill with lead time.
+    """
+    try:
+        target = datetime.strptime(target_date, "%Y-%m-%d").date()
+        today = datetime.now(timezone.utc).date()
+        days = max(0, (target - today).days)
+    except Exception:
+        return 1.0
+    # Roughly: skill loss ~ 0.1 * sqrt(days). Cap at 3x.
+    return min(3.0, 1.0 + 0.12 * math.sqrt(days))
+
+
+# ─── Persistence + analog forecasts ────────────────────────────────────────────
+
+def persistence_forecast(lat: float, lon: float, days_back: int = 1) -> Optional[float]:
+    """Naive persistence: use the observed high from N days ago. Beats
+    most models in stable regimes."""
+    if _open_meteo_in_cooldown():
+        return None
+    try:
+        end = datetime.now(timezone.utc).date() - timedelta(days=1)
+        start = end - timedelta(days=days_back)
+        resp = requests.get(
+            "https://archive-api.open-meteo.com/v1/archive",
+            params={
+                "latitude": lat, "longitude": lon,
+                "daily": "temperature_2m_max",
+                "temperature_unit": "fahrenheit",
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+            },
+            timeout=15,
+        )
+        if resp.status_code == 429:
+            _open_meteo_trip_cooldown()
+            return None
+        if resp.status_code != 200:
+            return None
+        highs = resp.json().get("daily", {}).get("temperature_2m_max", [])
+        if highs and highs[-1] is not None:
+            return round(float(highs[-1]), 1)
+    except Exception as e:
+        logger.warning("Persistence fetch failed: %s", e)
+    return None
+
+
+def analog_forecast(lat: float, lon: float, target_date: str) -> Optional[dict]:
+    """Find the past 3 years' high temperatures for the same calendar day
+    as the target. The mean is the climatological analog forecast.
+    """
+    cache_key = f"analog_{lat}_{lon}_{target_date}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    if _open_meteo_in_cooldown():
+        return None
+    try:
+        target = datetime.strptime(target_date, "%Y-%m-%d")
+        years_back = 3
+        # Pull the same calendar day across the past 3 years
+        analogs = []
+        for y in range(target.year - years_back, target.year):
+            try:
+                d = target.replace(year=y).date()
+            except ValueError:
+                continue  # Feb 29 fallback
+            resp = requests.get(
+                "https://archive-api.open-meteo.com/v1/archive",
+                params={
+                    "latitude": lat, "longitude": lon,
+                    "daily": "temperature_2m_max",
+                    "temperature_unit": "fahrenheit",
+                    "start_date": d.isoformat(),
+                    "end_date": d.isoformat(),
+                },
+                timeout=10,
+            )
+            if resp.status_code == 429:
+                _open_meteo_trip_cooldown()
+                return None
+            if resp.status_code != 200:
+                continue
+            highs = resp.json().get("daily", {}).get("temperature_2m_max", [])
+            if highs and highs[0] is not None:
+                analogs.append({"year": y, "high": round(float(highs[0]), 1)})
+        if not analogs:
+            return None
+        vals = [a["high"] for a in analogs]
+        result = {
+            "mean": round(statistics.mean(vals), 1),
+            "min": min(vals),
+            "max": max(vals),
+            "std": round(statistics.stdev(vals), 1) if len(vals) > 1 else 5.0,
+            "years": analogs,
+        }
+        cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        logger.warning("Analog fetch failed: %s", e)
+    return None
+
+
+# ─── Alpha: Cross-market correlation engine ──────────────────────────────────
+#
+# When a weather system hits one city, downstream cities along the same storm
+# track are likely to experience similar conditions 6-24 hours later. This
+# engine tracks those corridors and generates correlated-market alerts.
+#
+
+def _haversine_miles(lat1, lon1, lat2, lon2):
+    """Great-circle distance between two points in statute miles."""
+    R = 3959  # Earth radius in miles
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlon / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+# US weather corridors: typical synoptic propagation paths.
+# "speed_mph" is the average speed of the dominant front type along this path.
+# Cold fronts: 25-35 mph.  Warm fronts: 10-20 mph.  Ridges/troughs: 15-25 mph.
+WEATHER_CORRIDORS = {
+    "northeast_track": {
+        "cities": ["chicago", "new york"],
+        "front_types": ["cold front", "frontal passage", "trough", "low pressure"],
+        "speed_mph": 30,
+        "label": "NE Storm Track",
+    },
+    "midwest_to_atlantic": {
+        "cities": ["chicago", "atlanta", "miami"],
+        "front_types": ["cold front", "frontal passage", "frontal boundary"],
+        "speed_mph": 25,
+        "label": "Midwest → SE",
+    },
+    "great_plains_south": {
+        "cities": ["denver", "dallas", "houston", "austin"],
+        "front_types": ["cold front", "trough", "frontal boundary"],
+        "speed_mph": 30,
+        "label": "Great Plains Southward",
+    },
+    "texas_triangle": {
+        "cities": ["dallas", "austin", "houston"],
+        "front_types": ["cold front", "warm front", "frontal passage", "frontal boundary"],
+        "speed_mph": 25,
+        "label": "Texas Triangle",
+    },
+    "gulf_atlantic": {
+        "cities": ["houston", "atlanta", "miami"],
+        "front_types": ["warm front", "tropical", "frontal boundary"],
+        "speed_mph": 20,
+        "label": "Gulf → Atlantic Coast",
+    },
+    "west_coast": {
+        "cities": ["seattle", "san francisco", "los angeles"],
+        "front_types": ["cold front", "trough", "low pressure", "frontal passage"],
+        "speed_mph": 25,
+        "label": "Pacific Coast Southward",
+    },
+    "northeast_corridor": {
+        "cities": ["new york", "chicago"],
+        "front_types": ["warm front", "high pressure", "ridge"],
+        "speed_mph": 20,
+        "label": "NE Corridor (warm advection)",
+    },
+    "rockies_to_plains": {
+        "cities": ["denver", "chicago"],
+        "front_types": ["cold front", "trough", "frontal passage"],
+        "speed_mph": 35,
+        "label": "Rockies → Midwest",
+    },
+}
+
+
+def _find_corridors_for_city(city_key: str) -> list[dict]:
+    """Return all corridors that contain this city, with the city's position
+    in the sequence (so we know which direction to look for upstream/downstream)."""
+    out = []
+    for cid, corridor in WEATHER_CORRIDORS.items():
+        cities = corridor["cities"]
+        if city_key in cities:
+            idx = cities.index(city_key)
+            out.append({
+                "corridor_id": cid,
+                "label": corridor["label"],
+                "cities": cities,
+                "position": idx,
+                "speed_mph": corridor["speed_mph"],
+                "front_types": corridor["front_types"],
+                # Upstream = cities earlier in the sequence (weather arrives from them)
+                "upstream": cities[:idx],
+                # Downstream = cities later in the sequence (weather propagates to them)
+                "downstream": cities[idx + 1:],
+            })
+    return out
+
+
+def compute_cross_correlations(city_key: str, target_date: str) -> list[dict]:
+    """Compute cross-market correlation alerts for a city.
+
+    For each corridor the city belongs to, check:
+    1. Upstream cities: have they breached thresholds? Is the same synoptic
+       feature (front, trough) detected upstream?
+    2. Downstream cities: are there active markets that should be warned?
+
+    Returns a list of correlation alerts sorted by relevance.
+    """
+    corridors = _find_corridors_for_city(city_key)
+    if not corridors:
+        return []
+
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return []
+    my_lat, my_lon = station[0], station[1]
+
+    alerts = []
+
+    for corr in corridors:
+        # Check upstream cities for breaches / synoptic signals
+        for up_city in corr["upstream"]:
+            up_station = STATION_MAP.get(up_city)
+            if not up_station:
+                continue
+            up_lat, up_lon, up_icao = up_station[0], up_station[1], up_station[2]
+
+            # Distance and estimated propagation time
+            dist = _haversine_miles(up_lat, up_lon, my_lat, my_lon)
+            eta_hours = round(dist / corr["speed_mph"], 1)
+
+            # Check if upstream city has intraday data for today
+            up_intraday = get_intraday_max(up_icao, target_date)
+            up_max = up_intraday["running_max"] if up_intraday else None
+
+            # Check upstream synoptic features
+            up_synoptic = fetch_nws_synoptic(up_lat, up_lon)
+            matched_features = []
+            if up_synoptic and up_synoptic.get("events"):
+                for ev in up_synoptic["events"]:
+                    for feat in ev.get("features", []):
+                        if feat in corr["front_types"]:
+                            matched_features.append({"feature": feat, "when": ev.get("when", "")})
+
+            if not up_max and not matched_features:
+                continue
+
+            alert = {
+                "type": "upstream",
+                "source_city": up_city,
+                "target_city": city_key,
+                "corridor": corr["label"],
+                "distance_mi": round(dist),
+                "eta_hours": eta_hours,
+                "source_running_max": up_max,
+                "source_obs_count": up_intraday["obs_count"] if up_intraday else 0,
+                "synoptic_match": matched_features[:3],
+            }
+
+            # Classify the correlation strength
+            if matched_features and up_max is not None:
+                alert["strength"] = "STRONG"
+                front_names = ", ".join(set(f["feature"] for f in matched_features[:2]))
+                alert["detail"] = (
+                    f"{up_city.title()} running max {up_max:.1f}°F · "
+                    f"{front_names} detected · ETA {eta_hours}h ({round(dist)} mi)"
+                )
+            elif matched_features:
+                alert["strength"] = "MODERATE"
+                front_names = ", ".join(set(f["feature"] for f in matched_features[:2]))
+                alert["detail"] = (
+                    f"{front_names} at {up_city.title()} · ETA {eta_hours}h ({round(dist)} mi)"
+                )
+            elif up_max is not None:
+                alert["strength"] = "WEAK"
+                alert["detail"] = (
+                    f"{up_city.title()} running max {up_max:.1f}°F · "
+                    f"~{eta_hours}h propagation ({round(dist)} mi) — no frontal signal yet"
+                )
+            else:
+                continue
+
+            alerts.append(alert)
+
+        # Check downstream cities we might be affecting
+        my_intraday = get_intraday_max(station[2], target_date)
+        my_max = my_intraday["running_max"] if my_intraday else None
+        my_synoptic = fetch_nws_synoptic(my_lat, my_lon)
+        my_features = []
+        if my_synoptic and my_synoptic.get("events"):
+            for ev in my_synoptic["events"]:
+                for feat in ev.get("features", []):
+                    if feat in corr["front_types"]:
+                        my_features.append(feat)
+
+        if not my_max and not my_features:
+            continue
+
+        for dn_city in corr["downstream"]:
+            dn_station = STATION_MAP.get(dn_city)
+            if not dn_station:
+                continue
+            dn_lat, dn_lon = dn_station[0], dn_station[1]
+            dist = _haversine_miles(my_lat, my_lon, dn_lat, dn_lon)
+            eta_hours = round(dist / corr["speed_mph"], 1)
+
+            alert = {
+                "type": "downstream",
+                "source_city": city_key,
+                "target_city": dn_city,
+                "corridor": corr["label"],
+                "distance_mi": round(dist),
+                "eta_hours": eta_hours,
+                "source_running_max": my_max,
+                "synoptic_match": [{"feature": f} for f in set(my_features[:3])],
+            }
+
+            if my_features:
+                front_names = ", ".join(set(my_features[:2]))
+                alert["strength"] = "MODERATE"
+                alert["detail"] = (
+                    f"This city's {front_names} → {dn_city.title()} in ~{eta_hours}h ({round(dist)} mi)"
+                )
+            else:
+                alert["strength"] = "WEAK"
+                alert["detail"] = (
+                    f"Same corridor as {dn_city.title()} · ~{eta_hours}h downstream ({round(dist)} mi)"
+                )
+
+            alerts.append(alert)
+
+    # Sort: STRONG first, then MODERATE, then WEAK
+    order = {"STRONG": 0, "MODERATE": 1, "WEAK": 2}
+    alerts.sort(key=lambda a: order.get(a.get("strength", "WEAK"), 3))
+
+    # Deduplicate (same source_city can appear from multiple corridors)
+    seen = set()
+    deduped = []
+    for a in alerts:
+        key = (a["type"], a["source_city"], a["target_city"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(a)
+    return deduped
+
+
+# ─── Alpha: Intraday running-max tracker ─────────────────────────────────────
+#
+# The highest-impact proprietary signal: if the market asks "Will NYC be above
+# 75°F?" and at 2pm the running max at KLGA is already 76°F, we know the answer
+# with near-certainty while the market price may still be at 80%.
+#
+# Strategy:
+#   1. Background thread polls METAR every 5 min for all active stations
+#   2. We track the running daily max in the `intraday_max` table
+#   3. The `/api/intraday/<city>/<date>` endpoint returns:
+#      - running_max: highest observed so far today
+#      - last_obs: most recent temp
+#      - hours_remaining: est. hours of warmth left (sunset)
+#      - hrrr_remaining_max: hourly forecast peak for remaining hours
+#      - threshold_status: "BREACHED" / "AT RISK" / "SAFE"
+#
+
+def update_intraday_max(icao: str):
+    """Poll METAR for the station and update the running daily max."""
+    obs = fetch_metar(icao)
+    if not obs or obs.get("temp_f") is None:
+        return None
+    temp_f = obs["temp_f"]
+    # Determine local date from obs_time
+    try:
+        obs_ts = obs.get("obs_time")
+        if isinstance(obs_ts, (int, float)):
+            obs_dt = datetime.fromtimestamp(obs_ts, tz=timezone.utc)
+        else:
+            obs_dt = datetime.now(timezone.utc)
+    except Exception:
+        obs_dt = datetime.now(timezone.utc)
+    obs_date = obs_dt.strftime("%Y-%m-%d")
+
+    try:
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT running_max, obs_count FROM intraday_max WHERE icao = ? AND obs_date = ?",
+                (icao, obs_date),
+            ).fetchone()
+            if row:
+                new_max = max(row["running_max"], temp_f)
+                conn.execute(
+                    """UPDATE intraday_max
+                       SET running_max = ?, last_obs_f = ?, obs_count = obs_count + 1,
+                           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                       WHERE icao = ? AND obs_date = ?""",
+                    (new_max, temp_f, icao, obs_date),
+                )
+                return new_max
+            else:
+                conn.execute(
+                    """INSERT INTO intraday_max (icao, obs_date, running_max, last_obs_f)
+                       VALUES (?, ?, ?, ?)""",
+                    (icao, obs_date, temp_f, temp_f),
+                )
+                return temp_f
+    except Exception as e:
+        logger.warning("update_intraday_max %s: %s", icao, e)
+    return None
+
+
+def get_intraday_max(icao: str, obs_date: str) -> Optional[dict]:
+    """Return the current running max for a station today."""
+    try:
+        with _get_conn(readonly=True) as conn:
+            row = conn.execute(
+                "SELECT * FROM intraday_max WHERE icao = ? AND obs_date = ?",
+                (icao, obs_date),
+            ).fetchone()
+        if row:
+            return dict(row)
+    except Exception:
+        pass
+    return None
+
+
+def estimate_hours_remaining(lat: float, lon: float) -> Optional[float]:
+    """Rough estimate of warmth-hours remaining today (hours until ~local sunset).
+    Uses a simplified solar position calculation.
+    """
+    now = datetime.now(timezone.utc)
+    # Approximate local solar noon offset from UTC
+    lon_offset = lon / 15.0  # hours from UTC
+    local_solar = now.hour + now.minute / 60 + lon_offset
+    # Peak temps typically occur ~2-3h after solar noon (14:00-15:00 local).
+    # Temps drop significantly after ~17:00 local (5pm).
+    peak_end_local = 17.0  # 5pm local solar time
+    remaining = peak_end_local - local_solar
+    return max(0.0, round(remaining, 1))
+
+
+def threshold_status(running_max: float, threshold: dict, hours_remaining: float,
+                     forecast_remaining_max: Optional[float] = None) -> dict:
+    """Given running max and a market threshold, classify the intraday state.
+
+    threshold is like {"kind": "above", "value": 75} or {"kind": "between", "low": 70, "high": 71}
+    """
+    kind = threshold.get("kind")
+    if kind == "above":
+        target = threshold["value"]
+        if running_max >= target:
+            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F already ≥ {target}°F",
+                    "confidence": 0.98}
+        gap = target - running_max
+        if hours_remaining > 0 and forecast_remaining_max is not None and forecast_remaining_max >= target:
+            return {"status": "LIKELY", "detail": f"{gap:.1f}°F below, forecast peak {forecast_remaining_max:.1f}°F still coming",
+                    "confidence": 0.75}
+        if hours_remaining <= 1 and gap > 3:
+            return {"status": "SAFE", "detail": f"{gap:.1f}°F below with {hours_remaining:.1f}h warmth left",
+                    "confidence": 0.90}
+        return {"status": "AT_RISK", "detail": f"{gap:.1f}°F below, {hours_remaining:.1f}h warmth remaining",
+                "confidence": 0.5}
+
+    elif kind == "below":
+        target = threshold["value"]
+        if hours_remaining <= 0.5 and running_max <= target:
+            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F stayed ≤ {target}°F, day ending",
+                    "confidence": 0.95}
+        if running_max > target:
+            return {"status": "SAFE", "detail": f"Already exceeded {target}°F (running max {running_max:.1f}°F), NO wins",
+                    "confidence": 0.98}
+        return {"status": "AT_RISK", "detail": f"Currently {running_max:.1f}°F ≤ {target}°F, {hours_remaining:.1f}h warmth left",
+                "confidence": 0.5}
+
+    elif kind == "between":
+        lo, hi = threshold.get("low", 0), threshold.get("high", 999)
+        if running_max > hi:
+            return {"status": "SAFE", "detail": f"Already above range ({running_max:.1f}°F > {hi}°F), NO wins",
+                    "confidence": 0.98}
+        if hours_remaining <= 0.5 and lo <= round(running_max) <= hi:
+            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F in [{lo}–{hi}] range, day ending",
+                    "confidence": 0.85}
+        return {"status": "AT_RISK", "detail": f"Running max {running_max:.1f}°F, target [{lo}–{hi}], {hours_remaining:.1f}h left",
+                "confidence": 0.5}
+
+    return {"status": "UNKNOWN", "detail": "Cannot parse threshold", "confidence": 0.0}
+
+
+def _intraday_poll_loop():
+    """Background thread: poll METAR every 5 minutes for all stations with
+    active markets resolving today. This is what populates the intraday_max
+    table and creates the real-time alpha edge.
+    """
+    import time as _time
+    _time.sleep(60)  # Wait 1 min for server to boot
+    while True:
+        try:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            # Find stations with markets resolving today
+            active_icaos = set()
+            cached = cache_get("parsed_markets")
+            if cached and cached.get("markets"):
+                for m in cached["markets"]:
+                    td = m.get("target_date", "")
+                    city = m.get("city")
+                    if td == today and city:
+                        s = STATION_MAP.get(city)
+                        if s and len(s) > 2:
+                            active_icaos.add(s[2])
+            # Also poll a baseline set of major US stations
+            baseline = {"KLGA", "KORD", "KDAL", "KMIA", "KLAX", "KATL",
+                        "KAUS", "KHOU", "KBKF", "KSFO", "KSEA"}
+            to_poll = active_icaos | baseline
+            for icao in to_poll:
+                try:
+                    update_intraday_max(icao)
+                except Exception as e:
+                    logger.warning("intraday poll %s: %s", icao, e)
+                _time.sleep(2)  # Stagger requests
+        except Exception as e:
+            logger.error("Intraday poll loop error: %s", e)
+        _time.sleep(300)  # 5 minutes
+
+
+def fetch_forecast(lat: float, lon: float, date_str: str,
+                   station: Optional[str] = None) -> Optional[dict]:
     """Wrapper that returns multi-model forecast."""
-    return fetch_multi_model_forecast(lat, lon, date_str)
+    return fetch_multi_model_forecast(lat, lon, date_str, station)
 
 
 def fetch_current_weather(lat: float, lon: float) -> Optional[dict]:
@@ -1151,17 +2324,33 @@ def compute_probability(forecast: dict, temp_info: dict) -> Optional[float]:
         # Also scale std for range comparison (°C std * 1.8 = °F std)
         # No -- std is already in °F from the forecast. Only thresholds need conversion.
 
+    def _safe_clamp(p):
+        # min(0.99, NaN) returns 0.99 in Python — leaving NaN forecasts to
+        # silently surface as confident 99% bets. Reject NaN/inf explicitly.
+        try:
+            pf = float(p)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(pf) or math.isinf(pf):
+            return None
+        return max(0.01, min(0.99, pf))
+
+    # Defensive: scipy's norm.cdf returns NaN when scale<=0 — treat that as
+    # "we cannot compute a probability" rather than fabricating one.
+    if std is None or std <= 0:
+        return None
+
     if threshold is not None:
         if is_over:
             prob = round(1.0 - norm.cdf(threshold, loc=mean, scale=std), 4)
         else:
             prob = round(norm.cdf(threshold, loc=mean, scale=std), 4)
-        return max(0.01, min(0.99, prob))
+        return _safe_clamp(prob)
     elif lower is not None and upper is not None:
         prob = round(
             norm.cdf(upper + 0.5, loc=mean, scale=std) - norm.cdf(lower - 0.5, loc=mean, scale=std), 4
         )
-        return max(0.01, min(0.99, prob))
+        return _safe_clamp(prob)
     return None
 
 
@@ -1243,8 +2432,8 @@ def _parse_market(m):
             prices = json.loads(prices)
         except json.JSONDecodeError:
             prices = []
-    yes_price = float(prices[0]) if len(prices) > 0 else None
-    no_price = float(prices[1]) if len(prices) > 1 else None
+    yes_price = _safe_float(prices[0], None) if len(prices) > 0 else None
+    no_price = _safe_float(prices[1], None) if len(prices) > 1 else None
     city = parse_city(question)
     temp_info = parse_temperature(question)
     target_date = parse_date(question) or parse_date(m.get("_event_title", ""))
@@ -1312,6 +2501,56 @@ def _parse_market(m):
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# FX rates proxy (frankfurter.dev) — cached, USD base
+# ─────────────────────────────────────────────────────────────────────────
+_FX_CACHE = {"data": None, "fetched_at": 0.0}
+_fx_cache_lock = threading.Lock()
+_FX_TTL = 3600  # 1 hour
+_FX_FALLBACK = {
+    "base": "USD",
+    "date": "fallback",
+    "rates": {
+        "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
+        "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
+        "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
+        "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
+        "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
+        "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+    },
+}
+
+
+@app.route("/api/fx-rates")
+def api_fx_rates():
+    """Return USD-base FX rates, cached for 1h. Source: frankfurter.dev."""
+    now = time.time()
+    with _fx_cache_lock:
+        cached = _FX_CACHE["data"]
+        if cached and (now - _FX_CACHE["fetched_at"]) < _FX_TTL:
+            return jsonify(cached)
+    try:
+        r = requests.get(
+            "https://api.frankfurter.dev/v1/latest?base=USD",
+            timeout=5,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            data.setdefault("rates", {})
+            data["rates"]["USD"] = 1.0
+            with _fx_cache_lock:
+                _FX_CACHE["data"] = data
+                _FX_CACHE["fetched_at"] = now
+            return jsonify(data)
+    except Exception as e:
+        logging.warning("FX rate fetch failed: %s", e)
+    with _fx_cache_lock:
+        cached = _FX_CACHE["data"]
+    if cached:
+        return jsonify(cached)
+    return jsonify(_FX_FALLBACK)
+
+
 @app.route("/api/markets")
 @require_auth
 def api_markets():
@@ -1327,13 +2566,28 @@ def api_markets():
     # Kalshi
     try:
         kalshi_raw = fetch_kalshi_weather_markets()
-        kalshi_parsed = [e for e in (_parse_kalshi_market(m) for m in kalshi_raw) if e is not None]
+        # Per-market try/except so one malformed entry can't kill the batch.
+        kalshi_parsed = []
+        for km in kalshi_raw:
+            try:
+                parsed = _parse_kalshi_market(km)
+            except Exception as parse_err:
+                logger.warning("Skipped malformed Kalshi market %s: %s",
+                               (km or {}).get("ticker", "?"), parse_err)
+                continue
+            if parsed is not None:
+                kalshi_parsed.append(parsed)
         enriched.extend(kalshi_parsed)
         logger.info("Merged %d Kalshi markets into response", len(kalshi_parsed))
     except Exception as e:
         logger.error("Kalshi fetch failed, continuing with Polymarket only: %s", e)
 
-    enriched.sort(key=lambda x: -(float(x.get("volume") or 0)))
+    def _sort_key(x):
+        try:
+            return -float(x.get("volume") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    enriched.sort(key=_sort_key)
 
     result = {"markets": enriched, "count": len(enriched),
               "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -1350,7 +2604,7 @@ def api_forecasts():
         return jsonify(cached)
 
     # Collect unique city+date+temp_info combos from BOTH sources
-    forecast_needs: dict[str, tuple] = {}  # key -> (lat, lon, date)
+    forecast_needs: dict[str, tuple] = {}  # key -> (lat, lon, date, city)
     market_temps: dict[str, list] = {}  # key -> list of (market_id, yes_price, temp_info)
 
     # --- Polymarket raw markets ---
@@ -1375,7 +2629,7 @@ def api_forecasts():
 
         fc_key = f"{city}:{target_date}"
         if fc_key not in forecast_needs:
-            forecast_needs[fc_key] = (s[0], s[1], target_date)
+            forecast_needs[fc_key] = (s[0], s[1], target_date, city)
             market_temps[fc_key] = []
 
         prices = m.get("outcomePrices", [])
@@ -1384,7 +2638,7 @@ def api_forecasts():
                 prices = json.loads(prices)
             except json.JSONDecodeError:
                 prices = []
-        yes_price = float(prices[0]) if len(prices) > 0 else None
+        yes_price = _safe_float(prices[0], None) if len(prices) > 0 else None
         market_id = m.get("conditionId") or m.get("id", "")
         market_temps[fc_key].append((market_id, yes_price, temp_info))
 
@@ -1394,7 +2648,16 @@ def api_forecasts():
         if _cached_markets and _cached_markets.get("markets"):
             _kalshi_parsed = [m for m in _cached_markets["markets"] if m.get("source") == "kalshi"]
         else:
-            _kalshi_parsed = [e for e in (_parse_kalshi_market(km) for km in fetch_kalshi_weather_markets()) if e is not None]
+            _kalshi_parsed = []
+            for km in fetch_kalshi_weather_markets():
+                try:
+                    parsed = _parse_kalshi_market(km)
+                except Exception as parse_err:
+                    logger.warning("Skipped malformed Kalshi market %s: %s",
+                                   (km or {}).get("ticker", "?"), parse_err)
+                    continue
+                if parsed is not None:
+                    _kalshi_parsed.append(parsed)
         for parsed in _kalshi_parsed:
             if not parsed or not parsed.get("city") or not parsed.get("target_date") or not parsed.get("temp_info"):
                 continue
@@ -1404,21 +2667,30 @@ def api_forecasts():
                 continue
             fc_key = f"{city}:{parsed['target_date']}"
             if fc_key not in forecast_needs:
-                forecast_needs[fc_key] = (s[0], s[1], parsed["target_date"])
+                forecast_needs[fc_key] = (s[0], s[1], parsed["target_date"], city)
                 market_temps[fc_key] = []
             market_temps[fc_key].append((parsed["id"], parsed["yes_price"], parsed["temp_info"]))
     except Exception as e:
         logger.error("Kalshi forecasts merge failed: %s", e)
 
-    # Parallel fetch all forecasts
+    # Parallel fetch all forecasts.
+    # Each city+date triggers ~10 inner API calls (8 ensemble models + NWS + climo).
+    # Keep outer pool small (3) so peak concurrency is ~30, well under
+    # Open-Meteo's 600/min limit and leaving headroom for /api/weather_history.
     from concurrent.futures import ThreadPoolExecutor
 
     def _fetch_fc(args):
-        key, (lat, lon, date) = args
-        return key, fetch_multi_model_forecast(lat, lon, date)
+        key, payload = args
+        # Backward compatibility for older 3-tuple format if any cache hit
+        if len(payload) == 4:
+            lat, lon, date, city = payload
+        else:
+            lat, lon, date = payload
+            city = None
+        return key, fetch_multi_model_forecast(lat, lon, date, station=city)
 
     forecast_data: dict[str, dict] = {}
-    with ThreadPoolExecutor(max_workers=20) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(_fetch_fc, item): item[0] for item in forecast_needs.items()}
         for future in futures:
             try:
@@ -1481,6 +2753,15 @@ def api_forecasts():
                     if (rm.get("conditionId") or rm.get("id", "")) == market_id:
                         question = rm.get("question", "")
                         break
+                # If not found in Polymarket raw data, search Kalshi parsed markets
+                if not question and market_id.startswith("kalshi_"):
+                    try:
+                        for km in _kalshi_parsed:
+                            if km and km.get("id") == market_id:
+                                question = km.get("question", "")
+                                break
+                    except NameError:
+                        pass
                 category = "temperature"
                 log_signal(market_id, question, category, yes_price, consensus_prob, edge, action)
 
@@ -1510,7 +2791,7 @@ def api_forecast(city, date):
     station = STATION_MAP.get(city_key)
     if not station:
         return jsonify({"error": f"Unknown city: {city}"}), 404
-    forecast = fetch_forecast(station[0], station[1], date)
+    forecast = fetch_forecast(station[0], station[1], date, station=city_key)
     if not forecast:
         return jsonify({"error": "Forecast not available"}), 404
     return jsonify({
@@ -1518,6 +2799,327 @@ def api_forecast(city, date):
         "station": {"lat": station[0], "lon": station[1], "icao": station[2], "name": station[3]},
         "date": date,
         "forecast": forecast,
+    })
+
+
+# ─── New: Live observation, synoptic, analog, spread trend, ENSO ───────────────
+
+@app.route("/api/metar/<icao>")
+@require_auth
+def api_metar(icao):
+    """Latest METAR for an airport (the actual resolution station)."""
+    icao = (icao or "").upper().strip()
+    if not re.match(r'^[A-Z]{4}$', icao):
+        return jsonify({"error": "Invalid ICAO code"}), 400
+    obs = fetch_metar(icao)
+    if obs is None:
+        return jsonify({"error": "METAR unavailable"}), 503
+    return jsonify(obs)
+
+
+@app.route("/api/hourly/<city>/<date>")
+@require_auth
+def api_hourly(city, date):
+    """Hourly forecast at the resolution station for the target date."""
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format"}), 400
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    hourly = fetch_hourly_at_station(station[0], station[1], date)
+    if hourly is None:
+        return jsonify({"error": "Hourly forecast unavailable"}), 503
+    return jsonify(hourly)
+
+
+@app.route("/api/synoptic/<city>")
+@require_auth
+def api_synoptic(city):
+    """NWS narrative-extracted synoptic features (fronts, pressure systems)
+    for a US city. Returns nothing useful for international cities."""
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    syn = fetch_nws_synoptic(station[0], station[1])
+    return jsonify({"city": city_key, "synoptic": syn or {"events": [], "had_data": False}})
+
+
+@app.route("/api/enso")
+@require_auth
+def api_enso():
+    """Current ENSO phase (El Niño / La Niña / Neutral) + AO/NAO indices."""
+    enso = fetch_enso_state()
+    teleconn = fetch_teleconnections()
+    return jsonify({
+        "enso": enso,
+        "teleconnections": teleconn or {},
+    })
+
+
+@app.route("/api/analog/<city>/<date>")
+@require_auth
+def api_analog(city, date):
+    """Persistence (yesterday's high) + 3-year historical analog forecast
+    for the target date. Two model-free baselines for comparison."""
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format"}), 400
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    persistence = persistence_forecast(station[0], station[1])
+    analog = analog_forecast(station[0], station[1], date)
+    return jsonify({
+        "city": city_key,
+        "date": date,
+        "persistence_high": persistence,
+        "analog": analog,
+    })
+
+
+@app.route("/api/spread_trend/<city>/<date>")
+@require_auth
+def api_spread_trend(city, date):
+    """Recent ensemble snapshots so the frontend can render a sparkline of
+    how consensus has been evolving for this market."""
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format"}), 400
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    if city_key not in STATION_MAP:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    snaps = get_spread_trend(city_key, date)
+    biases = get_model_biases(city_key)
+    return jsonify({
+        "city": city_key,
+        "date": date,
+        "snapshots": snaps,
+        "model_biases": biases,
+    })
+
+
+@app.route("/api/coastal/<city>")
+@require_auth
+def api_coastal(city):
+    """Coastal flow indicator (onshore/offshore/alongshore) for cities where
+    marine layer or sea-breeze regimes affect the temperature forecast."""
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    if city_key not in COASTAL_CITIES:
+        return jsonify({"city": city_key, "coastal": None})
+    metar = fetch_metar(station[2]) if len(station) > 2 else None
+    wind_dir = (metar or {}).get("wind_dir")
+    flow = coastal_flow_assessment(city_key, wind_dir)
+    return jsonify({
+        "city": city_key,
+        "coastal": flow,
+        "wind_obs_from_metar": bool(metar),
+    })
+
+
+@app.route("/api/market_signals/<city>/<date>")
+@require_auth
+def api_market_signals(city, date):
+    """Bundle ALL the new signals for a market in one round-trip:
+    METAR, hourly, synoptic, analog/persistence, spread trend, coastal,
+    ENSO state, and current model biases. The frontend modal calls this
+    instead of hitting six separate endpoints.
+    """
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format"}), 400
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    lat, lon, icao, station_name = station[0], station[1], station[2], station[3]
+
+    # Fetch everything in parallel — all of these are independent.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    payload: dict = {
+        "city": city_key,
+        "date": date,
+        "station": {"lat": lat, "lon": lon, "icao": icao, "name": station_name},
+    }
+    tasks = {
+        "metar": lambda: fetch_metar(icao),
+        "hourly": lambda: fetch_hourly_at_station(lat, lon, date),
+        "synoptic": lambda: fetch_nws_synoptic(lat, lon),
+        "persistence_high": lambda: persistence_forecast(lat, lon),
+        "analog": lambda: analog_forecast(lat, lon, date),
+        "spread_trend": lambda: get_spread_trend(city_key, date),
+        "biases": lambda: get_model_biases(city_key),
+        "enso": fetch_enso_state,
+        "teleconnections": fetch_teleconnections,
+        "intraday": lambda: (update_intraday_max(icao), get_intraday_max(icao, date))[1],
+        "correlations": lambda: compute_cross_correlations(city_key, date),
+    }
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futs = {pool.submit(fn): name for name, fn in tasks.items()}
+        for fut in as_completed(futs):
+            name = futs[fut]
+            try:
+                payload[name] = fut.result()
+            except Exception as e:
+                logger.warning("market_signals.%s failed: %s", name, e)
+                payload[name] = None
+
+    # Coastal flow needs the wind dir from METAR, so derive it after.
+    if city_key in COASTAL_CITIES:
+        wind_dir = (payload.get("metar") or {}).get("wind_dir")
+        payload["coastal"] = coastal_flow_assessment(city_key, wind_dir)
+    else:
+        payload["coastal"] = None
+
+    # Add hours-remaining to intraday data
+    if payload.get("intraday"):
+        payload["intraday"]["hours_remaining"] = estimate_hours_remaining(lat, lon)
+
+    return jsonify(payload)
+
+
+@app.route("/api/correlations/<city>/<date>")
+@require_auth
+def api_correlations(city, date):
+    """Cross-market weather correlations.
+
+    Returns upstream/downstream correlation alerts based on synoptic
+    features propagating along known weather corridors.
+    """
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format"}), 400
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    if city_key not in STATION_MAP:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    correlations = compute_cross_correlations(city_key, date)
+    corridors = _find_corridors_for_city(city_key)
+    return jsonify({
+        "city": city_key,
+        "date": date,
+        "corridors": [{"id": c["corridor_id"], "label": c["label"],
+                       "upstream": c["upstream"], "downstream": c["downstream"]}
+                      for c in corridors],
+        "correlations": correlations,
+        "count": len(correlations),
+    })
+
+
+@app.route("/api/intraday/<city>/<date>")
+@require_auth
+def api_intraday(city, date):
+    """Alpha endpoint: intraday running-max tracker.
+
+    Returns the highest temperature observed so far today at the resolution
+    station, how many hours of warmth remain, and whether the market's
+    threshold has already been breached.
+    """
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format"}), 400
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    lat, lon, icao = station[0], station[1], station[2]
+
+    # Trigger a fresh METAR poll + update (sub-second)
+    update_intraday_max(icao)
+    intraday = get_intraday_max(icao, date)
+    hours_left = estimate_hours_remaining(lat, lon)
+
+    # Try to get the hourly forecast peak for remaining hours
+    remaining_peak = None
+    hourly = fetch_hourly_at_station(lat, lon, date)
+    if hourly and hourly.get("max_f") is not None:
+        remaining_peak = hourly["max_f"]
+
+    result = {
+        "city": city_key,
+        "date": date,
+        "icao": icao,
+        "running_max": intraday["running_max"] if intraday else None,
+        "last_obs_f": intraday["last_obs_f"] if intraday else None,
+        "obs_count": intraday["obs_count"] if intraday else 0,
+        "updated_at": intraday["updated_at"] if intraday else None,
+        "hours_remaining": hours_left,
+        "hourly_forecast_peak": remaining_peak,
+    }
+    return jsonify(result)
+
+
+@app.route("/api/intraday_alert/<city>/<date>")
+@require_auth
+def api_intraday_alert(city, date):
+    """Check all markets for this city+date and flag threshold status.
+
+    Returns per-market intraday resolution confidence. This is the "money
+    signal": if status is BREACHED, the market outcome is already determined.
+    """
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        return jsonify({"error": "Invalid date format"}), 400
+    city_key = CITY_ALIASES.get(city.lower(), city.lower())
+    station = STATION_MAP.get(city_key)
+    if not station:
+        return jsonify({"error": f"Unknown city: {city}"}), 404
+    lat, lon, icao = station[0], station[1], station[2]
+
+    update_intraday_max(icao)
+    intraday = get_intraday_max(icao, date)
+    if not intraday:
+        return jsonify({"city": city_key, "date": date, "alerts": [], "no_data": True})
+
+    running_max = intraday["running_max"]
+    hours_left = estimate_hours_remaining(lat, lon)
+    remaining_peak = None
+    hourly = fetch_hourly_at_station(lat, lon, date)
+    if hourly:
+        remaining_peak = hourly.get("max_f")
+
+    # Find all markets for this city+date
+    cached = cache_get("parsed_markets")
+    markets = cached.get("markets", []) if cached else []
+    alerts = []
+    for m in markets:
+        if m.get("city") != city_key or m.get("target_date") != date:
+            continue
+        ti = m.get("temp_info", {})
+        if not ti:
+            continue
+        # Build threshold dict from temp_info
+        thresh = {}
+        if ti.get("threshold") is not None:
+            if ti.get("is_over") is True:
+                thresh = {"kind": "above", "value": ti["threshold"]}
+            elif ti.get("is_over") is False:
+                thresh = {"kind": "below", "value": ti["threshold"]}
+        elif ti.get("temp_lower") is not None and ti.get("temp_upper") is not None:
+            thresh = {"kind": "between", "low": ti["temp_lower"], "high": ti["temp_upper"]}
+        if not thresh:
+            continue
+        status = threshold_status(running_max, thresh, hours_left, remaining_peak)
+        alerts.append({
+            "market_id": m.get("id"),
+            "question": m.get("question"),
+            "yes_price": m.get("yes_price"),
+            "threshold": thresh,
+            "running_max": running_max,
+            "hours_remaining": hours_left,
+            **status,
+        })
+
+    # Sort: BREACHED first, then LIKELY, then by confidence desc
+    order = {"BREACHED": 0, "LIKELY": 1, "SAFE": 2, "AT_RISK": 3, "UNKNOWN": 4}
+    alerts.sort(key=lambda a: (order.get(a["status"], 5), -a.get("confidence", 0)))
+
+    return jsonify({
+        "city": city_key,
+        "date": date,
+        "icao": icao,
+        "running_max": running_max,
+        "hours_remaining": hours_left,
+        "alerts": alerts,
+        "count": len(alerts),
     })
 
 
@@ -1555,21 +3157,45 @@ def api_weather_history(city):
             "shortwave_radiation_sum", "et0_fao_evapotranspiration",
         ])
 
-        resp = requests.get(
-            "https://archive-api.open-meteo.com/v1/archive",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "daily": daily_vars,
-                "temperature_unit": "fahrenheit",
-                "wind_speed_unit": "mph",
-                "precipitation_unit": "inch",
-                "start_date": start_date.isoformat(),
-                "end_date": end_date.isoformat(),
-            },
-            timeout=30,
-        )
-        if resp.status_code != 200:
+        archive_params = {
+            "latitude": lat,
+            "longitude": lon,
+            "daily": daily_vars,
+            "temperature_unit": "fahrenheit",
+            "wind_speed_unit": "mph",
+            "precipitation_unit": "inch",
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        if _open_meteo_in_cooldown():
+            with _open_meteo_cooldown_lock:
+                wait_s = max(1, int(_open_meteo_cooldown_until - time.time()))
+            return jsonify({
+                "error": "Open-Meteo rate-limited",
+                "retry_after": wait_s,
+            }), 503
+        resp = None
+        for attempt in range(3):
+            try:
+                resp = requests.get(
+                    "https://archive-api.open-meteo.com/v1/archive",
+                    params=archive_params,
+                    timeout=30,
+                )
+                if resp.status_code == 429:
+                    _open_meteo_trip_cooldown()
+                    return jsonify({
+                        "error": "Open-Meteo rate-limited",
+                        "retry_after": 60,
+                    }), 503
+                if resp.status_code == 200:
+                    break
+            except requests.RequestException as ex:
+                logger.warning("Weather archive attempt %d failed: %s", attempt + 1, ex)
+                resp = None
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+        if resp is None or resp.status_code != 200:
             return jsonify({"error": "Weather archive unavailable"}), 502
 
         daily = resp.json().get("daily", {})
@@ -1739,7 +3365,7 @@ def api_history():
 @require_auth
 def api_accuracy():
     """Compute accuracy stats: win rate, avg edge, by category."""
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         rows = conn.execute("SELECT market_id, edge, category FROM weather_signals_log").fetchall()
         all_signals = [dict(r) for r in rows]
 
@@ -1849,7 +3475,7 @@ def snapshot_prices() -> int:
                 m.get("yes_price"),
                 enrich.get("model_prob") if enrich.get("model_prob") is not None else m.get("model_prob"),
                 enrich.get("edge") if enrich.get("edge") is not None else m.get("edge"),
-                float(m.get("volume") or 0),
+                _safe_float(m.get("volume")),
             ))
         count = 0
         with _get_conn() as conn:
@@ -1884,10 +3510,20 @@ def fetch_kalshi_price_history(series_ticker: str, ticker: str, period: int = 14
                 data = resp.json()
                 candles = data.get("candlesticks", [])
                 if candles:
-                    return [{
-                        "timestamp": c.get("end_period_ts"),
-                        "price": float(c.get("price", {}).get("close", 0)) / 100,
-                    } for c in candles if c.get("end_period_ts")]
+                    result = []
+                    for c in candles:
+                        if not c.get("end_period_ts"):
+                            continue
+                        raw_price = c.get("price")
+                        if isinstance(raw_price, dict):
+                            close = _safe_float(raw_price.get("close"))
+                        else:
+                            close = _safe_float(raw_price)
+                        result.append({
+                            "timestamp": c["end_period_ts"],
+                            "price": close / 100,
+                        })
+                    return result
         return []
     except Exception as e:
         logger.warning("Kalshi price history fetch failed for %s: %s", ticker, e)
@@ -1930,14 +3566,14 @@ def backfill_price_history() -> dict:
                                 prices = json.loads(prices)
                             except Exception:
                                 prices = []
-                        yes_price = float(prices[0]) if prices else None
+                        yes_price = _safe_float(prices[0], None) if prices else None
                         end_date = m.get("endDate", "")
                         ts = end_date if end_date else m.get("updatedAt", "")
                         if not ts:
                             continue
                         poly_rows.append((
                             ts, mid, "polymarket", question, city, target_date,
-                            yes_price, float(m.get("volume") or 0),
+                            yes_price, _safe_float(m.get("volume")),
                         ))
                 offset += 100
         # Insert in batches (upsert via INSERT OR REPLACE)
@@ -1965,7 +3601,7 @@ def backfill_price_history() -> dict:
                 if not ticker:
                     continue
                 # Check how many existing snapshots we have for this market
-                with _get_conn() as conn:
+                with _get_conn(readonly=True) as conn:
                     existing_count = conn.execute(
                         "SELECT COUNT(*) FROM weather_price_snapshots WHERE market_id = ?",
                         (m["id"],),
@@ -1990,7 +3626,7 @@ def backfill_price_history() -> dict:
                 if kalshi_rows:
                     with _get_conn() as conn:
                         conn.executemany(
-                            "INSERT INTO weather_price_snapshots "
+                            "INSERT OR IGNORE INTO weather_price_snapshots "
                             "(timestamp, market_id, source, question, city, target_date, yes_price, volume) "
                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                             kalshi_rows,
@@ -2018,7 +3654,7 @@ def api_price_history(market_id):
     """Return price history for a specific market. Daily by default, hourly requires premium."""
     granularity = request.args.get("granularity", "daily")  # daily or hourly
 
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         rows = conn.execute(
             "SELECT timestamp, yes_price, model_prob, edge, volume "
             "FROM weather_price_snapshots WHERE market_id = ? ORDER BY timestamp ASC",
@@ -2048,7 +3684,7 @@ def api_price_history(market_id):
 @require_auth
 def api_price_history_city(city):
     """Return price history for all markets in a city, grouped by market_id."""
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         rows = conn.execute(
             "SELECT market_id, timestamp, yes_price, model_prob, edge, volume, question, source "
             "FROM weather_price_snapshots WHERE LOWER(city) = ? ORDER BY market_id, timestamp ASC",
@@ -2071,7 +3707,7 @@ def api_price_history_city(city):
 @require_auth
 def api_snapshot_stats():
     """Return summary stats about stored price snapshots."""
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         total = conn.execute("SELECT COUNT(*) FROM weather_price_snapshots").fetchone()[0]
 
         row = conn.execute(
@@ -2119,7 +3755,7 @@ def api_log_signal():
 def api_alerts_settings_get():
     """Get current alert settings."""
     user = request.user
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         row = conn.execute(
             "SELECT * FROM weather_alert_settings WHERE user_id = ? ORDER BY id DESC LIMIT 1",
             (user["id"],),
@@ -2166,7 +3802,7 @@ def api_alerts_settings_post():
 def api_alerts_active():
     """Get current alerts that match user settings."""
     user = request.user
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         row = conn.execute(
             "SELECT * FROM weather_alert_settings WHERE user_id = ? ORDER BY id DESC LIMIT 1",
             (user["id"],),
@@ -2200,7 +3836,7 @@ def api_alerts_active():
             except json.JSONDecodeError:
                 prices = []
 
-        yes_price = float(prices[0]) if len(prices) > 0 else None
+        yes_price = _safe_float(prices[0], None) if len(prices) > 0 else None
         city = parse_city(question)
         temp_info = parse_temperature(question)
         target_date = parse_date(question) or parse_date(m.get("_event_title", ""))
@@ -2267,7 +3903,7 @@ def api_alerts_active():
 def api_me():
     user = _get_user_from_request()
     if not user:
-        if not _BEHIND_GATEWAY:
+        if not _is_behind_gateway():
             # Not behind gateway — allow anonymous access with a local user
             user = {"id": "local", "username": "local", "email": "", "is_admin": 1}
         else:
@@ -2278,7 +3914,7 @@ def api_me():
     favorites = []
     user_id = user["id"]
     try:
-        with _get_conn() as conn:
+        with _get_conn(readonly=True) as conn:
             row = conn.execute(
                 "SELECT settings, favorites FROM weather_user_prefs WHERE user_id = ? LIMIT 1",
                 (user_id,),
@@ -2293,10 +3929,12 @@ def api_me():
         logger.warning("Failed to load prefs for %s: %s", user_id, e)
 
     # Fall back to in-memory cache if DB returned nothing
-    if not settings and not favorites and user_id in _user_prefs_cache:
-        cached = _user_prefs_cache[user_id]
-        settings = cached.get("settings", {})
-        favorites = cached.get("favorites", [])
+    if not settings and not favorites:
+        with _user_prefs_lock:
+            cached = _user_prefs_cache.get(user_id)
+        if cached:
+            settings = cached.get("settings", {})
+            favorites = cached.get("favorites", [])
 
     return jsonify({
         "user": {
@@ -2328,9 +3966,10 @@ def api_user_settings():
     except Exception as e:
         logger.warning("Failed to persist settings for %s: %s", user_id, e)
         # Fall back to in-memory cache so settings survive within this session
-        if len(_user_prefs_cache) > _USER_PREFS_CACHE_MAX_SIZE:
-            _user_prefs_cache.clear()
-        _user_prefs_cache[user_id] = {"settings": data}
+        with _user_prefs_lock:
+            if len(_user_prefs_cache) > _USER_PREFS_CACHE_MAX_SIZE:
+                _user_prefs_cache.clear()
+            _user_prefs_cache[user_id] = {"settings": data}
     return jsonify({"status": "ok"})
 
 
@@ -2350,9 +3989,10 @@ def api_user_favorites():
             )
     except Exception as e:
         logger.warning("Failed to persist favorites for %s: %s", user_id, e)
-        if len(_user_prefs_cache) > _USER_PREFS_CACHE_MAX_SIZE:
-            _user_prefs_cache.clear()
-        _user_prefs_cache.setdefault(user_id, {})["favorites"] = data
+        with _user_prefs_lock:
+            if len(_user_prefs_cache) > _USER_PREFS_CACHE_MAX_SIZE:
+                _user_prefs_cache.clear()
+            _user_prefs_cache.setdefault(user_id, {})["favorites"] = data
     return jsonify({"status": "ok"})
 
 
@@ -2369,7 +4009,7 @@ def admin_page():
 @require_admin
 def api_admin_users():
     """List users from the profiles table (managed by gateway)."""
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         rows = conn.execute(
             "SELECT id, username, email, is_admin, created_at FROM profiles ORDER BY created_at DESC"
         ).fetchall()
@@ -2383,7 +4023,7 @@ def api_admin_metrics():
     day_ago = (now - timedelta(days=1)).isoformat()
     week_ago = (now - timedelta(days=7)).isoformat()
 
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         # Total users from profiles
         total_users = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
 
@@ -2433,7 +4073,7 @@ def api_admin_metrics():
 @require_admin
 def api_admin_activity():
     lim = request.args.get("limit", 100, type=int)
-    with _get_conn() as conn:
+    with _get_conn(readonly=True) as conn:
         rows = conn.execute(
             "SELECT * FROM weather_user_activity ORDER BY timestamp DESC LIMIT ?", (lim,)
         ).fetchall()
@@ -2456,6 +4096,149 @@ def api_admin_activity():
     return jsonify({"activity": activities})
 
 
+# ── Bot Signal Feed + Calibration ────────────────────────────────────────────
+# Reads from the weather_bot's trades.db (separate SQLite, written by
+# polymarket_weather_bot/main.py).  Falls back gracefully if DB missing.
+
+_BOT_DB = Path(__file__).parent.parent / "polymarket_weather_bot" / "trades.db"
+
+
+def _get_bot_conn():
+    """Read-only connection to the bot's trades.db."""
+    if not _BOT_DB.exists():
+        return None
+    conn = sqlite3.connect(str(_BOT_DB), timeout=5)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+@app.route("/api/bot/signals")
+@require_auth
+def api_bot_signals():
+    """Live trading signals from the weather bot (last 100)."""
+    conn = _get_bot_conn()
+    if conn is None:
+        return jsonify({"signals": [], "note": "Bot database not found"})
+    try:
+        rows = conn.execute(
+            "SELECT * FROM signals ORDER BY timestamp DESC LIMIT 100"
+        ).fetchall()
+        return jsonify({"signals": [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+@app.route("/api/bot/trades")
+@require_auth
+def api_bot_trades():
+    """Recent trades placed by the weather bot."""
+    limit = request.args.get("limit", 50, type=int)
+    conn = _get_bot_conn()
+    if conn is None:
+        return jsonify({"trades": [], "note": "Bot database not found"})
+    try:
+        rows = conn.execute(
+            "SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return jsonify({"trades": [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+@app.route("/api/bot/calibration")
+@require_auth
+def api_bot_calibration():
+    """Brier score and calibration breakdown from resolved signals."""
+    conn = _get_bot_conn()
+    if conn is None:
+        return jsonify({"n": 0, "brier_model": None, "brier_market": None,
+                        "note": "Bot database not found"})
+    try:
+        tbl = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='calibration'"
+        ).fetchone()
+        if not tbl:
+            return jsonify({"n": 0, "brier_model": None, "brier_market": None,
+                            "note": "No calibration data yet"})
+        rows = conn.execute(
+            "SELECT model_prob, market_prob, outcome, prob_method, platform "
+            "FROM calibration WHERE outcome IS NOT NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return jsonify({"n": 0, "brier_model": None, "brier_market": None})
+
+    n = len(rows)
+    brier_model = sum((r["model_prob"] - r["outcome"]) ** 2 for r in rows) / n
+    brier_market = sum((r["market_prob"] - r["outcome"]) ** 2 for r in rows) / n
+
+    buckets = {}
+    for r in rows:
+        b = min(int(r["model_prob"] * 10), 9)
+        label = f"{b * 10}-{b * 10 + 10}%"
+        if label not in buckets:
+            buckets[label] = {"n": 0, "sp": 0.0, "so": 0.0}
+        buckets[label]["n"] += 1
+        buckets[label]["sp"] += r["model_prob"]
+        buckets[label]["so"] += r["outcome"]
+
+    cal = {}
+    for label, d in sorted(buckets.items()):
+        cal[label] = {"n": d["n"],
+                      "avg_predicted": round(d["sp"] / d["n"], 3),
+                      "avg_actual": round(d["so"] / d["n"], 3)}
+
+    return jsonify({
+        "n": n,
+        "brier_model": round(brier_model, 4),
+        "brier_market": round(brier_market, 4),
+        "edge_vs_market": round(brier_market - brier_model, 4),
+        "calibration_buckets": cal,
+    })
+
+
+@app.route("/api/bot/stats")
+@require_auth
+def api_bot_stats():
+    """Summary stats from the weather bot."""
+    conn = _get_bot_conn()
+    if conn is None:
+        return jsonify({"note": "Bot database not found"})
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        total = conn.execute(
+            "SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as total FROM trades"
+        ).fetchone()
+        td_trades = conn.execute(
+            "SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as total "
+            "FROM trades WHERE timestamp LIKE ?", (f"{today}%",)
+        ).fetchone()
+        td_sigs = conn.execute(
+            "SELECT COUNT(*) as cnt FROM signals "
+            "WHERE timestamp LIKE ? AND action != 'NO_TRADE'", (f"{today}%",)
+        ).fetchone()
+        by_plat = conn.execute(
+            "SELECT COALESCE(platform,'polymarket') as plat, COUNT(*) as cnt, "
+            "COALESCE(SUM(amount),0) as total FROM trades GROUP BY plat"
+        ).fetchall()
+        by_city = conn.execute(
+            "SELECT city, COUNT(*) as cnt, COALESCE(SUM(amount),0) as total "
+            "FROM trades GROUP BY city ORDER BY cnt DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return jsonify({
+        "all_time": {"trades": total["cnt"], "wagered": round(total["total"], 2)},
+        "today": {"trades": td_trades["cnt"], "wagered": round(td_trades["total"], 2),
+                  "actionable_signals": td_sigs["cnt"]},
+        "by_platform": {r["plat"]: {"trades": r["cnt"], "wagered": round(r["total"], 2)} for r in by_plat},
+        "by_city": {r["city"]: {"trades": r["cnt"], "wagered": round(r["total"], 2)} for r in by_city},
+    })
+
+
 def _snapshot_loop():
     """Background thread: take price snapshots every 30 minutes."""
     import time as _time
@@ -2468,13 +4251,49 @@ def _snapshot_loop():
         _time.sleep(1800)  # 30 minutes
 
 
+def _bias_pairing_loop():
+    """Background thread: every 6 hours, walk every station in STATION_MAP
+    and pair any unpaired forecast_history rows with the now-observed high
+    from Open-Meteo's archive. This is what makes get_model_biases() return
+    actual numbers — without it the bias table would just keep growing
+    without ever getting closed out.
+    """
+    import time as _time
+    _time.sleep(600)  # Wait 10 min after boot before first pairing
+    while True:
+        try:
+            paired_total = 0
+            seen_stations = set()
+            for city_key, info in STATION_MAP.items():
+                # STATION_MAP has alias entries (e.g. "nyc" -> same coords as "new york").
+                # Avoid pairing the same coords twice in one pass.
+                coord_key = (round(info[0], 4), round(info[1], 4))
+                if coord_key in seen_stations:
+                    continue
+                seen_stations.add(coord_key)
+                if _open_meteo_in_cooldown():
+                    _time.sleep(60)
+                    continue
+                try:
+                    n = pair_forecasts_with_observed(city_key, info[0], info[1])
+                    paired_total += n or 0
+                except Exception as e:
+                    logger.warning("Bias pair %s: %s", city_key, e)
+                _time.sleep(2)  # Be polite to Open-Meteo
+            if paired_total:
+                logger.info("Bias pairing pass: paired %d rows", paired_total)
+        except Exception as e:
+            logger.error("Bias pairing loop error: %s", e)
+        _time.sleep(6 * 3600)  # 6 hours
+
+
 @app.after_request
 def _add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
-    if _BEHIND_GATEWAY:
+    if _is_behind_gateway():
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
@@ -2486,10 +4305,17 @@ if __name__ == "__main__":
     if _debug and _production:
         logging.error("FLASK_DEBUG=1 is not allowed when PRODUCTION=1 — disabling debug mode")
         _debug = False
-    bind_host = "0.0.0.0" if _DEV_MODE else "127.0.0.1"
-    # Only start background thread in the reloader child (or when reloader is off)
+    # Never bind to all interfaces in production, even if DEV_MODE leaks through
+    bind_host = "127.0.0.1" if _production else ("0.0.0.0" if _DEV_MODE else "127.0.0.1")
+    # Only start background threads in the reloader child (or when reloader is off)
     if not _debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         t = threading.Thread(target=_snapshot_loop, daemon=True)
         t.start()
         logger.info("Price snapshot background thread started (every 30 min)")
+        bp = threading.Thread(target=_bias_pairing_loop, daemon=True)
+        bp.start()
+        logger.info("Forecast bias pairing background thread started (every 6 h)")
+        ip = threading.Thread(target=_intraday_poll_loop, daemon=True)
+        ip.start()
+        logger.info("Intraday running-max poller started (every 5 min)")
     app.run(host=bind_host, port=5050, debug=_debug)
