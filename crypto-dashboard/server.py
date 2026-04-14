@@ -21,7 +21,7 @@ import defusedxml.ElementTree as ET
 import requests
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, Depends, HTTPException, Form
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from btc_analyzer import (
@@ -32,6 +32,7 @@ from btc_analyzer import (
 )
 import database as db
 import clob_trading as clob
+import kalshi_trading as kalshi_auth
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -94,6 +95,310 @@ async def security_middleware(request: Request, call_next):
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
+
+# ─── Unit System Toggle + Currency Picker ────────────────────────────
+# Injected into all HTML responses. Walks the DOM and converts $1,234.56
+# into the user-chosen currency, with the user-chosen number locale.
+UNIT_TOGGLE_SCRIPT = """
+<script>
+(function() {
+  if (window.__narveUnitToggleLoaded) return;
+  window.__narveUnitToggleLoaded = true;
+  let unitSystem = localStorage.getItem('narve_units') || 'american';
+  let currencyCode = localStorage.getItem('narve_currency') || 'USD';
+  let langCode = localStorage.getItem('narve_language') || 'en';
+  function isMetric() { return unitSystem === 'european'; }
+  function getLocale() { return isMetric() ? 'de-DE' : 'en-US'; }
+
+  /* ----- i18n ----- */
+  const LANGUAGES = [
+    ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+    ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+    ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+    ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
+    ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
+  ];
+  const I18N = {
+    en: {'common.loading':'Loading...','common.refresh':'Refresh','common.search':'Search','common.error':'Error','nav.dashboard':'Dashboard','nav.settings':'Settings','nav.signOut':'Sign Out'},
+    es: {'common.loading':'Cargando...','common.refresh':'Actualizar','common.search':'Buscar','common.error':'Error','nav.dashboard':'Panel','nav.settings':'Configuraci\u00f3n','nav.signOut':'Cerrar sesi\u00f3n'},
+    de: {'common.loading':'Wird geladen...','common.refresh':'Aktualisieren','common.search':'Suchen','common.error':'Fehler','nav.dashboard':'\u00dcbersicht','nav.settings':'Einstellungen','nav.signOut':'Abmelden'},
+    fr: {'common.loading':'Chargement...','common.refresh':'Actualiser','common.search':'Rechercher','common.error':'Erreur','nav.dashboard':'Tableau de bord','nav.settings':'Param\u00e8tres','nav.signOut':'D\u00e9connexion'},
+    it: {'common.loading':'Caricamento...','common.refresh':'Aggiorna','common.search':'Cerca','common.error':'Errore','nav.dashboard':'Pannello','nav.settings':'Impostazioni','nav.signOut':'Esci'},
+    pt: {'common.loading':'Carregando...','common.refresh':'Atualizar','common.search':'Pesquisar','common.error':'Erro','nav.dashboard':'Painel','nav.settings':'Configura\u00e7\u00f5es','nav.signOut':'Sair'},
+    nl: {'common.loading':'Laden...','common.refresh':'Vernieuwen','common.search':'Zoeken','common.error':'Fout','nav.dashboard':'Dashboard','nav.settings':'Instellingen','nav.signOut':'Afmelden'},
+    pl: {'common.loading':'\u0141adowanie...','common.refresh':'Od\u015bwie\u017c','common.search':'Szukaj','common.error':'B\u0142\u0105d','nav.dashboard':'Panel','nav.settings':'Ustawienia','nav.signOut':'Wyloguj'},
+    ja: {'common.loading':'\u8aad\u307f\u8fbc\u307f\u4e2d...','common.refresh':'\u66f4\u65b0','common.search':'\u691c\u7d22','common.error':'\u30a8\u30e9\u30fc','nav.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','nav.settings':'\u8a2d\u5b9a','nav.signOut':'\u30b5\u30a4\u30f3\u30a2\u30a6\u30c8'},
+    ko: {'common.loading':'\ub85c\ub529 \uc911...','common.refresh':'\uc0c8\ub85c \uace0\uce68','common.search':'\uac80\uc0c9','common.error':'\uc624\ub958','nav.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','nav.settings':'\uc124\uc815','nav.signOut':'\ub85c\uadf8\uc544\uc6c3'},
+    zh: {'common.loading':'\u52a0\u8f7d\u4e2d...','common.refresh':'\u5237\u65b0','common.search':'\u641c\u7d22','common.error':'\u9519\u8bef','nav.dashboard':'\u4eea\u8868\u677f','nav.settings':'\u8bbe\u7f6e','nav.signOut':'\u9000\u51fa'},
+    ru: {'common.loading':'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...','common.refresh':'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c','common.search':'\u041f\u043e\u0438\u0441\u043a','common.error':'\u041e\u0448\u0438\u0431\u043a\u0430','nav.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','nav.settings':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438','nav.signOut':'\u0412\u044b\u0439\u0442\u0438'},
+    hi: {'common.loading':'\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...','common.refresh':'\u0930\u093f\u092b\u094d\u0930\u0947\u0936','common.search':'\u0916\u094b\u091c\u0947\u0902','common.error':'\u0924\u094d\u0930\u0941\u091f\u093f','nav.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','nav.settings':'\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938','nav.signOut':'\u0938\u093e\u0907\u0928 \u0906\u0909\u091f'},
+    ar: {'common.loading':'\u062c\u0627\u0631\u064a \u0627\u0644\u062a\u062d\u0645\u064a\u0644...','common.refresh':'\u062a\u062d\u062f\u064a\u062b','common.search':'\u0628\u062d\u062b','common.error':'\u062e\u0637\u0623','nav.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0645\u0639\u0644\u0648\u0645\u0627\u062a','nav.settings':'\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a','nav.signOut':'\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c'},
+    bn: {'common.loading':'\u09b2\u09cb\u09a1 \u09b9\u099a\u09cd\u099b\u09c7...','common.refresh':'\u09b0\u09bf\u09ab\u09cd\u09b0\u09c7\u09b6','common.search':'\u0985\u09a8\u09c1\u09b8\u09a8\u09cd\u09a7\u09be\u09a8','common.error':'\u09a4\u09cd\u09b0\u09c1\u099f\u09bf','nav.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','nav.settings':'\u09b8\u09c7\u099f\u09bf\u0982\u09b8','nav.signOut':'\u09b8\u09be\u0987\u09a8 \u0986\u0989\u099f'},
+    ur: {'common.loading':'\u0644\u0648\u0688 \u06c1\u0648 \u0631\u06c1\u0627 \u06c1\u06d2...','common.refresh':'\u0631\u06cc\u0641\u0631\u06cc\u0634','common.search':'\u062a\u0644\u0627\u0634','common.error':'\u062e\u0631\u0627\u0628\u06cc','nav.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','nav.settings':'\u0633\u06cc\u0679\u0646\u06af\u0632','nav.signOut':'\u0633\u0627\u0626\u0646 \u0622\u0624\u0679'},
+    id: {'common.loading':'Memuat...','common.refresh':'Segarkan','common.search':'Cari','common.error':'Kesalahan','nav.dashboard':'Dasbor','nav.settings':'Pengaturan','nav.signOut':'Keluar'},
+    tr: {'common.loading':'Y\u00fckleniyor...','common.refresh':'Yenile','common.search':'Ara','common.error':'Hata','nav.dashboard':'G\u00f6sterge Paneli','nav.settings':'Ayarlar','nav.signOut':'\u00c7\u0131k\u0131\u015f Yap'},
+    vi: {'common.loading':'\u0110ang t\u1ea3i...','common.refresh':'L\u00e0m m\u1edbi','common.search':'T\u00ecm ki\u1ebfm','common.error':'L\u1ed7i','nav.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','nav.settings':'C\u00e0i \u0111\u1eb7t','nav.signOut':'\u0110\u0103ng xu\u1ea5t'},
+    th: {'common.loading':'\u0e01\u0e33\u0e25\u0e31\u0e07\u0e42\u0e2b\u0e25\u0e14...','common.refresh':'\u0e23\u0e35\u0e40\u0e1f\u0e23\u0e0a','common.search':'\u0e04\u0e49\u0e19\u0e2b\u0e32','common.error':'\u0e02\u0e49\u0e2d\u0e1c\u0e34\u0e14\u0e1e\u0e25\u0e32\u0e14','nav.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','nav.settings':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32','nav.signOut':'\u0e2d\u0e2d\u0e01\u0e08\u0e32\u0e01\u0e23\u0e30\u0e1a\u0e1a'},
+  };
+  function t(key) {
+    const dict = I18N[langCode] || I18N.en;
+    return dict[key] || I18N.en[key] || key;
+  }
+  function applyTranslations(root) {
+    const scope = root || document;
+    scope.querySelectorAll('[data-i18n]').forEach(el => {
+      const v = t(el.getAttribute('data-i18n'));
+      if (v) el.textContent = v;
+    });
+    scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      const v = t(el.getAttribute('data-i18n-placeholder'));
+      if (v) el.placeholder = v;
+    });
+    scope.querySelectorAll('[data-i18n-title]').forEach(el => {
+      const v = t(el.getAttribute('data-i18n-title'));
+      if (v) el.title = v;
+    });
+  }
+  window.t = t;
+  window.applyNarveTranslations = applyTranslations;
+
+  const CURRENCIES = [
+    ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+    ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],['CNY','Chinese Yuan'],
+    ['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],['SEK','Swedish Krona'],['KRW','South Korean Won'],
+    ['SGD','Singapore Dollar'],['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+    ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],['DKK','Danish Krone'],
+    ['PLN','Polish Zloty'],['THB','Thai Baht'],['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],
+    ['CZK','Czech Koruna'],['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+    ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+  ];
+  const FX_FALLBACK = {
+    USD:1.0, EUR:0.92, GBP:0.79, JPY:150, AUD:1.52, CAD:1.36, CHF:0.88, CNY:7.20,
+    HKD:7.83, NZD:1.65, SEK:10.5, KRW:1340, SGD:1.34, NOK:10.6, MXN:17.0,
+    INR:83.0, ZAR:18.5, TRY:32.0, BRL:5.0, DKK:6.85, PLN:3.95, THB:35.0,
+    IDR:15700, HUF:360, CZK:23.0, ILS:3.7, PHP:56.0, MYR:4.7, RON:4.6, ISK:137,
+  };
+  let _fxRates = FX_FALLBACK;
+
+  function _readFxCache() {
+    try { return JSON.parse(localStorage.getItem('narve_fx_rates') || 'null'); } catch { return null; }
+  }
+  function _writeFxCache(rates) {
+    try { localStorage.setItem('narve_fx_rates', JSON.stringify({ rates: rates, fetched_at: Date.now() })); } catch {}
+  }
+  async function ensureFxRates() {
+    const cached = _readFxCache();
+    if (cached && cached.rates && Date.now() - cached.fetched_at < 3600000) {
+      _fxRates = cached.rates;
+      return _fxRates;
+    }
+    try {
+      const r = await fetch('/api/fx-rates', { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      if (r.ok) {
+        const data = await r.json();
+        _fxRates = data.rates || FX_FALLBACK;
+        _fxRates.USD = 1.0;
+        _writeFxCache(_fxRates);
+        return _fxRates;
+      }
+    } catch {}
+    if (cached && cached.rates) { _fxRates = cached.rates; }
+    return _fxRates;
+  }
+  function getRate(code) {
+    if (!code || code === 'USD') return 1;
+    return (_fxRates && _fxRates[code]) || FX_FALLBACK[code] || 1;
+  }
+  function getSymbol(code, locale) {
+    try {
+      const parts = new Intl.NumberFormat(locale || getLocale(), { style: 'currency', currency: code }).formatToParts(0);
+      const sym = parts.find(p => p.type === 'currency');
+      if (sym) return sym.value;
+    } catch {}
+    return code;
+  }
+  function symbolFirst(code, locale) {
+    try {
+      const parts = new Intl.NumberFormat(locale || getLocale(), { style: 'currency', currency: code }).formatToParts(0);
+      const cIdx = parts.findIndex(p => p.type === 'currency');
+      const nIdx = parts.findIndex(p => p.type === 'integer');
+      return cIdx < nIdx;
+    } catch { return true; }
+  }
+
+  // Convert any "$1,234.56" in a text node to the chosen currency / locale.
+  function convertCurrencyText(text) {
+    if (!text) return text;
+    if (currencyCode === 'USD' && !isMetric()) return text;
+    const loc = getLocale();
+    const rate = getRate(currencyCode);
+    const sym = getSymbol(currencyCode, loc);
+    const symFirst = symbolFirst(currencyCode, loc);
+    return text.replace(/\\$([+-]?)([\\d,]+(?:\\.\\d+)?)([KMBT]?)/g, function(match, sign, num, suffix) {
+      const value = parseFloat(num.replace(/,/g, ''));
+      if (isNaN(value)) return match;
+      const decPart = num.includes('.') ? num.split('.')[1] : '';
+      const decimals = decPart.length;
+      const converted = value * rate;
+      const formatted = converted.toLocaleString(loc, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: Math.max(decimals, suffix ? 1 : 0),
+      });
+      return symFirst
+        ? sym + sign + formatted + suffix
+        : sign + formatted + suffix + ' ' + sym;
+    });
+  }
+
+  function walk(node) {
+    if (node.nodeType === 3) {
+      const newText = convertCurrencyText(node.nodeValue);
+      if (newText !== node.nodeValue) node.nodeValue = newText;
+    } else if (node.nodeType === 1) {
+      const tag = node.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (node.classList && node.classList.contains('no-unit-convert')) return;
+      for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+    }
+  }
+
+  function applyUnits() {
+    // Only walk the DOM if we're actually changing something.
+    if (currencyCode !== 'USD' || isMetric()) walk(document.body);
+    document.querySelectorAll('.narve-unit-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.unit === unitSystem);
+    });
+    const sel = document.getElementById('narve-currency-select');
+    if (sel) sel.value = currencyCode;
+  }
+
+  window.setNarveUnits = function(sys) {
+    if (sys === unitSystem) return;
+    unitSystem = sys;
+    localStorage.setItem('narve_units', sys);
+    location.reload();
+  };
+  window.setNarveCurrency = function(code) {
+    if (code === currencyCode) return;
+    currencyCode = code;
+    localStorage.setItem('narve_currency', code);
+    location.reload();
+  };
+  window.setNarveLanguage = function(code) {
+    if (!I18N[code] || code === langCode) return;
+    langCode = code;
+    localStorage.setItem('narve_language', code);
+    document.documentElement.lang = code;
+    applyTranslations();
+    const sel = document.getElementById('narve-language-select');
+    if (sel) sel.value = code;
+  };
+
+  function injectToggle() {
+    if (document.getElementById('narve-unit-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'narve-unit-wrap';
+    wrap.className = 'no-unit-convert';
+    wrap.style.cssText = 'position:fixed;top:12px;right:12px;display:flex;gap:4px;z-index:9999;background:rgba(22,27,34,0.9);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px;backdrop-filter:blur(8px);align-items:center;';
+    const usBtn = document.createElement('button');
+    usBtn.className = 'narve-unit-btn';
+    usBtn.dataset.unit = 'american';
+    usBtn.title = 'American ($, MM/DD)';
+    usBtn.textContent = '\U0001F1FA\U0001F1F8';
+    usBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:4px 8px;font-size:14px;border-radius:4px;color:#8b949e;';
+    usBtn.onclick = function() { window.setNarveUnits('american'); };
+    const euBtn = document.createElement('button');
+    euBtn.className = 'narve-unit-btn';
+    euBtn.dataset.unit = 'european';
+    euBtn.title = 'European (\u20ac, DD.MM)';
+    euBtn.textContent = '\U0001F1EA\U0001F1FA';
+    euBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:4px 8px;font-size:14px;border-radius:4px;color:#8b949e;';
+    euBtn.onclick = function() { window.setNarveUnits('european'); };
+    const langSel = document.createElement('select');
+    langSel.id = 'narve-language-select';
+    langSel.title = 'Language';
+    langSel.style.cssText = 'background:rgba(0,0,0,0.4);color:#e6edf3;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;font-family:inherit;max-width:90px;';
+    langSel.innerHTML = LANGUAGES.map(function(l) {
+      return '<option value="' + l[0] + '"' + (l[0] === langCode ? ' selected' : '') + '>' + l[1] + '</option>';
+    }).join('');
+    langSel.onchange = function(e) { window.setNarveLanguage(e.target.value); };
+    const sel = document.createElement('select');
+    sel.id = 'narve-currency-select';
+    sel.title = 'Display currency';
+    sel.style.cssText = 'background:rgba(0,0,0,0.4);color:#e6edf3;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;font-family:inherit;';
+    sel.innerHTML = CURRENCIES.map(function(c) {
+      return '<option value="' + c[0] + '"' + (c[0] === currencyCode ? ' selected' : '') + '>' + c[0] + '</option>';
+    }).join('');
+    sel.onchange = function(e) { window.setNarveCurrency(e.target.value); };
+    wrap.appendChild(usBtn);
+    wrap.appendChild(euBtn);
+    wrap.appendChild(langSel);
+    wrap.appendChild(sel);
+    document.body.appendChild(wrap);
+    const style = document.createElement('style');
+    style.textContent = '.narve-unit-btn.active { background: #58a6ff !important; color: #fff !important; }';
+    document.head.appendChild(style);
+  }
+
+  function init() {
+    document.documentElement.lang = langCode;
+    injectToggle();
+    applyTranslations();
+    // Apply immediately with cached/fallback rates so the page never flashes
+    // raw USD when the user prefers a different currency.
+    applyUnits();
+    // Then refresh from server in the background and re-apply.
+    ensureFxRates().then(function() {
+      if (currencyCode !== 'USD' || isMetric()) {
+        // We already converted text nodes in applyUnits(); a second pass would
+        // double-convert (e.g. €0,92 → €0,85). Reload instead so the text
+        // starts fresh from server-rendered USD.
+        const cached = _readFxCache();
+        if (cached && Date.now() - cached.fetched_at < 60000) {
+          // Rates were just updated — reload once to apply fresh values.
+          if (!sessionStorage.getItem('narve_fx_reloaded')) {
+            sessionStorage.setItem('narve_fx_reloaded', '1');
+            location.reload();
+            return;
+          }
+        }
+      }
+      sessionStorage.removeItem('narve_fx_reloaded');
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+"""
+
+
+@app.middleware("http")
+async def unit_toggle_middleware(request: Request, call_next):
+    """Inject the unit-system toggle script into all HTML responses."""
+    response = await call_next(request)
+    ct = response.headers.get("content-type", "")
+    if "text/html" not in ct:
+        return response
+    body_bytes = b""
+    async for chunk in response.body_iterator:
+        body_bytes += chunk
+    try:
+        body = body_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return Response(content=body_bytes, status_code=response.status_code,
+                        headers=dict(response.headers), media_type=ct)
+    if "</body>" in body and "__narveUnitToggleLoaded" not in body:
+        body = body.replace("</body>", UNIT_TOGGLE_SCRIPT + "</body>", 1)
+    new_headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+    return Response(content=body, status_code=response.status_code,
+                    headers=new_headers, media_type=ct)
+
+
 # ─── Authentication ──────────────────────────────────────────────────
 # Auth is handled by the gateway. These helpers extract user info from
 # gateway SSO headers or allow localhost bypass for trading bots.
@@ -140,6 +445,7 @@ asset_state = {}       # ticker -> full result dict
 ensembles = {}         # ticker -> trained EnsemblePredictor
 live_prices = {}       # ticker -> latest price
 connected_ws = set()   # active WebSocket connections
+_bg_tasks: set = set() # prevent GC of background tasks
 _ws_lock = asyncio.Lock()
 last_refresh = {}      # ticker -> timestamp of last full refresh
 REFRESH_INTERVAL = 300 # re-analyze every 5 min (1 window)
@@ -153,11 +459,11 @@ BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
 async def startup():
     db.init_db()
     # Start background tasks immediately so dashboards work
-    asyncio.create_task(price_updater())
-    asyncio.create_task(window_refresher())
-    asyncio.create_task(news_trade_monitor())
+    _bg_tasks.add(asyncio.create_task(price_updater()))
+    _bg_tasks.add(asyncio.create_task(window_refresher()))
+    _bg_tasks.add(asyncio.create_task(news_trade_monitor()))
     # Load data in background so server is available immediately
-    asyncio.create_task(load_all_assets())
+    _bg_tasks.add(asyncio.create_task(load_all_assets()))
     print("Server started. Loading data in background...")
 
 
@@ -652,13 +958,31 @@ async def logout():
 
 # ─── REST Endpoints ──────────────────────────────────────────────────
 
+_FAVICON_PATH = Path(__file__).parent / "favicon.png"
+
+
+@app.get("/favicon.png")
+async def favicon_png():
+    if _FAVICON_PATH.exists():
+        return FileResponse(str(_FAVICON_PATH), media_type="image/png")
+    return Response(status_code=404)
+
+
+@app.get("/favicon.ico")
+async def favicon_ico():
+    # Browsers auto-request /favicon.ico — serve the PNG so it still works.
+    if _FAVICON_PATH.exists():
+        return FileResponse(str(_FAVICON_PATH), media_type="image/png")
+    return Response(status_code=404)
+
+
 @app.get("/")
 async def root(request: Request):
     """Serve the live crypto dashboard."""
     if not _check_auth(request):
         return RedirectResponse("https://narve.ai/login", status_code=302)
     if not asset_state:
-        return HTMLResponse("<h1>Loading... refresh in 30s</h1>")
+        return HTMLResponse("<html><body style='background:#0d1117;color:#e6edf3;font-family:system-ui'><h1>Loading... refresh in 30s</h1></body></html>")
     # Generate and serve the dashboard with live JS injected
     all_results = {}
     for ticker in asset_state:
@@ -703,15 +1027,24 @@ async def root(request: Request):
     user_name = html_mod.escape((user.get("display_name") or user.get("email", "")) if user else "")
     tier_label = html_mod.escape(user.get("tier", "free").upper() if user else "FREE")
     tier_color = "var(--green)" if tier_label in ("PREMIUM","ADMIN") else "var(--muted)"
+    has_creds = db.has_clob_credentials(user["id"]) if user else False
+    wallet_indicator = (
+        '<span style="color:#a371f7;font-size:0.7em;" title="Polymarket wallet connected">&#9679; WALLET</span>'
+        if has_creds else
+        '<a href="/settings#polymarket" style="color:var(--yellow);font-size:0.7em;text-decoration:none;" title="Connect Polymarket wallet">&#9888; CONNECT WALLET</a>'
+    )
     nav_html = f"""
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:8px 0;border-bottom:1px solid var(--border);">
   <div style="display:flex;gap:12px;align-items:center;font-size:0.8em;">
     <span style="color:var(--muted);">{user_name}</span>
     <span style="color:{tier_color};font-weight:600;">{tier_label}</span>
+    {wallet_indicator}
   </div>
   <div style="display:flex;gap:12px;align-items:center;font-size:0.8em;">
+    <button onclick="dashTradePrompt()" style="background:#a371f7;color:#000;border:none;padding:5px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.85em;">Trade Polymarket</button>
     <a href="/kalshi" style="color:var(--muted);text-decoration:none;">Kalshi</a>
-    <a href="/trade" style="color:var(--blue);text-decoration:none;font-weight:600;">Trade</a>
+    <a href="/trade" style="color:var(--blue);text-decoration:none;font-weight:600;">All Markets</a>
+    <a href="/polybot" style="color:var(--muted);text-decoration:none;">Bot</a>
     <a href="/accuracy" style="color:var(--muted);text-decoration:none;">Accuracy</a>
     <a href="/settings" style="color:var(--muted);text-decoration:none;">Settings</a>
     <a href="/logout" style="color:var(--red);text-decoration:none;font-weight:600;">Logout</a>
@@ -942,6 +1275,54 @@ async def root(request: Request):
 </script>
 """
     html = html.replace("</body>", ws_script + "</body>")
+
+    # Inject Polymarket trade widget — adds openTradeWidget/openTradeWidgetSearch
+    # globals plus a per-ticker trade button injector
+    trade_widget = _trade_widget_html(has_creds)
+    crypto_names = {
+        "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana",
+        "DOGE": "Dogecoin", "XRP": "XRP", "BNB": "BNB",
+    }
+    crypto_names_js = json.dumps(crypto_names)
+    dash_trade_script = f"""
+<script>
+(function() {{
+  const COIN_NAMES = {crypto_names_js};
+
+  // Global helper used by the nav button
+  window.dashTradePrompt = function() {{
+    const q = prompt('Search Polymarket markets:', 'Bitcoin');
+    if (q) openTradeWidgetSearch(q);
+  }};
+
+  // Inject a "Trade on Polymarket" button next to each crypto's live price
+  function injectTradeButtons() {{
+    document.querySelectorAll('[id^="live-price-"]').forEach(function(el) {{
+      if (el.dataset.tradeBtn === '1') return;
+      const ticker = el.id.replace('live-price-', '').toUpperCase();
+      const name = COIN_NAMES[ticker] || ticker;
+      const btn = document.createElement('button');
+      btn.textContent = 'Trade ' + ticker + ' \u2192';
+      btn.style.cssText = 'background:#a371f7;color:#000;border:none;padding:6px 14px;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.78em;margin-left:10px;';
+      btn.title = 'Find a Polymarket market for ' + name + ' and trade it';
+      btn.onclick = function() {{ openTradeWidgetSearch(name); }};
+      el.parentNode.insertBefore(btn, el.nextSibling);
+      el.dataset.tradeBtn = '1';
+    }});
+  }}
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', injectTradeButtons);
+  }} else {{
+    injectTradeButtons();
+  }}
+  // Re-inject if tabs are toggled or DOM is updated
+  setInterval(injectTradeButtons, 2000);
+}})();
+</script>
+"""
+    html = html.replace("</body>", trade_widget + dash_trade_script + "</body>")
+
     return HTMLResponse(html)
 
 
@@ -1004,6 +1385,52 @@ def _get_bot_signals():
             })
         signals[ticker] = signal
     return signals
+
+
+# ─── FX rates proxy (frankfurter.dev) ─────────────────────────────────
+_fx_cache: dict = {"data": None, "fetched_at": 0.0}
+_FX_TTL = 3600  # 1 hour
+_FX_FALLBACK = {
+    "base": "USD",
+    "date": "fallback",
+    "rates": {
+        "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
+        "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
+        "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
+        "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
+        "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
+        "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+    },
+}
+
+
+@app.get("/api/fx-rates")
+async def get_fx_rates():
+    """USD-base FX rates, cached for 1h. Source: frankfurter.dev."""
+    now = time.time()
+    cached = _fx_cache["data"]
+    if cached and (now - _fx_cache["fetched_at"]) < _FX_TTL:
+        return cached
+    try:
+        def _fetch():
+            r = requests.get(
+                "https://api.frankfurter.dev/v1/latest?base=USD",
+                timeout=5,
+                headers={"User-Agent": "narve-crypto/1.0"},
+            )
+            return r.json() if r.status_code == 200 else None
+        data = await asyncio.to_thread(_fetch)
+        if data:
+            data.setdefault("rates", {})
+            data["rates"]["USD"] = 1.0
+            _fx_cache["data"] = data
+            _fx_cache["fetched_at"] = now
+            return data
+    except Exception as e:
+        print(f"FX rate fetch failed: {e}")
+    if cached:
+        return cached
+    return _FX_FALLBACK
 
 
 @app.get("/api/state")
@@ -1234,6 +1661,15 @@ async def get_polybot_status(request: Request):
 async def polybot_dashboard(request: Request):
     if not _check_auth(request):
         return RedirectResponse("https://narve.ai/login", status_code=302)
+    user = _get_session_user(request)
+    has_creds = db.has_clob_credentials(user["id"]) if user else False
+    trade_widget = _trade_widget_html(has_creds)
+    creds_banner = "" if has_creds else (
+        '<div style="background:#1a1a2e;border:1px solid #d29922;color:#d29922;'
+        'padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.78em;">'
+        'Connect your Polymarket wallet on <a href="/settings#polymarket" style="color:#58a6ff;">Settings</a> '
+        'to trade these markets one-click from this page.</div>'
+    )
     html = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1242,6 +1678,10 @@ async def polybot_dashboard(request: Request):
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#0a0a1a; color:#e0e0e0; font-family:'SF Mono',Monaco,monospace; padding:16px; }
   h1 { color:#f7931a; font-size:1.5em; margin-bottom:8px; }
+  .nav { display:flex; gap:16px; font-size:0.8em; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #2a2a4a; flex-wrap:wrap; }
+  .nav a { color:#8b949e; text-decoration:none; }
+  .nav a.active { color:#f7931a; font-weight:600; }
+  .nav a:hover { color:#e6edf3; }
   .subtitle { color:#888; font-size:0.8em; margin-bottom:16px; }
   .live-dot { display:inline-block; width:8px; height:8px; background:#f7931a; border-radius:50%; animation:pulse 1.5s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
@@ -1253,6 +1693,7 @@ async def polybot_dashboard(request: Request):
   .negative { color:#ff4466; }
   .pending-box { background:#1a1a2e; border:2px solid #f7931a; border-radius:10px; padding:16px; margin-bottom:20px; }
   .pending-box h3 { color:#f7931a; margin-bottom:8px; }
+  .pending-box .actions { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
   .section { margin-bottom:20px; }
   .section h2 { color:#aaa; font-size:0.9em; margin-bottom:8px; border-bottom:1px solid #2a2a4a; padding-bottom:4px; }
   table { width:100%; border-collapse:collapse; font-size:0.8em; }
@@ -1266,13 +1707,27 @@ async def polybot_dashboard(request: Request):
   .empty { color:#666; font-style:italic; padding:12px; }
 </style>
 </head><body>
+<div class="nav">
+  <a href="/">Dashboard</a>
+  <a href="/kalshi">Kalshi</a>
+  <a href="/trade">Trade</a>
+  <a href="/polybot" class="active">Polymarket Bot</a>
+  <a href="/settings">Settings</a>
+</div>
 <h1>Polymarket Multi-Coin 5-Min Bot</h1>
 <p class="subtitle"><span class="live-dot"></span> <span id="status">Loading...</span> &middot; $100 per trade &middot; BTC ETH SOL DOGE XRP BNB &middot; Auto-refresh 5s</p>
+__CREDS_BANNER__
 <div class="grid" id="stats"></div>
 <div id="pending"></div>
 <div class="section"><h2>Recent Trades</h2><div id="trades"></div></div>
 <div class="section"><h2>Activity Log</h2><div class="log-box" id="log"></div></div>
 <script>
+function escAttr(s) {
+  return String(s||'').replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'").replace(/"/g,'&quot;');
+}
+function tradeBtn(query, label) {
+  return '<button class="trade-btn poly" onclick="openTradeWidgetSearch(\\''+escAttr(query)+'\\')">'+(label||'Trade on Polymarket')+'</button>';
+}
 async function refresh() {
   try {
     const r = await fetch('/_internal/polybot/status');
@@ -1307,11 +1762,20 @@ async function refresh() {
       let ph = '';
       pendingEntries.forEach(([coin, p]) => {
         const potWin = (p.shares * 1.0 - p.amount).toFixed(2);
+        const titleEsc = escAttr(p.title || (coin.toUpperCase()+' price'));
+        const condId = p.condition_id || p.market_id || '';
+        let tradeAction;
+        if (condId) {
+          tradeAction = '<button class="trade-btn poly" onclick="openTradeWidget(\\''+escAttr(condId)+'\\')">Trade this market</button>';
+        } else {
+          tradeAction = '<button class="trade-btn poly" onclick="openTradeWidgetSearch(\\''+titleEsc+'\\')">Find &amp; trade on Polymarket</button>';
+        }
         ph += `<div class="pending-box">
           <h3>LIVE BET — ${coin.toUpperCase()}</h3>
           <p><strong>${p.side.toUpperCase()}</strong> @ $${p.buy_price.toFixed(3)} | ${p.shares.toFixed(1)} shares | Edge: ${(p.edge*100).toFixed(1)}%</p>
           <p>Potential: <span class="positive">+$${potWin}</span> / <span class="negative">-$${p.amount}</span></p>
-          <p style="color:#888;font-size:0.8em">${p.title}</p>
+          <p style="color:#888;font-size:0.8em">${p.title||''}</p>
+          <div class="actions">${tradeAction}</div>
         </div>`;
       });
       document.getElementById('pending').innerHTML = ph;
@@ -1320,11 +1784,13 @@ async function refresh() {
     }
     const trades = (d.trades||[]).reverse().slice(0,30);
     if (trades.length > 0) {
-      let h = '<table><tr><th>Coin</th><th>Side</th><th>Price</th><th>Edge</th><th>Result</th><th>PnL</th></tr>';
+      let h = '<table><tr><th>Coin</th><th>Side</th><th>Price</th><th>Edge</th><th>Result</th><th>PnL</th><th>Trade</th></tr>';
       trades.forEach(t => {
         const cls = t.pnl >= 0 ? 'positive' : 'negative';
         const coin = (t.coin || 'btc').toUpperCase();
-        h += '<tr><td>'+coin+'</td><td>'+t.side.toUpperCase()+'</td><td>$'+t.buy_price.toFixed(3)+'</td><td>'+(t.edge*100).toFixed(1)+'%</td><td class="'+cls+'">'+t.result+'</td><td class="'+cls+'">$'+(t.pnl>=0?'+':'')+t.pnl.toFixed(2)+'</td></tr>';
+        const searchQ = (t.title || (coin + ' price')).slice(0,60);
+        const btn = tradeBtn(searchQ, 'Trade');
+        h += '<tr><td>'+coin+'</td><td>'+t.side.toUpperCase()+'</td><td>$'+t.buy_price.toFixed(3)+'</td><td>'+(t.edge*100).toFixed(1)+'%</td><td class="'+cls+'">'+t.result+'</td><td class="'+cls+'">$'+(t.pnl>=0?'+':'')+t.pnl.toFixed(2)+'</td><td>'+btn+'</td></tr>';
       });
       h += '</table>';
       document.getElementById('trades').innerHTML = h;
@@ -1351,7 +1817,9 @@ async function refresh() {
 refresh();
 setInterval(refresh, 5000);
 </script>
+__TRADE_WIDGET__
 </body></html>"""
+    html = html.replace("__CREDS_BANNER__", creds_banner).replace("__TRADE_WIDGET__", trade_widget)
     return HTMLResponse(html)
 
 
@@ -1394,21 +1862,23 @@ async def get_weather_status(request: Request):
     if db_path.exists():
         try:
             import sqlite3
-            conn = sqlite3.connect(str(db_path))
-            conn.row_factory = sqlite3.Row
-            result["running"] = True
-            # Recent signals
-            rows = conn.execute("SELECT * FROM signals ORDER BY created_at DESC LIMIT 50").fetchall()
-            result["signals"] = [dict(r) for r in rows]
-            result["total_signals"] = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
-            # Recent trades
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
             try:
-                rows = conn.execute("SELECT * FROM trades ORDER BY created_at DESC LIMIT 50").fetchall()
-                result["trades"] = [dict(r) for r in rows]
-                result["total_trades"] = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-            except Exception:
-                pass
-            conn.close()
+                conn.row_factory = sqlite3.Row
+                result["running"] = True
+                # Recent signals
+                rows = conn.execute("SELECT * FROM signals ORDER BY created_at DESC LIMIT 50").fetchall()
+                result["signals"] = [dict(r) for r in rows]
+                result["total_signals"] = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+                # Recent trades
+                try:
+                    rows = conn.execute("SELECT * FROM trades ORDER BY created_at DESC LIMIT 50").fetchall()
+                    result["trades"] = [dict(r) for r in rows]
+                    result["total_trades"] = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+                except Exception:
+                    pass
+            finally:
+                conn.close()
         except Exception as e:
             result["error"] = str(e)
     return result
@@ -1418,6 +1888,425 @@ async def get_weather_status(request: Request):
 async def weather_dashboard(request: Request):
     """Redirect to standalone Weather Dashboard on port 5050."""
     return RedirectResponse("http://localhost:5050", status_code=302)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SHARED TRADE WIDGET — Embeddable Polymarket trading modal for any page
+# ═══════════════════════════════════════════════════════════════════════
+
+def _trade_widget_html(has_creds: bool) -> str:
+    """Return the HTML/CSS/JS for an embeddable Polymarket quick-trade modal.
+
+    Any page that includes this can call:
+      openTradeWidget(conditionId)          — open by condition ID
+      openTradeWidgetSearch(query)          — search + show first result
+
+    Simplified UX: shows YES/NO prices + amount field + 4 direct action buttons
+    (BUY YES, BUY NO, SELL YES, SELL NO). One click = one order. No confirm dialog.
+    """
+    template = """
+<!-- ── Quick Trade Widget CSS ── -->
+<style>
+  .qt-overlay { display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.78);z-index:5000;justify-content:center;align-items:flex-start;padding:60px 12px;overflow-y:auto; }
+  .qt-overlay.open { display:flex; }
+  .qt-modal { background:#0d1117;border:1px solid #30363d;border-radius:14px;width:100%;max-width:440px;box-shadow:0 12px 48px rgba(0,0,0,0.6); }
+  .qt-header { display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 12px;border-bottom:1px solid #21262d;gap:10px; }
+  .qt-header h2 { font-size:0.95em;flex:1;line-height:1.35;color:#e6edf3;font-weight:600; }
+  .qt-meta { font-size:0.65em;color:#8b949e;margin-top:4px; }
+  .qt-close { background:none;border:none;color:#8b949e;font-size:1.5em;cursor:pointer;padding:0 4px;line-height:1; }
+  .qt-close:hover { color:#e6edf3; }
+  .qt-body { padding:16px 18px 18px; }
+
+  /* Big YES/NO price tiles */
+  .qt-prices { display:flex;gap:10px;margin-bottom:14px; }
+  .qt-tile { flex:1;text-align:center;padding:12px 8px;border-radius:10px;border:1px solid; }
+  .qt-tile.yes { background:rgba(63,185,80,0.08);border-color:rgba(63,185,80,0.3); }
+  .qt-tile.no  { background:rgba(248,81,73,0.08);border-color:rgba(248,81,73,0.3); }
+  .qt-tile .lbl { font-size:0.65em;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px; }
+  .qt-tile .val { font-size:1.6em;font-weight:800;margin-top:2px; }
+  .qt-tile.yes .val { color:#3fb950; }
+  .qt-tile.no  .val { color:#f85149; }
+
+  /* Amount input + presets */
+  .qt-amt-row { display:flex;align-items:center;gap:8px;margin-bottom:8px; }
+  .qt-amt-row label { font-size:0.7em;color:#8b949e;text-transform:uppercase;flex-shrink:0; }
+  .qt-amt-row input { flex:1;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:9px 10px;border-radius:8px;font-size:1em;font-weight:700;text-align:right; }
+  .qt-amt-row input:focus { outline:none;border-color:#58a6ff; }
+  .qt-amt-row .unit { color:#8b949e;font-size:0.78em;font-weight:600; }
+  .qt-presets { display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap; }
+  .qt-presets button { flex:1;min-width:50px;background:#161b22;border:1px solid #30363d;color:#8b949e;padding:6px 4px;border-radius:6px;font-size:0.74em;cursor:pointer;font-weight:600; }
+  .qt-presets button:hover { border-color:#58a6ff;color:#e6edf3; }
+
+  /* Action buttons grid */
+  .qt-actions { display:grid;grid-template-columns:1fr 1fr;gap:8px; }
+  .qt-btn { padding:12px 8px;border:none;border-radius:10px;font-weight:800;cursor:pointer;font-size:0.85em;transition:all 0.15s;letter-spacing:0.3px; }
+  .qt-btn:hover:not(:disabled) { transform:translateY(-1px);filter:brightness(1.1); }
+  .qt-btn:disabled { opacity:0.4;cursor:not-allowed; }
+  .qt-btn.buy-yes  { background:#3fb950;color:#000; }
+  .qt-btn.buy-no   { background:#f85149;color:#fff; }
+  .qt-btn.sell-yes { background:rgba(63,185,80,0.18);color:#3fb950;border:1px solid #3fb950; }
+  .qt-btn.sell-no  { background:rgba(248,81,73,0.18);color:#f85149;border:1px solid #f85149; }
+
+  .qt-foot { margin-top:12px;padding-top:10px;border-top:1px solid #21262d;display:flex;justify-content:space-between;align-items:center;font-size:0.7em;color:#8b949e; }
+  .qt-foot a { color:#58a6ff;text-decoration:none; }
+  .qt-foot a:hover { text-decoration:underline; }
+  .qt-connect { background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.4);border-radius:8px;padding:10px;margin-bottom:12px;font-size:0.78em;color:#d29922;text-align:center; }
+  .qt-connect a { color:#d29922;font-weight:700;text-decoration:underline; }
+
+  /* Inline trade button (used by callers across all dashboards) */
+  .trade-btn { background:none;border:1px solid #58a6ff;color:#58a6ff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:0.75em;font-weight:600;transition:all 0.15s;white-space:nowrap; }
+  .trade-btn:hover { background:#58a6ff;color:#000; }
+  .trade-btn.poly { border-color:#a371f7;color:#a371f7; }
+  .trade-btn.poly:hover { background:#a371f7;color:#000; }
+
+  /* Toast (shared with Kalshi widget) */
+  #tw-toasts { position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none; }
+  .tw-toast { pointer-events:auto;background:#161b22;border:1px solid #3fb950;border-radius:8px;padding:12px 16px;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,0.5);animation:twSlide 0.4s ease-out;position:relative; }
+  .tw-toast.err { border-color:#f85149; }
+  .tw-toast .tw-tt { font-size:0.82em;font-weight:700;margin-bottom:3px;color:#e6edf3; }
+  .tw-toast .tw-tb { font-size:0.72em;color:#8b949e; }
+  .tw-toast .tw-tx { position:absolute;top:6px;right:10px;background:none;border:none;color:#8b949e;cursor:pointer;font-size:1em; }
+  @keyframes twSlide { from{opacity:0;transform:translateX(40px)} to{opacity:1;transform:translateX(0)} }
+</style>
+
+<!-- ── Quick Trade Widget HTML ── -->
+<div class="qt-overlay" id="qt-overlay">
+  <div class="qt-modal">
+    <div class="qt-header">
+      <div style="flex:1;">
+        <h2 id="qt-title">Loading...</h2>
+        <div class="qt-meta" id="qt-meta"></div>
+      </div>
+      <button class="qt-close" onclick="closeTW()">&times;</button>
+    </div>
+    <div class="qt-body">
+      <div class="qt-prices">
+        <div class="qt-tile yes"><div class="lbl">YES</div><div class="val" id="qt-yes">&mdash;</div></div>
+        <div class="qt-tile no"><div class="lbl">NO</div><div class="val" id="qt-no">&mdash;</div></div>
+      </div>
+      <div id="qt-connect-block" style="display:__CONNECT_DISPLAY__;">
+        <div class="qt-connect">
+          Polymarket wallet not connected.<br>
+          <a href="/settings#polymarket">Connect in Settings &rarr;</a>
+        </div>
+      </div>
+      <div class="qt-amt-row">
+        <label>Amount</label>
+        <input type="number" id="qt-amt" placeholder="10" min="1" step="1" value="10">
+        <span class="unit">USDC</span>
+      </div>
+      <div class="qt-presets">
+        <button onclick="qtSet(5)">$5</button>
+        <button onclick="qtSet(10)">$10</button>
+        <button onclick="qtSet(25)">$25</button>
+        <button onclick="qtSet(50)">$50</button>
+        <button onclick="qtSet(100)">$100</button>
+      </div>
+      <div class="qt-actions">
+        <button class="qt-btn buy-yes"  id="qt-buy-yes"  onclick="qtFire('buy','yes')"  __DISABLED__>BUY YES</button>
+        <button class="qt-btn buy-no"   id="qt-buy-no"   onclick="qtFire('buy','no')"   __DISABLED__>BUY NO</button>
+        <button class="qt-btn sell-yes" id="qt-sell-yes" onclick="qtFire('sell','yes')" __DISABLED__>SELL YES</button>
+        <button class="qt-btn sell-no"  id="qt-sell-no"  onclick="qtFire('sell','no')"  __DISABLED__>SELL NO</button>
+      </div>
+      <div class="qt-foot">
+        <span id="qt-vol">&mdash;</span>
+        <a href="#" id="qt-poly" target="_blank" rel="noopener">View on Polymarket &#8599;</a>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="tw-toasts"></div>
+
+<!-- ── Quick Trade Widget JS ── -->
+<script>
+(function(){
+  let _tw={};
+  const hasCreds=__HAS_CREDS__;
+
+  function esc(s){ const d=document.createElement('div');d.textContent=s||'';return d.innerHTML; }
+  function twToast(t,b,err){
+    const c=document.getElementById('tw-toasts'),e=document.createElement('div');
+    e.className='tw-toast'+(err?' err':'');e.style.position='relative';
+    e.innerHTML='<button class="tw-tx" onclick="this.parentElement.remove()">&times;</button><div class="tw-tt">'+esc(t)+'</div><div class="tw-tb">'+esc(b)+'</div>';
+    c.appendChild(e);setTimeout(()=>e.remove(),7000);
+  }
+
+  window.openTradeWidget=async function(conditionId){
+    const ov=document.getElementById('qt-overlay');ov.classList.add('open');
+    document.getElementById('qt-title').textContent='Loading...';
+    document.getElementById('qt-yes').textContent='—';
+    document.getElementById('qt-no').textContent='—';
+    document.getElementById('qt-meta').textContent='';
+    document.getElementById('qt-vol').textContent='—';
+    let m=null;
+    try{const r=await fetch('/api/clob/market/'+conditionId);if(r.ok) m=await r.json();}catch(e){}
+    if(!m){
+      try{const r=await fetch('/api/clob/markets?q=&limit=50');if(r.ok){const ms=await r.json();m=ms.find(x=>(x.conditionId||x.condition_id)===conditionId);}}catch(e){}
+    }
+    if(!m){document.getElementById('qt-title').textContent='Market not found';return;}
+    let yT=null,nT=null;
+    const tks=m.tokens||[];
+    if(tks.length>=2){yT=tks.find(t=>(t.outcome||'').toLowerCase()==='yes')||tks[0];nT=tks.find(t=>(t.outcome||'').toLowerCase()==='no')||tks[1];}
+    else if(m.clobTokenIds){const ids=typeof m.clobTokenIds==='string'?JSON.parse(m.clobTokenIds):m.clobTokenIds;yT={token_id:ids[0],outcome:'Yes'};nT={token_id:ids[1],outcome:'No'};}
+    let yPrice=0.5,nPrice=0.5;
+    const op=m.outcomePrices?(typeof m.outcomePrices==='string'?JSON.parse(m.outcomePrices):m.outcomePrices):null;
+    if(op&&op.length>=2){yPrice=parseFloat(op[0]);nPrice=parseFloat(op[1]);}
+    _tw={market:m,yesToken:yT,noToken:nT,conditionId:conditionId,yesPrice:yPrice,noPrice:nPrice};
+    document.getElementById('qt-title').textContent=m.question||m.title||'?';
+    document.getElementById('qt-yes').textContent=(yPrice*100).toFixed(0)+'¢';
+    document.getElementById('qt-no').textContent=(nPrice*100).toFixed(0)+'¢';
+    const vol=m.volume?'Vol $'+Number(m.volume).toLocaleString():'';
+    const liq=m.liquidity?'Liq $'+Number(m.liquidity).toLocaleString():'';
+    document.getElementById('qt-vol').textContent=[vol,liq].filter(Boolean).join(' • ')||'—';
+    const slug=m.slug||conditionId;
+    document.getElementById('qt-poly').href='https://polymarket.com/event/'+slug;
+  };
+
+  window.openTradeWidgetSearch=async function(query){
+    const ov=document.getElementById('qt-overlay');ov.classList.add('open');
+    document.getElementById('qt-title').textContent='Searching: '+query+'...';
+    document.getElementById('qt-yes').textContent='—';
+    document.getElementById('qt-no').textContent='—';
+    document.getElementById('qt-meta').textContent='';
+    document.getElementById('qt-vol').textContent='—';
+    try{
+      const r=await fetch('/api/clob/markets?q='+encodeURIComponent(query)+'&limit=5');
+      if(r.ok){const ms=await r.json();if(ms.length>0){const cid=ms[0].conditionId||ms[0].condition_id;openTradeWidget(cid);return;}}
+    }catch(e){}
+    document.getElementById('qt-title').textContent='No matching Polymarket found for: '+query;
+  };
+
+  window.closeTW=function(){document.getElementById('qt-overlay').classList.remove('open');_tw={};};
+  document.getElementById('qt-overlay').addEventListener('click',function(e){if(e.target===this)closeTW();});
+
+  window.qtSet=function(v){document.getElementById('qt-amt').value=v;};
+
+  window.qtFire=async function(side,outcome){
+    if(!hasCreds){twToast('Wallet Not Connected','Open Settings to add your Polymarket API keys.',true);
+      setTimeout(function(){window.location.href='/settings#polymarket';},1200);return;}
+    if(!_tw.market){twToast('No market loaded','Try reopening the popup',true);return;}
+    const amt=parseFloat(document.getElementById('qt-amt').value)||0;
+    if(amt<=0){twToast('Invalid amount','Enter an amount > 0',true);return;}
+    const tk=outcome==='yes'?_tw.yesToken:_tw.noToken;
+    const tokenId=tk?(tk.token_id||tk):'';
+    if(!tokenId){twToast('Token unavailable','Could not resolve '+outcome.toUpperCase()+' token',true);return;}
+    // For SELL, the API expects shares (size). Convert USDC -> shares using displayed price.
+    const px=outcome==='yes'?_tw.yesPrice:_tw.noPrice;
+    let payload={token_id:tokenId,condition_id:_tw.conditionId,market_question:_tw.market.question||'',outcome:outcome.toUpperCase(),side:side,order_type:'market'};
+    if(side==='buy'){payload.amount=amt;}
+    else{const shares=px>0?Math.floor(amt/px):0;if(shares<=0){twToast('Invalid','Amount too small for current price',true);return;}payload.size=shares;payload.amount=0;payload.price=0;}
+    // Disable all buttons while submitting
+    const btns=['qt-buy-yes','qt-buy-no','qt-sell-yes','qt-sell-no'].map(function(id){return document.getElementById(id);});
+    btns.forEach(function(b){b.disabled=true;});
+    const fired=document.getElementById('qt-'+side+'-'+outcome);
+    const orig=fired.textContent;fired.textContent='...';
+    try{
+      const r=await fetch('/api/clob/order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const d=await r.json();
+      if(r.ok&&!d.error){twToast('Order Placed',side.toUpperCase()+' '+outcome.toUpperCase()+' • $'+amt.toFixed(2),false);}
+      else twToast('Order Failed',d.error||'Unknown error',true);
+    }catch(e){twToast('Error',e.message,true);}
+    btns.forEach(function(b){b.disabled=false;});
+    fired.textContent=orig;
+  };
+})();
+</script>"""
+    return (template
+        .replace("__HAS_CREDS__", "true" if has_creds else "false")
+        .replace("__DISABLED__", "" if has_creds else "disabled")
+        .replace("__CONNECT_DISPLAY__", "none" if has_creds else "block"))
+
+
+def _kalshi_widget_html(has_kalshi_creds: bool) -> str:
+    """Return the HTML/CSS/JS for an embeddable Kalshi quick-trade modal.
+
+    Any page that includes this can call:
+      openKalshiWidget(ticker, title, yesPrice, noPrice)
+
+    Prices can be 0-1 floats or 0-100 cents — both are normalized to cents.
+    Simplified UX: shows YES/NO prices + contracts field + 4 direct action buttons
+    (BUY YES, BUY NO, SELL YES, SELL NO). One click = one market order.
+    """
+    template = """
+<!-- ── Kalshi Quick Widget CSS ── -->
+<style>
+  .kq-overlay { display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.78);z-index:5100;justify-content:center;align-items:flex-start;padding:60px 12px;overflow-y:auto; }
+  .kq-overlay.open { display:flex; }
+  .kq-modal { background:#0d1117;border:1px solid #30363d;border-radius:14px;width:100%;max-width:440px;box-shadow:0 12px 48px rgba(0,0,0,0.6); }
+  .kq-header { display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 12px;border-bottom:1px solid #21262d;gap:10px; }
+  .kq-header h2 { font-size:0.95em;flex:1;line-height:1.35;color:#e6edf3;font-weight:600; }
+  .kq-tkr { font-size:0.65em;color:#00b4d8;font-family:monospace;margin-top:4px;letter-spacing:0.5px; }
+  .kq-close { background:none;border:none;color:#8b949e;font-size:1.5em;cursor:pointer;padding:0 4px;line-height:1; }
+  .kq-close:hover { color:#e6edf3; }
+  .kq-body { padding:16px 18px 18px; }
+
+  .kq-prices { display:flex;gap:10px;margin-bottom:14px; }
+  .kq-tile { flex:1;text-align:center;padding:12px 8px;border-radius:10px;border:1px solid; }
+  .kq-tile.yes { background:rgba(63,185,80,0.08);border-color:rgba(63,185,80,0.3); }
+  .kq-tile.no  { background:rgba(248,81,73,0.08);border-color:rgba(248,81,73,0.3); }
+  .kq-tile .lbl { font-size:0.65em;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px; }
+  .kq-tile .val { font-size:1.6em;font-weight:800;margin-top:2px; }
+  .kq-tile.yes .val { color:#3fb950; }
+  .kq-tile.no  .val { color:#f85149; }
+
+  .kq-amt-row { display:flex;align-items:center;gap:8px;margin-bottom:8px; }
+  .kq-amt-row label { font-size:0.7em;color:#8b949e;text-transform:uppercase;flex-shrink:0; }
+  .kq-amt-row input { flex:1;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:9px 10px;border-radius:8px;font-size:1em;font-weight:700;text-align:right; }
+  .kq-amt-row input:focus { outline:none;border-color:#58a6ff; }
+  .kq-amt-row .unit { color:#8b949e;font-size:0.78em;font-weight:600; }
+  .kq-presets { display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap; }
+  .kq-presets button { flex:1;min-width:50px;background:#161b22;border:1px solid #30363d;color:#8b949e;padding:6px 4px;border-radius:6px;font-size:0.74em;cursor:pointer;font-weight:600; }
+  .kq-presets button:hover { border-color:#00b4d8;color:#e6edf3; }
+
+  .kq-actions { display:grid;grid-template-columns:1fr 1fr;gap:8px; }
+  .kq-btn { padding:12px 8px;border:none;border-radius:10px;font-weight:800;cursor:pointer;font-size:0.85em;transition:all 0.15s;letter-spacing:0.3px; }
+  .kq-btn:hover:not(:disabled) { transform:translateY(-1px);filter:brightness(1.1); }
+  .kq-btn:disabled { opacity:0.4;cursor:not-allowed; }
+  .kq-btn.buy-yes  { background:#3fb950;color:#000; }
+  .kq-btn.buy-no   { background:#f85149;color:#fff; }
+  .kq-btn.sell-yes { background:rgba(63,185,80,0.18);color:#3fb950;border:1px solid #3fb950; }
+  .kq-btn.sell-no  { background:rgba(248,81,73,0.18);color:#f85149;border:1px solid #f85149; }
+
+  .kq-foot { margin-top:12px;padding-top:10px;border-top:1px solid #21262d;display:flex;justify-content:space-between;align-items:center;font-size:0.7em;color:#8b949e; }
+  .kq-foot a { color:#00b4d8;text-decoration:none; }
+  .kq-foot a:hover { text-decoration:underline; }
+  .kq-connect { background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.4);border-radius:8px;padding:10px;margin-bottom:12px;font-size:0.78em;color:#d29922;text-align:center; }
+  .kq-connect a { color:#d29922;font-weight:700;text-decoration:underline; }
+
+  .trade-btn.kalshi { border-color:#00b4d8;color:#00b4d8; }
+  .trade-btn.kalshi:hover { background:#00b4d8;color:#000; }
+</style>
+
+<!-- ── Kalshi Quick Widget HTML ── -->
+<div class="kq-overlay" id="kq-overlay">
+  <div class="kq-modal">
+    <div class="kq-header">
+      <div style="flex:1;">
+        <h2 id="kq-title">Loading...</h2>
+        <div class="kq-tkr" id="kq-ticker"></div>
+      </div>
+      <button class="kq-close" onclick="closeKW()">&times;</button>
+    </div>
+    <div class="kq-body">
+      <div class="kq-prices">
+        <div class="kq-tile yes"><div class="lbl">YES</div><div class="val" id="kq-yes">&mdash;</div></div>
+        <div class="kq-tile no"><div class="lbl">NO</div><div class="val" id="kq-no">&mdash;</div></div>
+      </div>
+      <div id="kq-connect-block" style="display:__CONNECT_DISPLAY__;">
+        <div class="kq-connect">
+          Kalshi account not connected.<br>
+          <a href="/settings#kalshi">Connect in Settings &rarr;</a>
+        </div>
+      </div>
+      <div class="kq-amt-row">
+        <label>Contracts</label>
+        <input type="number" id="kq-count" placeholder="10" min="1" step="1" value="10">
+        <span class="unit">qty</span>
+      </div>
+      <div class="kq-presets">
+        <button onclick="kqSet(1)">1</button>
+        <button onclick="kqSet(5)">5</button>
+        <button onclick="kqSet(10)">10</button>
+        <button onclick="kqSet(25)">25</button>
+        <button onclick="kqSet(100)">100</button>
+      </div>
+      <div class="kq-actions">
+        <button class="kq-btn buy-yes"  id="kq-buy-yes"  onclick="kqFire('buy','yes')"  __DISABLED__>BUY YES</button>
+        <button class="kq-btn buy-no"   id="kq-buy-no"   onclick="kqFire('buy','no')"   __DISABLED__>BUY NO</button>
+        <button class="kq-btn sell-yes" id="kq-sell-yes" onclick="kqFire('sell','yes')" __DISABLED__>SELL YES</button>
+        <button class="kq-btn sell-no"  id="kq-sell-no"  onclick="kqFire('sell','no')"  __DISABLED__>SELL NO</button>
+      </div>
+      <div class="kq-foot">
+        <span id="kq-cost">Cost: &mdash;</span>
+        <a href="#" id="kq-link" target="_blank" rel="noopener">View on Kalshi &#8599;</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Kalshi Quick Widget JS ── -->
+<script>
+(function(){
+  let _kq={};
+  const hasKCreds=__HAS_CREDS__;
+
+  function esc(s){ const d=document.createElement('div');d.textContent=s||'';return d.innerHTML; }
+  function kqToast(t,b,err){
+    // Reuse Polymarket widget's toast container if present; else fallback to alert
+    const host=document.getElementById('tw-toasts');
+    if(!host){ alert(t+': '+b); return; }
+    const e=document.createElement('div');
+    e.className='tw-toast'+(err?' err':'');e.style.position='relative';
+    e.innerHTML='<button class="tw-tx" onclick="this.parentElement.remove()">&times;</button><div class="tw-tt">'+esc(t)+'</div><div class="tw-tb">'+esc(b)+'</div>';
+    host.appendChild(e);setTimeout(function(){e.remove();},7000);
+  }
+
+  // Prices come in as 0-1 floats (probability) OR 0-100 cents. Normalize to cents.
+  function toCents(p){
+    if(p==null||p==='') return null;
+    const n=parseFloat(p);
+    if(isNaN(n)) return null;
+    return n<=1 ? Math.round(n*100) : Math.round(n);
+  }
+
+  function recalcCost(){
+    const c=parseInt(document.getElementById('kq-count').value)||0;
+    const yC=_kq.yesCents||0;
+    const nC=_kq.noCents||0;
+    const yCost=((yC*c)/100).toFixed(2);
+    const nCost=((nC*c)/100).toFixed(2);
+    document.getElementById('kq-cost').textContent='YES $'+yCost+' • NO $'+nCost;
+  }
+
+  window.openKalshiWidget=function(ticker, title, yesPrice, noPrice){
+    const ov=document.getElementById('kq-overlay');ov.classList.add('open');
+    document.getElementById('kq-title').textContent=title||ticker||'?';
+    document.getElementById('kq-ticker').textContent=ticker||'';
+    const yC=toCents(yesPrice);
+    const nC=toCents(noPrice) != null ? toCents(noPrice) : (yC!=null ? (100-yC) : null);
+    _kq={ticker:ticker,title:title,yesCents:yC,noCents:nC};
+    document.getElementById('kq-yes').textContent=(yC!=null ? yC : '—')+(yC!=null?'\u00A2':'');
+    document.getElementById('kq-no').textContent =(nC!=null ? nC : '—')+(nC!=null?'\u00A2':'');
+    const link=document.getElementById('kq-link');
+    if(ticker) link.href='https://kalshi.com/markets/'+ticker.toLowerCase().split('-')[0]+'/'+ticker;
+    recalcCost();
+  };
+
+  window.closeKW=function(){document.getElementById('kq-overlay').classList.remove('open');_kq={};};
+  document.getElementById('kq-overlay').addEventListener('click',function(e){if(e.target===this)closeKW();});
+  document.getElementById('kq-count').addEventListener('input',recalcCost);
+
+  window.kqSet=function(v){document.getElementById('kq-count').value=v;recalcCost();};
+
+  window.kqFire=async function(action,side){
+    if(!hasKCreds){
+      kqToast('Kalshi Not Connected','Open Settings to add your Kalshi API key.',true);
+      setTimeout(function(){window.location.href='/settings#kalshi';},1200);return;
+    }
+    if(!_kq.ticker){kqToast('No market','Ticker missing.',true);return;}
+    const count=parseInt(document.getElementById('kq-count').value)||0;
+    if(count<=0){kqToast('Invalid','Enter contracts > 0',true);return;}
+    const payload={ticker:_kq.ticker,side:side,action:action,count:count,order_type:'market'};
+    // Disable all buttons while submitting
+    const btns=['kq-buy-yes','kq-buy-no','kq-sell-yes','kq-sell-no'].map(function(id){return document.getElementById(id);});
+    btns.forEach(function(b){b.disabled=true;});
+    const fired=document.getElementById('kq-'+action+'-'+side);
+    const orig=fired.textContent;fired.textContent='...';
+    try{
+      const r=await fetch('/api/kalshi/order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const d=await r.json();
+      if(r.ok&&!d.error){kqToast('Kalshi Order Placed',action.toUpperCase()+' '+count+' x '+side.toUpperCase(),false);}
+      else kqToast('Order Failed',typeof d.error==='string'?d.error:JSON.stringify(d.error||'Unknown'),true);
+    }catch(e){kqToast('Error',e.message,true);}
+    btns.forEach(function(b){b.disabled=false;});
+    fired.textContent=orig;
+  };
+})();
+</script>"""
+    return (template
+        .replace("__HAS_CREDS__", "true" if has_kalshi_creds else "false")
+        .replace("__DISABLED__", "" if has_kalshi_creds else "disabled")
+        .replace("__CONNECT_DISPLAY__", "none" if has_kalshi_creds else "block"))
 
 
 # ─── Dashboard Hub ───────────────────────────────────────────────────
@@ -1485,6 +2374,8 @@ async def kalshi_dashboard(request: Request):
     if not _check_auth(request):
         return RedirectResponse("https://narve.ai/login", status_code=302)
     user = _get_session_user(request)
+    has_creds = db.has_clob_credentials(user["id"])
+    has_kalshi_creds = db.has_kalshi_credentials(user["id"])
 
     try:
         from kalshi_scanner import run_scanner as kalshi_scan
@@ -1492,32 +2383,62 @@ async def kalshi_dashboard(request: Request):
     except Exception as e:
         data = {"total_markets": 0, "trending": [], "close_calls": [], "top_events": [], "categories": {}}
 
-    # Build market rows
-    trending_rows = ""
-    for m in (data.get("trending") or [])[:25]:
+    # Build market rows — each row has a direct Kalshi trade button AND a "Find on Polymarket" button
+    def _make_row(m: dict, show_24h: bool = False) -> str:
+        title = html_mod.escape(m['title'][:70])
+        ticker_raw = m.get('ticker', '')
+        ticker = html_mod.escape(ticker_raw, quote=True)
+        kalshi_url = f"https://kalshi.com/markets/{ticker_raw.lower().split('-')[0]}/{ticker_raw.lower()}" if ticker_raw else "https://kalshi.com"
         yes_cls = "positive" if m["yes_price"] >= 0.5 else "negative"
-        trending_rows += f"""<tr>
-          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(m['title'][:70])}</td>
-          <td class="{yes_cls}" style="font-weight:700;">{m['yes_price']:.0%}</td>
-          <td>{1-m['yes_price']:.0%}</td>
-          <td>{m.get('volume_24h',0):,}</td>
+        vol_24h = f"<td>{m.get('volume_24h', 0):,}</td>" if show_24h else ""
+        # Use json.dumps for JS string literals — handles backslashes, quotes,
+        # </script> sequences, U+2028/U+2029, and embedded newlines correctly.
+        # Then HTML-escape (with quote=True) so the resulting JS literal can be
+        # safely interpolated into a double-quoted onclick attribute.
+        def _js_attr(s: str) -> str:
+            return html_mod.escape(json.dumps(s), quote=True)
+        title_js = _js_attr(m['title'][:80])
+        title_short_js = _js_attr(m['title'][:60])
+        ticker_js = _js_attr(ticker_raw)
+        yes_val = float(m['yes_price'])
+        no_val = 1 - yes_val
+        kalshi_btn = (
+            f'<button class="trade-btn kalshi" '
+            f'onclick="openKalshiWidget({ticker_js}, {title_js}, {yes_val:.4f}, {no_val:.4f})"'
+            f'>Kalshi</button>'
+        )
+        poly_btn = (
+            f'<button class="trade-btn poly" '
+            f'onclick="openTradeWidgetSearch({title_short_js})"'
+            f'>Polymarket</button>'
+        )
+        return f"""<tr>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;">{title}</td>
+          <td class="{yes_cls}" style="font-weight:700;">{yes_val:.0%}</td>
+          <td>{no_val:.0%}</td>
+          {vol_24h}
           <td>{m.get('volume',0):,}</td>
           <td style="color:var(--muted);font-size:0.75em;">{html_mod.escape(m.get('category',''))}</td>
+          <td style="white-space:nowrap;">
+            {kalshi_btn}
+            {poly_btn}
+            <a href="{kalshi_url}" target="_blank" class="trade-btn" style="text-decoration:none;display:inline-block;font-size:0.7em;opacity:0.7;">site&#8599;</a>
+          </td>
         </tr>"""
 
-    close_rows = ""
-    for m in (data.get("close_calls") or [])[:20]:
-        close_rows += f"""<tr>
-          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{html_mod.escape(m['title'][:70])}</td>
-          <td style="font-weight:700;">{m['yes_price']:.0%}</td>
-          <td>{1-m['yes_price']:.0%}</td>
-          <td>{m.get('volume',0):,}</td>
-          <td style="color:var(--muted);font-size:0.75em;">{html_mod.escape(m.get('category',''))}</td>
-        </tr>"""
+    trending_rows = "".join(_make_row(m, show_24h=True) for m in (data.get("trending") or [])[:25])
+    close_rows = "".join(_make_row(m, show_24h=False) for m in (data.get("close_calls") or [])[:20])
 
     cat_cards = ""
     for cat, info in list((data.get("categories") or {}).items())[:12]:
         cat_cards += f'<div class="card"><div class="label">{html_mod.escape(cat)}</div><div class="value">{info["count"]}</div><div class="detail">Vol: {info["total_volume"]:,}</div></div>'
+
+    trade_widget = _trade_widget_html(has_creds)
+    kalshi_widget = _kalshi_widget_html(has_kalshi_creds)
+
+    # Status banner showing which accounts are connected
+    poly_status = '<span style="color:var(--green);">&#9679; Polymarket</span>' if has_creds else '<a href="/settings#polymarket" style="color:var(--yellow);">&#9888; Connect Polymarket</a>'
+    kalshi_status = '<span style="color:#00b4d8;">&#9679; Kalshi</span>' if has_kalshi_creds else '<a href="/settings#kalshi" style="color:var(--yellow);">&#9888; Connect Kalshi</a>'
 
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1545,7 +2466,11 @@ async def kalshi_dashboard(request: Request):
 </style></head><body>
 <div class="nav">
   <div class="nav-links">
+    <a href="/">Dashboard</a>
+    <a href="/kalshi" class="active">Kalshi</a>
+    <a href="/trade">Trade</a>
     <a href="/polybot">Polymarket Bot</a>
+    <a href="/settings">Settings</a>
   </div>
   <div class="nav-links">
     <a href="/logout" style="color:var(--red);">Logout</a>
@@ -1553,7 +2478,16 @@ async def kalshi_dashboard(request: Request):
 </div>
 
 <h1>Kalshi Prediction Markets</h1>
-<p style="color:var(--muted);font-size:0.85em;margin-bottom:16px;">{data.get('total_markets',0):,} active markets &bull; Updated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</p>
+<p style="color:var(--muted);font-size:0.85em;margin-bottom:8px;">{data.get('total_markets',0):,} active markets &bull; Updated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</p>
+<p style="font-size:0.78em;margin-bottom:14px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+  <span style="color:var(--muted);">Trading:</span>
+  {kalshi_status}
+  {poly_status}
+</p>
+<p style="color:var(--muted);font-size:0.75em;margin-bottom:16px;">
+  Click <span class="trade-btn kalshi" style="display:inline-block;cursor:default;">Kalshi</span> to place a direct Kalshi order, or
+  <span class="trade-btn poly" style="display:inline-block;cursor:default;">Polymarket</span> to find &amp; trade the equivalent Polymarket market.
+</p>
 
 <div class="section">
   <h2>Categories</h2>
@@ -1564,7 +2498,7 @@ async def kalshi_dashboard(request: Request):
   <h2>Trending (24h Volume)</h2>
   <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;">
     <table>
-      <thead><tr><th>Market</th><th>Yes</th><th>No</th><th>24h Vol</th><th>Total Vol</th><th>Category</th></tr></thead>
+      <thead><tr><th>Market</th><th>Yes</th><th>No</th><th>24h Vol</th><th>Total Vol</th><th>Category</th><th>Trade</th></tr></thead>
       <tbody>{trending_rows}</tbody>
     </table>
   </div>
@@ -1574,11 +2508,14 @@ async def kalshi_dashboard(request: Request):
   <h2>Close Calls (35-65% odds)</h2>
   <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;">
     <table>
-      <thead><tr><th>Market</th><th>Yes</th><th>No</th><th>Volume</th><th>Category</th></tr></thead>
+      <thead><tr><th>Market</th><th>Yes</th><th>No</th><th>Volume</th><th>Category</th><th>Trade</th></tr></thead>
       <tbody>{close_rows}</tbody>
     </table>
   </div>
 </div>
+
+{trade_widget}
+{kalshi_widget}
 
 <script>setInterval(()=>location.reload(),300000);</script>
 </body></html>"""
@@ -1744,7 +2681,7 @@ async def trade_page(request: Request):
 <div class="status-bar">
   <div class="sb-item">
     <span class="sb-dot" style="background:{'var(--green)' if has_creds else 'var(--red)'}"></span>
-    <span>{'Wallet Connected' if has_creds else '<a href="/settings" style="color:var(--blue);">Connect Wallet</a>'}</span>
+    <span>{'Wallet Connected' if has_creds else '<a href="/settings#polymarket" style="color:var(--blue);">Connect Wallet</a>'}</span>
   </div>
   <div class="sb-item" id="sb-balance" style="display:{'flex' if has_creds else 'none'};">
     <span style="color:var(--muted);">Balance:</span>
@@ -1788,7 +2725,7 @@ async def trade_page(request: Request):
 <!-- Open Orders Tab -->
 <div id="tab-positions" class="tab-content">
   <div id="positions-container">
-    {'<div class="loading">Connect your wallet in <a href="/settings" style="color:var(--blue);">Settings</a> to see open orders.</div>' if not has_creds else '<div class="loading"><span class="spinner"></span><br>Loading open orders...</div>'}
+    {'<div class="loading">Connect your wallet in <a href="/settings#polymarket" style="color:var(--blue);">Settings</a> to see open orders.</div>' if not has_creds else '<div class="loading"><span class="spinner"></span><br>Loading open orders...</div>'}
   </div>
 </div>
 
@@ -1900,7 +2837,7 @@ async def trade_page(request: Request):
           {'Connect Wallet First' if not has_creds else 'Place Order'}
         </button>
 
-        {'' if has_creds else '<p style="font-size:0.7em;color:var(--muted);margin-top:8px;text-align:center;">Go to <a href="/settings" style="color:var(--blue);">Settings</a> to connect your Polymarket wallet.</p>'}
+        {'' if has_creds else '<p style="font-size:0.7em;color:var(--muted);margin-top:8px;text-align:center;">Go to <a href="/settings#polymarket" style="color:var(--blue);">Settings</a> to connect your Polymarket wallet.</p>'}
       </div>
     </div>
   </div>
@@ -2588,7 +3525,13 @@ def _fetch_news_from_rss() -> list:
         except Exception:
             continue
     # Sort by published date (most recent first), limit to 30
-    articles.sort(key=lambda a: a.get("published", ""), reverse=True)
+    from email.utils import parsedate_to_datetime
+    def _parse_pub_date(article):
+        try:
+            return parsedate_to_datetime(article.get("published", ""))
+        except Exception:
+            return datetime.min.replace(tzinfo=timezone.utc)
+    articles.sort(key=_parse_pub_date, reverse=True)
     return articles[:30]
 
 
@@ -2621,7 +3564,7 @@ async def api_news_trade_alerts(request: Request):
     except ValueError:
         return JSONResponse({"error": "Invalid hours"}, status_code=400)
     min_score = max(0, min(min_score, 100))
-    hours = min(hours, 720)
+    hours = max(1, min(hours, 720))  # lower bound of 1h prevents future-window queries
     alerts = await asyncio.to_thread(db.get_news_alerts, min_score, 50, hours)
     return JSONResponse({"alerts": alerts, "updated": last_news_trade_time})
 
@@ -2707,11 +3650,16 @@ async def accuracy_page(request: Request):
             correct_str = "pending"
         dir_cls = "positive" if p["pred_direction"] == "positive" else "negative"
         conf_pct = (p["confidence"] or 0) * 100
+        # pred_direction and pred_delta can both be NULL in the DB; render
+        # safely so a single null row doesn't 500 the whole accuracy page.
+        pdir_str = (p["pred_direction"] or "").upper() or "—"
+        pd_val = p.get("pred_delta") if hasattr(p, "get") else p["pred_delta"]
+        pd_str = f"${pd_val:+,.2f}" if pd_val is not None else "—"
         recent_rows += f"""<tr>
           <td>{p['ticker']}</td>
           <td>{p['window_start'][:16]}</td>
-          <td class="{dir_cls}">{p['pred_direction'].upper()}</td>
-          <td>${p['pred_delta']:+,.2f}</td>
+          <td class="{dir_cls}">{pdir_str}</td>
+          <td>{pd_str}</td>
           <td>{conf_pct:.0f}%</td>
           <td>{p.get('actual_direction','—') or '—'}</td>
           <td class="{correct_cls}" style="font-weight:700;">{correct_str}</td>
@@ -2868,17 +3816,23 @@ async def save_clob_credentials(request: Request):
     user = _get_session_user(request)
     if not user:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
     required = ["api_key", "api_secret", "api_passphrase", "private_key"]
     for field in required:
-        if not body.get(field, "").strip():
+        # Use `or ""` so JSON null doesn't crash on .strip()
+        if not (body.get(field) or "").strip():
             return JSONResponse({"error": f"Missing {field}"}, status_code=400)
     try:
         encrypted = clob.encrypt_credentials({
-            "api_key": body["api_key"].strip(),
-            "api_secret": body["api_secret"].strip(),
-            "api_passphrase": body["api_passphrase"].strip(),
-            "private_key": body["private_key"].strip(),
+            "api_key": (body.get("api_key") or "").strip(),
+            "api_secret": (body.get("api_secret") or "").strip(),
+            "api_passphrase": (body.get("api_passphrase") or "").strip(),
+            "private_key": (body.get("private_key") or "").strip(),
         })
         db.save_clob_credentials(user["id"], encrypted)
         # Clear cached trader so it re-initializes with new creds
@@ -2935,13 +3889,23 @@ async def place_clob_order(request: Request):
     if not trader:
         return JSONResponse({"error": "No credentials configured. Go to Settings to add your Polymarket API keys."}, status_code=400)
 
-    body = await request.json()
-    token_id = body.get("token_id", "").strip()
-    side = body.get("side", "").strip().lower()
-    order_type = body.get("order_type", "market").strip().lower()
-    amount = float(body.get("amount", 0))
-    price = float(body.get("price", 0))
-    size = float(body.get("size", 0))
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
+    token_id = (body.get("token_id") or "").strip()
+    side = (body.get("side") or "").strip().lower()
+    order_type = (body.get("order_type") or "market").strip().lower()
+    try:
+        amount = float(body.get("amount") or 0)
+        price = float(body.get("price") or 0)
+        size = float(body.get("size") or 0)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "amount, price and size must be numeric"}, status_code=400)
+    if math.isnan(amount) or math.isinf(amount) or math.isnan(price) or math.isinf(price) or math.isnan(size) or math.isinf(size):
+        return JSONResponse({"error": "amount, price and size must be finite numbers"}, status_code=400)
 
     if not token_id:
         return JSONResponse({"error": "Missing token_id"}, status_code=400)
@@ -3027,7 +3991,12 @@ async def add_clob_favorite(request: Request):
     user = _get_session_user(request)
     if not user:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict) or "condition_id" not in body:
+        return JSONResponse({"error": "missing condition_id"}, status_code=400)
     db.add_clob_favorite(user["id"], body["condition_id"], body.get("question", ""))
     return {"ok": True}
 
@@ -3052,6 +4021,158 @@ async def get_clob_favorites(request: Request):
     return {"favorites": favs}
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# KALSHI AUTHENTICATED API
+# ═══════════════════════════════════════════════════════════════════════
+
+# In-memory Kalshi client cache (per user_id) with TTL
+_kalshi_cache: dict[str, tuple] = {}
+_KALSHI_CACHE_TTL = 3600  # 1 hour
+_KALSHI_CACHE_MAX = 100
+
+
+def _get_kalshi_client(user_id: str):
+    """Get or create a KalshiClient for a user from their stored credentials."""
+    now = time.time()
+    if user_id in _kalshi_cache:
+        client, ts = _kalshi_cache[user_id]
+        if now - ts < _KALSHI_CACHE_TTL:
+            return client
+        del _kalshi_cache[user_id]
+    enc = db.get_kalshi_credentials(user_id)
+    if not enc:
+        return None
+    try:
+        creds = kalshi_auth.decrypt_kalshi_credentials(enc)
+        client = kalshi_auth.KalshiClient(
+            api_key=creds["api_key"],
+            private_key_pem=creds["private_key_pem"],
+        )
+        if len(_kalshi_cache) >= _KALSHI_CACHE_MAX:
+            oldest_key = min(_kalshi_cache, key=lambda k: _kalshi_cache[k][1])
+            del _kalshi_cache[oldest_key]
+        _kalshi_cache[user_id] = (client, now)
+        return client
+    except Exception as e:
+        print(f"  [Kalshi] Failed to create client for {user_id}: {e}")
+        return None
+
+
+@app.post("/api/kalshi/credentials")
+async def save_kalshi_credentials_api(request: Request):
+    """Save encrypted Kalshi API credentials."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    api_key = (body.get("api_key") or "").strip()
+    private_key_pem = (body.get("private_key_pem") or "").strip()
+    if not api_key or not private_key_pem:
+        return JSONResponse({"error": "Both api_key and private_key_pem are required"}, status_code=400)
+    if "BEGIN" not in private_key_pem or "PRIVATE KEY" not in private_key_pem:
+        return JSONResponse({"error": "private_key_pem must be a PEM-encoded RSA key"}, status_code=400)
+    # Validate the key actually parses before saving
+    try:
+        kalshi_auth._load_rsa_key(private_key_pem)
+    except Exception as e:
+        return JSONResponse({"error": f"Invalid RSA private key: {e}"}, status_code=400)
+    try:
+        encrypted = kalshi_auth.encrypt_kalshi_credentials(api_key, private_key_pem)
+        db.save_kalshi_credentials(user["id"], encrypted)
+        _kalshi_cache.pop(user["id"], None)
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to save credentials: {e}"}, status_code=500)
+
+
+@app.delete("/api/kalshi/credentials")
+async def delete_kalshi_credentials_api(request: Request):
+    """Remove stored Kalshi credentials."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    db.delete_kalshi_credentials(user["id"])
+    _kalshi_cache.pop(user["id"], None)
+    return {"ok": True}
+
+
+@app.get("/api/kalshi/test-connection")
+async def test_kalshi_connection(request: Request):
+    """Test that stored Kalshi credentials work."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    client = _get_kalshi_client(user["id"])
+    if not client:
+        return JSONResponse({"error": "No credentials configured"}, status_code=400)
+    result = await asyncio.to_thread(client.test_connection)
+    return result
+
+
+@app.get("/api/kalshi/balance")
+async def kalshi_balance(request: Request):
+    """Get Kalshi portfolio balance."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    client = _get_kalshi_client(user["id"])
+    if not client:
+        return JSONResponse({"error": "No credentials configured"}, status_code=400)
+    return await asyncio.to_thread(client.get_balance)
+
+
+@app.post("/api/kalshi/order")
+async def place_kalshi_order(request: Request):
+    """Place an order on Kalshi."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    client = _get_kalshi_client(user["id"])
+    if not client:
+        return JSONResponse({"error": "No credentials configured. Go to Settings to add your Kalshi API keys."}, status_code=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
+    ticker = (body.get("ticker") or "").strip()
+    side = (body.get("side") or "").strip().lower()
+    action = (body.get("action") or "buy").strip().lower()
+    try:
+        count = int(float(body.get("count") or 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "count must be an integer"}, status_code=400)
+    order_type = (body.get("order_type") or "market").strip().lower()
+    if not ticker:
+        return JSONResponse({"error": "Missing ticker"}, status_code=400)
+    if side not in ("yes", "no"):
+        return JSONResponse({"error": "Side must be 'yes' or 'no'"}, status_code=400)
+    if count <= 0:
+        return JSONResponse({"error": "count must be > 0"}, status_code=400)
+    yes_price = body.get("yes_price")
+    no_price = body.get("no_price")
+    result = await asyncio.to_thread(
+        client.place_order, ticker, side, action, count, order_type,
+        yes_price, no_price, body.get("client_order_id"),
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse({"error": result["error"]}, status_code=400)
+    return result
+
+
+@app.get("/api/kalshi/orders")
+async def kalshi_open_orders(request: Request):
+    """Get user's resting Kalshi orders."""
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    client = _get_kalshi_client(user["id"])
+    if not client:
+        return JSONResponse({"error": "No credentials configured"}, status_code=400)
+    return await asyncio.to_thread(client.get_orders)
+
+
 # ─── Settings / Watchlist ────────────────────────────────────────────
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -3064,8 +4185,17 @@ async def settings_page(request: Request):
 
     wl_html = ""
     for wl in watchlists:
-        tickers = json.loads(wl["tickers"]) if isinstance(wl["tickers"], str) else wl["tickers"]
-        wl_html += f'<div class="card"><div class="label">{wl["name"]}</div><div class="value" style="font-size:1em;">{", ".join(tickers)}</div></div>'
+        try:
+            tickers = json.loads(wl["tickers"]) if isinstance(wl["tickers"], str) else wl["tickers"]
+        except (json.JSONDecodeError, TypeError):
+            tickers = []
+        if not isinstance(tickers, list):
+            tickers = []
+        # Escape both the user-provided watchlist name and the ticker list to
+        # prevent stored self-XSS via /api/watchlist/create.
+        name_esc = html_mod.escape(str(wl["name"] or ""))
+        tickers_esc = html_mod.escape(", ".join(str(t) for t in tickers))
+        wl_html += f'<div class="card"><div class="label">{name_esc}</div><div class="value" style="font-size:1em;">{tickers_esc}</div></div>'
     if not wl_html:
         wl_html = '<div style="color:var(--muted);">No watchlists yet.</div>'
 
@@ -3073,18 +4203,69 @@ async def settings_page(request: Request):
     tier_badge = f'<span style="background:{"var(--green)" if user["tier"]=="premium" else "var(--blue)"};color:#fff;padding:3px 10px;border-radius:12px;font-size:0.75em;font-weight:600;">{tier_esc}</span>'
 
     has_creds = db.has_clob_credentials(user["id"])
+    has_kalshi_creds = db.has_kalshi_credentials(user["id"])
+
+    poly_status_color = "var(--green)" if has_creds else "var(--red)"
+    poly_status_text = "Connected" if has_creds else "Not Connected"
+    kalshi_status_color = "var(--green)" if has_kalshi_creds else "var(--red)"
+    kalshi_status_text = "Connected" if has_kalshi_creds else "Not Connected"
+
+    poly_connected_block = (
+        '<div id="creds-connected">'
+        '<p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">'
+        'Your Polymarket CLOB API credentials are stored encrypted. You can trade directly '
+        'from the <a href="/trade" style="color:var(--blue);">Trade</a> page or any market on '
+        'the <a href="/" style="color:var(--blue);">Dashboard</a>, '
+        '<a href="/kalshi" style="color:var(--blue);">Kalshi page</a>, or '
+        '<a href="/polybot" style="color:var(--blue);">Bot page</a>.'
+        '</p>'
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+        '<button class="btn btn-secondary" onclick="testConnection()">Test Connection</button>'
+        '<button class="btn btn-secondary" onclick="showCredsForm()">Replace Credentials</button>'
+        '<button class="btn btn-danger" onclick="removeCreds()">Disconnect</button>'
+        '</div></div>'
+    ) if has_creds else ""
+
+    kalshi_connected_block = (
+        '<div id="kalshi-connected">'
+        '<p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">'
+        'Your Kalshi API key is stored encrypted. You can place YES/NO orders directly '
+        'from the <a href="/kalshi" style="color:var(--blue);">Kalshi page</a>.'
+        '</p>'
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+        '<button class="btn btn-secondary" onclick="testKalshiConnection()">Test Connection</button>'
+        '<button class="btn btn-secondary" onclick="showKalshiForm()">Replace Credentials</button>'
+        '<button class="btn btn-danger" onclick="removeKalshiCreds()">Disconnect</button>'
+        '</div></div>'
+    ) if has_kalshi_creds else ""
+
+    poly_form_display = "none" if has_creds else "block"
+    kalshi_form_display = "none" if has_kalshi_creds else "block"
+
+    poly_cancel_btn = '<button class="btn btn-secondary" onclick="cancelCredsForm()">Cancel</button>' if has_creds else ""
+    kalshi_cancel_btn = '<button class="btn btn-secondary" onclick="cancelKalshiForm()">Cancel</button>' if has_kalshi_creds else ""
+
+    tier_html = (
+        "<p style='color:var(--green);font-weight:600;'>Premium features active: Neural Net predictions, Model Marketplace</p>"
+        if user['tier'] in ('premium','admin')
+        else "<p style='color:var(--muted);'>Free tier — upgrade to Premium for neural net predictions and model marketplace.</p><p style='margin-top:8px;'><em>Contact admin to upgrade.</em></p>"
+    )
 
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CryptoEdge — Settings</title>
 <style>
-  :root {{ --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#d29922; }}
+  :root {{ --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#d29922;--purple:#a371f7; }}
   * {{ margin:0;padding:0;box-sizing:border-box; }}
-  body {{ background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',sans-serif;padding:16px;max-width:700px;margin:0 auto; }}
-  .nav {{ display:flex;gap:16px;font-size:0.85em;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border); }}
+  body {{ background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',sans-serif;padding:16px;max-width:760px;margin:0 auto; }}
+  .nav {{ display:flex;gap:16px;font-size:0.85em;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);flex-wrap:wrap; }}
   .nav a {{ color:var(--muted);text-decoration:none; }}
+  .nav a:hover {{ color:var(--text); }}
   h1 {{ font-size:1.4em;margin-bottom:16px; }}
-  h2 {{ font-size:1em;color:var(--blue);margin:20px 0 8px; }}
+  h2 {{ font-size:1em;color:var(--blue);margin:24px 0 8px;display:flex;align-items:center;gap:8px; }}
+  h2 .badge {{ font-size:0.7em;padding:2px 8px;border-radius:10px;font-weight:600; }}
+  .badge.poly {{ background:rgba(163,113,247,0.15);color:var(--purple);border:1px solid rgba(163,113,247,0.4); }}
+  .badge.kalshi {{ background:rgba(0,180,216,0.15);color:#00b4d8;border:1px solid rgba(0,180,216,0.4); }}
   .cards {{ display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px; }}
   .card {{ background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px; }}
   .card .label {{ color:var(--muted);font-size:0.7em;text-transform:uppercase; }}
@@ -3092,19 +4273,31 @@ async def settings_page(request: Request):
   .info-box {{ background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px; }}
   .form-field {{ margin-bottom:12px; }}
   .form-field label {{ display:block;font-size:0.75em;color:var(--muted);margin-bottom:4px;text-transform:uppercase; }}
-  .form-field input {{ width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-size:0.9em;font-family:monospace; }}
-  .form-field input:focus {{ outline:none;border-color:var(--blue); }}
-  .btn {{ padding:8px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:0.85em;transition:all 0.2s; }}
+  .form-field .hint {{ font-size:0.7em;color:var(--muted);margin-top:3px;text-transform:none; }}
+  .form-field input, .form-field textarea {{ width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-size:0.85em;font-family:'SF Mono',Monaco,monospace; }}
+  .form-field textarea {{ min-height:140px;resize:vertical;line-height:1.4; }}
+  .form-field input:focus, .form-field textarea:focus {{ outline:none;border-color:var(--blue); }}
+  .btn {{ padding:8px 18px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:0.85em;transition:all 0.2s; }}
   .btn-primary {{ background:var(--blue);color:#fff; }}
   .btn-primary:hover {{ opacity:0.9; }}
   .btn-danger {{ background:var(--red);color:#fff; }}
   .btn-danger:hover {{ opacity:0.9; }}
-  .btn-secondary {{ background:var(--card);color:var(--blue);border:1px solid var(--blue); }}
+  .btn-secondary {{ background:transparent;color:var(--blue);border:1px solid var(--blue); }}
+  .btn-secondary:hover {{ background:rgba(88,166,255,0.1); }}
   .btn:disabled {{ opacity:0.4;cursor:not-allowed; }}
-  .status-dot {{ display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px; }}
+  .status-dot {{ display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle; }}
+  .help {{ background:rgba(88,166,255,0.05);border:1px solid rgba(88,166,255,0.2);border-radius:6px;padding:10px;margin-bottom:14px;font-size:0.78em;color:var(--text);line-height:1.5; }}
+  .help b {{ color:var(--blue); }}
+  .help ol {{ margin:6px 0 0 18px; }}
+  .help a {{ color:var(--blue);text-decoration:underline; }}
+  .warn {{ background:rgba(210,153,34,0.08);border:1px solid rgba(210,153,34,0.3);border-radius:6px;padding:10px;margin-bottom:14px;font-size:0.75em;color:var(--yellow);line-height:1.5; }}
 </style></head><body>
 <div class="nav">
-  <a href="/">&larr; Dashboard</a> <a href="/trade">Trade</a> <a href="/settings" style="color:var(--blue);font-weight:600;">Settings</a>
+  <a href="/">&larr; Dashboard</a>
+  <a href="/kalshi">Kalshi</a>
+  <a href="/trade">Trade</a>
+  <a href="/polybot">Bot</a>
+  <a href="/settings" style="color:var(--blue);font-weight:600;">Settings</a>
 </div>
 
 <h1>Account Settings {tier_badge}</h1>
@@ -3119,51 +4312,100 @@ async def settings_page(request: Request):
 </div>
 
 <h2>Your Tier: {tier_esc}</h2>
-<div class="info-box">
-  {"<p style='color:var(--green);font-weight:600;'>Premium features active: Neural Net predictions, Model Marketplace</p>" if user['tier'] in ('premium','admin') else "<p style='color:var(--muted);'>Free tier — upgrade to Premium for neural net predictions and model marketplace.</p><p style='margin-top:8px;'><em>Contact admin to upgrade.</em></p>"}
-</div>
+<div class="info-box">{tier_html}</div>
 
-<h2>Polymarket Trading Wallet</h2>
+<!-- ═══════ POLYMARKET ═══════ -->
+<h2 id="polymarket">Polymarket Wallet <span class="badge poly">Trading</span></h2>
 <div class="info-box" id="clob-section">
   <div style="margin-bottom:12px;">
-    <span class="status-dot" style="background:{'var(--green)' if has_creds else 'var(--red)'};"></span>
-    <strong>{'Connected' if has_creds else 'Not Connected'}</strong>
+    <span class="status-dot" style="background:{poly_status_color};"></span>
+    <strong>{poly_status_text}</strong>
     <span style="color:var(--muted);font-size:0.8em;margin-left:8px;" id="conn-test-result"></span>
   </div>
 
-  {'<div id="creds-connected"><p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">Your Polymarket CLOB API credentials are stored encrypted. You can trade directly from the <a href="/trade" style="color:var(--blue);">Trade</a> page.</p><div style="display:flex;gap:8px;"><button class="btn btn-secondary" onclick="testConnection()">Test Connection</button><button class="btn btn-danger" onclick="removeCreds()">Remove Credentials</button></div></div>' if has_creds else ''}
+  {poly_connected_block}
 
-  <div id="creds-form" style="display:{'none' if has_creds else 'block'};">
-    <p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">
-      Connect your Polymarket wallet to trade directly from CryptoEdge. You need API credentials from
-      <a href="https://polymarket.com" target="_blank" style="color:var(--blue);">Polymarket</a>.
-    </p>
-
-    <div style="background:rgba(210,153,34,0.1);border:1px solid rgba(210,153,34,0.3);border-radius:6px;padding:10px;margin-bottom:14px;font-size:0.75em;color:var(--yellow);">
-      &#9888; Your credentials are encrypted with AES-256 before storage. The private key never leaves this server. However, use a dedicated trading wallet — not your main wallet.
+  <div id="creds-form" style="display:{poly_form_display};">
+    <div class="help">
+      <b>How to get your Polymarket API keys</b>
+      <ol>
+        <li>Go to <a href="https://polymarket.com" target="_blank">polymarket.com</a> and log in.</li>
+        <li>Click your profile &rarr; <b>API Keys</b> (or visit <code>/profile/api</code>).</li>
+        <li>Click <b>Create API Key</b> &mdash; you'll get an <b>API Key</b>, <b>Secret</b>, and <b>Passphrase</b>.</li>
+        <li>Your <b>private key</b> is the Polygon wallet you funded with USDC. Export it from MetaMask &rarr; Account Details &rarr; Show private key, or whatever wallet you're using.</li>
+      </ol>
+    </div>
+    <div class="warn">
+      &#9888; <b>Use a dedicated trading wallet</b>, not your main wallet. Credentials are encrypted with AES-256 before storage and the private key never leaves this server, but you should still minimize exposure. <br>
+      &#9888; You also need <b>USDC.e on Polygon</b> in this wallet to actually trade.
     </div>
 
     <div class="form-field">
       <label>API Key</label>
-      <input type="text" id="clob-api-key" placeholder="Your Polymarket CLOB API key" autocomplete="off">
+      <input type="text" id="clob-api-key" placeholder="0x..." autocomplete="off">
     </div>
     <div class="form-field">
       <label>API Secret</label>
-      <input type="password" id="clob-api-secret" placeholder="Your Polymarket CLOB API secret" autocomplete="off">
+      <input type="password" id="clob-api-secret" placeholder="Your API secret" autocomplete="off">
     </div>
     <div class="form-field">
       <label>API Passphrase</label>
-      <input type="password" id="clob-api-passphrase" placeholder="Your Polymarket CLOB API passphrase" autocomplete="off">
+      <input type="password" id="clob-api-passphrase" placeholder="Your passphrase" autocomplete="off">
     </div>
     <div class="form-field">
-      <label>Private Key (Polygon Wallet)</label>
+      <label>Private Key (Polygon wallet)</label>
       <input type="password" id="clob-private-key" placeholder="0x..." autocomplete="off">
+      <div class="hint">64-char hex string starting with 0x</div>
     </div>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-primary" id="save-creds-btn" onclick="saveCreds()">Save &amp; Connect</button>
-      {'<button class="btn btn-secondary" onclick="cancelCredsForm()">Cancel</button>' if has_creds else ''}
+      {poly_cancel_btn}
     </div>
     <div id="creds-error" style="color:var(--red);font-size:0.8em;margin-top:8px;display:none;"></div>
+  </div>
+</div>
+
+<!-- ═══════ KALSHI ═══════ -->
+<h2 id="kalshi">Kalshi Account <span class="badge kalshi">Trading</span></h2>
+<div class="info-box" id="kalshi-section">
+  <div style="margin-bottom:12px;">
+    <span class="status-dot" style="background:{kalshi_status_color};"></span>
+    <strong>{kalshi_status_text}</strong>
+    <span style="color:var(--muted);font-size:0.8em;margin-left:8px;" id="kalshi-test-result"></span>
+  </div>
+
+  {kalshi_connected_block}
+
+  <div id="kalshi-form" style="display:{kalshi_form_display};">
+    <div class="help">
+      <b>How to get your Kalshi API key</b>
+      <ol>
+        <li>Go to <a href="https://kalshi.com/account/profile" target="_blank">kalshi.com/account/profile</a> and log in.</li>
+        <li>Scroll to the <b>API Keys</b> section &rarr; click <b>Create New Key</b>.</li>
+        <li>Kalshi will show you the <b>API Key ID</b> (a UUID) and download a <b>private_key.pem</b> file. Save the file &mdash; you cannot download it again.</li>
+        <li>Open <code>private_key.pem</code> in a text editor and paste its full contents (including the <code>-----BEGIN PRIVATE KEY-----</code> lines) below.</li>
+      </ol>
+    </div>
+    <div class="warn">
+      &#9888; The PEM file contains your full RSA private key &mdash; treat it like a password. It's encrypted with AES-256 before storage and only used to sign Kalshi API requests on this server. <br>
+      &#9888; You also need a <b>funded Kalshi account</b> to actually trade.
+    </div>
+
+    <div class="form-field">
+      <label>API Key ID</label>
+      <input type="text" id="kalshi-api-key" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off">
+      <div class="hint">UUID provided by Kalshi when you created the key</div>
+    </div>
+    <div class="form-field">
+      <label>Private Key (PEM)</label>
+      <textarea id="kalshi-private-key" placeholder="-----BEGIN PRIVATE KEY-----&#10;MIIE...&#10;-----END PRIVATE KEY-----" autocomplete="off" spellcheck="false"></textarea>
+      <div class="hint">Paste the full contents of private_key.pem (multi-line)</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="save-kalshi-btn" onclick="saveKalshiCreds()">Save &amp; Connect</button>
+      {kalshi_cancel_btn}
+    </div>
+    <div id="kalshi-error" style="color:var(--red);font-size:0.8em;margin-top:8px;display:none;"></div>
   </div>
 </div>
 
@@ -3172,27 +4414,29 @@ async def settings_page(request: Request):
 
 <script>
 (function() {{
+  // ─── Polymarket ───
   async function saveCreds() {{
     const btn = document.getElementById('save-creds-btn');
     const errEl = document.getElementById('creds-error');
     errEl.style.display = 'none';
-
     const data = {{
       api_key: document.getElementById('clob-api-key').value.trim(),
       api_secret: document.getElementById('clob-api-secret').value.trim(),
       api_passphrase: document.getElementById('clob-api-passphrase').value.trim(),
       private_key: document.getElementById('clob-private-key').value.trim(),
     }};
-
     if (!data.api_key || !data.api_secret || !data.api_passphrase || !data.private_key) {{
       errEl.textContent = 'All fields are required.';
       errEl.style.display = 'block';
       return;
     }}
-
+    if (!data.private_key.startsWith('0x') || data.private_key.length < 64) {{
+      errEl.textContent = 'Private key must be a 0x-prefixed hex string.';
+      errEl.style.display = 'block';
+      return;
+    }}
     btn.disabled = true;
     btn.textContent = 'Saving...';
-
     try {{
       const resp = await fetch('/api/clob/credentials', {{
         method: 'POST',
@@ -3222,7 +4466,7 @@ async def settings_page(request: Request):
       const resp = await fetch('/api/clob/test-connection');
       const data = await resp.json();
       if (data.ok) {{
-        resultEl.textContent = 'Connection successful!';
+        resultEl.textContent = 'Connection successful';
         resultEl.style.color = 'var(--green)';
       }} else {{
         resultEl.textContent = 'Failed: ' + (data.error || 'Unknown error');
@@ -3235,11 +4479,17 @@ async def settings_page(request: Request):
   }}
 
   async function removeCreds() {{
-    if (!confirm('Remove your Polymarket trading credentials? You will not be able to trade until you re-add them.')) return;
+    if (!confirm('Disconnect your Polymarket wallet? You will not be able to trade Polymarket markets until you reconnect.')) return;
     try {{
       await fetch('/api/clob/credentials', {{method: 'DELETE'}});
       location.reload();
     }} catch(e) {{}}
+  }}
+
+  function showCredsForm() {{
+    document.getElementById('creds-form').style.display = 'block';
+    const conn = document.getElementById('creds-connected');
+    if (conn) conn.style.display = 'none';
   }}
 
   function cancelCredsForm() {{
@@ -3248,10 +4498,100 @@ async def settings_page(request: Request):
     if (conn) conn.style.display = 'block';
   }}
 
+  // ─── Kalshi ───
+  async function saveKalshiCreds() {{
+    const btn = document.getElementById('save-kalshi-btn');
+    const errEl = document.getElementById('kalshi-error');
+    errEl.style.display = 'none';
+    const data = {{
+      api_key: document.getElementById('kalshi-api-key').value.trim(),
+      private_key_pem: document.getElementById('kalshi-private-key').value.trim(),
+    }};
+    if (!data.api_key || !data.private_key_pem) {{
+      errEl.textContent = 'Both fields are required.';
+      errEl.style.display = 'block';
+      return;
+    }}
+    if (!data.private_key_pem.includes('BEGIN') || !data.private_key_pem.includes('PRIVATE KEY')) {{
+      errEl.textContent = 'Paste the full PEM file including the -----BEGIN PRIVATE KEY----- lines.';
+      errEl.style.display = 'block';
+      return;
+    }}
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    try {{
+      const resp = await fetch('/api/kalshi/credentials', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(data)
+      }});
+      const result = await resp.json();
+      if (resp.ok && result.ok) {{
+        location.reload();
+      }} else {{
+        errEl.textContent = result.error || 'Failed to save credentials.';
+        errEl.style.display = 'block';
+      }}
+    }} catch(e) {{
+      errEl.textContent = 'Network error: ' + e.message;
+      errEl.style.display = 'block';
+    }}
+    btn.disabled = false;
+    btn.textContent = 'Save & Connect';
+  }}
+
+  async function testKalshiConnection() {{
+    const resultEl = document.getElementById('kalshi-test-result');
+    resultEl.textContent = 'Testing...';
+    resultEl.style.color = 'var(--muted)';
+    try {{
+      const resp = await fetch('/api/kalshi/test-connection');
+      const data = await resp.json();
+      if (data.ok) {{
+        const bal = data.data && data.data.balance != null ? ' ($' + (data.data.balance/100).toFixed(2) + ')' : '';
+        resultEl.textContent = 'Connection successful' + bal;
+        resultEl.style.color = 'var(--green)';
+      }} else {{
+        resultEl.textContent = 'Failed: ' + (typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+        resultEl.style.color = 'var(--red)';
+      }}
+    }} catch(e) {{
+      resultEl.textContent = 'Error: ' + e.message;
+      resultEl.style.color = 'var(--red)';
+    }}
+  }}
+
+  async function removeKalshiCreds() {{
+    if (!confirm('Disconnect your Kalshi account? You will not be able to trade Kalshi markets until you reconnect.')) return;
+    try {{
+      await fetch('/api/kalshi/credentials', {{method: 'DELETE'}});
+      location.reload();
+    }} catch(e) {{}}
+  }}
+
+  function showKalshiForm() {{
+    document.getElementById('kalshi-form').style.display = 'block';
+    const conn = document.getElementById('kalshi-connected');
+    if (conn) conn.style.display = 'none';
+  }}
+
+  function cancelKalshiForm() {{
+    document.getElementById('kalshi-form').style.display = 'none';
+    const conn = document.getElementById('kalshi-connected');
+    if (conn) conn.style.display = 'block';
+  }}
+
+  // Expose to global so inline onclick handlers work
   window.saveCreds = saveCreds;
   window.testConnection = testConnection;
   window.removeCreds = removeCreds;
+  window.showCredsForm = showCredsForm;
   window.cancelCredsForm = cancelCredsForm;
+  window.saveKalshiCreds = saveKalshiCreds;
+  window.testKalshiConnection = testKalshiConnection;
+  window.removeKalshiCreds = removeKalshiCreds;
+  window.showKalshiForm = showKalshiForm;
+  window.cancelKalshiForm = cancelKalshiForm;
 }})();
 </script>
 </body></html>"""
@@ -3381,9 +4721,38 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         async with _ws_lock:
             connected_ws.discard(ws)
-    except Exception:
+    except Exception as e:
+        print(f"  [WS] Connection error: {type(e).__name__}: {e}")
         async with _ws_lock:
             connected_ws.discard(ws)
+
+
+# ===================================================================
+# CROSS-DASHBOARD SHARE ENDPOINT (localhost-only, for sibling services)
+# ===================================================================
+
+@app.get("/api/share/snapshot")
+async def share_snapshot(request: Request):
+    """Lightweight crypto summary for cross-dashboard integration."""
+    client_host = request.client.host if request.client else ""
+    if client_host not in ("127.0.0.1", "::1", "localhost"):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+
+    signals = _get_bot_signals()
+    summary = {}
+    for ticker, sig in signals.items():
+        summary[ticker] = {
+            "ticker": ticker,
+            "price": sig.get("price", 0),
+            "volatility": sig.get("volatility_label", "UNKNOWN"),
+            "rsi": round(sig.get("rsi", 50), 1),
+            "win_rate": round(sig.get("hist_win_rate", 50), 1),
+            "gain_loss_ratio": round(sig.get("gain_loss_ratio", 0), 3),
+            "momentum_decay": round(sig.get("momentum_decay", 1), 3),
+            "current_delta": round(sig.get("current_delta", 0), 4),
+            "pct_gaining": round(sig.get("pct_seconds_gaining", 50), 1),
+        }
+    return {"assets": summary, "count": len(summary)}
 
 
 if __name__ == "__main__":

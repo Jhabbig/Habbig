@@ -55,8 +55,11 @@ def safe_pickle_load(filepath):
         expected = _hmac.new(_pickle_hmac_key(), raw, hashlib.sha256).digest()
         if _hmac.compare_digest(sig, expected):
             return pickle.loads(raw)
-    # Fallback: legacy unsigned pickle (will be re-saved with HMAC on next write)
-    return pickle.loads(content)
+    # Reject unsigned pickle — refuse to deserialize untrusted data.
+    # If a legacy unsigned cache file exists, delete it and return None
+    # so the caller regenerates the data and saves it with HMAC.
+    print(f"[SECURITY] Rejecting unsigned pickle file: {filepath} — delete and regenerate")
+    return None
 
 # ─── GPU acceleration via CuPy (falls back to NumPy on CPU) ─────────
 try:
@@ -448,10 +451,15 @@ def compute_volatility(windows, lookback_hours=24):
         label = "NOT VOLATILE"
         color = "positive"
 
-    # Trend: is volatility increasing or decreasing?
-    half = len(returns_arr) // 2
-    first_half_std = float(np.std(returns_arr[:half]))
-    second_half_std = float(np.std(returns_arr[half:]))
+    # Trend: is volatility increasing or decreasing? Need at least 2 returns
+    # to split into halves; otherwise fall back to a single std (no trend).
+    if len(returns_arr) >= 2:
+        half = len(returns_arr) // 2
+        first_half_std = float(np.std(returns_arr[:half])) if half > 0 else float(np.std(returns_arr))
+        second_half_std = float(np.std(returns_arr[half:]))
+    else:
+        first_half_std = float(np.std(returns_arr)) if len(returns_arr) > 0 else 0.0
+        second_half_std = first_half_std
     vol_trend = "INCREASING" if second_half_std > first_half_std * 1.2 else (
         "DECREASING" if second_half_std < first_half_std * 0.8 else "STABLE")
 
@@ -715,9 +723,16 @@ class WindowNeuralNet:
             features.extend(pad.tolist())
 
         # Momentum
-        weights = np.exp(np.linspace(-2, 0, len(end_deltas)))
-        weights /= weights.sum()
-        features.append(float(np.dot(weights, end_deltas)))
+        if len(end_deltas) > 0:
+            weights = np.exp(np.linspace(-2, 0, len(end_deltas)))
+            ws = weights.sum()
+            if ws > 0:
+                weights /= ws
+                features.append(float(np.dot(weights, end_deltas)))
+            else:
+                features.append(0.0)
+        else:
+            features.append(0.0)
         features.append(float(np.mean(end_deltas[-3:])))
         features.append(float(np.mean(end_deltas[-6:])))
         features.append(float(np.mean(end_deltas[-12:])) if len(end_deltas) >= 12 else float(np.mean(end_deltas)))
@@ -865,8 +880,8 @@ class WindowNeuralNet:
         else:
             features.append(0.5)
 
-        # Lag-2 autocorrelation
-        if len(end_deltas) >= 6:
+        # Lag-2 autocorrelation (require >=10 samples for statistical reliability)
+        if len(end_deltas) >= 10:
             ac2 = float(np.corrcoef(end_deltas[:-2], end_deltas[2:])[0, 1])
             features.append(ac2 if not np.isnan(ac2) else 0.0)
         else:
@@ -875,16 +890,16 @@ class WindowNeuralNet:
         return np.array(features, dtype=DTYPE)
 
     def _init_weights(self, n_input, seed=42):
-        # Generate weights on CPU with numpy for reproducibility, then move to GPU
-        np.random.seed(seed)
+        # Generate weights on CPU with a local RNG for thread-safe reproducibility
+        rng = np.random.RandomState(seed)
         h1, h2, h3, h4 = 64, 48, 32, 16
         dt = DTYPE
         self.params = {
-            "W1": to_gpu(np.random.randn(n_input, h1).astype(dt) * np.sqrt(2.0/n_input)), "b1": xp.zeros((1,h1), dtype=dt),
-            "W2": to_gpu(np.random.randn(h1, h2).astype(dt) * np.sqrt(2.0/h1)), "b2": xp.zeros((1,h2), dtype=dt),
-            "W3": to_gpu(np.random.randn(h2, h3).astype(dt) * np.sqrt(2.0/h2)), "b3": xp.zeros((1,h3), dtype=dt),
-            "W4": to_gpu(np.random.randn(h3, h4).astype(dt) * np.sqrt(2.0/h3)), "b4": xp.zeros((1,h4), dtype=dt),
-            "W_reg": to_gpu(np.random.randn(h4, 1).astype(dt) * np.sqrt(2.0/h4)), "b_reg": xp.zeros((1,1), dtype=dt),
+            "W1": to_gpu(rng.randn(n_input, h1).astype(dt) * np.sqrt(2.0/n_input)), "b1": xp.zeros((1,h1), dtype=dt),
+            "W2": to_gpu(rng.randn(h1, h2).astype(dt) * np.sqrt(2.0/h1)), "b2": xp.zeros((1,h2), dtype=dt),
+            "W3": to_gpu(rng.randn(h2, h3).astype(dt) * np.sqrt(2.0/h2)), "b3": xp.zeros((1,h3), dtype=dt),
+            "W4": to_gpu(rng.randn(h3, h4).astype(dt) * np.sqrt(2.0/h3)), "b4": xp.zeros((1,h4), dtype=dt),
+            "W_reg": to_gpu(rng.randn(h4, 1).astype(dt) * np.sqrt(2.0/h4)), "b_reg": xp.zeros((1,1), dtype=dt),
             "W_cls": to_gpu(np.random.randn(h4, 1).astype(dt) * np.sqrt(2.0/h4)), "b_cls": xp.zeros((1,1), dtype=dt),
             "bn1_g": xp.ones((1,h1), dtype=dt), "bn1_b": xp.zeros((1,h1), dtype=dt),
             "bn2_g": xp.ones((1,h2), dtype=dt), "bn2_b": xp.zeros((1,h2), dtype=dt),
@@ -1054,13 +1069,14 @@ class WindowNeuralNet:
         lr_reductions = 0
         current_lr = lr
 
+        train_rng = np.random.RandomState(seed)
         for epoch in range(epochs):
-            np.random.seed(seed + epoch)  # reproducible seeding
-            perm = np.random.permutation(int(Xt.shape[0]))
+            train_rng.seed(seed + epoch)  # reproducible per-epoch seeding
+            perm = train_rng.permutation(int(Xt.shape[0]))
             for b in range(0, int(Xt.shape[0]), bs):
                 batch_end = min(b + bs, int(Xt.shape[0]))
                 idx = perm[b:batch_end]
-                Xb = Xt[idx] + xp.asarray(np.random.randn(len(idx), int(Xt.shape[1])).astype(DTYPE)) * noise
+                Xb = Xt[idx] + xp.asarray(train_rng.randn(len(idx), int(Xt.shape[1])).astype(DTYPE)) * noise
                 _, _, cache = self._forward(Xb, training=True)
                 grads = self._backward(cache, yrt[idx], yct[idx])
                 opt.step(self.params, grads)
@@ -1144,7 +1160,18 @@ class WindowNeuralNet:
         rmn = np.mean([w["max_negative"] for w in recent]) if recent else 0
         crosses = [w["last_cross_sec"] for w in recent if w["last_cross_sec"] is not None]
         eds = [w["end_delta"] for w in recent]
-        wts = np.exp(np.linspace(-1,0,len(eds))); wts /= wts.sum()
+        # Guard against empty `eds` — np.linspace(-1,0,0) is empty, sum()==0,
+        # and the resulting division would emit RuntimeWarning + NaN momentum.
+        if eds:
+            wts = np.exp(np.linspace(-1, 0, len(eds)))
+            wt_sum = wts.sum()
+            if wt_sum > 0:
+                wts /= wt_sum
+                momentum_val = float(np.dot(wts, eds))
+            else:
+                momentum_val = 0.0
+        else:
+            momentum_val = 0.0
         return {
             "pred_end_delta": round(delta, 2),
             "pred_direction": "positive" if prob >= 0.5 else "negative",
@@ -1154,7 +1181,7 @@ class WindowNeuralNet:
             "pred_cross_sec": round(float(np.mean(crosses)), 1) if crosses else None,
             "confidence": round(abs(prob-0.5)*2, 2),
             "vol_regime": "HIGH" if vr>1.3 else ("LOW" if vr<0.7 else "NORMAL"),
-            "momentum": round(float(np.dot(wts, eds)), 2),
+            "momentum": round(momentum_val, 2),
             "avg_rsi": round(float(np.mean([w["rsi"] for w in recent[-6:]])), 1) if recent else 50,
         }
 
@@ -1301,6 +1328,8 @@ class EnsemblePredictor:
         }
 
     def predict_next(self, windows):
+        if not windows:
+            return None
         last = windows[-1]
         ns = last["start"] + timedelta(minutes=WINDOW_MINUTES)
         dummy = {"start": ns, "end_delta":0, "max_positive":0, "max_negative":0,
@@ -1690,6 +1719,7 @@ def generate_dashboard(all_results):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CryptoEdge — Dashboard</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
   :root {{ --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;
            --green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#d29922; }}

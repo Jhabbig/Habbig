@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
+import { fmtCount } from '../lib/settings'
 import { Search, ArrowRight, MapPin, X, History, Scale, Vote, MessageCircle, GitCompare, Layers } from 'lucide-react'
 
 const SOURCE_STYLES = {
@@ -109,7 +110,7 @@ function HistoryBlock({ hist }) {
           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${lastBadge}`}>{last.party} +{last.margin_pct}%</span>
         </div>
         <div className="text-sm font-semibold text-stone-800">{last.winner} <span className="font-normal text-stone-500">beat {last.runner_up}</span></div>
-        <div className="text-[11px] text-stone-500">{last.winner_pct}% vs {last.runner_up_pct}% &middot; {last.winner_votes >= 1000000 ? `${(last.winner_votes/1000000).toFixed(1)}M` : `${(last.winner_votes/1000).toFixed(0)}K`} votes</div>
+        <div className="text-[11px] text-stone-500">{last.winner_pct}% vs {last.runner_up_pct}% &middot; {fmtCount(last.winner_votes)} votes</div>
       </div>
       {hist.length > 1 && (
         <div className="flex items-center gap-2 mt-2">

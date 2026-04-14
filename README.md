@@ -37,7 +37,7 @@ Each directory has its own `README.md` with a per-file breakdown.
 | `deploy.sh` | Rsync deploy from this Mac to the Ubuntu production box. Supports per-site selection and automatic snapshot before sync. |
 | `snapshot.sh` | Local backup/restore — `tar.gz` per site with safe `sqlite3 .backup` for live DBs. Index lives in `.snapshots/index.txt`. |
 | `.dockerignore` | Top-level Docker build exclusions (also overridden per-dashboard). |
-| `.gitignore` | Project-wide ignores: secrets, DBs, logs, Python/Node artifacts, OS cruft. |
+| `.gitignore` | Project-wide ignores: secrets, DBs, logs, Python/Node artifacts, OS cruft. The Python `lib/` rule is unignored for `midterm-dashboard/frontend/src/lib/` — without that explicit unignore, the entire frontend `src/lib/` directory (api.js, settings.jsx, currency.js) is silently swallowed. If you add a frontend `src/lib/` to another dashboard, add it to the unignore list too. |
 | `.env.example` | Reference of every env key across every service. Each service also has its own `.env.example`. |
 | `ruff.toml` | Linting config — 200-char lines, F821 (undefined names) only. |
 

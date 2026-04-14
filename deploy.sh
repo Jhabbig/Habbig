@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-SERVER="julianhabbig@100.69.44.108"
+SERVER="${DEPLOY_SERVER:?Set DEPLOY_SERVER env var (e.g. user@host)}"
 REMOTE_DIR="~/Polymarket"
 LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -27,6 +27,7 @@ SITES=(
     Dashboard-x-truth-research-prediction
     polymarket-bot
     polymarket_weather_bot
+    top-traders-dashboard
 )
 
 # Excluded from rsync
@@ -61,7 +62,9 @@ message=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -m|--message) message="$2"; shift 2 ;;
+        -m|--message)
+            if [ -z "${2:-}" ]; then echo "Error: -m requires a message"; exit 1; fi
+            message="$2"; shift 2 ;;
         -h|--help)
             echo ""
             echo -e "${BOLD}deploy.sh${NC} — Push updates to Ubuntu server"
@@ -101,12 +104,10 @@ done
 echo -e "${CYAN}[1/3] Snapshotting current server state...${NC}"
 
 snapshot_msg="${message:-pre-deploy}"
-# Escape single quotes in message to prevent shell injection
-escaped_msg="${snapshot_msg//\'/\'\\\'\'}"
 if [[ -n "$site" ]]; then
-    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save $site -m '${escaped_msg}'"
+    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save $(printf '%q' "$site") -m $(printf '%q' "$snapshot_msg")"
 else
-    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save -m '${escaped_msg}'"
+    ssh "$SERVER" "cd $REMOTE_DIR && ./snapshot.sh save -m $(printf '%q' "$snapshot_msg")"
 fi
 
 # ── Step 2: Sync files ──────────────────────────

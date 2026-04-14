@@ -28,12 +28,17 @@ def print_run_summary(
 
     mode = "PAPER" if config.PAPER_MODE else "LIVE"
 
+    poly_signals = [s for s in signals if getattr(s.market, "platform", "polymarket") == "polymarket"]
+    kalshi_signals = [s for s in signals if getattr(s.market, "platform", "") == "kalshi"]
+
     print(f"\n{'='*70}")
-    print(f"  POLYMARKET WEATHER BOT — {mode} MODE")
+    print(f"  WEATHER BOT — {mode} MODE")
     print(f"  {now}")
     print(f"{'='*70}")
     print(f"  Markets scanned:    {markets_scanned}")
     print(f"  Signals found:      {len(actionable)} actionable / {len(signals)} total")
+    if kalshi_signals:
+        print(f"    Polymarket:       {len(poly_signals)}  |  Kalshi: {len(kalshi_signals)}")
     print(f"    BUY YES:          {len(buy_yes)}")
     print(f"    BUY NO:           {len(buy_no)}")
     print(f"  Trades executed:    {trades_executed}")
@@ -41,13 +46,14 @@ def print_run_summary(
     print(f"{'='*70}")
 
     if actionable:
-        print(f"\n  {'ACTION':<10} {'EDGE':>6} {'MODEL':>6} {'MKT':>6}  {'CITY':<12} {'QUESTION'}")
-        print(f"  {'—'*10} {'—'*6} {'—'*6} {'—'*6}  {'—'*12} {'—'*40}")
+        print(f"\n  {'PLAT':<6} {'ACTION':<10} {'EDGE':>6} {'MODEL':>6} {'MKT':>6}  {'CITY':<12} {'QUESTION'}")
+        print(f"  {'—'*6} {'—'*10} {'—'*6} {'—'*6} {'—'*6}  {'—'*12} {'—'*35}")
         for s in actionable:
+            plat = getattr(s.market, "platform", "poly")[:6]
             print(
-                f"  {s.action:<10} {s.edge*100:>+5.1f}% {s.model_prob*100:>5.1f}% "
+                f"  {plat:<6} {s.action:<10} {s.edge*100:>+5.1f}% {s.model_prob*100:>5.1f}% "
                 f"{s.market_prob*100:>5.1f}%  {s.market.city:<12} "
-                f"{s.market.question[:45]}"
+                f"{s.market.question[:40]}"
             )
 
     print()
@@ -88,13 +94,14 @@ def print_daily_report(store: DataStore, config: Optional[Config] = None) -> Non
 
     if recent_trades:
         print(f"\n  RECENT TRADES")
-        print(f"  {'TIME':<20} {'ACTION':<10} {'SIDE':<5} {'AMT':>7} {'PRICE':>6} {'EDGE':>6}  {'CITY'}")
-        print(f"  {'—'*20} {'—'*10} {'—'*5} {'—'*7} {'—'*6} {'—'*6}  {'—'*12}")
+        print(f"  {'TIME':<20} {'PLAT':<6} {'ACTION':<10} {'SIDE':<5} {'AMT':>7} {'PRICE':>6} {'EDGE':>6}  {'CITY'}")
+        print(f"  {'—'*20} {'—'*6} {'—'*10} {'—'*5} {'—'*7} {'—'*6} {'—'*6}  {'—'*12}")
         for t in recent_trades:
             ts = t["timestamp"][:16].replace("T", " ")
             paper_tag = " [P]" if t["paper_mode"] else ""
+            plat = (t.get("platform") or "poly")[:6]
             print(
-                f"  {ts:<20} {t['action']:<10} {t['side']:<5} "
+                f"  {ts:<20} {plat:<6} {t['action']:<10} {t['side']:<5} "
                 f"${t['amount']:>6.2f} {t['price']:>5.3f} {t['edge']*100:>+5.1f}%  "
                 f"{t['city']}{paper_tag}"
             )

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate the Sharpe pitch deck — minimalist black & white aesthetic."""
 
+from pathlib import Path
+
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
@@ -455,6 +457,6 @@ add_text(slide, Inches(1.5), Inches(5.2), Inches(8), Inches(0.8),
 
 
 # Save
-out = "/Users/julianhabbig/Claude Vibecoding /Polymarket/sports-dashboard/Sharpe_Pitch.pptx"
-prs.save(out)
+out = Path(__file__).parent / "Sharpe_Pitch.pptx"
+prs.save(str(out))
 print(f"Saved: {out}")

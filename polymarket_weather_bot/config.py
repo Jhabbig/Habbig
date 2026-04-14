@@ -11,6 +11,12 @@ class Config:
     PRIVATE_KEY: str = os.getenv("PRIVATE_KEY", "")
     POLYMARKET_API_KEY: str = os.getenv("POLYMARKET_API_KEY", "")
 
+    # Kalshi credentials
+    KALSHI_ENABLED: bool = os.getenv("KALSHI_ENABLED", "false").lower() == "true"
+    KALSHI_API_KEY_ID: str = os.getenv("KALSHI_API_KEY_ID", "")
+    KALSHI_PRIVATE_KEY_PATH: str = os.getenv("KALSHI_PRIVATE_KEY_PATH", "")
+    KALSHI_MAX_TRADE_SIZE: float = float(os.getenv("KALSHI_MAX_TRADE_SIZE", "100.0"))
+
     # Trading config
     PAPER_MODE: bool = os.getenv("PAPER_MODE", "true").lower() == "true"
     EDGE_THRESHOLD: float = float(os.getenv("EDGE_THRESHOLD", "0.08"))

@@ -10,6 +10,7 @@ export default defineConfig({
       '/data': 'http://localhost:8050',
       '/premium': 'http://localhost:8050',
       '/admin': 'http://localhost:8050',
+      '/api': 'http://localhost:8050',
     }
   }
 })

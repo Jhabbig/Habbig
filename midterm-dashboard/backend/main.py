@@ -305,9 +305,6 @@ async def divergence_calculator():
                 # market_race_key — never compare them across sources.
                 if race_key.startswith("unmatched_"):
                     continue
-                if len(sources) < 2:
-                    continue
-
                 source_probs: dict[str, float] = {}
                 for source, markets in sources.items():
                     # Use the first market's top outcome probability
@@ -317,11 +314,11 @@ async def divergence_calculator():
                             source_probs[source] = outcomes[0]["probability"]
                             break
 
-                if len(source_probs) < 2:
+                if len(source_probs) < 1:
                     continue
 
                 values = list(source_probs.values())
-                max_div = max(values) - min(values)
+                max_div = (max(values) - min(values)) if len(values) >= 2 else 0.0
 
                 parts = race_key.split("_", 1)
                 race_type = parts[0] if parts else "other"
@@ -991,6 +988,9 @@ async def data_race_detail(race_key: str):
     - "source_sourceId" e.g. "predictit_8156" — direct market lookup, then find siblings
     - legacy "race_type_STATE_sourceId" format
     """
+    # Length guard against DoS via absurdly long keys
+    if len(race_key) > 200:
+        return JSONResponse({"error": "invalid race_key"}, status_code=400)
     all_markets = state.db.get_all_markets(active_only=True)
     # Load flag state once so step 2 can skip flagged sibling markets.
     wrong_flags = state.db.get_all_wrong_flags()
@@ -1163,8 +1163,20 @@ async def data_race_candidates(race_key: str, refresh: bool = False):
         context_parts.append(rt)
     context_hint = " ".join(context_parts) if context_parts else None
 
-    # Fresh enrichment: fetch Wikipedia bio for each candidate
+    # Fresh enrichment: fetch Wikipedia bio + FEC financials for each candidate
     from data_sources.wikipedia import fetch_person_bio
+    from data_sources.fec import fetch_race_financials, match_fec_to_candidate
+
+    # Fetch FEC data for the race (House/Senate only — FEC doesn't cover governors)
+    dist_code = detail.get("district")
+    fec_candidates = await fetch_race_financials(
+        state.http_session,
+        st,
+        rt,
+        district=dist_code,
+        cycle=2026,
+    )
+
     enriched = []
     for c in sorted_candidates:
         bio = await fetch_person_bio(
@@ -1173,16 +1185,25 @@ async def data_race_candidates(race_key: str, refresh: bool = False):
             context=context_hint,
             state_name=state_name_hint,
         )
+        entry = {**c}
         if bio:
-            enriched.append({
-                **c,
+            entry.update({
                 "description": bio.get("description"),
                 "extract": bio.get("extract"),
                 "url": bio.get("url"),
                 "thumbnail": bio.get("thumbnail"),
             })
-        else:
-            enriched.append(c)
+        # Match to FEC financials
+        fec_match = match_fec_to_candidate(fec_candidates, c["name"])
+        if fec_match:
+            entry["fec"] = {
+                "receipts": fec_match["receipts"],
+                "disbursements": fec_match["disbursements"],
+                "cash_on_hand": fec_match["cash_on_hand"],
+                "party": fec_match["party"],
+                "candidate_id": fec_match["candidate_id"],
+            }
+        enriched.append(entry)
 
     # Cache to DB
     try:
@@ -1756,6 +1777,77 @@ async def get_fx_rates():
 # ===================================================================
 
 _frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+# ===================================================================
+# CROSS-DASHBOARD SHARE ENDPOINT (localhost-only, for sibling services)
+# ===================================================================
+
+@app.get("/api/share/top-races")
+async def share_top_races(request: Request):
+    """Lightweight summary for cross-dashboard integration (world-state, etc.)."""
+    client_host = request.client.host if request.client else ""
+    if client_host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=403, detail="localhost only")
+
+    all_markets = state.db.get_all_markets(active_only=True)
+
+    # --- Control probabilities ---
+    senate_control = {}
+    house_control = {}
+    for m in all_markets:
+        if m.get("race_type") != "control":
+            continue
+        title = (m.get("title") or "").lower()
+        outcomes = m.get("outcomes", [])
+        target = senate_control if "senate" in title else (house_control if "house" in title else None)
+        if target is None or not outcomes:
+            continue
+        src = m.get("source", "unknown")
+        dem = rep = 0
+        for o in outcomes:
+            n = (o.get("name") or "").lower()
+            p = o.get("probability") or 0
+            if "democrat" in n or n in ("dem", "dems") or "yes" in n:
+                dem = p
+            elif "republican" in n or n in ("rep", "reps", "gop") or n == "no":
+                rep = p
+        if not rep and dem:
+            rep = 1 - dem
+        target[src] = {"dem": round(dem, 3), "rep": round(rep, 3)}
+
+    # --- Top races by volume ---
+    race_markets = [m for m in all_markets if m.get("race_type") in ("senate", "house", "governor", "presidential")]
+    race_markets.sort(key=lambda m: m.get("volume") or 0, reverse=True)
+
+    races = []
+    seen_keys = set()
+    for m in race_markets:
+        rk = f"{m.get('race_type','')}-{m.get('state','')}-{m.get('district','')}"
+        if rk in seen_keys:
+            continue
+        seen_keys.add(rk)
+        outcomes = m.get("outcomes", [])
+        top = max(outcomes, key=lambda o: o.get("probability", 0)) if outcomes else {}
+        races.append({
+            "race_type": m.get("race_type"),
+            "state": m.get("state"),
+            "district": m.get("district"),
+            "title": m.get("title", "")[:120],
+            "source": m.get("source"),
+            "top_candidate": top.get("name", ""),
+            "top_prob": round(top.get("probability", 0), 3),
+            "volume": m.get("volume", 0),
+        })
+        if len(races) >= 20:
+            break
+
+    return {
+        "senate_control": senate_control,
+        "house_control": house_control,
+        "top_races": races,
+        "total_markets": len(all_markets),
+    }
+
 
 if _frontend_dist.is_dir():
     # Serve static assets (js, css, images) under /assets

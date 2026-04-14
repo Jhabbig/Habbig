@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portfolio - narve.ai</title>
+  <link rel="icon" type="image/png" href="/_gateway_static/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    body { background: #0a0a0a; color: #e8e8e8; font-family: 'Inter', -apple-system, sans-serif; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+    .pf-wrap { max-width: 960px; margin: 0 auto; padding: 48px 24px 80px; }
+    .pf-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+    .pf-title { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; }
+    .pf-sync-btn { padding: 8px 16px; background: #1e1e1e; color: #aaa; border: 1px solid #2a2a2a; border-radius: 8px; font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+    .pf-sync-btn:hover { border-color: #444; color: #ddd; }
+    .pf-sync-btn:disabled { opacity: 0.5; cursor: default; }
+
+    /* Summary cards */
+    .pf-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 32px; }
+    .pf-stat { background: #141414; border: 1px solid #1e1e1e; border-radius: 12px; padding: 20px; }
+    .pf-stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #555; margin-bottom: 8px; }
+    .pf-stat-value { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+    .pf-stat-sub { font-size: 12px; color: #555; margin-top: 4px; }
+    .pf-green { color: #81c995; }
+    .pf-red { color: #f28b82; }
+    .pf-neutral { color: #e8e8e8; }
+
+    /* Platform breakdown */
+    .pf-platforms { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 32px; }
+    .pf-plat-pill { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: #141414; border: 1px solid #1e1e1e; border-radius: 10px; font-size: 12px; }
+    .pf-plat-name { font-weight: 600; color: #aaa; text-transform: capitalize; }
+    .pf-plat-pnl { font-weight: 600; }
+
+    /* Tabs */
+    .pf-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #1e1e1e; }
+    .pf-tab { padding: 10px 16px; font-size: 13px; font-weight: 500; color: #555; background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; font-family: inherit; transition: color 0.15s; }
+    .pf-tab:hover { color: #aaa; }
+    .pf-tab.active { color: #e8e8e8; border-bottom-color: #8ab4f8; }
+
+    /* Tables */
+    .pf-table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #555; border-bottom: 1px solid #1e1e1e; }
+    td { padding: 12px; border-bottom: 1px solid #111; }
+    tr:hover td { background: #111; }
+    .pf-platform-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .pf-platform-badge.polymarket { background: rgba(138,180,248,0.12); color: #8ab4f8; }
+    .pf-platform-badge.kalshi { background: rgba(197,138,249,0.12); color: #c58af9; }
+    .pf-platform-badge.alpaca { background: rgba(253,214,99,0.12); color: #fdd663; }
+    .pf-side { font-weight: 600; text-transform: uppercase; font-size: 11px; }
+    .pf-side.yes, .pf-side.buy { color: #81c995; }
+    .pf-side.no, .pf-side.sell { color: #f28b82; }
+    .pf-mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+
+    /* Empty state */
+    .pf-empty { text-align: center; padding: 64px 24px; color: #444; }
+    .pf-empty-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #666; }
+    .pf-empty-desc { font-size: 13px; line-height: 1.6; }
+    .pf-empty a { color: #8ab4f8; text-decoration: none; }
+    .pf-empty a:hover { text-decoration: underline; }
+
+    /* Balance bar */
+    .pf-balances { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 32px; }
+    .pf-bal-card { flex: 1; min-width: 200px; background: #141414; border: 1px solid #1e1e1e; border-radius: 12px; padding: 16px 20px; }
+    .pf-bal-plat { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #555; margin-bottom: 6px; }
+    .pf-bal-amount { font-size: 20px; font-weight: 700; }
+    .pf-bal-sub { font-size: 11px; color: #444; margin-top: 2px; }
+
+    .pf-loading { text-align: center; padding: 48px; color: #444; font-size: 13px; }
+
+    @media (max-width: 640px) {
+      .pf-wrap { padding: 32px 16px 64px; }
+      .pf-title { font-size: 20px; }
+      .pf-summary { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="pf-wrap">
+    <div class="pf-header">
+      <div>
+        <h1 class="pf-title">Portfolio</h1>
+        <div style="font-size:12px;color:#555;margin-top:4px"><a href="/dashboards" style="color:#8ab4f8;text-decoration:none">Dashboards</a> &middot; <a href="/profile" style="color:#666;text-decoration:none">Profile</a></div>
+      </div>
+      <button class="pf-sync-btn" onclick="syncPortfolio()" id="syncBtn">Sync Positions</button>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="pf-summary" id="summaryCards">
+      <div class="pf-stat"><div class="pf-stat-label">Loading...</div><div class="pf-stat-value">--</div></div>
+    </div>
+
+    <!-- Platform balances -->
+    <div class="pf-balances" id="balances"></div>
+
+    <!-- Platform P&L pills -->
+    <div class="pf-platforms" id="platformPills"></div>
+
+    <!-- Tabs -->
+    <div class="pf-tabs">
+      <button class="pf-tab active" data-tab="open" onclick="switchTab('open')">Open Positions</button>
+      <button class="pf-tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
+      <button class="pf-tab" data-tab="history" onclick="switchTab('history')">Trade History</button>
+    </div>
+
+    <!-- Tab content -->
+    <div id="tabContent">
+      <div class="pf-loading">Loading portfolio data...</div>
+    </div>
+  </div>
+
+  <script>
+    const CSRF = '{{ csrf_token }}';
+    let currentTab = 'open';
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function pnlClass(v) { return v > 0.005 ? 'pf-green' : v < -0.005 ? 'pf-red' : 'pf-neutral'; }
+    function fmt$(v) { return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2); }
+    function fmtPct(v) { return (v * 100).toFixed(1) + '%'; }
+    function platformBadge(p) { return `<span class="pf-platform-badge ${p}">${p}</span>`; }
+    function sideBadge(s) { return `<span class="pf-side ${s}">${s}</span>`; }
+    function ts(epoch) {
+      if (!epoch) return '--';
+      const d = new Date(epoch * 1000);
+      return d.toLocaleDateString('en-US', {month:'short', day:'numeric'}) + ' ' +
+             d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+    }
+
+    function apiFetch(url) {
+      return fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' }).then(r => r.json());
+    }
+
+    // ── Load summary ────────────────────────────────────────────────────
+    async function loadSummary() {
+      try {
+        const data = await apiFetch('/api/portfolio/summary');
+        const s = data.summary || {};
+        const byPlat = data.by_platform || [];
+        document.getElementById('summaryCards').innerHTML = `
+          <div class="pf-stat">
+            <div class="pf-stat-label">Net P&L</div>
+            <div class="pf-stat-value ${pnlClass(s.net_pnl || 0)}">${fmt$(s.net_pnl || 0)}</div>
+            <div class="pf-stat-sub">Realized ${fmt$(s.realized_pnl || 0)} + Unrealized ${fmt$(s.unrealized_pnl || 0)}</div>
+          </div>
+          <div class="pf-stat">
+            <div class="pf-stat-label">Open Positions</div>
+            <div class="pf-stat-value">${s.open_count || 0}</div>
+            <div class="pf-stat-sub">Value: $${(s.open_value || 0).toFixed(2)}</div>
+          </div>
+          <div class="pf-stat">
+            <div class="pf-stat-label">Win Rate</div>
+            <div class="pf-stat-value">${s.wins + s.losses > 0 ? ((s.wins / (s.wins + s.losses)) * 100).toFixed(0) + '%' : '--'}</div>
+            <div class="pf-stat-sub">${s.wins || 0}W / ${s.losses || 0}L (${s.closed_count || 0} closed)</div>
+          </div>
+          <div class="pf-stat">
+            <div class="pf-stat-label">Fees Paid</div>
+            <div class="pf-stat-value pf-red">$${(s.total_fees || 0).toFixed(2)}</div>
+          </div>
+        `;
+        // Platform pills
+        document.getElementById('platformPills').innerHTML = byPlat.map(p => `
+          <div class="pf-plat-pill">
+            <span class="pf-plat-name">${p.platform}</span>
+            <span class="pf-plat-pnl ${pnlClass(p.net_pnl)}">${fmt$(p.net_pnl)}</span>
+            <span style="color:#444">${p.open_count} open</span>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Summary load error:', e); }
+    }
+
+    // ── Load balances ───────────────────────────────────────────────────
+    async function loadBalances() {
+      try {
+        const data = await apiFetch('/api/portfolio/balances');
+        const bals = data.balances || [];
+        if (!bals.length) { document.getElementById('balances').innerHTML = ''; return; }
+        document.getElementById('balances').innerHTML = bals.map(b => `
+          <div class="pf-bal-card">
+            <div class="pf-bal-plat">${b.platform}${b.error ? ' (offline)' : ''}</div>
+            <div class="pf-bal-amount">$${(b.total_usd || 0).toFixed(2)}</div>
+            <div class="pf-bal-sub">Available: $${(b.available_usd || 0).toFixed(2)}</div>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Balance load error:', e); }
+    }
+
+    // ── Tab rendering ───────────────────────────────────────────────────
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.pf-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      loadTab(tab);
+    }
+
+    async function loadTab(tab) {
+      const el = document.getElementById('tabContent');
+      el.innerHTML = '<div class="pf-loading">Loading...</div>';
+      try {
+        if (tab === 'open') await renderOpen(el);
+        else if (tab === 'closed') await renderClosed(el);
+        else if (tab === 'history') await renderHistory(el);
+      } catch(e) {
+        el.innerHTML = `<div class="pf-empty"><div class="pf-empty-title">Error loading data</div><div class="pf-empty-desc">${e.message}</div></div>`;
+      }
+    }
+
+    async function renderOpen(el) {
+      const data = await apiFetch('/api/portfolio/open');
+      const pos = data.positions || [];
+      if (!pos.length) {
+        el.innerHTML = '<div class="pf-empty"><div class="pf-empty-title">No open positions</div><div class="pf-empty-desc">Place trades from any dashboard to see them here. <a href="/dashboards">Go to dashboards</a></div></div>';
+        return;
+      }
+      el.innerHTML = `<div class="pf-table-wrap"><table>
+        <thead><tr><th>Market</th><th>Platform</th><th>Side</th><th>Qty</th><th>Entry</th><th>Mark</th><th>Unrealized</th><th>Opened</th></tr></thead>
+        <tbody>${pos.map(p => `<tr>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(p.title||'').replace(/"/g,'&quot;')}">${p.title || p.external_id}</td>
+          <td>${platformBadge(p.platform)}</td>
+          <td>${sideBadge(p.token_or_side)}</td>
+          <td class="pf-mono">${p.qty_open}</td>
+          <td class="pf-mono">${fmtPct(p.avg_entry_price)}</td>
+          <td class="pf-mono">${p.last_mark_price ? fmtPct(p.last_mark_price) : '--'}</td>
+          <td class="pf-mono ${pnlClass(p.unrealized_pnl)}">${fmt$(p.unrealized_pnl)}</td>
+          <td style="color:#555;font-size:12px">${ts(p.opened_at)}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    async function renderClosed(el) {
+      const data = await apiFetch('/api/portfolio/closed');
+      const pos = data.positions || [];
+      if (!pos.length) {
+        el.innerHTML = '<div class="pf-empty"><div class="pf-empty-title">No closed positions yet</div></div>';
+        return;
+      }
+      el.innerHTML = `<div class="pf-table-wrap"><table>
+        <thead><tr><th>Market</th><th>Platform</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Realized P&L</th><th>Closed</th></tr></thead>
+        <tbody>${pos.map(p => `<tr>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.title || p.external_id}</td>
+          <td>${platformBadge(p.platform)}</td>
+          <td>${sideBadge(p.token_or_side)}</td>
+          <td class="pf-mono">${p.qty_closed}</td>
+          <td class="pf-mono">${fmtPct(p.avg_entry_price)}</td>
+          <td class="pf-mono">${p.avg_exit_price ? fmtPct(p.avg_exit_price) : '--'}</td>
+          <td class="pf-mono ${pnlClass(p.realized_pnl)}">${fmt$(p.realized_pnl)}</td>
+          <td style="color:#555;font-size:12px">${ts(p.closed_at)}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    async function renderHistory(el) {
+      const data = await apiFetch('/api/portfolio/history?limit=100');
+      const orders = data.orders || [];
+      if (!orders.length) {
+        el.innerHTML = '<div class="pf-empty"><div class="pf-empty-title">No trade history</div></div>';
+        return;
+      }
+      el.innerHTML = `<div class="pf-table-wrap"><table>
+        <thead><tr><th>Market</th><th>Platform</th><th>Side</th><th>Action</th><th>Amount</th><th>Price</th><th>Fill</th><th>Status</th><th>Time</th></tr></thead>
+        <tbody>${orders.map(o => `<tr>
+          <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(o.market_question||'').replace(/"/g,'&quot;')}">${o.market_question || o.market_slug}</td>
+          <td>${platformBadge(o.platform)}</td>
+          <td>${sideBadge(o.side)}</td>
+          <td><span class="pf-side ${o.action}">${o.action}</span></td>
+          <td class="pf-mono">$${Number(o.amount).toFixed(2)}</td>
+          <td class="pf-mono">${fmtPct(o.price)}</td>
+          <td class="pf-mono">${o.fill_price ? fmtPct(o.fill_price) : '--'}</td>
+          <td><span style="color:${o.status === 'submitted' ? '#81c995' : o.status === 'error' ? '#f28b82' : '#888'};font-size:12px;font-weight:500">${o.status}</span></td>
+          <td style="color:#555;font-size:12px">${ts(o.created_at)}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    // ── Sync ────────────────────────────────────────────────────────────
+    async function syncPortfolio() {
+      const btn = document.getElementById('syncBtn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing...';
+      try {
+        const resp = await fetch('/api/portfolio/sync', {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': CSRF, 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          btn.textContent = `Synced (${data.synced_from_platforms} positions)`;
+          // Reload all data
+          await Promise.all([loadSummary(), loadBalances(), loadTab(currentTab)]);
+        } else {
+          btn.textContent = 'Sync failed';
+        }
+      } catch(e) {
+        btn.textContent = 'Sync error';
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Sync Positions'; }, 3000);
+    }
+
+    // ── Init ────────────────────────────────────────────────────────────
+    Promise.all([loadSummary(), loadBalances(), loadTab('open')]);
+  </script>
+</body>
+</html>

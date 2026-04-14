@@ -300,6 +300,7 @@
   var nav = document.createElement('div');
   nav.className = 'hb-nav';
   var navItems = [
+    { label: 'Portfolio', path: '/portfolio', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 13V6l3.5-3 3.5 3.5L13 3"/><path d="M10 3h3v3"/><path d="M2 13h12"/></svg>' },
     { label: 'Billing',  path: '/billing',  icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="3" width="13" height="10" rx="1.5"/><path d="M1.5 6.5h13"/></svg>' },
     { label: 'Settings', path: '/settings', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>' }
   ];
@@ -388,6 +389,7 @@
 
   var mobNavItems = [
     { label: 'Hub', path: '/dashboards' },
+    { label: 'Portfolio', path: '/portfolio' },
     { label: 'Billing', path: '/billing' },
     { label: 'Settings', path: '/settings' },
     { label: 'Profile', path: '/profile' }

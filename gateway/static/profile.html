@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Profile — narve.ai</title>
+  <link rel="icon" type="image/png" href="/_gateway_static/favicon.png">
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
   <style>
     .profile-card {
@@ -178,7 +179,7 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
         Trading Credentials
       </div>
-      <div class="profile-section-desc">Connect your Polymarket wallet and Kalshi account to trade directly from any dashboard. Credentials are encrypted at rest.</div>
+      <div class="profile-section-desc">Connect your Polymarket wallet, Kalshi account, or Alpaca brokerage to trade directly from any dashboard. Credentials are encrypted at rest.</div>
 
       {{ raw_trading_banner }}
 
@@ -243,6 +244,33 @@
           <div class="profile-actions" style="justify-content:flex-start;gap:8px">
             <button type="submit" class="btn btn-primary" style="padding:10px 20px;font-size:13px;background:linear-gradient(135deg,#3b82f6,#2563eb);border:none">Save Kalshi Keys</button>
             {{ raw_kalshi_delete }}
+          </div>
+        </form>
+      </div>
+
+      <!-- Alpaca -->
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b"></span>
+            <span style="font-weight:600;font-size:14px">Alpaca (Stocks)</span>
+          </div>
+          {{ raw_alpaca_status }}
+        </div>
+        <form method="post" action="/profile/trading/alpaca" style="display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">API Key ID</label>
+            <input class="profile-input" type="password" name="api_key" placeholder="PK..." autocomplete="off">
+          </div>
+          <div class="profile-field" style="margin:0">
+            <label class="profile-label">API Secret Key</label>
+            <input class="profile-input" type="password" name="api_secret" placeholder="Your Alpaca secret key" autocomplete="off">
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);padding:4px 0">Uses Paper Trading by default. Switch to live keys in your Alpaca dashboard when ready.</div>
+          <div class="profile-actions" style="justify-content:flex-start;gap:8px">
+            <button type="submit" class="btn btn-primary" style="padding:10px 20px;font-size:13px;background:linear-gradient(135deg,#f59e0b,#d97706);border:none">Save Alpaca Keys</button>
+            {{ raw_alpaca_delete }}
           </div>
         </form>
       </div>

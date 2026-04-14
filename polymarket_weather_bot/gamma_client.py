@@ -20,7 +20,7 @@ GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 
 @dataclass
 class WeatherMarket:
-    """Parsed weather market from Polymarket."""
+    """Parsed weather market from Polymarket or Kalshi."""
     condition_id: str
     question: str
     market_slug: str
@@ -40,6 +40,7 @@ class WeatherMarket:
     token_id: str
     no_token_id: str              # Token ID for the NO side (needed for BUY_NO trades)
     end_date: Optional[datetime]
+    platform: str = "polymarket"  # "polymarket" or "kalshi"
 
 
 async def fetch_weather_markets(session: aiohttp.ClientSession) -> list:

@@ -4,29 +4,46 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>World Monitor</title>
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin="anonymous"></script>
-<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" crossorigin="anonymous">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<link rel="icon" type="image/png" href="/static/favicon.png">
+<script>
+// In hidden/throttled tabs (preview sandboxes, background tabs), requestAnimationFrame
+// is heavily throttled, which prevents MapLibre's deferred Style.loadJSON from ever
+// completing. This patch falls back to setTimeout after 100ms so the style spec parses
+// even when rAF stalls. In a normal visible tab, the real rAF fires within ~16ms and
+// the setTimeout fallback is a no-op.
+(function(){
+  var origRAF = window.requestAnimationFrame;
+  window.requestAnimationFrame = function(cb) {
+    var fired = false;
+    var id = origRAF.call(window, function(t){ if (fired) return; fired = true; cb(t); });
+    setTimeout(function(){ if (fired) return; fired = true; try { cb(performance.now()); } catch(e){} }, 100);
+    return id;
+  };
+})();
+</script>
+<script src="/static/maplibre-gl.js"></script>
+<link href="/static/maplibre-gl.css" rel="stylesheet">
+<script src="/static/chart.umd.min.js"></script>
 <style>
 :root {
-  --bg-0: #0c0d10;
-  --bg-1: #131417;
-  --bg-2: #18191e;
-  --bg-3: #1f2027;
-  --border: rgba(255,255,255,0.06);
-  --border-light: rgba(255,255,255,0.08);
-  --text-0: #ebebef;
-  --text-1: #8b8d98;
-  --text-2: #5c5e6a;
-  --green: #34d399;
-  --green-dim: rgba(52,211,153,0.12);
-  --green-bright: #6ee7b7;
+  --bg-0: #0a0a0a;
+  --bg-1: #111111;
+  --bg-2: #161616;
+  --bg-3: #1c1c1c;
+  --border: #1f1f1f;
+  --border-light: #262626;
+  --text-0: #e6e6e6;
+  --text-1: #888888;
+  --text-2: #555555;
+  --green: #4ade80;
+  --green-dim: rgba(74,222,128,0.10);
+  --green-bright: #86efac;
   --red: #f87171;
-  --red-dim: rgba(248,113,113,0.12);
+  --red-dim: rgba(248,113,113,0.10);
   --orange: #fb923c;
-  --orange-dim: rgba(251,146,60,0.12);
-  --yellow: #fbbf24;
-  --blue: #818cf8;
+  --orange-dim: rgba(251,146,60,0.10);
+  --yellow: #facc15;
+  --blue: #60a5fa;
   --teal: #2dd4bf;
   --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Monaco, Consolas, 'Courier New', monospace;
 }
@@ -285,7 +302,7 @@ body {
 
 /* ── Panels Grid ─────────────────────────────────── */
 .panels-container {
-  padding: 12px;
+  padding: 8px;
   position: relative;
   z-index: 2;
 }
@@ -293,18 +310,18 @@ body {
 .panels-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 8px;
+  gap: 4px;
 }
 
 /* ── Panel Base ──────────────────────────────────── */
 .panel {
   background: var(--bg-1);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  max-height: 340px;
+  max-height: 320px;
 }
 
 .panel-head {
@@ -327,7 +344,7 @@ body {
   font-size: 9px;
   font-weight: 700;
   padding: 1px 6px;
-  border-radius: 2px;
+  border-radius: 0;
   letter-spacing: 0.5px;
 }
 
@@ -444,6 +461,82 @@ body {
 .h-level.high { background: var(--red-dim); color: var(--red); }
 .h-level.elevated { background: var(--orange-dim); color: var(--orange); }
 .h-level.watch { background: rgba(37,99,235,0.15); color: var(--blue); }
+
+/* ── Trend / Air Force / Spaceport Rows ──────────── */
+.t-row {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.t-row:last-child { border-bottom: none; }
+.t-row:hover { background: var(--bg-2); }
+
+.t-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.t-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.t-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.t-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+.t-stats b { color: var(--text-1); font-weight: 600; }
+
+.t-meta {
+  font-size: 9px;
+  color: var(--text-2);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.t-bar {
+  width: 100%;
+  height: 2px;
+  background: rgba(255,255,255,0.04);
+  margin-top: 4px;
+  overflow: hidden;
+}
+.t-bar-fill { height: 100%; transition: width .6s ease; }
+
+.t-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+.t-pill.red { background: var(--red-dim); color: var(--red); }
+.t-pill.orange { background: var(--orange-dim); color: var(--orange); }
+.t-pill.green { background: rgba(22,163,74,0.15); color: var(--green); }
+.t-pill.blue { background: rgba(37,99,235,0.15); color: var(--blue); }
+.t-pill.muted { background: rgba(255,255,255,0.05); color: var(--text-2); }
 
 /* ── Indicator Panel ─────────────────────────────── */
 .ind-body { padding: 10px; }
@@ -1373,6 +1466,61 @@ body {
 .theme-btn[data-theme="amber"] { background: #1a150a; }
 .theme-btn[data-theme="blue"] { background: #0a0a1a; }
 
+/* ── Unit Toggle ────────────────────────────────── */
+.unit-switcher {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  margin-left: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.unit-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  background: var(--bg-2);
+  user-select: none;
+}
+
+.unit-btn:hover { transform: scale(1.1); border-color: var(--text-1); }
+.unit-btn.active { border-color: var(--text-0); box-shadow: 0 0 4px rgba(255,255,255,0.2); }
+.currency-select {
+  margin-left: 6px;
+  padding: 3px 6px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 80px;
+}
+.currency-select:hover { border-color: var(--text-1); }
+.currency-select:focus { outline: none; border-color: var(--text-0); }
+.unit-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--green);
+}
+
 /* ── Theme: Light ────────────────────────────────── */
 [data-theme="light"] {
   --bg-0: #f0f0f0;
@@ -1494,6 +1642,248 @@ body {
 @media (max-width: 480px) {
   .panels-grid { grid-template-columns: 1fr; }
 }
+
+/* ════ Phase 3: worldmonitor-parity additions ════ */
+
+/* ── Header utility buttons ── */
+.hbtn {
+  background: rgba(30, 200, 120, 0.08);
+  border: 1px solid rgba(30, 200, 120, 0.3);
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 4px 9px;
+  cursor: pointer;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+.hbtn:hover { background: rgba(30, 200, 120, 0.18); }
+.hbtn.kbd { font-family: ui-monospace, monospace; }
+
+/* ── Time-range filter chips ── */
+.time-filter-bar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+}
+.time-chip {
+  padding: 3px 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 10px;
+}
+.time-chip:hover { background: rgba(255,255,255,0.04); color: var(--text-1); }
+.time-chip.active { background: rgba(30, 200, 120, 0.2); color: #1ec878; border-color: #1ec878; }
+
+/* ── Cmd+K command palette ── */
+.cmdk-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  z-index: 9999;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  backdrop-filter: blur(3px);
+}
+.cmdk-overlay.open { display: flex; }
+.cmdk-modal {
+  width: 92%; max-width: 640px;
+  background: #0a1628;
+  border: 1px solid rgba(30, 200, 120, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.cmdk-input {
+  width: 100%;
+  padding: 14px 16px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.cmdk-results {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.cmdk-item {
+  padding: 8px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-1);
+  border-left: 2px solid transparent;
+}
+.cmdk-item:hover, .cmdk-item.active { background: rgba(30, 200, 120, 0.1); border-left-color: #1ec878; }
+.cmdk-item .ck-cat { color: var(--text-2); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; }
+.cmdk-section { padding: 4px 16px; font-size: 9px; text-transform: uppercase; color: #555; letter-spacing: 1.5px; }
+.cmdk-empty { padding: 14px 16px; color: var(--text-2); font-size: 11px; text-align: center; }
+
+/* ── Sources filter modal ── */
+.sources-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 9990;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.sources-overlay.open { display: flex; }
+.sources-modal {
+  width: 92%; max-width: 540px;
+  background: #0a1628;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.sources-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sources-body { flex: 1; overflow-y: auto; padding: 10px 16px; }
+.sources-search { width: 100%; padding: 6px 8px; background: #050f1c; color: var(--text-1); border: 1px solid var(--border); margin-bottom: 8px; font-family: inherit; font-size: 11px; }
+.source-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 11px; cursor: pointer; }
+.source-item input { margin: 0; }
+.sources-actions { padding: 10px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+.sources-actions button { flex: 1; padding: 6px; font-family: inherit; font-size: 10px; background: rgba(30,200,120,0.1); color: var(--text-1); border: 1px solid rgba(30,200,120,0.3); cursor: pointer; }
+
+/* ── Custom monitors ── */
+.monitor-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  border-radius: 2px;
+  margin-right: 3px;
+  font-family: ui-monospace, monospace;
+}
+.monitor-row { background: rgba(255, 255, 255, 0.02); border-left: 2px solid; padding: 4px 6px; margin-bottom: 3px; font-size: 10px; }
+
+/* ── Activity tracking ── */
+.new-badge {
+  display: inline-block;
+  background: linear-gradient(90deg, #1ec878, #14b85d);
+  color: #001a0a;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 2px;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.new-glow { animation: nrv-glow 30s ease-out 1; }
+@keyframes nrv-glow {
+  0%, 5% { box-shadow: inset 0 0 0 1px #1ec878, 0 0 12px rgba(30, 200, 120, 0.4); background: rgba(30, 200, 120, 0.06); }
+  100% { box-shadow: none; background: transparent; }
+}
+.panel-badge.new-count {
+  background: #1ec878 !important;
+  color: #001a0a !important;
+  animation: pulse-new 2s ease-in-out infinite;
+}
+@keyframes pulse-new {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Tabbed panels (Aviation, Live Intel) ── */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.tab-btn {
+  background: transparent;
+  color: var(--text-2);
+  border: 0;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tab-btn:hover { color: var(--text-1); }
+.tab-btn.active { color: #1ec878; border-bottom-color: #1ec878; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── Sector heatmap grid ── */
+.sector-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.sector-cell {
+  padding: 8px 6px;
+  border-radius: 3px;
+  text-align: center;
+  font-size: 10px;
+  cursor: pointer;
+}
+.sector-cell .sc-name { font-weight: 600; }
+.sector-cell .sc-pct { font-size: 13px; margin-top: 2px; }
+
+/* ── Strategic risk gauge ── */
+.risk-gauge { position: relative; width: 100%; height: 70px; display: flex; align-items: center; justify-content: center; }
+.risk-gauge-num { font-family: ui-monospace, monospace; font-size: 32px; font-weight: 700; }
+.risk-gauge-label { font-size: 10px; color: var(--text-2); margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+.risk-modules { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; font-size: 10px; }
+.risk-modules div { display: flex; justify-content: space-between; }
+.risk-modules .rm-val { color: var(--text-1); font-family: ui-monospace, monospace; }
+
+/* ── Pinnable map ── */
+.map-section.pinned {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.pin-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  padding: 5px 10px;
+  font-size: 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  z-index: 5;
+}
+.pin-btn.active { color: #1ec878; border-color: #1ec878; }
+
+/* ── BIS rates strip ── */
+.bis-strip { display: flex; flex-wrap: wrap; gap: 4px; }
+.bis-pill { background: rgba(255,255,255,0.04); border-radius: 3px; padding: 4px 6px; font-size: 10px; min-width: 64px; }
+.bis-pill .bp-bank { color: var(--text-2); font-size: 9px; }
+.bis-pill .bp-rate { font-family: ui-monospace, monospace; font-weight: 600; font-size: 12px; }
+
+/* ── Country brief lookup ── */
+.cb-input-row { display: flex; gap: 4px; margin-bottom: 8px; }
+.cb-input-row input { flex: 1; background: #050f1c; color: var(--text-1); border: 1px solid var(--border); padding: 5px 8px; font-family: inherit; font-size: 11px; }
+.cb-input-row button { background: rgba(30,200,120,0.15); color: #1ec878; border: 1px solid rgba(30,200,120,0.4); padding: 5px 12px; font-family: inherit; font-size: 10px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -1509,12 +1899,23 @@ body {
     <span class="header-stat">hotspots: <span id="h-hotspots">--</span></span>
     <span class="header-stat">indicators: <span id="h-indicators">--</span></span>
     <span class="threat-pill elevated" id="threat-pill">elevated</span>
+    <button class="hbtn" id="btn-cmdk" title="Search panels, layers, regions (Cmd/Ctrl + K)"><span class="kbd">⌘K</span> Search</button>
+    <button class="hbtn" id="btn-sources" title="Source filtering &amp; visibility">Sources</button>
+    <button class="hbtn" id="btn-monitors" title="Custom keyword monitors">Monitors</button>
+    <button class="hbtn" id="btn-export" title="Export current data (CSV / JSON)">Export</button>
+    <button class="hbtn" id="btn-snapshot" title="Snapshot history &amp; playback">Snapshots</button>
     <div class="theme-switcher">
       <div class="theme-btn active" data-theme="dark" title="Dark"></div>
       <div class="theme-btn" data-theme="light" title="Light"></div>
       <div class="theme-btn" data-theme="green" title="Green Terminal"></div>
       <div class="theme-btn" data-theme="amber" title="Amber Terminal"></div>
       <div class="theme-btn" data-theme="blue" title="Blue"></div>
+    </div>
+    <div class="unit-switcher">
+      <div class="unit-btn" data-unit="american" title="American ($/en-US)">&#x1F1FA;&#x1F1F8;</div>
+      <div class="unit-btn" data-unit="european" title="European (&euro;/de-DE)">&#x1F1EA;&#x1F1FA;</div>
+      <select id="language-select" class="currency-select" title="Language" style="max-width:90px"></select>
+      <select id="currency-select" class="currency-select" title="Display currency"></select>
     </div>
   </div>
 </header>
@@ -1549,7 +1950,48 @@ body {
       <label class="layer-toggle"><input type="checkbox" id="lyr-spaceports" checked><span class="layer-dot" style="background:#e879f9"></span>Spaceports</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-airforces"><span class="layer-dot" style="background:#22d3ee"></span>Air Forces</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-trends" checked><span class="layer-dot" style="background:#f43f5e"></span>Trends</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-earthquakes"><span class="layer-dot" style="background:#dc2626"></span>Earthquakes</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-wildfires"><span class="layer-dot" style="background:#f97316"></span>Wildfires</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-chokepoints"><span class="layer-dot" style="background:#fbbf24"></span>Chokepoints</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-exchanges"><span class="layer-dot" style="background:#facc15"></span>Markets</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-mining"><span class="layer-dot" style="background:#92400e"></span>Mining</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-diseases"><span class="layer-dot" style="background:#ec4899"></span>Outbreaks</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-protests"><span class="layer-dot" style="background:#d946ef"></span>Protests</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-cyber"><span class="layer-dot" style="background:#8b5cf6"></span>Cyber/Outages</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-cyberthreats"><span class="layer-dot" style="background:#a855f7"></span>Cyber Threats</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-gpsjam"><span class="layer-dot" style="background:#fde047;border:1px dashed #facc15"></span>GPS Jamming</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-airquality"><span class="layer-dot" style="background:#7c3aed"></span>Air Quality</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-displacement"><span class="layer-dot" style="background:#fb7185"></span>Refugees</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-supplychain"><span class="layer-dot" style="background:#f59e0b"></span>Supply Chain</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-volcanoes"><span class="layer-dot" style="background:#ef4444"></span>Volcanoes</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-aidatacenters"><span class="layer-dot" style="background:#22d3ee"></span>AI Datacenters</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-techhqs"><span class="layer-dot" style="background:#06b6d4"></span>Tech HQs</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-startuphubs"><span class="layer-dot" style="background:#0ea5e9"></span>Startup Hubs</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-finance"><span class="layer-dot" style="background:#fde047"></span>Finance Centers</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-commodity"><span class="layer-dot" style="background:#fbbf24"></span>Commodity Hubs</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-traderoutes"><span class="layer-dot" style="background:#fde68a;border:1px dashed #fbbf24"></span>Trade Routes</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-intel"><span class="layer-dot" style="background:#e879f9"></span>Intel Hotspots</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-sanctions"><span class="layer-dot" style="background:#f87171"></span>Sanctions</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-webcams"><span class="layer-dot" style="background:#fcd34d"></span>Live Webcams</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-seaice"><span class="layer-dot" style="background:#bae6fd;border:1px solid #7dd3fc"></span>Sea Ice</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-daynight"><span class="layer-dot" style="background:#1e293b;border:1px solid #94a3b8"></span>Day/Night</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-firmsfires"><span class="layer-dot" style="background:#f97316"></span>FIRMS Fires</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-aptgroups"><span class="layer-dot" style="background:#a855f7"></span>APT Groups</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-climate"><span class="layer-dot" style="background:#fb923c"></span>Climate Anom</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-sirens"><span class="layer-dot" style="background:#ef4444"></span>Sirens (IL)</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-popexpose"><span class="layer-dot" style="background:#fbbf24"></span>Pop Exposure</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-cluster"><span class="layer-dot" style="background:#1ec878"></span>Cluster Mode</label>
     </div>
+  </div>
+  <button class="pin-btn" id="pin-btn" title="Pin map so it stays on screen while scrolling">📌 Pin Map</button>
+  <div class="time-filter-bar" id="time-filter-bar" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);">
+    <span style="color:var(--text-2);margin-right:4px;text-transform:uppercase;letter-spacing:1px;">Window:</span>
+    <button class="time-chip" data-window="1">1h</button>
+    <button class="time-chip" data-window="6">6h</button>
+    <button class="time-chip active" data-window="24">24h</button>
+    <button class="time-chip" data-window="48">48h</button>
+    <button class="time-chip" data-window="168">7d</button>
+    <button class="time-chip" data-window="all">All</button>
   </div>
   <div class="heatmap-indicator" id="heatmap-indicator">
     <span class="heatmap-indicator-label">Relations:</span>
@@ -1593,7 +2035,344 @@ body {
   Updated: <span id="last-updated"></span>
 </div>
 
+<!-- ── Cmd+K Command Palette ─────────────────────── -->
+<div class="cmdk-overlay" id="cmdk-overlay">
+  <div class="cmdk-modal">
+    <input class="cmdk-input" id="cmdk-input" placeholder="Search panels, layers, regions, countries...   (Esc to close)" />
+    <div class="cmdk-results" id="cmdk-results"></div>
+  </div>
+</div>
+
+<!-- ── Sources Filter Modal ─────────────────────── -->
+<div class="sources-overlay" id="sources-overlay">
+  <div class="sources-modal">
+    <div class="sources-header">
+      <span style="font-size:12px;text-transform:uppercase;letter-spacing:1px;">Source Filtering</span>
+      <button class="hbtn" id="sources-close">Close</button>
+    </div>
+    <div class="sources-body">
+      <input type="text" class="sources-search" id="sources-search" placeholder="Filter sources..." />
+      <div id="sources-list"></div>
+    </div>
+    <div class="sources-actions">
+      <button id="sources-all">Enable All</button>
+      <button id="sources-none">Disable All</button>
+      <button id="sources-apply">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Monitors Modal ───────────────────────────── -->
+<div class="sources-overlay" id="monitors-overlay">
+  <div class="sources-modal">
+    <div class="sources-header">
+      <span style="font-size:12px;text-transform:uppercase;letter-spacing:1px;">Custom Monitors</span>
+      <button class="hbtn" id="monitors-close">Close</button>
+    </div>
+    <div class="sources-body">
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:8px;">Highlight panel rows that match keywords. Add monitors below — they persist across sessions.</div>
+      <div class="cb-input-row">
+        <input type="text" id="monitor-keyword" placeholder="Keyword (e.g. Taiwan, Sandworm, ETH)" />
+        <input type="color" id="monitor-color" value="#1ec878" style="width:42px;flex:0 0 42px;padding:0;height:28px;border:1px solid var(--border);background:#050f1c;" />
+        <button id="monitor-add">Add</button>
+      </div>
+      <div id="monitor-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Snapshots Modal ──────────────────────────── -->
+<div class="sources-overlay" id="snapshots-overlay">
+  <div class="sources-modal">
+    <div class="sources-header">
+      <span style="font-size:12px;text-transform:uppercase;letter-spacing:1px;">Snapshot History</span>
+      <button class="hbtn" id="snapshots-close">Close</button>
+    </div>
+    <div class="sources-body">
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:8px;">Snapshots are auto-captured every 5 minutes. Click to view historical state.</div>
+      <div class="sources-actions" style="border:0;padding:0;margin-bottom:8px;">
+        <button id="snap-now">Capture Now</button>
+        <button id="snap-clear">Clear History</button>
+      </div>
+      <div id="snapshots-list"></div>
+    </div>
+  </div>
+</div>
+
 <script>
+// ── Unit System ─────────────────────────────────────────
+let unitSystem = localStorage.getItem('narve_units') || 'american';
+let currencyCode = localStorage.getItem('narve_currency') || 'USD';
+let langCode = localStorage.getItem('narve_language') || 'en';
+
+// ── i18n ────────────────────────────────────────────────
+const LANGUAGES = [
+  ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+  ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+  ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+  ['hi','हिन्दी'],['ar','العربية'],['bn','বাংলা'],['ur','اردو'],
+  ['id','Bahasa Indonesia'],['tr','Türkçe'],['vi','Tiếng Việt'],['th','ไทย'],
+];
+const I18N = {
+  en: {'common.loading':'Loading...','common.refresh':'Refresh','common.search':'Search','common.error':'Error','nav.dashboard':'Dashboard','nav.settings':'Settings'},
+  es: {'common.loading':'Cargando...','common.refresh':'Actualizar','common.search':'Buscar','common.error':'Error','nav.dashboard':'Panel','nav.settings':'Configuraci\u00f3n'},
+  de: {'common.loading':'Wird geladen...','common.refresh':'Aktualisieren','common.search':'Suchen','common.error':'Fehler','nav.dashboard':'\u00dcbersicht','nav.settings':'Einstellungen'},
+  fr: {'common.loading':'Chargement...','common.refresh':'Actualiser','common.search':'Rechercher','common.error':'Erreur','nav.dashboard':'Tableau de bord','nav.settings':'Param\u00e8tres'},
+  it: {'common.loading':'Caricamento...','common.refresh':'Aggiorna','common.search':'Cerca','common.error':'Errore','nav.dashboard':'Pannello','nav.settings':'Impostazioni'},
+  pt: {'common.loading':'Carregando...','common.refresh':'Atualizar','common.search':'Pesquisar','common.error':'Erro','nav.dashboard':'Painel','nav.settings':'Configura\u00e7\u00f5es'},
+  nl: {'common.loading':'Laden...','common.refresh':'Vernieuwen','common.search':'Zoeken','common.error':'Fout','nav.dashboard':'Dashboard','nav.settings':'Instellingen'},
+  pl: {'common.loading':'\u0141adowanie...','common.refresh':'Od\u015bwie\u017c','common.search':'Szukaj','common.error':'B\u0142\u0105d','nav.dashboard':'Panel','nav.settings':'Ustawienia'},
+  ja: {'common.loading':'\u8aad\u307f\u8fbc\u307f\u4e2d...','common.refresh':'\u66f4\u65b0','common.search':'\u691c\u7d22','common.error':'\u30a8\u30e9\u30fc','nav.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','nav.settings':'\u8a2d\u5b9a'},
+  ko: {'common.loading':'\ub85c\ub529 \uc911...','common.refresh':'\uc0c8\ub85c \uace0\uce68','common.search':'\uac80\uc0c9','common.error':'\uc624\ub958','nav.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','nav.settings':'\uc124\uc815'},
+  zh: {'common.loading':'\u52a0\u8f7d\u4e2d...','common.refresh':'\u5237\u65b0','common.search':'\u641c\u7d22','common.error':'\u9519\u8bef','nav.dashboard':'\u4eea\u8868\u677f','nav.settings':'\u8bbe\u7f6e'},
+  ru: {'common.loading':'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...','common.refresh':'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c','common.search':'\u041f\u043e\u0438\u0441\u043a','common.error':'\u041e\u0448\u0438\u0431\u043a\u0430','nav.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','nav.settings':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438'},
+  hi: {'common.loading':'लोड हो रहा है...','common.refresh':'रिफ़्रेश','common.search':'खोजें','common.error':'त्रुटि','nav.dashboard':'डैशबोर्ड','nav.settings':'सेटिंग्स','nav.signOut':'साइन आउट'},
+  ar: {'common.loading':'جارٍ التحميل...','common.refresh':'تحديث','common.search':'بحث','common.error':'خطأ','nav.dashboard':'لوحة المعلومات','nav.settings':'الإعدادات','nav.signOut':'تسجيل الخروج'},
+  bn: {'common.loading':'লোড হচ্ছে...','common.refresh':'রিফ্রেশ','common.search':'অনুসন্ধান','common.error':'ত্রুটি','nav.dashboard':'ড্যাশবোর্ড','nav.settings':'সেটিংস','nav.signOut':'সাইন আউট'},
+  ur: {'common.loading':'لوڈ ہو رہا ہے...','common.refresh':'ریفریش','common.search':'تلاش','common.error':'خرابی','nav.dashboard':'ڈیش بورڈ','nav.settings':'ترتیبات','nav.signOut':'سائن آؤٹ'},
+  id: {'common.loading':'Memuat...','common.refresh':'Segarkan','common.search':'Cari','common.error':'Kesalahan','nav.dashboard':'Dasbor','nav.settings':'Pengaturan','nav.signOut':'Keluar'},
+  tr: {'common.loading':'Yükleniyor...','common.refresh':'Yenile','common.search':'Ara','common.error':'Hata','nav.dashboard':'Gösterge Paneli','nav.settings':'Ayarlar','nav.signOut':'Çıkış Yap'},
+  vi: {'common.loading':'Đang tải...','common.refresh':'Làm mới','common.search':'Tìm kiếm','common.error':'Lỗi','nav.dashboard':'Bảng điều khiển','nav.settings':'Cài đặt','nav.signOut':'Đăng xuất'},
+  th: {'common.loading':'กำลังโหลด...','common.refresh':'รีเฟรช','common.search':'ค้นหา','common.error':'ข้อผิดพลาด','nav.dashboard':'แดชบอร์ด','nav.settings':'ตั้งค่า','nav.signOut':'ออกจากระบบ'},
+};
+function t(key) {
+  const dict = I18N[langCode] || I18N.en;
+  return dict[key] || I18N.en[key] || key;
+}
+function applyTranslations(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el => {
+    const v = t(el.getAttribute('data-i18n'));
+    if (v) el.textContent = v;
+  });
+  scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const v = t(el.getAttribute('data-i18n-placeholder'));
+    if (v) el.placeholder = v;
+  });
+}
+function setLanguage(code) {
+  if (!I18N[code] || code === langCode) return;
+  langCode = code;
+  localStorage.setItem('narve_language', code);
+  document.documentElement.lang = code;
+  applyTranslations();
+  const sel = document.getElementById('language-select');
+  if (sel) sel.value = code;
+}
+function populateLanguagePicker() {
+  const sel = document.getElementById('language-select');
+  if (!sel) return;
+  sel.innerHTML = LANGUAGES.map(([c,n]) => `<option value="${c}"${c===langCode?' selected':''}>${n}</option>`).join('');
+  sel.addEventListener('change', e => setLanguage(e.target.value));
+}
+window.t = t;
+window.setNarveLanguage = setLanguage;
+
+function isMetric() { return unitSystem === 'european'; }
+
+function getLocale() { return isMetric() ? 'de-DE' : 'en-US'; }
+
+// ── Currency / FX ──────────────────────────────────────
+const CURRENCIES = [
+  ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+  ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],['CNY','Chinese Yuan'],
+  ['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],['SEK','Swedish Krona'],['KRW','South Korean Won'],
+  ['SGD','Singapore Dollar'],['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+  ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],['DKK','Danish Krone'],
+  ['PLN','Polish Zloty'],['THB','Thai Baht'],['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],
+  ['CZK','Czech Koruna'],['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+  ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+];
+const FX_FALLBACK = {
+  USD:1.0, EUR:0.92, GBP:0.79, JPY:150, AUD:1.52, CAD:1.36, CHF:0.88, CNY:7.20,
+  HKD:7.83, NZD:1.65, SEK:10.5, KRW:1340, SGD:1.34, NOK:10.6, MXN:17.0,
+  INR:83.0, ZAR:18.5, TRY:32.0, BRL:5.0, DKK:6.85, PLN:3.95, THB:35.0,
+  IDR:15700, HUF:360, CZK:23.0, ILS:3.7, PHP:56.0, MYR:4.7, RON:4.6, ISK:137,
+};
+let _fxRates = null;
+let _fxPromise = null;
+
+function _readFxCache() {
+  try {
+    const raw = localStorage.getItem('narve_fx_rates');
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && p.rates && p.fetched_at) return p;
+  } catch {}
+  return null;
+}
+function _writeFxCache(rates) {
+  try { localStorage.setItem('narve_fx_rates', JSON.stringify({rates, fetched_at: Date.now()})); } catch {}
+}
+async function ensureFxRates() {
+  const cached = _readFxCache();
+  if (cached && Date.now() - cached.fetched_at < 3600000) {
+    _fxRates = cached.rates;
+    return _fxRates;
+  }
+  if (_fxPromise) return _fxPromise;
+  _fxPromise = (async () => {
+    try {
+      const r = await fetch('/api/fx-rates', { credentials: 'same-origin' });
+      if (r.ok) {
+        const data = await r.json();
+        const rates = data.rates || {};
+        rates.USD = 1.0;
+        _fxRates = rates;
+        _writeFxCache(rates);
+        return rates;
+      }
+    } catch {}
+    _fxRates = (cached && cached.rates) || FX_FALLBACK;
+    return _fxRates;
+  })().finally(() => { _fxPromise = null; });
+  return _fxPromise;
+}
+function getRate(code) {
+  if (!code || code === 'USD') return 1;
+  if (_fxRates && _fxRates[code] != null) return _fxRates[code];
+  const cached = _readFxCache();
+  if (cached && cached.rates && cached.rates[code] != null) return cached.rates[code];
+  return FX_FALLBACK[code];
+}
+function convertUSD(usd) {
+  if (usd == null || isNaN(usd)) return null;
+  if (currencyCode === 'USD') return Number(usd);
+  const rate = getRate(currencyCode);
+  if (rate == null) return Number(usd);
+  return Number(usd) * rate;
+}
+function getCurrencySymbol() {
+  // Returns the symbol for the currently-selected currency in the active locale.
+  try {
+    const parts = new Intl.NumberFormat(getLocale(), { style: 'currency', currency: currencyCode }).formatToParts(0);
+    const sym = parts.find(p => p.type === 'currency');
+    if (sym) return sym.value;
+  } catch {}
+  return currencyCode;
+}
+function fmtMoney(usdAmount, opts = {}) {
+  // Format a USD amount in the chosen currency + locale.
+  if (usdAmount == null || isNaN(usdAmount)) return '\u2014';
+  const value = convertUSD(usdAmount);
+  try {
+    return new Intl.NumberFormat(getLocale(), {
+      style: 'currency',
+      currency: currencyCode,
+      maximumFractionDigits: opts.maxFractionDigits ?? 0,
+      minimumFractionDigits: opts.minFractionDigits ?? 0,
+    }).format(value);
+  } catch {
+    return `${currencyCode} ${Number(value).toLocaleString(getLocale())}`;
+  }
+}
+// Parse strings like "$27.4T" / "$530B" / "$18B (est.)" into a USD number,
+// then re-format in the chosen currency. Returns the original string if it
+// doesn't look like a numeric USD amount.
+function reformatUsdString(str) {
+  if (!str || typeof str !== 'string') return str;
+  const m = str.match(/\$\s*([\d,.]+)\s*([TBMK])?(.*)$/);
+  if (!m) return str;
+  const num = parseFloat(m[1].replace(/,/g, ''));
+  if (isNaN(num)) return str;
+  const mult = { T: 1e12, B: 1e9, M: 1e6, K: 1e3 }[m[2]] || 1;
+  const usd = num * mult;
+  const trailing = (m[3] || '').trim();
+  const formatted = fmtMoneyCompact(usd);
+  return trailing ? `${formatted} ${trailing}` : formatted;
+}
+
+function fmtMoneyCompact(usdAmount) {
+  // $1.2M / €1,2M / 1,3M €
+  if (usdAmount == null || isNaN(usdAmount)) return '\u2014';
+  const value = convertUSD(usdAmount);
+  const loc = getLocale();
+  let suffix = '', scaled = value;
+  const abs = Math.abs(value);
+  if (abs >= 1e12) { scaled = value / 1e12; suffix = 'T'; }
+  else if (abs >= 1e9) { scaled = value / 1e9; suffix = 'B'; }
+  else if (abs >= 1e6) { scaled = value / 1e6; suffix = 'M'; }
+  else if (abs >= 1e3) { scaled = value / 1e3; suffix = 'K'; }
+  try {
+    const fmt = new Intl.NumberFormat(loc, {
+      style: 'currency',
+      currency: currencyCode,
+      maximumFractionDigits: suffix ? 1 : 0,
+      minimumFractionDigits: 0,
+    });
+    const numberStr = scaled.toLocaleString(loc, {
+      maximumFractionDigits: suffix ? 1 : 0,
+      minimumFractionDigits: 0,
+    });
+    const parts = fmt.formatToParts(0);
+    const symPart = parts.find(p => p.type === 'currency');
+    const sym = symPart ? symPart.value : currencyCode;
+    const symFirst = parts.findIndex(p => p.type === 'currency') < parts.findIndex(p => p.type === 'integer');
+    return symFirst ? `${sym}${numberStr}${suffix}` : `${numberStr}${suffix} ${sym}`;
+  } catch {
+    return `${currencyCode} ${scaled.toLocaleString(loc)}${suffix}`;
+  }
+}
+
+function localNum(n) {
+  if (n == null) return '';
+  return Number(n).toLocaleString(getLocale());
+}
+
+function localDate(d) {
+  if (!(d instanceof Date)) d = new Date(d);
+  if (isNaN(d)) return '';
+  return d.toLocaleString(getLocale());
+}
+
+function localDateShort(d) {
+  if (!(d instanceof Date)) d = new Date(d);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString(getLocale());
+}
+
+function setUnits(sys) {
+  unitSystem = sys;
+  localStorage.setItem('narve_units', sys);
+  document.querySelectorAll('.unit-btn').forEach(b => b.classList.toggle('active', b.dataset.unit === sys));
+  refreshAllPanels();
+}
+
+function setCurrency(code) {
+  currencyCode = code;
+  localStorage.setItem('narve_currency', code);
+  ensureFxRates().then(() => refreshAllPanels());
+}
+
+function populateCurrencyPicker() {
+  const sel = document.getElementById('currency-select');
+  if (!sel) return;
+  sel.innerHTML = CURRENCIES.map(([c,n]) => `<option value="${c}"${c===currencyCode?' selected':''}>${c}</option>`).join('');
+  sel.title = 'Display currency';
+  sel.addEventListener('change', e => setCurrency(e.target.value));
+}
+
+function refreshAllPanels() {
+  renderPanels();
+  updateHeaderStats();
+  document.getElementById('last-updated').textContent = localDate(new Date());
+}
+
+// Initialize unit toggle buttons on load
+(function() {
+  document.documentElement.lang = langCode;
+  document.querySelectorAll('.unit-btn').forEach(b => b.classList.toggle('active', b.dataset.unit === unitSystem));
+  populateLanguagePicker();
+  populateCurrencyPicker();
+  applyTranslations();
+  ensureFxRates().then(() => { try { refreshAllPanels(); } catch {} });
+})();
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.unit-btn');
+  if (btn) setUnits(btn.dataset.unit);
+});
+
 // ── Theme ────────────────────────────────────────────────
 (function() {
   const saved = localStorage.getItem('wm-theme') || 'dark';
@@ -1624,6 +2403,7 @@ document.addEventListener('click', e => {
 
 // ── Helpers ───────────────────────────────────────────────
 function countryFlag(code) {
+  if (!code || typeof code !== 'string') return '';
   return code.toUpperCase().replace(/./g, c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65));
 }
 
@@ -1648,10 +2428,12 @@ let relationArcs = [];
 // ── Init ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   await loadData();
+  // Fetch trends before initial render so the panel appears in its sorted position
+  try { await loadTrends(); } catch (e) { console.warn('Initial trends load failed:', e); }
   try { initGlobe(); } catch(e) { console.warn('Globe init failed:', e); }
   renderPanels();
   updateHeaderStats();
-  document.getElementById('last-updated').textContent = new Date().toLocaleString();
+  document.getElementById('last-updated').textContent = localDate(new Date());
 
   // Collapsible layer panel
   document.getElementById('layer-toggles-header').addEventListener('click', () => {
@@ -1664,6 +2446,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateLayerCount();
       refreshGlobePoints();
       refreshGlobeArcs();
+      refreshDayNight();
       // Fetch data on first toggle
       if (cb.id === 'lyr-aircraft' && cb.checked && aircraftData.length === 0) loadAircraft();
       if (cb.id === 'lyr-disasters' && cb.checked && globeDisasters.length === 0) loadDisasters();
@@ -1675,7 +2458,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadNews();
   loadPolymarket();
   loadXFeed();
-  loadTrends();
   setInterval(loadNews, 90 * 1000);
   setInterval(loadPolymarket, 60 * 1000);
   setInterval(loadXFeed, 300 * 1000);
@@ -1765,6 +2547,32 @@ const _ptLayers = [
   { id: 'capitals', color: '#fbbf24', radius: 6, sw: 1 },
   { id: 'datacenters', color: '#34d399', radius: 5, sw: 1 },
   { id: 'reactors', color: '#84cc16', radius: 5, sw: 1 },
+  { id: 'earthquakes', color: '#dc2626', radius: 5, sw: 1 },
+  { id: 'wildfires', color: '#f97316', radius: 4, sw: 0 },
+  { id: 'chokepoints', color: '#fbbf24', radius: 7, sw: 2 },
+  { id: 'exchanges', color: '#facc15', radius: 6, sw: 1 },
+  { id: 'banks', color: '#fde047', radius: 5, sw: 1 },
+  { id: 'mining', color: '#92400e', radius: 5, sw: 1 },
+  { id: 'diseases', color: '#ec4899', radius: 6, sw: 2 },
+  { id: 'protests', color: '#d946ef', radius: 5, sw: 1 },
+  { id: 'cyber', color: '#8b5cf6', radius: 5, sw: 1 },
+  { id: 'cyberthreats', color: '#a855f7', radius: 5, sw: 1 },
+  { id: 'airquality', color: '#7c3aed', radius: 5, sw: 1 },
+  { id: 'supplychain', color: '#f59e0b', radius: 6, sw: 2 },
+  { id: 'volcanoes', color: '#ef4444', radius: 6, sw: 2 },
+  { id: 'aidatacenters', color: '#22d3ee', radius: 5, sw: 1 },
+  { id: 'techhqs', color: '#06b6d4', radius: 5, sw: 1 },
+  { id: 'startuphubs', color: '#0ea5e9', radius: 5, sw: 1 },
+  { id: 'finance', color: '#fde047', radius: 6, sw: 2 },
+  { id: 'commodity', color: '#fbbf24', radius: 5, sw: 1 },
+  { id: 'intel', color: '#e879f9', radius: 5, sw: 2 },
+  { id: 'sanctions', color: '#f87171', radius: 7, sw: 2 },
+  { id: 'webcams', color: '#fcd34d', radius: 5, sw: 1 },
+  { id: 'firmsfires', color: '#f97316', radius: 4, sw: 0 },
+  { id: 'aptgroups', color: '#a855f7', radius: 6, sw: 2 },
+  { id: 'climate', color: '#fb923c', radius: 7, sw: 2 },
+  { id: 'sirens', color: '#ef4444', radius: 5, sw: 2 },
+  { id: 'popexpose', color: '#fbbf24', radius: 6, sw: 2 },
 ];
 
 function _pt(lng, lat, name, note, extra) {
@@ -1787,7 +2595,10 @@ function initGlobe() {
           tileSize: 256, maxzoom: 19,
         },
       },
-      layers: [{ id: 'satellite-base', type: 'raster', source: 'satellite' }],
+      layers: [
+        { id: 'bg', type: 'background', paint: { 'background-color': '#0a1929' } },
+        { id: 'satellite-base', type: 'raster', source: 'satellite' },
+      ],
       glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     },
     center: [40, 20],
@@ -1858,6 +2669,14 @@ function initGlobe() {
       ctx.beginPath(); ctx.moveTo(16, 4); ctx.lineTo(16, 28); ctx.stroke();
     }));
 
+    // ─── Day/Night terminator overlay ───
+    globeMap.addSource('src-daynight', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-daynight-fill', type: 'fill', source: 'src-daynight',
+      paint: { 'fill-color': '#0a1929', 'fill-opacity': 0.42 },
+      layout: { visibility: 'none' },
+    });
+
     // ─── Country borders ───
     globeMap.addSource('countries', {
       type: 'geojson',
@@ -1910,14 +2729,29 @@ function initGlobe() {
     globeMap.addLayer({ id: 'lyr-shipping', type: 'line', source: 'src-shipping',
       paint: { 'line-color': '#60a5fa', 'line-width': 2, 'line-opacity': 0.5, 'line-dasharray': [8, 4] } });
 
+    // ─── Trade routes (multi-modal: sea/rail/pipeline/land) ───
+    globeMap.addSource('src-traderoutes', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({ id: 'lyr-traderoutes', type: 'line', source: 'src-traderoutes',
+      paint: {
+        'line-color': ['case',
+          ['==', ['get', 'rtype'], 'sea'], '#fde68a',
+          ['==', ['get', 'rtype'], 'rail'], '#f97316',
+          ['==', ['get', 'rtype'], 'pipeline'], '#fb923c',
+          ['==', ['get', 'rtype'], 'land'], '#fcd34d',
+          '#fde68a'],
+        'line-width': ['interpolate', ['linear'], ['get', 'tonnage_pa'], 0, 1.0, 1500, 4.5],
+        'line-opacity': 0.75,
+      },
+      layout: { 'line-cap': 'round', 'line-join': 'round' } });
+
     // ─── Movement trend projection arrows ───
     globeMap.addSource('src-trend-arrows', { type: 'geojson', data: _emptyGJ() });
     globeMap.addLayer({ id: 'lyr-trend-arrows', type: 'line', source: 'src-trend-arrows',
       paint: { 'line-color': '#f43f5e', 'line-width': 2.5, 'line-opacity': 0.8, 'line-dasharray': [3, 2] } });
 
     // ─── New point layers for new data ───
-    ['industrial', 'ecozones', 'oilfields', 'spaceports', 'airforces'].forEach(id => {
-      const colors = { industrial: '#f472b6', ecozones: '#c084fc', oilfields: '#d97706', spaceports: '#e879f9', airforces: '#22d3ee' };
+    ['industrial', 'ecozones', 'spaceports', 'airforces'].forEach(id => {
+      const colors = { industrial: '#f472b6', ecozones: '#c084fc', spaceports: '#e879f9', airforces: '#22d3ee' };
       globeMap.addSource('src-' + id, { type: 'geojson', data: _emptyGJ() });
       globeMap.addLayer({
         id: 'lyr-pt-' + id, type: 'circle', source: 'src-' + id,
@@ -1929,6 +2763,46 @@ function initGlobe() {
       });
     });
 
+    // ─── Oil/gas fields & mineral deposits as area polygons ───
+    globeMap.addSource('src-oilfields', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-fill-oilfields', type: 'fill', source: 'src-oilfields',
+      paint: {
+        'fill-color': ['case',
+          ['==', ['get', 'resType'], 'oil'], '#d97706',
+          ['==', ['get', 'resType'], 'oil/gas'], '#ea580c',
+          ['==', ['get', 'resType'], 'gas'], '#3b82f6',
+          ['==', ['get', 'resType'], 'rare_earth'], '#a855f7',
+          ['==', ['get', 'resType'], 'lithium'], '#06b6d4',
+          ['==', ['get', 'resType'], 'cobalt/copper'], '#10b981',
+          ['==', ['get', 'resType'], 'platinum_group'], '#e5e7eb',
+          '#d97706'],
+        'fill-opacity': ['interpolate', ['linear'], ['zoom'], 1, 0.25, 5, 0.4, 10, 0.5],
+      },
+    });
+    globeMap.addLayer({
+      id: 'lyr-outline-oilfields', type: 'line', source: 'src-oilfields',
+      paint: {
+        'line-color': ['case',
+          ['==', ['get', 'resType'], 'oil'], '#fbbf24',
+          ['==', ['get', 'resType'], 'oil/gas'], '#fb923c',
+          ['==', ['get', 'resType'], 'gas'], '#60a5fa',
+          ['==', ['get', 'resType'], 'rare_earth'], '#c084fc',
+          ['==', ['get', 'resType'], 'lithium'], '#22d3ee',
+          ['==', ['get', 'resType'], 'cobalt/copper'], '#34d399',
+          ['==', ['get', 'resType'], 'platinum_group'], '#f3f4f6',
+          '#fbbf24'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 0.5, 5, 1, 10, 1.5],
+        'line-opacity': 0.7,
+      },
+    });
+    // Invisible center-point for hover/popup on deposits
+    globeMap.addSource('src-oilfield-pts', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-pt-oilfields', type: 'circle', source: 'src-oilfield-pts',
+      paint: { 'circle-radius': 8, 'circle-color': '#d97706', 'circle-opacity': 0.01 },
+    });
+
     // ─── Line sources + layers ───
     ['conflict-arcs', 'cables', 'pipelines', 'relation-arcs', 'score-arcs'].forEach(id => {
       globeMap.addSource('src-' + id, { type: 'geojson', data: _emptyGJ() });
@@ -1937,18 +2811,98 @@ function initGlobe() {
       paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.7 },
       layout: { 'line-cap': 'round' } });
     globeMap.addLayer({ id: 'lyr-cables', type: 'line', source: 'src-cables',
-      paint: { 'line-color': '#38bdf8', 'line-width': 1.5, 'line-opacity': 0.6, 'line-dasharray': [6, 3] } });
+      paint: {
+        'line-color': '#38bdf8',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1.2, 4, 2, 8, 3],
+        'line-opacity': 0.7,
+      },
+      layout: { 'line-cap': 'round', 'line-join': 'round' } });
+    // Cable glow layer
+    globeMap.addLayer({ id: 'lyr-cables-glow', type: 'line', source: 'src-cables',
+      paint: {
+        'line-color': '#38bdf8',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 4, 4, 6, 8, 10],
+        'line-opacity': 0.12, 'line-blur': 4,
+      },
+      layout: { 'line-cap': 'round', 'line-join': 'round' } }, 'lyr-cables');
     globeMap.addLayer({ id: 'lyr-pipelines', type: 'line', source: 'src-pipelines',
-      paint: { 'line-color': '#fb923c', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [5, 3] } });
+      paint: {
+        'line-color': ['case', ['==', ['get', 'pipeType'], 'gas'], '#60a5fa', '#fb923c'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1.5, 4, 2.5, 8, 4],
+        'line-opacity': 0.75,
+        'line-dasharray': [6, 3],
+      },
+      layout: { 'line-cap': 'round', 'line-join': 'round' } });
     globeMap.addLayer({ id: 'lyr-relation-arcs', type: 'line', source: 'src-relation-arcs',
       paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.8 } });
     globeMap.addLayer({ id: 'lyr-score-arcs', type: 'line', source: 'src-score-arcs',
       paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.6 } });
 
+    // ─── GPS jamming coverage zones (filled polygons) ───
+    globeMap.addSource('src-gpsjam', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-fill-gpsjam', type: 'fill', source: 'src-gpsjam',
+      paint: {
+        'fill-color': ['case',
+          ['==', ['get', 'intensity'], 'EXTREME'], '#facc15',
+          ['==', ['get', 'intensity'], 'HIGH'], '#fde047',
+          '#fef08a'],
+        'fill-opacity': ['interpolate', ['linear'], ['zoom'], 1, 0.18, 5, 0.30, 10, 0.40],
+      },
+    });
+    globeMap.addLayer({
+      id: 'lyr-outline-gpsjam', type: 'line', source: 'src-gpsjam',
+      paint: {
+        'line-color': '#facc15',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 1, 5, 2, 10, 3],
+        'line-opacity': 0.85,
+        'line-dasharray': [3, 2],
+      },
+    });
+    // Hover anchor point
+    globeMap.addSource('src-gpsjam-pts', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-pt-gpsjam', type: 'circle', source: 'src-gpsjam-pts',
+      paint: { 'circle-radius': 6, 'circle-color': '#facc15', 'circle-opacity': 0.85,
+               'circle-stroke-color': '#fff', 'circle-stroke-width': 1 },
+    });
+
+    // ─── Displacement / refugee flow arcs ───
+    globeMap.addSource('src-displacement', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-displacement', type: 'line', source: 'src-displacement',
+      paint: {
+        'line-color': '#fb7185',
+        'line-width': ['interpolate', ['linear'], ['get', 'pop_log'], 4, 1, 7, 5],
+        'line-opacity': 0.7,
+      },
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+    });
+    // Origin/destination markers
+    globeMap.addSource('src-displacement-pts', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-pt-displacement', type: 'circle', source: 'src-displacement-pts',
+      paint: { 'circle-radius': 5, 'circle-color': '#fb7185', 'circle-stroke-color': '#fff',
+               'circle-stroke-width': 1, 'circle-opacity': 0.9 },
+    });
+
+    // ─── Sea ice extent rings ───
+    globeMap.addSource('src-seaice', { type: 'geojson', data: _emptyGJ() });
+    globeMap.addLayer({
+      id: 'lyr-fill-seaice', type: 'fill', source: 'src-seaice',
+      paint: { 'fill-color': '#bae6fd', 'fill-opacity': 0.18 },
+    });
+    globeMap.addLayer({
+      id: 'lyr-outline-seaice', type: 'line', source: 'src-seaice',
+      paint: { 'line-color': '#7dd3fc', 'line-width': 1.5, 'line-opacity': 0.7,
+               'line-dasharray': [4, 2] },
+    });
+
     // ─── Country click (skip if a point/symbol layer is nearby) ───
     const _pointLayerIds = [
       ..._ptLayers.map(c => 'lyr-pt-' + c.id),
-      'lyr-pt-industrial', 'lyr-pt-ecozones', 'lyr-pt-oilfields', 'lyr-pt-spaceports', 'lyr-pt-airforces'
+      'lyr-pt-industrial', 'lyr-pt-ecozones', 'lyr-pt-oilfields', 'lyr-pt-spaceports', 'lyr-pt-airforces',
+      'lyr-pt-gpsjam', 'lyr-pt-displacement'
     ];
     const _HIT_TOL = 20; // px tolerance for point hit detection
     function _hitBox(pt) {
@@ -1986,6 +2940,8 @@ function initGlobe() {
       { layerId: 'lyr-pt-oilfields', color: '#d97706' },
       { layerId: 'lyr-pt-spaceports', color: '#e879f9' },
       { layerId: 'lyr-pt-airforces', color: '#22d3ee' },
+      { layerId: 'lyr-pt-gpsjam', color: '#facc15' },
+      { layerId: 'lyr-pt-displacement', color: '#fb7185' },
     ];
     allPopupLayers.forEach(({ layerId, color }) => {
       globeMap.on('mouseenter', layerId, e => {
@@ -1993,6 +2949,33 @@ function initGlobe() {
         const f = e.features[0];
         _globePopup.setLngLat(e.lngLat)
           .setHTML(`<b style="color:${color}">${f.properties.name || ''}</b><br><span style="color:#999">${f.properties.note || ''}</span>`)
+          .addTo(globeMap);
+      });
+      globeMap.on('mouseleave', layerId, () => {
+        globeMap.getCanvas().style.cursor = '';
+        _globePopup.remove();
+      });
+    });
+
+    // ─── Line hover popups for cables & pipelines ───
+    const lineHoverLayers = [
+      { layerId: 'lyr-cables', color: '#38bdf8', label: 'Submarine Cable' },
+      { layerId: 'lyr-pipelines', color: '#fb923c', label: 'Pipeline' },
+      { layerId: 'lyr-displacement', color: '#fb7185', label: 'Refugee Flow' },
+    ];
+    lineHoverLayers.forEach(({ layerId, color, label }) => {
+      globeMap.on('mousemove', layerId, e => {
+        globeMap.getCanvas().style.cursor = 'pointer';
+        const f = e.features[0];
+        const p = f.properties || {};
+        const extras = [];
+        if (p.capacity) extras.push(p.capacity);
+        if (p.length_km) extras.push(p.length_km + ' km');
+        if (p.pipeType) extras.push(p.pipeType.toUpperCase());
+        const sub = extras.join(' \u00b7 ');
+        const detail = p.detail || '';
+        _globePopup.setLngLat(e.lngLat)
+          .setHTML(`<b style="color:${color}">${p.name || label}</b>${sub ? '<br><span style="color:#bbb">' + sub + '</span>' : ''}${detail ? '<br><span style="color:#888;font-size:11px">' + detail + '</span>' : ''}`)
           .addTo(globeMap);
       });
       globeMap.on('mouseleave', layerId, () => {
@@ -2010,6 +2993,8 @@ function initGlobe() {
     _ptColorMap['lyr-pt-oilfields'] = '#d97706';
     _ptColorMap['lyr-pt-spaceports'] = '#e879f9';
     _ptColorMap['lyr-pt-airforces'] = '#22d3ee';
+    _ptColorMap['lyr-pt-gpsjam'] = '#facc15';
+    _ptColorMap['lyr-pt-displacement'] = '#fb7185';
     globeMap.on('click', e => {
       const hits = globeMap.queryRenderedFeatures(_hitBox(e.point), { layers: _pointLayerIds });
       if (!hits.length) return;
@@ -2048,14 +3033,28 @@ function initGlobe() {
     refreshGlobeArcs();
   }
   globeMap.on('load', _onGlobeLoad);
-  // Fallback: poll until style is loaded, then init
-  const _fallbackInterval = setInterval(() => {
-    if (_globeReady) { clearInterval(_fallbackInterval); return; }
+  // Expose for debugging / preview verification
+  window.globeMap = globeMap;
+  // styledata fires once the style spec has been parsed, even if raster tiles
+  // never finish loading (e.g. sandbox/offline). This guarantees we can call
+  // addSource/addLayer without waiting for the satellite tiles.
+  const _styleDataHandler = () => {
+    if (_globeReady) return;
     try {
-      if (globeMap.isStyleLoaded()) { clearInterval(_fallbackInterval); _onGlobeLoad(); }
-      else { globeMap.resize(); }
+      if (globeMap.style && globeMap.style._loaded) {
+        globeMap.off('styledata', _styleDataHandler);
+        _onGlobeLoad();
+      }
     } catch(e) {}
-  }, 2000);
+  };
+  globeMap.on('styledata', _styleDataHandler);
+  // Final safety net: hard timeout in case neither load nor styledata fires
+  setTimeout(() => {
+    if (_globeReady) return;
+    try {
+      if (globeMap.style && globeMap.style._loaded) _onGlobeLoad();
+    } catch(e) { console.warn('globe init fallback failed', e); }
+  }, 4000);
 }
 
 function refreshGlobePoints() {
@@ -2112,6 +3111,161 @@ function refreshGlobePoints() {
   if (lyr('lyr-satellites')) {
     globeSatellites.forEach(s => feats.satellites.push(_pt(s.lng, s.lat, s.name, s.group.toUpperCase() + ' · NORAD ' + s.norad_id + ' · Alt ' + s.alt_km + 'km')));
   }
+  if (lyr('lyr-earthquakes')) {
+    (data.earthquakes || []).forEach(q => {
+      const note = 'M' + q.mag.toFixed(1) + ' · depth ' + q.depth_km.toFixed(0) + 'km' + (q.tsunami ? ' · TSUNAMI WARNING' : '') + (q.alert ? ' · ' + q.alert.toUpperCase() : '');
+      feats.earthquakes.push(_pt(q.lng, q.lat, q.place || ('M' + q.mag), note, { mag: q.mag }));
+    });
+  }
+  if (lyr('lyr-wildfires')) {
+    (data.wildfires || []).forEach(f => {
+      const note = 'FRP ' + f.frp.toFixed(0) + ' MW · ' + (f.daynight === 'D' ? 'Day' : 'Night') + ' · ' + f.date;
+      feats.wildfires.push(_pt(f.lng, f.lat, 'Active fire', note, { frp: f.frp }));
+    });
+  }
+  if (lyr('lyr-chokepoints')) {
+    (data.chokepoints || []).forEach(c => {
+      const note = c.type + ' · ' + c.country + ' · ' + c.throughput + ' · risk: ' + c.risk + ' · ' + c.detail;
+      feats.chokepoints.push(_pt(c.lng, c.lat, c.name, note));
+    });
+  }
+  if (lyr('lyr-exchanges')) {
+    (data.stock_exchanges || []).forEach(e => {
+      const note = e.city + ', ' + e.country + ' · mcap ' + e.mcap + ' · ' + e.detail;
+      feats.exchanges.push(_pt(e.lng, e.lat, e.name, note));
+    });
+    (data.central_banks || []).forEach(b => {
+      const note = b.city + ', ' + b.country + ' · rate ' + b.rate + ' · ' + b.currency + ' · ' + b.detail;
+      feats.banks.push(_pt(b.lng, b.lat, b.name, note));
+    });
+  }
+  if (lyr('lyr-mining')) {
+    (data.mining_sites || []).forEach(m => {
+      const note = m.mineral + ' · ' + m.operator + ' · ' + m.country + ' · ' + m.detail;
+      feats.mining.push(_pt(m.lng, m.lat, m.name, note));
+    });
+  }
+  if (lyr('lyr-diseases')) {
+    (data.diseases || []).forEach(d => {
+      const note = d.disease + ' · ' + d.country + ' · severity: ' + d.severity + ' · ' + d.cases + ' · ' + d.detail;
+      feats.diseases.push(_pt(d.lng, d.lat, d.name, note));
+    });
+  }
+  if (lyr('lyr-protests')) {
+    (data.protests || []).forEach(p => {
+      const note = p.country + ' · ' + p.size + ' · ' + p.duration + ' · ' + p.detail;
+      feats.protests.push(_pt(p.lng, p.lat, p.name, note));
+    });
+  }
+  if (lyr('lyr-cyber')) {
+    (data.internet_outages || []).forEach(o => {
+      const note = o.type + ' · ' + o.country + ' · severity: ' + o.severity + ' · ' + o.detail;
+      feats.cyber.push(_pt(o.lng, o.lat, o.name, note));
+    });
+  }
+  if (lyr('lyr-cyberthreats')) {
+    (data.cyber_advisories || []).forEach(c => {
+      const note = c.severity + ' · ' + c.actor + ' · ' + (c.id || '') + ' · ' + (c.detail || '');
+      feats.cyberthreats.push(_pt(c.lng, c.lat, c.title, note));
+    });
+  }
+  if (lyr('lyr-airquality')) {
+    (data.air_quality || []).forEach(a => {
+      const note = 'PM2.5 ' + a.pm25 + ' µg/m³ · ' + a.aqi_label + (a.detail ? ' · ' + a.detail : '');
+      feats.airquality.push(_pt(a.lng, a.lat, a.name, note));
+    });
+  }
+  if (lyr('lyr-supplychain')) {
+    (data.supply_chain || []).forEach(s => {
+      const note = s.severity + ' · ' + s.type + ' · ' + s.country + ' · ' + s.detail;
+      feats.supplychain.push(_pt(s.lng, s.lat, s.name, note));
+    });
+  }
+  if (lyr('lyr-volcanoes')) {
+    (data.volcanoes || []).forEach(v => {
+      const note = v.status + ' · ' + (v.vtype || '') + ' · ' + v.country + ' · ' + (v.elev_m || '?') + 'm · ' + v.detail;
+      feats.volcanoes.push(_pt(v.lng, v.lat, v.name, note));
+    });
+  }
+  if (lyr('lyr-aidatacenters')) {
+    (data.ai_datacenters || []).forEach(d => {
+      const note = d.operator + ' · ' + d.chip + ' · ' + (d.chip_count || 0).toLocaleString() + ' chips · ' + (d.power_mw || 0) + ' MW · ' + d.status;
+      feats.aidatacenters.push(_pt(d.lng, d.lat, d.name, note));
+    });
+  }
+  if (lyr('lyr-techhqs')) {
+    (data.tech_hqs || []).forEach(h => {
+      const note = h.category + ' · $' + (h.mcap || 0) + 'B mcap · ' + h.country;
+      feats.techhqs.push(_pt(h.lng, h.lat, h.name, note));
+    });
+  }
+  if (lyr('lyr-startuphubs')) {
+    (data.startup_hubs || []).forEach(h => {
+      const note = '#' + (h.rank || '?') + ' globally · ' + (h.unicorns || 0) + ' unicorns · ' + h.country;
+      feats.startuphubs.push(_pt(h.lng, h.lat, h.name, note));
+    });
+  }
+  if (lyr('lyr-finance')) {
+    (data.financial_centers || []).forEach(f => {
+      const note = (f.ftype || '').toUpperCase() + ' · $' + (f.aum || 0) + 'T AUM · ' + f.country;
+      feats.finance.push(_pt(f.lng, f.lat, f.name, note));
+    });
+  }
+  if (lyr('lyr-commodity')) {
+    (data.commodity_hubs || []).forEach(c => {
+      const note = c.commodity + ' · ' + c.country + ' · ' + c.detail;
+      feats.commodity.push(_pt(c.lng, c.lat, c.name, note));
+    });
+  }
+  if (lyr('lyr-intel')) {
+    (data.intel_hotspots || []).forEach(i => {
+      const note = (i.category || '').toUpperCase() + ' · ' + i.country;
+      feats.intel.push(_pt(i.lng, i.lat, i.name, note));
+    });
+  }
+  if (lyr('lyr-sanctions')) {
+    (data.sanctions_pressure || []).forEach(s => {
+      const note = 'Score ' + s.score + '/100 · Programs: ' + (s.programs || []).join(', ');
+      feats.sanctions.push(_pt(s.lng, s.lat, s.country, note));
+    });
+  }
+  if (lyr('lyr-webcams')) {
+    (data.live_webcams || []).forEach(w => {
+      if (w.lat === 0 && w.lng === 0) return;
+      const note = (w.category || '').toUpperCase() + ' · ' + w.country + ' · click for live feed';
+      feats.webcams.push(_pt(w.lng, w.lat, w.name, note, { url: w.url }));
+    });
+  }
+  if (lyr('lyr-firmsfires')) {
+    (data.firms_fires || []).forEach(f => {
+      const note = 'FRP ' + (f.frp || '?') + ' MW · ' + (f.confidence || '') + ' confidence · ' + (f.satellite || 'VIIRS') + ' · ' + (f.acq_date || '');
+      feats.firmsfires.push(_pt(f.lng, f.lat, f.region || 'NASA FIRMS', note, { frp: f.frp }));
+    });
+  }
+  if (lyr('lyr-aptgroups')) {
+    (data.apt_groups || []).forEach(a => {
+      const note = (a.alias || a.name) + ' · ' + (a.country || '') + ' · ' + (a.targets || '').split(',').slice(0,2).join(',') + ' · sophistication: ' + (a.sophistication || '?');
+      feats.aptgroups.push(_pt(a.lng, a.lat, a.name, note));
+    });
+  }
+  if (lyr('lyr-climate')) {
+    (data.climate_anomalies || []).forEach(c => {
+      const note = (c.severity || '').toUpperCase() + ' · Δ' + (c.temp_anom_c || 0) + '°C · precip ' + (c.precip_anom_pct >= 0 ? '+' : '') + (c.precip_anom_pct || 0) + '% · ' + (c.detail || '');
+      feats.climate.push(_pt(c.lng, c.lat, c.region || 'Climate Anomaly', note));
+    });
+  }
+  if (lyr('lyr-sirens')) {
+    (data.israel_sirens || []).forEach(s => {
+      const note = (s.threat || 'Air raid') + ' · origin: ' + (s.origin || 'unknown') + ' · ' + (s.time || '');
+      feats.sirens.push(_pt(s.lng, s.lat, s.location || 'Israel Siren', note));
+    });
+  }
+  if (lyr('lyr-popexpose')) {
+    (data.population_exposure || []).forEach(p => {
+      const note = 'Pop at risk: ' + (p.exposed_m || 0) + 'M · risk: ' + (p.risk_type || '') + ' · ' + (p.detail || '');
+      feats.popexpose.push(_pt(p.lng, p.lat, p.region || 'At-risk pop', note));
+    });
+  }
 
   // Update each MapLibre source
   _ptLayers.forEach(cfg => {
@@ -2132,11 +3286,22 @@ function refreshGlobePoints() {
   }
   globeMap.getSource('src-ecozones')?.setData({ type: 'FeatureCollection', features: ezFeats });
 
-  const oilFeats = [];
+  const oilPolyFeats = [];
+  const oilPtFeats = [];
   if (lyr('lyr-oilfields')) {
-    (data.oil_rare_earth || []).forEach(o => oilFeats.push(_pt(o.lng, o.lat, o.name, o.type.toUpperCase() + (o.reserves ? ' · ' + o.reserves : '') + ' · ' + o.detail)));
+    (data.oil_rare_earth || []).forEach(o => {
+      const note = o.type.toUpperCase() + (o.reserves ? ' \u00b7 ' + o.reserves : '') + ' \u00b7 ' + o.detail;
+      // Area polygon
+      const r = o.radius_km || 30;
+      const poly = _circlePolygon(o.lng, o.lat, r);
+      poly.properties = { name: o.name, note: note, resType: o.type };
+      oilPolyFeats.push(poly);
+      // Center point for hover
+      oilPtFeats.push(_pt(o.lng, o.lat, o.name, note));
+    });
   }
-  globeMap.getSource('src-oilfields')?.setData({ type: 'FeatureCollection', features: oilFeats });
+  globeMap.getSource('src-oilfields')?.setData({ type: 'FeatureCollection', features: oilPolyFeats });
+  globeMap.getSource('src-oilfield-pts')?.setData({ type: 'FeatureCollection', features: oilPtFeats });
 
   // Spaceports
   const spFeats = [];
@@ -2173,6 +3338,83 @@ function _line(startLng, startLat, endLng, endLat, props) {
   return { type: 'Feature', geometry: { type: 'LineString', coordinates: [[startLng, startLat], [endLng, endLat]] }, properties: props };
 }
 
+function _multiline(coords, props) {
+  return { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: props };
+}
+
+function _circlePolygon(lng, lat, radiusKm, steps) {
+  steps = steps || 36;
+  const coords = [];
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i / steps) * 2 * Math.PI;
+    const dlat = (radiusKm / 111.32) * Math.cos(angle);
+    const dlng = (radiusKm / (111.32 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle);
+    coords.push([lng + dlng, lat + dlat]);
+  }
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] }, properties: {} };
+}
+
+// ─── Day/Night terminator computation ───
+function _solarPosition(date) {
+  // Returns subsolar point [lng, lat] for given Date in UTC
+  const rad = Math.PI / 180;
+  const jd = date.getTime() / 86400000 + 2440587.5;
+  const n = jd - 2451545.0;
+  const L = (280.460 + 0.9856474 * n) % 360;
+  const g = ((357.528 + 0.9856003 * n) % 360) * rad;
+  const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const epsilon = (23.439 - 0.0000004 * n) * rad;
+  const ra = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda)) / rad;
+  const dec = Math.asin(Math.sin(epsilon) * Math.sin(lambda)) / rad;
+  // Greenwich Mean Sidereal Time
+  const gmst = (18.697374558 + 24.06570982441908 * n) % 24;
+  const lng = ((ra - gmst * 15 + 540) % 360) - 180;
+  return [lng, dec];
+}
+
+function _terminatorPolygon(date) {
+  // Build a polygon covering the night-side of the globe.
+  const [sunLng, sunLat] = _solarPosition(date || new Date());
+  const rad = Math.PI / 180;
+  const phi0 = sunLat * rad;
+  const lam0 = sunLng * rad;
+  const ring = [];
+  // Compute terminator latitude as longitude varies from -180 to 180
+  for (let i = 0; i <= 720; i++) {
+    const lon = -180 + (360 * i) / 720;
+    const lam = lon * rad;
+    // Latitude where solar elevation = 0:
+    // tan(lat) = -cos(lam - lam0) / tan(phi0)
+    let lat;
+    if (Math.abs(phi0) < 1e-6) {
+      lat = 0;
+    } else {
+      lat = Math.atan(-Math.cos(lam - lam0) / Math.tan(phi0)) / rad;
+    }
+    ring.push([lon, lat]);
+  }
+  // Close the polygon along the night-side. If sun is in the north, night is in the south.
+  const nightPole = phi0 > 0 ? -90 : 90;
+  ring.push([180, nightPole]);
+  ring.push([-180, nightPole]);
+  ring.push(ring[0]);
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: {} };
+}
+
+function refreshDayNight() {
+  if (!_globeReady) return;
+  const visible = !!document.getElementById('lyr-daynight')?.checked;
+  if (globeMap.getLayer('lyr-daynight-fill')) {
+    globeMap.setLayoutProperty('lyr-daynight-fill', 'visibility', visible ? 'visible' : 'none');
+  }
+  if (visible) {
+    const src = globeMap.getSource('src-daynight');
+    if (src) src.setData({ type: 'FeatureCollection', features: [_terminatorPolygon(new Date())] });
+  }
+}
+// Update terminator every minute
+setInterval(() => { refreshDayNight(); }, 60 * 1000);
+
 function refreshGlobeArcs() {
   if (!_globeReady) return;
   const lyr = id => document.getElementById(id)?.checked;
@@ -2187,20 +3429,29 @@ function refreshGlobeArcs() {
   }
   globeMap.getSource('src-conflict-arcs')?.setData({ type: 'FeatureCollection', features: conflictFeats });
 
-  // Cables
+  // Cables (multi-point waypoint routes)
   const cableFeats = [];
   if (lyr('lyr-cables')) {
     (data.undersea_cables || []).forEach(c => {
-      cableFeats.push(_line(c.landing_a.lng, c.landing_a.lat, c.landing_b.lng, c.landing_b.lat, { name: c.name }));
+      if (c.waypoints && c.waypoints.length >= 2) {
+        cableFeats.push(_multiline(c.waypoints, { name: c.name, capacity: c.capacity || '', length_km: c.length_km || '' }));
+      } else if (c.landing_a && c.landing_b) {
+        cableFeats.push(_line(c.landing_a.lng, c.landing_a.lat, c.landing_b.lng, c.landing_b.lat, { name: c.name }));
+      }
     });
   }
   globeMap.getSource('src-cables')?.setData({ type: 'FeatureCollection', features: cableFeats });
 
-  // Pipelines
+  // Pipelines (multi-point waypoint routes, colored by type)
   const pipeFeats = [];
   if (lyr('lyr-pipelines')) {
     (data.pipelines || []).forEach(p => {
-      pipeFeats.push(_line(p.from_loc.lng, p.from_loc.lat, p.to_loc.lng, p.to_loc.lat, { name: p.name }));
+      const props = { name: p.name, pipeType: p.type || 'oil', capacity: p.capacity || '', detail: p.detail || '' };
+      if (p.waypoints && p.waypoints.length >= 2) {
+        pipeFeats.push(_multiline(p.waypoints, props));
+      } else if (p.from_loc && p.to_loc) {
+        pipeFeats.push(_line(p.from_loc.lng, p.from_loc.lat, p.to_loc.lng, p.to_loc.lat, props));
+      }
     });
   }
   globeMap.getSource('src-pipelines')?.setData({ type: 'FeatureCollection', features: pipeFeats });
@@ -2213,6 +3464,113 @@ function refreshGlobeArcs() {
     });
   }
   globeMap.getSource('src-shipping')?.setData({ type: 'FeatureCollection', features: shipFeats });
+
+  // Trade routes (multi-waypoint corridors)
+  const tradeFeats = [];
+  if (lyr('lyr-traderoutes')) {
+    (data.trade_routes || []).forEach(r => {
+      if (r.waypoints && r.waypoints.length >= 2) {
+        tradeFeats.push(_multiline(r.waypoints, {
+          name: r.name,
+          rtype: r.rtype || 'sea',
+          tonnage_pa: r.tonnage_pa || 0,
+          note: (r.rtype || 'sea').toUpperCase() + ' · ' + (r.tonnage_pa || 0) + ' Mt/yr',
+        }));
+      }
+    });
+  }
+  globeMap.getSource('src-traderoutes')?.setData({ type: 'FeatureCollection', features: tradeFeats });
+
+  // GPS jamming zones (filled circles)
+  const jamFeats = [];
+  const jamPtFeats = [];
+  if (lyr('lyr-gpsjam')) {
+    (data.gps_jamming || []).forEach(z => {
+      const poly = _circlePolygon(z.lng, z.lat, z.radius_km || 200);
+      poly.properties = { name: z.name, intensity: z.intensity, actor: z.actor, detail: z.detail,
+                          note: z.intensity + ' · ' + z.actor + ' · ' + z.detail };
+      jamFeats.push(poly);
+      jamPtFeats.push(_pt(z.lng, z.lat, z.name, z.intensity + ' · ' + z.actor + ' · ' + z.detail));
+    });
+  }
+  globeMap.getSource('src-gpsjam')?.setData({ type: 'FeatureCollection', features: jamFeats });
+  globeMap.getSource('src-gpsjam-pts')?.setData({ type: 'FeatureCollection', features: jamPtFeats });
+
+  // Displacement / refugee arcs
+  const dispFeats = [];
+  const dispPtFeats = [];
+  if (lyr('lyr-displacement')) {
+    (data.displacement_flows || []).forEach(f => {
+      const popLog = Math.log10(Math.max(1, f.population || 1));
+      const coords = _greatCircle(f.from_lng, f.from_lat, f.to_lng, f.to_lat, 32);
+      dispFeats.push(_multiline(coords, {
+        name: f.name,
+        population: f.population,
+        pop_log: popLog,
+        note: (f.population || 0).toLocaleString() + ' · since ' + f.year_started + ' · ' + f.detail,
+      }));
+      dispPtFeats.push(_pt(f.from_lng, f.from_lat, f.name + ' (origin)',
+        (f.population || 0).toLocaleString() + ' displaced · ' + f.detail));
+    });
+  }
+  globeMap.getSource('src-displacement')?.setData({ type: 'FeatureCollection', features: dispFeats });
+  globeMap.getSource('src-displacement-pts')?.setData({ type: 'FeatureCollection', features: dispPtFeats });
+
+  // Sea ice extent rings
+  const seaIceFeats = [];
+  if (lyr('lyr-seaice')) {
+    const arctic = data.sea_ice_arctic;
+    const antarctic = data.sea_ice_antarctic;
+    if (arctic) {
+      seaIceFeats.push(_latitudeRing(arctic.edge_lat, true, {
+        name: arctic.name,
+        note: arctic.extent_million_km2 + ' M km² · ' + arctic.anomaly_pct + '% anomaly · ' + arctic.detail,
+      }));
+    }
+    if (antarctic) {
+      seaIceFeats.push(_latitudeRing(antarctic.edge_lat, false, {
+        name: antarctic.name,
+        note: antarctic.extent_million_km2 + ' M km² · ' + antarctic.anomaly_pct + '% anomaly · ' + antarctic.detail,
+      }));
+    }
+  }
+  globeMap.getSource('src-seaice')?.setData({ type: 'FeatureCollection', features: seaIceFeats });
+}
+
+// Great-circle interpolation between two lng/lat points (returns array of [lng,lat])
+function _greatCircle(lng1, lat1, lng2, lat2, steps) {
+  steps = steps || 32;
+  const d2r = Math.PI / 180, r2d = 180 / Math.PI;
+  const φ1 = lat1 * d2r, φ2 = lat2 * d2r;
+  const λ1 = lng1 * d2r, λ2 = lng2 * d2r;
+  const dφ = φ2 - φ1, dλ = λ2 - λ1;
+  const a = Math.sin(dφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ/2)**2;
+  const δ = 2 * Math.asin(Math.sqrt(a));
+  const out = [];
+  if (δ === 0) return [[lng1, lat1], [lng2, lat2]];
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    const A = Math.sin((1 - f) * δ) / Math.sin(δ);
+    const B = Math.sin(f * δ) / Math.sin(δ);
+    const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
+    const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
+    const z = A * Math.sin(φ1) + B * Math.sin(φ2);
+    const φ = Math.atan2(z, Math.sqrt(x*x + y*y));
+    const λ = Math.atan2(y, x);
+    out.push([λ * r2d, φ * r2d]);
+  }
+  return out;
+}
+
+// Closed polygon following a constant latitude (used for sea-ice rings)
+function _latitudeRing(latitude, north, props) {
+  const ring = [];
+  for (let lng = -180; lng <= 180; lng += 4) ring.push([lng, latitude]);
+  const polePt = north ? 90 : -90;
+  ring.push([180, polePt]);
+  ring.push([-180, polePt]);
+  ring.push([-180, latitude]);
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: props || {} };
 }
 
 function focusGlobe(lat, lng, alt = 1.5) {
@@ -2366,8 +3724,70 @@ function renderPanels() {
   // 6. Sanctions panel
   html += buildSanctionsPanel();
 
+  // 6.1 Country Intelligence Index panel (worldmonitor-style)
+  html += buildIntelIndexPanel();
+
+  // 6.2 Cross-stream correlation alerts panel
+  html += buildCorrelationPanel();
+
+  // 6.3 Cyber threat advisories panel
+  html += buildCyberThreatsPanel();
+
+  // 6.4 Refugee/displacement panel
+  html += buildDisplacementPanel();
+
+  // 6.5 Air quality leaderboard panel
+  html += buildAirQualityPanel();
+
+  // 6.6 Supply chain disruption panel
+  html += buildSupplyChainPanel();
+
+  // 6.7 OFAC sanctions search panel
+  html += buildSanctionsSearchPanel();
+
   // 7. Nuclear Arsenals panel
   html += buildNuclearPanel();
+
+  // ════ Phase 3: worldmonitor parity panels ════
+  html += buildStrategicRiskPanel();
+  html += buildStrategicPosturePanel();
+  html += buildLiveIntelPanel();
+  html += buildCountryBriefPanel();
+  html += buildAviationIntelPanel();
+  html += buildClimateAnomaliesPanel();
+  html += buildWtoTradePanel();
+  html += buildBisRatesPanel();
+  html += buildSectorHeatmapPanel();
+  html += buildOilAnalyticsPanel();
+  html += buildBtcEtfPanel();
+  html += buildStablecoinsPanel();
+  html += buildGovSpendingPanel();
+  html += buildLayoffsPanel();
+  html += buildIsraelSirensPanel();
+  html += buildTelegramIntelPanel();
+  html += buildTechReadinessPanel();
+  html += buildAptGroupsPanel();
+  html += buildFirmsFiresPanel();
+  html += buildPopExposurePanel();
+  html += buildLiveStreamsPanel();
+
+  // ════ Tier 2: Markets / Intel / Utility ════
+  html += buildMarketIndicesPanel();
+  html += buildFearGreedPanel();
+  html += buildYieldCurvePanel();
+  html += buildCommoditiesPanel();
+  html += buildEtfFlowsPanel();
+  html += buildEarningsCalendarPanel();
+  html += buildCotReportPanel();
+  html += buildGdeltEventsPanel();
+  html += buildGlobalConflictIndexPanel();
+  html += buildHumanitarianCrisesPanel();
+  html += buildWorldClockPanel();
+  html += buildNationalDebtPanel();
+
+  // ════ Cross-Dashboard (live from siblings) ════
+  html += buildMidtermElectionsPanel();
+  html += buildCryptoSignalsPanel();
 
   grid.innerHTML = html;
 
@@ -2380,6 +3800,10 @@ function renderPanels() {
   bindCountryBrowserClicks();
   initRelations();
   initCountryModal();
+  bindSanctionsSearch();
+  bindPhase3Panels();
+  applyMonitorHighlights();
+  decorateNewItems();
 }
 
 // ── Conflicts Panel ──────────────────────────────────────
@@ -2474,7 +3898,7 @@ function buildNuclearPanel() {
   const rows = data.nuclear.map(n => {
     const pct = (n.warheads / max) * 100;
     return `<div class="n-row">
-      <span class="n-flag">${countryFlag(n.flag)}</span>
+      <span class="n-flag">${countryFlag(n.flag || '')}</span>
       <div class="n-info">
         <span class="n-country">${n.country}</span>
         <div class="n-bar-wrap">
@@ -2482,7 +3906,7 @@ function buildNuclearPanel() {
           <span class="n-status">${n.status}</span>
         </div>
       </div>
-      <span class="n-count">${n.warheads.toLocaleString()}</span>
+      <span class="n-count">${localNum(n.warheads)}</span>
     </div>`;
   }).join('');
 
@@ -2560,7 +3984,7 @@ function buildBlocsPanel() {
       <span class="bloc-stat"><b>${escapeHtml(b.members)}</b> members</span>
       <span class="bloc-stat"><b>${escapeHtml(b.combined_gdp)}</b> GDP</span>
       <span class="bloc-stat"><b>${escapeHtml(b.combined_military)}</b></span>
-      ${b.combined_nukes > 0 ? `<span class="bloc-stat" style="color:var(--red)">☢ ${b.combined_nukes.toLocaleString()}</span>` : ''}
+      ${b.combined_nukes > 0 ? `<span class="bloc-stat" style="color:var(--red)">☢ ${localNum(b.combined_nukes)}</span>` : ''}
       <span class="bloc-trend ${trendCls}">${escapeHtml(b.trend)}</span>
     </div>`;
   }).join('');
@@ -2581,7 +4005,7 @@ function buildDemocracyPanel() {
     if (!d) return '';
     const pct = ((d.count / total) * 100).toFixed(1);
     const popPct = d.population_pct || 0;
-    const examples = (d.examples || []).map(code => countryFlag(code)).join(' ');
+    const examples = (d.examples || []).map(code => countryFlag(code || '')).join(' ');
     return `<div class="dem-bar-wrap">
       <div class="dem-bar-label">
         <span class="dem-bar-label-name" style="color:${d.color}">${d.label}</span>
@@ -2633,9 +4057,9 @@ function buildEconPanel() {
     const growSign = e.gdp_growth >= 0 ? '+' : '';
     return `<div class="econ-row">
       <span class="econ-rank">${i + 1}</span>
-      <span class="econ-flag">${countryFlag(e.code)}</span>
+      <span class="econ-flag">${countryFlag(e.code || '')}</span>
       <span class="econ-name">${e.name}</span>
-      <span class="econ-gdp">$${e.gdp_t}T</span>
+      <span class="econ-gdp">${fmtMoneyCompact(e.gdp_t * 1e12)}</span>
       <span class="econ-growth ${growCls}">${growSign}${e.gdp_growth}%</span>
       <span class="econ-debt">${e.debt_gdp}% D/G</span>
     </div>`;
@@ -2748,8 +4172,8 @@ function buildPolyRows() {
     const color = pct >= 70 ? '#16a34a' : pct >= 40 ? '#ca8a04' : '#dc2626';
     const circumference = 2 * Math.PI * 20;
     const dash = (pct / 100) * circumference;
-    const vol24 = formatVolume(m.volume_24h);
-    const volTot = formatVolume(m.volume_total);
+    const vol24 = fmtMoneyCompact(m.volume_24h);
+    const volTot = fmtMoneyCompact(m.volume_total);
     const endStr = formatEndDate(m.end_date);
     const outcomeClass = (m.top_outcome || '').toLowerCase() === 'no' ? 'no' : '';
     const url = m.slug ? `https://polymarket.com/event/${m.slug}` : 'https://polymarket.com';
@@ -2766,8 +4190,8 @@ function buildPolyRows() {
       <div class="poly-info">
         <div class="poly-question">${safeQ}</div>
         <div class="poly-meta">
-          <span><span class="poly-meta-label">24h:</span> <span class="poly-meta-value">$${vol24}</span></span>
-          <span><span class="poly-meta-label">vol:</span> <span class="poly-meta-value">$${volTot}</span></span>
+          <span><span class="poly-meta-label">24h:</span> <span class="poly-meta-value">${vol24}</span></span>
+          <span><span class="poly-meta-label">vol:</span> <span class="poly-meta-value">${volTot}</span></span>
           ${endStr ? `<span><span class="poly-meta-label">ends:</span> <span class="poly-meta-value">${endStr}</span></span>` : ''}
         </div>
       </div>
@@ -2846,7 +4270,7 @@ function buildXFeedRows() {
 
     // Country mentions
     const countryTags = (analysis.countries || []).map(c =>
-      `<span class="xfeed-tag">${countryFlag(c)}</span>`
+      `<span class="xfeed-tag">${countryFlag(c || '')}</span>`
     ).join('');
 
     return `<a class="xfeed-row" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer">
@@ -2899,9 +4323,10 @@ function formatXTime(iso) {
 
 function formatCompact(n) {
   if (!n || n < 1) return '0';
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return n.toString();
+  const loc = getLocale();
+  if (n >= 1e6) return (n / 1e6).toLocaleString(loc, {minimumFractionDigits:1, maximumFractionDigits:1}) + 'M';
+  if (n >= 1e3) return (n / 1e3).toLocaleString(loc, {minimumFractionDigits:1, maximumFractionDigits:1}) + 'K';
+  return n.toLocaleString(loc);
 }
 
 function bindXFeedFilters() {
@@ -2923,10 +4348,11 @@ function escapeHtml(s) {
 
 function formatVolume(v) {
   if (!v || v < 1) return '0';
-  if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
-  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
-  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
-  return Math.round(v).toString();
+  const loc = getLocale();
+  if (v >= 1e9) return (v / 1e9).toLocaleString(loc, {minimumFractionDigits:1, maximumFractionDigits:1}) + 'B';
+  if (v >= 1e6) return (v / 1e6).toLocaleString(loc, {minimumFractionDigits:1, maximumFractionDigits:1}) + 'M';
+  if (v >= 1e3) return (v / 1e3).toLocaleString(loc, {minimumFractionDigits:1, maximumFractionDigits:1}) + 'K';
+  return Math.round(v).toLocaleString(loc);
 }
 
 function formatEndDate(iso) {
@@ -2956,59 +4382,239 @@ function formatNewsTime(pubDate) {
   if (hrs < 24) return hrs + 'h ago';
   const days = Math.floor(hrs / 24);
   if (days < 7) return days + 'd ago';
-  return d.toLocaleDateString();
+  return d.toLocaleDateString(getLocale());
+}
+
+// ── Country Intelligence Index Panel ────────────────────
+function buildIntelIndexPanel() {
+  const idx = data.country_intel_index || {};
+  const arr = Object.entries(idx).map(([code, info]) => ({ code, ...info }));
+  if (!arr.length) return '';
+  arr.sort((a, b) => b.score - a.score);
+  const top = arr.slice(0, 25);
+  const rows = top.map(c => {
+    const profile = (data.profiles || {})[c.code] || {};
+    const cls = c.score >= 60 ? 'red' : c.score >= 40 ? 'orange' : c.score >= 25 ? 'blue' : 'green';
+    const pct = Math.min(100, c.score);
+    const drivers = (c.drivers || []).slice(0, 3).join(' · ');
+    return `<div class="t-row" data-code="${c.code}">
+      <div class="t-row-top">
+        <div class="t-name">${countryFlag(c.code || '')} ${profile.name || c.code} <span style="color:#666;font-size:10px">#${c.rank}</span></div>
+        <span class="t-pill ${cls}">${c.score.toFixed(1)}</span>
+      </div>
+      <div class="t-bar"><div class="t-bar-fill" style="width:${pct}%;background:var(--${cls})"></div></div>
+      <div class="t-meta">${drivers}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Country Intelligence Index <span class="panel-badge red">${arr.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Cross-stream Correlation Alerts Panel ──────────────
+function buildCorrelationPanel() {
+  const alerts = data.correlation_alerts || [];
+  if (!alerts.length) return '';
+  const sevCls = { EXTREME: 'red', HIGH: 'orange', MEDIUM: 'blue' };
+  const rows = alerts.slice(0, 20).map(a => {
+    const profile = (data.profiles || {})[a.country] || {};
+    const sigList = Object.entries(a.signals).map(([k, v]) => `${k.replace(/_/g, ' ')}×${v}`).join(' · ');
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${countryFlag(a.country || '')} ${profile.name || a.country}</div>
+        <span class="t-pill ${sevCls[a.severity] || 'blue'}">${a.signal_types} signals</span>
+      </div>
+      <div class="t-meta" style="color:#aaa">${sigList}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Convergent Signal Alerts <span class="panel-badge orange">${alerts.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Cyber Threat Advisories Panel ──────────────────────
+function buildCyberThreatsPanel() {
+  const adv = data.cyber_advisories || [];
+  if (!adv.length) return '';
+  const sevCls = { CRITICAL: 'red', HIGH: 'orange', MEDIUM: 'blue' };
+  const rows = adv.map(a => {
+    return `<div class="t-row" data-lat="${a.lat}" data-lng="${a.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${a.title}</div>
+        <span class="t-pill ${sevCls[a.severity] || 'blue'}">${a.severity}</span>
+      </div>
+      <div class="t-meta"><b>${a.actor}</b> · ${a.id}</div>
+      <div class="t-meta" style="color:#888">${a.detail || ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Cyber Threat Advisories <span class="panel-badge red">${adv.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Refugee/Displacement Panel ─────────────────────────
+function buildDisplacementPanel() {
+  const flows = (data.displacement_flows || []).slice().sort((a, b) => (b.population || 0) - (a.population || 0));
+  if (!flows.length) return '';
+  const total = flows.reduce((s, f) => s + (f.population || 0), 0);
+  const max = flows[0].population || 1;
+  const rows = flows.map(f => {
+    const pct = Math.min(100, (f.population / max) * 100);
+    return `<div class="t-row" data-lat="${f.from_lat}" data-lng="${f.from_lng}">
+      <div class="t-row-top">
+        <div class="t-name">${f.name}</div>
+        <div class="t-num">${(f.population / 1000).toFixed(0)}K</div>
+      </div>
+      <div class="t-bar"><div class="t-bar-fill" style="width:${pct}%;background:#fb7185"></div></div>
+      <div class="t-meta">since ${f.year_started} · ${f.detail || ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Displacement Flows <span class="panel-badge red">${(total / 1e6).toFixed(1)}M</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Air Quality Panel ──────────────────────────────────
+function buildAirQualityPanel() {
+  const aq = (data.air_quality || []).slice().sort((a, b) => (b.pm25 || 0) - (a.pm25 || 0));
+  if (!aq.length) return '';
+  const rows = aq.slice(0, 30).map(a => {
+    const pm = a.pm25 || 0;
+    const cls = pm >= 150 ? 'red' : pm >= 75 ? 'orange' : pm >= 35 ? 'blue' : 'green';
+    const pct = Math.min(100, pm / 2);
+    return `<div class="t-row" data-lat="${a.lat}" data-lng="${a.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${countryFlag(a.country || '')} ${a.name}</div>
+        <span class="t-pill ${cls}">${pm}</span>
+      </div>
+      <div class="t-bar"><div class="t-bar-fill" style="width:${pct}%;background:var(--${cls})"></div></div>
+      <div class="t-meta">${a.aqi_label}${a.detail ? ' · ' + a.detail : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Air Quality (PM2.5) <span class="panel-badge orange">${aq.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Supply Chain Disruption Panel ──────────────────────
+function buildSupplyChainPanel() {
+  const sd = data.supply_chain || [];
+  if (!sd.length) return '';
+  const sevCls = { EXTREME: 'red', HIGH: 'orange', MEDIUM: 'blue' };
+  const rows = sd.map(d => {
+    return `<div class="t-row" data-lat="${d.lat}" data-lng="${d.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${countryFlag(d.country || '')} ${d.name}</div>
+        <span class="t-pill ${sevCls[d.severity] || 'blue'}">${d.severity}</span>
+      </div>
+      <div class="t-meta">${d.type.replace(/_/g, ' ')}</div>
+      <div class="t-meta" style="color:#888">${d.detail || ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel">
+    <div class="panel-head">Supply Chain Disruptions <span class="panel-badge orange">${sd.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Sanctions Search Panel ─────────────────────────────
+function buildSanctionsSearchPanel() {
+  return `<div class="panel">
+    <div class="panel-head">Sanctions Entity Search</div>
+    <div class="panel-body">
+      <input type="text" id="sanctions-search-input" placeholder="Search OFAC entities, countries, types…"
+             style="width:100%;padding:6px 8px;background:#0a1929;border:1px solid #1ec87844;color:#cbd5e1;font-family:inherit;font-size:11px;border-radius:3px;margin-bottom:6px"/>
+      <div id="sanctions-search-results" style="max-height:280px;overflow-y:auto"></div>
+    </div>
+  </div>`;
+}
+
+async function _runSanctionsSearch(q) {
+  const out = document.getElementById('sanctions-search-results');
+  if (!out) return;
+  if (!q || q.length < 2) {
+    out.innerHTML = `<div style="color:#666;font-size:10px;padding:6px">Type at least 2 characters…</div>`;
+    return;
+  }
+  try {
+    const resp = await fetch('/api/sanctions/search?q=' + encodeURIComponent(q));
+    const j = await resp.json();
+    if (!j.results || !j.results.length) {
+      out.innerHTML = `<div style="color:#666;font-size:10px;padding:6px">No matches.</div>`;
+      return;
+    }
+    out.innerHTML = j.results.slice(0, 30).map(r => `
+      <div class="t-row">
+        <div class="t-row-top">
+          <div class="t-name">${r.name || r.target || ''}</div>
+          <span class="t-pill blue">${r.type || ''}</span>
+        </div>
+        <div class="t-meta">${r.country || ''}${r.detail ? ' · ' + r.detail : ''}</div>
+      </div>`).join('');
+  } catch (e) {
+    out.innerHTML = `<div style="color:#dc2626;font-size:10px;padding:6px">Error: ${e}</div>`;
+  }
+}
+
+function bindSanctionsSearch() {
+  const inp = document.getElementById('sanctions-search-input');
+  if (!inp) return;
+  let timer;
+  inp.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => _runSanctionsSearch(inp.value.trim()), 250);
+  });
 }
 
 // ── Military Trends Panel ───────────────────────────────
 function buildTrendsAnalysisPanel() {
   if (!trendData.trends || !trendData.trends.length) return '';
-  const sevColors = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e' };
+  const sevClass = { high: 'red', medium: 'orange', low: 'green' };
   const rows = trendData.trends.map(t => {
-    const color = sevColors[t.severity] || '#666';
-    const countries = t.countries_present.join(', ') || 'none';
-    const types = Object.entries(t.vessel_types || {}).map(([k,v]) => `${v} ${k}`).join(', ');
-    const movement = t.movement_trend || 'No significant inbound movement';
-    return `<div class="c-row" style="border-left:3px solid ${color};padding-left:8px;margin-bottom:8px">
-      <div class="c-name" style="color:${color}">${t.region}</div>
-      <div class="c-sub" style="font-size:11px;opacity:0.8">
-        <b>${t.vessel_count}</b> vessels · <b>${t.base_count}</b> bases · <b>${t.inbound_count}</b> inbound
+    const cls = sevClass[t.severity] || 'blue';
+    const movement = t.movement_trend || '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${t.region}</div>
+        <span class="t-pill ${cls}">${t.severity}</span>
       </div>
-      <div class="c-sub" style="font-size:10px;opacity:0.6">Countries: ${countries}</div>
-      ${types ? `<div class="c-sub" style="font-size:10px;opacity:0.6">Types: ${types}</div>` : ''}
-      <div class="c-sub" style="font-size:10px;opacity:0.7;color:${t.inbound_count > 0 ? '#f59e0b' : '#666'}">${movement}</div>
+      <div class="t-stats">
+        <span><b>${t.vessel_count}</b> vessels</span>
+        <span><b>${t.base_count}</b> bases</span>
+        <span><b>${t.inbound_count}</b> inbound</span>
+      </div>
+      ${movement ? `<div class="t-meta">${movement}</div>` : ''}
     </div>`;
   }).join('');
   return `<div class="panel">
-    <div class="panel-title">Military Movement Trends</div>
-    <div class="panel-subtitle">${trendData.total_vessels || 0} vessels tracked · ${trendData.moving_vessels || 0} underway</div>
-    <div style="max-height:400px;overflow-y:auto">${rows}</div>
+    <div class="panel-head">Military Movement Trends <span class="panel-badge red">${trendData.trends.length}</span></div>
+    <div class="panel-body">${rows}</div>
   </div>`;
 }
 
 // ── Air Forces Panel ────────────────────────────────────
 function buildAirForcesPanel() {
   if (!data.air_forces || !data.air_forces.length) return '';
-  const rows = data.air_forces.sort((a,b) => b.total_aircraft - a.total_aircraft).map(af => {
-    const pct = Math.min(100, (af.total_aircraft / 13300) * 100);
-    return `<div class="c-row" style="margin-bottom:6px">
-      <div class="c-name">${af.name} <span style="opacity:0.5">(${af.country})</span></div>
-      <div style="display:flex;gap:8px;font-size:10px;opacity:0.7;flex-wrap:wrap">
-        <span>Total: <b>${af.total_aircraft.toLocaleString()}</b></span>
-        <span>Fighters: <b>${af.fighters}</b></span>
-        ${af.bombers ? `<span>Bombers: <b>${af.bombers}</b></span>` : ''}
-        <span>Heli: <b>${af.helicopters}</b></span>
-        <span>Transport: <b>${af.transport}</b></span>
+  const maxTotal = Math.max(...data.air_forces.map(a => a.total_aircraft));
+  const rows = data.air_forces.slice().sort((a,b) => b.total_aircraft - a.total_aircraft).map(af => {
+    const pct = Math.min(100, (af.total_aircraft / maxTotal) * 100);
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${countryFlag(af.country || '')} ${af.name}</div>
+        <div class="t-num">${localNum(af.total_aircraft)}</div>
       </div>
-      <div style="background:rgba(255,255,255,0.05);height:4px;border-radius:2px;margin-top:3px">
-        <div style="background:#22d3ee;height:4px;border-radius:2px;width:${pct}%"></div>
-      </div>
-      <div class="c-sub" style="font-size:9px;opacity:0.5;margin-top:2px">${af.key_types}</div>
+      <div class="t-bar"><div class="t-bar-fill" style="width:${pct}%;background:var(--blue)"></div></div>
+      <div class="t-meta">${af.fighters} fighters · ${af.bombers || 0} bombers · ${af.helicopters} heli · ${af.transport} transport</div>
     </div>`;
   }).join('');
   return `<div class="panel">
-    <div class="panel-title">World Air Forces</div>
-    <div class="panel-subtitle">${data.air_forces.length} air forces tracked</div>
-    <div style="max-height:400px;overflow-y:auto">${rows}</div>
+    <div class="panel-head">World Air Forces <span class="panel-badge blue">${data.air_forces.length}</span></div>
+    <div class="panel-body">${rows}</div>
   </div>`;
 }
 
@@ -3016,23 +4622,19 @@ function buildAirForcesPanel() {
 function buildSpaceportsPanel() {
   if (!data.spaceports || !data.spaceports.length) return '';
   const active = data.spaceports.filter(s => s.status === 'active');
-  const dev = data.spaceports.filter(s => s.status === 'development');
-  const byCountry = {};
-  data.spaceports.forEach(s => { byCountry[s.country] = (byCountry[s.country] || 0) + 1; });
   const rows = data.spaceports.map(s => {
-    const statusColor = s.status === 'active' ? '#22c55e' : s.status === 'development' ? '#f59e0b' : '#666';
-    return `<div class="c-row" style="margin-bottom:4px">
-      <div class="c-name">${s.name} <span style="opacity:0.5">(${s.country})</span></div>
-      <div class="c-sub" style="font-size:10px">
-        <span style="color:${statusColor}">${s.status.toUpperCase()}</span> · ${s.operator}
+    const statusCls = s.status === 'active' ? 'green' : s.status === 'development' ? 'orange' : 'muted';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${countryFlag(s.country || '')} ${s.name}</div>
+        <span class="t-pill ${statusCls}">${s.status}</span>
       </div>
-      <div class="c-sub" style="font-size:9px;opacity:0.5">${s.detail}</div>
+      <div class="t-meta">${s.operator}</div>
     </div>`;
   }).join('');
   return `<div class="panel">
-    <div class="panel-title">Spaceports & Launch Sites</div>
-    <div class="panel-subtitle">${active.length} active · ${dev.length} in development · ${Object.keys(byCountry).length} countries</div>
-    <div style="max-height:400px;overflow-y:auto">${rows}</div>
+    <div class="panel-head">Spaceports & Launch Sites <span class="panel-badge green">${active.length}/${data.spaceports.length}</span></div>
+    <div class="panel-body">${rows}</div>
   </div>`;
 }
 
@@ -3066,7 +4668,7 @@ function initRelations() {
       const c = data.relations[code];
       const opt = document.createElement('option');
       opt.value = code;
-      opt.textContent = `${countryFlag(code)} ${c.name}`;
+      opt.textContent = `${countryFlag(code || '')} ${c.name}`;
       sel.appendChild(opt);
     });
   }
@@ -3096,12 +4698,12 @@ function showRelations(code) {
   if (!c) return;
 
   overlay.classList.add('open');
-  title.textContent = `${countryFlag(code)} ${c.name}`;
+  title.textContent = `${countryFlag(code || '')} ${c.name}`;
 
   // Build relation rows
   list.innerHTML = c.relations.map(r => `
     <div class="rel-row" data-lat="${r.lat}" data-lng="${r.lng}">
-      <span class="rel-flag">${countryFlag(r.target)}</span>
+      <span class="rel-flag">${countryFlag(r.target || '')}</span>
       <div class="rel-info">
         <div class="rel-name">${escapeHtml(r.name)}</div>
         <div class="rel-detail">${escapeHtml(r.detail)}</div>
@@ -3164,10 +4766,10 @@ function buildCountryBrowserPanel() {
   const cards = codes.map(code => {
     const p = profiles[code];
     return `<div class="cb-card" data-code="${code}">
-      <span class="cb-card-flag">${countryFlag(code)}</span>
+      <span class="cb-card-flag">${countryFlag(code || '')}</span>
       <div class="cb-card-info">
         <div class="cb-card-name">${p.name}</div>
-        <div class="cb-card-meta">${p.population} &middot; ${p.gdp}</div>
+        <div class="cb-card-meta">${p.population} &middot; ${reformatUsdString(p.gdp)}</div>
       </div>
     </div>`;
   }).join('');
@@ -3290,7 +4892,7 @@ function showCountryProfile(code) {
       || (COUNTRY_COORDS[rc] && COUNTRY_COORDS[rc].name)
       || rc;
     return `<div class="cm-rel" data-code="${escapeHtml(rc)}">
-      <span class="cm-rel-flag">${countryFlag(rc)}</span>
+      <span class="cm-rel-flag">${countryFlag(rc || '')}</span>
       <span class="cm-rel-name">${escapeHtml(otherName)}</span>
       <div class="cm-rel-bar"><div class="cm-rel-bar-fill" style="width:${score}%;background:${color}"></div></div>
       <span class="cm-rel-score" style="color:${color}">${score}</span>
@@ -3299,7 +4901,7 @@ function showCountryProfile(code) {
 
   dialog.innerHTML = `
     <div class="cm-header">
-      <span class="cm-flag">${countryFlag(code)}</span>
+      <span class="cm-flag">${countryFlag(code || '')}</span>
       <div class="cm-title-block">
         <div class="cm-title">${escapeHtml(p.name)}</div>
         <div class="cm-subtitle">${escapeHtml(p.govt)}</div>
@@ -3309,7 +4911,7 @@ function showCountryProfile(code) {
     <div class="cm-stats">
       <div class="cm-stat"><div class="cm-stat-label">Capital</div><div class="cm-stat-value">${escapeHtml(p.capital)}</div></div>
       <div class="cm-stat"><div class="cm-stat-label">Population</div><div class="cm-stat-value">${escapeHtml(p.population)}</div></div>
-      <div class="cm-stat"><div class="cm-stat-label">GDP</div><div class="cm-stat-value">${escapeHtml(p.gdp)}</div></div>
+      <div class="cm-stat"><div class="cm-stat-label">GDP</div><div class="cm-stat-value">${escapeHtml(reformatUsdString(p.gdp))}</div></div>
       <div class="cm-stat"><div class="cm-stat-label">Military Rank</div><div class="cm-stat-value">#${escapeHtml(String(p.military_rank))}</div></div>
     </div>
     ${indicesHtml}
@@ -3363,7 +4965,7 @@ function drawRelationHeatmap(code) {
   const ind = document.getElementById('heatmap-indicator');
   if (ind) {
     ind.classList.add('active');
-    document.getElementById('heatmap-flag').textContent = countryFlag(code);
+    document.getElementById('heatmap-flag').textContent = countryFlag(code || '');
     document.getElementById('heatmap-country').textContent = p.name;
   }
 
@@ -3520,6 +5122,1297 @@ const COUNTRY_COORDS = {
   PG: {lat: -9.44, lng: 147.18, name: 'Papua New Guinea'},
   FJ: {lat: -18.12, lng: 178.44, name: 'Fiji'},
 };
+
+// ════════════════════════════════════════════════════════════
+// ════ Phase 3: worldmonitor parity — panel builders ════════
+// ════════════════════════════════════════════════════════════
+
+// Helper: severity color
+function _sevColor(level) {
+  level = (level || '').toLowerCase();
+  if (level === 'critical' || level === 'extreme') return '#dc2626';
+  if (level === 'high') return '#ea580c';
+  if (level === 'elevated' || level === 'medium' || level === 'moderate') return '#ca8a04';
+  if (level === 'low') return '#16a34a';
+  return '#6b7280';
+}
+
+// ── Strategic Risk Gauge ────────────────────────────────
+function buildStrategicRiskPanel() {
+  const r = data.strategic_risk || {};
+  const score = r.composite || 0;
+  const level = r.level || 'UNKNOWN';
+  const color = _sevColor(level);
+  const mods = r.modules || {};
+  const modList = Object.entries(mods).map(([k, v]) => {
+    const labels = {
+      country_intel: 'Avg Country Intel',
+      high_intel: 'High-Intel Countries',
+      volcanoes: 'Volcanoes Erupting',
+      climate: 'Extreme Climate Zones',
+      supply: 'Extreme Supply Disrupt',
+      cyber: 'Critical Cyber',
+      conflicts: 'Active Conflicts',
+      grounded: 'Airport Ground Stops',
+    };
+    return `<div><span>${labels[k] || k}</span><span class="rm-val">${typeof v === 'number' ? v.toFixed(1) : v}</span></div>`;
+  }).join('');
+  return `<div class="panel" data-panel="strategic-risk">
+    <div class="panel-head">Strategic Risk Index <span class="panel-badge" style="background:${color};color:#000">${level}</span></div>
+    <div class="panel-body">
+      <div class="risk-gauge">
+        <div style="text-align:center">
+          <div class="risk-gauge-num" style="color:${color}">${score.toFixed(1)}</div>
+          <div class="risk-gauge-label">Composite / 100</div>
+        </div>
+      </div>
+      <div class="risk-modules">${modList}</div>
+    </div>
+  </div>`;
+}
+
+// ── Strategic Posture (6 theaters) ──────────────────────
+function buildStrategicPosturePanel() {
+  const sp = data.strategic_posture || [];
+  if (!sp.length) return '';
+  const rows = sp.map(t => {
+    const alert = t.alert || t.posture || 'UNKNOWN';
+    return `<div class="t-row" data-lat="${t.lat}" data-lng="${t.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${t.theater}</div>
+        <span class="t-pill" style="background:${_sevColor(alert)};color:#000">${alert}</span>
+      </div>
+      <div class="t-stats">
+        <span><b>${(t.us_forces || 0).toLocaleString()}</b> US</span>
+        <span>vs <b>${t.rival || ''}</b></span>
+        <span><b>${(t.rival_forces || 0).toLocaleString()}</b> rival</span>
+      </div>
+      <div class="t-meta">${t.summary || ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="strategic-posture">
+    <div class="panel-head">Strategic Posture <span class="panel-badge blue">${sp.length} theaters</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Live Intelligence (tabbed) ─────────────────────────
+function buildLiveIntelPanel() {
+  const feeds = data.live_intel_feeds || {};
+  const topics = Object.keys(feeds).length ? Object.keys(feeds) : ['military', 'cyber', 'nuclear', 'sanctions'];
+  const tabs = topics.map((t, i) => `<button class="tab-btn ${i === 0 ? 'active' : ''}" data-tab="li-${t}">${t}</button>`).join('');
+  const contents = topics.map((t, i) => {
+    const items = (feeds[t] || []).map(f => `
+      <div class="t-row">
+        <div class="t-name">${f.headline || f.title || ''}</div>
+        <div class="t-meta">${f.source || ''} · ${(f.country || f.region || '').trim()} · ${(f.time || '').replace('T',' ').replace('Z','')}</div>
+      </div>`).join('');
+    return `<div class="tab-content ${i === 0 ? 'active' : ''}" id="li-${t}">${items || '<div style="color:#666;font-size:11px;padding:6px">No feed items.</div>'}</div>`;
+  }).join('');
+  const total = topics.reduce((s, t) => s + (feeds[t] || []).length, 0);
+  return `<div class="panel" data-panel="live-intel">
+    <div class="panel-head">Live Intelligence <span class="panel-badge red">${total}</span></div>
+    <div class="panel-body">
+      <div class="tab-bar" data-tab-group="li">${tabs}</div>
+      ${contents}
+    </div>
+  </div>`;
+}
+
+// ── Country Brief (lookup form) ────────────────────────
+function buildCountryBriefPanel() {
+  return `<div class="panel" data-panel="country-brief">
+    <div class="panel-head">Country Brief <span class="panel-badge blue">lookup</span></div>
+    <div class="panel-body">
+      <div class="cb-input-row">
+        <input type="text" id="cb-input" placeholder="ISO code: US, CN, RU, IR, IL, UA…" maxlength="3" />
+        <button id="cb-go">Go</button>
+      </div>
+      <div id="cb-result" style="font-size:11px;color:var(--text-2)">Enter a 2-letter country code above.</div>
+    </div>
+  </div>`;
+}
+
+// ── Aviation Intelligence (6 tabs) ─────────────────────
+function buildAviationIntelPanel() {
+  const av = data.aviation_airports || [];
+  if (!av.length) return '';
+  const groundStops = av.filter(a => a.ground_stop);
+  const severeDelay = av.filter(a => (a.delay_min || 0) >= 30 && !a.ground_stop);
+  const notams = data.notam_closures || [];
+  const tabs = [
+    ['Top Hubs', av.slice(0, 12).map(a => `<div class="t-row" data-lat="${a.lat}" data-lng="${a.lng}"><div class="t-row-top"><div class="t-name">${a.iata} ${countryFlag(a.country||'')} ${(a.name||'').replace(a.iata||'','').trim()}</div><div class="t-num">${a.delay_min || 0}m</div></div><div class="t-meta">${a.delay_status || ''} · ${a.passengers_m || '?'}M pax/yr</div></div>`).join('')],
+    ['Ground Stops', groundStops.map(a => `<div class="t-row" style="border-left:2px solid #dc2626" data-lat="${a.lat}" data-lng="${a.lng}"><div class="t-row-top"><div class="t-name">${a.iata} ${a.name||''}</div><span class="t-pill red">STOP</span></div><div class="t-meta">${a.country || ''}</div></div>`).join('') || '<div style="color:#16a34a;font-size:11px">No active ground stops.</div>'],
+    ['Severe Delays', severeDelay.map(a => `<div class="t-row" data-lat="${a.lat}" data-lng="${a.lng}"><div class="t-row-top"><div class="t-name">${a.iata}</div><div class="t-num" style="color:#ea580c">${a.delay_min}m</div></div><div class="t-meta">${a.delay_status}</div></div>`).join('') || '<div style="color:#666;font-size:11px">No severe delays.</div>'],
+    ['NOTAMs', notams.map(n => `<div class="t-row"><div class="t-row-top"><div class="t-name">${n.airport || n.icao || ''}</div><span class="t-pill orange">${n.type || 'NOTAM'}</span></div><div class="t-meta">${n.reason || n.summary || n.text || ''} · since ${n.since || ''}</div></div>`).join('') || '<div style="color:#666;font-size:11px">No active NOTAMs.</div>'],
+    ['Overflight', '<div style="font-size:11px;color:var(--text-2);padding:6px">Restricted/closed airspace: RU, BY, IR (per current sanctions/conflict status). Reroutes adding 60-180 min for transatlantic and EU-Asia routes.</div>'],
+    ['Stats', `<div style="font-size:11px;line-height:1.6;padding:4px"><b>${av.length}</b> hubs tracked<br/><b>${groundStops.length}</b> ground stops<br/><b>${severeDelay.length}</b> severe delays<br/><b>${notams.length}</b> NOTAMs<br/>Total annual pax: <b>${av.reduce((s,a)=>s+(a.passengers_m||0),0).toFixed(0)}M</b></div>`]
+  ];
+  const tabBar = tabs.map((t, i) => `<button class="tab-btn ${i === 0 ? 'active' : ''}" data-tab="av-${i}">${t[0]}</button>`).join('');
+  const tabContents = tabs.map((t, i) => `<div class="tab-content ${i === 0 ? 'active' : ''}" id="av-${i}">${t[1]}</div>`).join('');
+  return `<div class="panel" data-panel="aviation-intel">
+    <div class="panel-head">Aviation Intelligence <span class="panel-badge ${groundStops.length ? 'red' : 'blue'}">${groundStops.length} stops</span></div>
+    <div class="panel-body">
+      <div class="tab-bar" data-tab-group="av">${tabBar}</div>
+      ${tabContents}
+    </div>
+  </div>`;
+}
+
+// ── Climate Anomalies ──────────────────────────────────
+function buildClimateAnomaliesPanel() {
+  const ca = data.climate_anomalies || [];
+  if (!ca.length) return '';
+  const rows = ca.slice().sort((a,b) => Math.abs(b.temp_anom_c||0) - Math.abs(a.temp_anom_c||0)).map(c => `
+    <div class="t-row" data-lat="${c.lat}" data-lng="${c.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${c.zone || c.region || ''}</div>
+        <span class="t-pill" style="background:${_sevColor(c.severity)};color:#000">${c.severity}</span>
+      </div>
+      <div class="t-stats">
+        <span>Δ <b style="color:${(c.temp_anom_c||0) > 0 ? '#ea580c' : '#06b6d4'}">${(c.temp_anom_c >= 0 ? '+' : '') + (c.temp_anom_c || 0)}°C</b></span>
+        <span>precip <b>${(c.precip_anom_pct >= 0 ? '+' : '') + (c.precip_anom_pct || 0)}%</b></span>
+      </div>
+      <div class="t-meta">${c.detail || ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="climate-anomalies">
+    <div class="panel-head">Climate Anomalies <span class="panel-badge orange">${ca.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── WTO Trade Restrictions ──────────────────────────────
+function buildWtoTradePanel() {
+  const wto = data.wto_restrictions || [];
+  if (!wto.length) return '';
+  const rows = wto.map(w => `
+    <div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${countryFlag(w.from_country || '')} ${w.from_country || ''} → ${countryFlag(w.to_country || '')} ${w.to_country || ''}</div>
+        <span class="t-pill ${(w.status||'').toUpperCase() === 'ACTIVE' ? 'red' : 'orange'}">${w.type || ''}</span>
+      </div>
+      <div class="t-meta">${w.product || ''}${w.rate_pct ? ' · ' + w.rate_pct + '%' : ''} · since ${w.since || ''}${w.detail ? ' · ' + w.detail : ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="wto-trade">
+    <div class="panel-head">WTO Trade Policy <span class="panel-badge red">${wto.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── BIS Central Bank Rates ─────────────────────────────
+function buildBisRatesPanel() {
+  const bis = data.bis_rates || [];
+  if (!bis.length) return '';
+  const pills = bis.map(b => {
+    const dColor = (b.delta_bps || 0) > 0 ? '#dc2626' : (b.delta_bps || 0) < 0 ? '#16a34a' : '#6b7280';
+    const stanceColor = b.stance === 'HAWKISH' ? '#dc2626' : b.stance === 'DOVISH' ? '#16a34a' : '#6b7280';
+    return `<div class="bis-pill" title="${b.bank || ''} · stance: ${b.stance || ''}">
+      <div class="bp-bank">${countryFlag(b.country || '')} ${b.country || ''}</div>
+      <div class="bp-rate">${(b.rate_pct || 0).toFixed(2)}%</div>
+      <div style="font-size:9px;color:${dColor}">${b.delta_bps > 0 ? '+' : ''}${b.delta_bps || 0} bps</div>
+      <div style="font-size:8px;color:${stanceColor};text-transform:uppercase;letter-spacing:0.5px">${b.stance || ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="bis-rates">
+    <div class="panel-head">Central Bank Rates (BIS) <span class="panel-badge blue">${bis.length}</span></div>
+    <div class="panel-body"><div class="bis-strip">${pills}</div></div>
+  </div>`;
+}
+
+// ── Sector Heatmap ─────────────────────────────────────
+function buildSectorHeatmapPanel() {
+  const sh = data.sector_heatmap || [];
+  if (!sh.length) return '';
+  const cells = sh.map(s => {
+    const pct = s.change_pct ?? s.pct_change ?? 0;
+    let bg;
+    if (pct > 1.5) bg = 'rgba(22, 163, 74, 0.4)';
+    else if (pct > 0.3) bg = 'rgba(22, 163, 74, 0.2)';
+    else if (pct > -0.3) bg = 'rgba(100, 100, 100, 0.2)';
+    else if (pct > -1.5) bg = 'rgba(220, 38, 38, 0.2)';
+    else bg = 'rgba(220, 38, 38, 0.4)';
+    const color = pct >= 0 ? '#16a34a' : '#dc2626';
+    const ytd = s.ytd_pct;
+    return `<div class="sector-cell" style="background:${bg};border:1px solid ${color}aa" title="${s.name || ''} · weight ${s.weight_pct || ''}%">
+      <div class="sc-name">${s.ticker || s.symbol || ''}</div>
+      <div class="sc-pct" style="color:${color}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</div>
+      <div style="font-size:9px;color:var(--text-2);margin-top:2px">${(s.name || '').replace('Select Sector SPDR','').trim()}</div>
+      ${typeof ytd === 'number' ? `<div style="font-size:9px;color:${ytd >= 0 ? '#16a34a' : '#dc2626'};margin-top:1px">YTD ${ytd >= 0 ? '+' : ''}${ytd.toFixed(1)}%</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="sector-heatmap">
+    <div class="panel-head">Sector Heatmap (SPDR) <span class="panel-badge blue">${sh.length}</span></div>
+    <div class="panel-body"><div class="sector-grid">${cells}</div></div>
+  </div>`;
+}
+
+// ── Oil Analytics ──────────────────────────────────────
+function buildOilAnalyticsPanel() {
+  const o = data.oil_analytics || {};
+  if (!o.wti_spot && !o.wti_usd) return '';
+  const wti = o.wti_spot ?? o.wti_usd;
+  const brent = o.brent_spot ?? o.brent_usd;
+  const wtiChg = o.wti_change_pct || 0;
+  const brentChg = o.brent_change_pct || 0;
+  const colorPct = p => p >= 0 ? '#16a34a' : '#dc2626';
+  const fields = [
+    ['WTI', '$' + (wti || 0).toFixed(2), wtiChg],
+    ['Brent', '$' + (brent || 0).toFixed(2), brentChg],
+    ['US prod', (o.us_production_mbd || 0).toFixed(2) + ' mbd'],
+    ['OPEC+ prod', (o.opec_production_mbd || 0).toFixed(2) + ' mbd'],
+    ['SPR', (o.spr_mb || 0).toFixed(0) + ' mb'],
+    ['Inventory', (o.us_inventory_mb || o.inventory_mb || 0).toFixed(0) + ' mb'],
+    ['Rig count', o.rig_count || '—'],
+    ['Brent-WTI', (o.spread_brent_wti || o.brent_wti_spread || 0).toFixed(2)]
+  ];
+  const cells = fields.map(([k, v, chg]) => `<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:3px;font-size:11px"><div style="color:var(--text-2);font-size:9px;text-transform:uppercase;letter-spacing:0.5px">${k}</div><div class="rm-val">${v}${typeof chg === 'number' ? ` <span style="color:${colorPct(chg)};font-size:9px">(${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)</span>` : ''}</div></div>`).join('');
+  return `<div class="panel" data-panel="oil-analytics">
+    <div class="panel-head">Oil Analytics <span class="panel-badge orange">EIA</span></div>
+    <div class="panel-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">${cells}</div>
+      ${o.detail ? `<div style="font-size:10px;color:var(--text-2);margin-top:6px;font-style:italic">${o.detail}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+// ── BTC ETF Flows ──────────────────────────────────────
+function buildBtcEtfPanel() {
+  const etfs = data.btc_etfs || [];
+  if (!etfs.length) return '';
+  const totalAum = etfs.reduce((s, e) => s + (e.aum_b || 0), 0);
+  const totalFlow = etfs.reduce((s, e) => s + (e.flow_24h_m ?? e.net_flow_24h_m ?? 0), 0);
+  const rows = etfs.slice().sort((a,b) => (b.aum_b || 0) - (a.aum_b || 0)).map(e => {
+    const flow = e.flow_24h_m ?? e.net_flow_24h_m ?? 0;
+    const flow7 = e.flow_7d_m;
+    const flowColor = flow >= 0 ? '#16a34a' : '#dc2626';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${e.ticker} <span style="color:var(--text-2)">${e.issuer || ''}</span></div>
+        <div class="t-num">$${(e.aum_b || 0).toFixed(1)}B</div>
+      </div>
+      <div class="t-meta">${e.name || ''} · 24h: <span style="color:${flowColor}">${flow >= 0 ? '+' : ''}$${flow.toFixed(0)}M</span>${typeof flow7 === 'number' ? ' · 7d: ' + (flow7 >= 0 ? '+' : '') + '$' + flow7.toFixed(0) + 'M' : ''}${e.expense_pct ? ' · fee ' + e.expense_pct + '%' : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="btc-etfs">
+    <div class="panel-head">BTC/ETH ETF Flows <span class="panel-badge ${totalFlow >= 0 ? 'green' : 'red'}">${totalFlow >= 0 ? '+' : ''}$${totalFlow.toFixed(0)}M</span></div>
+    <div class="panel-body">
+      <div style="font-size:10px;color:var(--text-2);margin-bottom:6px">Total AUM: <b>$${totalAum.toFixed(1)}B</b></div>
+      ${rows}
+    </div>
+  </div>`;
+}
+
+// ── Stablecoins ────────────────────────────────────────
+function buildStablecoinsPanel() {
+  const sc = data.stablecoins || [];
+  if (!sc.length) return '';
+  const total = sc.reduce((s, x) => s + (x.marketcap_b || 0), 0);
+  const rows = sc.slice().sort((a,b) => (b.marketcap_b||0) - (a.marketcap_b||0)).map(x => {
+    const share = x.share_pct || 0;
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${x.symbol} <span style="color:var(--text-2)">${x.name || x.issuer || ''}</span></div>
+        <div class="t-num">$${(x.marketcap_b || 0).toFixed(1)}B</div>
+      </div>
+      <div class="t-meta">share <b>${share.toFixed(1)}%</b> · ${x.chain || x.chains || ''} · ${x.backing || ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="stablecoins">
+    <div class="panel-head">Stablecoin Monitor <span class="panel-badge green">$${total.toFixed(0)}B</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Government Spending ────────────────────────────────
+function buildGovSpendingPanel() {
+  const gs = data.gov_spending || [];
+  if (!gs.length) return '';
+  const total = gs.reduce((s, g) => s + (g.amount_m || 0), 0);
+  const rows = gs.slice().sort((a,b) => (b.amount_m||0) - (a.amount_m||0)).slice(0, 12).map(g => `
+    <div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${g.recipient || ''}</div>
+        <div class="t-num">$${(g.amount_m || 0).toFixed(0)}M</div>
+      </div>
+      <div class="t-meta">${g.agency || ''} · ${g.date || ''} · ${g.purpose || ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="gov-spending">
+    <div class="panel-head">USA Spending Watch <span class="panel-badge orange">$${(total/1000).toFixed(1)}B</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Layoffs Tracker ────────────────────────────────────
+function buildLayoffsPanel() {
+  const ly = data.layoffs || [];
+  if (!ly.length) return '';
+  const total = ly.reduce((s, l) => s + (l.count || 0), 0);
+  const rows = ly.slice().sort((a,b) => (b.count||0) - (a.count||0)).map(l => `
+    <div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${l.company || ''}</div>
+        <div class="t-num" style="color:#dc2626">-${(l.count || 0).toLocaleString()}</div>
+      </div>
+      <div class="t-meta">${l.sector || ''} · ${l.date || ''} · ${l.country || ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="layoffs">
+    <div class="panel-head">Layoffs Tracker <span class="panel-badge red">${total.toLocaleString()}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Israel Sirens ──────────────────────────────────────
+function buildIsraelSirensPanel() {
+  const ir = data.israel_sirens || [];
+  if (!ir.length) return '';
+  const rows = ir.map(s => `
+    <div class="t-row" data-lat="${s.lat}" data-lng="${s.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${s.location || ''}</div>
+        <span class="t-pill red">${s.threat || 'siren'}</span>
+      </div>
+      <div class="t-meta">origin: ${s.origin || 'unknown'} · ${s.time || ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="israel-sirens">
+    <div class="panel-head">Israel Sirens (last 24h) <span class="panel-badge red">${ir.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Telegram Intel ─────────────────────────────────────
+function buildTelegramIntelPanel() {
+  const tg = data.telegram_intel || [];
+  if (!tg.length) return '';
+  const rows = tg.slice().sort((a,b) => (b.subscribers_k||0) - (a.subscribers_k||0)).map(t => {
+    const ch = (t.channel || '').replace(/^@/, '');
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">@${ch}</div>
+        <div class="t-num">${(t.subscribers_k || 0).toLocaleString()}K</div>
+      </div>
+      <div class="t-meta">${t.category || ''} · ${t.language || ''} · ${(t.last_update || '').replace('T',' ').replace('Z','')}</div>
+      <div class="t-meta" style="color:var(--text-1)">${t.summary || ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="telegram-intel">
+    <div class="panel-head">Telegram Intel Channels <span class="panel-badge blue">${tg.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Tech Readiness Levels ──────────────────────────────
+function buildTechReadinessPanel() {
+  const tr = data.tech_readiness || [];
+  if (!tr.length) return '';
+  const rows = tr.slice().sort((a,b) => (b.trl||0) - (a.trl||0)).map(t => `
+    <div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${t.tech || ''}</div>
+        <span class="t-pill blue">TRL ${t.trl || 0}</span>
+      </div>
+      <div class="t-meta">${t.leader ? 'lead: ' + t.leader : ''}${t.year_field ? ' · fielded ~' + t.year_field : ''}</div>
+      ${t.status ? `<div class="t-meta" style="color:var(--text-1)">${t.status}</div>` : ''}
+    </div>`).join('');
+  return `<div class="panel" data-panel="tech-readiness">
+    <div class="panel-head">Tech Readiness <span class="panel-badge blue">${tr.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── APT Groups ─────────────────────────────────────────
+function buildAptGroupsPanel() {
+  const apt = data.apt_groups || [];
+  if (!apt.length) return '';
+  const sevRank = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+  const rows = apt.slice().sort((a,b) => (sevRank[b.severity]||0) - (sevRank[a.severity]||0)).map(a => `
+    <div class="t-row" data-lat="${a.lat}" data-lng="${a.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${a.name || a.id || ''}</div>
+        <span class="t-pill" style="background:${_sevColor(a.severity)};color:#000">${countryFlag(a.sponsor || '')} ${a.sponsor || ''}</span>
+      </div>
+      <div class="t-meta">${a.agency || ''} · since ${a.first_seen || '?'}</div>
+      <div class="t-meta" style="color:var(--text-1)">targets: ${a.targets || ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="apt-groups">
+    <div class="panel-head">APT Groups <span class="panel-badge red">${apt.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── FIRMS Wildfires ────────────────────────────────────
+function buildFirmsFiresPanel() {
+  const ff = data.firms_fires || [];
+  if (!ff.length) return '';
+  const total = ff.length;
+  const rows = ff.slice().sort((a,b) => (b.frp||0) - (a.frp||0)).slice(0, 12).map(f => `
+    <div class="t-row" data-lat="${f.lat}" data-lng="${f.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${f.biome || 'Hotspot'} ${countryFlag(f.country || '')}</div>
+        <div class="t-num" style="color:#f97316">${(f.frp || 0).toFixed(0)} MW</div>
+      </div>
+      <div class="t-meta">${f.confidence || ''} confidence · ${f.country || ''} · ${f.detail || ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="firms-fires">
+    <div class="panel-head">NASA FIRMS Fires <span class="panel-badge orange">${total}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Population Exposure ────────────────────────────────
+function buildPopExposurePanel() {
+  const pe = data.population_exposure || [];
+  if (!pe.length) return '';
+  const total = pe.reduce((s, p) => s + (p.exposed_m || 0), 0);
+  const rows = pe.slice().sort((a,b) => (b.exposed_m||0) - (a.exposed_m||0)).map(p => `
+    <div class="t-row" data-lat="${p.lat}" data-lng="${p.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${p.region || ''}</div>
+        <div class="t-num">${(p.exposed_m || 0).toFixed(1)}M</div>
+      </div>
+      <div class="t-meta">${p.risk_type || ''} · ${p.detail || ''}</div>
+    </div>`).join('');
+  return `<div class="panel" data-panel="pop-exposure">
+    <div class="panel-head">Population Exposure <span class="panel-badge red">${total.toFixed(0)}M at risk</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Live Streams (YouTube embeds) ──────────────────────
+function buildLiveStreamsPanel() {
+  // Curated live streams: news + significant cams. No third-party API needed.
+  const streams = [
+    { title: 'Sky News (UK)', vid: '9Auq9mYxFEE' },
+    { title: 'Al Jazeera English', vid: 'gCNeDWCI0vo' },
+    { title: 'France 24 English', vid: 'h3MuIUNCCzI' },
+    { title: 'DW News', vid: 'pq0jdcl_Bdo' }
+  ];
+  const items = streams.map(s => `
+    <div style="margin-bottom:8px">
+      <div style="font-size:10px;color:var(--text-2);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px">${s.title}</div>
+      <iframe loading="lazy" style="width:100%;aspect-ratio:16/9;border:1px solid var(--border);border-radius:3px"
+              src="https://www.youtube.com/embed/${s.vid}?autoplay=0&mute=1"
+              allow="accelerometer;encrypted-media;picture-in-picture"
+              allowfullscreen></iframe>
+    </div>`).join('');
+  return `<div class="panel" data-panel="live-streams">
+    <div class="panel-head">Live News Streams <span class="panel-badge red">${streams.length}</span></div>
+    <div class="panel-body">${items}</div>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════════
+// ════ Tier 2: Markets / Intel / Utility panels ═════════════
+// ════════════════════════════════════════════════════════════
+
+// ── Global Market Indices ──────────────────────────────
+function buildMarketIndicesPanel() {
+  const mi = data.market_indices || [];
+  if (!mi.length) return '';
+  const ups = mi.filter(m => (m.ch_pct || 0) >= 0).length;
+  const rows = mi.slice().sort((a,b) => (b.ch_pct||0) - (a.ch_pct||0)).map(m => {
+    const pct = (m.ch_pct || 0);
+    const cls = pct >= 0 ? 'green' : 'red';
+    const sign = pct >= 0 ? '+' : '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${m.symbol} <span style="color:var(--text-2)">${m.region || ''}</span></div>
+        <div class="t-num ${cls}">${sign}${pct.toFixed(2)}%</div>
+      </div>
+      <div class="t-meta">${m.name || ''} · ${(m.value || 0).toLocaleString()} · YTD ${(m.ytd_pct || 0).toFixed(1)}%</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="market-indices">
+    <div class="panel-head">Global Equity Indices <span class="panel-badge ${ups >= mi.length/2 ? 'green' : 'red'}">${ups}/${mi.length} up</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Fear & Greed Index ─────────────────────────────────
+function buildFearGreedPanel() {
+  const fg = data.fear_greed || {};
+  if (fg.value == null) return '';
+  const v = fg.value;
+  const lvl = fg.level || '';
+  const color = v >= 75 ? '#16a34a' : v >= 55 ? '#65a30d' : v >= 45 ? '#facc15' : v >= 25 ? '#f97316' : '#dc2626';
+  const comps = fg.components || {};
+  const compRows = Object.entries(comps).map(([k, c]) => {
+    const cv = (c && typeof c === 'object') ? (c.value || 0) : (c || 0);
+    const cl = (c && typeof c === 'object') ? (c.level || '') : '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name" style="font-size:11px">${k.replace(/_/g, ' ')}</div>
+        <div class="t-num" style="color:${cv >= 50 ? '#16a34a' : '#dc2626'}">${cv}</div>
+      </div>
+      ${cl ? `<div class="t-meta">${cl}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="fear-greed">
+    <div class="panel-head">Fear &amp; Greed <span class="panel-badge" style="background:${color};color:#fff">${v} ${lvl}</span></div>
+    <div class="panel-body">
+      <div style="text-align:center;padding:8px 0;font-size:32px;font-weight:700;color:${color}">${v}</div>
+      <div style="text-align:center;font-size:11px;color:var(--text-2);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">${lvl}</div>
+      ${compRows}
+    </div>
+  </div>`;
+}
+
+// ── US Yield Curve + Global 10Y ────────────────────────
+function buildYieldCurvePanel() {
+  const yc = data.yield_curve_us || [];
+  const gby = data.global_bond_yields || [];
+  if (!yc.length && !gby.length) return '';
+  const usRows = yc.map(y => {
+    const ch = y.ch_bp || 0;
+    const cls = ch >= 0 ? 'red' : 'green';
+    const sign = ch >= 0 ? '+' : '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${y.tenor}</div>
+        <div class="t-num">${(y.yield || 0).toFixed(2)}%</div>
+      </div>
+      <div class="t-meta ${cls}">${sign}${ch}bp</div>
+    </div>`;
+  }).join('');
+  const gRows = gby.slice().sort((a,b) => (b.yield||0) - (a.yield||0)).map(g => {
+    const code = g.country || g.code || '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${code ? countryFlag(code) : ''} ${code}</div>
+        <div class="t-num">${(g.yield || 0).toFixed(2)}%</div>
+      </div>
+    </div>`;
+  }).join('');
+  const twoY = (yc.find(y => y.tenor === '2Y') || {}).yield;
+  const tenY = (yc.find(y => y.tenor === '10Y') || {}).yield;
+  const spread = (twoY != null && tenY != null) ? (tenY - twoY) : null;
+  const inverted = spread != null && spread < 0;
+  return `<div class="panel" data-panel="yield-curve">
+    <div class="panel-head">Yield Curve ${spread != null ? `<span class="panel-badge ${inverted ? 'red' : 'green'}">10Y-2Y ${spread >= 0 ? '+' : ''}${spread.toFixed(2)}%</span>` : ''}</div>
+    <div class="panel-body">
+      <div style="font-size:9px;text-transform:uppercase;color:var(--text-2);margin:2px 0 4px;letter-spacing:1px">US Curve</div>
+      ${usRows}
+      <div style="font-size:9px;text-transform:uppercase;color:var(--text-2);margin:8px 0 4px;letter-spacing:1px">Global 10Y</div>
+      ${gRows}
+    </div>
+  </div>`;
+}
+
+// ── Commodity Prices ───────────────────────────────────
+function buildCommoditiesPanel() {
+  const cp = data.commodity_prices || [];
+  if (!cp.length) return '';
+  const grouped = {};
+  cp.forEach(c => {
+    const cat = c.category || 'other';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(c);
+  });
+  const sections = Object.keys(grouped).sort().map(cat => {
+    const items = grouped[cat].map(c => {
+      const pct = c.ch_pct || 0;
+      const cls = pct >= 0 ? 'green' : 'red';
+      const sign = pct >= 0 ? '+' : '';
+      const price = c.value != null ? c.value : (c.price || 0);
+      return `<div class="t-row">
+        <div class="t-row-top">
+          <div class="t-name">${c.name || c.symbol}</div>
+          <div class="t-num ${cls}">${sign}${pct.toFixed(2)}%</div>
+        </div>
+        <div class="t-meta">${price.toLocaleString()} ${c.unit || ''}</div>
+      </div>`;
+    }).join('');
+    return `<div style="font-size:9px;text-transform:uppercase;color:var(--text-2);margin:6px 0 4px;letter-spacing:1px">${cat}</div>${items}`;
+  }).join('');
+  return `<div class="panel" data-panel="commodities">
+    <div class="panel-head">Commodities <span class="panel-badge">${cp.length}</span></div>
+    <div class="panel-body">${sections}</div>
+  </div>`;
+}
+
+// ── ETF Flows ──────────────────────────────────────────
+function buildEtfFlowsPanel() {
+  const ef = data.etf_flows || [];
+  if (!ef.length) return '';
+  const flowOf = (e) => (e.flow_5d_b != null ? e.flow_5d_b : (e.flow_5d_m != null ? e.flow_5d_m / 1000 : 0));
+  const totalNet = ef.reduce((s, e) => s + flowOf(e), 0);
+  const rows = ef.slice().sort((a,b) => Math.abs(flowOf(b)) - Math.abs(flowOf(a))).map(e => {
+    const f = flowOf(e);
+    const cls = f >= 0 ? 'green' : 'red';
+    const sign = f >= 0 ? '+' : '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${e.symbol} <span style="color:var(--text-2)">${e.category || ''}</span></div>
+        <div class="t-num ${cls}">${sign}$${Math.abs(f).toFixed(2)}B</div>
+      </div>
+      <div class="t-meta">${e.name || ''} · AUM $${((e.aum_b || 0)).toFixed(0)}B</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="etf-flows">
+    <div class="panel-head">ETF Flows (5d) <span class="panel-badge ${totalNet >= 0 ? 'green' : 'red'}">$${totalNet.toFixed(1)}B net</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Earnings Calendar ──────────────────────────────────
+function buildEarningsCalendarPanel() {
+  const ec = data.earnings_calendar || [];
+  if (!ec.length) return '';
+  const rows = ec.slice(0, 25).map(e => {
+    const tk = e.ticker || e.symbol || '';
+    const imp = e.importance || '';
+    const impCls = imp === 'high' ? 'red' : imp === 'med' ? 'orange' : '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${tk} <span style="color:var(--text-2)">${e.session || ''}</span></div>
+        <div class="t-num">${e.date || ''}</div>
+      </div>
+      <div class="t-meta">${e.name || ''} · est EPS $${e.eps_est != null ? e.eps_est.toFixed(2) : '—'}${imp ? ` · <span class="${impCls}">${imp}</span>` : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="earnings-calendar">
+    <div class="panel-head">Earnings Calendar <span class="panel-badge">${ec.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── COT Report ─────────────────────────────────────────
+function buildCotReportPanel() {
+  const cot = data.cot_report || [];
+  if (!cot.length) return '';
+  const rows = cot.slice().sort((a,b) => Math.abs(b.net_position||0) - Math.abs(a.net_position||0)).map(c => {
+    const net = c.net_position || 0;
+    const cls = net >= 0 ? 'green' : 'red';
+    const ch = c.ch_week != null ? c.ch_week : (c.change || 0);
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${c.contract || ''}</div>
+        <div class="t-num ${cls}">${net >= 0 ? '+' : ''}${(net/1000).toFixed(1)}k</div>
+      </div>
+      <div class="t-meta">${c.category || ''} · Δw ${ch >= 0 ? '+' : ''}${ch.toLocaleString()}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="cot-report">
+    <div class="panel-head">CoT Positioning <span class="panel-badge">${cot.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── GDELT Events ───────────────────────────────────────
+function buildGdeltEventsPanel() {
+  const ge = data.gdelt_events || [];
+  if (!ge.length) return '';
+  const rows = ge.slice().sort((a,b) => (a.tone||0) - (b.tone||0)).slice(0, 30).map(e => {
+    const tone = e.tone || 0;
+    const tcls = tone <= -5 ? 'red' : tone >= 3 ? 'green' : '';
+    const a1 = e.actor1 || e.actor || '';
+    const a2 = e.actor2 || e.target || '';
+    const summary = e.summary || '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${a1} → ${a2}</div>
+        <div class="t-num ${tcls}">${tone.toFixed(1)}</div>
+      </div>
+      <div class="t-meta">${e.event_type || ''} · G ${(e.goldstein || 0).toFixed(1)}${summary ? ` · ${summary}` : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="gdelt-events">
+    <div class="panel-head">GDELT Events <span class="panel-badge">${ge.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Global Conflict Index ──────────────────────────────
+function buildGlobalConflictIndexPanel() {
+  const gci = data.global_conflict_index || [];
+  if (!gci.length) return '';
+  const rows = gci.slice().sort((a,b) => (b.score||0) - (a.score||0)).map(c => {
+    const sc = c.score || 0;
+    const trend = c.trend || '';
+    const trendIcon = (trend === 'rising' || trend === 'high') ? '↑' : (trend === 'falling' || trend === 'low') ? '↓' : '→';
+    const trendCls = (trend === 'rising' || trend === 'high') ? 'red' : (trend === 'falling' || trend === 'low') ? 'green' : '';
+    const code = c.iso || c.code || '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${code ? countryFlag(code) : ''} ${c.country || code}</div>
+        <div class="t-num ${sc >= 70 ? 'red' : sc >= 50 ? '' : 'green'}">${sc}</div>
+      </div>
+      <div class="t-meta">${(c.events_30d || 0).toLocaleString()} events · ${(c.fatalities_30d || 0).toLocaleString()} KIA · <span class="${trendCls}">${trendIcon} ${trend}</span></div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="conflict-index">
+    <div class="panel-head">Conflict Severity Index <span class="panel-badge red">${gci.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Humanitarian Crises ────────────────────────────────
+function buildHumanitarianCrisesPanel() {
+  const hc = data.humanitarian_crises || [];
+  if (!hc.length) return '';
+  const affectedOf = (c) => c.people_in_need_m != null ? c.people_in_need_m : (c.affected_m || 0);
+  const totalAffected = hc.reduce((s, c) => s + affectedOf(c), 0);
+  const rows = hc.slice().sort((a,b) => affectedOf(b) - affectedOf(a)).map(c => {
+    const code = c.iso || c.code || '';
+    const aff = affectedOf(c);
+    const pct = c.funding_pct != null ? c.funding_pct : (c.funded_pct || 0);
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${code ? countryFlag(code) : ''} ${c.country || ''}</div>
+        <div class="t-num red">${aff.toFixed(1)}M</div>
+      </div>
+      <div class="t-meta">displaced ${(c.displaced_m || 0).toFixed(1)}M · food-ins ${(c.food_insecure_m || 0).toFixed(1)}M · funded ${pct}%</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="humanitarian">
+    <div class="panel-head">Humanitarian Crises <span class="panel-badge red">${totalAffected.toFixed(0)}M PIN</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── World Clock ────────────────────────────────────────
+function buildWorldClockPanel() {
+  const wc = data.world_clock_zones || [];
+  if (!wc.length) return '';
+  const now = new Date();
+  const rows = wc.slice().sort((a,b) => (a.utc_offset||0) - (b.utc_offset||0)).map(z => {
+    const offset = z.utc_offset || 0;
+    const local = new Date(now.getTime() + offset * 3600 * 1000);
+    const h = local.getUTCHours().toString().padStart(2, '0');
+    const m = local.getUTCMinutes().toString().padStart(2, '0');
+    const isBiz = local.getUTCHours() >= 9 && local.getUTCHours() < 17 && local.getUTCDay() >= 1 && local.getUTCDay() <= 5;
+    const cls = isBiz ? 'green' : '';
+    const code = z.country || z.code || '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${code ? countryFlag(code) : ''} ${z.city || ''}</div>
+        <div class="t-num ${cls}">${h}:${m}</div>
+      </div>
+      <div class="t-meta">UTC${offset >= 0 ? '+' : ''}${offset} · ${isBiz ? 'open' : 'closed'}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="world-clock">
+    <div class="panel-head">World Clock <span class="panel-badge">${wc.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── National Debt / GDP ────────────────────────────────
+function buildNationalDebtPanel() {
+  const nd = data.national_debt || [];
+  if (!nd.length) return '';
+  const ratioOf = (d) => d.debt_gdp_pct != null ? d.debt_gdp_pct : (d.debt_to_gdp || 0);
+  const rows = nd.slice().sort((a,b) => ratioOf(b) - ratioOf(a)).map(d => {
+    const ratio = ratioOf(d);
+    const cls = ratio >= 150 ? 'red' : ratio >= 100 ? 'orange' : '';
+    const code = d.iso || d.code || '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${code ? countryFlag(code) : ''} ${d.country || code}</div>
+        <div class="t-num ${cls}">${ratio.toFixed(0)}%</div>
+      </div>
+      <div class="t-meta">$${((d.debt_t || 0)).toFixed(2)}T${d.debt_pc ? ` · $${(d.debt_pc).toLocaleString()}/capita` : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="panel" data-panel="national-debt">
+    <div class="panel-head">National Debt / GDP <span class="panel-badge">${nd.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════════
+// ════ Cross-Dashboard Integration panels ═══════════════════
+// ════════════════════════════════════════════════════════════
+
+// ── Midterm Elections (live from midterm-dashboard) ─────
+function buildMidtermElectionsPanel() {
+  const me = data.midterm_elections || {};
+  if (!me.top_races && !me.senate_control) return '';
+  const races = me.top_races || [];
+  const senate = me.senate_control || {};
+  const house = me.house_control || {};
+  const meta = (data._cross_meta || {}).midterm_elections || {};
+  const staleTag = meta.stale ? ' <span style="color:#f97316;font-size:9px">STALE</span>' : '';
+
+  // Control probabilities — pick first source
+  let controlHtml = '';
+  const sKeys = Object.keys(senate);
+  const hKeys = Object.keys(house);
+  if (sKeys.length) {
+    const s = senate[sKeys[0]];
+    controlHtml += `<div style="display:flex;gap:8px;margin-bottom:6px">
+      <div style="flex:1;text-align:center;padding:4px;background:rgba(37,99,235,0.15);border-radius:4px">
+        <div style="font-size:9px;color:var(--text-2);text-transform:uppercase">Senate (D)</div>
+        <div style="font-size:16px;font-weight:700;color:#2563eb">${(s.dem * 100).toFixed(0)}%</div>
+      </div>
+      <div style="flex:1;text-align:center;padding:4px;background:rgba(220,38,38,0.15);border-radius:4px">
+        <div style="font-size:9px;color:var(--text-2);text-transform:uppercase">Senate (R)</div>
+        <div style="font-size:16px;font-weight:700;color:#dc2626">${(s.rep * 100).toFixed(0)}%</div>
+      </div>`;
+    if (hKeys.length) {
+      const h = house[hKeys[0]];
+      controlHtml += `
+      <div style="flex:1;text-align:center;padding:4px;background:rgba(37,99,235,0.15);border-radius:4px">
+        <div style="font-size:9px;color:var(--text-2);text-transform:uppercase">House (D)</div>
+        <div style="font-size:16px;font-weight:700;color:#2563eb">${(h.dem * 100).toFixed(0)}%</div>
+      </div>
+      <div style="flex:1;text-align:center;padding:4px;background:rgba(220,38,38,0.15);border-radius:4px">
+        <div style="font-size:9px;color:var(--text-2);text-transform:uppercase">House (R)</div>
+        <div style="font-size:16px;font-weight:700;color:#dc2626">${(h.rep * 100).toFixed(0)}%</div>
+      </div>`;
+    }
+    controlHtml += '</div>';
+  }
+
+  const raceRows = races.slice(0, 15).map(r => {
+    const prob = r.top_prob || 0;
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${r.state || ''} ${r.race_type || ''}</div>
+        <div class="t-num">${(prob * 100).toFixed(0)}%</div>
+      </div>
+      <div class="t-meta">${r.top_candidate || ''} · ${r.title || ''}${r.volume ? ` · $${(r.volume/1000).toFixed(0)}k vol` : ''}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="panel" data-panel="midterm-elections">
+    <div class="panel-head">US Elections (live) ${staleTag}<span class="panel-badge">${races.length} races</span></div>
+    <div class="panel-body">
+      ${controlHtml}
+      <div style="font-size:9px;text-transform:uppercase;color:var(--text-2);margin:4px 0;letter-spacing:1px">Top Races by Volume</div>
+      ${raceRows || '<div style="color:var(--text-2);font-size:11px">Midterm dashboard offline</div>'}
+    </div>
+  </div>`;
+}
+
+// ── Crypto Signals (live from crypto-dashboard) ────────
+function buildCryptoSignalsPanel() {
+  const cs = data.crypto_signals || {};
+  const assets = cs.assets || {};
+  const tickers = Object.keys(assets);
+  if (!tickers.length) return '';
+  const meta = (data._cross_meta || {}).crypto_signals || {};
+  const staleTag = meta.stale ? ' <span style="color:#f97316;font-size:9px">STALE</span>' : '';
+
+  const rows = tickers.sort((a, b) => {
+    const pa = assets[a].price || 0, pb = assets[b].price || 0;
+    return pb - pa;
+  }).map(t => {
+    const a = assets[t];
+    const delta = a.current_delta || 0;
+    const cls = delta >= 0 ? 'green' : 'red';
+    const volLabel = a.volatility || '';
+    const volCls = volLabel === 'HIGH' ? 'red' : volLabel === 'LOW' ? 'green' : '';
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${t}</div>
+        <div class="t-num">$${(a.price || 0).toLocaleString()}</div>
+      </div>
+      <div class="t-meta">RSI ${a.rsi || 0} · WR ${(a.win_rate || 0).toFixed(0)}% · <span class="${cls}">Δ ${(delta * 100).toFixed(2)}%</span> · <span class="${volCls}">${volLabel}</span></div>
+    </div>`;
+  }).join('');
+
+  return `<div class="panel" data-panel="crypto-signals">
+    <div class="panel-head">Crypto Signals (live) ${staleTag}<span class="panel-badge">${tickers.length}</span></div>
+    <div class="panel-body">${rows}</div>
+  </div>`;
+}
+
+// ── Phase 3 panel bindings ─────────────────────────────
+function bindPhase3Panels() {
+  // Tab switching
+  document.querySelectorAll('.tab-bar').forEach(bar => {
+    bar.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tabId = btn.dataset.tab;
+        bar.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+        const panel = bar.closest('.panel');
+        if (panel) panel.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === tabId));
+      });
+    });
+  });
+  // Country brief lookup
+  const cbInput = document.getElementById('cb-input');
+  const cbGo = document.getElementById('cb-go');
+  if (cbInput && cbGo) {
+    const run = async () => {
+      const code = (cbInput.value || '').trim().toUpperCase();
+      if (code.length < 2) return;
+      const out = document.getElementById('cb-result');
+      out.innerHTML = '<div style="color:#666">Loading…</div>';
+      try {
+        const r = await fetch('/api/country-brief?code=' + encodeURIComponent(code));
+        const j = await r.json();
+        if (j.error) { out.innerHTML = '<div style="color:#dc2626">' + j.error + '</div>'; return; }
+        const p = j.profile || {};
+        const sec = (label, body) => body ? `<div style="margin-top:6px"><div style="font-size:9px;text-transform:uppercase;color:#888;letter-spacing:1px">${label}</div><div style="color:var(--text-1)">${body}</div></div>` : '';
+        const apts = (j.apt_groups || []).map(a => a.name).join(', ');
+        const layoffs = (j.recent_layoffs || []).map(l => l.company + ' (-' + l.count + ')').join(', ');
+        const intel = j.intel_index || {};
+        out.innerHTML = `
+          <div style="font-size:13px;color:var(--text-1)"><b>${countryFlag(code || '')} ${p.name || code}</b></div>
+          ${sec('Capital', p.capital)}
+          ${sec('Pop / GDP', (p.population_m || '?') + 'M / $' + (p.gdp_t || '?') + 'T')}
+          ${sec('Intel index', intel.score ? 'rank #' + intel.rank + ' · score ' + intel.score : '—')}
+          ${sec('Drivers', (intel.drivers || []).join(' · '))}
+          ${sec('APT groups attributed', apts || '—')}
+          ${sec('Cyber advisories', (j.cyber_advisories || []).length + ' active')}
+          ${sec('Sanctions programs', ((j.sanctions || []).map(s => s.programs || s.score).join(' · ')) || '—')}
+          ${sec('Outbreaks', (j.outbreaks || []).map(o => o.disease + ' (' + o.severity + ')').join(', ') || '—')}
+          ${sec('Recent layoffs', layoffs || '—')}
+        `;
+      } catch (e) {
+        out.innerHTML = '<div style="color:#dc2626">Error: ' + e + '</div>';
+      }
+    };
+    cbGo.addEventListener('click', run);
+    cbInput.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// ════ Pass 2: UX Features (Cmd+K, time, monitors, etc.) ════
+// ════════════════════════════════════════════════════════════
+
+// ── Custom Monitors (keyword highlighting) ─────────────
+let monitors = [];
+try { monitors = JSON.parse(localStorage.getItem('narve_monitors') || '[]'); } catch {}
+
+function saveMonitors() {
+  try { localStorage.setItem('narve_monitors', JSON.stringify(monitors)); } catch {}
+}
+
+function applyMonitorHighlights() {
+  if (!monitors.length) return;
+  document.querySelectorAll('.panel-body .t-row, .panel-body .c-row, .panel-body .h-row').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    monitors.forEach(m => {
+      if (text.includes(m.kw.toLowerCase())) {
+        row.style.borderLeft = '3px solid ' + m.color;
+        if (!row.querySelector('.monitor-tag')) {
+          const tag = document.createElement('span');
+          tag.className = 'monitor-tag';
+          tag.style.background = m.color;
+          tag.style.color = '#000';
+          tag.textContent = m.kw;
+          const head = row.querySelector('.t-name, .c-name, .h-name');
+          if (head) head.appendChild(tag);
+        }
+      }
+    });
+  });
+}
+
+function renderMonitorList() {
+  const list = document.getElementById('monitor-list');
+  if (!list) return;
+  list.innerHTML = monitors.map((m, i) => `
+    <div class="monitor-row" style="border-left-color:${m.color};display:flex;justify-content:space-between;align-items:center">
+      <span><span class="monitor-tag" style="background:${m.color};color:#000">${m.kw}</span></span>
+      <button class="hbtn" data-rm="${i}">Remove</button>
+    </div>`).join('') || '<div style="color:#666;font-size:11px">No monitors yet.</div>';
+  list.querySelectorAll('button[data-rm]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      monitors.splice(parseInt(btn.dataset.rm), 1);
+      saveMonitors();
+      renderMonitorList();
+      applyMonitorHighlights();
+    });
+  });
+}
+
+// ── Activity tracking (NEW badges) ─────────────────────
+let _seenItems = new Set();
+try { _seenItems = new Set(JSON.parse(localStorage.getItem('narve_seen') || '[]')); } catch {}
+function _saveSeen() {
+  try { localStorage.setItem('narve_seen', JSON.stringify(Array.from(_seenItems).slice(-2000))); } catch {}
+}
+
+function decorateNewItems() {
+  let newCount = 0;
+  document.querySelectorAll('.panel-body .t-row, .panel-body .c-row, .panel-body .h-row').forEach(row => {
+    const id = row.textContent.slice(0, 80).trim();
+    if (!_seenItems.has(id)) {
+      newCount++;
+      _seenItems.add(id);
+      const head = row.querySelector('.t-name, .c-name, .h-name');
+      if (head && !head.querySelector('.new-badge')) {
+        const b = document.createElement('span');
+        b.className = 'new-badge';
+        b.textContent = 'NEW';
+        head.appendChild(b);
+      }
+      row.classList.add('new-glow');
+    }
+  });
+  _saveSeen();
+}
+
+// ── Cmd+K Command Palette ──────────────────────────────
+function _buildCmdkIndex() {
+  const idx = [];
+  // Layers
+  document.querySelectorAll('#map-layer-toggles .layer-toggle').forEach(lab => {
+    const cb = lab.querySelector('input');
+    if (!cb) return;
+    idx.push({ cat: 'Layer', label: lab.textContent.trim(), action: () => { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); } });
+  });
+  // Panels
+  document.querySelectorAll('#panels-grid .panel').forEach(p => {
+    const head = p.querySelector('.panel-head');
+    if (!head) return;
+    idx.push({ cat: 'Panel', label: head.textContent.trim().replace(/\d+$/, '').trim(), action: () => p.scrollIntoView({ behavior: 'smooth', block: 'center' }) });
+  });
+  // Countries
+  Object.entries(data.profiles || {}).slice(0, 80).forEach(([code, p]) => {
+    idx.push({ cat: 'Country', label: (p.name || code) + ' (' + code + ')', action: () => { try { showCountryProfile(code); } catch {} } });
+  });
+  return idx;
+}
+let _cmdkIdx = [];
+let _cmdkActive = 0;
+let _cmdkFiltered = [];
+
+function openCmdk() {
+  _cmdkIdx = _buildCmdkIndex();
+  document.getElementById('cmdk-overlay').classList.add('open');
+  const inp = document.getElementById('cmdk-input');
+  inp.value = '';
+  _renderCmdk('');
+  setTimeout(() => inp.focus(), 30);
+}
+function closeCmdk() { document.getElementById('cmdk-overlay').classList.remove('open'); }
+function _renderCmdk(q) {
+  q = (q || '').toLowerCase().trim();
+  _cmdkFiltered = q
+    ? _cmdkIdx.filter(it => it.label.toLowerCase().includes(q))
+    : _cmdkIdx.slice(0, 50);
+  _cmdkActive = 0;
+  const out = document.getElementById('cmdk-results');
+  if (!_cmdkFiltered.length) {
+    out.innerHTML = '<div class="cmdk-empty">No matches.</div>';
+    return;
+  }
+  out.innerHTML = _cmdkFiltered.slice(0, 60).map((it, i) =>
+    `<div class="cmdk-item ${i === 0 ? 'active' : ''}" data-i="${i}">
+      <span>${it.label}</span><span class="ck-cat">${it.cat}</span>
+    </div>`).join('');
+  out.querySelectorAll('.cmdk-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const it = _cmdkFiltered[parseInt(el.dataset.i)];
+      if (it && it.action) it.action();
+      closeCmdk();
+    });
+  });
+}
+
+// ── Time-range filter ─────────────────────────────────
+let _timeWindow = 24; // hours; 'all' for everything
+function applyTimeFilter() {
+  // Filter visible rows in panels by data-time or data-date attributes if present
+  const cutoff = _timeWindow === 'all' ? 0 : Date.now() - (_timeWindow * 3600 * 1000);
+  document.querySelectorAll('[data-time], [data-date]').forEach(el => {
+    const ts = parseInt(el.dataset.time || Date.parse(el.dataset.date || ''));
+    if (isNaN(ts)) return;
+    el.style.display = (_timeWindow === 'all' || ts >= cutoff) ? '' : 'none';
+  });
+}
+
+// ── Sources Filter Modal ───────────────────────────────
+const ALL_SOURCES = [
+  'OSINT/ACLED','OpenSky','Celestrak','EONET/NASA','OFAC','GDELT','BIS','WTO','EIA','FED',
+  'NOAA','USGS','RSOE','ECDC/WHO','UNHCR','Polymarket','X/Twitter','Telegram','NASA FIRMS','Reuters'
+];
+let _enabledSources = null;
+try { _enabledSources = new Set(JSON.parse(localStorage.getItem('narve_sources') || 'null') || ALL_SOURCES); } catch { _enabledSources = new Set(ALL_SOURCES); }
+
+function renderSourcesList(filter) {
+  filter = (filter || '').toLowerCase();
+  const list = document.getElementById('sources-list');
+  if (!list) return;
+  list.innerHTML = ALL_SOURCES
+    .filter(s => !filter || s.toLowerCase().includes(filter))
+    .map(s => `<label class="source-item"><input type="checkbox" data-src="${s}" ${_enabledSources.has(s) ? 'checked' : ''}/> ${s}</label>`).join('');
+}
+
+// ── Snapshot history ───────────────────────────────────
+let _snapshots = [];
+try { _snapshots = JSON.parse(localStorage.getItem('narve_snaps') || '[]'); } catch {}
+
+function captureSnapshot() {
+  if (typeof data === 'undefined') return;
+  const snap = {
+    t: Date.now(),
+    summary: {
+      conflicts: (data.conflicts || []).length,
+      hotspots: (data.hotspots || []).length,
+      strategic_risk: (data.strategic_risk || {}).composite || 0,
+    }
+  };
+  _snapshots.push(snap);
+  if (_snapshots.length > 100) _snapshots.shift();
+  try { localStorage.setItem('narve_snaps', JSON.stringify(_snapshots)); } catch {}
+  renderSnapshotsList();
+}
+function renderSnapshotsList() {
+  const list = document.getElementById('snapshots-list');
+  if (!list) return;
+  if (!_snapshots.length) { list.innerHTML = '<div style="color:#666;font-size:11px">No snapshots yet.</div>'; return; }
+  list.innerHTML = _snapshots.slice().reverse().map(s => {
+    const d = new Date(s.t);
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${d.toLocaleString()}</div>
+        <span class="t-pill blue">${s.summary.strategic_risk.toFixed(0)}</span>
+      </div>
+      <div class="t-meta">${s.summary.conflicts} conflicts · ${s.summary.hotspots} hotspots</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Data Export (CSV / JSON) ───────────────────────────
+function exportData(format) {
+  if (typeof data === 'undefined') return;
+  if (format === 'json') {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    _downloadBlob(blob, 'narve-export-' + Date.now() + '.json');
+  } else {
+    const lines = ['type,name,country,detail'];
+    (data.conflicts || []).forEach(c => lines.push(['conflict', c.name, c.country || '', (c.casualties || '').replace(/,/g,';')].join(',')));
+    (data.hotspots || []).forEach(h => lines.push(['hotspot', h.name, h.country || '', (h.note || '').replace(/,/g,';')].join(',')));
+    (data.layoffs || []).forEach(l => lines.push(['layoff', l.company, l.country || '', l.count].join(',')));
+    (data.bis_rates || []).forEach(b => lines.push(['bis_rate', b.bank || b.code, b.country || '', b.rate_pct].join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    _downloadBlob(blob, 'narve-export-' + Date.now() + '.csv');
+  }
+}
+function _downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+}
+
+// ── Pin map ────────────────────────────────────────────
+function togglePinMap() {
+  const sec = document.querySelector('.map-section');
+  const btn = document.getElementById('pin-btn');
+  if (!sec || !btn) return;
+  sec.classList.toggle('pinned');
+  btn.classList.toggle('active');
+  btn.textContent = sec.classList.contains('pinned') ? '📌 Pinned' : '📌 Pin Map';
+  localStorage.setItem('narve_pinned', sec.classList.contains('pinned') ? '1' : '0');
+}
+
+// ── Wire all Pass 2 buttons + global keyboard ─────────
+(function _initPass2() {
+  // Buttons
+  document.getElementById('btn-cmdk')?.addEventListener('click', openCmdk);
+  document.getElementById('btn-sources')?.addEventListener('click', () => {
+    document.getElementById('sources-overlay').classList.add('open');
+    renderSourcesList('');
+  });
+  document.getElementById('btn-monitors')?.addEventListener('click', () => {
+    document.getElementById('monitors-overlay').classList.add('open');
+    renderMonitorList();
+  });
+  document.getElementById('btn-snapshot')?.addEventListener('click', () => {
+    document.getElementById('snapshots-overlay').classList.add('open');
+    renderSnapshotsList();
+  });
+  document.getElementById('btn-export')?.addEventListener('click', () => {
+    if (confirm('Export current data?\n\nOK = JSON, Cancel = CSV')) exportData('json');
+    else exportData('csv');
+  });
+  document.getElementById('pin-btn')?.addEventListener('click', togglePinMap);
+  if (localStorage.getItem('narve_pinned') === '1') togglePinMap();
+
+  // Sources modal close + actions
+  document.getElementById('sources-close')?.addEventListener('click', () => document.getElementById('sources-overlay').classList.remove('open'));
+  document.getElementById('sources-search')?.addEventListener('input', e => renderSourcesList(e.target.value));
+  document.getElementById('sources-all')?.addEventListener('click', () => { _enabledSources = new Set(ALL_SOURCES); renderSourcesList(''); });
+  document.getElementById('sources-none')?.addEventListener('click', () => { _enabledSources = new Set(); renderSourcesList(''); });
+  document.getElementById('sources-apply')?.addEventListener('click', () => {
+    document.querySelectorAll('#sources-list input[type=checkbox]').forEach(cb => {
+      if (cb.checked) _enabledSources.add(cb.dataset.src); else _enabledSources.delete(cb.dataset.src);
+    });
+    try { localStorage.setItem('narve_sources', JSON.stringify(Array.from(_enabledSources))); } catch {}
+    document.getElementById('sources-overlay').classList.remove('open');
+  });
+
+  // Monitors modal
+  document.getElementById('monitors-close')?.addEventListener('click', () => document.getElementById('monitors-overlay').classList.remove('open'));
+  document.getElementById('monitor-add')?.addEventListener('click', () => {
+    const kw = document.getElementById('monitor-keyword').value.trim();
+    const color = document.getElementById('monitor-color').value;
+    if (!kw) return;
+    monitors.push({ kw, color });
+    saveMonitors();
+    document.getElementById('monitor-keyword').value = '';
+    renderMonitorList();
+    applyMonitorHighlights();
+  });
+
+  // Snapshots modal
+  document.getElementById('snapshots-close')?.addEventListener('click', () => document.getElementById('snapshots-overlay').classList.remove('open'));
+  document.getElementById('snap-now')?.addEventListener('click', captureSnapshot);
+  document.getElementById('snap-clear')?.addEventListener('click', () => {
+    if (!confirm('Clear all snapshots?')) return;
+    _snapshots = [];
+    try { localStorage.removeItem('narve_snaps'); } catch {}
+    renderSnapshotsList();
+  });
+
+  // Cmd+K input handlers
+  const cmdkInput = document.getElementById('cmdk-input');
+  if (cmdkInput) {
+    cmdkInput.addEventListener('input', e => _renderCmdk(e.target.value));
+    cmdkInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { closeCmdk(); return; }
+      if (e.key === 'Enter') {
+        const it = _cmdkFiltered[_cmdkActive];
+        if (it && it.action) it.action();
+        closeCmdk();
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        _cmdkActive = Math.max(0, Math.min(_cmdkFiltered.length - 1, _cmdkActive + (e.key === 'ArrowDown' ? 1 : -1)));
+        document.querySelectorAll('.cmdk-item').forEach((el, i) => el.classList.toggle('active', i === _cmdkActive));
+        const act = document.querySelectorAll('.cmdk-item')[_cmdkActive];
+        if (act) act.scrollIntoView({ block: 'nearest' });
+      }
+    });
+  }
+  document.getElementById('cmdk-overlay')?.addEventListener('click', e => {
+    if (e.target.id === 'cmdk-overlay') closeCmdk();
+  });
+
+  // Time filter chips
+  document.querySelectorAll('#time-filter-bar .time-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#time-filter-bar .time-chip').forEach(c => c.classList.toggle('active', c === chip));
+      _timeWindow = chip.dataset.window === 'all' ? 'all' : parseInt(chip.dataset.window);
+      applyTimeFilter();
+    });
+  });
+
+  // Global keyboard: Cmd/Ctrl+K opens palette, / focuses search
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      openCmdk();
+    } else if (e.key === 'Escape') {
+      closeCmdk();
+      document.getElementById('sources-overlay')?.classList.remove('open');
+      document.getElementById('monitors-overlay')?.classList.remove('open');
+      document.getElementById('snapshots-overlay')?.classList.remove('open');
+    }
+  });
+
+  // Auto-snapshot every 5 minutes
+  setInterval(captureSnapshot, 5 * 60 * 1000);
+})();
 </script>
 
 <div class="sources-bar">

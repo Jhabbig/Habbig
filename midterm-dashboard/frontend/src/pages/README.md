@@ -10,7 +10,7 @@ and renders.
 |---|---|---|
 | `Dashboard.jsx` | `/` | Landing view — top movers, race summary cards, divergence highlights. |
 | `Races.jsx` | `/races` | Filterable/sortable list of every Senate, House, and gubernatorial race. |
-| `RaceDetail.jsx` | `/race/:id` | Single-race deep dive — current odds across markets, polling, candidates, history, divergence chart. |
+| `RaceDetail.jsx` | `/race/:id` | Single-race deep dive — current odds across markets, polling, candidates, history, divergence chart. **Admin-only human-review controls**: a "Verify match"/"Unverify" toggle in the race header (renders a green "Verified" badge when set), and a "Wrong"/"Unflag" toggle on each source card. Flagged source cards render grayed-out with strike-through and the reviewer's note. All four actions go through `api.flagMarket` / `api.unflagMarket` / `api.verifyRace` / `api.unverifyRace` and refetch the race after each call so the UI reflects the new state. |
 | `Divergence.jsx` | `/divergence` | Cross-market divergence view — pairs of markets disagreeing about the same race. |
 | `Historical.jsx` | `/historical` | Historical results comparison — current odds vs `historical_results.py` baselines. |
 | `WorldElections.jsx` | `/world` | Global elections sidebar — non-US races tracked for context. |

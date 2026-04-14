@@ -113,7 +113,37 @@ CREATE TABLE IF NOT EXISTS trading_orders (
     fill_price       REAL,
     fill_amount      REAL,
     order_ext_id     TEXT,
+    source_dashboard TEXT,
     created_at       INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+    event_id     TEXT PRIMARY KEY,
+    event_type   TEXT NOT NULL,
+    processed_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_positions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL,
+    platform         TEXT NOT NULL,
+    external_id      TEXT NOT NULL,
+    token_or_side    TEXT NOT NULL DEFAULT '',
+    title            TEXT NOT NULL DEFAULT '',
+    qty_open         REAL NOT NULL DEFAULT 0,
+    qty_closed       REAL NOT NULL DEFAULT 0,
+    avg_entry_price  REAL NOT NULL DEFAULT 0,
+    avg_exit_price   REAL,
+    realized_pnl     REAL NOT NULL DEFAULT 0,
+    fees_paid        REAL NOT NULL DEFAULT 0,
+    last_mark_price  REAL,
+    last_mark_at     INTEGER,
+    status           TEXT NOT NULL DEFAULT 'open',
+    source_dashboard TEXT,
+    opened_at        INTEGER NOT NULL,
+    closed_at        INTEGER,
+    UNIQUE(user_id, platform, external_id, token_or_side),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -125,6 +155,10 @@ CREATE INDEX IF NOT EXISTS idx_invite_status ON invite_tokens(status);
 CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token);
 CREATE INDEX IF NOT EXISTS idx_trading_creds_user ON trading_credentials(user_id);
 CREATE INDEX IF NOT EXISTS idx_trading_orders_user ON trading_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_events_processed ON stripe_events(processed_at);
+CREATE INDEX IF NOT EXISTS idx_positions_user ON user_positions(user_id);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON user_positions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_positions_platform ON user_positions(user_id, platform);
 """
 
 
@@ -193,10 +227,17 @@ def init_db() -> None:
             c.execute("ALTER TABLE subscriptions ADD COLUMN stripe_sub_id TEXT")
         if "source" not in sub_cols:
             c.execute("ALTER TABLE subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'placeholder'")
+        # trading_orders migrations
+        order_cols = {row["name"] for row in c.execute("PRAGMA table_info(trading_orders)")}
+        if "source_dashboard" not in order_cols:
+            c.execute("ALTER TABLE trading_orders ADD COLUMN source_dashboard TEXT")
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────
-# Using PBKDF2-HMAC-SHA256 (stdlib, no external deps). 200k iterations.
+# Using PBKDF2-HMAC-SHA256 (stdlib, no external deps). 600k iterations per
+# OWASP 2023 recommendation for SHA-256.
+
+_PBKDF2_ITERATIONS = 600_000
 
 
 def _hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
@@ -204,7 +245,7 @@ def _hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]
         raise ValueError("Password too long")
     if salt is None:
         salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _PBKDF2_ITERATIONS)
     return dk.hex(), salt
 
 
@@ -269,9 +310,45 @@ def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
 
 
 def delete_user(user_id: int) -> None:
-    """Delete a user by ID (used to clean up orphaned users on failed invite claim)."""
+    """Delete a user by ID and all related rows.
+
+    Used both to clean up orphaned users on failed invite claim and to fully
+    purge a user. We don't rely on FK CASCADE because the schema was created
+    without `PRAGMA foreign_keys = ON` enforcement, so we explicitly cascade
+    to children tables here within a single transaction.
+    """
     with conn() as c:
+        # Sessions for this user
         c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        # Trading credentials and orders
+        try:
+            c.execute("DELETE FROM trading_credentials WHERE user_id = ?", (user_id,))
+        except sqlite3.OperationalError:
+            pass  # table may not exist in older deployments
+        try:
+            c.execute("DELETE FROM trading_orders WHERE user_id = ?", (user_id,))
+        except sqlite3.OperationalError:
+            pass
+        # Subscriptions
+        try:
+            c.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
+        except sqlite3.OperationalError:
+            pass
+        # Password reset tokens
+        try:
+            c.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
+        except sqlite3.OperationalError:
+            pass
+        # Detach claimed invite tokens (don't delete — preserves audit trail
+        # but clears the FK so we don't have rows pointing at a deleted user)
+        try:
+            c.execute(
+                "UPDATE invite_tokens SET claimed_by_user_id = NULL WHERE claimed_by_user_id = ?",
+                (user_id,),
+            )
+        except sqlite3.OperationalError:
+            pass
+        # Finally delete the user row
         c.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
 
@@ -525,6 +602,34 @@ def list_all_subscriptions() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def stripe_event_already_processed(event_id: str) -> bool:
+    """Idempotency check for Stripe webhook delivery — True if already handled."""
+    if not event_id:
+        return False
+    with conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM stripe_events WHERE event_id = ?", (event_id,)
+        ).fetchone()
+    return row is not None
+
+
+def mark_stripe_event_processed(event_id: str, event_type: str) -> bool:
+    """Atomically record that we've processed a Stripe event.
+    Returns True on first insertion, False if the event was already recorded
+    (i.e., a concurrent webhook delivery beat us to it)."""
+    if not event_id:
+        return True
+    try:
+        with conn() as c:
+            c.execute(
+                "INSERT INTO stripe_events (event_id, event_type, processed_at) VALUES (?, ?, ?)",
+                (event_id, event_type or "", int(time.time())),
+            )
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
 def get_revenue_stats() -> dict:
     """Return subscription counts and breakdown by dashboard and plan."""
     now = int(time.time())
@@ -654,13 +759,17 @@ def _get_fernet() -> Fernet:
         if not key:
             if os.getenv("PRODUCTION", "0") == "1":
                 raise RuntimeError(
-                    "TRADING_ENCRYPTION_KEY must be set in production"
+                    "TRADING_ENCRYPTION_KEY must be set in production. "
+                    "Generate with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+                )
+            if os.getenv("DEV_MODE", "").strip() != "1":
+                raise RuntimeError(
+                    "TRADING_ENCRYPTION_KEY not set. Set DEV_MODE=1 to use an ephemeral key for development."
                 )
             key = Fernet.generate_key().decode()
             log.warning(
-                "%s not set — using ephemeral key. "
-                "Trading credentials will NOT survive restart. "
-                "Set this env var in production.",
+                "%s not set — using ephemeral key (DEV_MODE). "
+                "Trading credentials will NOT survive restart.",
                 _TRADING_KEY_ENV,
             )
         _fernet = Fernet(key.encode() if isinstance(key, str) else key)
@@ -718,7 +827,11 @@ def has_trading_credentials(user_id: int) -> dict[str, bool]:
             "SELECT platform FROM trading_credentials WHERE user_id = ?", (user_id,)
         ).fetchall()
     platforms = {r["platform"] for r in rows}
-    return {"polymarket": "polymarket" in platforms, "kalshi": "kalshi" in platforms}
+    return {
+        "polymarket": "polymarket" in platforms,
+        "kalshi": "kalshi" in platforms,
+        "alpaca": "alpaca" in platforms,
+    }
 
 
 def delete_trading_credentials(user_id: int, platform: str) -> None:
@@ -735,15 +848,16 @@ def delete_trading_credentials(user_id: int, platform: str) -> None:
 def create_trading_order(
     user_id: int, platform: str, market_slug: str, market_question: str,
     side: str, action: str, amount: float, price: float,
+    source_dashboard: str | None = None,
 ) -> int:
     """Create a pending order record. Returns the order ID."""
     now = int(time.time())
     with conn() as c:
         cur = c.execute(
             "INSERT INTO trading_orders "
-            "(user_id, platform, market_slug, market_question, side, action, amount, price, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-            (user_id, platform, market_slug, market_question, side, action, amount, price, now),
+            "(user_id, platform, market_slug, market_question, side, action, amount, price, status, source_dashboard, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (user_id, platform, market_slug, market_question, side, action, amount, price, source_dashboard, now),
         )
         return cur.lastrowid
 
@@ -758,6 +872,10 @@ def update_trading_order(order_id: int, **fields) -> None:
     bad = set(fields) - _TRADING_ORDER_FIELDS
     if bad:
         raise ValueError(f"disallowed fields: {bad}")
+    # Double-check column names are simple identifiers (defense in depth)
+    for k in fields:
+        if not k.isidentifier():
+            raise ValueError(f"invalid column name: {k!r}")
     sets = ", ".join(f"{k} = ?" for k in fields)
     vals = list(fields.values()) + [order_id]
     with conn() as c:
@@ -770,3 +888,283 @@ def get_recent_orders(user_id: int, limit: int = 20) -> list[sqlite3.Row]:
             "SELECT * FROM trading_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
             (user_id, limit),
         ).fetchall()
+
+
+# ── Position operations ────────────────────────────────────────────────────────
+
+
+def upsert_position(
+    user_id: int,
+    platform: str,
+    external_id: str,
+    token_or_side: str,
+    *,
+    title: str = "",
+    qty_open: float = 0,
+    qty_closed: float = 0,
+    avg_entry_price: float = 0,
+    avg_exit_price: float | None = None,
+    realized_pnl: float = 0,
+    fees_paid: float = 0,
+    last_mark_price: float | None = None,
+    last_mark_at: int | None = None,
+    status: str = "open",
+    source_dashboard: str | None = None,
+    opened_at: int | None = None,
+    closed_at: int | None = None,
+) -> int:
+    """Insert or update a position. Returns the row ID."""
+    now = int(time.time())
+    if opened_at is None:
+        opened_at = now
+    with conn() as c:
+        cur = c.execute(
+            """
+            INSERT INTO user_positions
+                (user_id, platform, external_id, token_or_side, title,
+                 qty_open, qty_closed, avg_entry_price, avg_exit_price,
+                 realized_pnl, fees_paid, last_mark_price, last_mark_at,
+                 status, source_dashboard, opened_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, platform, external_id, token_or_side) DO UPDATE SET
+                title           = excluded.title,
+                qty_open        = excluded.qty_open,
+                qty_closed      = excluded.qty_closed,
+                avg_entry_price = excluded.avg_entry_price,
+                avg_exit_price  = COALESCE(excluded.avg_exit_price, user_positions.avg_exit_price),
+                realized_pnl    = excluded.realized_pnl,
+                fees_paid       = excluded.fees_paid,
+                last_mark_price = COALESCE(excluded.last_mark_price, user_positions.last_mark_price),
+                last_mark_at    = COALESCE(excluded.last_mark_at, user_positions.last_mark_at),
+                status          = excluded.status,
+                source_dashboard = COALESCE(excluded.source_dashboard, user_positions.source_dashboard),
+                closed_at       = excluded.closed_at
+            """,
+            (
+                user_id, platform, external_id, token_or_side, title,
+                qty_open, qty_closed, avg_entry_price, avg_exit_price,
+                realized_pnl, fees_paid, last_mark_price, last_mark_at,
+                status, source_dashboard, opened_at, closed_at,
+            ),
+        )
+        return cur.lastrowid
+
+
+def update_mark_price(position_id: int, mark_price: float) -> None:
+    """Update the mark-to-market price for a position."""
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            "UPDATE user_positions SET last_mark_price = ?, last_mark_at = ? WHERE id = ?",
+            (mark_price, now, position_id),
+        )
+
+
+def get_open_positions(user_id: int, platform: str | None = None) -> list[sqlite3.Row]:
+    """Fetch open positions, optionally filtered by platform."""
+    with conn() as c:
+        if platform:
+            return c.execute(
+                "SELECT * FROM user_positions WHERE user_id = ? AND platform = ? AND status = 'open' ORDER BY opened_at DESC",
+                (user_id, platform),
+            ).fetchall()
+        return c.execute(
+            "SELECT * FROM user_positions WHERE user_id = ? AND status = 'open' ORDER BY opened_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def get_closed_positions(user_id: int, platform: str | None = None, limit: int = 50) -> list[sqlite3.Row]:
+    """Fetch closed/settled positions."""
+    with conn() as c:
+        if platform:
+            return c.execute(
+                "SELECT * FROM user_positions WHERE user_id = ? AND platform = ? AND status != 'open' ORDER BY closed_at DESC LIMIT ?",
+                (user_id, platform, limit),
+            ).fetchall()
+        return c.execute(
+            "SELECT * FROM user_positions WHERE user_id = ? AND status != 'open' ORDER BY closed_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+
+
+def get_all_positions(user_id: int) -> list[sqlite3.Row]:
+    """All positions for a user (any status)."""
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM user_positions WHERE user_id = ? ORDER BY opened_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def get_positions_needing_mark(limit: int = 500) -> list[sqlite3.Row]:
+    """Open positions across all users that need a price update.
+
+    Used by the mark-to-market background worker.
+    Returns distinct (platform, external_id, token_or_side) + position id.
+    """
+    with conn() as c:
+        return c.execute(
+            """
+            SELECT id, user_id, platform, external_id, token_or_side
+            FROM user_positions
+            WHERE status = 'open' AND qty_open > 0
+            ORDER BY last_mark_at ASC NULLS FIRST
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+
+def get_portfolio_summary(user_id: int) -> dict:
+    """Aggregate stats across all positions for a user."""
+    with conn() as c:
+        row = c.execute(
+            """
+            SELECT
+                COUNT(CASE WHEN status = 'open' THEN 1 END)          AS open_count,
+                COALESCE(SUM(CASE WHEN status = 'open'
+                    THEN qty_open * COALESCE(last_mark_price, avg_entry_price)
+                    END), 0)                                          AS open_value,
+                COALESCE(SUM(CASE WHEN status = 'open'
+                    THEN qty_open * (COALESCE(last_mark_price, avg_entry_price) - avg_entry_price)
+                    END), 0)                                          AS unrealized_pnl,
+                COALESCE(SUM(realized_pnl), 0)                        AS realized_pnl,
+                COALESCE(SUM(fees_paid), 0)                           AS total_fees,
+                COUNT(CASE WHEN status IN ('closed', 'settled_win', 'settled_loss') THEN 1 END) AS closed_count,
+                COUNT(CASE WHEN status = 'settled_win' THEN 1 END)    AS wins,
+                COUNT(CASE WHEN status = 'settled_loss' THEN 1 END)   AS losses
+            FROM user_positions WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return {
+            "open_count": 0, "open_value": 0, "unrealized_pnl": 0,
+            "realized_pnl": 0, "total_fees": 0, "closed_count": 0,
+            "wins": 0, "losses": 0, "net_pnl": 0,
+        }
+    r = dict(row)
+    r["net_pnl"] = round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)
+    for k in ("open_value", "unrealized_pnl", "realized_pnl", "total_fees"):
+        r[k] = round(r[k], 2)
+    return r
+
+
+def get_portfolio_by_platform(user_id: int) -> list[dict]:
+    """Aggregate stats grouped by platform."""
+    with conn() as c:
+        rows = c.execute(
+            """
+            SELECT
+                platform,
+                COUNT(CASE WHEN status = 'open' THEN 1 END) AS open_count,
+                COALESCE(SUM(realized_pnl), 0)               AS realized_pnl,
+                COALESCE(SUM(CASE WHEN status = 'open'
+                    THEN qty_open * (COALESCE(last_mark_price, avg_entry_price) - avg_entry_price)
+                    END), 0)                                  AS unrealized_pnl,
+                COALESCE(SUM(fees_paid), 0)                   AS total_fees
+            FROM user_positions WHERE user_id = ?
+            GROUP BY platform
+            """,
+            (user_id,),
+        ).fetchall()
+    return [
+        {**dict(r), "net_pnl": round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)}
+        for r in rows
+    ]
+
+
+def get_portfolio_by_dashboard(user_id: int) -> list[dict]:
+    """Aggregate stats grouped by source_dashboard."""
+    with conn() as c:
+        rows = c.execute(
+            """
+            SELECT
+                COALESCE(source_dashboard, 'unknown') AS dashboard,
+                platform,
+                COUNT(CASE WHEN status = 'open' THEN 1 END) AS open_count,
+                COALESCE(SUM(realized_pnl), 0)               AS realized_pnl,
+                COALESCE(SUM(CASE WHEN status = 'open'
+                    THEN qty_open * (COALESCE(last_mark_price, avg_entry_price) - avg_entry_price)
+                    END), 0)                                  AS unrealized_pnl,
+                COALESCE(SUM(fees_paid), 0)                   AS total_fees
+            FROM user_positions WHERE user_id = ?
+            GROUP BY source_dashboard, platform
+            """,
+            (user_id,),
+        ).fetchall()
+    return [
+        {**dict(r), "net_pnl": round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)}
+        for r in rows
+    ]
+
+
+def rebuild_positions_for_user(user_id: int) -> int:
+    """Derive positions from the trading_orders audit log.
+
+    Groups filled orders by (platform, market_slug, side) and computes
+    net qty, VWAP entry/exit, realized P&L. Upserts into user_positions.
+
+    Returns the number of positions upserted.
+    """
+    with conn() as c:
+        orders = c.execute(
+            """
+            SELECT platform, market_slug, market_question, side, action,
+                   fill_price, fill_amount, created_at
+            FROM trading_orders
+            WHERE user_id = ? AND status = 'submitted' AND fill_price IS NOT NULL AND fill_amount IS NOT NULL
+            ORDER BY created_at ASC
+            """,
+            (user_id,),
+        ).fetchall()
+
+    # Aggregate: key = (platform, market_slug, side)
+    agg: dict[tuple, dict] = {}
+    for o in orders:
+        key = (o["platform"], o["market_slug"], o["side"])
+        if key not in agg:
+            agg[key] = {
+                "question": o["market_question"],
+                "buy_qty": 0, "buy_cost": 0,
+                "sell_qty": 0, "sell_proceeds": 0,
+                "first_at": o["created_at"],
+                "last_at": o["created_at"],
+            }
+        a = agg[key]
+        qty = float(o["fill_amount"])
+        price = float(o["fill_price"])
+        if o["action"] == "buy":
+            a["buy_qty"] += qty
+            a["buy_cost"] += qty * price
+        else:
+            a["sell_qty"] += qty
+            a["sell_proceeds"] += qty * price
+        a["last_at"] = o["created_at"]
+
+    count = 0
+    for (platform, slug, side), a in agg.items():
+        net = a["buy_qty"] - a["sell_qty"]
+        avg_entry = (a["buy_cost"] / a["buy_qty"]) if a["buy_qty"] > 0 else 0
+        avg_exit = (a["sell_proceeds"] / a["sell_qty"]) if a["sell_qty"] > 0 else None
+        realized = a["sell_proceeds"] - (a["sell_qty"] * avg_entry) if a["sell_qty"] > 0 else 0
+
+        status = "open" if net > 0.001 else "closed"
+        upsert_position(
+            user_id=user_id,
+            platform=platform,
+            external_id=slug,
+            token_or_side=side,
+            title=a["question"],
+            qty_open=max(net, 0),
+            qty_closed=a["sell_qty"],
+            avg_entry_price=round(avg_entry, 4),
+            avg_exit_price=round(avg_exit, 4) if avg_exit is not None else None,
+            realized_pnl=round(realized, 4),
+            status=status,
+            opened_at=a["first_at"],
+            closed_at=a["last_at"] if status == "closed" else None,
+        )
+        count += 1
+    return count

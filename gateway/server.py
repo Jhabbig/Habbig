@@ -27,7 +27,7 @@ import os
 import re
 import secrets
 import time
-from collections import defaultdict, deque
+from collections import defaultdict, deque, OrderedDict
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
@@ -52,9 +52,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
+import polymarket_client as poly_client
+import kalshi_client as kalshi_client
+import trading
 from cache import cache
 from sse import event_stream, active_connection_count
 from poller import Poller
+from mark_to_market import MarkToMarketWorker
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -66,7 +70,9 @@ with open(CONFIG_PATH) as f:
     CONFIG = json.load(f)
 
 DOMAIN: str = CONFIG["domain"]
-GATEWAY_PORT: int = CONFIG["gateway_port"]
+# Allow GATEWAY_PORT env var to override config.json — useful for local dev
+# when port 7000 is held by another process (e.g. macOS Control Center).
+GATEWAY_PORT: int = int(os.environ.get("GATEWAY_PORT") or CONFIG["gateway_port"])
 DASHBOARDS: dict = CONFIG["dashboards"]
 
 # Build reverse lookup: subdomain → dashboard_key
@@ -258,9 +264,9 @@ def cookie_domain_for(request: Request) -> Optional[str]:
     # localhost / dev — no domain attribute
     if host in ("localhost", "127.0.0.1") or host.endswith(".localhost"):
         return None
-    # Flexible: derive base from request so cookies span subdomains on any domain
+    # Flexible: derive base from request — but only if it matches our configured domain
     _, base, _ = _request_base_domain(request)
-    if "." in base and base != "localhost":
+    if "." in base and base != "localhost" and base == DOMAIN:
         return f".{base}"
     return None
 
@@ -287,6 +293,7 @@ db.init_db()
 HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
 _poller: Optional[Poller] = None
+_mtm_worker: Optional[MarkToMarketWorker] = None
 _cleanup_task: Optional[asyncio.Task] = None
 _health_task: Optional[asyncio.Task] = None
 
@@ -336,7 +343,7 @@ async def _periodic_cleanup():
 
 @app.on_event("startup")
 async def _startup():
-    global HTTP_CLIENT, _cleanup_task, _health_task, _poller
+    global HTTP_CLIENT, _cleanup_task, _health_task, _poller, _mtm_worker
     HTTP_CLIENT = httpx.AsyncClient(
         timeout=httpx.Timeout(30.0, connect=5.0),
         limits=httpx.Limits(
@@ -356,6 +363,10 @@ async def _startup():
     else:
         log.warning("Running without Redis — no caching or SSE")
 
+    # Mark-to-market background worker for portfolio positions
+    _mtm_worker = MarkToMarketWorker()
+    await _mtm_worker.start()
+
     mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
     log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
     log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
@@ -366,13 +377,15 @@ async def _startup():
     if not tokens:
         first_token = db.create_invite_token("Auto-generated admin token")
         log.info("=" * 50)
-        log.info("  FIRST ADMIN INVITE TOKEN created (check DB or logs at DEBUG level)")
-        log.debug("  FIRST ADMIN INVITE TOKEN: %s", first_token)
+        log.info("  FIRST ADMIN INVITE TOKEN created — retrieve from DB:")
+        log.info("  sqlite3 auth.db \"SELECT token FROM invite_tokens LIMIT 1\"")
         log.info("=" * 50)
 
 
 @app.on_event("shutdown")
 async def _shutdown():
+    if _mtm_worker:
+        await _mtm_worker.stop()
     if _poller:
         await _poller.stop()
     if _health_task:
@@ -469,6 +482,10 @@ _RATE_WINDOW = 300
 _RATE_MAX_LOGIN = 10
 _RATE_MAX_SIGNUP = 5
 _RATE_MAX_FORGOT = 3
+# Hard cap on rate-store size to prevent IP-rotation memory DoS. When over the
+# cap, _is_rate_limited fails closed (returns True for new keys) until the
+# periodic cleanup prunes stale entries.
+_RATE_STORE_MAX = 10_000
 _rate_last_cleanup = 0.0
 
 
@@ -488,6 +505,10 @@ def _is_rate_limited(ip: str, endpoint: str, limit: int) -> bool:
     _rate_cleanup()
     now = time.time()
     key = f"{ip}:{endpoint}"
+    # Fail closed if the store has hit its hard cap and this would be a new
+    # key — protects against IP-rotation memory exhaustion.
+    if key not in _rate_store and len(_rate_store) >= _RATE_STORE_MAX:
+        return True
     timestamps = _rate_store[key]
     cutoff = now - _RATE_WINDOW
     while timestamps and timestamps[0] < cutoff:
@@ -499,9 +520,15 @@ def _is_rate_limited(ip: str, endpoint: str, limit: int) -> bool:
 
 
 def _get_client_ip(request: Request) -> str:
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
+    # In production, only trust Cloudflare's cf-connecting-ip header.
+    # It is set and overwritten by Cloudflare, not spoofable by clients.
+    if IS_PRODUCTION:
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
+        # Fallback to direct connection IP (not xff, which is spoofable)
+        return request.client.host if request.client else "unknown"
+    # In dev, allow X-Forwarded-For for local proxy setups
     xff = request.headers.get("x-forwarded-for")
     if xff:
         return xff.split(",")[0].strip()
@@ -689,8 +716,15 @@ def is_local_host(request: Request) -> bool:
     Always returns False in production (PRODUCTION=1) regardless of host,
     so a misconfigured reverse proxy can't accidentally trigger the dev
     bypass on the live server.
+
+    Checks BOTH the Host header AND the actual client IP to prevent
+    spoofed Host headers from granting dev-bypass access.
     """
     if IS_PRODUCTION:
+        return False
+    # Verify the actual connection comes from loopback, not just the header.
+    client_ip = request.client.host if request.client else ""
+    if client_ip not in ("127.0.0.1", "::1", "localhost"):
         return False
     host = request.headers.get("host", "").split(":")[0].lower()
     return host == "localhost" or host.endswith(".localhost") or host == "127.0.0.1"
@@ -726,7 +760,7 @@ def ensure_dev_user() -> int:
 # Avoids a DB round-trip on every proxied request.  Entries expire after 60 s
 # so permission changes (suspend, role update) propagate within a minute.
 
-_SESSION_CACHE: dict[str, tuple[float, dict]] = {}
+_SESSION_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 _SESSION_CACHE_TTL = 60  # seconds
 _SESSION_CACHE_MAX = 500
 
@@ -736,6 +770,7 @@ def _get_cached_session(token: str) -> Optional[dict]:
     now = time.time()
     entry = _SESSION_CACHE.get(token)
     if entry and now - entry[0] < _SESSION_CACHE_TTL:
+        _SESSION_CACHE.move_to_end(token)
         return entry[1]
     session = db.get_session(token)
     if not session:
@@ -754,10 +789,9 @@ def _get_cached_session(token: str) -> Optional[dict]:
         "is_super_admin": admin_level >= 2,
         "admin_level": admin_level,
     }
-    # Evict oldest entries if cache is full
+    # Evict LRU entry if cache is full
     if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX:
-        oldest_key = min(_SESSION_CACHE, key=lambda k: _SESSION_CACHE[k][0])
-        del _SESSION_CACHE[oldest_key]
+        _SESSION_CACHE.popitem(last=False)
     _SESSION_CACHE[token] = (now, result)
     return result
 
@@ -776,7 +810,7 @@ def flush_session_cache() -> None:
 # Caches has_active_subscription results per (user_id, dashboard_key).
 # TTL is 120 s — subscriptions change far less often than sessions.
 
-_SUB_CACHE: dict[tuple[int, str], tuple[float, bool]] = {}
+_SUB_CACHE: OrderedDict[tuple[int, str], tuple[float, bool]] = OrderedDict()
 _SUB_CACHE_TTL = 120  # seconds
 _SUB_CACHE_MAX = 1000
 
@@ -787,11 +821,11 @@ def cached_has_subscription(user_id: int, dashboard_key: str) -> bool:
     cache_key = (user_id, dashboard_key)
     entry = _SUB_CACHE.get(cache_key)
     if entry and now - entry[0] < _SUB_CACHE_TTL:
+        _SUB_CACHE.move_to_end(cache_key)
         return entry[1]
     result = db.has_active_subscription(user_id, dashboard_key)
     if len(_SUB_CACHE) >= _SUB_CACHE_MAX:
-        oldest = min(_SUB_CACHE, key=lambda k: _SUB_CACHE[k][0])
-        del _SUB_CACHE[oldest]
+        _SUB_CACHE.popitem(last=False)
     _SUB_CACHE[cache_key] = (now, result)
     return result
 
@@ -870,13 +904,27 @@ def clear_session_cookie(response: Response, request: Request) -> None:
     response.delete_cookie(**kwargs)
 
 
+class StripeProviderError(Exception):
+    """Raised when Stripe is unavailable or returns an unrecoverable error."""
+
+
 def _get_or_create_stripe_customer(user_id: str, email: str) -> str:
-    """Find an existing Stripe customer by email, or create a new one."""
-    existing = stripe.Customer.list(email=email, limit=1)
-    if existing.data:
-        return existing.data[0].id
-    customer = stripe.Customer.create(email=email, metadata={"user_id": str(user_id)})
-    return customer.id
+    """Find an existing Stripe customer by email, or create a new one.
+
+    Wraps Stripe SDK calls in try/except so callers can present a user-friendly
+    error rather than 500-ing the checkout flow on transient Stripe issues.
+    """
+    try:
+        existing = stripe.Customer.list(email=email, limit=1)
+        if getattr(existing, "data", None):
+            return existing.data[0].id
+        customer = stripe.Customer.create(email=email, metadata={"user_id": str(user_id)})
+        return customer.id
+    except Exception as exc:
+        # stripe.error.* all subclass Exception; we don't want to import the
+        # specific class here because the SDK version may not expose every type.
+        log.error("Stripe customer lookup/create failed for %s: %s", email, exc)
+        raise StripeProviderError("Payment provider unavailable. Please try again in a moment.") from exc
 
 
 def _stripe_base_url(request: Request) -> str:
@@ -1323,7 +1371,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
                 open_url = f"http://localhost:{cfg['target']}"
             else:
                 open_url = f"{req_scheme}://{cfg['subdomain']}.{req_base}{req_port}"
-            cta = f'<a class="card-cta cta-open" href="{open_url}" target="_blank">Open →</a>'
+            cta = f'<a class="card-cta cta-open" href="{open_url}" target="_blank" rel="noopener">Open →</a>'
         else:
             cta = f'<a class="card-cta cta-sub" href="/preview/{key}">Learn More</a>'
 
@@ -1534,22 +1582,29 @@ async def billing_action(request: Request, action: str = Form(...)):
                 log.error("No Stripe price ID configured for %s %s", key, plan)
                 return RedirectResponse("/billing", status_code=302)
 
-            customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+            try:
+                customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+            except StripeProviderError:
+                return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
             base = _stripe_base_url(request)
 
-            session = stripe.checkout.Session.create(
-                customer=customer_id,
-                mode="subscription",
-                line_items=[{"price": stripe_price_id, "quantity": 1}],
-                metadata={
-                    "user_id": str(user["user_id"]),
-                    "dashboard_key": key,
-                    "plan": plan,
-                    "type": "dashboard",
-                },
-                success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
-                cancel_url=base + f"/billing?dashboard={key}",
-            )
+            try:
+                session = stripe.checkout.Session.create(
+                    customer=customer_id,
+                    mode="subscription",
+                    line_items=[{"price": stripe_price_id, "quantity": 1}],
+                    metadata={
+                        "user_id": str(user["user_id"]),
+                        "dashboard_key": key,
+                        "plan": plan,
+                        "type": "dashboard",
+                    },
+                    success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
+                    cancel_url=base + f"/billing?dashboard={key}",
+                )
+            except Exception as exc:
+                log.error("Stripe checkout creation failed for user %s: %s", user.get("user_id"), exc)
+                return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
             return RedirectResponse(session.url, status_code=303)
 
     # ── Cancel a dashboard subscription ────────────────────────────────────
@@ -1610,22 +1665,29 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
         log.error("No Stripe price ID configured for bundle %s %s", plan, interval)
         return RedirectResponse("/billing", status_code=302)
 
-    customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+    try:
+        customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+    except StripeProviderError:
+        return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
     base = _stripe_base_url(request)
 
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        mode="subscription",
-        line_items=[{"price": stripe_price_id, "quantity": 1}],
-        metadata={
-            "user_id": str(user["user_id"]),
-            "plan_type": plan,
-            "interval": interval,
-            "type": "bundle",
-        },
-        success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
-        cancel_url=base + "/billing",
-    )
+    try:
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            mode="subscription",
+            line_items=[{"price": stripe_price_id, "quantity": 1}],
+            metadata={
+                "user_id": str(user["user_id"]),
+                "plan_type": plan,
+                "interval": interval,
+                "type": "bundle",
+            },
+            success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=base + "/billing",
+        )
+    except Exception as exc:
+        log.error("Stripe checkout creation failed for bundle %s: %s", plan, exc)
+        return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
     return RedirectResponse(session.url, status_code=303)
 
 
@@ -1659,7 +1721,13 @@ async def stripe_webhook(request: Request):
         event = json.loads(payload)
 
     event_type = event["type"] if isinstance(event, dict) else event.type
+    event_id = event.get("id") if isinstance(event, dict) else getattr(event, "id", None)
     data_obj = event["data"]["object"] if isinstance(event, dict) else event.data.object
+
+    # Idempotency: skip events already processed (Stripe retries on network errors).
+    if event_id and not db.mark_stripe_event_processed(event_id, event_type):
+        log.info("Stripe webhook: skipping duplicate event %s (%s)", event_id, event_type)
+        return JSONResponse({"status": "ok", "duplicate": True})
 
     # ── checkout.session.completed — subscription paid ─────────────────────
     if event_type == "checkout.session.completed":
@@ -1811,6 +1879,39 @@ async def preview_page(request: Request, dashboard_key: str):
 # ── Profile page ────────────────────────────────────────────────────────────
 
 
+def _trading_credentials_context(user_id: int, csrf_token: str, scope: str) -> dict:
+    """Build the template vars for the Trading Credentials section.
+
+    ``scope`` is either ``"profile"`` or ``"settings"`` and controls which
+    URL the disconnect forms post to. The Polymarket/Kalshi *save* form
+    actions are hard-coded in the templates themselves.
+    """
+    if scope not in ("profile", "settings"):
+        raise ValueError(f"Invalid scope: {scope}")
+
+    cred_status = db.has_trading_credentials(user_id)
+    connected = '<span class="setup-status on">Connected</span>'
+    not_connected = '<span class="setup-status off">Not connected</span>'
+    csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
+
+    def _delete_form(platform: str, label: str) -> str:
+        return (
+            f'<form method="post" action="/{scope}/trading/{platform}/delete" style="display:inline" '
+            f'onsubmit="return confirm(\'Disconnect {label}?\')">{csrf_hidden}<button type="submit" '
+            f'class="setup-btn-remove">Disconnect</button></form>'
+        )
+
+    return {
+        "raw_trading_banner": "",
+        "raw_poly_status": connected if cred_status["polymarket"] else not_connected,
+        "raw_kalshi_status": connected if cred_status["kalshi"] else not_connected,
+        "raw_alpaca_status": connected if cred_status["alpaca"] else not_connected,
+        "raw_poly_delete": _delete_form("polymarket", "Polymarket") if cred_status["polymarket"] else "",
+        "raw_kalshi_delete": _delete_form("kalshi", "Kalshi") if cred_status["kalshi"] else "",
+        "raw_alpaca_delete": _delete_form("alpaca", "Alpaca") if cred_status["alpaca"] else "",
+    }
+
+
 def _profile_context(user: dict, banner: str = "", csrf_token: str = "", request: Request = None) -> dict:
     import datetime as _dt
     db_user = db.get_user_by_id(user["user_id"])
@@ -1835,29 +1936,6 @@ def _profile_context(user: dict, banner: str = "", csrf_token: str = "", request
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     avatar = user.get("username", "?")[0].upper()
 
-    # Trading credentials status
-    cred_status = db.has_trading_credentials(user["user_id"])
-    connected = '<span class="setup-status on">Connected</span>'
-    not_connected = '<span class="setup-status off">Not connected</span>'
-    csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
-    poly_delete = (
-        f'<form method="post" action="/profile/trading/polymarket/delete" style="display:inline" '
-        f'onsubmit="return confirm(\'Disconnect Polymarket?\')">{csrf_hidden}<button type="submit" '
-        f'class="setup-btn-remove">Disconnect</button></form>'
-    ) if cred_status["polymarket"] else ""
-    kalshi_delete = (
-        f'<form method="post" action="/profile/trading/kalshi/delete" style="display:inline" '
-        f'onsubmit="return confirm(\'Disconnect Kalshi?\')">{csrf_hidden}<button type="submit" '
-        f'class="setup-btn-remove">Disconnect</button></form>'
-    ) if cred_status["kalshi"] else ""
-
-    # Cards that aren't connected start open so the user sees the setup steps
-    poly_open = "" if cred_status["polymarket"] else "open"
-    kalshi_open = "" if cred_status["kalshi"] else "open"
-    # If both are connected, add the 'connected' border style
-    poly_connected = "connected" if cred_status["polymarket"] else ""
-    kalshi_connected = "connected" if cred_status["kalshi"] else ""
-
     return {
         "username": user.get("username", user["email"]),
         "email": user["email"],
@@ -1866,15 +1944,20 @@ def _profile_context(user: dict, banner: str = "", csrf_token: str = "", request
         "raw_role_badge": role_badge,
         "raw_admin_link": admin_link,
         "raw_banner": banner,
-        "raw_trading_banner": "",
-        "raw_poly_status": connected if cred_status["polymarket"] else not_connected,
-        "raw_kalshi_status": connected if cred_status["kalshi"] else not_connected,
-        "raw_poly_delete": poly_delete,
-        "raw_kalshi_delete": kalshi_delete,
-        "poly_open_class": f"{poly_connected} {poly_open}".strip(),
-        "kalshi_open_class": f"{kalshi_connected} {kalshi_open}".strip(),
         "raw_dashboard_tabs": _build_tab_html(user["user_id"], request=request),
+        **_trading_credentials_context(user["user_id"], csrf_token, scope="profile"),
     }
+
+
+@app.get("/portfolio", response_class=HTMLResponse)
+async def portfolio_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/portfolio")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    return render_page("portfolio", request=request)
 
 
 @app.get("/profile", response_class=HTMLResponse)
@@ -1934,6 +2017,42 @@ async def profile_change_password(request: Request, current_password: str = Form
 # ── Trading credential management (profile forms) ────────────────────────
 
 
+def _parse_trading_creds(
+    platform: str, private_key: str, api_key: str, api_secret: str,
+    api_passphrase: str, email: str, password: str,
+) -> tuple[Optional[dict], Optional[str]]:
+    """Validate trading-credential form input.
+
+    Returns ``(creds_dict, None)`` on success or ``(None, error_message)`` on
+    failure. Shared by ``/profile/trading/*`` and ``/settings/trading/*`` so the
+    two flows can stay byte-for-byte consistent in what they accept.
+    """
+    if platform == "polymarket":
+        pk = private_key.strip()
+        if not pk:
+            return None, "Polymarket private key is required."
+        return {
+            "private_key": pk,
+            "api_key": api_key.strip(),
+            "api_secret": api_secret.strip(),
+            "api_passphrase": api_passphrase.strip(),
+        }, None
+    if platform == "kalshi":
+        ak = api_key.strip()
+        em = email.strip()
+        pw = password.strip()
+        if not ak and not (em and pw):
+            return None, "Kalshi API key, or email + password, is required."
+        return {"api_key": ak, "email": em, "password": pw}, None
+    if platform == "alpaca":
+        ak = api_key.strip()
+        sec = api_secret.strip()
+        if not ak or not sec:
+            return None, "Alpaca API key and secret are required."
+        return {"api_key": ak, "api_secret": sec, "paper": True}, None
+    return None, "Unknown trading platform."
+
+
 @app.post("/profile/trading/{platform}")
 async def profile_save_trading_creds(
     request: Request, platform: str,
@@ -1952,7 +2071,7 @@ async def profile_save_trading_creds(
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
-    if platform not in ("polymarket", "kalshi"):
+    if platform not in ("polymarket", "kalshi", "alpaca"):
         return RedirectResponse("/profile#trading", status_code=302)
 
     t_err = lambda msg: (
@@ -1965,27 +2084,17 @@ async def profile_save_trading_creds(
     )
 
     _csrf = _get_csrf_token(request)
-    if platform == "polymarket":
-        pk = private_key.strip()
-        if not pk:
-            ctx = _profile_context(user, csrf_token=_csrf, request=request)
-            ctx["raw_trading_banner"] = t_err("Polymarket private key is required.")
-            return render_page("profile", request=request, **ctx)
-        creds = {"private_key": pk, "api_key": api_key.strip(), "api_secret": api_secret.strip(), "api_passphrase": api_passphrase.strip()}
-    else:
-        ak = api_key.strip()
-        em = email.strip()
-        pw = password.strip()
-        if not ak and not (em and pw):
-            ctx = _profile_context(user, csrf_token=_csrf, request=request)
-            ctx["raw_trading_banner"] = t_err("Kalshi API key or email + password required.")
-            return render_page("profile", request=request, **ctx)
-        creds = {"api_key": ak, "email": em, "password": pw}
+    creds, err = _parse_trading_creds(platform, private_key, api_key, api_secret, api_passphrase, email, password)
+    if err is not None:
+        ctx = _profile_context(user, csrf_token=_csrf, request=request)
+        ctx["raw_trading_banner"] = t_err(err)
+        return render_page("profile", request=request, **ctx)
 
     db.save_trading_credentials(user["user_id"], platform, creds)
     log.info("User %s saved %s trading credentials via profile", user.get("username", user["email"]), platform)
     ctx = _profile_context(user, csrf_token=_csrf, request=request)
-    ctx["raw_trading_banner"] = t_ok(f"{'Polymarket' if platform == 'polymarket' else 'Kalshi'} credentials saved and encrypted.")
+    platform_label = {"polymarket": "Polymarket", "kalshi": "Kalshi", "alpaca": "Alpaca"}.get(platform, platform)
+    ctx["raw_trading_banner"] = t_ok(f"{platform_label} credentials saved and encrypted.")
     return render_page("profile", request=request, **ctx)
 
 
@@ -2002,7 +2111,7 @@ async def profile_delete_trading_creds(request: Request, platform: str):
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
-    if platform in ("polymarket", "kalshi"):
+    if platform in ("polymarket", "kalshi", "alpaca"):
         db.delete_trading_credentials(user["user_id"], platform)
         log.info("User %s deleted %s trading credentials", user.get("username", user["email"]), platform)
     return RedirectResponse("/profile#trading", status_code=302)
@@ -2066,10 +2175,17 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
     user = db.get_user_by_email(email)
     if user:
         reset_token = db.create_password_reset(user["id"])
-        # Determine the reset link based on the current request host.
-        host = request.headers.get("host", DOMAIN)
-        scheme = "https" if IS_PRODUCTION else request.url.scheme
-        reset_link = f"{scheme}://{host}/reset-password?token={reset_token}"
+        # Build the reset link from the configured DOMAIN, not the request Host header.
+        # The Host header is attacker-controlled and could be used to phish a victim
+        # into clicking a reset link that points to a malicious domain.
+        if IS_PRODUCTION:
+            reset_link = f"https://{DOMAIN}/reset-password?token={reset_token}"
+        else:
+            host = request.headers.get("host", DOMAIN).split(",")[0].strip()
+            # Allow only localhost or the configured DOMAIN in dev to avoid header injection.
+            if host not in (DOMAIN, "localhost", "127.0.0.1") and not host.startswith("localhost:") and not host.startswith("127.0.0.1:"):
+                host = DOMAIN
+            reset_link = f"{request.url.scheme}://{host}/reset-password?token={reset_token}"
         log.info("Password reset requested for %s", email)
 
         # Send email if SMTP is configured
@@ -2110,9 +2226,14 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
             except Exception as exc:
                 log.error("Failed to send password reset email: %s", exc)
         else:
-            # No SMTP configured — log the link so the admin can relay it.
-            log.info("SMTP not configured. Reset link generated for %s (check /admin for details)", email)
-            log.debug("Reset link for %s: %s", email, reset_link)
+            # No SMTP configured — note that a reset was generated, but never log
+            # the actual reset_token/reset_link. Logs may be shipped or persisted,
+            # and a leaked token would let an attacker reset that user's password.
+            log.warning(
+                "SMTP not configured. Password reset requested for %s but no email sent. "
+                "Configure SMTP_USER/SMTP_PASS to enable reset emails.",
+                email,
+            )
 
     return render_page("forgot-password", request=request, error="", raw_success=success_msg)
 
@@ -2170,6 +2291,9 @@ async def reset_password_submit(
     db.update_user_password(reset["user_id"], new_password)
     db.use_password_reset(token)
     # Kill all existing sessions so a compromised session can't persist.
+    # Flush the cache BEFORE deleting from DB so concurrent in-flight requests
+    # cannot read a stale session row that races the cache flush.
+    flush_session_cache()
     db.delete_user_sessions(reset["user_id"])
     flush_session_cache()
 
@@ -2299,6 +2423,71 @@ async def api_enquire(request: Request):
     return JSONResponse({"success": True})
 
 
+@app.post("/api/newsletter")
+async def api_newsletter(request: Request):
+    """Landing page waitlist signup. Accepts email + optional referral, persists
+    as a lightweight enquiry, returns the user's position in the waitlist."""
+    # Require XMLHttpRequest header to prevent cross-site form-post CSRF
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/newsletter")
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "newsletter", 5):
+        return JSONResponse({"error": "Too many requests. Please try again later."}, status_code=429)
+
+    # Accept either form-encoded (landing page) or JSON
+    email = ""
+    ref = ""
+    try:
+        ctype = (request.headers.get("content-type") or "").lower()
+        if "application/json" in ctype:
+            body = await request.json()
+            if isinstance(body, dict):
+                email = (body.get("email") or "").strip().lower()
+                ref = (body.get("ref") or "").strip()
+        else:
+            form = await request.form()
+            email = (form.get("email") or "").strip().lower()
+            ref = (form.get("ref") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Please enter a valid email address"}, status_code=400)
+    # Bound the referral string to prevent abuse
+    ref = ref[:120]
+
+    try:
+        message = f"Newsletter signup{f' (ref: {ref})' if ref else ''}"
+        db.create_enquiry(email, "newsletter", message)
+    except Exception as exc:
+        log.error("Failed to record newsletter signup for %s: %s", email, exc)
+        return JSONResponse({"error": "Could not record signup. Try again."}, status_code=500)
+
+    # Position = total enquiries (rough waitlist position; admins can de-dup later)
+    try:
+        all_enq = db.list_enquiries() or []
+        position = len(all_enq)
+    except Exception:
+        position = 0
+
+    # Build a simple share URL pointing back at the landing page with a ref tag
+    try:
+        scheme = "https" if IS_PRODUCTION else "http"
+        share_url = f"{scheme}://{DOMAIN}/?ref={position}" if DOMAIN else f"/?ref={position}"
+    except Exception:
+        share_url = "/"
+
+    log.info("Newsletter signup: %s (position=%d)", email, position)
+    return JSONResponse({
+        "success": True,
+        "position": position,
+        "share_url": share_url,
+    })
+
+
 # ── Admin panel ──────────────────────────────────────────────────────────────
 
 
@@ -2415,7 +2604,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             if not u["suspended"]:
                 actions += f'<form method="post" action="/admin/users/{u["id"]}/suspend" onsubmit="return confirm(\'Suspend {uname_js}?\')" style="display:flex;gap:6px;align-items:center">{csrf_hidden}{pw_field}<button class="btn btn-danger" style="font-size:11px">Suspend</button></form>'
             else:
-                actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend">{csrf_hidden}<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
+                actions += f'<form method="post" action="/admin/users/{u["id"]}/unsuspend" onsubmit="return confirm(\'Unsuspend {uname_js}?\')" style="display:flex;gap:6px;align-items:center">{csrf_hidden}{pw_field}<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Unsuspend</button></form>'
 
             # Change email (admin+)
             detail_extra += (
@@ -2423,6 +2612,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
                 f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
                 f'{csrf_hidden}'
                 f'<input name="new_email" type="email" placeholder="New email" {sel_style} style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);flex:1">'
+                f'{pw_field}'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Change Email</button></form>'
             )
 
@@ -2430,17 +2620,18 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             if u["invite_token_id"]:
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/revoke-token" onclick="event.stopPropagation()" '
-                    f'onsubmit="return confirm(\'Revoke token for {uname}? They will not be able to log in.\')"'
-                    f' style="margin-top:8px">'
-                    f'{csrf_hidden}'
+                    f'onsubmit="return confirm(\'Revoke token for {uname_js}? They will not be able to log in.\')"'
+                    f' style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                    f'{csrf_hidden}{pw_field}'
                     f'<button class="btn btn-danger" style="font-size:11px">Revoke Invite Token</button></form>'
                 )
 
             # Generate new token for user (admin+)
             detail_extra += (
                 f'<form method="post" action="/admin/users/{u["id"]}/new-token" onclick="event.stopPropagation()" '
-                f'onsubmit="return confirm(\'Generate a new invite token for {uname}?\')" style="margin-top:8px">'
-                f'{csrf_hidden}'
+                f'onsubmit="return confirm(\'Generate a new invite token for {uname_js}?\')" '
+                f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                f'{csrf_hidden}{pw_field}'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
             )
 
@@ -2726,6 +2917,8 @@ def _verify_admin_password(request: Request, admin: dict, password: str) -> bool
 
 @app.post("/admin/users/{user_id}/promote")
 async def admin_promote(request: Request, user_id: int):
+    # Promotion requires super-admin privileges to prevent privilege escalation
+    # (a regular admin should not be able to create more admins).
     admin = _require_super_admin(request)
     form = await request.form()
     csrf_tok = form.get("_csrf_token", "")
@@ -2787,6 +2980,9 @@ async def admin_unsuspend(request: Request, user_id: int):
     csrf_tok = form.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     db.set_user_suspended(user_id, False)
@@ -2797,11 +2993,14 @@ async def admin_unsuspend(request: Request, user_id: int):
 
 @app.post("/admin/enquiries/{enquiry_id}/read")
 async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
-    _require_admin_user(request)
+    admin = _require_admin_user(request)
     form = await request.form()
     csrf_tok = form.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     db.mark_enquiry_read(enquiry_id)
     return RedirectResponse("/admin", status_code=302)
 
@@ -2813,6 +3012,9 @@ async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
     csrf_tok = form.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     enquiry = db.get_enquiry_by_id(enquiry_id)
     if not enquiry:
         raise HTTPException(status_code=404, detail="Enquiry not found")
@@ -2876,6 +3078,9 @@ async def admin_change_email(request: Request, user_id: int, new_email: str = Fo
     csrf_tok = form.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     new_email = new_email.strip().lower()
@@ -2897,6 +3102,9 @@ async def admin_revoke_user_token(request: Request, user_id: int):
     csrf_tok = form.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     user = db.get_user_by_id(user_id)
@@ -2913,15 +3121,25 @@ async def admin_new_token_for_user(request: Request, user_id: int):
     csrf_tok = form.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
     if not _can_manage_user(admin, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     user = db.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    # Revoke previous invite token before issuing replacement to prevent stale-token accumulation
+    if user.get("invite_token_id"):
+        try:
+            db.revoke_invite_token(user["invite_token_id"])
+        except Exception as e:
+            log.warning("Failed to revoke previous token for user %s: %s", user_id, e)
     new_token = db.create_invite_token(f"Replacement token for {user['username'] or user['email']}")
     db.claim_invite_token(new_token, user_id, user["email"])
     db.link_invite_token_to_user(user_id, new_token)
-    log.info("Super admin %s generated new token %s for user %s", admin["email"], new_token, user_id)
+    admin_label = "Super admin" if admin.get("admin_level", 0) >= 2 else "Admin"
+    log.info("%s %s generated new token %s for user %s", admin_label, admin["email"], new_token, user_id)
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -2971,6 +3189,9 @@ async def admin_bulk_users(request: Request):
     action = form.get("bulk_action", "")
     if action not in ("promote", "demote", "suspend", "unsuspend"):
         raise HTTPException(status_code=400, detail="Invalid bulk action")
+    # Promotion requires super-admin to prevent privilege escalation
+    if action == "promote" and admin.get("admin_level", 0) < 2:
+        raise HTTPException(status_code=403, detail="Only super admins can promote users")
     user_ids_raw = [uid for uid in form.getlist("user_ids") if uid]
     if not user_ids_raw:
         return RedirectResponse("/admin", status_code=302)
@@ -2984,7 +3205,9 @@ async def admin_bulk_users(request: Request):
         if not _can_manage_user(admin, uid):
             continue
         if action == "promote":
-            db.set_user_admin(uid, True)
+            # Super admins promote to level 2, regular admins to level 1
+            new_level = 2 if admin.get("admin_level", 0) >= 2 else 1
+            db.set_user_role(uid, new_level)
         elif action == "demote":
             db.set_user_admin(uid, False)
         elif action == "suspend":
@@ -2998,6 +3221,29 @@ async def admin_bulk_users(request: Request):
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
+
+
+_SETTINGS_BANNER_MESSAGES: dict[str, tuple[str, str]] = {
+    # query value → (severity, message)
+    "1":                       ("success", "<strong>Saved.</strong> Your landing preference has been updated."),
+    "trading_poly":            ("success", "Polymarket credentials saved and encrypted."),
+    "trading_kalshi":          ("success", "Kalshi credentials saved and encrypted."),
+    "trading_poly_removed":    ("success", "Polymarket credentials removed."),
+    "trading_kalshi_removed":  ("success", "Kalshi credentials removed."),
+    "err_poly_missing_key":    ("error",   "Polymarket private key is required."),
+    "err_kalshi_missing":      ("error",   "Kalshi API key, or email + password, is required."),
+}
+
+
+def _settings_banner_html(saved: Optional[str]) -> str:
+    if not saved:
+        return ""
+    entry = _SETTINGS_BANNER_MESSAGES.get(saved)
+    if not entry:
+        return ""
+    severity, msg = entry
+    cls = "notice-success" if severity == "success" else "notice-error"
+    return f'<div class="notice {cls}">{msg}</div>'
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -3025,22 +3271,16 @@ async def settings_page(request: Request, saved: Optional[str] = None):
             f'{html.escape(cfg["display_name"])}</option>'
         )
 
-    saved_banner = ""
-    if saved == "1":
-        saved_banner = (
-            '<div class="notice notice-success">'
-            '<strong>Saved.</strong> Your landing preference has been updated.'
-            '</div>'
-        )
-
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    csrf_token = _get_csrf_token(request)
     return render_page(
         "settings", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         raw_options="".join(option_html),
-        raw_saved_banner=saved_banner,
+        raw_saved_banner=_settings_banner_html(saved),
         raw_admin_link=admin_link,
         raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
+        **_trading_credentials_context(user["user_id"], csrf_token, scope="settings"),
     )
 
 
@@ -3071,6 +3311,66 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
     return RedirectResponse("/settings?saved=1", status_code=302)
 
 
+# ── Settings: trading credential management ─────────────────────────────────
+# Mirrors /profile/trading/* but redirects back to /settings#trading. Both
+# endpoints write to the same encrypted store, so saving in one place reflects
+# everywhere immediately.
+
+
+@app.post("/settings/trading/{platform}")
+async def settings_save_trading_creds(
+    request: Request, platform: str,
+    private_key: str = Form(""), api_key: str = Form(""),
+    api_secret: str = Form(""), api_passphrase: str = Form(""),
+    email: str = Form(""), password: str = Form(""),
+):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, f"/settings/trading/{platform}")
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    if platform not in ("polymarket", "kalshi", "alpaca"):
+        return RedirectResponse("/settings#trading", status_code=302)
+
+    creds, err = _parse_trading_creds(platform, private_key, api_key, api_secret, api_passphrase, email, password)
+    if err is not None:
+        err_markers = {"polymarket": "err_poly_missing_key", "kalshi": "err_kalshi_missing", "alpaca": "err_alpaca_missing"}
+        marker = err_markers.get(platform, "err_missing")
+        return RedirectResponse(f"/settings?saved={marker}#trading", status_code=302)
+
+    db.save_trading_credentials(user["user_id"], platform, creds)
+    log.info("User %s saved %s trading credentials via settings", user.get("username", user["email"]), platform)
+    saved_markers = {"polymarket": "trading_poly", "kalshi": "trading_kalshi", "alpaca": "trading_alpaca"}
+    saved_marker = saved_markers.get(platform, f"trading_{platform}")
+    return RedirectResponse(f"/settings?saved={saved_marker}#trading", status_code=302)
+
+
+@app.post("/settings/trading/{platform}/delete")
+async def settings_delete_trading_creds(request: Request, platform: str):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, f"/settings/trading/{platform}/delete")
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+    if platform not in ("polymarket", "kalshi", "alpaca"):
+        return RedirectResponse("/settings#trading", status_code=302)
+    db.delete_trading_credentials(user["user_id"], platform)
+    log.info("User %s deleted %s trading credentials via settings", user.get("username", user["email"]), platform)
+    del_markers = {"polymarket": "trading_poly_removed", "kalshi": "trading_kalshi_removed", "alpaca": "trading_alpaca_removed"}
+    marker = del_markers.get(platform, f"trading_{platform}_removed")
+    return RedirectResponse(f"/settings?saved={marker}#trading", status_code=302)
+
+
 # ── Trading API ──────────────────────────────────────────────────────────────
 # JSON endpoints under /api/trading/* — used by trade.js from any subdomain.
 # Because all subdomain traffic goes through the gateway proxy, requests to
@@ -3091,7 +3391,11 @@ async def trading_credentials_status(request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     status = db.has_trading_credentials(user["user_id"])
-    return JSONResponse({"polymarket": status["polymarket"], "kalshi": status["kalshi"]})
+    return JSONResponse({
+        "polymarket": status["polymarket"],
+        "kalshi": status["kalshi"],
+        "alpaca": status["alpaca"],
+    })
 
 
 @app.post("/api/trading/credentials/{platform}")
@@ -3100,13 +3404,21 @@ async def trading_save_credentials(request: Request, platform: str):
         return JSONResponse({"error": "Missing required header"}, status_code=403)
     if not _validate_csrf_header(request):
         return _csrf_error_json()
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "trading_creds_save", limit=10):
+        return JSONResponse({"error": "Too many attempts"}, status_code=429)
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    if platform not in ("polymarket", "kalshi"):
+    if platform not in ("polymarket", "kalshi", "alpaca"):
         return JSONResponse({"error": "Invalid platform"}, status_code=400)
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
 
     if platform == "polymarket":
         private_key = body.get("private_key", "").strip()
@@ -3121,13 +3433,22 @@ async def trading_save_credentials(request: Request, platform: str):
             "api_secret": api_secret,
             "api_passphrase": api_passphrase,
         }
-    else:  # kalshi
+    elif platform == "kalshi":
         email = body.get("email", "").strip()
         password = body.get("password", "").strip()
         api_key = body.get("api_key", "").strip()
         if not api_key and not (email and password):
             return JSONResponse({"error": "API key or email+password required"}, status_code=400)
         creds = {"email": email, "password": password, "api_key": api_key}
+    elif platform == "alpaca":
+        api_key = body.get("api_key", "").strip()
+        api_secret = body.get("api_secret", "").strip()
+        paper = body.get("paper", True)
+        if not api_key or not api_secret:
+            return JSONResponse({"error": "Alpaca API key and secret are required"}, status_code=400)
+        creds = {"api_key": api_key, "api_secret": api_secret, "paper": bool(paper)}
+    else:
+        return JSONResponse({"error": "Invalid platform"}, status_code=400)
 
     db.save_trading_credentials(user["user_id"], platform, creds)
     log.info("User %s saved %s trading credentials", user.get("username", user["email"]), platform)
@@ -3143,7 +3464,7 @@ async def trading_delete_credentials(request: Request, platform: str):
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    if platform not in ("polymarket", "kalshi"):
+    if platform not in ("polymarket", "kalshi", "alpaca"):
         return JSONResponse({"error": "Invalid platform"}, status_code=400)
     db.delete_trading_credentials(user["user_id"], platform)
     return JSONResponse({"ok": True})
@@ -3159,6 +3480,11 @@ async def trading_place_order(request: Request):
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    # Hard-block suspended users from placing trades — they should not have any
+    # write access to monetary endpoints regardless of credential state.
+    if user.get("suspended"):
+        return JSONResponse({"error": "Account is suspended."}, status_code=403)
 
     ip = _get_client_ip(request)
     if _is_rate_limited(ip, "trade", _RATE_MAX_TRADE):
@@ -3178,18 +3504,45 @@ async def trading_place_order(request: Request):
         price = float(body.get("price", 0))
     except (ValueError, TypeError):
         return JSONResponse({"error": "Amount and price must be numbers"}, status_code=400)
-    question = body.get("question", "")
+    # Bound free-text fields so a malicious client cannot push multi-MB strings
+    # into the trading_orders table (which is later returned in /api/trading/orders).
+    question = str(body.get("question", ""))[:500]
+    source_dashboard = str(body.get("source_dashboard", ""))[:50] or None
 
-    if platform not in ("polymarket", "kalshi"):
+    if platform not in ("polymarket", "kalshi", "alpaca"):
         return JSONResponse({"error": "Invalid platform"}, status_code=400)
-    if side not in ("yes", "no"):
-        return JSONResponse({"error": "Side must be 'yes' or 'no'"}, status_code=400)
-    if action not in ("buy", "sell"):
-        return JSONResponse({"error": "Action must be 'buy' or 'sell'"}, status_code=400)
-    if amount <= 0 or amount > 10000:
-        return JSONResponse({"error": "Amount must be $0.01-$10,000"}, status_code=400)
-    if price <= 0 or price >= 1:
-        return JSONResponse({"error": "Price must be between 0 and 1"}, status_code=400)
+    if platform == "alpaca":
+        # Stock trades: side=buy/sell, slug=symbol, amount=qty, price=limit (0=market)
+        if action not in ("buy", "sell"):
+            return JSONResponse({"error": "Action must be 'buy' or 'sell'"}, status_code=400)
+        if not slug:
+            return JSONResponse({"error": "Symbol is required"}, status_code=400)
+        if amount <= 0 or amount > 100000:
+            return JSONResponse({"error": "Quantity must be 0.01-100,000"}, status_code=400)
+        if price < 0:
+            return JSONResponse({"error": "Price cannot be negative"}, status_code=400)
+        side = action  # For stocks, side == action (buy/sell)
+    else:
+        if side not in ("yes", "no"):
+            return JSONResponse({"error": "Side must be 'yes' or 'no'"}, status_code=400)
+        if action not in ("buy", "sell"):
+            return JSONResponse({"error": "Action must be 'buy' or 'sell'"}, status_code=400)
+        if amount <= 0 or amount > 10000:
+            return JSONResponse({"error": "Amount must be $0.01-$10,000"}, status_code=400)
+        if price <= 0 or price >= 1:
+            return JSONResponse({"error": "Price must be between 0 and 1"}, status_code=400)
+    # Subscription gate: trading is a paid feature — require an active sub on at
+    # least one dashboard (admins are exempt). This prevents lapsed/free users
+    # from continuing to trade after they ever once saved credentials.
+    is_admin_user = bool(user.get("is_admin"))
+    if not is_admin_user:
+        user_subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+        has_any_active = any(_is_sub_active(s, False) for s in user_subs.values())
+        if not has_any_active:
+            return JSONResponse(
+                {"error": "Trading requires an active subscription."},
+                status_code=403,
+            )
 
     creds = db.get_trading_credentials(user["user_id"], platform)
     if not creds:
@@ -3199,14 +3552,15 @@ async def trading_place_order(request: Request):
     order_id = db.create_trading_order(
         user_id=user["user_id"], platform=platform, market_slug=slug,
         market_question=question, side=side, action=action,
-        amount=amount, price=price,
+        amount=amount, price=price, source_dashboard=source_dashboard,
     )
 
     try:
-        if platform == "polymarket":
-            result = await _execute_polymarket_trade(creds, token_id, side, action, amount, price)
-        else:
-            result = await _execute_kalshi_trade(creds, slug, side, action, amount, price)
+        result = await trading.place_order(
+            platform, creds,
+            slug=slug, token_id=token_id, side=side, action=action,
+            amount=amount, price=price,
+        )
 
         db.update_trading_order(order_id,
             status=result.get("status", "error"),
@@ -3227,131 +3581,9 @@ async def trading_place_order(request: Request):
         return JSONResponse({"error": "Trade failed. Check logs for details."}, status_code=500)
 
 
-async def _execute_polymarket_trade(
-    creds: dict, token_id: str, side: str, action: str, amount: float, price: float
-) -> dict:
-    """Execute a trade on Polymarket via py-clob-client."""
-    private_key = creds.get("private_key", "")
-    api_key = creds.get("api_key", "")
-    api_secret = creds.get("api_secret", "")
-    api_passphrase = creds.get("api_passphrase", "")
-
-    if not private_key:
-        return {"status": "error", "error": "Missing private key"}
-
-    try:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import OrderArgs, OrderType, ApiCreds
-
-        client = ClobClient(
-            host="https://clob.polymarket.com",
-            key=private_key,
-            chain_id=137,
-        )
-        if api_key and api_secret and api_passphrase:
-            client.set_api_creds(ApiCreds(
-                api_key=api_key,
-                api_secret=api_secret,
-                api_passphrase=api_passphrase,
-            ))
-        else:
-            client.set_api_creds(client.create_or_derive_api_creds())
-
-        if not token_id:
-            return {"status": "error", "error": "token_id required for Polymarket trades"}
-
-        shares = amount / price
-        buy_or_sell = "BUY" if action == "buy" else "SELL"
-
-        order_args = OrderArgs(
-            price=round(price, 2),
-            size=round(shares, 2),
-            side=buy_or_sell,
-            token_id=token_id,
-        )
-
-        resp = await asyncio.to_thread(client.create_and_post_order, order_args, OrderType.GTC)
-        if resp and resp.get("success"):
-            return {
-                "status": "submitted",
-                "order_id": resp.get("orderID", ""),
-                "fill_price": price,
-                "shares": round(shares, 2),
-            }
-
-        error = resp.get("errorMsg", "Order rejected") if resp else "No response"
-        return {"status": "error", "error": error}
-
-    except ImportError:
-        return {"status": "error", "error": "py-clob-client not installed on server"}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-async def _execute_kalshi_trade(
-    creds: dict, ticker: str, side: str, action: str, amount: float, price: float
-) -> dict:
-    """Execute a trade on Kalshi via their REST API."""
-    api_key = creds.get("api_key", "")
-    email = creds.get("email", "")
-    password = creds.get("password", "")
-
-    kalshi_base = "https://api.elections.kalshi.com/trade-api/v2"
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-
-    try:
-        import httpx as _httpx
-        async with _httpx.AsyncClient(timeout=15) as client:
-            # Authenticate
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            else:
-                login_resp = await client.post(
-                    f"{kalshi_base}/login",
-                    json={"email": email, "password": password},
-                    headers=headers,
-                )
-                if login_resp.status_code != 200:
-                    return {"status": "error", "error": "Kalshi login failed"}
-                token = login_resp.json().get("token", "")
-                headers["Authorization"] = f"Bearer {token}"
-
-            # Convert price to cents (Kalshi uses cents 1-99)
-            price_cents = max(1, min(99, int(round(price * 100))))
-            contracts = max(1, int(amount / (price_cents / 100)))
-
-            order_body = {
-                "ticker": ticker,
-                "action": action,
-                "side": side,
-                "type": "limit",
-                "count": contracts,
-                "yes_price" if side == "yes" else "no_price": price_cents,
-            }
-
-            resp = await client.post(
-                f"{kalshi_base}/portfolio/orders",
-                json=order_body,
-                headers=headers,
-            )
-
-            if resp.status_code in (200, 201):
-                data = resp.json().get("order", resp.json())
-                return {
-                    "status": data.get("status", "submitted"),
-                    "order_id": data.get("order_id", ""),
-                    "fill_price": price,
-                    "shares": contracts,
-                }
-
-            error_data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            return {
-                "status": "error",
-                "error": error_data.get("message", error_data.get("error", f"HTTP {resp.status_code}")),
-            }
-
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+# _execute_polymarket_trade and _execute_kalshi_trade have been moved to
+# polymarket_client.py and kalshi_client.py respectively, unified behind
+# the trading.place_order() abstraction.
 
 
 @app.get("/api/trading/orders")
@@ -3361,6 +3593,289 @@ async def trading_orders(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     orders = db.get_recent_orders(user["user_id"], limit=30)
     return JSONResponse({"orders": [dict(o) for o in orders]})
+
+
+# ── Portfolio API ─────────────────────────────────────────────────────────────
+# Cross-platform portfolio: positions, P&L, trade history, balances.
+# Backed by the user_positions table + live data from trading.py.
+
+
+@app.get("/api/portfolio/summary")
+async def portfolio_summary(request: Request):
+    """Aggregate portfolio stats across all platforms."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    summary = db.get_portfolio_summary(user["user_id"])
+    by_platform = db.get_portfolio_by_platform(user["user_id"])
+    return JSONResponse({"summary": summary, "by_platform": by_platform})
+
+
+@app.get("/api/portfolio/open")
+async def portfolio_open(request: Request):
+    """Current open positions with mark-to-market data."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    platform = request.query_params.get("platform")
+    positions = db.get_open_positions(user["user_id"], platform=platform)
+    result = []
+    for p in positions:
+        d = dict(p)
+        # Compute unrealized P&L from mark price
+        mark = d.get("last_mark_price") or d.get("avg_entry_price", 0)
+        entry = d.get("avg_entry_price", 0)
+        qty = d.get("qty_open", 0)
+        d["unrealized_pnl"] = round(qty * (mark - entry), 2)
+        result.append(d)
+    return JSONResponse({"positions": result})
+
+
+@app.get("/api/portfolio/closed")
+async def portfolio_closed(request: Request):
+    """Closed positions with realized P&L."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    platform = request.query_params.get("platform")
+    limit = min(int(request.query_params.get("limit", 50)), 200)
+    positions = db.get_closed_positions(user["user_id"], platform=platform, limit=limit)
+    return JSONResponse({"positions": [dict(p) for p in positions]})
+
+
+@app.get("/api/portfolio/history")
+async def portfolio_history(request: Request):
+    """Chronological trade/order history across all platforms."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    limit = min(int(request.query_params.get("limit", 50)), 200)
+    orders = db.get_recent_orders(user["user_id"], limit=limit)
+    return JSONResponse({"orders": [dict(o) for o in orders]})
+
+
+@app.get("/api/portfolio/by-dashboard")
+async def portfolio_by_dashboard(request: Request):
+    """P&L breakdown grouped by source dashboard."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    breakdown = db.get_portfolio_by_dashboard(user["user_id"])
+    return JSONResponse({"by_dashboard": breakdown})
+
+
+@app.get("/api/portfolio/balances")
+async def portfolio_balances(request: Request):
+    """Live balances from all connected platforms."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    uid = user["user_id"]
+    cred_status = db.has_trading_credentials(uid)
+
+    balances = []
+    tasks = []
+    platforms_to_fetch = []
+    for plat, connected in cred_status.items():
+        if connected:
+            creds = db.get_trading_credentials(uid, plat)
+            if creds:
+                tasks.append(trading.get_balance(plat, creds))
+                platforms_to_fetch.append(plat)
+
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for plat, result in zip(platforms_to_fetch, results):
+            if isinstance(result, Exception):
+                balances.append({"platform": plat, "available_usd": 0, "total_usd": 0, "error": str(result)})
+            else:
+                balances.append(result.to_dict())
+
+    return JSONResponse({"balances": balances})
+
+
+@app.post("/api/portfolio/sync")
+async def portfolio_sync(request: Request):
+    """Pull authoritative positions from all connected platforms and sync locally."""
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
+    if not _validate_csrf_header(request):
+        return _csrf_error_json()
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    uid = user["user_id"]
+    cred_status = db.has_trading_credentials(uid)
+    synced = 0
+
+    for plat, connected in cred_status.items():
+        if not connected:
+            continue
+        creds = db.get_trading_credentials(uid, plat)
+        if not creds:
+            continue
+        try:
+            positions = await trading.get_positions(plat, creds)
+            for pos in positions:
+                db.upsert_position(
+                    user_id=uid,
+                    platform=pos.platform,
+                    external_id=pos.external_id,
+                    token_or_side=pos.token_or_side,
+                    title=pos.title,
+                    qty_open=pos.qty,
+                    avg_entry_price=pos.avg_entry_price,
+                    realized_pnl=pos.realized_pnl,
+                    fees_paid=pos.fees_paid,
+                    status=pos.status,
+                )
+                synced += 1
+        except Exception as exc:
+            log.warning("Portfolio sync failed for %s/%s: %s", uid, plat, exc)
+
+    # Also rebuild from local order history
+    rebuilt = db.rebuild_positions_for_user(uid)
+    return JSONResponse({"ok": True, "synced_from_platforms": synced, "rebuilt_from_orders": rebuilt})
+
+
+# ── Stock broker API ─────────────────────────────────────────────────────────
+# Endpoints for the stock dashboard to fetch account info, positions, quotes,
+# and place orders through the user's connected broker (BYO-key model).
+
+import alpaca_client as alpaca_api
+
+
+@app.get("/api/trading/stock/account")
+async def stock_account(request: Request):
+    """Return broker account summary (cash, buying power, portfolio value)."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    creds = db.get_trading_credentials(user["user_id"], "alpaca")
+    if not creds:
+        return JSONResponse({"error": "No broker connected. Add Alpaca credentials in Settings."}, status_code=400)
+    data = await alpaca_api.get_account(creds)
+    if "error" in data:
+        return JSONResponse({"error": data["error"]}, status_code=502)
+    return JSONResponse({
+        "broker": "alpaca",
+        "account_id": data.get("id", ""),
+        "status": data.get("status", ""),
+        "cash": float(data.get("cash", 0)),
+        "portfolio_value": float(data.get("portfolio_value", 0)),
+        "buying_power": float(data.get("buying_power", 0)),
+        "currency": data.get("currency", "USD"),
+        "paper": creds.get("paper", True),
+    })
+
+
+@app.get("/api/trading/stock/positions")
+async def stock_positions(request: Request):
+    """Return open stock positions."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    creds = db.get_trading_credentials(user["user_id"], "alpaca")
+    if not creds:
+        return JSONResponse({"error": "No broker connected"}, status_code=400)
+    raw = await alpaca_api.get_positions(creds)
+    positions = []
+    for p in raw:
+        positions.append({
+            "symbol": p.get("symbol", ""),
+            "qty": float(p.get("qty", 0)),
+            "side": p.get("side", "long"),
+            "avg_entry": float(p.get("avg_entry_price", 0)),
+            "current_price": float(p.get("current_price", 0)),
+            "market_value": float(p.get("market_value", 0)),
+            "unrealized_pnl": float(p.get("unrealized_pl", 0)),
+            "unrealized_pnl_pct": float(p.get("unrealized_plpc", 0)),
+            "change_today": float(p.get("change_today", 0)),
+        })
+    return JSONResponse({"positions": positions})
+
+
+@app.get("/api/trading/stock/quote")
+async def stock_quote(request: Request):
+    """Get a stock quote. Query param: ?symbol=AAPL"""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    symbol = request.query_params.get("symbol", "").strip().upper()
+    if not symbol or len(symbol) > 10:
+        return JSONResponse({"error": "Valid symbol required"}, status_code=400)
+    creds = db.get_trading_credentials(user["user_id"], "alpaca")
+    if not creds:
+        return JSONResponse({"error": "No broker connected"}, status_code=400)
+    data = await alpaca_api.get_quote(creds, symbol)
+    if "error" in data:
+        return JSONResponse({"error": data["error"]}, status_code=502)
+    return JSONResponse(data)
+
+
+@app.get("/api/trading/stock/orders")
+async def stock_orders(request: Request):
+    """List broker orders (open or recent closed)."""
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    creds = db.get_trading_credentials(user["user_id"], "alpaca")
+    if not creds:
+        return JSONResponse({"error": "No broker connected"}, status_code=400)
+    status = request.query_params.get("status", "open")
+    if status not in ("open", "closed", "all"):
+        status = "open"
+    raw = await alpaca_api.get_orders(creds, status=status, limit=30)
+    orders = []
+    for o in raw:
+        orders.append({
+            "order_id": o.get("id", ""),
+            "symbol": o.get("symbol", ""),
+            "side": o.get("side", ""),
+            "type": o.get("type", ""),
+            "qty": float(o.get("qty") or 0),
+            "filled_qty": float(o.get("filled_qty") or 0),
+            "filled_avg_price": float(o.get("filled_avg_price") or 0),
+            "limit_price": float(o.get("limit_price") or 0) if o.get("limit_price") else None,
+            "status": o.get("status", ""),
+            "created_at": o.get("created_at", ""),
+        })
+    return JSONResponse({"orders": orders})
+
+
+@app.delete("/api/trading/stock/order/{order_id}")
+async def stock_cancel_order(request: Request, order_id: str):
+    """Cancel a broker order."""
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
+    if not _validate_csrf_header(request):
+        return _csrf_error_json()
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    creds = db.get_trading_credentials(user["user_id"], "alpaca")
+    if not creds:
+        return JSONResponse({"error": "No broker connected"}, status_code=400)
+    result = await alpaca_api.cancel_order(creds, order_id)
+    if not result.get("ok"):
+        return JSONResponse({"error": result.get("error", "Cancel failed")}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/trading/stock/test")
+async def stock_test_connection(request: Request):
+    """Test broker connection with saved credentials."""
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return JSONResponse({"error": "Missing required header"}, status_code=403)
+    user = _trading_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    creds = db.get_trading_credentials(user["user_id"], "alpaca")
+    if not creds:
+        return JSONResponse({"error": "No broker connected"}, status_code=400)
+    result = await alpaca_api.test_connection(creds)
+    return JSONResponse(result)
 
 
 # ── Switcher injection ────────────────────────────────────────────────────────
@@ -3383,12 +3898,25 @@ def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf
         _, effective_domain, _ = _request_base_domain(request)
     else:
         effective_domain = DOMAIN
+    # Portfolio link — resolve the apex URL so it works from any subdomain.
+    if request:
+        scheme, base, port_suffix = _request_base_domain(request)
+        local = base == "localhost" or base.endswith(".localhost") or base == "127.0.0.1"
+        if local:
+            gw_port = CONFIG.get("gateway_port", 7000)
+            portfolio_url = f"http://localhost:{gw_port}/portfolio"
+        else:
+            portfolio_url = f"{scheme}://{base}{port_suffix}/portfolio"
+    else:
+        portfolio_url = "/portfolio"
+
     cfg_json = json.dumps({
         "dashboards": items,
         "current": dashboard_key,
         "domain": effective_domain,
         "username": username,
         "csrf_token": csrf_token,
+        "portfolio_url": portfolio_url,
     }).replace("</", "<\\/")  # prevent </script> breakout in HTML context
     return (
         f'<script>window.__hbSwitcher={cfg_json};</script>'
@@ -3434,6 +3962,24 @@ def _build_tab_html(user_id: int, active_tab: str = "", request: Request = None)
 
 _SSE_SCRIPT_TAG = '<script src="/_gateway_static/sse-client.js" defer></script>'
 
+# Match the *structural* </body> tag — one that is followed only by optional
+# whitespace and then </html> (or EOF). This avoids the bug where a string
+# literal like `'<div></body></div>'` inside an inline <script> would otherwise
+# be picked up by a naive rfind("</body>") search and corrupt the page.
+_STRUCTURAL_BODY_CLOSE_RE = re.compile(r"</body\s*>(?=\s*(?:</html\s*>)?\s*\Z)", re.IGNORECASE)
+
+
+def _find_structural_body_close(text: str) -> int:
+    """Return the index of the document's real closing </body>, or -1.
+
+    Falls back to the last raw rfind only when no structural match is found,
+    which keeps behaviour backwards compatible with pages missing </html>.
+    """
+    m = _STRUCTURAL_BODY_CLOSE_RE.search(text)
+    if m:
+        return m.start()
+    return text.lower().rfind("</body>")
+
 
 def _inject_sse_client(content: bytes) -> bytes:
     """Inject the SSE client script before </body> in HTML responses."""
@@ -3441,8 +3987,7 @@ def _inject_sse_client(content: bytes) -> bytes:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return content
-    lower = text.lower()
-    idx = lower.rfind("</body>")
+    idx = _find_structural_body_close(text)
     if idx != -1:
         text = text[:idx] + _SSE_SCRIPT_TAG + text[idx:]
     else:
@@ -3472,9 +4017,10 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
             if close != -1:
                 text = text[:close + 1] + css_tag + text[close + 1:]
 
-    # 2. Inject JS before </body>
+    # 2. Inject JS before the *structural* </body> (not any </body> substring
+    # appearing inside inline <script> string literals).
     snippet = _switcher_snippet(key, user_id, username, csrf_token=csrf_token, request=request)
-    idx = text.lower().rfind("</body>")
+    idx = _find_structural_body_close(text)
     if idx != -1:
         text = text[:idx] + snippet + text[idx:]
     else:
@@ -3531,8 +4077,9 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # Cache-first: serve GET /api/* and /data/* from Redis when available.
     # Never cache /api/auth/* — responses are per-user.
+    cache_path = f"{path}?{query}" if query else path
     if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")) and not path.startswith("/api/auth"):
-        cached = cache.get_api(key, path)
+        cached = cache.get_api(key, cache_path)
         if cached:
             cached_body, cached_ct = cached
             return Response(
@@ -3623,7 +4170,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         # Write-through: cache this response for next time.
         # Never cache /api/auth/* — responses are per-user.
         if request.method == "GET" and upstream.status_code == 200 and not path.startswith("/api/auth"):
-            cache.set_api(key, path, upstream.content, content_type)
+            cache.set_api(key, cache_path, upstream.content, content_type)
 
     # Inject SSE client script into HTML responses for live updates.
     if "text/html" in (content_type or ""):

@@ -34,6 +34,12 @@ def _get_fernet_key() -> bytes:
     """Derive a Fernet key from the server's .secret_key file."""
     if not _SECRET_KEY_PATH.exists():
         raise RuntimeError("Server secret key not found")
+    # Verify file permissions — must not be world-readable
+    import stat
+    mode = _SECRET_KEY_PATH.stat().st_mode
+    if mode & (stat.S_IRGRP | stat.S_IROTH):
+        log.warning(".secret_key has loose permissions (%o) — tightening to 0600", mode & 0o777)
+        _SECRET_KEY_PATH.chmod(0o600)
     raw = _SECRET_KEY_PATH.read_bytes().strip()
     # Fernet needs 32 bytes URL-safe base64-encoded
     dk = hashlib.sha256(raw).digest()
@@ -147,8 +153,17 @@ def get_event_by_slug(slug: str) -> Optional[dict]:
         resp = requests.get(f"{GAMMA_HOST}/events", params={"slug": slug}, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        return data[0] if data else None
-    except requests.RequestException as e:
+        # Defensively handle multiple Gamma response shapes: a bare list, or a
+        # wrapped {"data": [...]} / {"events": [...]}.
+        if isinstance(data, list) and data:
+            first = data[0]
+            return first if isinstance(first, dict) else None
+        if isinstance(data, dict):
+            events = data.get("events") or data.get("data") or []
+            if isinstance(events, list) and events and isinstance(events[0], dict):
+                return events[0]
+        return None
+    except (requests.RequestException, ValueError) as e:
         log.warning("Gamma event fetch failed: %s", e)
         return None
 

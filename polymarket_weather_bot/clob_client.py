@@ -56,9 +56,11 @@ class TradingClient:
 
     async def execute_trade(self, signal: Signal, position: PositionSize) -> dict:
         """Execute a trade (or simulate in paper mode)."""
-        if not self._init_client():
+        platform = getattr(signal.market, "platform", "polymarket")
+
+        if platform == "polymarket" and not self._init_client():
             return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
-                    "error": "Client not initialized"}
+                    "error": "Polymarket client not initialized"}
 
         side = "YES" if signal.action == "BUY_YES" else "NO"
         price = signal.market_prob if signal.action == "BUY_YES" else (1.0 - signal.market_prob)
@@ -73,20 +75,28 @@ class TradingClient:
         if self.paper_mode:
             return self._paper_trade(signal, position, side, price, shares)
 
+        # Live Kalshi trading not yet implemented — paper only for now
+        if platform == "kalshi":
+            logger.warning("[KALSHI] Live trading not implemented — use PAPER_MODE=true")
+            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
+                    "error": "Kalshi live trading not yet implemented"}
+
         return await self._live_trade(signal, position, side, price, shares, token_id)
 
     def _paper_trade(self, signal: Signal, position: PositionSize,
                      side: str, price: float, shares: float) -> dict:
+        platform = getattr(signal.market, "platform", "polymarket")
+        tag = platform.upper()
         logger.info(
-            "[PAPER] %s %s | %.1f shares @ $%.3f | Amount: $%.2f | Edge: %+.1f%% | %s",
-            signal.action, signal.market.question[:50],
+            "[PAPER/%s] %s %s | %.1f shares @ $%.3f | Amount: $%.2f | Edge: %+.1f%% | %s",
+            tag, signal.action, signal.market.question[:50],
             shares, price, position.amount, signal.edge * 100, signal.market.city,
         )
         return {
             "order_id": f"paper_{signal.market.condition_id[:8]}_{int(price*1000)}",
             "status": "filled", "fill_price": price,
             "amount": position.amount, "shares": shares,
-            "side": side, "paper": True,
+            "side": side, "paper": True, "platform": platform,
         }
 
     async def _live_trade(self, signal: Signal, position: PositionSize,

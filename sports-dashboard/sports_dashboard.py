@@ -8,10 +8,14 @@ Signals only — no trading logic.
 """
 
 import asyncio
+import copy
+import hashlib
 import hmac
 import json
 import logging
+import math
 import os
+import re
 import tempfile
 import statistics
 import time
@@ -22,6 +26,47 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
+
+# ── Simple encryption for sensitive fields (Telegram tokens) ──
+try:
+    from cryptography.fernet import Fernet as _Fernet, InvalidToken as _InvalidToken
+
+    def _get_sports_fernet():
+        key_file = Path(__file__).parent / ".secret_key"
+        if key_file.exists():
+            raw = key_file.read_bytes().strip()
+        else:
+            raw = _Fernet.generate_key()
+            key_file.write_bytes(raw)
+            key_file.chmod(0o600)
+        import base64
+        if len(raw) == 44 and raw.endswith(b"="):
+            return _Fernet(raw)
+        dk = hashlib.pbkdf2_hmac("sha256", raw, b"sports-dash-v1", 100000)
+        return _Fernet(base64.urlsafe_b64encode(dk))
+
+    _sports_fernet = _get_sports_fernet()
+
+    def _encrypt_field(plaintext: str) -> str:
+        if not plaintext:
+            return ""
+        return "enc:" + _sports_fernet.encrypt(plaintext.encode()).decode()
+
+    def _decrypt_field(ciphertext: str) -> str:
+        if not ciphertext:
+            return ""
+        if ciphertext.startswith("enc:"):
+            return _sports_fernet.decrypt(ciphertext[4:].encode()).decode()
+        return ciphertext  # legacy plaintext — will be encrypted on next save
+
+except ImportError:
+    logging.warning("cryptography not installed — Telegram tokens stored in plaintext")
+
+    def _encrypt_field(plaintext: str) -> str:
+        return plaintext
+
+    def _decrypt_field(ciphertext: str) -> str:
+        return ciphertext
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -37,9 +82,14 @@ load_dotenv()
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 POLYMARKET_HOST = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
 GAMMA_API_HOST = "https://gamma-api.polymarket.com"
+POLY_LB_API_HOST = "https://lb-api.polymarket.com"
+POLY_DATA_API_HOST = "https://data-api.polymarket.com"
 KALSHI_API_HOST = "https://api.elections.kalshi.com/trade-api/v2"
 DIVERGENCE_THRESHOLD = float(os.getenv("DIVERGENCE_THRESHOLD", "5"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
+TOP_TRADERS_LIMIT = int(os.getenv("TOP_TRADERS_LIMIT", "10"))
+TOP_TRADER_TRADES_LIMIT = int(os.getenv("TOP_TRADER_TRADES_LIMIT", "500"))
+TOP_TRADERS_REFRESH_SECS = int(os.getenv("TOP_TRADERS_REFRESH_SECS", "600"))
 
 # Map our sport keys to Kalshi series tickers (list per sport)
 KALSHI_SERIES: dict[str, list[str]] = {
@@ -285,6 +335,112 @@ def _init_db():
                 UNIQUE(sport, event_id)
             );
         """)
+        # Historical head-to-head record across all sports (sourced from ESPN)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sports_team_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sport TEXT NOT NULL,
+                event_date TEXT NOT NULL,
+                home_team TEXT NOT NULL,
+                away_team TEXT NOT NULL,
+                home_team_norm TEXT NOT NULL,
+                away_team_norm TEXT NOT NULL,
+                home_score INTEGER,
+                away_score INTEGER,
+                winner TEXT NOT NULL DEFAULT '',
+                season TEXT DEFAULT '',
+                source TEXT DEFAULT 'espn',
+                fetched_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(sport, event_date, home_team_norm, away_team_norm)
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_history_pair ON sports_team_history(sport, home_team_norm, away_team_norm);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_history_home ON sports_team_history(sport, home_team_norm);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_history_away ON sports_team_history(sport, away_team_norm);")
+        # Tracks when we last hit ESPN for each sport so we don't refetch needlessly
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sports_history_meta (
+                sport TEXT PRIMARY KEY,
+                last_fetch_at TEXT,
+                last_date_covered TEXT,
+                rows_total INTEGER DEFAULT 0
+            );
+        """)
+        # Per-team season stats (record, ranking, points-for/against)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sports_team_info (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sport TEXT NOT NULL,
+                team_name TEXT NOT NULL,
+                team_norm TEXT NOT NULL,
+                espn_id TEXT,
+                abbreviation TEXT,
+                wins INTEGER DEFAULT 0,
+                losses INTEGER DEFAULT 0,
+                draws INTEGER DEFAULT 0,
+                win_pct REAL DEFAULT 0,
+                points_for REAL DEFAULT 0,
+                points_against REAL DEFAULT 0,
+                rank INTEGER DEFAULT 0,
+                conference_rank INTEGER DEFAULT 0,
+                streak TEXT DEFAULT '',
+                close_game_wins INTEGER DEFAULT 0,
+                close_game_losses INTEGER DEFAULT 0,
+                last_10 TEXT DEFAULT '',
+                logo_url TEXT DEFAULT '',
+                fetched_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(sport, team_norm)
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_info_norm ON sports_team_info(sport, team_norm);")
+        # Player roster + stats
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sports_player_info (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sport TEXT NOT NULL,
+                team_norm TEXT NOT NULL,
+                player_name TEXT NOT NULL,
+                espn_id TEXT,
+                position TEXT DEFAULT '',
+                jersey TEXT DEFAULT '',
+                stats_json TEXT DEFAULT '{}',
+                strengths TEXT DEFAULT '',
+                weaknesses TEXT DEFAULT '',
+                impact_score REAL DEFAULT 0,
+                fetched_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(sport, team_norm, player_name)
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_player_team ON sports_player_info(sport, team_norm);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_player_impact ON sports_player_info(sport, team_norm, impact_score DESC);")
+        # Top Polymarket traders' open positions, indexed by condition_id so we
+        # can join against sports comparisons in O(1).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS top_trader_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet TEXT NOT NULL,
+                pseudonym TEXT DEFAULT '',
+                name TEXT DEFAULT '',
+                profile_image TEXT DEFAULT '',
+                rank INTEGER DEFAULT 0,
+                lifetime_volume REAL DEFAULT 0,
+                condition_id TEXT NOT NULL,
+                slug TEXT DEFAULT '',
+                title TEXT DEFAULT '',
+                outcome TEXT DEFAULT '',
+                outcome_index INTEGER DEFAULT 0,
+                net_size REAL DEFAULT 0,
+                net_usd REAL DEFAULT 0,
+                avg_price REAL DEFAULT 0,
+                last_side TEXT DEFAULT '',
+                last_traded_ts INTEGER DEFAULT 0,
+                trade_count INTEGER DEFAULT 0,
+                fetched_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(wallet, condition_id, outcome)
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ttp_condition ON top_trader_positions(condition_id);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ttp_wallet ON top_trader_positions(wallet);")
 
 
 _init_db()
@@ -403,6 +559,16 @@ def get_current_user(request: Request) -> dict | None:
                 "is_admin": 0,
                 "_gateway_sso": True,
             }
+
+    # DEV_MODE: synthesize a local dev user so the dashboard renders without gateway SSO
+    if _DEV_MODE:
+        return {
+            "id": "dev-user",
+            "email": "dev@localhost",
+            "username": "dev",
+            "is_admin": 1,
+            "_dev_mode": True,
+        }
 
     # No gateway SSO -- not authenticated (auth handled by gateway)
     return None
@@ -578,15 +744,26 @@ def parse_odds_events(raw: list[dict], market_type: str = "h2h") -> list[dict]:
                     continue
                 outcomes = {}
                 for o in mkt["outcomes"]:
-                    implied = (1.0 / o["price"]) * 100
-                    label = o["name"]
+                    # Defensively skip outcomes with missing/zero/negative price
+                    # — a single bad row would otherwise ZeroDivision the entire
+                    # parse loop and stall the data updater on stale data.
+                    try:
+                        price = float(o.get("price") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if price <= 0:
+                        continue
+                    implied = (1.0 / price) * 100
+                    label = o.get("name") or ""
+                    if not label:
+                        continue
                     # For spreads/totals, include point value in label
                     if market_type == "spreads" and o.get("point") is not None:
-                        label = f"{o['name']} {o['point']:+g}"
+                        label = f"{label} {o['point']:+g}"
                     elif market_type == "totals" and o.get("point") is not None:
-                        label = f"{o['name']} {o['point']}"
+                        label = f"{label} {o['point']}"
                     outcomes[label] = {
-                        "decimal_odds": o["price"],
+                        "decimal_odds": price,
                         "implied_prob": round(implied, 2),
                         "point": o.get("point"),
                     }
@@ -615,7 +792,9 @@ def parse_odds_events(raw: list[dict], market_type: str = "h2h") -> list[dict]:
 
         # Find sharpest book (Pinnacle preferred)
         pin_key = f"pinnacle_{market_type}" if market_type != "h2h" else "pinnacle"
-        sharp_key = pin_key if pin_key in bookmakers_data else list(bookmakers_data.keys())[0]
+        sharp_key = pin_key if pin_key in bookmakers_data else next(iter(bookmakers_data), None)
+        if sharp_key is None:
+            continue
         sharp = bookmakers_data[sharp_key]
 
         events.append({
@@ -825,6 +1004,7 @@ def parse_polymarket_events(raw: list[dict]) -> list[dict]:
                 "market_question": mkt.get("question", ""),
                 "group_title": group_title,
                 "slug": ev.get("slug", ""),
+                "condition_id": mkt.get("conditionId", ""),
                 "outcomes": outcome_data,
                 "volume": float(mkt.get("volumeNum", 0) or mkt.get("volume", 0) or 0),
                 "liquidity": float(mkt.get("liquidityNum", 0) or mkt.get("liquidity", 0) or ev.get("liquidity", 0) or 0),
@@ -1086,8 +1266,11 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             abs_div = abs(divergence)
 
             # Half-Kelly criterion: f* = (b*p - q) / (2*b)
-            # where b = net decimal odds, p = true prob (sharp), q = 1-p
-            p = odds_prob / 100  # true probability (from sharp book)
+            # where b = net decimal odds, p = de-vigged true prob, q = 1-p
+            # De-vig: divide sharp prob by the sharp book's total overround
+            all_consensus_vals = list(event.get("consensus_probs", {}).values()) if event.get("consensus_probs") else []
+            total_prob_raw = sum(all_consensus_vals) if all_consensus_vals else 100
+            p = (odds_prob / total_prob_raw) if total_prob_raw > 0 else (odds_prob / 100)
             q = 1 - p
             if poly_prob > 0:
                 b = (100 / poly_prob) - 1  # net decimal odds on Polymarket
@@ -1203,7 +1386,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
 
         # True prob no vig
         total_prob = sum(all_consensus) if all_consensus else 100
-        true_prob_no_vig = round(best_oc["sharp_prob"] * 100 / total_prob, 2) if total_prob > 0 else best_oc["sharp_prob"]
+        true_prob_no_vig = round(best_oc["sharp_prob"] / total_prob * 100, 2) if total_prob > 0 else best_oc["sharp_prob"]
 
         # Best/worst decimal odds for top outcome
         best_decimal_odds = round(100 / lowest_book_prob, 2) if lowest_book_prob > 0 else 0
@@ -1252,6 +1435,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             "bookmaker_breakdown": bookmaker_breakdown,
             "poly_question": best_match["market_question"],
             "poly_slug": best_match["slug"],
+            "condition_id": best_match.get("condition_id", ""),
             "poly_volume": best_match["volume"],
             "poly_liquidity": best_match["liquidity"],
             "poly_spread": best_match["spread"],
@@ -1438,6 +1622,7 @@ def compare_outrights(outright_odds: dict, poly_markets: list[dict]) -> list[dic
             "bookmaker_breakdown": bookmaker_breakdown,
             "poly_question": best_match["market_question"],
             "poly_slug": best_match["slug"],
+            "condition_id": best_match.get("condition_id", ""),
             "poly_volume": best_match["volume"],
             "poly_liquidity": best_match["liquidity"],
             "poly_spread": best_match["spread"],
@@ -1604,9 +1789,12 @@ def _auto_resolve_edges():
             away_n = normalize_name(edge["away_team"])
             score = score_map.get((home_n, away_n))
             if not score:
-                # Try fuzzy match
+                # Try fuzzy match. Use partial_ratio so abbreviations like
+                # "LA Rams" still match "Los Angeles Rams" (ratio is overly
+                # length-sensitive and would mark these as a miss).
                 for (sh, sa), sc_data in score_map.items():
-                    if fuzz.ratio(home_n, sh) > 80 and fuzz.ratio(away_n, sa) > 80:
+                    if (fuzz.partial_ratio(home_n, sh) > 85
+                            and fuzz.partial_ratio(away_n, sa) > 85):
                         score = sc_data
                         break
             if not score:
@@ -1617,15 +1805,34 @@ def _auto_resolve_edges():
             winner_name = normalize_name(score["winner"])
             divergence = edge["divergence"] or 0
 
-            # Edge said "buy on Polymarket" (divergence > 0) = book thinks outcome more likely
-            # So the edge is "correct" if that outcome actually won
+            # Draw/tie synonyms — treat "draw", "tie", and "x" as equivalent
+            _draw_terms = {"draw", "tie", "x"}
+            outcome_is_draw = outcome_name in _draw_terms
+            winner_is_draw = winner_name in _draw_terms
+
+            # Match outcome name against the actual winner. partial_ratio so
+            # "LA Rams" vs "Los Angeles Rams" still matches; falling back to
+            # `ratio` would falsely mark this as "outcome did not win", which
+            # then flips to a phantom `is_correct=True` on negative divergence.
+            if outcome_is_draw and winner_is_draw:
+                outcome_won = True
+            elif outcome_is_draw or winner_is_draw:
+                outcome_won = False
+            else:
+                outcome_won = fuzz.partial_ratio(outcome_name, winner_name) > 80
+
+            # Skip edges we cannot positively classify (no recorded winner) so
+            # we don't mislabel them via the negative-divergence flip below.
+            if not winner_name:
+                continue
+
             if divergence > 0:
                 # We recommended this outcome — check if it won
-                is_correct = fuzz.ratio(outcome_name, winner_name) > 75
+                is_correct = outcome_won
             else:
-                # Negative divergence = Polymarket overpriced this outcome
-                # "Correct" if this outcome did NOT win
-                is_correct = fuzz.ratio(outcome_name, winner_name) <= 75
+                # Negative divergence = Polymarket overpriced this outcome.
+                # "Correct" if this outcome did NOT win.
+                is_correct = not outcome_won
 
             resolution = "correct" if is_correct else "incorrect"
             conn.execute(
@@ -1640,59 +1847,1658 @@ def _auto_resolve_edges():
 
 
 # ---------------------------------------------------------------------------
+# Historical team data (ESPN) - powers head-to-head and recent form
+# ---------------------------------------------------------------------------
+
+# Maps our internal sport_key -> ESPN (sport, league) tuple. Sports without an
+# ESPN endpoint (esports, individual sports w/o team-vs-team H2H) are omitted.
+ESPN_LEAGUE_MAP: dict[str, tuple[str, str]] = {
+    "basketball_nba": ("basketball", "nba"),
+    "americanfootball_nfl": ("football", "nfl"),
+    "americanfootball_ncaaf": ("football", "college-football"),
+    "icehockey_nhl": ("hockey", "nhl"),
+    "baseball_mlb": ("baseball", "mlb"),
+    "soccer_epl": ("soccer", "eng.1"),
+    "soccer_spain_la_liga": ("soccer", "esp.1"),
+    "soccer_germany_bundesliga": ("soccer", "ger.1"),
+    "soccer_italy_serie_a": ("soccer", "ita.1"),
+    "soccer_france_ligue_one": ("soccer", "fra.1"),
+    "soccer_uefa_champs_league": ("soccer", "uefa.champions"),
+    "soccer_uefa_europa_league": ("soccer", "uefa.europa"),
+    "soccer_usa_mls": ("soccer", "usa.1"),
+    "mma_mixed_martial_arts": ("mma", "ufc"),
+    "boxing_boxing": ("boxing", "boxing"),
+}
+
+
+def _espn_scoreboard_url(sport_key: str, date_str: str) -> str | None:
+    league = ESPN_LEAGUE_MAP.get(sport_key)
+    if not league:
+        return None
+    sport, lg = league
+    return f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{lg}/scoreboard?dates={date_str}&limit=200"
+
+
+def _parse_espn_event(ev: dict) -> dict | None:
+    """Convert one ESPN scoreboard event into our internal row format."""
+    try:
+        comps = ev.get("competitions") or []
+        if not comps:
+            return None
+        comp = comps[0]
+        status = (comp.get("status") or {}).get("type", {})
+        # Only count completed games
+        if not status.get("completed"):
+            return None
+        teams = comp.get("competitors") or []
+        if len(teams) < 2:
+            return None
+        home = away = None
+        for t in teams:
+            if t.get("homeAway") == "home":
+                home = t
+            elif t.get("homeAway") == "away":
+                away = t
+        # Boxing/MMA scoreboards don't tag homeAway — fall back to first/second
+        if home is None or away is None:
+            home, away = teams[0], teams[1]
+        # ESPN responses sometimes set "athlete" to None explicitly (boxing
+        # cards without a roster entry). `dict.get("k", {})` returns None in
+        # that case, so chained `.get("displayName")` would crash with
+        # AttributeError. Use `(... or {})` to coerce None to an empty dict.
+        h_name = (
+            (home.get("team") or {}).get("displayName")
+            or (home.get("athlete") or {}).get("displayName")
+            or ""
+        )
+        a_name = (
+            (away.get("team") or {}).get("displayName")
+            or (away.get("athlete") or {}).get("displayName")
+            or ""
+        )
+        if not h_name or not a_name:
+            return None
+        try:
+            h_score = int(home.get("score") or 0)
+            a_score = int(away.get("score") or 0)
+        except (ValueError, TypeError):
+            h_score = a_score = 0
+        # Determine winner — ESPN sets a "winner" boolean on the competitor
+        winner = ""
+        if home.get("winner") is True:
+            winner = h_name
+        elif away.get("winner") is True:
+            winner = a_name
+        elif h_score > a_score:
+            winner = h_name
+        elif a_score > h_score:
+            winner = a_name
+        else:
+            winner = "draw"
+        date_iso = ev.get("date") or comp.get("date") or ""
+        date_only = date_iso[:10] if date_iso else ""
+        season = ""
+        try:
+            season = str((ev.get("season") or {}).get("year") or "")
+        except Exception:
+            pass
+        return {
+            "event_date": date_only,
+            "home_team": h_name,
+            "away_team": a_name,
+            "home_team_norm": normalize_name(h_name),
+            "away_team_norm": normalize_name(a_name),
+            "home_score": h_score,
+            "away_score": a_score,
+            "winner": winner,
+            "season": season,
+        }
+    except Exception:
+        return None
+
+
+def fetch_espn_history(sport_key: str, days_back: int = 180) -> list[dict]:
+    """Pull completed games from ESPN's public scoreboard API for the given sport.
+
+    Iterates day-by-day from today back `days_back` days. Returns a list of
+    parsed event dicts ready for _store_team_history. Stops early if many
+    consecutive empty days are encountered (off-season).
+    """
+    if sport_key not in ESPN_LEAGUE_MAP:
+        return []
+    session = _make_http_session()
+    rows: list[dict] = []
+    today = datetime.now(timezone.utc).date()
+    consecutive_empty = 0
+    max_empty_streak = 30  # bail out of long off-season gaps
+    for offset in range(days_back):
+        d = today - timedelta(days=offset)
+        date_str = d.strftime("%Y%m%d")
+        url = _espn_scoreboard_url(sport_key, date_str)
+        if not url:
+            break
+        try:
+            resp = session.get(url, timeout=15)
+            if resp.status_code != 200:
+                consecutive_empty += 1
+                if consecutive_empty >= max_empty_streak:
+                    break
+                continue
+            data = resp.json()
+        except Exception as e:
+            log.debug("ESPN fetch %s %s: %s", sport_key, date_str, e)
+            consecutive_empty += 1
+            if consecutive_empty >= max_empty_streak:
+                break
+            continue
+        events = data.get("events") or []
+        day_added = 0
+        for ev in events:
+            parsed = _parse_espn_event(ev)
+            if parsed:
+                parsed["sport"] = sport_key
+                rows.append(parsed)
+                day_added += 1
+        if day_added == 0:
+            consecutive_empty += 1
+            if consecutive_empty >= max_empty_streak:
+                break
+        else:
+            consecutive_empty = 0
+        # Be a polite citizen of ESPN's free API
+        import time as _t
+        _t.sleep(0.05)
+    return rows
+
+
+def _store_team_history(rows: list[dict]) -> int:
+    """Bulk insert team history rows. Returns number actually inserted."""
+    if not rows:
+        return 0
+    inserted = 0
+    with _get_db() as conn:
+        for r in rows:
+            try:
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO sports_team_history
+                       (sport, event_date, home_team, away_team, home_team_norm, away_team_norm,
+                        home_score, away_score, winner, season, source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'espn')""",
+                    (r["sport"], r["event_date"], r["home_team"], r["away_team"],
+                     r["home_team_norm"], r["away_team_norm"],
+                     r["home_score"], r["away_score"], r["winner"], r.get("season", "")),
+                )
+                if cur.rowcount > 0:
+                    inserted += 1
+            except Exception as e:
+                log.debug("history insert error: %s", e)
+        # Update meta row for this sport
+        if rows:
+            sport = rows[0]["sport"]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM sports_team_history WHERE sport = ?", (sport,)
+            ).fetchone()[0]
+            last_date = conn.execute(
+                "SELECT MAX(event_date) FROM sports_team_history WHERE sport = ?", (sport,)
+            ).fetchone()[0] or ""
+            conn.execute(
+                """INSERT INTO sports_history_meta (sport, last_fetch_at, last_date_covered, rows_total)
+                   VALUES (?, datetime('now'), ?, ?)
+                   ON CONFLICT(sport) DO UPDATE SET
+                       last_fetch_at = excluded.last_fetch_at,
+                       last_date_covered = excluded.last_date_covered,
+                       rows_total = excluded.rows_total""",
+                (sport, last_date, total),
+            )
+    return inserted
+
+
+def _refresh_history_for_sport(sport_key: str, days_back: int = 30) -> int:
+    """Pull recent games for a sport and persist them. Used by background refresh."""
+    if sport_key not in ESPN_LEAGUE_MAP:
+        return 0
+    rows = fetch_espn_history(sport_key, days_back=days_back)
+    return _store_team_history(rows)
+
+
+def _backfill_all_team_history(days_back: int = 365):
+    """One-shot backfill for every supported sport. Run in background on startup."""
+    total = 0
+    for sport_key in ESPN_LEAGUE_MAP:
+        try:
+            n = _refresh_history_for_sport(sport_key, days_back=days_back)
+            total += n
+            print(f"  team_history: {sport_key} +{n} games", flush=True)
+        except Exception as e:
+            print(f"  team_history: {sport_key} error: {e}", flush=True)
+    print(f"team_history backfill complete: {total} new rows", flush=True)
+    return total
+
+
+def _compute_h2h(sport_key: str, team_a: str, team_b: str, lookback: int = 10) -> dict | None:
+    """Look up the head-to-head history between two teams. Returns a summary
+    dict the frontend can render directly. Returns None if no games found.
+    """
+    if not team_a or not team_b:
+        return None
+    a_norm = normalize_name(team_a)
+    b_norm = normalize_name(team_b)
+    if not a_norm or not b_norm or a_norm == b_norm:
+        return None
+    try:
+        with _get_db() as conn:
+            rows = conn.execute(
+                """SELECT event_date, home_team, away_team, home_team_norm, away_team_norm,
+                          home_score, away_score, winner
+                   FROM sports_team_history
+                   WHERE sport = ?
+                     AND ((home_team_norm = ? AND away_team_norm = ?)
+                          OR (home_team_norm = ? AND away_team_norm = ?))
+                   ORDER BY event_date DESC
+                   LIMIT ?""",
+                (sport_key, a_norm, b_norm, b_norm, a_norm, lookback),
+            ).fetchall()
+    except Exception as e:
+        log.debug("h2h query error: %s", e)
+        return None
+    if not rows:
+        return None
+    a_wins = b_wins = draws = 0
+    recent: list[dict] = []
+    for row in rows:
+        r = dict(row)
+        winner_norm = normalize_name(r["winner"])
+        if winner_norm == a_norm:
+            a_wins += 1
+            who = "a"
+        elif winner_norm == b_norm:
+            b_wins += 1
+            who = "b"
+        else:
+            draws += 1
+            who = "draw"
+        recent.append({
+            "date": r["event_date"],
+            "home": r["home_team"],
+            "away": r["away_team"],
+            "home_score": r["home_score"],
+            "away_score": r["away_score"],
+            "winner": r["winner"],
+            "who": who,
+        })
+    last = recent[0]
+    return {
+        "team_a": team_a,
+        "team_b": team_b,
+        "total_games": len(rows),
+        "team_a_wins": a_wins,
+        "team_b_wins": b_wins,
+        "draws": draws,
+        "last_meeting": {
+            "date": last["date"],
+            "score": f"{last['home']} {last['home_score']}-{last['away_score']} {last['away']}",
+            "winner": last["winner"],
+        },
+        "recent": recent,
+    }
+
+
+def _compute_team_form(sport_key: str, team: str, last_n: int = 5) -> dict | None:
+    """Recent W/L/D form for a team across all opponents."""
+    if not team:
+        return None
+    t_norm = normalize_name(team)
+    if not t_norm:
+        return None
+    try:
+        with _get_db() as conn:
+            rows = conn.execute(
+                """SELECT event_date, home_team, away_team, home_team_norm, away_team_norm,
+                          home_score, away_score, winner
+                   FROM sports_team_history
+                   WHERE sport = ?
+                     AND (home_team_norm = ? OR away_team_norm = ?)
+                   ORDER BY event_date DESC
+                   LIMIT ?""",
+                (sport_key, t_norm, t_norm, last_n),
+            ).fetchall()
+    except Exception:
+        return None
+    if not rows:
+        return None
+    results: list[str] = []
+    wins = losses = draws = 0
+    for row in rows:
+        r = dict(row)
+        winner_norm = normalize_name(r["winner"])
+        if winner_norm in {"draw", "tie", ""}:
+            results.append("D")
+            draws += 1
+        elif winner_norm == t_norm:
+            results.append("W")
+            wins += 1
+        else:
+            results.append("L")
+            losses += 1
+    return {
+        "team": team,
+        "results": results,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "last_n": len(results),
+    }
+
+
+def _attach_h2h_to_comparisons(sport_key: str, comparisons: list[dict]) -> None:
+    """Mutates each comparison in place to add h2h, home_form, away_form,
+    plus team_info, players, and chemistry score for both sides."""
+    if sport_key not in ESPN_LEAGUE_MAP:
+        return
+    for comp in comparisons:
+        # Skip futures (no opponent)
+        if comp.get("is_futures"):
+            continue
+        home = comp.get("home_team", "")
+        away = comp.get("away_team", "")
+        if not home or not away:
+            continue
+        h2h = _compute_h2h(sport_key, home, away)
+        if h2h:
+            comp["h2h"] = h2h
+        home_form = _compute_team_form(sport_key, home)
+        if home_form:
+            comp["home_form"] = home_form
+        away_form = _compute_team_form(sport_key, away)
+        if away_form:
+            comp["away_form"] = away_form
+        # Team info: record, ranking, points-for/against
+        home_info = _get_team_info(sport_key, home)
+        if home_info:
+            comp["home_info"] = home_info
+        away_info = _get_team_info(sport_key, away)
+        if away_info:
+            comp["away_info"] = away_info
+        # Top players
+        home_players = _get_top_players(sport_key, home, limit=3)
+        if home_players:
+            comp["home_players"] = home_players
+        away_players = _get_top_players(sport_key, away, limit=3)
+        if away_players:
+            comp["away_players"] = away_players
+        # Chemistry score (form consistency × close-game record × roster stability)
+        comp["home_chemistry"] = _compute_chemistry(sport_key, home, home_form, home_info)
+        comp["away_chemistry"] = _compute_chemistry(sport_key, away, away_form, away_info)
+
+
+# ---------------------------------------------------------------------------
+# ESPN team standings + rosters (powers team_info + player_info)
+# ---------------------------------------------------------------------------
+
+def _espn_teams_url(sport_key: str) -> str | None:
+    league = ESPN_LEAGUE_MAP.get(sport_key)
+    if not league:
+        return None
+    sport, lg = league
+    return f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{lg}/teams?limit=100"
+
+
+def _espn_team_detail_url(sport_key: str, team_id: str) -> str | None:
+    league = ESPN_LEAGUE_MAP.get(sport_key)
+    if not league:
+        return None
+    sport, lg = league
+    return f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{lg}/teams/{team_id}"
+
+
+def _espn_team_roster_url(sport_key: str, team_id: str) -> str | None:
+    league = ESPN_LEAGUE_MAP.get(sport_key)
+    if not league:
+        return None
+    sport, lg = league
+    return f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{lg}/teams/{team_id}/roster"
+
+
+def _espn_athlete_stats_url(sport_key: str, athlete_id: str) -> str | None:
+    league = ESPN_LEAGUE_MAP.get(sport_key)
+    if not league:
+        return None
+    sport, lg = league
+    # ESPN has a per-athlete stats endpoint that returns season averages
+    return f"https://site.api.espn.com/apis/common/v3/sports/{sport}/{lg}/athletes/{athlete_id}/statistics"
+
+
+def fetch_espn_teams(sport_key: str) -> list[dict]:
+    """Fetch all teams for a sport with their season records.
+
+    Returns a list of dicts with keys: espn_id, name, abbreviation, wins,
+    losses, draws, win_pct, points_for, points_against, rank, conference_rank,
+    streak, last_10, logo_url.
+    """
+    if sport_key not in ESPN_LEAGUE_MAP:
+        return []
+    session = _make_http_session()
+    url = _espn_teams_url(sport_key)
+    if not url:
+        return []
+    try:
+        resp = session.get(url, timeout=20)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except Exception as e:
+        log.debug("espn teams fetch %s: %s", sport_key, e)
+        return []
+
+    teams_out: list[dict] = []
+    sports_arr = data.get("sports") or []
+    for sp in sports_arr:
+        for lg in sp.get("leagues") or []:
+            for tw in lg.get("teams") or []:
+                team = tw.get("team") or {}
+                name = team.get("displayName") or team.get("name") or ""
+                if not name:
+                    continue
+                espn_id = str(team.get("id") or "")
+                abbr = team.get("abbreviation") or ""
+                logos = team.get("logos") or []
+                logo_url = (logos[0].get("href") if logos else "") or ""
+                teams_out.append({
+                    "sport": sport_key,
+                    "espn_id": espn_id,
+                    "name": name,
+                    "team_norm": normalize_name(name),
+                    "abbreviation": abbr,
+                    "logo_url": logo_url,
+                    "wins": 0, "losses": 0, "draws": 0, "win_pct": 0.0,
+                    "points_for": 0.0, "points_against": 0.0,
+                    "rank": 0, "conference_rank": 0, "streak": "", "last_10": "",
+                    "close_game_wins": 0, "close_game_losses": 0,
+                })
+    # Each team needs a per-team detail call to grab record + stats
+    for t in teams_out:
+        try:
+            detail_url = _espn_team_detail_url(sport_key, t["espn_id"])
+            if not detail_url:
+                continue
+            r = session.get(detail_url, timeout=15)
+            if r.status_code != 200:
+                continue
+            d = r.json()
+            tm = (d.get("team") or {})
+            # Record info
+            record_groups = (tm.get("record") or {}).get("items") or []
+            for rg in record_groups:
+                if rg.get("type") == "total" or not rg.get("type"):
+                    stats_arr = rg.get("stats") or []
+                    for st in stats_arr:
+                        nm = st.get("name") or ""
+                        val = st.get("value")
+                        if nm == "wins" and val is not None:
+                            t["wins"] = int(val)
+                        elif nm == "losses" and val is not None:
+                            t["losses"] = int(val)
+                        elif nm == "ties" and val is not None:
+                            t["draws"] = int(val)
+                        elif nm == "winPercent" and val is not None:
+                            t["win_pct"] = float(val)
+                        elif nm == "pointsFor" and val is not None:
+                            t["points_for"] = float(val)
+                        elif nm == "pointsAgainst" and val is not None:
+                            t["points_against"] = float(val)
+                        elif nm == "streak" and val is not None:
+                            t["streak"] = str(int(val))
+                    summary = rg.get("summary") or ""
+                    if summary and not t["last_10"]:
+                        t["last_10"] = summary
+            # Conference standing
+            standing = tm.get("standingSummary") or ""
+            if standing:
+                # e.g. "3rd in Eastern Conference"
+                import re as _re
+                m = _re.search(r"(\d+)", standing)
+                if m:
+                    t["conference_rank"] = int(m.group(1))
+        except Exception as e:
+            log.debug("espn team detail %s/%s: %s", sport_key, t.get("espn_id"), e)
+        import time as _t
+        _t.sleep(0.04)
+    return teams_out
+
+
+def _store_team_info(rows: list[dict]) -> int:
+    """Bulk upsert team info rows. Returns number written."""
+    if not rows:
+        return 0
+    written = 0
+    with _get_db() as conn:
+        for r in rows:
+            try:
+                conn.execute(
+                    """INSERT INTO sports_team_info
+                       (sport, team_name, team_norm, espn_id, abbreviation, wins, losses, draws,
+                        win_pct, points_for, points_against, rank, conference_rank, streak,
+                        close_game_wins, close_game_losses, last_10, logo_url, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                       ON CONFLICT(sport, team_norm) DO UPDATE SET
+                         espn_id = excluded.espn_id,
+                         abbreviation = excluded.abbreviation,
+                         wins = excluded.wins,
+                         losses = excluded.losses,
+                         draws = excluded.draws,
+                         win_pct = excluded.win_pct,
+                         points_for = excluded.points_for,
+                         points_against = excluded.points_against,
+                         rank = excluded.rank,
+                         conference_rank = excluded.conference_rank,
+                         streak = excluded.streak,
+                         last_10 = excluded.last_10,
+                         logo_url = excluded.logo_url,
+                         fetched_at = datetime('now')""",
+                    (r["sport"], r["name"], r["team_norm"], r.get("espn_id", ""),
+                     r.get("abbreviation", ""), r.get("wins", 0), r.get("losses", 0),
+                     r.get("draws", 0), r.get("win_pct", 0.0),
+                     r.get("points_for", 0.0), r.get("points_against", 0.0),
+                     r.get("rank", 0), r.get("conference_rank", 0),
+                     r.get("streak", ""),
+                     r.get("close_game_wins", 0), r.get("close_game_losses", 0),
+                     r.get("last_10", ""), r.get("logo_url", "")),
+                )
+                written += 1
+            except Exception as e:
+                log.debug("team_info upsert error: %s", e)
+    return written
+
+
+# Per-sport stat key mapping for player stats. ESPN uses different names per
+# sport so we centralize them here. Used by _summarize_player_stats.
+_PLAYER_STAT_KEYS: dict[str, list[tuple[str, str, str]]] = {
+    # (display label, ESPN stat name candidates separated by |, format)
+    "basketball_nba": [
+        ("PPG", "avgPoints|points", "{:.1f}"),
+        ("RPG", "avgRebounds|rebounds", "{:.1f}"),
+        ("APG", "avgAssists|assists", "{:.1f}"),
+        ("FG%", "fieldGoalPct", "{:.1f}%"),
+        ("3P%", "threePointPct", "{:.1f}%"),
+    ],
+    "americanfootball_nfl": [
+        ("YDS", "passingYards|rushingYards|receivingYards", "{:.0f}"),
+        ("TD", "passingTouchdowns|rushingTouchdowns|receivingTouchdowns", "{:.0f}"),
+        ("INT", "interceptions", "{:.0f}"),
+        ("RTG", "QBRating|passerRating", "{:.1f}"),
+    ],
+    "americanfootball_ncaaf": [
+        ("YDS", "passingYards|rushingYards|receivingYards", "{:.0f}"),
+        ("TD", "passingTouchdowns|rushingTouchdowns|receivingTouchdowns", "{:.0f}"),
+        ("INT", "interceptions", "{:.0f}"),
+    ],
+    "icehockey_nhl": [
+        ("G", "goals", "{:.0f}"),
+        ("A", "assists", "{:.0f}"),
+        ("PTS", "points", "{:.0f}"),
+        ("+/-", "plusMinus", "{:+.0f}"),
+    ],
+    "baseball_mlb": [
+        ("AVG", "avg|battingAverage", "{:.3f}"),
+        ("HR", "homeRuns", "{:.0f}"),
+        ("RBI", "RBIs|runsBattedIn", "{:.0f}"),
+        ("OPS", "OPS|onBasePlusSlugging", "{:.3f}"),
+    ],
+    "soccer_epl": [
+        ("G", "totalGoals|goals", "{:.0f}"),
+        ("A", "goalAssists|assists", "{:.0f}"),
+        ("APP", "appearances", "{:.0f}"),
+    ],
+    "mma_mixed_martial_arts": [
+        ("W", "wins", "{:.0f}"),
+        ("L", "losses", "{:.0f}"),
+        ("KO", "knockouts", "{:.0f}"),
+    ],
+}
+# Reuse soccer mapping for all soccer leagues
+for _k in ("soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_italy_serie_a",
+           "soccer_france_ligue_one", "soccer_uefa_champs_league", "soccer_uefa_europa_league",
+           "soccer_usa_mls"):
+    _PLAYER_STAT_KEYS[_k] = _PLAYER_STAT_KEYS["soccer_epl"]
+
+
+def _summarize_player_stats(sport_key: str, raw_stats: dict) -> dict:
+    """Convert ESPN raw stats payload into a sport-specific summary dict."""
+    out: dict = {}
+    if not raw_stats:
+        return out
+    keys = _PLAYER_STAT_KEYS.get(sport_key, [])
+    # ESPN's stats payloads vary, but most expose a "splits.categories" or
+    # a flat list of stat dicts with name + value/displayValue.
+    flat: dict[str, float] = {}
+    try:
+        # Drill into common shapes
+        cats = raw_stats.get("splits", {}).get("categories") or raw_stats.get("categories") or []
+        for cat in cats:
+            for s in cat.get("stats") or []:
+                nm = s.get("name") or ""
+                val = s.get("value")
+                if val is None:
+                    try:
+                        val = float(s.get("displayValue", "0").replace(",", "").replace("%", ""))
+                    except (ValueError, AttributeError):
+                        val = 0
+                if nm:
+                    try:
+                        flat[nm] = float(val)
+                    except (TypeError, ValueError):
+                        pass
+        # Also try the top-level "stats" if present
+        for s in raw_stats.get("stats") or []:
+            nm = s.get("name") or ""
+            val = s.get("value")
+            if nm and val is not None and nm not in flat:
+                try:
+                    flat[nm] = float(val)
+                except (TypeError, ValueError):
+                    pass
+    except Exception:
+        pass
+    for label, name_str, fmt in keys:
+        for nm in name_str.split("|"):
+            if nm in flat and flat[nm] != 0:
+                try:
+                    out[label] = fmt.format(flat[nm])
+                except (ValueError, TypeError):
+                    out[label] = str(flat[nm])
+                break
+    return out
+
+
+def _derive_player_strengths(sport_key: str, raw_stats: dict, position: str = "") -> tuple[list[str], list[str]]:
+    """Derive 1-2 strengths and 0-1 weaknesses from raw stats. Heuristic only."""
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+    if not raw_stats:
+        return strengths, weaknesses
+    flat: dict[str, float] = {}
+    try:
+        cats = raw_stats.get("splits", {}).get("categories") or raw_stats.get("categories") or []
+        for cat in cats:
+            for s in cat.get("stats") or []:
+                nm = s.get("name") or ""
+                val = s.get("value")
+                if val is None:
+                    try:
+                        val = float(str(s.get("displayValue", "0")).replace(",", "").replace("%", ""))
+                    except (ValueError, AttributeError):
+                        val = 0
+                if nm:
+                    try:
+                        flat[nm] = float(val)
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        return strengths, weaknesses
+
+    if sport_key == "basketball_nba":
+        ppg = flat.get("avgPoints", flat.get("points", 0))
+        rpg = flat.get("avgRebounds", flat.get("rebounds", 0))
+        apg = flat.get("avgAssists", flat.get("assists", 0))
+        fg_pct = flat.get("fieldGoalPct", 0)
+        tp_pct = flat.get("threePointPct", 0)
+        ft_pct = flat.get("freeThrowPct", 0)
+        if ppg >= 22: strengths.append("Elite Scorer")
+        elif ppg >= 16: strengths.append("Volume Scorer")
+        if apg >= 7: strengths.append("Playmaker")
+        if rpg >= 9: strengths.append("Rebounder")
+        if tp_pct >= 38 and ppg >= 10: strengths.append("Sharpshooter")
+        if fg_pct >= 55 and ppg >= 10: strengths.append("Efficient")
+        if 0 < tp_pct < 30: weaknesses.append("Poor 3pt")
+        if 0 < ft_pct < 65: weaknesses.append("Bad FT")
+    elif sport_key in ("americanfootball_nfl", "americanfootball_ncaaf"):
+        py = flat.get("passingYards", 0)
+        ptd = flat.get("passingTouchdowns", 0)
+        ints = flat.get("interceptions", 0)
+        ry = flat.get("rushingYards", 0)
+        rtd = flat.get("rushingTouchdowns", 0)
+        recy = flat.get("receivingYards", 0)
+        rectd = flat.get("receivingTouchdowns", 0)
+        if py >= 3500: strengths.append("Elite Passer")
+        elif py >= 2500: strengths.append("Starting QB")
+        if ry >= 1000: strengths.append("Workhorse RB")
+        elif ry >= 600: strengths.append("Rushing Threat")
+        if recy >= 1000: strengths.append("WR1")
+        elif recy >= 700: strengths.append("Reliable Target")
+        if ptd >= 25: strengths.append("TD Machine")
+        if rtd >= 8 or rectd >= 8: strengths.append("Red-Zone Threat")
+        if ints >= 12: weaknesses.append("Turnover Prone")
+    elif sport_key == "icehockey_nhl":
+        goals = flat.get("goals", 0)
+        assists = flat.get("assists", 0)
+        pm = flat.get("plusMinus", 0)
+        if goals >= 30: strengths.append("Sniper")
+        elif goals >= 20: strengths.append("Scorer")
+        if assists >= 50: strengths.append("Playmaker")
+        if pm >= 15: strengths.append("Two-Way Star")
+        if pm <= -10: weaknesses.append("Defensive Liability")
+    elif sport_key == "baseball_mlb":
+        avg = flat.get("avg", flat.get("battingAverage", 0))
+        hr = flat.get("homeRuns", 0)
+        rbi = flat.get("RBIs", flat.get("runsBattedIn", 0))
+        ops = flat.get("OPS", flat.get("onBasePlusSlugging", 0))
+        era = flat.get("ERA", 0)
+        if avg >= 0.300: strengths.append("Hits for Avg")
+        if hr >= 30: strengths.append("Power Hitter")
+        elif hr >= 20: strengths.append("Slugger")
+        if rbi >= 90: strengths.append("RBI Producer")
+        if ops >= 0.900: strengths.append("Elite OPS")
+        if 0 < era < 3: strengths.append("Ace")
+        elif era > 4.5: weaknesses.append("High ERA")
+    elif sport_key.startswith("soccer_"):
+        goals = flat.get("totalGoals", flat.get("goals", 0))
+        assists = flat.get("goalAssists", flat.get("assists", 0))
+        if goals >= 15: strengths.append("Top Scorer")
+        elif goals >= 8: strengths.append("Goal Threat")
+        if assists >= 8: strengths.append("Creator")
+        # Position-based fallbacks
+        pos = (position or "").lower()
+        if "keeper" in pos or pos in ("g", "gk"):
+            strengths.append("Shot Stopper")
+        elif "defender" in pos or pos in ("d", "df", "cb"):
+            strengths.append("Defender")
+    elif sport_key == "mma_mixed_martial_arts":
+        wins = flat.get("wins", 0)
+        losses = flat.get("losses", 0)
+        kos = flat.get("knockouts", 0)
+        if wins >= 15: strengths.append("Veteran")
+        if kos >= 5: strengths.append("KO Artist")
+        if losses >= 5: weaknesses.append("Losing Streak Risk")
+    return strengths[:2], weaknesses[:1]
+
+
+def fetch_espn_roster(sport_key: str, team_espn_id: str, team_norm: str, max_players: int = 25) -> list[dict]:
+    """Fetch roster + per-player stats for a team. Returns parsed player rows."""
+    if sport_key not in ESPN_LEAGUE_MAP or not team_espn_id:
+        return []
+    session = _make_http_session()
+    roster_url = _espn_team_roster_url(sport_key, team_espn_id)
+    if not roster_url:
+        return []
+    try:
+        resp = session.get(roster_url, timeout=15)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except Exception as e:
+        log.debug("espn roster fetch %s/%s: %s", sport_key, team_espn_id, e)
+        return []
+
+    # ESPN structures rosters as either "athletes": [{position, items: [...]}, ...]
+    # or a flat "athletes" list of athlete dicts.
+    raw_athletes: list[dict] = []
+    athletes_field = data.get("athletes") or []
+    if athletes_field and isinstance(athletes_field[0], dict):
+        if "items" in athletes_field[0]:
+            for grp in athletes_field:
+                for a in grp.get("items") or []:
+                    raw_athletes.append(a)
+        else:
+            raw_athletes = athletes_field
+
+    rows: list[dict] = []
+    for a in raw_athletes[:max_players]:
+        try:
+            name = a.get("displayName") or a.get("fullName") or a.get("name") or ""
+            if not name:
+                continue
+            ath_id = str(a.get("id") or "")
+            position = ((a.get("position") or {}).get("abbreviation") or
+                        (a.get("position") or {}).get("displayName") or "")
+            jersey = str(a.get("jersey") or "")
+            # Per-athlete stats lookup (best-effort, tolerate failure)
+            stats_payload: dict = {}
+            try:
+                stats_url = _espn_athlete_stats_url(sport_key, ath_id)
+                if stats_url:
+                    sr = session.get(stats_url, timeout=10)
+                    if sr.status_code == 200:
+                        stats_payload = sr.json() or {}
+            except Exception:
+                pass
+            stats_summary = _summarize_player_stats(sport_key, stats_payload)
+            strengths, weaknesses = _derive_player_strengths(sport_key, stats_payload, position)
+            # Impact score: weighted sum of "key" stats so we can pick top players
+            impact = _player_impact_score(sport_key, stats_payload)
+            rows.append({
+                "sport": sport_key,
+                "team_norm": team_norm,
+                "player_name": name,
+                "espn_id": ath_id,
+                "position": position,
+                "jersey": jersey,
+                "stats_summary": stats_summary,
+                "strengths": strengths,
+                "weaknesses": weaknesses,
+                "impact_score": impact,
+            })
+        except Exception as e:
+            log.debug("athlete parse error: %s", e)
+        import time as _t
+        _t.sleep(0.03)
+    return rows
+
+
+def _player_impact_score(sport_key: str, raw_stats: dict) -> float:
+    """Numeric impact score for ranking players within a team. Higher = more important."""
+    if not raw_stats:
+        return 0.0
+    flat: dict[str, float] = {}
+    try:
+        cats = raw_stats.get("splits", {}).get("categories") or raw_stats.get("categories") or []
+        for cat in cats:
+            for s in cat.get("stats") or []:
+                nm = s.get("name") or ""
+                val = s.get("value", 0)
+                if nm:
+                    try:
+                        flat[nm] = float(val or 0)
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        return 0.0
+    if sport_key == "basketball_nba":
+        return (flat.get("avgPoints", 0) * 1.0 +
+                flat.get("avgRebounds", 0) * 0.7 +
+                flat.get("avgAssists", 0) * 1.0)
+    if sport_key in ("americanfootball_nfl", "americanfootball_ncaaf"):
+        return (flat.get("passingYards", 0) * 0.001 +
+                flat.get("passingTouchdowns", 0) * 1.0 +
+                flat.get("rushingYards", 0) * 0.005 +
+                flat.get("rushingTouchdowns", 0) * 1.0 +
+                flat.get("receivingYards", 0) * 0.005 +
+                flat.get("receivingTouchdowns", 0) * 1.0)
+    if sport_key == "icehockey_nhl":
+        return flat.get("goals", 0) * 1.0 + flat.get("assists", 0) * 0.7
+    if sport_key == "baseball_mlb":
+        return (flat.get("homeRuns", 0) * 1.5 +
+                flat.get("RBIs", flat.get("runsBattedIn", 0)) * 0.5 +
+                flat.get("OPS", 0) * 5)
+    if sport_key.startswith("soccer_"):
+        return (flat.get("totalGoals", flat.get("goals", 0)) * 2.0 +
+                flat.get("goalAssists", flat.get("assists", 0)) * 1.5)
+    return 0.0
+
+
+def _store_player_info(rows: list[dict]) -> int:
+    """Bulk upsert player rows. Returns number written."""
+    if not rows:
+        return 0
+    written = 0
+    with _get_db() as conn:
+        for r in rows:
+            try:
+                conn.execute(
+                    """INSERT INTO sports_player_info
+                       (sport, team_norm, player_name, espn_id, position, jersey,
+                        stats_json, strengths, weaknesses, impact_score, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                       ON CONFLICT(sport, team_norm, player_name) DO UPDATE SET
+                         espn_id = excluded.espn_id,
+                         position = excluded.position,
+                         jersey = excluded.jersey,
+                         stats_json = excluded.stats_json,
+                         strengths = excluded.strengths,
+                         weaknesses = excluded.weaknesses,
+                         impact_score = excluded.impact_score,
+                         fetched_at = datetime('now')""",
+                    (r["sport"], r["team_norm"], r["player_name"],
+                     r.get("espn_id", ""), r.get("position", ""), r.get("jersey", ""),
+                     json.dumps(r.get("stats_summary") or {}),
+                     json.dumps(r.get("strengths") or []),
+                     json.dumps(r.get("weaknesses") or []),
+                     float(r.get("impact_score", 0))),
+                )
+                written += 1
+            except Exception as e:
+                log.debug("player_info upsert error: %s", e)
+    return written
+
+
+def fetch_espn_team_leaders(sport_key: str, days_back: int = 21) -> dict[str, list[dict]]:
+    """Pull recent scoreboard pages for a sport and extract per-team statistical
+    leaders. ESPN scoreboard responses include `competitors[].leaders` with the
+    top player per stat category (PPG/RPG/APG, passingYards/touchdowns, etc.)
+    plus their displayValue. We aggregate across all events in the window so
+    every team gets a list of leader-players with real, current-season values.
+
+    Returns a dict keyed by team_norm → list of player rows ready for
+    _store_player_info.
+    """
+    if sport_key not in ESPN_LEAGUE_MAP:
+        return {}
+    league = ESPN_LEAGUE_MAP[sport_key]
+    sport, lg = league
+    session = _make_http_session()
+    leaders_by_team: dict[str, dict[str, dict]] = {}  # team_norm -> {player_name: row}
+
+    # Walk back through the past N days. Each day's scoreboard returns up to
+    # ~20 events; that gives us most teams in a typical league season.
+    today = datetime.now(timezone.utc).date()
+    for offset in range(0, days_back):
+        d = today - timedelta(days=offset)
+        date_str = d.strftime("%Y%m%d")
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{lg}/scoreboard?dates={date_str}"
+        try:
+            resp = session.get(url, timeout=15)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+        except Exception as e:
+            log.debug("espn scoreboard leaders %s %s: %s", sport_key, date_str, e)
+            continue
+        events = data.get("events") or []
+        for ev in events:
+            for comp in ev.get("competitions") or []:
+                for c in comp.get("competitors") or []:
+                    team = c.get("team") or {}
+                    name = team.get("displayName") or team.get("name") or ""
+                    if not name:
+                        continue
+                    team_norm = normalize_name(name)
+                    bucket = leaders_by_team.setdefault(team_norm, {})
+                    leaders_arr = c.get("leaders") or []
+                    for ldr_cat in leaders_arr:
+                        cat_name = ldr_cat.get("name") or ""
+                        cat_short = ldr_cat.get("shortDisplayName") or ldr_cat.get("abbreviation") or cat_name
+                        for ldr in ldr_cat.get("leaders") or []:
+                            ath = ldr.get("athlete") or {}
+                            pname = ath.get("displayName") or ath.get("fullName") or ""
+                            if not pname:
+                                continue
+                            disp = ldr.get("displayValue") or ""
+                            try:
+                                value = float(ldr.get("value") or 0)
+                            except (TypeError, ValueError):
+                                value = 0.0
+                            row = bucket.setdefault(pname, {
+                                "player_name": pname,
+                                "espn_id": str(ath.get("id") or ""),
+                                "position": ((ath.get("position") or {}).get("abbreviation") or ""),
+                                "jersey": str(ath.get("jersey") or ""),
+                                "stats": {},
+                                "raw_values": {},
+                            })
+                            # Stat label e.g. "PPG", "REB", "PTS" → display value
+                            row["stats"][cat_short] = disp
+                            row["raw_values"][cat_name] = value
+        import time as _t
+        _t.sleep(0.05)
+
+    # Convert to player rows ready for _store_player_info
+    out: dict[str, list[dict]] = {}
+    for team_norm, players in leaders_by_team.items():
+        rows: list[dict] = []
+        for p in players.values():
+            raw = p["raw_values"]
+            strengths, weaknesses = _derive_player_strengths_from_raw(sport_key, raw, p["position"])
+            impact = _player_impact_score_from_raw(sport_key, raw)
+            rows.append({
+                "sport": sport_key,
+                "team_norm": team_norm,
+                "player_name": p["player_name"],
+                "espn_id": p["espn_id"],
+                "position": p["position"],
+                "jersey": p["jersey"],
+                "stats_summary": p["stats"],
+                "strengths": strengths,
+                "weaknesses": weaknesses,
+                "impact_score": impact,
+            })
+        # Keep top 6 per team by impact
+        rows.sort(key=lambda r: r["impact_score"], reverse=True)
+        out[team_norm] = rows[:6]
+    return out
+
+
+def _derive_player_strengths_from_raw(sport_key: str, raw: dict, position: str) -> tuple[list[str], list[str]]:
+    """Strengths/weaknesses from the raw value dict produced by leaders extraction.
+    The keys are ESPN stat names like 'pointsPerGame', 'reboundsPerGame', etc.
+    """
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+    if not raw:
+        return strengths, weaknesses
+    if sport_key == "basketball_nba":
+        ppg = raw.get("pointsPerGame", 0)
+        rpg = raw.get("reboundsPerGame", 0)
+        apg = raw.get("assistsPerGame", 0)
+        if ppg >= 25: strengths.append("Elite Scorer")
+        elif ppg >= 18: strengths.append("Scorer")
+        if rpg >= 10: strengths.append("Glass Eater")
+        elif rpg >= 7: strengths.append("Strong Rebounder")
+        if apg >= 8: strengths.append("Floor General")
+        elif apg >= 5: strengths.append("Playmaker")
+        if ppg < 8 and rpg < 4 and apg < 3 and (ppg or rpg or apg):
+            weaknesses.append("Limited Output")
+    elif sport_key in ("americanfootball_nfl", "americanfootball_ncaaf"):
+        py = raw.get("passingYards", 0)
+        pt = raw.get("passingTouchdowns", 0)
+        ry = raw.get("rushingYards", 0)
+        rt = raw.get("rushingTouchdowns", 0)
+        rcy = raw.get("receivingYards", 0)
+        rct = raw.get("receivingTouchdowns", 0)
+        ints = raw.get("interceptions", 0)
+        rtg = raw.get("QBRating", 0) or raw.get("passerRating", 0)
+        if py >= 4000: strengths.append("Elite Passer")
+        elif py >= 2500: strengths.append("Pocket Arm")
+        if pt >= 25: strengths.append("TD Machine")
+        if ints >= 12: weaknesses.append("Turnover Prone")
+        if ry >= 1000: strengths.append("Bell Cow Back")
+        elif ry >= 600: strengths.append("Workhorse")
+        if rt >= 8: strengths.append("Goal Line Threat")
+        if rcy >= 1000: strengths.append("WR1")
+        elif rcy >= 600: strengths.append("Dependable Target")
+        if rct >= 8: strengths.append("End Zone Threat")
+        if rtg and rtg >= 100: strengths.append("Efficient")
+    elif sport_key == "icehockey_nhl":
+        g = raw.get("goals", 0)
+        a = raw.get("assists", 0)
+        pts = raw.get("points", 0)
+        pm = raw.get("plusMinus", 0)
+        if g >= 30: strengths.append("Sniper")
+        elif g >= 20: strengths.append("Goal Scorer")
+        if a >= 40: strengths.append("Elite Setup")
+        elif a >= 25: strengths.append("Playmaker")
+        if pts >= 70: strengths.append("Offensive Star")
+        if pm <= -10: weaknesses.append("Liability")
+        elif pm >= 15: strengths.append("Defensive Plus")
+    elif sport_key == "baseball_mlb":
+        avg = raw.get("avg", 0) or raw.get("battingAverage", 0)
+        hr = raw.get("homeRuns", 0)
+        rbi = raw.get("RBIs", 0) or raw.get("runsBattedIn", 0)
+        ops = raw.get("OPS", 0) or raw.get("onBasePlusSlugging", 0)
+        era = raw.get("ERA", 0) or raw.get("earnedRunAverage", 0)
+        wins = raw.get("wins", 0)
+        if avg >= 0.300: strengths.append("Hits for Avg")
+        if hr >= 30: strengths.append("Power Hitter")
+        elif hr >= 20: strengths.append("Long Ball Threat")
+        if rbi >= 90: strengths.append("RBI Machine")
+        if ops >= 0.900: strengths.append("Elite Hitter")
+        if era and era < 3.0: strengths.append("Ace")
+        elif era and era > 4.5: weaknesses.append("High ERA")
+        if wins >= 15: strengths.append("Workhorse")
+    elif sport_key.startswith("soccer_"):
+        gls = raw.get("totalGoals", 0) or raw.get("goals", 0)
+        ast = raw.get("goalAssists", 0) or raw.get("assists", 0)
+        if gls >= 20: strengths.append("Top Scorer")
+        elif gls >= 10: strengths.append("Goal Threat")
+        if ast >= 10: strengths.append("Creator")
+        elif ast >= 5: strengths.append("Setup Artist")
+        if (position or "").upper() in ("GK", "G"): strengths.append("Shot Stopper")
+    return strengths[:3], weaknesses[:2]
+
+
+def _player_impact_score_from_raw(sport_key: str, raw: dict) -> float:
+    if not raw:
+        return 0.0
+    if sport_key == "basketball_nba":
+        return (raw.get("pointsPerGame", 0) * 1.0 +
+                raw.get("reboundsPerGame", 0) * 0.7 +
+                raw.get("assistsPerGame", 0) * 1.0)
+    if sport_key in ("americanfootball_nfl", "americanfootball_ncaaf"):
+        return (raw.get("passingYards", 0) * 0.001 +
+                raw.get("passingTouchdowns", 0) * 1.0 +
+                raw.get("rushingYards", 0) * 0.005 +
+                raw.get("rushingTouchdowns", 0) * 1.0 +
+                raw.get("receivingYards", 0) * 0.005 +
+                raw.get("receivingTouchdowns", 0) * 1.0)
+    if sport_key == "icehockey_nhl":
+        return raw.get("goals", 0) * 1.0 + raw.get("assists", 0) * 0.7 + raw.get("points", 0) * 0.5
+    if sport_key == "baseball_mlb":
+        return (raw.get("homeRuns", 0) * 1.5 +
+                (raw.get("RBIs", 0) or raw.get("runsBattedIn", 0)) * 0.3 +
+                (raw.get("OPS", 0) or raw.get("onBasePlusSlugging", 0)) * 5)
+    if sport_key.startswith("soccer_"):
+        return ((raw.get("totalGoals", 0) or raw.get("goals", 0)) * 2.0 +
+                (raw.get("goalAssists", 0) or raw.get("assists", 0)) * 1.5)
+    return 0.0
+
+
+def _refresh_team_info_for_sport(sport_key: str) -> int:
+    """Pull fresh team standings + records for a sport, then top players via
+    scoreboard leaders extraction (much faster + more reliable than
+    per-athlete stats endpoints, which return only metadata).
+    """
+    if sport_key not in ESPN_LEAGUE_MAP:
+        return 0
+    teams = fetch_espn_teams(sport_key)
+    if not teams:
+        return 0
+    n = _store_team_info(teams)
+    # Pull top players via scoreboard leaders aggregation
+    try:
+        leaders = fetch_espn_team_leaders(sport_key, days_back=21)
+        all_player_rows: list[dict] = []
+        for team_norm, rows in leaders.items():
+            all_player_rows.extend(rows)
+        if all_player_rows:
+            written = _store_player_info(all_player_rows)
+            log.debug("team_info %s: %d teams, %d players", sport_key, n, written)
+    except Exception as e:
+        log.debug("leaders refresh %s: %s", sport_key, e)
+    return n
+
+
+def _backfill_all_team_info():
+    """Backfill team_info + player_info for every supported sport."""
+    total = 0
+    for sport_key in ESPN_LEAGUE_MAP:
+        try:
+            n = _refresh_team_info_for_sport(sport_key)
+            total += n
+            print(f"  team_info: {sport_key} +{n} teams", flush=True)
+        except Exception as e:
+            print(f"  team_info: {sport_key} error: {e}", flush=True)
+    print(f"team_info backfill complete: {total} team rows", flush=True)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Top Polymarket traders — fetcher + cache layer
+# ---------------------------------------------------------------------------
+# Pulls the top N wallets by lifetime volume from the Polymarket leaderboard,
+# then walks each wallet's recent trades from the data API and aggregates
+# net positions per (conditionId, outcome). The aggregated rows are upserted
+# into top_trader_positions, indexed by condition_id so that comparisons
+# can be joined in O(1) when we build the dashboard payload.
+
+def fetch_top_polymarket_traders(limit: int = TOP_TRADERS_LIMIT) -> list[dict]:
+    """Fetch the top N traders by lifetime volume from the Polymarket
+    leaderboard API. Returns a list of {wallet, pseudonym, name, profile_image,
+    lifetime_volume, rank}.
+    """
+    session = _make_http_session()
+    url = f"{POLY_LB_API_HOST}/volume"
+    params = {"window": "all", "limit": limit}
+    try:
+        resp = session.get(url, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.debug("top traders fetch error: %s", e)
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for i, row in enumerate(data[:limit]):
+        wallet = (row.get("proxyWallet") or row.get("wallet") or "").lower()
+        if not wallet:
+            continue
+        out.append({
+            "wallet": wallet,
+            "pseudonym": row.get("pseudonym") or "",
+            "name": row.get("name") or "",
+            "profile_image": row.get("profileImage") or "",
+            "lifetime_volume": float(row.get("amount") or 0),
+            "rank": i + 1,
+        })
+    return out
+
+
+def fetch_trader_trades(wallet: str, limit: int = TOP_TRADER_TRADES_LIMIT) -> list[dict]:
+    """Fetch recent trades for a single wallet from the Polymarket data API.
+    Returns the raw trade list (each trade has conditionId, outcome, side,
+    size, price, title, slug, timestamp, etc.).
+    """
+    if not wallet:
+        return []
+    session = _make_http_session()
+    url = f"{POLY_DATA_API_HOST}/trades"
+    params = {"user": wallet, "limit": limit}
+    try:
+        resp = session.get(url, params=params, timeout=25)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.debug("trader trades fetch %s error: %s", wallet[:8], e)
+        return []
+    if not isinstance(data, list):
+        return []
+    return data
+
+
+def _aggregate_positions_by_market(trades: list[dict]) -> list[dict]:
+    """Group trades by (conditionId, outcome) and compute net position.
+
+    For each (market, outcome) pair, sums BUY size minus SELL size, computes
+    weighted-average buy price, captures the latest trade side + timestamp,
+    and counts trades. Returns a list of position dicts ready to upsert into
+    top_trader_positions.
+    """
+    if not trades:
+        return []
+    grouped: dict[tuple[str, str], dict] = {}
+    for t in trades:
+        cid = t.get("conditionId") or ""
+        if not cid:
+            continue
+        outcome = t.get("outcome") or ""
+        key = (cid, outcome)
+        try:
+            size = float(t.get("size") or 0)
+            price = float(t.get("price") or 0)
+        except (ValueError, TypeError):
+            continue
+        if size <= 0:
+            continue
+        side = (t.get("side") or "").upper()
+        signed_size = size if side == "BUY" else -size
+        try:
+            ts = int(t.get("timestamp") or 0)
+        except (ValueError, TypeError):
+            ts = 0
+        bucket = grouped.setdefault(key, {
+            "condition_id": cid,
+            "outcome": outcome,
+            "outcome_index": int(t.get("outcomeIndex") or 0),
+            "slug": t.get("slug") or "",
+            "title": t.get("title") or "",
+            "net_size": 0.0,
+            "net_usd": 0.0,
+            "buy_size_total": 0.0,
+            "buy_usd_total": 0.0,
+            "last_side": "",
+            "last_traded_ts": 0,
+            "trade_count": 0,
+        })
+        bucket["net_size"] += signed_size
+        bucket["net_usd"] += signed_size * price
+        if side == "BUY":
+            bucket["buy_size_total"] += size
+            bucket["buy_usd_total"] += size * price
+        bucket["trade_count"] += 1
+        if ts > bucket["last_traded_ts"]:
+            bucket["last_traded_ts"] = ts
+            bucket["last_side"] = side
+    out: list[dict] = []
+    for bucket in grouped.values():
+        buy_size = bucket.pop("buy_size_total")
+        buy_usd = bucket.pop("buy_usd_total")
+        avg_price = (buy_usd / buy_size) if buy_size > 0 else 0.0
+        bucket["avg_price"] = round(avg_price, 4)
+        bucket["net_size"] = round(bucket["net_size"], 4)
+        bucket["net_usd"] = round(bucket["net_usd"], 2)
+        out.append(bucket)
+    return out
+
+
+def _store_top_trader_positions(trader: dict, positions: list[dict]) -> int:
+    """Upsert a list of aggregated positions for one trader into
+    top_trader_positions. Existing rows for the same wallet that are no
+    longer present in the new payload are deleted, so closed/expired
+    positions don't linger in the cache.
+    """
+    if not trader:
+        return 0
+    wallet = trader["wallet"]
+    written = 0
+    with _get_db() as conn:
+        new_keys = {(p["condition_id"], p.get("outcome", "")) for p in positions}
+        existing = conn.execute(
+            "SELECT condition_id, outcome FROM top_trader_positions WHERE wallet = ?",
+            (wallet,),
+        ).fetchall()
+        for row in existing:
+            key = (row["condition_id"], row["outcome"] or "")
+            if key not in new_keys:
+                conn.execute(
+                    "DELETE FROM top_trader_positions WHERE wallet = ? AND condition_id = ? AND outcome = ?",
+                    (wallet, key[0], key[1]),
+                )
+        for pos in positions:
+            try:
+                conn.execute(
+                    """INSERT INTO top_trader_positions
+                       (wallet, pseudonym, name, profile_image, rank, lifetime_volume,
+                        condition_id, slug, title, outcome, outcome_index,
+                        net_size, net_usd, avg_price, last_side, last_traded_ts,
+                        trade_count, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                       ON CONFLICT(wallet, condition_id, outcome) DO UPDATE SET
+                         pseudonym = excluded.pseudonym,
+                         name = excluded.name,
+                         profile_image = excluded.profile_image,
+                         rank = excluded.rank,
+                         lifetime_volume = excluded.lifetime_volume,
+                         slug = excluded.slug,
+                         title = excluded.title,
+                         outcome_index = excluded.outcome_index,
+                         net_size = excluded.net_size,
+                         net_usd = excluded.net_usd,
+                         avg_price = excluded.avg_price,
+                         last_side = excluded.last_side,
+                         last_traded_ts = excluded.last_traded_ts,
+                         trade_count = excluded.trade_count,
+                         fetched_at = datetime('now')""",
+                    (
+                        wallet,
+                        trader.get("pseudonym", ""),
+                        trader.get("name", ""),
+                        trader.get("profile_image", ""),
+                        int(trader.get("rank") or 0),
+                        float(trader.get("lifetime_volume") or 0),
+                        pos["condition_id"],
+                        pos.get("slug", ""),
+                        pos.get("title", ""),
+                        pos.get("outcome", ""),
+                        int(pos.get("outcome_index") or 0),
+                        float(pos.get("net_size") or 0),
+                        float(pos.get("net_usd") or 0),
+                        float(pos.get("avg_price") or 0),
+                        pos.get("last_side", ""),
+                        int(pos.get("last_traded_ts") or 0),
+                        int(pos.get("trade_count") or 0),
+                    ),
+                )
+                written += 1
+            except Exception as e:
+                log.debug("ttp upsert error: %s", e)
+    return written
+
+
+def _refresh_top_trader_positions() -> int:
+    """Refresh the cached top-trader positions table.
+
+    Fetches the top N traders by volume, walks each wallet's recent trades,
+    aggregates them by (conditionId, outcome) and upserts into the
+    top_trader_positions table. Also drops rows for wallets that fell out of
+    the top N.
+    """
+    traders = fetch_top_polymarket_traders(TOP_TRADERS_LIMIT)
+    if not traders:
+        return 0
+    active_wallets = {t["wallet"] for t in traders}
+    try:
+        with _get_db() as conn:
+            existing_wallets = {
+                row[0] for row in conn.execute(
+                    "SELECT DISTINCT wallet FROM top_trader_positions"
+                ).fetchall()
+            }
+            for w in existing_wallets - active_wallets:
+                conn.execute("DELETE FROM top_trader_positions WHERE wallet = ?", (w,))
+    except Exception as e:
+        log.debug("ttp prune error: %s", e)
+    total_written = 0
+    for trader in traders:
+        try:
+            trades = fetch_trader_trades(trader["wallet"], TOP_TRADER_TRADES_LIMIT)
+            positions = _aggregate_positions_by_market(trades)
+            # Filter out fully-closed positions (net_size near zero)
+            positions = [p for p in positions if abs(p["net_size"]) > 0.5]
+            n = _store_top_trader_positions(trader, positions)
+            total_written += n
+        except Exception as e:
+            log.debug("ttp refresh wallet %s error: %s", trader["wallet"][:8], e)
+    print(f"top_trader_positions: refreshed {len(traders)} traders, {total_written} positions", flush=True)
+    return total_written
+
+
+def _attach_top_traders_to_comparisons(comparisons: list[dict]) -> None:
+    """Annotate each comparison with `top_trader_positions` and `has_top_trader`.
+    Single SQL query batches the lookup for every condition_id in the list.
+    """
+    if not comparisons:
+        return
+    cids = [c.get("condition_id") for c in comparisons if c.get("condition_id")]
+    if not cids:
+        for c in comparisons:
+            c["top_trader_positions"] = []
+            c["has_top_trader"] = False
+        return
+    placeholders = ",".join("?" for _ in cids)
+    lookup: dict[str, list[dict]] = {}
+    try:
+        with _get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT wallet, pseudonym, name, profile_image, rank, lifetime_volume,
+                           condition_id, outcome, outcome_index, net_size, net_usd,
+                           avg_price, last_side, last_traded_ts, trade_count
+                    FROM top_trader_positions
+                    WHERE condition_id IN ({placeholders})
+                    ORDER BY rank ASC, ABS(net_usd) DESC""",
+                cids,
+            ).fetchall()
+    except Exception as e:
+        log.debug("ttp attach query error: %s", e)
+        rows = []
+    for r in rows:
+        d = dict(r)
+        cid = d["condition_id"]
+        lookup.setdefault(cid, []).append({
+            "wallet": d["wallet"],
+            "pseudonym": d.get("pseudonym") or "",
+            "name": d.get("name") or "",
+            "profile_image": d.get("profile_image") or "",
+            "rank": int(d.get("rank") or 0),
+            "lifetime_volume": float(d.get("lifetime_volume") or 0),
+            "outcome": d.get("outcome") or "",
+            "outcome_index": int(d.get("outcome_index") or 0),
+            "net_size": float(d.get("net_size") or 0),
+            "net_usd": float(d.get("net_usd") or 0),
+            "avg_price": float(d.get("avg_price") or 0),
+            "last_side": d.get("last_side") or "",
+            "last_traded_ts": int(d.get("last_traded_ts") or 0),
+            "trade_count": int(d.get("trade_count") or 0),
+            "side": "LONG" if float(d.get("net_size") or 0) >= 0 else "SHORT",
+        })
+    for c in comparisons:
+        cid = c.get("condition_id") or ""
+        positions = lookup.get(cid, [])
+        c["top_trader_positions"] = positions
+        c["has_top_trader"] = bool(positions)
+
+
+def _get_team_info(sport_key: str, team_name: str) -> dict | None:
+    if not team_name:
+        return None
+    norm = normalize_name(team_name)
+    try:
+        with _get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM sports_team_info WHERE sport = ? AND team_norm = ?",
+                (sport_key, norm),
+            ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    r = dict(row)
+    games = r["wins"] + r["losses"] + (r.get("draws") or 0)
+    win_pct = r["win_pct"] if r["win_pct"] else (r["wins"] / games if games else 0)
+    return {
+        "name": r["team_name"],
+        "abbreviation": r.get("abbreviation") or "",
+        "wins": r["wins"],
+        "losses": r["losses"],
+        "draws": r.get("draws") or 0,
+        "win_pct": round(win_pct, 3),
+        "points_for": r.get("points_for") or 0,
+        "points_against": r.get("points_against") or 0,
+        "rank": r.get("rank") or 0,
+        "conference_rank": r.get("conference_rank") or 0,
+        "streak": r.get("streak") or "",
+        "last_10": r.get("last_10") or "",
+        "logo_url": r.get("logo_url") or "",
+    }
+
+
+def _get_top_players(sport_key: str, team_name: str, limit: int = 3) -> list[dict]:
+    if not team_name:
+        return []
+    norm = normalize_name(team_name)
+    try:
+        with _get_db() as conn:
+            rows = conn.execute(
+                """SELECT player_name, position, jersey, stats_json, strengths, weaknesses, impact_score
+                   FROM sports_player_info
+                   WHERE sport = ? AND team_norm = ?
+                   ORDER BY impact_score DESC
+                   LIMIT ?""",
+                (sport_key, norm, limit),
+            ).fetchall()
+    except Exception:
+        return []
+    out: list[dict] = []
+    for row in rows:
+        r = dict(row)
+        try:
+            stats = json.loads(r.get("stats_json") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            stats = {}
+        try:
+            strengths = json.loads(r.get("strengths") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            strengths = []
+        try:
+            weaknesses = json.loads(r.get("weaknesses") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            weaknesses = []
+        out.append({
+            "name": r["player_name"],
+            "position": r.get("position") or "",
+            "jersey": r.get("jersey") or "",
+            "stats": stats,
+            "strengths": strengths,
+            "weaknesses": weaknesses,
+            "impact": round(float(r.get("impact_score") or 0), 1),
+        })
+    return out
+
+
+def _compute_chemistry(sport_key: str, team: str, form: dict | None, info: dict | None) -> dict | None:
+    """Composite 'chemistry' score 0-100. Inputs:
+       - Recent form consistency (low variance in W/L = better chemistry)
+       - Win % from team_info
+       - Streak direction (positive streak = momentum)
+    Returns dict with score, label, components.
+    """
+    if not form and not info:
+        return None
+    components: dict[str, float] = {}
+    score = 50.0  # neutral baseline
+
+    # 1) Recent form consistency (40 points possible)
+    if form:
+        results = form.get("results") or []
+        if results:
+            wins = sum(1 for r in results if r == "W")
+            recent_win_rate = wins / len(results)
+            # 5-0 = +30, 3-2 = neutral, 0-5 = -30
+            consistency_pts = (recent_win_rate - 0.5) * 60
+            components["recent_form"] = round(consistency_pts, 1)
+            score += consistency_pts
+
+    # 2) Season win pct (30 points possible)
+    if info:
+        win_pct = info.get("win_pct", 0)
+        if win_pct > 0:
+            season_pts = (win_pct - 0.5) * 60
+            components["season_pct"] = round(season_pts, 1)
+            score += season_pts
+
+    # 3) Active streak (20 points possible)
+    if info and info.get("streak"):
+        try:
+            s = int(info["streak"])
+            streak_pts = max(-20, min(20, s * 4))
+            components["streak"] = round(streak_pts, 1)
+            score += streak_pts
+        except (ValueError, TypeError):
+            pass
+
+    score = max(0, min(100, score))
+    if score >= 75:
+        label = "Excellent"
+    elif score >= 60:
+        label = "Strong"
+    elif score >= 40:
+        label = "Average"
+    elif score >= 25:
+        label = "Struggling"
+    else:
+        label = "Poor"
+    return {
+        "score": round(score, 1),
+        "label": label,
+        "components": components,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Line movement: compute trend from recent snapshots
 # ---------------------------------------------------------------------------
 
 def _compute_edge_trends(comparisons: list[dict]) -> dict:
-    """For each event+outcome, compute trend direction from recent snapshots."""
+    """For each event+outcome, compute trend direction from recent snapshots.
+
+    The previous implementation issued one SELECT per (event, outcome) which
+    blew up to N*M queries for large slates. We now prefetch the last 24h of
+    snapshots in a single query and group them in-memory.
+    """
     trends = {}
     cutoff_2h = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
     with _get_db() as conn:
-        for comp in comparisons:
-            event_name = comp.get("home_team", "") + (" vs " + comp.get("away_team", "") if comp.get("away_team") else "")
-            for oc in comp.get("outcomes", []):
-                outcome = oc.get("outcome", "")
-                key = f"{event_name}|{outcome}"
+        all_rows = conn.execute(
+            "SELECT event_name, outcome, divergence, snapshot_at "
+            "FROM sports_market_snapshots WHERE snapshot_at >= ? ORDER BY snapshot_at",
+            (cutoff_24h,),
+        ).fetchall()
 
-                # Get recent snapshots for this event+outcome
-                rows = conn.execute(
-                    "SELECT divergence, snapshot_at FROM sports_market_snapshots WHERE event_name = ? AND outcome = ? AND snapshot_at >= ? ORDER BY snapshot_at",
-                    (event_name, outcome, cutoff_24h),
-                ).fetchall()
+    # Group rows by (event, outcome). dict-of-list keeps insertion order so the
+    # rows stay sorted by snapshot_at thanks to the ORDER BY above.
+    snap_by_key: dict[tuple[str, str], list] = {}
+    for r in all_rows:
+        snap_by_key.setdefault((r["event_name"], r["outcome"]), []).append(r)
 
-                if len(rows) < 2:
-                    trends[key] = {"direction": "new", "change_2h": 0, "change_24h": 0, "points": []}
-                    continue
+    for comp in comparisons:
+        event_name = comp.get("home_team", "") + (
+            " vs " + comp.get("away_team", "") if comp.get("away_team") else ""
+        )
+        for oc in comp.get("outcomes", []):
+            outcome = oc.get("outcome", "")
+            key = f"{event_name}|{outcome}"
+            rows = snap_by_key.get((event_name, outcome), [])
 
-                points = [(r["divergence"] or 0) for r in rows]
-                current = oc.get("divergence", 0) or 0
+            if len(rows) < 2:
+                trends[key] = {"direction": "new", "change_2h": 0, "change_24h": 0, "points": []}
+                continue
 
-                # 2h trend
-                recent_rows = [r for r in rows if r["snapshot_at"] >= cutoff_2h]
-                if recent_rows:
-                    change_2h = round(current - (recent_rows[0]["divergence"] or 0), 2)
-                else:
-                    change_2h = 0
+            points = [(r["divergence"] or 0) for r in rows]
+            current = oc.get("divergence", 0) or 0
 
-                # 24h trend
-                change_24h = round(current - (rows[0]["divergence"] or 0), 2)
+            # 2h trend
+            recent_rows = [r for r in rows if r["snapshot_at"] >= cutoff_2h]
+            if recent_rows:
+                change_2h = round(current - (recent_rows[0]["divergence"] or 0), 2)
+            else:
+                change_2h = 0
 
-                if abs(change_2h) < 0.5:
-                    direction = "stable"
-                elif change_2h > 0:
-                    direction = "widening"  # edge is growing
-                else:
-                    direction = "narrowing"  # edge is closing
+            # 24h trend
+            change_24h = round(current - (rows[0]["divergence"] or 0), 2)
 
-                # Keep last 12 points for sparkline
-                trends[key] = {
-                    "direction": direction,
-                    "change_2h": change_2h,
-                    "change_24h": change_24h,
-                    "points": points[-12:],
-                }
+            if abs(change_2h) < 0.5:
+                direction = "stable"
+            elif change_2h > 0:
+                direction = "widening"  # edge is growing
+            else:
+                direction = "narrowing"  # edge is closing
+
+            # Keep last 12 points for sparkline
+            trends[key] = {
+                "direction": direction,
+                "change_2h": change_2h,
+                "change_24h": change_24h,
+                "points": points[-12:],
+            }
 
     return trends
 
@@ -1713,7 +3519,14 @@ def _send_alerts(sport: str, signals: list[dict]):
     for cfg in configs:
         cfg = dict(cfg)
         min_edge = cfg.get("min_edge", 5.0)
-        allowed_sports = json.loads(cfg.get("sports", "[]"))
+        # Defensive: a single corrupt row should not block alerts to every
+        # other user. Fall back to "all sports allowed" on parse failure.
+        try:
+            allowed_sports = json.loads(cfg.get("sports", "[]"))
+            if not isinstance(allowed_sports, list):
+                allowed_sports = []
+        except (json.JSONDecodeError, TypeError):
+            allowed_sports = []
         if allowed_sports and sport not in allowed_sports:
             continue
 
@@ -1722,6 +3535,9 @@ def _send_alerts(sport: str, signals: list[dict]):
         if last:
             try:
                 last_dt = datetime.fromisoformat(last)
+                # Datetime may be naive if older code wrote it without tz info
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
                 if (datetime.now(timezone.utc) - last_dt).total_seconds() < 300:
                     continue
             except (ValueError, TypeError):
@@ -1748,22 +3564,25 @@ def _send_alerts(sport: str, signals: list[dict]):
             lines.append(f"  ...and {len(user_signals) - 5} more")
         msg = "\n".join(lines)
 
-        # Send Telegram
-        tg_token = cfg.get("telegram_bot_token", "")
+        # Send Telegram (decrypt + validate token format to prevent SSRF)
+        tg_token = _decrypt_field(cfg.get("telegram_bot_token", ""))
         tg_chat = cfg.get("telegram_chat_id", "")
         if tg_token and tg_chat:
-            try:
-                requests.post(
-                    f"https://api.telegram.org/bot{tg_token}/sendMessage",
-                    json={"chat_id": tg_chat, "text": msg, "parse_mode": "HTML"},
-                    timeout=10,
-                )
-            except Exception as e:
-                log.warning("Telegram alert error: %s", e)
+            if not re.fullmatch(r"\d+:[A-Za-z0-9_-]+", tg_token):
+                log.warning("Telegram token rejected: invalid format")
+            else:
+                try:
+                    requests.post(
+                        f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                        json={"chat_id": tg_chat, "text": msg},
+                        timeout=10,
+                    )
+                except Exception as e:
+                    log.warning("Telegram alert error: %s", e)
 
-        # Send webhook
+        # Send webhook (re-validate at dispatch time to prevent DNS rebinding SSRF)
         webhook_url = cfg.get("webhook_url", "")
-        if webhook_url:
+        if webhook_url and _is_safe_webhook_url(webhook_url):
             try:
                 requests.post(
                     webhook_url,
@@ -1830,6 +3649,7 @@ def _get_all_cross_sport_edges() -> list[dict]:
 
 def fetch_orderbook_depth(token_id: str) -> dict:
     """Fetch Polymarket orderbook and compute executable depth at mid price."""
+    empty = {"bid_depth": 0, "ask_depth": 0, "mid_price": 0, "spread": 0, "executable_size": 0}
     try:
         resp = requests.get(
             f"{POLYMARKET_HOST}/book",
@@ -1839,19 +3659,57 @@ def fetch_orderbook_depth(token_id: str) -> dict:
         resp.raise_for_status()
         book = resp.json()
     except Exception:
-        return {"bid_depth": 0, "ask_depth": 0, "mid_price": 0, "executable_size": 0}
+        return empty
 
-    bids = book.get("bids", [])
-    asks = book.get("asks", [])
+    if not isinstance(book, dict):
+        return empty
+    bids = book.get("bids") or []
+    asks = book.get("asks") or []
+    if not isinstance(bids, list) or not isinstance(asks, list):
+        return empty
 
-    # Compute depth within 2% of mid price
-    best_bid = float(bids[0]["price"]) if bids else 0
-    best_ask = float(asks[0]["price"]) if asks else 1
-    mid = (best_bid + best_ask) / 2 if (best_bid and best_ask) else 0
-    spread = best_ask - best_bid if (best_bid and best_ask) else 0
+    # Defensive parse — if shape drift removes "price"/"size" keys, return the
+    # empty sentinel rather than 500-ing.
+    try:
+        best_bid = float(bids[0].get("price", 0)) if bids else 0
+        best_ask = float(asks[0].get("price", 0)) if asks else 0
 
-    bid_depth = sum(float(b["size"]) for b in bids if float(b["price"]) >= mid * 0.98)
-    ask_depth = sum(float(a["size"]) for a in asks if float(a["price"]) <= mid * 1.02)
+        # Mid price requires both sides; if only one side is present, fall back
+        # to that side's best — this preserves correct semantics for one-sided
+        # books instead of zeroing out the depth filter.
+        if best_bid > 0 and best_ask > 0:
+            mid = (best_bid + best_ask) / 2
+            spread = best_ask - best_bid
+        elif best_bid > 0:
+            mid = best_bid
+            spread = 0.0
+        elif best_ask > 0:
+            mid = best_ask
+            spread = 0.0
+        else:
+            return empty
+
+        bid_depth = 0.0
+        for b in bids:
+            try:
+                bp = float(b.get("price", 0))
+                bs = float(b.get("size", 0))
+            except (TypeError, ValueError):
+                continue
+            if bp >= mid * 0.98:
+                bid_depth += bs
+
+        ask_depth = 0.0
+        for a in asks:
+            try:
+                ap = float(a.get("price", 0))
+                asz = float(a.get("size", 0))
+            except (TypeError, ValueError):
+                continue
+            if ap <= mid * 1.02:
+                ask_depth += asz
+    except Exception:
+        return empty
 
     return {
         "bid_depth": round(bid_depth, 2),
@@ -1874,6 +3732,24 @@ _poly_cache: dict[str, list[dict]] = {}   # keyed by sport
 _poly_cache_time: dict[str, float] = {}   # keyed by sport
 
 _data_lock = asyncio.Lock()  # guards atomic swaps of dashboard_data
+
+# Track background tasks so they aren't garbage-collected mid-execution.
+# Without a strong reference, asyncio may collect a running task and silently
+# cancel it. Each helper adds itself to the set on creation and removes itself
+# on completion via add_done_callback.
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    """Create a background task and track it in _bg_tasks.
+
+    Use this instead of bare asyncio.create_task() for fire-and-forget tasks
+    so they aren't garbage-collected before they finish.
+    """
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
 
 
 def _build_esports_comparisons(poly_markets: list[dict]) -> list[dict]:
@@ -1931,6 +3807,7 @@ def _build_esports_comparisons(poly_markets: list[dict]) -> list[dict]:
             "bookmaker_breakdown": {},
             "poly_question": question,
             "poly_slug": pm["slug"],
+            "condition_id": pm.get("condition_id", ""),
             "poly_volume": pm["volume"],
             "poly_liquidity": pm["liquidity"],
             "poly_spread": pm["spread"],
@@ -1953,7 +3830,7 @@ def _build_esports_comparisons(poly_markets: list[dict]) -> list[dict]:
             "best_decimal_odds": 0,
             "worst_decimal_odds": 0,
             "volume_liquidity_ratio": round(pm["volume"] / max(pm["liquidity"], 1), 2),
-            "spread_pct": round((pm["spread"] / max(outcomes[0]["poly_price"], 0.01)) * 100, 2) if outcomes else 0,
+            "spread_pct": round((pm["spread"] / max((outcomes[0].get("poly_price") or 0.01), 0.01)) * 100, 2) if (outcomes and isinstance(outcomes[0], dict)) else 0,
             "edge_direction": "-",
             "time_to_event_hours": None,
             "confidence_score": 0,
@@ -2047,6 +3924,8 @@ def _build_kalshi_comparisons(kalshi_parsed: list[dict], poly_markets: list[dict
     return comparisons
 
 
+# These counters are only mutated inside data_updater (single asyncio task,
+# guarded by _updater_running), so they are safe without an explicit lock.
 _resolve_counter = 0  # run auto-resolve every 6th cycle (~30 min)
 _bg_scan_counter = 0  # run background multi-sport scan every 4th cycle (~20 min)
 _updater_running = False  # prevent double-start of data_updater
@@ -2160,6 +4039,18 @@ async def data_updater():
             comparisons.sort(key=lambda x: (-x["has_signal"], -x["max_divergence"]))
             signals = [c for c in comparisons if c["has_signal"]]
 
+            # Attach historical head-to-head + recent form to each comparison
+            try:
+                await asyncio.to_thread(_attach_h2h_to_comparisons, sport, comparisons)
+            except Exception as h2h_err:
+                print(f"H2H attach error: {h2h_err}", flush=True)
+
+            # Attach top-10 Polymarket trader positions (joined on conditionId)
+            try:
+                await asyncio.to_thread(_attach_top_traders_to_comparisons, comparisons)
+            except Exception as ttp_err:
+                print(f"Top trader attach error: {ttp_err}", flush=True)
+
             # Save edges to edge_history (deduplicate within 24h)
             try:
                 await asyncio.to_thread(_save_edge_history, sport, comparisons)
@@ -2247,7 +4138,7 @@ async def data_updater():
         _bg_scan_counter += 1
         if _bg_scan_counter >= 4:
             _bg_scan_counter = 0
-            asyncio.create_task(_background_multi_sport_scan())
+            _spawn_bg(_background_multi_sport_scan())
 
         # Wait for poll interval OR immediate rescan trigger
         _scan_event.clear()
@@ -2267,7 +4158,8 @@ def _run_score_resolution(sport: str):
 
 async def _background_multi_sport_scan():
     """Scan non-active sports in the background for cross-sport edge feed."""
-    active = dashboard_data["active_sport"]
+    async with _data_lock:
+        active = dashboard_data["active_sport"]
     # Pick a few non-active traditional sports to scan
     scan_sports = [k for k in SPORTS if k != active and k not in ESPORTS_KEYS and k not in KALSHI_ONLY_SPORTS]
     # Limit to 3 per cycle to conserve API calls
@@ -2290,6 +4182,10 @@ async def _background_multi_sport_scan():
             comparisons = match_and_compare(odds_events, poly_filtered)
             for c in comparisons:
                 c["market_type"] = "h2h"
+            try:
+                await asyncio.to_thread(_attach_h2h_to_comparisons, sport_key, comparisons)
+            except Exception:
+                pass
             _update_cross_sport_edges(sport_key, comparisons)
         except Exception as e:
             log.warning("BG scan %s error: %s", sport_key, e)
@@ -2348,15 +4244,11 @@ def save_signals(signals: list[dict]):
         existing = existing[-500:]
         # Atomic write: temp file + os.replace to avoid partial writes
         fd, tmp = tempfile.mkstemp(dir=str(SIGNALS_FILE.parent))
-        closed = False
         try:
-            os.write(fd, json.dumps(existing, indent=2, default=str).encode())
-            os.close(fd)
-            closed = True
+            with os.fdopen(fd, "w") as f:
+                json.dump(existing, f, indent=2, default=str)
             os.replace(tmp, str(SIGNALS_FILE))
         except BaseException:
-            if not closed:
-                os.close(fd)
             try:
                 os.unlink(tmp)
             except OSError:
@@ -2370,22 +4262,121 @@ def save_signals(signals: list[dict]):
 
 @app.on_event("startup")
 async def startup():
-    asyncio.create_task(data_updater())
+    _spawn_bg(data_updater())
     # Backfill historical markets in background thread (non-blocking)
     async def _backfill_wrapper():
         try:
             await asyncio.get_event_loop().run_in_executor(None, backfill_historical_markets)
         except Exception as e:
             print(f"Backfill error: {e}", flush=True)
-    asyncio.create_task(_backfill_wrapper())
+    _spawn_bg(_backfill_wrapper())
     # Run initial auto-resolution in background
     async def _initial_resolve():
         try:
             await asyncio.to_thread(_auto_resolve_edges)
         except Exception as e:
             print(f"Initial auto-resolve error: {e}", flush=True)
-    asyncio.create_task(_initial_resolve())
-    print(f"Sports Dashboard started. Polling {dashboard_data['active_sport']} every {POLL_INTERVAL}s")
+    _spawn_bg(_initial_resolve())
+
+    # Backfill team history (head-to-head) for all sports in background.
+    # Active sport gets a fast 30-day refresh first, then a deeper backfill
+    # for every sport runs over the next minute or two.
+    async def _h2h_backfill():
+        try:
+            async with _data_lock:
+                active = dashboard_data.get("active_sport")
+            if active and active in ESPN_LEAGUE_MAP:
+                n = await asyncio.to_thread(_refresh_history_for_sport, active, 30)
+                print(f"team_history: initial {active} +{n} games", flush=True)
+            # Check existing rows — only run full backfill if DB is mostly empty
+            with _get_db() as conn:
+                row_count = conn.execute("SELECT COUNT(*) FROM sports_team_history").fetchone()[0]
+            if row_count < 200:
+                await asyncio.to_thread(_backfill_all_team_history, 365)
+            else:
+                # Lighter refresh: pull last 14 days for every sport
+                for sport_key in ESPN_LEAGUE_MAP:
+                    try:
+                        await asyncio.to_thread(_refresh_history_for_sport, sport_key, 14)
+                    except Exception:
+                        pass
+                print(f"team_history: refreshed last 14 days for {len(ESPN_LEAGUE_MAP)} sports", flush=True)
+        except Exception as e:
+            print(f"team_history backfill error: {e}", flush=True)
+    _spawn_bg(_h2h_backfill())
+
+    # Backfill team info + rosters (team stats, top players, strengths/weaknesses)
+    async def _team_info_backfill():
+        try:
+            # Wait briefly so the H2H backfill has a head start (avoids hammering ESPN)
+            await asyncio.sleep(8)
+            with _get_db() as conn:
+                row_count = conn.execute("SELECT COUNT(*) FROM sports_team_info").fetchone()[0]
+            if row_count < 50:
+                await asyncio.to_thread(_backfill_all_team_info)
+                print("team_info: initial backfill complete", flush=True)
+            else:
+                # Lighter refresh: just refresh active sport
+                async with _data_lock:
+                    active = dashboard_data.get("active_sport")
+                if active and active in ESPN_LEAGUE_MAP:
+                    await asyncio.to_thread(_refresh_team_info_for_sport, active)
+                    print(f"team_info: refreshed {active}", flush=True)
+        except Exception as e:
+            print(f"team_info backfill error: {e}", flush=True)
+    _spawn_bg(_team_info_backfill())
+
+    # Periodically (every 3 days) refresh team info + rosters
+    async def _team_info_periodic_refresh():
+        while True:
+            try:
+                await asyncio.sleep(3 * 24 * 60 * 60)  # 3 days
+                for sport_key in ESPN_LEAGUE_MAP:
+                    try:
+                        await asyncio.to_thread(_refresh_team_info_for_sport, sport_key)
+                    except Exception:
+                        pass
+                print("team_info: periodic refresh complete", flush=True)
+            except Exception as e:
+                print(f"team_info periodic error: {e}", flush=True)
+    _spawn_bg(_team_info_periodic_refresh())
+
+    # Periodically (daily) refresh recent games for every supported sport
+    async def _h2h_periodic_refresh():
+        while True:
+            try:
+                await asyncio.sleep(24 * 60 * 60)  # 24 hours
+                for sport_key in ESPN_LEAGUE_MAP:
+                    try:
+                        await asyncio.to_thread(_refresh_history_for_sport, sport_key, 7)
+                    except Exception:
+                        pass
+                print("team_history: daily refresh complete", flush=True)
+            except Exception as e:
+                print(f"team_history periodic error: {e}", flush=True)
+    _spawn_bg(_h2h_periodic_refresh())
+
+    # Top-10 Polymarket trader positions: initial fetch on boot, then refresh
+    # every TOP_TRADERS_REFRESH_SECS (default 10 min). The data updater
+    # joins comparisons against the cached table on every poll.
+    async def _top_traders_backfill():
+        try:
+            await asyncio.sleep(4)
+            await asyncio.to_thread(_refresh_top_trader_positions)
+        except Exception as e:
+            print(f"top_traders backfill error: {e}", flush=True)
+    _spawn_bg(_top_traders_backfill())
+
+    async def _top_traders_periodic_refresh():
+        while True:
+            try:
+                await asyncio.sleep(TOP_TRADERS_REFRESH_SECS)
+                await asyncio.to_thread(_refresh_top_trader_positions)
+            except Exception as e:
+                print(f"top_traders periodic error: {e}", flush=True)
+    _spawn_bg(_top_traders_periodic_refresh())
+
+    print(f"Sports Dashboard started. Polling {dashboard_data.get('active_sport', 'unknown')} every {POLL_INTERVAL}s")
     if not ODDS_API_KEY:
         print("WARNING: ODDS_API_KEY not set — bookmaker odds will be unavailable")
 
@@ -2565,13 +4556,18 @@ async def api_data(request: Request):
     # current data is for a different sport, return a 202 with a hint so
     # the client knows it needs to wait for the data_updater to catch up.
     requested_sport = request.query_params.get("sport")
-    if requested_sport and requested_sport != dashboard_data.get("active_sport"):
+    # Snapshot dashboard_data under the lock so we never serialize a half-
+    # updated dict (the data_updater mutates this dict in-place).
+    async with _data_lock:
+        active_sport = dashboard_data.get("active_sport")
+        snapshot = copy.deepcopy(dashboard_data)
+    if requested_sport and requested_sport != active_sport:
         return JSONResponse(
-            {"status": "switching", "active_sport": dashboard_data.get("active_sport"),
+            {"status": "switching", "active_sport": active_sport,
              "requested_sport": requested_sport},
             status_code=202,
         )
-    return JSONResponse(dashboard_data)
+    return JSONResponse(snapshot)
 
 
 @app.get("/api/sports")
@@ -2586,7 +4582,9 @@ async def api_sports(request: Request):
         items = [{"key": k, "title": SPORTS[k]} for k in keys if k in SPORTS]
         categories.append({"name": cat_name, "sports": items})
     requested_sport = request.query_params.get("sport")
-    active = requested_sport if (requested_sport and requested_sport in SPORTS) else dashboard_data["active_sport"]
+    async with _data_lock:
+        current_active = dashboard_data["active_sport"]
+    active = requested_sport if (requested_sport and requested_sport in SPORTS) else current_active
     return JSONResponse({
         "categories": categories,
         "sports": SPORTS,
@@ -2663,8 +4661,11 @@ async def create_trade(request: Request):
     body = await request.json()
     market_name = body.get("market_name", "")
     outcome = body.get("outcome", "")
-    entry_price = float(body.get("entry_price", 0))
-    amount = float(body.get("amount", 0))
+    try:
+        entry_price = float(body.get("entry_price", 0))
+        amount = float(body.get("amount", 0))
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "entry_price and amount must be valid numbers"}, status_code=400)
     if not market_name or entry_price <= 0 or amount <= 0:
         return JSONResponse({"error": "market_name, entry_price > 0, and amount > 0 required"}, status_code=400)
     with _get_db() as conn:
@@ -2696,7 +4697,10 @@ async def resolve_trade(trade_id: int, request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     body = await request.json()
-    exit_price = float(body.get("exit_price", 0))
+    try:
+        exit_price = float(body.get("exit_price", 0))
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "exit_price must be a valid number"}, status_code=400)
     if exit_price <= 0:
         return JSONResponse({"error": "exit_price > 0 required"}, status_code=400)
     with _get_db() as conn:
@@ -2707,8 +4711,12 @@ async def resolve_trade(trade_id: int, request: Request):
         if not row:
             return JSONResponse({"error": "Trade not found"}, status_code=404)
         trade = dict(row)
-        # amount is dollars invested, entry_price is cents; shares = amount / (entry_price/100)
-        pnl = round((exit_price - trade["entry_price"]) * trade["amount"] / trade["entry_price"], 2)
+        # Prices are stored in cents (0-100) as entered by the user via
+        # the create_trade endpoint.  Shares = amount / (entry_price/100),
+        # so PnL = (exit_cents/100 - entry_cents/100) * shares
+        #        = (exit - entry) * amount / entry   (cents cancel out).
+        entry = trade["entry_price"]
+        pnl = round((exit_price - entry) * trade["amount"] / entry, 2)
         conn.execute(
             "UPDATE sports_trades SET status = 'closed', exit_price = ?, pnl = ?, resolved_at = ? WHERE id = ?",
             (exit_price, pnl, datetime.now(timezone.utc).isoformat(), trade_id),
@@ -2819,9 +4827,15 @@ async def get_layout(request: Request):
         widgets = r.get("visible_widgets", '["stats","top_opps","hero","events"]')
         data_points = r.get("visible_data_points", "[]")
         if isinstance(widgets, str):
-            widgets = json.loads(widgets)
+            try:
+                widgets = json.loads(widgets)
+            except (json.JSONDecodeError, TypeError):
+                widgets = ["stats", "top_opps", "hero", "events"]
         if isinstance(data_points, str):
-            data_points = json.loads(data_points)
+            try:
+                data_points = json.loads(data_points)
+            except (json.JSONDecodeError, TypeError):
+                data_points = []
         return JSONResponse({
             "visible_widgets": widgets,
             "visible_data_points": data_points,
@@ -2840,10 +4854,30 @@ async def save_layout(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Body must be an object"}, status_code=400)
     visible_widgets = body.get("visible_widgets", ["stats", "top_opps", "hero", "events"])
     visible_data_points = body.get("visible_data_points", [])
-    card_expanded_default = int(body.get("card_expanded_default", False))
+    if not isinstance(visible_widgets, list):
+        visible_widgets = ["stats", "top_opps", "hero", "events"]
+    if not isinstance(visible_data_points, list):
+        visible_data_points = []
+    # Coerce card_expanded_default to a 0/1 int. The previous code did
+    # int(body.get(...)) which crashes on strings like "true" or arbitrary
+    # JSON values. Treat any truthy non-bool as True/1.
+    raw_expanded = body.get("card_expanded_default", False)
+    if isinstance(raw_expanded, bool):
+        card_expanded_default = 1 if raw_expanded else 0
+    elif isinstance(raw_expanded, (int, float)):
+        card_expanded_default = 1 if raw_expanded else 0
+    elif isinstance(raw_expanded, str):
+        card_expanded_default = 1 if raw_expanded.strip().lower() in ("1", "true", "yes", "on") else 0
+    else:
+        card_expanded_default = 0
     with _get_db() as conn:
         conn.execute(
             """INSERT INTO sports_user_layout (user_id, visible_widgets, visible_data_points, card_expanded_default)
@@ -2945,14 +4979,37 @@ def backfill_historical_markets():
                 if not outcome:
                     outcome = mkt.get("groupItemTitle", question)
                 final_price = None
+                op = mkt.get("outcomePrices", "0")
+                # Polymarket returns outcomePrices in three observed shapes:
+                #   - a list of strings/floats: ["0.97", "0.03"]
+                #   - a JSON-encoded list string: '["0.97", "0.03"]'
+                #   - a bare numeric string: "0.97"
+                # The previous parser used str(op).strip("[]").split(",")[0]
+                # which crashed on quoted JSON ('["0.97"' has a stray quote)
+                # and silently returned the wrong value when the list had
+                # whitespace around commas. Parse JSON properly with a fallback.
                 try:
-                    op = mkt.get("outcomePrices", "0")
                     if isinstance(op, list):
-                        final_price = float(op[0]) if op else None
-                    else:
-                        final_price = float(str(op).strip("[]").split(",")[0])
+                        if op:
+                            final_price = float(op[0])
+                    elif isinstance(op, (int, float)):
+                        final_price = float(op)
+                    elif isinstance(op, str):
+                        op_stripped = op.strip()
+                        if op_stripped.startswith("["):
+                            try:
+                                parsed = json.loads(op_stripped)
+                                if isinstance(parsed, list) and parsed:
+                                    final_price = float(parsed[0])
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                # Last-ditch fallback: strip brackets/quotes and take first token
+                                tok = op_stripped.strip("[]").split(",")[0].strip().strip('"').strip("'")
+                                if tok:
+                                    final_price = float(tok)
+                        elif op_stripped:
+                            final_price = float(op_stripped)
                 except (ValueError, IndexError, TypeError):
-                    pass
+                    final_price = None
                 volume = 0
                 try:
                     volume = float(mkt.get("volume", 0) or 0)
@@ -3129,7 +5186,13 @@ async def get_alert_config(request: Request):
         ).fetchone()
     if row:
         cfg = dict(row)
-        cfg["sports"] = json.loads(cfg.get("sports", "[]"))
+        # Defensive: a corrupt JSON value should not 500 the settings page.
+        try:
+            cfg["sports"] = json.loads(cfg.get("sports", "[]"))
+            if not isinstance(cfg["sports"], list):
+                cfg["sports"] = []
+        except (json.JSONDecodeError, TypeError):
+            cfg["sports"] = []
         # Don't expose bot token to client
         cfg["telegram_bot_token"] = "****" if cfg.get("telegram_bot_token") else ""
         return JSONResponse(cfg)
@@ -3144,26 +5207,57 @@ async def save_alert_config(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    body = await request.json()
-    enabled = int(body.get("enabled", 0))
-    tg_chat = str(body.get("telegram_chat_id", "")).strip()
-    tg_token = str(body.get("telegram_bot_token", "")).strip()
-    webhook_url = str(body.get("webhook_url", "")).strip()
-    min_edge = float(body.get("min_edge", 5.0))
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Body must be an object"}, status_code=400)
+
+    raw_enabled = body.get("enabled", 0)
+    if isinstance(raw_enabled, bool):
+        enabled = 1 if raw_enabled else 0
+    else:
+        try:
+            enabled = 1 if int(raw_enabled) else 0
+        except (TypeError, ValueError):
+            enabled = 0
+
+    tg_chat = str(body.get("telegram_chat_id", "") or "").strip()[:200]
+    tg_token = str(body.get("telegram_bot_token", "") or "").strip()[:500]
+    webhook_url = str(body.get("webhook_url", "") or "").strip()[:2048]
+
+    try:
+        min_edge = float(body.get("min_edge", 5.0))
+    except (TypeError, ValueError):
+        min_edge = 5.0
+    if math.isnan(min_edge) or math.isinf(min_edge):
+        min_edge = 5.0
+    # Clamp to a sensible range so users can't poison the alert filter with
+    # extreme values that disable alerting entirely.
+    min_edge = max(0.0, min(min_edge, 100.0))
+
     alert_sports = body.get("sports", [])
+    if not isinstance(alert_sports, list):
+        alert_sports = []
+    # Drop non-string entries so the JSON column can't store junk
+    alert_sports = [str(s)[:80] for s in alert_sports if isinstance(s, (str, int))][:50]
 
     # Validate webhook URL against SSRF
     if webhook_url and not _is_safe_webhook_url(webhook_url):
         return JSONResponse({"error": "Webhook URL must be HTTPS and not target private networks"}, status_code=400)
 
     with _get_db() as conn:
-        # If token is masked, keep existing
+        # If token is masked, keep existing (already encrypted in DB)
         if tg_token == "****":
             existing = conn.execute(
                 "SELECT telegram_bot_token FROM sports_alert_config WHERE user_id = ?", (user["id"],)
             ).fetchone()
             if existing:
                 tg_token = existing[0] or ""
+        else:
+            # Encrypt new token before storing
+            tg_token = _encrypt_field(tg_token)
         conn.execute(
             """INSERT INTO sports_alert_config (user_id, enabled, telegram_chat_id, telegram_bot_token, webhook_url, min_edge, sports)
                VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -3192,9 +5286,11 @@ async def test_alert(request: Request):
     cfg = dict(row)
     msg = "Sharpe Test Alert: Your alerts are configured correctly!"
     sent = False
-    tg_token = cfg.get("telegram_bot_token", "")
+    tg_token = _decrypt_field(cfg.get("telegram_bot_token", ""))
     tg_chat = cfg.get("telegram_chat_id", "")
     if tg_token and tg_chat:
+        if not re.fullmatch(r"\d+:[A-Za-z0-9_-]+", tg_token):
+            return JSONResponse({"error": "Invalid Telegram bot token format"}, status_code=400)
         try:
             requests.post(
                 f"https://api.telegram.org/bot{tg_token}/sendMessage",
@@ -3222,25 +5318,58 @@ async def test_alert(request: Request):
 # Match flagging endpoint
 # ---------------------------------------------------------------------------
 
+_FLAG_MATCH_RATE: dict[int, list[float]] = {}
+_FLAG_MATCH_RATE_LIMIT = 10  # max flags per user per 5 minutes
+_FLAG_MATCH_RATE_WINDOW = 300
+
+
 @app.post("/api/flag-match")
 async def flag_match(request: Request):
-    """Let users report a bad fuzzy match."""
+    """Let users report a bad fuzzy match.
+
+    Lengths and rate are bounded so a misbehaving (or malicious) client
+    can't flood the table with megabyte payloads.
+    """
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    body = await request.json()
-    home = body.get("home_team", "")
-    away = body.get("away_team", "")
-    poly_q = body.get("poly_question", "")
-    reason = body.get("reason", "")
+
+    # Per-user rate limit (in-memory; resets on restart)
+    now_ts = time.time()
+    uid = user["id"]
+    history = [t for t in _FLAG_MATCH_RATE.get(uid, []) if now_ts - t < _FLAG_MATCH_RATE_WINDOW]
+    if len(history) >= _FLAG_MATCH_RATE_LIMIT:
+        return JSONResponse(
+            {"error": "Too many flags. Try again later."}, status_code=429,
+        )
+    history.append(now_ts)
+    _FLAG_MATCH_RATE[uid] = history
+    # Cap dict size so an attacker with many accounts can't OOM us
+    if len(_FLAG_MATCH_RATE) > 10_000:
+        # Drop the oldest half (cheap heuristic — entries are unordered, so
+        # just keep half the keys arbitrarily).
+        for k in list(_FLAG_MATCH_RATE.keys())[:5_000]:
+            _FLAG_MATCH_RATE.pop(k, None)
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Body must be an object"}, status_code=400)
+
+    home = str(body.get("home_team", "") or "").strip()[:200]
+    away = str(body.get("away_team", "") or "").strip()[:200]
+    poly_q = str(body.get("poly_question", "") or "").strip()[:500]
+    reason = str(body.get("reason", "") or "").strip()[:500]
     if not home:
         return JSONResponse({"error": "home_team required"}, status_code=400)
     with _get_db() as conn:
         conn.execute(
             "INSERT INTO sports_match_flags (user_id, home_team, away_team, poly_question, reason) VALUES (?, ?, ?, ?, ?)",
-            (user["id"], home, away, poly_q, reason),
+            (uid, home, away, poly_q, reason),
         )
-    log_activity(user["id"], "flag_match", f"{home} vs {away}: {reason}")
+    log_activity(uid, "flag_match", f"{home} vs {away}: {reason}")
     return JSONResponse({"status": "ok"})
 
 
@@ -3361,6 +5490,54 @@ async def api_scores(request: Request):
     return JSONResponse({"scores": [dict(r) for r in rows]})
 
 
+@app.get("/api/h2h")
+async def api_h2h(request: Request):
+    """Return historical head-to-head record between two teams.
+
+    Query params: sport (sport_key), team_a, team_b, limit (default 10).
+    Also returns recent form for each team.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport") or ""
+    team_a = request.query_params.get("team_a") or ""
+    team_b = request.query_params.get("team_b") or ""
+    try:
+        limit = max(1, min(50, int(request.query_params.get("limit") or 10)))
+    except ValueError:
+        limit = 10
+    if not sport or not team_a or not team_b:
+        return JSONResponse({"error": "sport, team_a, team_b required"}, status_code=400)
+    h2h = _compute_h2h(sport, team_a, team_b, lookback=limit)
+    home_form = _compute_team_form(sport, team_a)
+    away_form = _compute_team_form(sport, team_b)
+    return JSONResponse({
+        "sport": sport,
+        "h2h": h2h,
+        "home_form": home_form,
+        "away_form": away_form,
+    })
+
+
+@app.get("/api/h2h-stats")
+async def api_h2h_stats(request: Request):
+    """Return summary stats about the team_history table (per-sport row counts)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        meta_rows = conn.execute(
+            "SELECT sport, last_fetch_at, last_date_covered, rows_total FROM sports_history_meta"
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM sports_team_history").fetchone()[0]
+    return JSONResponse({
+        "total_rows": total,
+        "per_sport": [dict(r) for r in meta_rows],
+        "supported_sports": list(ESPN_LEAGUE_MAP.keys()),
+    })
+
+
 # ---------------------------------------------------------------------------
 # Referral endpoint
 # ---------------------------------------------------------------------------
@@ -3376,6 +5553,53 @@ async def get_referral(request: Request):
         "referred_count": 0,
         "managed_by": "gateway",
     })
+
+
+# ---------------------------------------------------------------------------
+# FX rates (frankfurter.dev) — used by client-side currency picker
+# ---------------------------------------------------------------------------
+
+_FX_CACHE: dict = {"rates": None, "fetched_at": 0.0}
+_FX_TTL = 3600  # 1 hour
+_FX_FALLBACK = {
+    "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
+    "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
+    "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
+    "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
+    "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
+    "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+}
+
+
+def _fetch_fx_blocking() -> dict:
+    try:
+        r = requests.get(
+            "https://api.frankfurter.dev/v1/latest",
+            params={"base": "USD"},
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json() or {}
+            rates = dict(data.get("rates") or {})
+            rates["USD"] = 1.0
+            return rates
+    except Exception:
+        pass
+    return dict(_FX_FALLBACK)
+
+
+@app.get("/api/fx-rates")
+async def api_fx_rates():
+    """Return USD-base FX rates with 1h server cache."""
+    now = time.time()
+    cached = _FX_CACHE.get("rates")
+    fetched = _FX_CACHE.get("fetched_at", 0.0)
+    if cached and (now - fetched) < _FX_TTL:
+        return JSONResponse({"base": "USD", "rates": cached, "fetched_at": fetched})
+    rates = await asyncio.to_thread(_fetch_fx_blocking)
+    _FX_CACHE["rates"] = rates
+    _FX_CACHE["fetched_at"] = now
+    return JSONResponse({"base": "USD", "rates": rates, "fetched_at": now})
 
 
 @app.websocket("/ws")
@@ -3662,21 +5886,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .btn-sm:hover { border-color: var(--text); color: var(--text); }
 
   /* ---- Event Cards ---- */
-  .cards-grid { display: flex; flex-direction: column; gap: 1px; background: var(--border); }
+  .cards-grid { display: flex; flex-direction: column; gap: 12px; }
   .card {
     background: var(--surface); overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    transition: border-color .15s, box-shadow .15s;
     animation: fadeIn .3s ease both;
   }
+  .card:hover { border-color: var(--border-light); box-shadow: var(--shadow); }
   .card:nth-child(1) { animation-delay: 0s; }
   .card:nth-child(2) { animation-delay: .03s; }
   .card:nth-child(3) { animation-delay: .06s; }
   .card:nth-child(4) { animation-delay: .09s; }
   .card:nth-child(5) { animation-delay: .12s; }
-  @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(2px); } to { opacity:1; transform: translateY(0); } }
 
   .card-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 20px; cursor: pointer; gap: 12px;
+    padding: 18px 22px; cursor: pointer; gap: 12px;
+    border-radius: var(--radius) var(--radius) 0 0;
   }
   .card-header:hover { background: var(--surface2); }
   .card-teams { font-size: 14px; font-weight: 500; flex: 1; letter-spacing: -0.01em; }
@@ -3684,10 +5914,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .card-time { font-size: 11px; color: var(--muted); white-space: nowrap; font-weight: 300; }
   .card-meta { display: flex; align-items: center; gap: 10px; }
   .signal-badge {
-    font-size: 10px; font-weight: 500; padding: 3px 8px;
+    font-size: 10px; font-weight: 600; padding: 4px 10px;
     text-transform: uppercase; letter-spacing: 0.06em;
+    border-radius: 999px;
   }
-  .signal-badge.buy { background: rgba(22,163,74,0.08); color: var(--positive); }
+  .signal-badge.buy { background: var(--green-mid); color: var(--positive); }
   .signal-badge.sell { background: var(--red-dim); color: var(--negative); }
   .signal-badge.neutral { background: var(--surface3); color: var(--muted); }
   .confidence-stars { display: inline-flex; gap: 1px; font-size: 12px; }
@@ -3695,23 +5926,29 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .star-empty { color: var(--border); }
 
   .card-action-hint {
-    padding: 0 20px 12px;
-    font-size: 12px; color: var(--positive); font-weight: 400;
+    margin: 0 22px 14px;
+    padding: 10px 14px;
+    font-size: 12px; color: var(--positive); font-weight: 500;
+    background: var(--green-dim);
+    border: 1px solid rgba(52,211,153,0.2);
+    border-radius: var(--radius-sm);
   }
 
   .outcome-chips {
-    display: flex; gap: 8px; padding: 0 20px 12px; flex-wrap: wrap;
+    display: flex; gap: 8px; padding: 0 22px 14px; flex-wrap: wrap;
   }
   .outcome-chip {
-    padding: 3px 10px; font-size: 11px; font-weight: 500;
+    padding: 5px 12px; font-size: 11px; font-weight: 500;
     background: var(--surface2); border: 1px solid var(--border);
     text-transform: uppercase; letter-spacing: 0.02em;
+    border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 6px;
   }
-  .outcome-chip.pos { background: rgba(22,163,74,0.06); border-color: rgba(22,163,74,0.2); color: var(--positive); }
-  .outcome-chip.neg { background: var(--red-dim); border-color: rgba(220,38,38,0.2); color: var(--negative); }
+  .outcome-chip.pos { background: var(--green-dim); border-color: rgba(52,211,153,0.25); color: var(--positive); }
+  .outcome-chip.neg { background: var(--red-dim); border-color: rgba(220,38,38,0.25); color: var(--negative); }
 
   /* Card Detail (expandable) */
-  .card-detail { display: none; padding: 0 20px 24px; }
+  .card-detail { display: none; padding: 6px 22px 24px; }
   .card-detail.open { display: block; }
 
   .prob-compare { margin-bottom: 20px; }
@@ -3775,6 +6012,267 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     padding: 10px 10px; border-bottom: 1px solid var(--border); font-weight: 300;
   }
   .outcome-table tr:last-child td { border-bottom: none; }
+
+  /* Head-to-head section */
+  .h2h-section {
+    margin-bottom: 20px; padding: 18px 20px;
+    background: linear-gradient(180deg, var(--surface2) 0%, var(--surface) 100%);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+  }
+  .h2h-header {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 10px; color: var(--text-secondary); text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 14px; font-weight: 600;
+  }
+  .h2h-header::before {
+    content: ''; width: 4px; height: 4px; border-radius: 50%;
+    background: var(--accent); display: inline-block;
+  }
+  .h2h-record {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 12px;
+  }
+  .h2h-team { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+  .h2h-team.away { text-align: right; }
+  .h2h-score {
+    font-size: 26px; font-weight: 600; color: var(--text);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+    padding: 6px 16px; background: var(--surface3);
+    border-radius: var(--radius-sm);
+    display: inline-flex; align-items: baseline;
+  }
+  .h2h-dash { font-size: 18px; color: var(--muted); margin: 0 6px; }
+  .h2h-meta {
+    display: flex; gap: 16px; font-size: 11px; color: var(--muted);
+    flex-wrap: wrap; padding-top: 4px;
+  }
+  .h2h-meta-item { display: flex; align-items: center; gap: 5px; }
+  .h2h-form-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .h2h-form-label {
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 6px; font-weight: 500;
+  }
+  .h2h-form-pills { display: flex; gap: 4px; }
+  .h2h-form-pill {
+    width: 20px; height: 20px; display: inline-flex;
+    align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    background: var(--surface2); color: var(--muted);
+    border-radius: 5px;
+  }
+  .h2h-form-pill.W { background: var(--green); color: var(--bg); }
+  .h2h-form-pill.L { background: var(--red); color: var(--bg); }
+  .h2h-form-pill.D { background: var(--text-secondary); color: var(--surface); }
+  .h2h-empty { font-size: 11px; color: var(--muted); font-style: italic; padding: 6px 0; }
+  .h2h-toggle-recent {
+    background: none; border: none; color: var(--text-secondary); cursor: pointer;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 8px 0 0; margin: 0; font-family: inherit; font-weight: 500;
+  }
+  .h2h-toggle-recent:hover { color: var(--text); }
+  .h2h-recent-list { display: none; margin-top: 10px; padding: 8px 12px; background: var(--surface); border-radius: var(--radius-sm); }
+  .h2h-recent-list.open { display: block; }
+  .h2h-recent-item {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 8px 0; font-size: 11px; color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+  .h2h-recent-item:last-child { border-bottom: none; }
+  .h2h-recent-date { color: var(--muted); white-space: nowrap; min-width: 80px; }
+  .h2h-recent-winner { color: var(--text); font-weight: 500; }
+
+  /* Team strength bars + chemistry */
+  .team-stats-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .team-stats-card {
+    background: var(--surface); padding: 12px 14px;
+    border-radius: var(--radius-sm); border: 1px solid var(--border);
+  }
+  .team-stats-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    margin-bottom: 8px; letter-spacing: -0.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .team-stats-record {
+    font-size: 18px; font-weight: 600; color: var(--text);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .team-stats-record .pct { font-size: 11px; color: var(--muted); font-weight: 400; }
+  .team-stats-rank {
+    font-size: 10px; color: var(--text-secondary); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .team-stats-bars { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .stat-bar-row { display: flex; align-items: center; gap: 8px; font-size: 10px; }
+  .stat-bar-label { color: var(--muted); width: 56px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-bar-track {
+    flex: 1; height: 4px; background: var(--surface3);
+    border-radius: 2px; overflow: hidden;
+  }
+  .stat-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
+  .stat-bar-fill.good { background: var(--green); }
+  .stat-bar-fill.mid { background: var(--accent); }
+  .stat-bar-fill.bad { background: var(--red); }
+  .stat-bar-value {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    width: 36px; text-align: right; font-weight: 500;
+  }
+
+  /* Chemistry indicator */
+  .chemistry-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; background: var(--surface);
+    border-radius: var(--radius-sm); margin-top: 8px;
+    border: 1px solid var(--border);
+  }
+  .chemistry-label {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.06em; flex-shrink: 0; font-weight: 500;
+  }
+  .chemistry-meter {
+    flex: 1; height: 6px; background: var(--surface3);
+    border-radius: 3px; overflow: hidden; position: relative;
+  }
+  .chemistry-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--red) 0%, var(--yellow) 50%, var(--green) 100%);
+    border-radius: 3px;
+  }
+  .chemistry-value { font-size: 11px; font-weight: 600; color: var(--text); min-width: 32px; text-align: right; }
+
+  /* Player cards */
+  .players-section {
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .players-section-title {
+    font-size: 10px; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 10px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .players-section-title::before {
+    content: ''; width: 4px; height: 4px; border-radius: 50%;
+    background: var(--accent); display: inline-block;
+  }
+  .players-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .player-team-block { display: flex; flex-direction: column; gap: 8px; }
+  .player-team-label {
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500;
+  }
+  .player-card {
+    background: var(--surface); padding: 10px 12px;
+    border-radius: var(--radius-sm); border: 1px solid var(--border);
+    transition: border-color .15s;
+  }
+  .player-card:hover { border-color: var(--border-light); }
+  .player-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.01em; margin-bottom: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .player-pos {
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .player-stats {
+    display: flex; gap: 8px; font-size: 11px; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums; flex-wrap: wrap;
+  }
+  .player-stat strong { color: var(--text); font-weight: 600; }
+  .player-tags {
+    display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;
+  }
+  .player-tag {
+    font-size: 9px; padding: 2px 7px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+  }
+  .player-tag.strength { background: var(--green-dim); color: var(--positive); border: 1px solid rgba(52,211,153,0.25); }
+  .player-tag.weakness { background: var(--red-dim); color: var(--negative); border: 1px solid rgba(248,113,113,0.25); }
+  @media (max-width: 600px) {
+    .team-stats-grid, .players-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ---- Top Polymarket Traders ---- */
+  .top-traders-section {
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .top-traders-title {
+    font-size: 10px; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 10px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .top-traders-title::before {
+    content: ''; width: 4px; height: 4px; border-radius: 50%;
+    background: #f5b942; display: inline-block;
+  }
+  .top-traders-list {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .top-trader-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    transition: border-color .15s;
+  }
+  .top-trader-row:hover { border-color: var(--border-light); }
+  .top-trader-rank {
+    font-size: 10px; font-weight: 700; color: var(--muted);
+    background: rgba(0,0,0,0.04); width: 22px; height: 22px;
+    border-radius: 999px; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .top-trader-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.01em; flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .top-trader-vol {
+    font-size: 10px; color: var(--muted);
+    font-variant-numeric: tabular-nums; flex-shrink: 0;
+  }
+  .top-trader-bet {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  }
+  .top-trader-side {
+    font-size: 9px; padding: 2px 7px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+  }
+  .top-trader-side.long { background: var(--green-dim); color: var(--positive); border: 1px solid rgba(52,211,153,0.25); }
+  .top-trader-side.short { background: var(--red-dim); color: var(--negative); border: 1px solid rgba(248,113,113,0.25); }
+  .top-trader-outcome {
+    font-size: 11px; font-weight: 600; color: var(--text);
+    max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .top-trader-usd {
+    font-size: 11px; font-weight: 600; color: var(--text);
+    font-variant-numeric: tabular-nums; min-width: 50px; text-align: right;
+  }
+  .top-trader-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 9px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(245,185,66,0.12); color: #c08214;
+    border: 1px solid rgba(245,185,66,0.35);
+    text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
+    margin-left: 8px;
+  }
+  .top-trader-badge::before {
+    content: '★'; font-size: 10px;
+  }
 
   /* Bookmaker Breakdown */
   .bookie-toggle {
@@ -4090,18 +6588,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
   <div class="nav-right">
-    <button class="btn-upgrade" id="btnUpgradeNav" onclick="openUpgrade()">Upgrade to Pro</button>
-    <button class="nav-link" onclick="openGlossary()">How It Works</button>
-    <a class="nav-link" href="/settings"><span class="hide-mobile">Settings </span>&#9881;</a>
-    <a class="nav-link admin" id="adminLink" href="/admin">Admin</a>
+    <button class="btn-upgrade" id="btnUpgradeNav" onclick="openUpgrade()" data-i18n="nav.upgrade">Upgrade to Pro</button>
+    <button class="nav-link" onclick="openGlossary()" data-i18n="nav.howItWorks">How It Works</button>
+    <a class="nav-link" href="/settings"><span class="hide-mobile" data-i18n="nav.settings">Settings </span>&#9881;</a>
+    <a class="nav-link admin" id="adminLink" href="/admin" data-i18n="nav.admin">Admin</a>
   </div>
 </nav>
 
 <!-- ===== MAIN TABS ===== -->
 <div class="main-tabs">
-  <button class="main-tab active" onclick="switchTab('dashboard')" id="tabBtnDashboard">Dashboard</button>
-  <button class="main-tab" onclick="switchTab('profit')" id="tabBtnProfit">Profit Tracker</button>
-  <button class="main-tab" onclick="switchTab('watchlist')" id="tabBtnWatchlist">Watchlist</button>
+  <button class="main-tab active" onclick="switchTab('dashboard')" id="tabBtnDashboard" data-i18n="tab.dashboard">Dashboard</button>
+  <button class="main-tab" onclick="switchTab('profit')" id="tabBtnProfit" data-i18n="tab.profitTracker">Profit Tracker</button>
+  <button class="main-tab" onclick="switchTab('watchlist')" id="tabBtnWatchlist" data-i18n="tab.watchlist">Watchlist</button>
   <button class="main-tab" onclick="switchTab('edgestats')" id="tabBtnEdgestats">Edge Stats</button>
   <button class="main-tab" onclick="switchTab('alerts')" id="tabBtnAlerts">Alerts</button>
   <button class="main-tab" onclick="switchTab('history')" id="tabBtnHistory">History</button>
@@ -4195,6 +6693,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <label class="toggle-wrap">
         <input type="checkbox" id="signalsToggle" onchange="signalsOnly=this.checked;render()">
         Opportunities Only
+      </label>
+      <label class="toggle-wrap" title="Show only events where one of the top 10 Polymarket traders has an open position">
+        <input type="checkbox" id="topTraderToggle" onchange="topTraderOnly=this.checked;render()">
+        Top Trader Bets
       </label>
       <button class="btn-sm" onclick="openCustomize()">Customize</button>
     </div>
@@ -4445,11 +6947,127 @@ const THRESH = __USER_THRESHOLD__;
 const DEFAULT_THRESH = """ + str(DIVERGENCE_THRESHOLD) + """;
 const USER_SPORT = '__USER_SPORT__';
 const USERNAME = '__USERNAME__';
-let data = null, sports = {}, activeSport = '', signalsOnly = false;
+let data = null, sports = {}, activeSport = '', signalsOnly = false, topTraderOnly = false;
 let refreshCountdown = POLL, ws = null;
 let userLayout = { visible_widgets: ['hero','top_opps','stats','events'], visible_data_points: ['volume','spread','bookmakers','sharp_book','price_change','match_confidence'], card_expanded_default: false };
 let userTier = 'free';
 let watchlistIds = new Set();
+
+/* ===== Localization: i18n + Currency / Units (narve_currency, narve_units, narve_language) ===== */
+const NARVE_LANGUAGES = [
+  ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+  ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+  ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+  ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
+  ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
+];
+const NARVE_I18N = {
+  en: {'pref.title':'Preferences','pref.localization':'Display & Language','pref.language':'Language','pref.currency':'Display Currency','pref.numberFormat':'Number Format','pref.american':'American (1,234.56)','pref.european':'European (1.234,56)','pref.languageDesc':'Interface language for menus and labels','pref.currencyDesc':'Convert market values to your preferred currency (live ECB rates)','pref.formatDesc':'How numbers are punctuated','pref.save':'Save','pref.cancel':'Cancel','pref.close':'Close','pref.savedOk':'Saved','pref.unsaved':'You have unsaved changes','pref.saveChanges':'Save Changes','nav.dashboard':'Dashboard','nav.settings':'Settings','nav.signOut':'Sign Out','common.loading':'Loading...','common.error':'Error','common.refresh':'Refresh','common.search':'Search','nav.upgrade':'Upgrade to Pro','nav.howItWorks':'How It Works','nav.admin':'Admin','tab.dashboard':'Dashboard','tab.profitTracker':'Profit Tracker','tab.watchlist':'Watchlist'},
+  es: {'pref.title':'Preferencias','pref.localization':'Pantalla e idioma','pref.language':'Idioma','pref.currency':'Moneda de visualizaci\u00f3n','pref.numberFormat':'Formato de n\u00famero','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Idioma de la interfaz para men\u00fas y etiquetas','pref.currencyDesc':'Convierte los valores del mercado a tu moneda preferida (tasas BCE en vivo)','pref.formatDesc':'C\u00f3mo se punt\u00faan los n\u00fameros','pref.save':'Guardar','pref.cancel':'Cancelar','pref.close':'Cerrar','pref.savedOk':'Guardado','pref.unsaved':'Tienes cambios sin guardar','pref.saveChanges':'Guardar cambios','nav.dashboard':'Panel','nav.settings':'Configuraci\u00f3n','nav.signOut':'Cerrar sesi\u00f3n','common.loading':'Cargando...','common.error':'Error','common.refresh':'Actualizar','common.search':'Buscar','nav.upgrade':'Actualizar a Pro','nav.howItWorks':'C\u00f3mo funciona','nav.admin':'Admin','tab.dashboard':'Panel','tab.profitTracker':'Seguidor de ganancias','tab.watchlist':'Lista de seguimiento'},
+  de: {'pref.title':'Einstellungen','pref.localization':'Anzeige & Sprache','pref.language':'Sprache','pref.currency':'Anzeigew\u00e4hrung','pref.numberFormat':'Zahlenformat','pref.american':'Amerikanisch (1,234.56)','pref.european':'Europ\u00e4isch (1.234,56)','pref.languageDesc':'Oberfl\u00e4chensprache f\u00fcr Men\u00fcs und Beschriftungen','pref.currencyDesc':'Marktwerte in Ihre bevorzugte W\u00e4hrung umrechnen (Live-EZB-Kurse)','pref.formatDesc':'Wie Zahlen formatiert werden','pref.save':'Speichern','pref.cancel':'Abbrechen','pref.close':'Schlie\u00dfen','pref.savedOk':'Gespeichert','pref.unsaved':'Sie haben ungespeicherte \u00c4nderungen','pref.saveChanges':'\u00c4nderungen speichern','nav.dashboard':'\u00dcbersicht','nav.settings':'Einstellungen','nav.signOut':'Abmelden','common.loading':'Wird geladen...','common.error':'Fehler','common.refresh':'Aktualisieren','common.search':'Suchen','nav.upgrade':'Auf Pro upgraden','nav.howItWorks':'Funktionsweise','nav.admin':'Admin','tab.dashboard':'\u00dcbersicht','tab.profitTracker':'Gewinn-Tracker','tab.watchlist':'Beobachtungsliste'},
+  fr: {'pref.title':'Pr\u00e9f\u00e9rences','pref.localization':'Affichage et langue','pref.language':'Langue','pref.currency':'Devise d\u2019affichage','pref.numberFormat':'Format des nombres','pref.american':'Am\u00e9ricain (1,234.56)','pref.european':'Europ\u00e9en (1.234,56)','pref.languageDesc':'Langue de l\u2019interface pour les menus et les \u00e9tiquettes','pref.currencyDesc':'Convertir les valeurs de march\u00e9 dans votre devise pr\u00e9f\u00e9r\u00e9e (taux BCE en direct)','pref.formatDesc':'Comment les nombres sont ponctu\u00e9s','pref.save':'Enregistrer','pref.cancel':'Annuler','pref.close':'Fermer','pref.savedOk':'Enregistr\u00e9','pref.unsaved':'Vous avez des modifications non enregistr\u00e9es','pref.saveChanges':'Enregistrer les modifications','nav.dashboard':'Tableau de bord','nav.settings':'Param\u00e8tres','nav.signOut':'D\u00e9connexion','common.loading':'Chargement...','common.error':'Erreur','common.refresh':'Actualiser','common.search':'Rechercher','nav.upgrade':'Passer \u00e0 Pro','nav.howItWorks':'Comment \u00e7a marche','nav.admin':'Admin','tab.dashboard':'Tableau de bord','tab.profitTracker':'Suivi des profits','tab.watchlist':'Liste de suivi'},
+  it: {'pref.title':'Preferenze','pref.localization':'Visualizzazione e lingua','pref.language':'Lingua','pref.currency':'Valuta di visualizzazione','pref.numberFormat':'Formato numerico','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Lingua dell\u2019interfaccia per menu ed etichette','pref.currencyDesc':'Converti i valori di mercato nella tua valuta preferita (tassi BCE in tempo reale)','pref.formatDesc':'Come sono punteggiati i numeri','pref.save':'Salva','pref.cancel':'Annulla','pref.close':'Chiudi','pref.savedOk':'Salvato','pref.unsaved':'Hai modifiche non salvate','pref.saveChanges':'Salva modifiche','nav.dashboard':'Pannello','nav.settings':'Impostazioni','nav.signOut':'Esci','common.loading':'Caricamento...','common.error':'Errore','common.refresh':'Aggiorna','common.search':'Cerca','nav.upgrade':'Passa a Pro','nav.howItWorks':'Come funziona','nav.admin':'Admin','tab.dashboard':'Pannello','tab.profitTracker':'Tracker dei profitti','tab.watchlist':'Lista di osservazione'},
+  pt: {'pref.title':'Prefer\u00eancias','pref.localization':'Exibi\u00e7\u00e3o e idioma','pref.language':'Idioma','pref.currency':'Moeda de exibi\u00e7\u00e3o','pref.numberFormat':'Formato num\u00e9rico','pref.american':'Americano (1,234.56)','pref.european':'Europeu (1.234,56)','pref.languageDesc':'Idioma da interface para menus e r\u00f3tulos','pref.currencyDesc':'Converter valores de mercado para sua moeda preferida (taxas BCE em tempo real)','pref.formatDesc':'Como os n\u00fameros s\u00e3o pontuados','pref.save':'Salvar','pref.cancel':'Cancelar','pref.close':'Fechar','pref.savedOk':'Salvo','pref.unsaved':'Voc\u00ea tem altera\u00e7\u00f5es n\u00e3o salvas','pref.saveChanges':'Salvar altera\u00e7\u00f5es','nav.dashboard':'Painel','nav.settings':'Configura\u00e7\u00f5es','nav.signOut':'Sair','common.loading':'Carregando...','common.error':'Erro','common.refresh':'Atualizar','common.search':'Pesquisar','nav.upgrade':'Atualizar para Pro','nav.howItWorks':'Como funciona','nav.admin':'Admin','tab.dashboard':'Painel','tab.profitTracker':'Rastreador de lucros','tab.watchlist':'Lista de observa\u00e7\u00e3o'},
+  nl: {'pref.title':'Voorkeuren','pref.localization':'Weergave en taal','pref.language':'Taal','pref.currency':'Weergavevaluta','pref.numberFormat':'Getalnotatie','pref.american':'Amerikaans (1,234.56)','pref.european':'Europees (1.234,56)','pref.languageDesc':'Taal van de interface voor menu\u2019s en labels','pref.currencyDesc':'Converteer marktwaardes naar je voorkeursvaluta (live ECB-koersen)','pref.formatDesc':'Hoe getallen worden geschreven','pref.save':'Opslaan','pref.cancel':'Annuleren','pref.close':'Sluiten','pref.savedOk':'Opgeslagen','pref.unsaved':'Je hebt niet-opgeslagen wijzigingen','pref.saveChanges':'Wijzigingen opslaan','nav.dashboard':'Dashboard','nav.settings':'Instellingen','nav.signOut':'Afmelden','common.loading':'Laden...','common.error':'Fout','common.refresh':'Vernieuwen','common.search':'Zoeken','nav.upgrade':'Upgraden naar Pro','nav.howItWorks':'Hoe het werkt','nav.admin':'Admin','tab.dashboard':'Dashboard','tab.profitTracker':'Winst-tracker','tab.watchlist':'Volglijst'},
+  pl: {'pref.title':'Preferencje','pref.localization':'Wy\u015bwietlanie i j\u0119zyk','pref.language':'J\u0119zyk','pref.currency':'Waluta wy\u015bwietlania','pref.numberFormat':'Format liczb','pref.american':'Ameryka\u0144ski (1,234.56)','pref.european':'Europejski (1.234,56)','pref.languageDesc':'J\u0119zyk interfejsu dla menu i etykiet','pref.currencyDesc':'Konwertuj warto\u015bci rynkowe na preferowan\u0105 walut\u0119 (kursy EBC na \u017cywo)','pref.formatDesc':'Jak interpunkcja liczb','pref.save':'Zapisz','pref.cancel':'Anuluj','pref.close':'Zamknij','pref.savedOk':'Zapisano','pref.unsaved':'Masz niezapisane zmiany','pref.saveChanges':'Zapisz zmiany','nav.dashboard':'Panel','nav.settings':'Ustawienia','nav.signOut':'Wyloguj','common.loading':'\u0141adowanie...','common.error':'B\u0142\u0105d','common.refresh':'Od\u015bwie\u017c','common.search':'Szukaj','nav.upgrade':'Przejd\u017a na Pro','nav.howItWorks':'Jak to dzia\u0142a','nav.admin':'Admin','tab.dashboard':'Panel','tab.profitTracker':'\u015aledzenie zysk\u00f3w','tab.watchlist':'Lista obserwowanych'},
+  ja: {'pref.title':'\u8a2d\u5b9a','pref.localization':'\u8868\u793a\u3068\u8a00\u8a9e','pref.language':'\u8a00\u8a9e','pref.currency':'\u8868\u793a\u901a\u8ca8','pref.numberFormat':'\u6570\u5024\u5f62\u5f0f','pref.american':'\u30a2\u30e1\u30ea\u30ab\u5f0f (1,234.56)','pref.european':'\u30e8\u30fc\u30ed\u30c3\u30d1\u5f0f (1.234,56)','pref.languageDesc':'\u30e1\u30cb\u30e5\u30fc\u3068\u30e9\u30d9\u30eb\u306e\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a00\u8a9e','pref.currencyDesc':'\u5e02\u5834\u4fa1\u5024\u3092\u5e0c\u671b\u306e\u901a\u8ca8\u306b\u5909\u63db\uff08\u30e9\u30a4\u30d6ECB\u30ec\u30fc\u30c8\uff09','pref.formatDesc':'\u6570\u5b57\u306e\u533a\u5207\u308a\u65b9','pref.save':'\u4fdd\u5b58','pref.cancel':'\u30ad\u30e3\u30f3\u30bb\u30eb','pref.close':'\u9589\u3058\u308b','pref.savedOk':'\u4fdd\u5b58\u3057\u307e\u3057\u305f','pref.unsaved':'\u672a\u4fdd\u5b58\u306e\u5909\u66f4\u304c\u3042\u308a\u307e\u3059','pref.saveChanges':'\u5909\u66f4\u3092\u4fdd\u5b58','nav.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','nav.settings':'\u8a2d\u5b9a','nav.signOut':'\u30b5\u30a4\u30f3\u30a2\u30a6\u30c8','common.loading':'\u8aad\u307f\u8fbc\u307f\u4e2d...','common.error':'\u30a8\u30e9\u30fc','common.refresh':'\u66f4\u65b0','common.search':'\u691c\u7d22','nav.upgrade':'Pro\u306b\u30a2\u30c3\u30d7\u30b0\u30ec\u30fc\u30c9','nav.howItWorks':'\u4f7f\u3044\u65b9','nav.admin':'\u7ba1\u7406','tab.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','tab.profitTracker':'\u5229\u76ca\u30c8\u30e9\u30c3\u30ab\u30fc','tab.watchlist':'\u30a6\u30a9\u30c3\u30c1\u30ea\u30b9\u30c8'},
+  ko: {'pref.title':'\ud658\uacbd\uc124\uc815','pref.localization':'\ud45c\uc2dc \ubc0f \uc5b8\uc5b4','pref.language':'\uc5b8\uc5b4','pref.currency':'\ud45c\uc2dc \ud1b5\ud654','pref.numberFormat':'\uc22b\uc790 \ud615\uc2dd','pref.american':'\ubbf8\uad6d\uc2dd (1,234.56)','pref.european':'\uc720\ub7fd\uc2dd (1.234,56)','pref.languageDesc':'\uba54\ub274 \ubc0f \ub77c\ubca8\uc758 \uc778\ud130\ud398\uc774\uc2a4 \uc5b8\uc5b4','pref.currencyDesc':'\uc2dc\uc7a5 \uac00\uce58\ub97c \uc120\ud638\ud558\ub294 \ud1b5\ud654\ub85c \ubcc0\ud658 (\uc2e4\uc2dc\uac04 ECB \ud658\uc728)','pref.formatDesc':'\uc22b\uc790 \uad6c\ub450\uc810 \ubc29\uc2dd','pref.save':'\uc800\uc7a5','pref.cancel':'\ucde8\uc18c','pref.close':'\ub2eb\uae30','pref.savedOk':'\uc800\uc7a5\ub428','pref.unsaved':'\uc800\uc7a5\ub418\uc9c0 \uc54a\uc740 \ubcc0\uacbd\uc0ac\ud56d\uc774 \uc788\uc2b5\ub2c8\ub2e4','pref.saveChanges':'\ubcc0\uacbd\uc0ac\ud56d \uc800\uc7a5','nav.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','nav.settings':'\uc124\uc815','nav.signOut':'\ub85c\uadf8\uc544\uc6c3','common.loading':'\ub85c\ub529 \uc911...','common.error':'\uc624\ub958','common.refresh':'\uc0c8\ub85c \uace0\uce68','common.search':'\uac80\uc0c9','nav.upgrade':'Pro\ub85c \uc5c5\uadf8\ub808\uc774\ub4dc','nav.howItWorks':'\uc0ac\uc6a9 \ubc29\ubc95','nav.admin':'\uad00\ub9ac\uc790','tab.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','tab.profitTracker':'\uc218\uc775 \ucd94\uc801\uae30','tab.watchlist':'\uad00\uc2ec \ubaa9\ub85d'},
+  zh: {'pref.title':'\u504f\u597d\u8bbe\u7f6e','pref.localization':'\u663e\u793a\u4e0e\u8bed\u8a00','pref.language':'\u8bed\u8a00','pref.currency':'\u663e\u793a\u8d27\u5e01','pref.numberFormat':'\u6570\u5b57\u683c\u5f0f','pref.american':'\u7f8e\u5f0f (1,234.56)','pref.european':'\u6b27\u5f0f (1.234,56)','pref.languageDesc':'\u83dc\u5355\u548c\u6807\u7b7e\u7684\u754c\u9762\u8bed\u8a00','pref.currencyDesc':'\u5c06\u5e02\u573a\u4ef7\u503c\u8f6c\u6362\u4e3a\u60a8\u504f\u597d\u7684\u8d27\u5e01\uff08\u5b9e\u65f6\u6b27\u6d32\u592e\u884c\u6c47\u7387\uff09','pref.formatDesc':'\u6570\u5b57\u6807\u70b9\u65b9\u5f0f','pref.save':'\u4fdd\u5b58','pref.cancel':'\u53d6\u6d88','pref.close':'\u5173\u95ed','pref.savedOk':'\u5df2\u4fdd\u5b58','pref.unsaved':'\u60a8\u6709\u672a\u4fdd\u5b58\u7684\u66f4\u6539','pref.saveChanges':'\u4fdd\u5b58\u66f4\u6539','nav.dashboard':'\u4eea\u8868\u677f','nav.settings':'\u8bbe\u7f6e','nav.signOut':'\u9000\u51fa','common.loading':'\u52a0\u8f7d\u4e2d...','common.error':'\u9519\u8bef','common.refresh':'\u5237\u65b0','common.search':'\u641c\u7d22','nav.upgrade':'\u5347\u7ea7\u5230 Pro','nav.howItWorks':'\u5de5\u4f5c\u539f\u7406','nav.admin':'\u7ba1\u7406','tab.dashboard':'\u4eea\u8868\u677f','tab.profitTracker':'\u5229\u6da6\u8ddf\u8e2a','tab.watchlist':'\u5173\u6ce8\u5217\u8868'},
+  ru: {'pref.title':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438','pref.localization':'\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u0438 \u044f\u0437\u044b\u043a','pref.language':'\u042f\u0437\u044b\u043a','pref.currency':'\u0412\u0430\u043b\u044e\u0442\u0430 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f','pref.numberFormat':'\u0424\u043e\u0440\u043c\u0430\u0442 \u0447\u0438\u0441\u0435\u043b','pref.american':'\u0410\u043c\u0435\u0440\u0438\u043a\u0430\u043d\u0441\u043a\u0438\u0439 (1,234.56)','pref.european':'\u0415\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u043a\u0438\u0439 (1.234,56)','pref.languageDesc':'\u042f\u0437\u044b\u043a \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0434\u043b\u044f \u043c\u0435\u043d\u044e \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u0435\u0439','pref.currencyDesc':'\u041a\u043e\u043d\u0432\u0435\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u044b\u043d\u043e\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432 \u043f\u0440\u0435\u0434\u043f\u043e\u0447\u0438\u0442\u0430\u0435\u043c\u0443\u044e \u0432\u0430\u043b\u044e\u0442\u0443 (\u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u0435 \u043a\u0443\u0440\u0441\u044b \u0415\u0426\u0411)','pref.formatDesc':'\u041a\u0430\u043a \u043f\u0443\u043d\u043a\u0442\u0443\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u0447\u0438\u0441\u043b\u0430','pref.save':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','pref.cancel':'\u041e\u0442\u043c\u0435\u043d\u0430','pref.close':'\u0417\u0430\u043a\u0440\u044b\u0442\u044c','pref.savedOk':'\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e','pref.unsaved':'\u0423 \u0432\u0430\u0441 \u0435\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f','pref.saveChanges':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','nav.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','nav.settings':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438','nav.signOut':'\u0412\u044b\u0439\u0442\u0438','common.loading':'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...','common.error':'\u041e\u0448\u0438\u0431\u043a\u0430','common.refresh':'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c','common.search':'\u041f\u043e\u0438\u0441\u043a','nav.upgrade':'\u041f\u0435\u0440\u0435\u0439\u0442\u0438 \u043d\u0430 Pro','nav.howItWorks':'\u041a\u0430\u043a \u044d\u0442\u043e \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442','nav.admin':'\u0410\u0434\u043c\u0438\u043d','tab.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','tab.profitTracker':'\u041e\u0442\u0441\u043b\u0435\u0436\u0438\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u0438\u0431\u044b\u043b\u0438','tab.watchlist':'\u0421\u043f\u0438\u0441\u043e\u043a \u043d\u0430\u0431\u043b\u044e\u0434\u0435\u043d\u0438\u044f'},
+  hi: {'pref.title':'\u092a\u094d\u0930\u093e\u0925\u092e\u093f\u0915\u0924\u093e\u090f\u0901','pref.localization':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u0914\u0930 \u092d\u093e\u0937\u093e','pref.language':'\u092d\u093e\u0937\u093e','pref.currency':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u092e\u0941\u0926\u094d\u0930\u093e','pref.numberFormat':'\u0938\u0902\u0916\u094d\u092f\u093e \u092a\u094d\u0930\u093e\u0930\u0942\u092a','pref.american':'\u0905\u092e\u0947\u0930\u093f\u0915\u0940 (1,234.56)','pref.european':'\u092f\u0942\u0930\u094b\u092a\u0940\u092f (1.234,56)','pref.languageDesc':'\u092e\u0947\u0928\u0942 \u0914\u0930 \u0932\u0947\u092c\u0932 \u0915\u0947 \u0932\u093f\u090f \u0907\u0902\u091f\u0930\u092b\u093c\u0947\u0938 \u092d\u093e\u0937\u093e','pref.currencyDesc':'\u092c\u093e\u091c\u093c\u093e\u0930 \u092e\u0942\u0932\u094d\u092f\u094b\u0902 \u0915\u094b \u0905\u092a\u0928\u0940 \u092a\u0938\u0902\u0926\u0940\u0926\u093e \u092e\u0941\u0926\u094d\u0930\u093e \u092e\u0947\u0902 \u092c\u0926\u0932\u0947\u0902 (\u0932\u093e\u0907\u0935 ECB \u0926\u0930\u0947\u0902)','pref.formatDesc':'\u0938\u0902\u0916\u094d\u092f\u093e\u090f\u0901 \u0915\u0948\u0938\u0947 \u0932\u093f\u0916\u0940 \u091c\u093e\u0924\u0940 \u0939\u0948\u0902','pref.save':'\u0938\u0939\u0947\u091c\u0947\u0902','pref.cancel':'\u0930\u0926\u094d\u0926 \u0915\u0930\u0947\u0902','pref.close':'\u092c\u0902\u0926 \u0915\u0930\u0947\u0902','pref.savedOk':'\u0938\u0939\u0947\u091c\u093e \u0917\u092f\u093e','pref.unsaved':'\u0906\u092a\u0915\u0947 \u092a\u093e\u0938 \u0905\u0938\u0939\u0947\u091c\u0947 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0939\u0948\u0902','pref.saveChanges':'\u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0938\u0939\u0947\u091c\u0947\u0902','nav.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','nav.settings':'\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938','nav.signOut':'\u0938\u093e\u0907\u0928 \u0906\u0909\u091f','common.loading':'\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...','common.error':'\u0924\u094d\u0930\u0941\u091f\u093f','common.refresh':'\u0930\u093f\u092b\u093c\u094d\u0930\u0947\u0936 \u0915\u0930\u0947\u0902','common.search':'\u0916\u094b\u091c\u0947\u0902','nav.upgrade':'Pro \u092e\u0947\u0902 \u0905\u092a\u0917\u094d\u0930\u0947\u0921 \u0915\u0930\u0947\u0902','nav.howItWorks':'\u092f\u0939 \u0915\u0948\u0938\u0947 \u0915\u093e\u092e \u0915\u0930\u0924\u093e \u0939\u0948','nav.admin':'\u090f\u0921\u092e\u093f\u0928','tab.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','tab.profitTracker':'\u0932\u093e\u092d \u091f\u094d\u0930\u0948\u0915\u0930','tab.watchlist':'\u0935\u0949\u091a\u0932\u093f\u0938\u094d\u091f'},
+  ar: {'pref.title':'\u0627\u0644\u062a\u0641\u0636\u064a\u0644\u0627\u062a','pref.localization':'\u0627\u0644\u0639\u0631\u0636 \u0648\u0627\u0644\u0644\u063a\u0629','pref.language':'\u0627\u0644\u0644\u063a\u0629','pref.currency':'\u0639\u0645\u0644\u0629 \u0627\u0644\u0639\u0631\u0636','pref.numberFormat':'\u062a\u0646\u0633\u064a\u0642 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.american':'\u0623\u0645\u0631\u064a\u0643\u064a (1,234.56)','pref.european':'\u0623\u0648\u0631\u0648\u0628\u064a (1.234,56)','pref.languageDesc':'\u0644\u063a\u0629 \u0627\u0644\u0648\u0627\u062c\u0647\u0629 \u0644\u0644\u0642\u0648\u0627\u0626\u0645 \u0648\u0627\u0644\u062a\u0633\u0645\u064a\u0627\u062a','pref.currencyDesc':'\u062a\u062d\u0648\u064a\u0644 \u0642\u064a\u0645 \u0627\u0644\u0633\u0648\u0642 \u0625\u0644\u0649 \u0639\u0645\u0644\u062a\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629 (\u0623\u0633\u0639\u0627\u0631 ECB \u0627\u0644\u0645\u0628\u0627\u0634\u0631\u0629)','pref.formatDesc':'\u0643\u064a\u0641\u064a\u0629 \u0643\u062a\u0627\u0628\u0629 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.save':'\u062d\u0641\u0638','pref.cancel':'\u0625\u0644\u063a\u0627\u0621','pref.close':'\u0625\u063a\u0644\u0627\u0642','pref.savedOk':'\u062a\u0645 \u0627\u0644\u062d\u0641\u0638','pref.unsaved':'\u0644\u062f\u064a\u0643 \u062a\u063a\u064a\u064a\u0631\u0627\u062a \u063a\u064a\u0631 \u0645\u062d\u0641\u0648\u0638\u0629','pref.saveChanges':'\u062d\u0641\u0638 \u0627\u0644\u062a\u063a\u064a\u064a\u0631\u0627\u062a','nav.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629','nav.settings':'\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a','nav.signOut':'\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c','common.loading':'\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0645\u064a\u0644...','common.error':'\u062e\u0637\u0623','common.refresh':'\u062a\u062d\u062f\u064a\u062b','common.search':'\u0628\u062d\u062b','nav.upgrade':'\u0627\u0644\u062a\u0631\u0642\u064a\u0629 \u0625\u0644\u0649 Pro','nav.howItWorks':'\u0643\u064a\u0641 \u064a\u0639\u0645\u0644','nav.admin':'\u0627\u0644\u0645\u0633\u0624\u0648\u0644','tab.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629','tab.profitTracker':'\u0645\u062a\u062a\u0628\u0639 \u0627\u0644\u0623\u0631\u0628\u0627\u062d','tab.watchlist':'\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0645\u0631\u0627\u0642\u0628\u0629'},
+  bn: {'pref.title':'\u09aa\u09cd\u09b0\u09be\u09a7\u09be\u09a8\u09cd\u09af\u09a4\u09be','pref.localization':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u0993 \u09ad\u09be\u09b7\u09be','pref.language':'\u09ad\u09be\u09b7\u09be','pref.currency':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be','pref.numberFormat':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u09ac\u09bf\u09a8\u09cd\u09af\u09be\u09b8','pref.american':'\u0986\u09ae\u09c7\u09b0\u09bf\u0995\u09be\u09a8 (1,234.56)','pref.european':'\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09af\u09bc (1.234,56)','pref.languageDesc':'\u09ae\u09c7\u09a8\u09c1 \u0993 \u09b2\u09c7\u09ac\u09c7\u09b2\u09c7\u09b0 \u099c\u09a8\u09cd\u09af \u0987\u09a8\u09cd\u099f\u09be\u09b0\u09ab\u09c7\u09b8 \u09ad\u09be\u09b7\u09be','pref.currencyDesc':'\u09ac\u09be\u099c\u09be\u09b0 \u09ae\u09c2\u09b2\u09cd\u09af \u0986\u09aa\u09a8\u09be\u09b0 \u09aa\u099b\u09a8\u09cd\u09a6\u09c7\u09b0 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be\u09af\u09bc \u09b0\u09c2\u09aa\u09be\u09a8\u09cd\u09a4\u09b0 \u0995\u09b0\u09c1\u09a8 (\u09b2\u09be\u0987\u09ad ECB \u09b0\u09c7\u099f)','pref.formatDesc':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u09b2\u09c7\u0996\u09be \u09b9\u09af\u09bc','pref.save':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','pref.cancel':'\u09ac\u09be\u09a4\u09bf\u09b2','pref.close':'\u09ac\u09a8\u09cd\u09a7 \u0995\u09b0\u09c1\u09a8','pref.savedOk':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4','pref.unsaved':'\u0986\u09aa\u09a8\u09be\u09b0 \u0985\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u0986\u099b\u09c7','pref.saveChanges':'\u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','nav.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','nav.settings':'\u09b8\u09c7\u099f\u09bf\u0982\u09b8','nav.signOut':'\u09b8\u09be\u0987\u09a8 \u0986\u0989\u099f','common.loading':'\u09b2\u09cb\u09a1 \u09b9\u099a\u09cd\u099b\u09c7...','common.error':'\u09a4\u09cd\u09b0\u09c1\u099f\u09bf','common.refresh':'\u09b0\u09bf\u09ab\u09cd\u09b0\u09c7\u09b6 \u0995\u09b0\u09c1\u09a8','common.search':'\u0985\u09a8\u09c1\u09b8\u09a8\u09cd\u09a7\u09be\u09a8','nav.upgrade':'Pro \u09a4\u09c7 \u0986\u09aa\u0997\u09cd\u09b0\u09c7\u09a1 \u0995\u09b0\u09c1\u09a8','nav.howItWorks':'\u098f\u099f\u09bf \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u0995\u09be\u099c \u0995\u09b0\u09c7','nav.admin':'\u0985\u09cd\u09af\u09be\u09a1\u09ae\u09bf\u09a8','tab.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','tab.profitTracker':'\u09b2\u09be\u09ad \u099f\u09cd\u09b0\u09cd\u09af\u09be\u0995\u09be\u09b0','tab.watchlist':'\u0993\u09af\u09bc\u09be\u099a\u09b2\u09bf\u09b8\u09cd\u099f'},
+  ur: {'pref.title':'\u062a\u0631\u062c\u06cc\u062d\u0627\u062a','pref.localization':'\u0688\u0633\u067e\u0644\u06cc \u0627\u0648\u0631 \u0632\u0628\u0627\u0646','pref.language':'\u0632\u0628\u0627\u0646','pref.currency':'\u0688\u0633\u067e\u0644\u06cc \u06a9\u0631\u0646\u0633\u06cc','pref.numberFormat':'\u0646\u0645\u0628\u0631 \u0641\u0627\u0631\u0645\u06cc\u0679','pref.american':'\u0627\u0645\u0631\u06cc\u06a9\u06cc (1,234.56)','pref.european':'\u06cc\u0648\u0631\u067e\u06cc (1.234,56)','pref.languageDesc':'\u0645\u06cc\u0646\u06cc\u0648\u0632 \u0627\u0648\u0631 \u0644\u06cc\u0628\u0644\u0632 \u06a9\u06cc \u0627\u0646\u0679\u0631\u0641\u06cc\u0633 \u0632\u0628\u0627\u0646','pref.currencyDesc':'\u0645\u0627\u0631\u06a9\u06cc\u0679 \u0642\u062f\u0631\u0648\u0646 \u06a9\u0648 \u0627\u067e\u0646\u06cc \u067e\u0633\u0646\u062f\u06cc\u062f\u06c1 \u06a9\u0631\u0646\u0633\u06cc \u0645\u06cc\u0646 \u062a\u0628\u062f\u06cc\u0644 \u06a9\u0631\u06cc\u0646 (\u0644\u0627\u0626\u06cc\u0648 ECB \u0634\u0631\u062d)','pref.formatDesc':'\u0646\u0645\u0628\u0631 \u06a9\u06cc\u0633\u06d2 \u0644\u06a9\u06be\u06d2 \u062c\u0627\u062a\u06d2 \u06c1\u06cc\u06ba','pref.save':'\u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','pref.cancel':'\u0645\u0646\u0633\u0648\u062e','pref.close':'\u0628\u0646\u062f \u06a9\u0631\u06cc\u0646','pref.savedOk':'\u0645\u062d\u0641\u0648\u0638 \u06c1\u0648 \u06af\u06cc\u0627','pref.unsaved':'\u0622\u067e \u06a9\u06cc \u063a\u06cc\u0631 \u0645\u062d\u0641\u0648\u0638 \u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u06c1\u06cc\u06ba','pref.saveChanges':'\u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','nav.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','nav.settings':'\u0633\u06cc\u0679\u0646\u06af\u0632','nav.signOut':'\u0633\u0627\u0626\u0646 \u0622\u0624\u0679','common.loading':'\u0644\u0648\u0688 \u06c1\u0648 \u0631\u06c1\u0627 \u06c1\u06d2...','common.error':'\u062e\u0631\u0627\u0628\u06cc','common.refresh':'\u0631\u06cc\u0641\u0631\u06cc\u0634 \u06a9\u0631\u06cc\u0646','common.search':'\u062a\u0644\u0627\u0634 \u06a9\u0631\u06cc\u0646','nav.upgrade':'Pro \u0645\u06cc\u0646 \u0627\u067e\u06af\u0631\u06cc\u0688 \u06a9\u0631\u06cc\u0646','nav.howItWorks':'\u06cc\u06c1 \u06a9\u06cc\u0633\u06d2 \u06a9\u0627\u0645 \u06a9\u0631\u062a\u0627 \u06c1\u06d2','nav.admin':'\u0627\u06cc\u0688\u0645\u0646','tab.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','tab.profitTracker':'\u0645\u0646\u0627\u0641\u0639 \u0679\u0631\u06cc\u06a9\u0631','tab.watchlist':'\u0648\u0627\u0686 \u0644\u0633\u0679'},
+  id: {'pref.title':'Preferensi','pref.localization':'Tampilan & Bahasa','pref.language':'Bahasa','pref.currency':'Mata Uang Tampilan','pref.numberFormat':'Format Angka','pref.american':'Amerika (1,234.56)','pref.european':'Eropa (1.234,56)','pref.languageDesc':'Bahasa antarmuka untuk menu dan label','pref.currencyDesc':'Konversi nilai pasar ke mata uang pilihan Anda (kurs ECB langsung)','pref.formatDesc':'Cara penulisan angka','pref.save':'Simpan','pref.cancel':'Batal','pref.close':'Tutup','pref.savedOk':'Tersimpan','pref.unsaved':'Anda memiliki perubahan yang belum disimpan','pref.saveChanges':'Simpan Perubahan','nav.dashboard':'Dasbor','nav.settings':'Pengaturan','nav.signOut':'Keluar','common.loading':'Memuat...','common.error':'Kesalahan','common.refresh':'Segarkan','common.search':'Cari','nav.upgrade':'Tingkatkan ke Pro','nav.howItWorks':'Cara Kerja','nav.admin':'Admin','tab.dashboard':'Dasbor','tab.profitTracker':'Pelacak Keuntungan','tab.watchlist':'Daftar Pantau'},
+  tr: {'pref.title':'Tercihler','pref.localization':'G\u00f6r\u00fcn\u00fcm ve Dil','pref.language':'Dil','pref.currency':'G\u00f6r\u00fcnt\u00fcleme Para Birimi','pref.numberFormat':'Say\u0131 Bi\u00e7imi','pref.american':'Amerikan (1,234.56)','pref.european':'Avrupa (1.234,56)','pref.languageDesc':'Men\u00fcler ve etiketler i\u00e7in aray\u00fcz dili','pref.currencyDesc':'Piyasa de\u011ferlerini tercih etti\u011finiz para birimine d\u00f6n\u00fc\u015ft\u00fcr\u00fcn (canl\u0131 ECB kurlar\u0131)','pref.formatDesc':'Say\u0131lar\u0131n yaz\u0131l\u0131\u015f bi\u00e7imi','pref.save':'Kaydet','pref.cancel':'\u0130ptal','pref.close':'Kapat','pref.savedOk':'Kaydedildi','pref.unsaved':'Kaydedilmemi\u015f de\u011fi\u015fiklikleriniz var','pref.saveChanges':'De\u011fi\u015fiklikleri Kaydet','nav.dashboard':'Pano','nav.settings':'Ayarlar','nav.signOut':'\u00c7\u0131k\u0131\u015f','common.loading':'Y\u00fckleniyor...','common.error':'Hata','common.refresh':'Yenile','common.search':'Ara','nav.upgrade':'Pro\u2019ya Y\u00fckseltin','nav.howItWorks':'Nas\u0131l \u00c7al\u0131\u015f\u0131r','nav.admin':'Y\u00f6netici','tab.dashboard':'Pano','tab.profitTracker':'K\u00e2r Takip\u00e7isi','tab.watchlist':'\u0130zleme Listesi'},
+  vi: {'pref.title':'T\u00f9y ch\u1ecdn','pref.localization':'Hi\u1ec3n th\u1ecb & Ng\u00f4n ng\u1eef','pref.language':'Ng\u00f4n ng\u1eef','pref.currency':'Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb','pref.numberFormat':'\u0110\u1ecbnh d\u1ea1ng s\u1ed1','pref.american':'Ki\u1ec3u M\u1ef9 (1,234.56)','pref.european':'Ki\u1ec3u Ch\u00e2u \u00c2u (1.234,56)','pref.languageDesc':'Ng\u00f4n ng\u1eef giao di\u1ec7n cho menu v\u00e0 nh\u00e3n','pref.currencyDesc':'Chuy\u1ec3n \u0111\u1ed5i gi\u00e1 tr\u1ecb th\u1ecb tr\u01b0\u1eddng sang ti\u1ec1n t\u1ec7 \u01b0a th\u00edch (t\u1ef7 gi\u00e1 ECB tr\u1ef1c ti\u1ebfp)','pref.formatDesc':'C\u00e1ch vi\u1ebft s\u1ed1','pref.save':'L\u01b0u','pref.cancel':'H\u1ee7y','pref.close':'\u0110\u00f3ng','pref.savedOk':'\u0110\u00e3 l\u01b0u','pref.unsaved':'B\u1ea1n c\u00f3 thay \u0111\u1ed5i ch\u01b0a l\u01b0u','pref.saveChanges':'L\u01b0u thay \u0111\u1ed5i','nav.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','nav.settings':'C\u00e0i \u0111\u1eb7t','nav.signOut':'\u0110\u0103ng xu\u1ea5t','common.loading':'\u0110ang t\u1ea3i...','common.error':'L\u1ed7i','common.refresh':'L\u00e0m m\u1edbi','common.search':'T\u00ecm ki\u1ebfm','nav.upgrade':'N\u00e2ng c\u1ea5p l\u00ean Pro','nav.howItWorks':'C\u00e1ch ho\u1ea1t \u0111\u1ed9ng','nav.admin':'Qu\u1ea3n tr\u1ecb','tab.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','tab.profitTracker':'Theo d\u00f5i l\u1ee3i nhu\u1eadn','tab.watchlist':'Danh s\u00e1ch theo d\u00f5i'},
+  th: {'pref.title':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32','pref.localization':'\u0e01\u0e32\u0e23\u0e41\u0e2a\u0e14\u0e07\u0e1c\u0e25\u0e41\u0e25\u0e30\u0e20\u0e32\u0e29\u0e32','pref.language':'\u0e20\u0e32\u0e29\u0e32','pref.currency':'\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e41\u0e2a\u0e14\u0e07','pref.numberFormat':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.american':'\u0e41\u0e1a\u0e1a\u0e2d\u0e40\u0e21\u0e23\u0e34\u0e01\u0e31\u0e19 (1,234.56)','pref.european':'\u0e41\u0e1a\u0e1a\u0e22\u0e38\u0e42\u0e23\u0e1b (1.234,56)','pref.languageDesc':'\u0e20\u0e32\u0e29\u0e32\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e40\u0e21\u0e19\u0e39\u0e41\u0e25\u0e30\u0e1b\u0e49\u0e32\u0e22\u0e01\u0e33\u0e01\u0e31\u0e1a','pref.currencyDesc':'\u0e41\u0e1b\u0e25\u0e07\u0e21\u0e39\u0e25\u0e04\u0e48\u0e32\u0e15\u0e25\u0e32\u0e14\u0e40\u0e1b\u0e47\u0e19\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 (\u0e2d\u0e31\u0e15\u0e23\u0e32 ECB \u0e2a\u0e14)','pref.formatDesc':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e01\u0e32\u0e23\u0e40\u0e02\u0e35\u0e22\u0e19\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.save':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.cancel':'\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01','pref.close':'\u0e1b\u0e34\u0e14','pref.savedOk':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e41\u0e25\u0e49\u0e27','pref.unsaved':'\u0e04\u0e38\u0e13\u0e21\u0e35\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07\u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.saveChanges':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07','nav.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','nav.settings':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32','nav.signOut':'\u0e2d\u0e2d\u0e01\u0e08\u0e32\u0e01\u0e23\u0e30\u0e1a\u0e1a','common.loading':'\u0e01\u0e33\u0e25\u0e31\u0e07\u0e42\u0e2b\u0e25\u0e14...','common.error':'\u0e02\u0e49\u0e2d\u0e1c\u0e34\u0e14\u0e1e\u0e25\u0e32\u0e14','common.refresh':'\u0e23\u0e35\u0e40\u0e1f\u0e23\u0e0a','common.search':'\u0e04\u0e49\u0e19\u0e2b\u0e32','nav.upgrade':'\u0e2d\u0e31\u0e1b\u0e40\u0e01\u0e23\u0e14\u0e40\u0e1b\u0e47\u0e19 Pro','nav.howItWorks':'\u0e27\u0e34\u0e18\u0e35\u0e01\u0e32\u0e23\u0e17\u0e33\u0e07\u0e32\u0e19','nav.admin':'\u0e1c\u0e39\u0e49\u0e14\u0e39\u0e41\u0e25\u0e23\u0e30\u0e1a\u0e1a','tab.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','tab.profitTracker':'\u0e15\u0e34\u0e14\u0e15\u0e32\u0e21\u0e01\u0e33\u0e44\u0e23','tab.watchlist':'\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e15\u0e34\u0e14\u0e15\u0e32\u0e21'},
+};
+let _narveLang = localStorage.getItem('narve_language') || 'en';
+function t(key) {
+  const dict = NARVE_I18N[_narveLang] || NARVE_I18N.en;
+  return dict[key] || NARVE_I18N.en[key] || key;
+}
+function applyTranslations(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    el.textContent = t(k);
+  });
+  scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+  });
+  scope.querySelectorAll('[data-i18n-title]').forEach(el => {
+    el.title = t(el.getAttribute('data-i18n-title'));
+  });
+}
+function setNarveLanguage(code) {
+  _narveLang = code;
+  localStorage.setItem('narve_language', code);
+  document.documentElement.lang = code;
+  applyTranslations();
+}
+
+const NARVE_FX_FALLBACK = {
+  USD:1.0, EUR:0.92, GBP:0.79, JPY:150, AUD:1.52, CAD:1.36, CHF:0.88, CNY:7.20,
+  HKD:7.83, NZD:1.65, SEK:10.5, KRW:1340, SGD:1.34, NOK:10.6, MXN:17.0,
+  INR:83.0, ZAR:18.5, TRY:32.0, BRL:5.0, DKK:6.85, PLN:3.95, THB:35.0,
+  IDR:15700, HUF:360, CZK:23.0, ILS:3.7, PHP:56.0, MYR:4.7, RON:4.6, ISK:137,
+};
+let _narveFxRates = NARVE_FX_FALLBACK;
+let _narveCurrency = localStorage.getItem('narve_currency') || 'USD';
+let _narveUnits = localStorage.getItem('narve_units') || 'american';
+function _narveLocale() { return _narveUnits === 'european' ? 'de-DE' : 'en-US'; }
+function _narveRate(code) {
+  if (!code || code === 'USD') return 1;
+  return _narveFxRates[code] || NARVE_FX_FALLBACK[code] || 1;
+}
+function _narveSymbol(code) {
+  try {
+    const parts = new Intl.NumberFormat(_narveLocale(), { style: 'currency', currency: code }).formatToParts(0);
+    const sym = parts.find(p => p.type === 'currency');
+    if (sym) return sym.value;
+  } catch (e) {}
+  return code;
+}
+function _narveSymFirst(code) {
+  try {
+    const parts = new Intl.NumberFormat(_narveLocale(), { style: 'currency', currency: code }).formatToParts(0);
+    const cIdx = parts.findIndex(p => p.type === 'currency');
+    const nIdx = parts.findIndex(p => p.type === 'integer');
+    return cIdx < nIdx;
+  } catch (e) { return true; }
+}
+// Format an amount given in USD into the user's chosen currency.
+function fmtMoney(usdValue, decimals) {
+  if (usdValue == null || isNaN(Number(usdValue))) return '-';
+  const v = Number(usdValue) * _narveRate(_narveCurrency);
+  const sym = _narveSymbol(_narveCurrency);
+  const symFirst = _narveSymFirst(_narveCurrency);
+  const dec = decimals == null ? 2 : decimals;
+  const formatted = v.toLocaleString(_narveLocale(), {
+    minimumFractionDigits: dec, maximumFractionDigits: dec,
+  });
+  return symFirst ? sym + formatted : formatted + ' ' + sym;
+}
+async function ensureNarveFxRates() {
+  try {
+    const cached = JSON.parse(localStorage.getItem('narve_fx_rates') || 'null');
+    if (cached && cached.rates && Date.now() - cached.fetched_at < 3600000) {
+      _narveFxRates = cached.rates; return _narveFxRates;
+    }
+  } catch (e) {}
+  try {
+    const r = await fetch('/api/fx-rates', { credentials: 'same-origin' });
+    if (r.ok) {
+      const data = await r.json();
+      _narveFxRates = data.rates || NARVE_FX_FALLBACK;
+      _narveFxRates.USD = 1.0;
+      try { localStorage.setItem('narve_fx_rates', JSON.stringify({ rates: _narveFxRates, fetched_at: Date.now() })); } catch (e) {}
+    }
+  } catch (e) {}
+  return _narveFxRates;
+}
 
 /* ===== Utilities ===== */
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -4704,6 +7322,7 @@ function renderCards(comps) {
   const marketFilter = document.getElementById('marketTypeFilter').value;
   let filtered = comps.filter(c => {
     if (signalsOnly && !(c.outcomes || []).some(o => Math.abs(o.divergence_pct || 0) >= THRESH)) return false;
+    if (topTraderOnly && !(c.has_top_trader || (c.top_trader_positions && c.top_trader_positions.length))) return false;
     if (marketFilter !== 'all' && (c.market_type || 'h2h') !== marketFilter) return false;
     if (search) {
       const hay = ((c.home_team || '') + ' ' + (c.away_team || '')).toLowerCase();
@@ -4747,7 +7366,7 @@ function renderCards(comps) {
 
     html += '<div class="card" id="' + cardId + '">';
     // Header
-    html += '<div class="card-header" onclick="toggleCard(\'' + cardId + '\')">';
+    html += '<div class="card-header" onclick="toggleCard(\\'' + cardId + '\\')">';
     html += '<div class="card-teams">' + esc(c.home_team || 'Unknown') + '<span class="vs">vs</span>' + esc(c.away_team || '');
     const mtype = c.market_type || 'h2h';
     if (mtype !== 'h2h') html += '<span class="market-type-badge ' + mtype + '">' + mtype + '</span>';
@@ -4755,6 +7374,10 @@ function renderCards(comps) {
     html += '<div class="card-meta">';
     if (c.time_to_event_hours != null) html += '<span class="card-time">' + (c.time_to_event_hours < 1 ? '<1h' : Math.round(c.time_to_event_hours) + 'h') + '</span>';
     html += '<span class="signal-badge ' + badgeCls + '">' + (isSignal ? dir + ' ' + fmt(Math.abs(bestOutcome.divergence_pct || 0)) + '%' : 'No Edge') + '</span>';
+    if (c.has_top_trader || (c.top_trader_positions && c.top_trader_positions.length)) {
+      const tCount = (c.top_trader_positions || []).length;
+      html += '<span class="top-trader-badge" title="' + tCount + ' of the top 10 Polymarket traders have a position on this market">Top ' + tCount + '</span>';
+    }
     // Trend arrow
     const bestTrend = bestOutcome.trend || {};
     const trendDir = bestTrend.direction || 'new';
@@ -4810,6 +7433,12 @@ function renderCards(comps) {
       html += '</div>';
     }
 
+    // Head-to-head historical record
+    html += buildH2HSection(c, cardId);
+
+    // Top 10 Polymarket trader positions on this market
+    html += buildTopTradersSection(c);
+
     // Market Intel Grid
     html += buildIntelGrid(c);
 
@@ -4827,7 +7456,7 @@ function renderCards(comps) {
 
     // Bookmaker Breakdown
     if (c.bookmaker_breakdown && Object.keys(c.bookmaker_breakdown).length) {
-      html += '<button class="bookie-toggle" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\'open\')">&#9660; Bookmaker Breakdown (' + Object.keys(c.bookmaker_breakdown).length + ')</button>';
+      html += '<button class="bookie-toggle" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\\'open\\')">&#9660; Bookmaker Breakdown (' + Object.keys(c.bookmaker_breakdown).length + ')</button>';
       html += '<div class="bookie-section"><table class="bookie-table"><thead><tr><th>Book</th><th>Outcome</th><th>Prob</th><th>Odds</th></tr></thead><tbody>';
       Object.entries(c.bookmaker_breakdown).forEach(([bk, outcomes]) => {
         (Array.isArray(outcomes) ? outcomes : []).forEach((o, oi) => {
@@ -4842,9 +7471,9 @@ function renderCards(comps) {
     html += '<div class="card-actions">';
     if (c.poly_url) html += '<a href="' + esc(c.poly_url) + '" target="_blank" class="btn-action primary">Trade on Polymarket</a>';
     if (c.kalshi_event) html += '<a href="https://kalshi.com/events/' + esc(c.kalshi_event) + '" target="_blank" class="btn-action kalshi-btn">Trade on Kalshi</a>';
-    html += '<button class="btn-action btn-watchlist' + (watchlistIds.has(wKey) ? ' active' : '') + '" onclick="event.stopPropagation();toggleWatchlist(\'' + wKey.replace(/'/g,"\\'") + '\',\'' + esc(c.home_team||'').replace(/'/g,"\\'") + '\',\'' + esc(c.away_team||'').replace(/'/g,"\\'") + '\')">&#9733; Watchlist</button>';
-    html += '<button class="btn-action" onclick="event.stopPropagation();logTrade(\'' + wKey.replace(/'/g,"\\'") + '\',\'' + esc((bestOutcome.outcome_name||'')).replace(/'/g,"\\'") + '\',' + Math.round((bestOutcome.poly_price||0)*100) + ')">Log Trade</button>';
-    html += '<button class="btn-flag" onclick="event.stopPropagation();flagMatch(\'' + esc(c.home_team||'').replace(/'/g,"\\'") + '\',\'' + esc(c.away_team||'').replace(/'/g,"\\'") + '\',\'' + esc(c.poly_question||'').replace(/'/g,"\\'") + '\')" title="Report bad match">&#9873; Flag</button>';
+    html += '<button class="btn-action btn-watchlist' + (watchlistIds.has(wKey) ? ' active' : '') + '" onclick="event.stopPropagation();toggleWatchlist(\\'' + wKey.replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.home_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.away_team||'').replace(/'/g,"\\\\'") + '\\')">&#9733; Watchlist</button>';
+    html += '<button class="btn-action" onclick="event.stopPropagation();logTrade(\\'' + wKey.replace(/'/g,"\\\\'") + '\\',\\'' + esc((bestOutcome.outcome_name||'')).replace(/'/g,"\\\\'") + '\\',' + Math.round((bestOutcome.poly_price||0)*100) + ')">Log Trade</button>';
+    html += '<button class="btn-flag" onclick="event.stopPropagation();flagMatch(\\'' + esc(c.home_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.away_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.poly_question||'').replace(/'/g,"\\\\'") + '\\')" title="Report bad match">&#9873; Flag</button>';
     html += '</div>';
 
     html += '</div>'; // card-detail
@@ -4859,6 +7488,251 @@ function renderCards(comps) {
   }
 
   grid.innerHTML = html;
+}
+
+/* ===== Head-to-Head Builder ===== */
+function buildH2HSection(c, cardId) {
+  const h2h = c.h2h;
+  const homeForm = c.home_form;
+  const awayForm = c.away_form;
+  const homeInfo = c.home_info;
+  const awayInfo = c.away_info;
+  const homePlayers = c.home_players || [];
+  const awayPlayers = c.away_players || [];
+  const homeChem = c.home_chemistry;
+  const awayChem = c.away_chemistry;
+  // Skip entirely for futures or when we have no historical data at all
+  if (c.is_futures) return '';
+  if (!h2h && !homeForm && !awayForm && !homeInfo && !awayInfo && !homePlayers.length && !awayPlayers.length) return '';
+  const home = c.home_team || '';
+  const away = c.away_team || '';
+  let html = '<div class="h2h-section">';
+  html += '<div class="h2h-header">Head-to-Head History</div>';
+  if (h2h && h2h.total_games > 0) {
+    html += '<div class="h2h-record">';
+    html += '<div class="h2h-team home">' + esc(home) + '</div>';
+    html += '<div class="h2h-score">' + h2h.team_a_wins + '<span class="h2h-dash">-</span>' + h2h.team_b_wins + (h2h.draws ? '<span class="h2h-dash">-</span>' + h2h.draws : '') + '</div>';
+    html += '<div class="h2h-team away">' + esc(away) + '</div>';
+    html += '</div>';
+    html += '<div class="h2h-meta">';
+    html += '<div class="h2h-meta-item">Last ' + h2h.total_games + ' meeting' + (h2h.total_games === 1 ? '' : 's') + '</div>';
+    if (h2h.last_meeting && h2h.last_meeting.date) {
+      html += '<div class="h2h-meta-item">Last: ' + esc(h2h.last_meeting.date) + ' &middot; ' + esc(h2h.last_meeting.score || '') + '</div>';
+    }
+    html += '</div>';
+    if (h2h.recent && h2h.recent.length > 1) {
+      const listId = cardId + '-h2h-recent';
+      html += '<button class="h2h-toggle-recent" onclick="event.stopPropagation();document.getElementById(\\'' + listId + '\\').classList.toggle(\\'open\\')">&#9660; Show all ' + h2h.recent.length + ' meetings</button>';
+      html += '<div class="h2h-recent-list" id="' + listId + '">';
+      h2h.recent.forEach(m => {
+        const winner = m.winner || '';
+        html += '<div class="h2h-recent-item">' +
+          '<span class="h2h-recent-date">' + esc(m.date || '') + '</span>' +
+          '<span>' + esc(m.home || '') + ' ' + (m.home_score != null ? m.home_score : '') + '-' + (m.away_score != null ? m.away_score : '') + ' ' + esc(m.away || '') + '</span>' +
+          '<span style="color:var(--muted)">' + esc(winner) + '</span>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+  } else if (!homeInfo && !awayInfo) {
+    html += '<div class="h2h-empty">No prior meetings found in our records.</div>';
+  }
+  // Recent form pills for both teams
+  if (homeForm || awayForm) {
+    html += '<div class="h2h-form-row">';
+    if (homeForm) {
+      html += '<div><div class="h2h-form-label">' + esc(home) + ' &middot; last ' + homeForm.last_n + '</div>';
+      html += '<div class="h2h-form-pills">' + (homeForm.results || []).map(r => '<span class="h2h-form-pill ' + r + '">' + r + '</span>').join('') + '</div></div>';
+    } else {
+      html += '<div></div>';
+    }
+    if (awayForm) {
+      html += '<div style="text-align:right"><div class="h2h-form-label">' + esc(away) + ' &middot; last ' + awayForm.last_n + '</div>';
+      html += '<div class="h2h-form-pills" style="justify-content:flex-end">' + (awayForm.results || []).map(r => '<span class="h2h-form-pill ' + r + '">' + r + '</span>').join('') + '</div></div>';
+    }
+    html += '</div>';
+  }
+
+  // Team stats grid (W/L record + key indicators)
+  if (homeInfo || awayInfo) {
+    html += '<div class="team-stats-grid">';
+    html += renderTeamStatsCard(home, homeInfo);
+    html += renderTeamStatsCard(away, awayInfo);
+    html += '</div>';
+  }
+
+  // Chemistry meters (team momentum / cohesion)
+  if (homeChem || awayChem) {
+    if (homeChem) html += renderChemistryRow(home, homeChem);
+    if (awayChem) html += renderChemistryRow(away, awayChem);
+  }
+
+  // Top players with strengths and weaknesses
+  if (homePlayers.length || awayPlayers.length) {
+    html += '<div class="players-section">';
+    html += '<div class="players-section-title">Key Players</div>';
+    html += '<div class="players-grid">';
+    html += '<div class="player-team-block">';
+    html += '<div class="player-team-label">' + esc(home) + '</div>';
+    if (homePlayers.length) {
+      homePlayers.forEach(p => { html += renderPlayerCard(p); });
+    } else {
+      html += '<div style="color:var(--muted);font-size:11px;">No roster data</div>';
+    }
+    html += '</div>';
+    html += '<div class="player-team-block">';
+    html += '<div class="player-team-label">' + esc(away) + '</div>';
+    if (awayPlayers.length) {
+      awayPlayers.forEach(p => { html += renderPlayerCard(p); });
+    } else {
+      html += '<div style="color:var(--muted);font-size:11px;">No roster data</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function renderTeamStatsCard(name, info) {
+  if (!info) {
+    return '<div class="team-stats-card"><div class="team-stats-name">' + esc(name) + '</div><div style="color:var(--muted);font-size:11px;">No team data</div></div>';
+  }
+  const wins = info.wins || 0;
+  const losses = info.losses || 0;
+  const draws = info.draws || 0;
+  const winPct = (info.win_pct || 0) * 100;
+  const recordStr = draws > 0 ? wins + '-' + losses + '-' + draws : wins + '-' + losses;
+  let html = '<div class="team-stats-card">';
+  html += '<div class="team-stats-name">' + esc(info.name || name) + '</div>';
+  html += '<div class="team-stats-record">' + recordStr + ' <span class="pct">' + winPct.toFixed(1) + '%</span></div>';
+  if (info.rank) {
+    html += '<div class="team-stats-rank">League Rank #' + info.rank + (info.conference_rank ? ' &middot; Conf #' + info.conference_rank : '') + '</div>';
+  } else if (info.conference_rank) {
+    html += '<div class="team-stats-rank">Conference Rank #' + info.conference_rank + '</div>';
+  }
+  html += '<div class="team-stats-bars">';
+  // Win pct bar
+  const winCls = winPct >= 60 ? 'good' : winPct >= 45 ? 'mid' : 'bad';
+  html += '<div class="stat-bar-row"><div class="stat-bar-label">Win %</div><div class="stat-bar-track"><div class="stat-bar-fill ' + winCls + '" style="width:' + Math.max(2, Math.min(100, winPct)) + '%"></div></div><div class="stat-bar-value">' + winPct.toFixed(0) + '%</div></div>';
+  // Last 10 (parse e.g. "7-3" -> percentage)
+  if (info.last_10) {
+    const m = String(info.last_10).match(/^(\\d+)-(\\d+)/);
+    if (m) {
+      const lw = parseInt(m[1], 10);
+      const ll = parseInt(m[2], 10);
+      const lp = (lw + ll) > 0 ? (lw / (lw + ll)) * 100 : 0;
+      const lcls = lp >= 60 ? 'good' : lp >= 45 ? 'mid' : 'bad';
+      html += '<div class="stat-bar-row"><div class="stat-bar-label">L10</div><div class="stat-bar-track"><div class="stat-bar-fill ' + lcls + '" style="width:' + Math.max(2, Math.min(100, lp)) + '%"></div></div><div class="stat-bar-value">' + lw + '-' + ll + '</div></div>';
+    }
+  }
+  // Streak
+  if (info.streak) {
+    let s = parseInt(info.streak, 10);
+    if (!isNaN(s)) {
+      const sAbs = Math.min(Math.abs(s), 10);
+      const sPct = (sAbs / 10) * 100;
+      const sCls = s > 0 ? 'good' : s < 0 ? 'bad' : 'mid';
+      const sLabel = s > 0 ? 'W' + s : s < 0 ? 'L' + Math.abs(s) : '-';
+      html += '<div class="stat-bar-row"><div class="stat-bar-label">Streak</div><div class="stat-bar-track"><div class="stat-bar-fill ' + sCls + '" style="width:' + Math.max(2, sPct) + '%"></div></div><div class="stat-bar-value">' + sLabel + '</div></div>';
+    }
+  }
+  // Points differential bar (basketball/hockey/football)
+  if (info.points_for && info.points_against) {
+    const pf = info.points_for;
+    const pa = info.points_against;
+    const diff = pf - pa;
+    // Map -10..+10 to 0..100
+    const dPct = Math.max(0, Math.min(100, 50 + (diff / 10) * 50));
+    const dCls = diff > 1 ? 'good' : diff < -1 ? 'bad' : 'mid';
+    const sign = diff > 0 ? '+' : '';
+    html += '<div class="stat-bar-row"><div class="stat-bar-label">Pt Diff</div><div class="stat-bar-track"><div class="stat-bar-fill ' + dCls + '" style="width:' + dPct + '%"></div></div><div class="stat-bar-value">' + sign + diff.toFixed(1) + '</div></div>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function renderChemistryRow(name, chem) {
+  if (!chem) return '';
+  const score = chem.score || 0;
+  const label = chem.label || '';
+  let html = '<div class="chemistry-row">';
+  html += '<div class="chemistry-label">' + esc(name) + ' Chemistry</div>';
+  html += '<div class="chemistry-meter"><div class="chemistry-fill" style="width:' + Math.max(2, Math.min(100, score)) + '%"></div></div>';
+  html += '<div class="chemistry-value">' + score.toFixed(0) + ' &middot; ' + esc(label) + '</div>';
+  html += '</div>';
+  return html;
+}
+
+function renderPlayerCard(p) {
+  if (!p) return '';
+  const stats = p.stats || {};
+  const statKeys = Object.keys(stats);
+  let statHtml = '';
+  if (statKeys.length) {
+    statHtml = '<div class="player-stats">';
+    statKeys.slice(0, 4).forEach(k => {
+      const v = stats[k];
+      if (v == null || v === '') return;
+      const vs = (typeof v === 'number') ? (v % 1 === 0 ? v.toString() : v.toFixed(1)) : String(v);
+      statHtml += '<span class="player-stat">' + esc(k) + ' <strong>' + esc(vs) + '</strong></span>';
+    });
+    statHtml += '</div>';
+  }
+  let tagHtml = '';
+  const strengths = p.strengths || [];
+  const weaknesses = p.weaknesses || [];
+  if (strengths.length || weaknesses.length) {
+    tagHtml = '<div class="player-tags">';
+    strengths.slice(0, 3).forEach(s => { tagHtml += '<span class="player-tag strength">' + esc(s) + '</span>'; });
+    weaknesses.slice(0, 2).forEach(w => { tagHtml += '<span class="player-tag weakness">' + esc(w) + '</span>'; });
+    tagHtml += '</div>';
+  }
+  let html = '<div class="player-card">';
+  html += '<div class="player-name">' + esc(p.name || '') + (p.jersey ? ' <span style="color:var(--muted);font-weight:400">#' + esc(p.jersey) + '</span>' : '') + '</div>';
+  if (p.position) html += '<div class="player-pos">' + esc(p.position) + '</div>';
+  html += statHtml;
+  html += tagHtml;
+  html += '</div>';
+  return html;
+}
+
+/* ===== Top Polymarket Traders Section =====
+   Renders an at-a-glance list of which top-10 Polymarket traders (by lifetime
+   volume) currently hold a position on this market, what side they took,
+   their average buy price, and their net dollar exposure. */
+function buildTopTradersSection(c) {
+  const positions = c.top_trader_positions || [];
+  if (!positions.length) return '';
+  let html = '<div class="top-traders-section">';
+  html += '<div class="top-traders-title">Top 10 Polymarket Traders &mdash; Positions on this Market <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;margin-left:6px">(' + positions.length + ' active)</span></div>';
+  html += '<div class="top-traders-list">';
+  positions.forEach(p => {
+    const sideCls = p.side === 'LONG' ? 'long' : 'short';
+    const sideLabel = p.side === 'LONG' ? 'Long' : 'Short';
+    const displayName = p.pseudonym || p.name || (p.wallet ? p.wallet.slice(0, 6) + '\u2026' + p.wallet.slice(-4) : 'Unknown');
+    const usd = Math.abs(p.net_usd || 0);
+    const usdStr = usd >= 1000 ? '$' + (usd / 1000).toFixed(usd >= 10000 ? 0 : 1) + 'k' : '$' + usd.toFixed(0);
+    const lifetimeVol = p.lifetime_volume || 0;
+    const lifetimeStr = lifetimeVol >= 1e6 ? '$' + (lifetimeVol / 1e6).toFixed(1) + 'M' : '$' + (lifetimeVol / 1000).toFixed(0) + 'k';
+    const avgPriceStr = p.avg_price > 0 ? Math.round(p.avg_price * 100) + 'c' : '';
+    html += '<div class="top-trader-row">';
+    html += '<span class="top-trader-rank">#' + (p.rank || '?') + '</span>';
+    html += '<span class="top-trader-name" title="' + esc(displayName) + ' &middot; lifetime ' + lifetimeStr + '">' + esc(displayName) + '</span>';
+    html += '<span class="top-trader-vol" title="Lifetime trading volume">' + lifetimeStr + '</span>';
+    html += '<div class="top-trader-bet">';
+    html += '<span class="top-trader-side ' + sideCls + '">' + sideLabel + '</span>';
+    html += '<span class="top-trader-outcome" title="' + esc(p.outcome || '') + '">' + esc(p.outcome || '') + '</span>';
+    if (avgPriceStr) html += '<span class="top-trader-vol">@ ' + avgPriceStr + '</span>';
+    html += '<span class="top-trader-usd">' + usdStr + '</span>';
+    html += '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  html += '</div>';
+  return html;
 }
 
 /* ===== Intel Grid Builder ===== */
@@ -4888,7 +7762,7 @@ function buildIntelGrid(c) {
     kalshi_volume: 'Total contracts traded on Kalshi for this game.'
   };
 
-  if (dp.includes('volume')) items.push({ label: 'Volume Traded', value: c.poly_volume != null ? '$' + Number(c.poly_volume).toLocaleString() : '-', key: 'volume' });
+  if (dp.includes('volume')) items.push({ label: 'Volume Traded', value: c.poly_volume != null ? fmtMoney(c.poly_volume, 0) : '-', key: 'volume' });
   if (dp.includes('spread')) items.push({ label: 'Bid-Ask Spread', value: c.poly_spread != null ? fmt(c.poly_spread, 2) : '-', key: 'spread' });
   if (dp.includes('bookmakers')) items.push({ label: 'Bookmakers', value: c.num_bookmakers || '-', key: 'bookmakers' });
   if (dp.includes('sharp_book')) items.push({ label: 'Sharp Book', value: c.sharp_book || '-', key: 'sharp_book' });
@@ -4947,7 +7821,7 @@ function renderProfitTracker() {
     const pnl = stats.total_pnl || 0;
     const pnlCol = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     wrap.innerHTML =
-      '<div class="profit-card"><div class="profit-value" style="color:' + pnlCol + '">$' + fmt(pnl, 2) + '</div><div class="profit-label">Total P&amp;L</div></div>' +
+      '<div class="profit-card"><div class="profit-value" style="color:' + pnlCol + '">' + fmtMoney(pnl, 2) + '</div><div class="profit-label">Total P&amp;L</div></div>' +
       '<div class="profit-card"><div class="profit-value">' + fmt(stats.win_rate || 0, 0) + '%</div><div class="profit-label">Win Rate</div></div>' +
       '<div class="profit-card"><div class="profit-value">' + (stats.open_trades || 0) + '</div><div class="profit-label">Open Trades</div></div>' +
       '<div class="profit-card"><div class="profit-value">' + (stats.closed_trades || 0) + '</div><div class="profit-label">Closed Trades</div></div>' +
@@ -4961,7 +7835,7 @@ function renderProfitTracker() {
     empty.style.display = 'none';
     body.innerHTML = trades.map(t => {
       const pnlCol = (t.pnl||0) >= 0 ? 'var(--green)' : 'var(--red)';
-      return '<tr><td>' + esc(t.market_name||'') + '</td><td>' + esc(t.outcome||'') + '</td><td>' + fmt(t.entry_price,0) + 'c</td><td>$' + fmt(t.amount,2) + '</td><td>' + esc(t.status||'open') + '</td><td style="color:' + pnlCol + '">$' + fmt(t.pnl||0,2) + '</td><td>' + (t.created_at ? new Date(t.created_at).toLocaleDateString() : '-') + '</td></tr>';
+      return '<tr><td>' + esc(t.market_name||'') + '</td><td>' + esc(t.outcome||'') + '</td><td>' + fmt(t.entry_price,0) + 'c</td><td>' + fmtMoney(t.amount,2) + '</td><td>' + esc(t.status||'open') + '</td><td style="color:' + pnlCol + '">' + fmtMoney(t.pnl||0,2) + '</td><td>' + (t.created_at ? new Date(t.created_at).toLocaleDateString() : '-') + '</td></tr>';
     }).join('');
   }).catch(() => {});
 }
@@ -5042,7 +7916,7 @@ function renderHistorical(rows) {
   body.innerHTML = rows.map(r => {
     const res = (r.resolution || '').toLowerCase();
     const resCls = res === 'yes' ? 'yes' : (res === 'no' ? 'no' : '');
-    const vol = r.volume ? '$' + fmt(r.volume, 0) : '-';
+    const vol = r.volume ? fmtMoney(r.volume, 0) : '-';
     const price = r.final_price != null ? fmtPct(r.final_price * 100) : '-';
     const date = r.end_date ? new Date(r.end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
     return '<tr>' +
@@ -5129,7 +8003,7 @@ function renderCrossSportTicker() {
   if (!edges.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
   items.innerHTML = edges.slice(0, 10).map(e =>
-    '<div class="ticker-item" onclick="switchSport(\'' + (Object.entries(sports).find(([k,s]) => s.title === e.sport_name)?.[0] || '') + '\')">' +
+    '<div class="ticker-item" onclick="switchSport(\\'' + (Object.entries(sports).find(([k,s]) => s.title === e.sport_name)?.[0] || '') + '\\')">' +
     '<div class="ticker-sport">' + esc(e.sport_name) + '</div>' +
     '<div class="ticker-teams">' + esc(e.home_team) + ' vs ' + esc(e.away_team) + '</div>' +
     '<div class="ticker-edge">' + fmtPct(Math.abs(e.divergence)) + ' &mdash; ' + esc(e.outcome) + '</div>' +
@@ -5331,11 +8205,15 @@ activeSport = USER_SPORT || '';
 if (!localStorage.getItem('sharpe_hero_dismissed')) {
   document.getElementById('heroBanner').style.display = '';
 }
+document.documentElement.lang = _narveLang;
+applyTranslations();
 connectWS();
 loadSports();
 loadLayout();
 loadSubscription();
 loadUserInfo();
+// Refresh FX rates in the background, then re-render so amounts use the latest rates.
+ensureNarveFxRates().then(() => { try { if (data) render(); } catch (e) {} }).catch(() => {});
 
 fetch('/api/data' + (activeSport ? '?sport=' + encodeURIComponent(activeSport) : ''), { credentials: 'same-origin' })
   .then(r => r.json()).then(d => { data = d; render(); }).catch(() => {});
@@ -6183,14 +9061,124 @@ SETTINGS_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Display & Language (units, conversions, language) -->
+  <div class="settings-section">
+    <div class="settings-section-title" data-i18n="pref.localization">Display &amp; Language</div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name" data-i18n="pref.language">Language</div>
+        <div class="setting-desc" data-i18n="pref.languageDesc">Interface language for menus and labels</div>
+      </div>
+      <div class="setting-control">
+        <select id="displayLanguage"></select>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name" data-i18n="pref.numberFormat">Number Format</div>
+        <div class="setting-desc" data-i18n="pref.formatDesc">How numbers are punctuated</div>
+      </div>
+      <div class="setting-control">
+        <select id="unitSystem">
+          <option value="american" data-i18n="pref.american">American (1,234.56)</option>
+          <option value="european" data-i18n="pref.european">European (1.234,56)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name" data-i18n="pref.currency">Display Currency</div>
+        <div class="setting-desc" data-i18n="pref.currencyDesc">Convert market values to your preferred currency (live ECB rates)</div>
+      </div>
+      <div class="setting-control">
+        <select id="displayCurrency"></select>
+      </div>
+    </div>
+  </div>
+
   <!-- Save bar -->
   <div class="save-bar" id="saveBar">
-    <span class="save-bar-text">You have unsaved changes</span>
-    <button class="save-btn" onclick="saveSettings()">Save Changes</button>
+    <span class="save-bar-text" data-i18n="pref.unsaved">You have unsaved changes</span>
+    <button class="save-btn" onclick="saveSettings()" data-i18n="pref.saveChanges">Save Changes</button>
   </div>
 </div>
 
 <script>
+const NARVE_CURRENCIES = [
+  ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+  ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],['CNY','Chinese Yuan'],
+  ['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],['SEK','Swedish Krona'],['KRW','South Korean Won'],
+  ['SGD','Singapore Dollar'],['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+  ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],['DKK','Danish Krone'],
+  ['PLN','Polish Zloty'],['THB','Thai Baht'],['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],
+  ['CZK','Czech Koruna'],['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+  ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+];
+const NARVE_LANGUAGES = [
+  ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+  ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+  ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+  ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
+  ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
+];
+const NARVE_I18N = {
+  en: {'pref.localization':'Display & Language','pref.language':'Language','pref.currency':'Display Currency','pref.numberFormat':'Number Format','pref.american':'American (1,234.56)','pref.european':'European (1.234,56)','pref.languageDesc':'Interface language for menus and labels','pref.currencyDesc':'Convert market values to your preferred currency (live ECB rates)','pref.formatDesc':'How numbers are punctuated','pref.unsaved':'You have unsaved changes','pref.saveChanges':'Save Changes','pref.savedOk':'Saved!'},
+  es: {'pref.localization':'Pantalla e idioma','pref.language':'Idioma','pref.currency':'Moneda de visualizaci\u00f3n','pref.numberFormat':'Formato de n\u00famero','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Idioma de la interfaz para men\u00fas y etiquetas','pref.currencyDesc':'Convierte los valores del mercado a tu moneda preferida (tasas BCE en vivo)','pref.formatDesc':'C\u00f3mo se punt\u00faan los n\u00fameros','pref.unsaved':'Tienes cambios sin guardar','pref.saveChanges':'Guardar cambios','pref.savedOk':'\u00a1Guardado!'},
+  de: {'pref.localization':'Anzeige & Sprache','pref.language':'Sprache','pref.currency':'Anzeigew\u00e4hrung','pref.numberFormat':'Zahlenformat','pref.american':'Amerikanisch (1,234.56)','pref.european':'Europ\u00e4isch (1.234,56)','pref.languageDesc':'Oberfl\u00e4chensprache f\u00fcr Men\u00fcs und Beschriftungen','pref.currencyDesc':'Marktwerte in Ihre bevorzugte W\u00e4hrung umrechnen (Live-EZB-Kurse)','pref.formatDesc':'Wie Zahlen formatiert werden','pref.unsaved':'Sie haben ungespeicherte \u00c4nderungen','pref.saveChanges':'\u00c4nderungen speichern','pref.savedOk':'Gespeichert!'},
+  fr: {'pref.localization':'Affichage et langue','pref.language':'Langue','pref.currency':'Devise d\u2019affichage','pref.numberFormat':'Format des nombres','pref.american':'Am\u00e9ricain (1,234.56)','pref.european':'Europ\u00e9en (1.234,56)','pref.languageDesc':'Langue de l\u2019interface pour les menus et les \u00e9tiquettes','pref.currencyDesc':'Convertir les valeurs de march\u00e9 dans votre devise pr\u00e9f\u00e9r\u00e9e (taux BCE en direct)','pref.formatDesc':'Comment les nombres sont ponctu\u00e9s','pref.unsaved':'Vous avez des modifications non enregistr\u00e9es','pref.saveChanges':'Enregistrer','pref.savedOk':'Enregistr\u00e9 !'},
+  it: {'pref.localization':'Visualizzazione e lingua','pref.language':'Lingua','pref.currency':'Valuta di visualizzazione','pref.numberFormat':'Formato numerico','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Lingua dell\u2019interfaccia per menu ed etichette','pref.currencyDesc':'Converti i valori di mercato nella tua valuta preferita (tassi BCE in tempo reale)','pref.formatDesc':'Come sono punteggiati i numeri','pref.unsaved':'Hai modifiche non salvate','pref.saveChanges':'Salva modifiche','pref.savedOk':'Salvato!'},
+  pt: {'pref.localization':'Exibi\u00e7\u00e3o e idioma','pref.language':'Idioma','pref.currency':'Moeda de exibi\u00e7\u00e3o','pref.numberFormat':'Formato num\u00e9rico','pref.american':'Americano (1,234.56)','pref.european':'Europeu (1.234,56)','pref.languageDesc':'Idioma da interface para menus e r\u00f3tulos','pref.currencyDesc':'Converter valores de mercado para sua moeda preferida (taxas BCE em tempo real)','pref.formatDesc':'Como os n\u00fameros s\u00e3o pontuados','pref.unsaved':'Voc\u00ea tem altera\u00e7\u00f5es n\u00e3o salvas','pref.saveChanges':'Salvar altera\u00e7\u00f5es','pref.savedOk':'Salvo!'},
+  nl: {'pref.localization':'Weergave en taal','pref.language':'Taal','pref.currency':'Weergavevaluta','pref.numberFormat':'Getalnotatie','pref.american':'Amerikaans (1,234.56)','pref.european':'Europees (1.234,56)','pref.languageDesc':'Taal van de interface voor menu\u2019s en labels','pref.currencyDesc':'Converteer marktwaardes naar je voorkeursvaluta (live ECB-koersen)','pref.formatDesc':'Hoe getallen worden geschreven','pref.unsaved':'Je hebt niet-opgeslagen wijzigingen','pref.saveChanges':'Wijzigingen opslaan','pref.savedOk':'Opgeslagen!'},
+  pl: {'pref.localization':'Wy\u015bwietlanie i j\u0119zyk','pref.language':'J\u0119zyk','pref.currency':'Waluta wy\u015bwietlania','pref.numberFormat':'Format liczb','pref.american':'Ameryka\u0144ski (1,234.56)','pref.european':'Europejski (1.234,56)','pref.languageDesc':'J\u0119zyk interfejsu dla menu i etykiet','pref.currencyDesc':'Konwertuj warto\u015bci rynkowe na preferowan\u0105 walut\u0119 (kursy EBC na \u017cywo)','pref.formatDesc':'Jak interpunkcja liczb','pref.unsaved':'Masz niezapisane zmiany','pref.saveChanges':'Zapisz zmiany','pref.savedOk':'Zapisano!'},
+  ja: {'pref.localization':'\u8868\u793a\u3068\u8a00\u8a9e','pref.language':'\u8a00\u8a9e','pref.currency':'\u8868\u793a\u901a\u8ca8','pref.numberFormat':'\u6570\u5024\u5f62\u5f0f','pref.american':'\u30a2\u30e1\u30ea\u30ab\u5f0f (1,234.56)','pref.european':'\u30e8\u30fc\u30ed\u30c3\u30d1\u5f0f (1.234,56)','pref.languageDesc':'\u30e1\u30cb\u30e5\u30fc\u3068\u30e9\u30d9\u30eb\u306e\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a00\u8a9e','pref.currencyDesc':'\u5e02\u5834\u4fa1\u5024\u3092\u5e0c\u671b\u306e\u901a\u8ca8\u306b\u5909\u63db\uff08\u30e9\u30a4\u30d6ECB\u30ec\u30fc\u30c8\uff09','pref.formatDesc':'\u6570\u5b57\u306e\u533a\u5207\u308a\u65b9','pref.unsaved':'\u672a\u4fdd\u5b58\u306e\u5909\u66f4\u304c\u3042\u308a\u307e\u3059','pref.saveChanges':'\u5909\u66f4\u3092\u4fdd\u5b58','pref.savedOk':'\u4fdd\u5b58\u3057\u307e\u3057\u305f\uff01'},
+  ko: {'pref.localization':'\ud45c\uc2dc \ubc0f \uc5b8\uc5b4','pref.language':'\uc5b8\uc5b4','pref.currency':'\ud45c\uc2dc \ud1b5\ud654','pref.numberFormat':'\uc22b\uc790 \ud615\uc2dd','pref.american':'\ubbf8\uad6d\uc2dd (1,234.56)','pref.european':'\uc720\ub7fd\uc2dd (1.234,56)','pref.languageDesc':'\uba54\ub274 \ubc0f \ub77c\ubca8\uc758 \uc778\ud130\ud398\uc774\uc2a4 \uc5b8\uc5b4','pref.currencyDesc':'\uc2dc\uc7a5 \uac00\uce58\ub97c \uc120\ud638\ud558\ub294 \ud1b5\ud654\ub85c \ubcc0\ud658 (\uc2e4\uc2dc\uac04 ECB \ud658\uc728)','pref.formatDesc':'\uc22b\uc790 \uad6c\ub450\uc810 \ubc29\uc2dd','pref.unsaved':'\uc800\uc7a5\ub418\uc9c0 \uc54a\uc740 \ubcc0\uacbd\uc0ac\ud56d\uc774 \uc788\uc2b5\ub2c8\ub2e4','pref.saveChanges':'\ubcc0\uacbd\uc0ac\ud56d \uc800\uc7a5','pref.savedOk':'\uc800\uc7a5\ub428!'},
+  zh: {'pref.localization':'\u663e\u793a\u4e0e\u8bed\u8a00','pref.language':'\u8bed\u8a00','pref.currency':'\u663e\u793a\u8d27\u5e01','pref.numberFormat':'\u6570\u5b57\u683c\u5f0f','pref.american':'\u7f8e\u5f0f (1,234.56)','pref.european':'\u6b27\u5f0f (1.234,56)','pref.languageDesc':'\u83dc\u5355\u548c\u6807\u7b7e\u7684\u754c\u9762\u8bed\u8a00','pref.currencyDesc':'\u5c06\u5e02\u573a\u4ef7\u503c\u8f6c\u6362\u4e3a\u60a8\u504f\u597d\u7684\u8d27\u5e01\uff08\u5b9e\u65f6\u6b27\u6d32\u592e\u884c\u6c47\u7387\uff09','pref.formatDesc':'\u6570\u5b57\u6807\u70b9\u65b9\u5f0f','pref.unsaved':'\u60a8\u6709\u672a\u4fdd\u5b58\u7684\u66f4\u6539','pref.saveChanges':'\u4fdd\u5b58\u66f4\u6539','pref.savedOk':'\u5df2\u4fdd\u5b58\uff01'},
+  ru: {'pref.localization':'\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u0438 \u044f\u0437\u044b\u043a','pref.language':'\u042f\u0437\u044b\u043a','pref.currency':'\u0412\u0430\u043b\u044e\u0442\u0430 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f','pref.numberFormat':'\u0424\u043e\u0440\u043c\u0430\u0442 \u0447\u0438\u0441\u0435\u043b','pref.american':'\u0410\u043c\u0435\u0440\u0438\u043a\u0430\u043d\u0441\u043a\u0438\u0439 (1,234.56)','pref.european':'\u0415\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u043a\u0438\u0439 (1.234,56)','pref.languageDesc':'\u042f\u0437\u044b\u043a \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0434\u043b\u044f \u043c\u0435\u043d\u044e \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u0435\u0439','pref.currencyDesc':'\u041a\u043e\u043d\u0432\u0435\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u044b\u043d\u043e\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432 \u043f\u0440\u0435\u0434\u043f\u043e\u0447\u0438\u0442\u0430\u0435\u043c\u0443\u044e \u0432\u0430\u043b\u044e\u0442\u0443','pref.formatDesc':'\u041a\u0430\u043a \u043f\u0443\u043d\u043a\u0442\u0443\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u0447\u0438\u0441\u043b\u0430','pref.unsaved':'\u0423 \u0432\u0430\u0441 \u0435\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f','pref.saveChanges':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','pref.savedOk':'\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e!'},
+  hi: {'pref.localization':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u0914\u0930 \u092d\u093e\u0937\u093e','pref.language':'\u092d\u093e\u0937\u093e','pref.currency':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u092e\u0941\u0926\u094d\u0930\u093e','pref.numberFormat':'\u0938\u0902\u0916\u094d\u092f\u093e \u092a\u094d\u0930\u093e\u0930\u0942\u092a','pref.american':'\u0905\u092e\u0947\u0930\u093f\u0915\u0940 (1,234.56)','pref.european':'\u092f\u0942\u0930\u094b\u092a\u0940\u092f (1.234,56)','pref.languageDesc':'\u092e\u0947\u0928\u0942 \u0914\u0930 \u0932\u0947\u092c\u0932 \u0915\u0947 \u0932\u093f\u090f \u0907\u0902\u091f\u0930\u092b\u093c\u0947\u0938 \u092d\u093e\u0937\u093e','pref.currencyDesc':'\u092c\u093e\u091c\u093c\u093e\u0930 \u092e\u0942\u0932\u094d\u092f\u094b\u0902 \u0915\u094b \u0905\u092a\u0928\u0940 \u092a\u0938\u0902\u0926\u0940\u0926\u093e \u092e\u0941\u0926\u094d\u0930\u093e \u092e\u0947\u0902 \u092c\u0926\u0932\u0947\u0902 (\u0932\u093e\u0907\u0935 ECB \u0926\u0930\u0947\u0902)','pref.formatDesc':'\u0938\u0902\u0916\u094d\u092f\u093e\u090f\u0901 \u0915\u0948\u0938\u0947 \u0932\u093f\u0916\u0940 \u091c\u093e\u0924\u0940 \u0939\u0948\u0902','pref.unsaved':'\u0906\u092a\u0915\u0947 \u092a\u093e\u0938 \u0905\u0938\u0939\u0947\u091c\u0947 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0939\u0948\u0902','pref.saveChanges':'\u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0938\u0939\u0947\u091c\u0947\u0902','pref.savedOk':'\u0938\u0939\u0947\u091c\u093e \u0917\u092f\u093e!'},
+  ar: {'pref.localization':'\u0627\u0644\u0639\u0631\u0636 \u0648\u0627\u0644\u0644\u063a\u0629','pref.language':'\u0627\u0644\u0644\u063a\u0629','pref.currency':'\u0639\u0645\u0644\u0629 \u0627\u0644\u0639\u0631\u0636','pref.numberFormat':'\u062a\u0646\u0633\u064a\u0642 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.american':'\u0623\u0645\u0631\u064a\u0643\u064a (1,234.56)','pref.european':'\u0623\u0648\u0631\u0648\u0628\u064a (1.234,56)','pref.languageDesc':'\u0644\u063a\u0629 \u0627\u0644\u0648\u0627\u062c\u0647\u0629 \u0644\u0644\u0642\u0648\u0627\u0626\u0645 \u0648\u0627\u0644\u062a\u0633\u0645\u064a\u0627\u062a','pref.currencyDesc':'\u062a\u062d\u0648\u064a\u0644 \u0642\u064a\u0645 \u0627\u0644\u0633\u0648\u0642 \u0625\u0644\u0649 \u0639\u0645\u0644\u062a\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629 (\u0623\u0633\u0639\u0627\u0631 ECB \u0627\u0644\u0645\u0628\u0627\u0634\u0631\u0629)','pref.formatDesc':'\u0643\u064a\u0641\u064a\u0629 \u0643\u062a\u0627\u0628\u0629 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.unsaved':'\u0644\u062f\u064a\u0643 \u062a\u063a\u064a\u064a\u0631\u0627\u062a \u063a\u064a\u0631 \u0645\u062d\u0641\u0648\u0638\u0629','pref.saveChanges':'\u062d\u0641\u0638 \u0627\u0644\u062a\u063a\u064a\u064a\u0631\u0627\u062a','pref.savedOk':'\u062a\u0645 \u0627\u0644\u062d\u0641\u0638!'},
+  bn: {'pref.localization':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u0993 \u09ad\u09be\u09b7\u09be','pref.language':'\u09ad\u09be\u09b7\u09be','pref.currency':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be','pref.numberFormat':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u09ac\u09bf\u09a8\u09cd\u09af\u09be\u09b8','pref.american':'\u0986\u09ae\u09c7\u09b0\u09bf\u0995\u09be\u09a8 (1,234.56)','pref.european':'\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09af\u09bc (1.234,56)','pref.languageDesc':'\u09ae\u09c7\u09a8\u09c1 \u0993 \u09b2\u09c7\u09ac\u09c7\u09b2\u09c7\u09b0 \u099c\u09a8\u09cd\u09af \u0987\u09a8\u09cd\u099f\u09be\u09b0\u09ab\u09c7\u09b8 \u09ad\u09be\u09b7\u09be','pref.currencyDesc':'\u09ac\u09be\u099c\u09be\u09b0 \u09ae\u09c2\u09b2\u09cd\u09af \u0986\u09aa\u09a8\u09be\u09b0 \u09aa\u099b\u09a8\u09cd\u09a6\u09c7\u09b0 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be\u09af\u09bc \u09b0\u09c2\u09aa\u09be\u09a8\u09cd\u09a4\u09b0 \u0995\u09b0\u09c1\u09a8 (\u09b2\u09be\u0987\u09ad ECB \u09b0\u09c7\u099f)','pref.formatDesc':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u09b2\u09c7\u0996\u09be \u09b9\u09af\u09bc','pref.unsaved':'\u0986\u09aa\u09a8\u09be\u09b0 \u0985\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u0986\u099b\u09c7','pref.saveChanges':'\u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','pref.savedOk':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4!'},
+  ur: {'pref.localization':'\u0688\u0633\u067e\u0644\u06cc \u0627\u0648\u0631 \u0632\u0628\u0627\u0646','pref.language':'\u0632\u0628\u0627\u0646','pref.currency':'\u0688\u0633\u067e\u0644\u06cc \u06a9\u0631\u0646\u0633\u06cc','pref.numberFormat':'\u0646\u0645\u0628\u0631 \u0641\u0627\u0631\u0645\u06cc\u0679','pref.american':'\u0627\u0645\u0631\u06cc\u06a9\u06cc (1,234.56)','pref.european':'\u06cc\u0648\u0631\u067e\u06cc (1.234,56)','pref.languageDesc':'\u0645\u06cc\u0646\u06cc\u0648\u0632 \u0627\u0648\u0631 \u0644\u06cc\u0628\u0644\u0632 \u06a9\u06cc \u0627\u0646\u0679\u0631\u0641\u06cc\u0633 \u0632\u0628\u0627\u0646','pref.currencyDesc':'\u0645\u0627\u0631\u06a9\u06cc\u0679 \u0642\u062f\u0631\u0648\u0646 \u06a9\u0648 \u0627\u067e\u0646\u06cc \u067e\u0633\u0646\u062f\u06cc\u062f\u06c1 \u06a9\u0631\u0646\u0633\u06cc \u0645\u06cc\u0646 \u062a\u0628\u062f\u06cc\u0644 \u06a9\u0631\u06cc\u0646 (\u0644\u0627\u0626\u06cc\u0648 ECB \u0634\u0631\u062d)','pref.formatDesc':'\u0646\u0645\u0628\u0631 \u06a9\u06cc\u0633\u06d2 \u0644\u06a9\u06be\u06d2 \u062c\u0627\u062a\u06d2 \u06c1\u06cc\u06ba','pref.unsaved':'\u0622\u067e \u06a9\u06cc \u063a\u06cc\u0631 \u0645\u062d\u0641\u0648\u0638 \u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u06c1\u06cc\u06ba','pref.saveChanges':'\u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','pref.savedOk':'\u0645\u062d\u0641\u0648\u0638 \u06c1\u0648 \u06af\u06cc\u0627!'},
+  id: {'pref.localization':'Tampilan & Bahasa','pref.language':'Bahasa','pref.currency':'Mata Uang Tampilan','pref.numberFormat':'Format Angka','pref.american':'Amerika (1,234.56)','pref.european':'Eropa (1.234,56)','pref.languageDesc':'Bahasa antarmuka untuk menu dan label','pref.currencyDesc':'Konversi nilai pasar ke mata uang pilihan Anda (kurs ECB langsung)','pref.formatDesc':'Cara penulisan angka','pref.unsaved':'Anda memiliki perubahan yang belum disimpan','pref.saveChanges':'Simpan Perubahan','pref.savedOk':'Tersimpan!'},
+  tr: {'pref.localization':'G\u00f6r\u00fcn\u00fcm ve Dil','pref.language':'Dil','pref.currency':'G\u00f6r\u00fcnt\u00fcleme Para Birimi','pref.numberFormat':'Say\u0131 Bi\u00e7imi','pref.american':'Amerikan (1,234.56)','pref.european':'Avrupa (1.234,56)','pref.languageDesc':'Men\u00fcler ve etiketler i\u00e7in aray\u00fcz dili','pref.currencyDesc':'Piyasa de\u011ferlerini tercih etti\u011finiz para birimine d\u00f6n\u00fc\u015ft\u00fcr\u00fcn (canl\u0131 ECB kurlar\u0131)','pref.formatDesc':'Say\u0131lar\u0131n yaz\u0131l\u0131\u015f bi\u00e7imi','pref.unsaved':'Kaydedilmemi\u015f de\u011fi\u015fiklikleriniz var','pref.saveChanges':'De\u011fi\u015fiklikleri Kaydet','pref.savedOk':'Kaydedildi!'},
+  vi: {'pref.localization':'Hi\u1ec3n th\u1ecb & Ng\u00f4n ng\u1eef','pref.language':'Ng\u00f4n ng\u1eef','pref.currency':'Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb','pref.numberFormat':'\u0110\u1ecbnh d\u1ea1ng s\u1ed1','pref.american':'Ki\u1ec3u M\u1ef9 (1,234.56)','pref.european':'Ki\u1ec3u Ch\u00e2u \u00c2u (1.234,56)','pref.languageDesc':'Ng\u00f4n ng\u1eef giao di\u1ec7n cho menu v\u00e0 nh\u00e3n','pref.currencyDesc':'Chuy\u1ec3n \u0111\u1ed5i gi\u00e1 tr\u1ecb th\u1ecb tr\u01b0\u1eddng sang ti\u1ec1n t\u1ec7 \u01b0a th\u00edch (t\u1ef7 gi\u00e1 ECB tr\u1ef1c ti\u1ebfp)','pref.formatDesc':'C\u00e1ch vi\u1ebft s\u1ed1','pref.unsaved':'B\u1ea1n c\u00f3 thay \u0111\u1ed5i ch\u01b0a l\u01b0u','pref.saveChanges':'L\u01b0u thay \u0111\u1ed5i','pref.savedOk':'\u0110\u00e3 l\u01b0u!'},
+  th: {'pref.localization':'\u0e01\u0e32\u0e23\u0e41\u0e2a\u0e14\u0e07\u0e1c\u0e25\u0e41\u0e25\u0e30\u0e20\u0e32\u0e29\u0e32','pref.language':'\u0e20\u0e32\u0e29\u0e32','pref.currency':'\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e41\u0e2a\u0e14\u0e07','pref.numberFormat':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.american':'\u0e41\u0e1a\u0e1a\u0e2d\u0e40\u0e21\u0e23\u0e34\u0e01\u0e31\u0e19 (1,234.56)','pref.european':'\u0e41\u0e1a\u0e1a\u0e22\u0e38\u0e42\u0e23\u0e1b (1.234,56)','pref.languageDesc':'\u0e20\u0e32\u0e29\u0e32\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e40\u0e21\u0e19\u0e39\u0e41\u0e25\u0e30\u0e1b\u0e49\u0e32\u0e22\u0e01\u0e33\u0e01\u0e31\u0e1a','pref.currencyDesc':'\u0e41\u0e1b\u0e25\u0e07\u0e21\u0e39\u0e25\u0e04\u0e48\u0e32\u0e15\u0e25\u0e32\u0e14\u0e40\u0e1b\u0e47\u0e19\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 (\u0e2d\u0e31\u0e15\u0e23\u0e32 ECB \u0e2a\u0e14)','pref.formatDesc':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e01\u0e32\u0e23\u0e40\u0e02\u0e35\u0e22\u0e19\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.unsaved':'\u0e04\u0e38\u0e13\u0e21\u0e35\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07\u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.saveChanges':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07','pref.savedOk':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e41\u0e25\u0e49\u0e27!'},
+};
+let _narveLang = localStorage.getItem('narve_language') || 'en';
+function t(key) {
+  const dict = NARVE_I18N[_narveLang] || NARVE_I18N.en;
+  return dict[key] || NARVE_I18N.en[key] || key;
+}
+function applyTranslations(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+}
+
+function populateCurrencyPicker() {
+  const sel = document.getElementById('displayCurrency');
+  if (!sel) return;
+  sel.innerHTML = NARVE_CURRENCIES.map(c =>
+    '<option value="' + c[0] + '">' + c[0] + ' \u2014 ' + c[1] + '</option>'
+  ).join('');
+  const saved = localStorage.getItem('narve_currency') || 'USD';
+  sel.value = saved;
+  const us = document.getElementById('unitSystem');
+  if (us) us.value = localStorage.getItem('narve_units') || 'american';
+}
+
+function populateLanguagePicker() {
+  const sel = document.getElementById('displayLanguage');
+  if (!sel) return;
+  sel.innerHTML = NARVE_LANGUAGES.map(l =>
+    '<option value="' + l[0] + '">' + l[1] + '</option>'
+  ).join('');
+  sel.value = _narveLang;
+}
+
 let originalSettings = {};
 let currentSettings = {};
 
@@ -6210,6 +9198,10 @@ async function loadSettings() {
     document.getElementById('notifications').checked = !!s.notifications_enabled;
     document.getElementById('theme').value = s.theme || 'dark';
 
+    populateCurrencyPicker();
+    populateLanguagePicker();
+    document.documentElement.lang = _narveLang;
+    applyTranslations();
     originalSettings = getFormSettings();
   } catch(e) {
     console.error(e);
@@ -6222,6 +9214,9 @@ function getFormSettings() {
     divergence_threshold: parseFloat(document.getElementById('threshold').value),
     notifications_enabled: document.getElementById('notifications').checked ? 1 : 0,
     theme: document.getElementById('theme').value,
+    _narve_currency: document.getElementById('displayCurrency').value,
+    _narve_units: document.getElementById('unitSystem').value,
+    _narve_language: document.getElementById('displayLanguage').value,
   };
 }
 
@@ -6231,24 +9226,45 @@ function checkChanges() {
   document.getElementById('saveBar').classList.toggle('visible', changed);
 }
 
+// Live language switch (no save needed — instant feedback)
+document.addEventListener('change', e => {
+  if (e.target && e.target.id === 'displayLanguage') {
+    _narveLang = e.target.value;
+    localStorage.setItem('narve_language', _narveLang);
+    document.documentElement.lang = _narveLang;
+    applyTranslations();
+  }
+});
+
 async function saveSettings() {
   const btn = document.querySelector('.save-btn');
-  btn.textContent = 'Saving...';
+  const savingLabel = (NARVE_I18N[_narveLang] && NARVE_I18N[_narveLang]['pref.saveChanges']) || 'Saving...';
+  btn.textContent = savingLabel + '...';
   try {
+    const formData = getFormSettings();
+    // Persist client-only display preferences locally.
+    localStorage.setItem('narve_currency', formData._narve_currency || 'USD');
+    localStorage.setItem('narve_units', formData._narve_units || 'american');
+    localStorage.setItem('narve_language', formData._narve_language || 'en');
+    // Strip them from the server payload.
+    const serverPayload = Object.assign({}, formData);
+    delete serverPayload._narve_currency;
+    delete serverPayload._narve_units;
+    delete serverPayload._narve_language;
     const r = await fetch('/api/settings', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(getFormSettings())
+      body: JSON.stringify(serverPayload)
     });
     if (r.ok) {
       originalSettings = getFormSettings();
       document.getElementById('saveBar').classList.remove('visible');
-      btn.textContent = 'Saved!';
-      setTimeout(() => { btn.textContent = 'Save Changes'; }, 1500);
+      btn.textContent = t('pref.savedOk');
+      setTimeout(() => { btn.textContent = t('pref.saveChanges'); }, 1500);
     }
   } catch(e) {
-    btn.textContent = 'Error — try again';
-    setTimeout(() => { btn.textContent = 'Save Changes'; }, 2000);
+    btn.textContent = 'Error \u2014 try again';
+    setTimeout(() => { btn.textContent = t('pref.saveChanges'); }, 2000);
   }
 }
 
@@ -6944,8 +9960,8 @@ function renderUsers(users) {
       ? '<span class="badge-pro">PRO</span>'
       : '<span class="badge-free">FREE</span>';
     const actionBtn = isPro
-      ? '<button class="btn-sm btn-downgrade" onclick="setTier(' + u.id + ', \'free\')">Downgrade</button>'
-      : '<button class="btn-sm btn-upgrade" onclick="setTier(' + u.id + ', \'pro\')">Upgrade to Pro</button>';
+      ? '<button class="btn-sm btn-downgrade" onclick="setTier(' + u.id + ', \\'free\\')">Downgrade</button>'
+      : '<button class="btn-sm btn-upgrade" onclick="setTier(' + u.id + ', \\'pro\\')">Upgrade to Pro</button>';
     return '<tr>' +
       '<td><div class="user-name-cell">' +
         '<div class="user-avatar-sm">' + esc(initial) + '</div>' +

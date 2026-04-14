@@ -15,6 +15,7 @@ import logging
 import os
 import time
 import argparse
+import urllib.request
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -31,6 +32,46 @@ if not _sso_secret:
 TRADE_LOG = Path(__file__).parent / "stock_trades.json"
 BOT_LOG = Path(__file__).parent / "stock_bot_activity.log"
 DASHBOARD_PORT = 8050
+
+# ─── FX rates cache ──────────────────────────────────────────────────
+_FX_CACHE: dict = {"data": None, "fetched_at": 0.0}
+_FX_TTL = 3600  # 1 hour
+_FX_FALLBACK = {
+    "base": "USD",
+    "date": "fallback",
+    "rates": {
+        "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
+        "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
+        "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
+        "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
+        "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
+        "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+    },
+}
+
+
+def get_fx_rates() -> dict:
+    """Return USD-base FX rates, cached for 1h. Source: frankfurter.dev."""
+    now = time.time()
+    cached = _FX_CACHE["data"]
+    if cached and (now - _FX_CACHE["fetched_at"]) < _FX_TTL:
+        return cached
+    try:
+        req = urllib.request.Request(
+            "https://api.frankfurter.dev/v1/latest?base=USD",
+            headers={"User-Agent": "narve-stock/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                data.setdefault("rates", {})
+                data["rates"]["USD"] = 1.0
+                _FX_CACHE["data"] = data
+                _FX_CACHE["fetched_at"] = now
+                return data
+    except Exception as e:
+        logging.warning("FX rate fetch failed: %s", e)
+    return cached or _FX_FALLBACK
 
 
 def load_state():
@@ -238,11 +279,11 @@ def build_html():
         </div>"""
 
     # Balance chart data
-    chart_balances = [10000]
+    chart_balances = [state.get("starting_balance", 10000)]
     for t in trades:
         chart_balances.append(t.get("balance_after", chart_balances[-1]))
 
-    chart_svg = build_svg_chart(chart_balances)
+    chart_svg = build_svg_chart(chart_balances, state)
 
     # Log entries (last 30)
     log_entries = ""
@@ -782,6 +823,123 @@ tbody tr:hover {{ background: var(--surface-hover); }}
 .hero-card:nth-child(2) {{ animation-delay: 0.1s; }}
 .hero-card:nth-child(3) {{ animation-delay: 0.15s; }}
 .hero-card:nth-child(4) {{ animation-delay: 0.2s; }}
+
+/* ─── Trading Panel ──────────────────────────────── */
+.connect-btn {{
+    display: inline-block;
+    margin-top: 16px;
+    padding: 10px 24px;
+    background: var(--accent);
+    color: white;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 13px;
+    transition: opacity 0.2s;
+}}
+.connect-btn:hover {{ opacity: 0.85; }}
+
+.broker-account {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+    padding: 16px;
+    background: var(--surface-hover);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+}}
+.broker-stat-label {{
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: block;
+}}
+.broker-stat-value {{
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: block;
+    margin-top: 2px;
+}}
+.trade-form {{
+    padding: 16px;
+    background: var(--surface-hover);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+}}
+.trade-form-title {{
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}}
+.trade-form-row {{
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    align-items: center;
+}}
+.trade-form-row:last-child {{ margin-bottom: 0; }}
+.trade-input {{
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    font-size: 14px;
+    font-family: inherit;
+    background: var(--surface);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s;
+}}
+.trade-input:focus {{ border-color: var(--accent); }}
+.trade-input-sm {{ max-width: 120px; }}
+.trade-select {{
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    font-size: 14px;
+    font-family: inherit;
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+}}
+.trade-btn {{
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius-xs);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}}
+.trade-btn:hover {{ opacity: 0.85; }}
+.trade-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+.trade-btn-buy {{ background: var(--green); color: white; flex: 1; }}
+.trade-btn-sell {{ background: var(--red); color: white; flex: 1; }}
+.trade-btn-quote {{ background: var(--accent); color: white; white-space: nowrap; }}
+.quote-result {{
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    border-radius: var(--radius-xs);
+    font-size: 13px;
+    background: var(--accent-light);
+    border: 1px solid var(--accent);
+    color: var(--text-primary);
+}}
+.trade-result {{
+    padding: 10px 14px;
+    margin-top: 10px;
+    border-radius: var(--radius-xs);
+    font-size: 13px;
+}}
+.trade-result.success {{ background: var(--green-light); border: 1px solid var(--green); }}
+.trade-result.error {{ background: var(--red-light); border: 1px solid var(--red); }}
 </style>
 </head>
 <body>
@@ -901,18 +1059,548 @@ tbody tr:hover {{ background: var(--surface-hover); }}
     </div>
 </div>
 
+<!-- ─── Broker Trading ─────────────────────────────────── -->
+<div class="section" id="trading-section">
+    <div class="section-head">
+        <div class="section-title">Stock Trading</div>
+        <div class="section-badge" id="broker-status-badge">checking...</div>
+    </div>
+
+    <div id="broker-not-connected" style="display:none;">
+        <div class="empty-state">
+            <div class="empty-icon">&#9889;</div>
+            <div class="empty-title">No Broker Connected</div>
+            <div class="empty-sub">Connect your Alpaca account to trade stocks directly from this dashboard.</div>
+            <a href="/settings#trading" class="connect-btn">Connect Alpaca</a>
+        </div>
+    </div>
+
+    <div id="broker-connected" style="display:none;">
+        <!-- Account summary -->
+        <div class="broker-account" id="broker-account">
+            <div class="broker-stat">
+                <span class="broker-stat-label">Cash</span>
+                <span class="broker-stat-value" id="acct-cash">-</span>
+            </div>
+            <div class="broker-stat">
+                <span class="broker-stat-label">Portfolio</span>
+                <span class="broker-stat-value" id="acct-portfolio">-</span>
+            </div>
+            <div class="broker-stat">
+                <span class="broker-stat-label">Buying Power</span>
+                <span class="broker-stat-value" id="acct-buying-power">-</span>
+            </div>
+            <div class="broker-stat">
+                <span class="broker-stat-label">Mode</span>
+                <span class="broker-stat-value" id="acct-mode">-</span>
+            </div>
+        </div>
+
+        <!-- Trade form -->
+        <div class="trade-form">
+            <div class="trade-form-title">Place Order</div>
+            <div class="trade-form-row">
+                <input type="text" id="trade-symbol" placeholder="Symbol (e.g. AAPL)" class="trade-input" maxlength="10" autocomplete="off"/>
+                <button id="quote-btn" class="trade-btn trade-btn-quote" onclick="fetchQuote()">Quote</button>
+            </div>
+            <div id="quote-result" class="quote-result" style="display:none;"></div>
+            <div class="trade-form-row">
+                <input type="number" id="trade-qty" placeholder="Qty" class="trade-input trade-input-sm" min="0.01" step="0.01"/>
+                <select id="trade-type" class="trade-select">
+                    <option value="market">Market</option>
+                    <option value="limit">Limit</option>
+                </select>
+                <input type="number" id="trade-limit-price" placeholder="Limit $" class="trade-input trade-input-sm" min="0.01" step="0.01" style="display:none;"/>
+            </div>
+            <div class="trade-form-row">
+                <button class="trade-btn trade-btn-buy" onclick="placeOrder('buy')">Buy</button>
+                <button class="trade-btn trade-btn-sell" onclick="placeOrder('sell')">Sell</button>
+            </div>
+            <div id="trade-result" class="trade-result" style="display:none;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Positions ─────────────────────────────────────── -->
+<div class="section" id="positions-section" style="display:none;">
+    <div class="section-head">
+        <div class="section-title">Open Positions</div>
+        <div class="section-badge" id="positions-count">0</div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Qty</th>
+                    <th>Avg Entry</th>
+                    <th>Current</th>
+                    <th>Value</th>
+                    <th>P&amp;L</th>
+                </tr>
+            </thead>
+            <tbody id="positions-body">
+                <tr><td colspan="6" class="empty-table">No open positions</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 </div>
 
 <div class="footer">
     StockSignal &mdash; AI predictions for Polymarket stock markets &middot; Auto-refreshes every 60s
+    <br><span style="font-size:10px;color:var(--text-muted);">Not investment advice. For informational purposes only. You make your own trading decisions.</span>
 </div>
 
+<script>
+(function() {{
+  let unitSystem = localStorage.getItem('narve_units') || 'american';
+  let currencyCode = localStorage.getItem('narve_currency') || 'USD';
+  let langCode = localStorage.getItem('narve_language') || 'en';
+  function isMetric() {{ return unitSystem === 'european'; }}
+  function getLocale() {{ return isMetric() ? 'de-DE' : 'en-US'; }}
+
+  /* ----- i18n ----- */
+  const LANGUAGES = [
+    ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+    ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+    ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+    ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
+    ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
+  ];
+  const I18N = {{
+    en: {{'common.loading':'Loading...','common.refresh':'Refresh','common.search':'Search','common.error':'Error','nav.dashboard':'Dashboard','nav.settings':'Settings'}},
+    es: {{'common.loading':'Cargando...','common.refresh':'Actualizar','common.search':'Buscar','common.error':'Error','nav.dashboard':'Panel','nav.settings':'Configuraci\u00f3n'}},
+    de: {{'common.loading':'Wird geladen...','common.refresh':'Aktualisieren','common.search':'Suchen','common.error':'Fehler','nav.dashboard':'\u00dcbersicht','nav.settings':'Einstellungen'}},
+    fr: {{'common.loading':'Chargement...','common.refresh':'Actualiser','common.search':'Rechercher','common.error':'Erreur','nav.dashboard':'Tableau de bord','nav.settings':'Param\u00e8tres'}},
+    it: {{'common.loading':'Caricamento...','common.refresh':'Aggiorna','common.search':'Cerca','common.error':'Errore','nav.dashboard':'Pannello','nav.settings':'Impostazioni'}},
+    pt: {{'common.loading':'Carregando...','common.refresh':'Atualizar','common.search':'Pesquisar','common.error':'Erro','nav.dashboard':'Painel','nav.settings':'Configura\u00e7\u00f5es'}},
+    nl: {{'common.loading':'Laden...','common.refresh':'Vernieuwen','common.search':'Zoeken','common.error':'Fout','nav.dashboard':'Dashboard','nav.settings':'Instellingen'}},
+    pl: {{'common.loading':'\u0141adowanie...','common.refresh':'Od\u015bwie\u017c','common.search':'Szukaj','common.error':'B\u0142\u0105d','nav.dashboard':'Panel','nav.settings':'Ustawienia'}},
+    ja: {{'common.loading':'\u8aad\u307f\u8fbc\u307f\u4e2d...','common.refresh':'\u66f4\u65b0','common.search':'\u691c\u7d22','common.error':'\u30a8\u30e9\u30fc','nav.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','nav.settings':'\u8a2d\u5b9a'}},
+    ko: {{'common.loading':'\ub85c\ub529 \uc911...','common.refresh':'\uc0c8\ub85c \uace0\uce68','common.search':'\uac80\uc0c9','common.error':'\uc624\ub958','nav.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','nav.settings':'\uc124\uc815'}},
+    zh: {{'common.loading':'\u52a0\u8f7d\u4e2d...','common.refresh':'\u5237\u65b0','common.search':'\u641c\u7d22','common.error':'\u9519\u8bef','nav.dashboard':'\u4eea\u8868\u677f','nav.settings':'\u8bbe\u7f6e'}},
+    ru: {{'common.loading':'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...','common.refresh':'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c','common.search':'\u041f\u043e\u0438\u0441\u043a','common.error':'\u041e\u0448\u0438\u0431\u043a\u0430','nav.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','nav.settings':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438'}},
+    hi: {{'common.loading':'\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...','common.refresh':'\u0930\u093f\u092b\u093c\u094d\u0930\u0947\u0936 \u0915\u0930\u0947\u0902','common.search':'\u0916\u094b\u091c\u0947\u0902','common.error':'\u0924\u094d\u0930\u0941\u091f\u093f','nav.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','nav.settings':'\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938'}},
+    ar: {{'common.loading':'\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0645\u064a\u0644...','common.refresh':'\u062a\u062d\u062f\u064a\u062b','common.search':'\u0628\u062d\u062b','common.error':'\u062e\u0637\u0623','nav.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629','nav.settings':'\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a'}},
+    bn: {{'common.loading':'\u09b2\u09cb\u09a1 \u09b9\u099a\u09cd\u099b\u09c7...','common.refresh':'\u09b0\u09bf\u09ab\u09cd\u09b0\u09c7\u09b6 \u0995\u09b0\u09c1\u09a8','common.search':'\u0985\u09a8\u09c1\u09b8\u09a8\u09cd\u09a7\u09be\u09a8','common.error':'\u09a4\u09cd\u09b0\u09c1\u099f\u09bf','nav.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','nav.settings':'\u09b8\u09c7\u099f\u09bf\u0982\u09b8'}},
+    ur: {{'common.loading':'\u0644\u0648\u0688 \u06c1\u0648 \u0631\u06c1\u0627 \u06c1\u06d2...','common.refresh':'\u0631\u06cc\u0641\u0631\u06cc\u0634 \u06a9\u0631\u06cc\u0646','common.search':'\u062a\u0644\u0627\u0634 \u06a9\u0631\u06cc\u0646','common.error':'\u062e\u0631\u0627\u0628\u06cc','nav.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','nav.settings':'\u0633\u06cc\u0679\u0646\u06af\u0632'}},
+    id: {{'common.loading':'Memuat...','common.refresh':'Segarkan','common.search':'Cari','common.error':'Kesalahan','nav.dashboard':'Dasbor','nav.settings':'Pengaturan'}},
+    tr: {{'common.loading':'Y\u00fckleniyor...','common.refresh':'Yenile','common.search':'Ara','common.error':'Hata','nav.dashboard':'Pano','nav.settings':'Ayarlar'}},
+    vi: {{'common.loading':'\u0110ang t\u1ea3i...','common.refresh':'L\u00e0m m\u1edbi','common.search':'T\u00ecm ki\u1ebfm','common.error':'L\u1ed7i','nav.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','nav.settings':'C\u00e0i \u0111\u1eb7t'}},
+    th: {{'common.loading':'\u0e01\u0e33\u0e25\u0e31\u0e07\u0e42\u0e2b\u0e25\u0e14...','common.refresh':'\u0e23\u0e35\u0e40\u0e1f\u0e23\u0e0a','common.search':'\u0e04\u0e49\u0e19\u0e2b\u0e32','common.error':'\u0e02\u0e49\u0e2d\u0e1c\u0e34\u0e14\u0e1e\u0e25\u0e32\u0e14','nav.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','nav.settings':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32'}},
+  }};
+  function t(key) {{
+    const dict = I18N[langCode] || I18N.en;
+    return dict[key] || I18N.en[key] || key;
+  }}
+  function applyTranslations(root) {{
+    const scope = root || document;
+    scope.querySelectorAll('[data-i18n]').forEach(el => {{
+      const v = t(el.getAttribute('data-i18n'));
+      if (v) el.textContent = v;
+    }});
+    scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {{
+      const v = t(el.getAttribute('data-i18n-placeholder'));
+      if (v) el.placeholder = v;
+    }});
+  }}
+  window.t = t;
+  window.applyNarveTranslations = applyTranslations;
+  window.setNarveLanguage = function(code) {{
+    if (!I18N[code] || code === langCode) return;
+    langCode = code;
+    localStorage.setItem('narve_language', code);
+    document.documentElement.lang = code;
+    applyTranslations();
+    const sel = document.getElementById('narve-language-select');
+    if (sel) sel.value = code;
+  }};
+
+  const CURRENCIES = [
+    ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+    ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],['CNY','Chinese Yuan'],
+    ['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],['SEK','Swedish Krona'],['KRW','South Korean Won'],
+    ['SGD','Singapore Dollar'],['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+    ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],['DKK','Danish Krone'],
+    ['PLN','Polish Zloty'],['THB','Thai Baht'],['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],
+    ['CZK','Czech Koruna'],['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+    ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+  ];
+  const FX_FALLBACK = {{
+    USD:1.0, EUR:0.92, GBP:0.79, JPY:150, AUD:1.52, CAD:1.36, CHF:0.88, CNY:7.20,
+    HKD:7.83, NZD:1.65, SEK:10.5, KRW:1340, SGD:1.34, NOK:10.6, MXN:17.0,
+    INR:83.0, ZAR:18.5, TRY:32.0, BRL:5.0, DKK:6.85, PLN:3.95, THB:35.0,
+    IDR:15700, HUF:360, CZK:23.0, ILS:3.7, PHP:56.0, MYR:4.7, RON:4.6, ISK:137,
+  }};
+  let _fxRates = FX_FALLBACK;
+
+  function _readFxCache() {{
+    try {{ return JSON.parse(localStorage.getItem('narve_fx_rates') || 'null'); }} catch {{ return null; }}
+  }}
+  function _writeFxCache(rates) {{
+    try {{ localStorage.setItem('narve_fx_rates', JSON.stringify({{ rates: rates, fetched_at: Date.now() }})); }} catch {{}}
+  }}
+  async function ensureFxRates() {{
+    const cached = _readFxCache();
+    if (cached && cached.rates && Date.now() - cached.fetched_at < 3600000) {{
+      _fxRates = cached.rates;
+      return _fxRates;
+    }}
+    try {{
+      const r = await fetch('/api/fx-rates', {{ credentials: 'same-origin' }});
+      if (r.ok) {{
+        const data = await r.json();
+        _fxRates = data.rates || FX_FALLBACK;
+        _fxRates.USD = 1.0;
+        _writeFxCache(_fxRates);
+        return _fxRates;
+      }}
+    }} catch {{}}
+    if (cached && cached.rates) {{ _fxRates = cached.rates; }}
+    return _fxRates;
+  }}
+  function getRate(code) {{
+    if (!code || code === 'USD') return 1;
+    return (_fxRates && _fxRates[code]) || FX_FALLBACK[code] || 1;
+  }}
+  function getSymbol(code, locale) {{
+    try {{
+      const parts = new Intl.NumberFormat(locale || getLocale(), {{ style: 'currency', currency: code }}).formatToParts(0);
+      const sym = parts.find(p => p.type === 'currency');
+      if (sym) return sym.value;
+    }} catch {{}}
+    return code;
+  }}
+  function symbolFirst(code, locale) {{
+    try {{
+      const parts = new Intl.NumberFormat(locale || getLocale(), {{ style: 'currency', currency: code }}).formatToParts(0);
+      const cIdx = parts.findIndex(p => p.type === 'currency');
+      const nIdx = parts.findIndex(p => p.type === 'integer');
+      return cIdx < nIdx;
+    }} catch {{ return true; }}
+  }}
+
+  function convertCurrencyText(text) {{
+    if (!text) return text;
+    if (currencyCode === 'USD' && !isMetric()) return text;
+    const loc = getLocale();
+    const rate = getRate(currencyCode);
+    const sym = getSymbol(currencyCode, loc);
+    const symFirst = symbolFirst(currencyCode, loc);
+    return text.replace(/\\$([+-]?)([\\d,]+(?:\\.\\d+)?)([KMBT]?)/g, function(match, sign, num, suffix) {{
+      const value = parseFloat(num.replace(/,/g, ''));
+      if (isNaN(value)) return match;
+      const decPart = num.includes('.') ? num.split('.')[1] : '';
+      const decimals = decPart.length;
+      const converted = value * rate;
+      const formatted = converted.toLocaleString(loc, {{
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: Math.max(decimals, suffix ? 1 : 0),
+      }});
+      return symFirst
+        ? sym + sign + formatted + suffix
+        : sign + formatted + suffix + ' ' + sym;
+    }});
+  }}
+
+  function walk(node) {{
+    if (node.nodeType === 3) {{
+      const newText = convertCurrencyText(node.nodeValue);
+      if (newText !== node.nodeValue) node.nodeValue = newText;
+    }} else if (node.nodeType === 1) {{
+      const tag = node.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (node.classList && node.classList.contains('no-unit-convert')) return;
+      for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+    }}
+  }}
+
+  function applyUnits() {{
+    if (currencyCode !== 'USD' || isMetric()) walk(document.body);
+    document.querySelectorAll('.narve-unit-btn').forEach(b => {{
+      b.classList.toggle('active', b.dataset.unit === unitSystem);
+    }});
+    const sel = document.getElementById('narve-currency-select');
+    if (sel) sel.value = currencyCode;
+  }}
+
+  window.setNarveUnits = function(sys) {{
+    if (sys === unitSystem) return;
+    unitSystem = sys;
+    localStorage.setItem('narve_units', sys);
+    location.reload();
+  }};
+  window.setNarveCurrency = function(code) {{
+    if (code === currencyCode) return;
+    currencyCode = code;
+    localStorage.setItem('narve_currency', code);
+    location.reload();
+  }};
+
+  function injectToggle() {{
+    if (document.getElementById('narve-unit-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'narve-unit-wrap';
+    wrap.className = 'no-unit-convert';
+    wrap.style.cssText = 'position:fixed;top:12px;right:12px;display:flex;gap:4px;z-index:9999;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,0.06);align-items:center;';
+    const usBtn = document.createElement('button');
+    usBtn.className = 'narve-unit-btn';
+    usBtn.dataset.unit = 'american';
+    usBtn.title = 'American';
+    usBtn.textContent = '\U0001F1FA\U0001F1F8';
+    usBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:4px 8px;font-size:14px;border-radius:4px;color:#6b7280;';
+    usBtn.onclick = function() {{ window.setNarveUnits('american'); }};
+    const euBtn = document.createElement('button');
+    euBtn.className = 'narve-unit-btn';
+    euBtn.dataset.unit = 'european';
+    euBtn.title = 'European';
+    euBtn.textContent = '\U0001F1EA\U0001F1FA';
+    euBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:4px 8px;font-size:14px;border-radius:4px;color:#6b7280;';
+    euBtn.onclick = function() {{ window.setNarveUnits('european'); }};
+    const langSel = document.createElement('select');
+    langSel.id = 'narve-language-select';
+    langSel.title = 'Language';
+    langSel.style.cssText = 'background:#fff;color:#1f2937;border:1px solid #e5e7eb;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer;font-family:inherit;max-width:90px;';
+    langSel.innerHTML = LANGUAGES.map(function(l) {{
+      return '<option value="' + l[0] + '"' + (l[0] === langCode ? ' selected' : '') + '>' + l[1] + '</option>';
+    }}).join('');
+    langSel.onchange = function(e) {{ window.setNarveLanguage(e.target.value); }};
+    const sel = document.createElement('select');
+    sel.id = 'narve-currency-select';
+    sel.title = 'Display currency';
+    sel.style.cssText = 'background:#fff;color:#1f2937;border:1px solid #e5e7eb;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer;font-family:inherit;';
+    sel.innerHTML = CURRENCIES.map(function(c) {{
+      return '<option value="' + c[0] + '"' + (c[0] === currencyCode ? ' selected' : '') + '>' + c[0] + '</option>';
+    }}).join('');
+    sel.onchange = function(e) {{ window.setNarveCurrency(e.target.value); }};
+    wrap.appendChild(usBtn);
+    wrap.appendChild(euBtn);
+    wrap.appendChild(langSel);
+    wrap.appendChild(sel);
+    document.body.appendChild(wrap);
+    const style = document.createElement('style');
+    style.textContent = '.narve-unit-btn.active {{ background: #10b981 !important; color: #fff !important; }}';
+    document.head.appendChild(style);
+  }}
+
+  function init() {{
+    document.documentElement.lang = langCode;
+    injectToggle();
+    applyTranslations();
+    applyUnits();
+    ensureFxRates().then(function() {{
+      if (currencyCode !== 'USD' || isMetric()) {{
+        const cached = _readFxCache();
+        if (cached && Date.now() - cached.fetched_at < 60000) {{
+          if (!sessionStorage.getItem('narve_fx_reloaded')) {{
+            sessionStorage.setItem('narve_fx_reloaded', '1');
+            location.reload();
+            return;
+          }}
+        }}
+      }}
+      sessionStorage.removeItem('narve_fx_reloaded');
+    }});
+  }}
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', init);
+  }} else {{
+    init();
+  }}
+}})();
+</script>
+
+<script>
+/* ── Stock Trading Panel ────────────────────────────── */
+(function() {{
+  const fmt = (n) => '$' + Number(n).toLocaleString('en-US', {{minimumFractionDigits:2, maximumFractionDigits:2}});
+
+  // Check broker connection on load
+  async function checkBroker() {{
+    try {{
+      const resp = await fetch('/api/trading/credentials');
+      if (!resp.ok) return showDisconnected();
+      const data = await resp.json();
+      if (data.alpaca) {{
+        showConnected();
+        loadAccount();
+        loadPositions();
+      }} else {{
+        showDisconnected();
+      }}
+    }} catch(e) {{
+      showDisconnected();
+    }}
+  }}
+
+  function showConnected() {{
+    const badge = document.getElementById('broker-status-badge');
+    badge.textContent = 'Connected';
+    badge.style.color = 'var(--green)';
+    document.getElementById('broker-not-connected').style.display = 'none';
+    document.getElementById('broker-connected').style.display = 'block';
+    document.getElementById('positions-section').style.display = 'block';
+  }}
+
+  function showDisconnected() {{
+    const badge = document.getElementById('broker-status-badge');
+    badge.textContent = 'Not connected';
+    badge.style.color = 'var(--text-muted)';
+    document.getElementById('broker-not-connected').style.display = 'block';
+    document.getElementById('broker-connected').style.display = 'none';
+    document.getElementById('positions-section').style.display = 'none';
+  }}
+
+  async function loadAccount() {{
+    try {{
+      const resp = await fetch('/api/trading/stock/account');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      document.getElementById('acct-cash').textContent = fmt(data.cash);
+      document.getElementById('acct-portfolio').textContent = fmt(data.portfolio_value);
+      document.getElementById('acct-buying-power').textContent = fmt(data.buying_power);
+      document.getElementById('acct-mode').textContent = data.paper ? 'Paper' : 'Live';
+      document.getElementById('acct-mode').style.color = data.paper ? 'var(--amber)' : 'var(--green)';
+    }} catch(e) {{ console.warn('Account load error:', e); }}
+  }}
+
+  async function loadPositions() {{
+    try {{
+      const resp = await fetch('/api/trading/stock/positions');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const tbody = document.getElementById('positions-body');
+      const count = document.getElementById('positions-count');
+      if (!data.positions || data.positions.length === 0) {{
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-table">No open positions</td></tr>';
+        count.textContent = '0';
+        return;
+      }}
+      count.textContent = data.positions.length;
+      tbody.innerHTML = data.positions.map(p => {{
+        const pnlClass = p.unrealized_pnl >= 0 ? 'profit-text' : 'loss-text';
+        const pnlSign = p.unrealized_pnl >= 0 ? '+' : '';
+        return `<tr class="trade-row">
+          <td><span class="trade-ticker">${{p.symbol}}</span></td>
+          <td>${{p.qty}}</td>
+          <td>${{fmt(p.avg_entry)}}</td>
+          <td>${{fmt(p.current_price)}}</td>
+          <td>${{fmt(p.market_value)}}</td>
+          <td class="${{pnlClass}}">${{pnlSign}}${{Number(p.unrealized_pnl).toFixed(2)}}</td>
+        </tr>`;
+      }}).join('');
+    }} catch(e) {{ console.warn('Positions load error:', e); }}
+  }}
+
+  // Toggle limit price input
+  document.getElementById('trade-type').addEventListener('change', function() {{
+    document.getElementById('trade-limit-price').style.display =
+      this.value === 'limit' ? 'block' : 'none';
+  }});
+
+  // Quote
+  window.fetchQuote = async function() {{
+    const sym = document.getElementById('trade-symbol').value.trim().toUpperCase();
+    if (!sym) return;
+    const el = document.getElementById('quote-result');
+    el.style.display = 'block';
+    el.textContent = 'Loading...';
+    try {{
+      const resp = await fetch('/api/trading/stock/quote?symbol=' + encodeURIComponent(sym));
+      const data = await resp.json();
+      if (data.error) {{ el.textContent = data.error; return; }}
+      el.innerHTML = `<strong>${{data.symbol}}</strong> &mdash; `
+        + `Bid: ${{fmt(data.bid)}} &middot; Ask: ${{fmt(data.ask)}} `
+        + `<span style="color:var(--text-muted);font-size:11px">`
+        + `Spread: ${{fmt(data.ask - data.bid)}}</span>`;
+    }} catch(e) {{
+      el.textContent = 'Quote failed: ' + e.message;
+    }}
+  }};
+
+  // Place order
+  window.placeOrder = async function(action) {{
+    const sym = document.getElementById('trade-symbol').value.trim().toUpperCase();
+    const qty = parseFloat(document.getElementById('trade-qty').value);
+    const orderType = document.getElementById('trade-type').value;
+    const limitPrice = parseFloat(document.getElementById('trade-limit-price').value) || 0;
+
+    if (!sym) {{ alert('Enter a symbol'); return; }}
+    if (!qty || qty <= 0) {{ alert('Enter a valid quantity'); return; }}
+
+    const label = action === 'buy' ? 'BUY' : 'SELL';
+    const priceLabel = orderType === 'limit' ? ` @ ${{fmt(limitPrice)}}` : ' (market)';
+    if (!confirm(`${{label}} ${{qty}} shares of ${{sym}}${{priceLabel}}?`)) return;
+
+    const el = document.getElementById('trade-result');
+    el.style.display = 'block';
+    el.className = 'trade-result';
+    el.textContent = 'Placing order...';
+
+    try {{
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = {{
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      }};
+      if (csrfMeta) headers['X-CSRF-Token'] = csrfMeta.content;
+
+      const resp = await fetch('/api/trading/place', {{
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({{
+          platform: 'alpaca',
+          slug: sym,
+          side: action,
+          action: action,
+          amount: qty,
+          price: orderType === 'limit' ? limitPrice : 0,
+          question: sym,
+        }}),
+      }});
+      const data = await resp.json();
+      if (data.ok || data.status === 'submitted') {{
+        el.className = 'trade-result success';
+        el.textContent = `Order submitted: ${{label}} ${{qty}} ${{sym}}`;
+        loadAccount();
+        loadPositions();
+      }} else {{
+        el.className = 'trade-result error';
+        el.textContent = data.error || 'Order failed';
+      }}
+    }} catch(e) {{
+      el.className = 'trade-result error';
+      el.textContent = 'Error: ' + e.message;
+    }}
+  }};
+
+  // Symbol input: uppercase + enter to quote
+  document.getElementById('trade-symbol').addEventListener('input', function() {{
+    this.value = this.value.toUpperCase();
+  }});
+  document.getElementById('trade-symbol').addEventListener('keydown', function(e) {{
+    if (e.key === 'Enter') {{ e.preventDefault(); fetchQuote(); }}
+  }});
+
+  // Init
+  checkBroker();
+  // Refresh positions every 30s
+  setInterval(() => {{
+    if (document.getElementById('broker-connected').style.display !== 'none') {{
+      loadPositions();
+    }}
+  }}, 30000);
+}})();
+</script>
 </body>
 </html>"""
     return page_html
 
 
-def build_svg_chart(balances):
+def build_svg_chart(balances, state=None):
     if len(balances) < 2:
         return '<div style="text-align:center;color:#9ca3af;padding:60px;font-size:14px;">Waiting for first trade...</div>'
 
@@ -945,7 +1633,7 @@ def build_svg_chart(balances):
         grid += f'<line x1="{pad_x}" y1="{gy:.1f}" x2="{w - pad_x}" y2="{gy:.1f}" stroke="#e8ecf1" stroke-width="1"/>'
         grid += f'<text x="{pad_x - 10}" y="{gy + 4:.1f}" text-anchor="end" fill="#9ca3af" font-size="10" font-family="Inter,sans-serif">${val:,.0f}</text>'
 
-    start_bal = 10000
+    start_bal = state.get("starting_balance", 10000) if isinstance(state, dict) else 10000
     start_y = pad_y + chart_h - ((start_bal - min_val) / val_range) * chart_h
     start_line = f'<line x1="{pad_x}" y1="{start_y:.1f}" x2="{w - pad_x}" y2="{start_y:.1f}" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,4"/>'
 
@@ -998,6 +1686,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(state).encode())
+        elif self.path == "/api/fx-rates":
+            data = get_fx_rates()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "public, max-age=300")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -1011,9 +1706,11 @@ def main():
     parser.add_argument("--port", type=int, default=DASHBOARD_PORT)
     args = parser.parse_args()
 
-    bind_host = "0.0.0.0" if _DEV_MODE else "127.0.0.1"
+    # Never bind to all interfaces when PRODUCTION=1, even if DEV_MODE leaks through
+    _is_prod = os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
+    bind_host = "127.0.0.1" if _is_prod else ("0.0.0.0" if _DEV_MODE else "127.0.0.1")
     server = HTTPServer((bind_host, args.port), DashboardHandler)
-    print(f"StockSignal dashboard running at http://0.0.0.0:{args.port}")
+    print(f"StockSignal dashboard running at http://{bind_host}:{args.port}")
 
     try:
         server.serve_forever()

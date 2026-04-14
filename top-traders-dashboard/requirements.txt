@@ -3,3 +3,7 @@ uvicorn[standard]>=0.29
 httpx>=0.27
 requests>=2.31
 numpy>=1.24
+# Optional ML dependencies — wallet_ml.py degrades gracefully if these are
+# missing (uses linear/z-score fallbacks). Install for full ML rankings.
+scikit-learn>=1.3
+xgboost>=2.0

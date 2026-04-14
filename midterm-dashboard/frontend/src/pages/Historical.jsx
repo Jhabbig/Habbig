@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
+import { fmtCount } from '../lib/settings'
 import { History, Trophy, ArrowRight } from 'lucide-react'
 
 const PARTY_COLORS = {
@@ -9,12 +10,7 @@ const PARTY_COLORS = {
   I: { bg: 'bg-purple-100', text: 'text-purple-700', bar: '#a855f7' },
 }
 
-function fmtVotes(v) {
-  if (!v) return '—'
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
-  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`
-  return v.toLocaleString()
-}
+const fmtVotes = (v) => (v ? fmtCount(v) : '\u2014')
 
 function ResultCard({ r }) {
   const winner = PARTY_COLORS[r.party] || PARTY_COLORS.I

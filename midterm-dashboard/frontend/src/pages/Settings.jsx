@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { useSettings } from '../lib/settings'
+import { useSettings, CURRENCIES } from '../lib/settings'
+import { LANGUAGES, useT } from '../lib/i18n'
 import { ArrowLeft, Check, Sun, Moon, Monitor, BarChart3, AreaChart } from 'lucide-react'
 
 const ACCENT_COLORS = [
@@ -72,6 +73,7 @@ function ToggleSwitch({ checked, onChange }) {
 
 export default function Settings() {
   const { settings, updateSetting } = useSettings()
+  const t = useT()
   const [toast, setToast] = useState({ visible: false, message: '' })
 
   const showToast = useCallback((message) => {
@@ -96,14 +98,14 @@ export default function Settings() {
   return (
     <div className="max-w-2xl mx-auto mt-8">
       <Link to="/account" className="flex items-center gap-1 text-stone-500 hover:text-stone-700 text-sm mb-4">
-        <ArrowLeft className="h-4 w-4" /> Back to Account
+        <ArrowLeft className="h-4 w-4" /> {t('common.back')}
       </Link>
 
-      <h1 className="text-3xl font-semibold text-stone-800 mb-6">Settings</h1>
+      <h1 className="text-3xl font-semibold text-stone-800 mb-6">{t('set.title')}</h1>
 
       {/* Theme */}
       <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-4">
-        <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-4">Appearance</h2>
+        <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-4">{t('set.appearance')}</h2>
 
         <div className="space-y-5">
           <div className="flex items-center justify-between">
@@ -176,9 +178,63 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Units, conversions & language */}
+      <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-4">
+        <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-4">{t('set.units')}</h2>
+
+        <div className="space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-stone-800">Number Format</div>
+              <div className="text-xs text-stone-400 mt-0.5">How numbers and dates are written</div>
+            </div>
+            <ToggleGroup
+              value={settings.unitSystem || 'american'}
+              onChange={v => update('unitSystem', v)}
+              options={[
+                { value: 'american', label: '\uD83C\uDDFA\uD83C\uDDF8 1,000.00' },
+                { value: 'european', label: '\uD83C\uDDEA\uD83C\uDDFA 1.000,00' },
+              ]}
+            />
+          </div>
+
+          <div className="border-t border-stone-100 pt-5 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-stone-800">{t('set.currency')}</div>
+              <div className="text-xs text-stone-400 mt-0.5">{t('set.currencyDesc')}</div>
+            </div>
+            <select
+              value={settings.currency || 'USD'}
+              onChange={e => update('currency', e.target.value)}
+              className="bg-stone-100 border-0 rounded-lg text-sm text-stone-700 px-3 py-1.5 focus:ring-2 focus:ring-stone-300"
+            >
+              {CURRENCIES.map(c => (
+                <option key={c.code} value={c.code}>{`${c.code} \u00b7 ${c.name}`}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="border-t border-stone-100 pt-5 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-stone-800">{t('set.language')}</div>
+              <div className="text-xs text-stone-400 mt-0.5">{t('set.languageDesc')}</div>
+            </div>
+            <select
+              value={settings.language || 'en'}
+              onChange={e => update('language', e.target.value)}
+              className="bg-stone-100 border-0 rounded-lg text-sm text-stone-700 px-3 py-1.5 focus:ring-2 focus:ring-stone-300"
+            >
+              {LANGUAGES.map(([code, name]) => (
+                <option key={code} value={code}>{name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
       {/* Charts */}
       <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-4">
-        <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-4">Charts</h2>
+        <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-4">{t('set.charts')}</h2>
 
         <div className="space-y-5">
           <div className="flex items-center justify-between">
@@ -211,7 +267,7 @@ export default function Settings() {
 
       {/* Data */}
       <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-4">
-        <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-4">Data</h2>
+        <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-4">{t('set.data')}</h2>
 
         <div className="space-y-5">
           <div>

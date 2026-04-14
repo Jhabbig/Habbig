@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Globe, RefreshCw, TrendingUp, ExternalLink } from 'lucide-react'
 import { api } from '../lib/api'
+import { fmtVolume } from '../lib/settings'
 
 const countryFlag = (code) => {
   if (!code || code.length !== 2) return '\u{1F30D}'
@@ -20,12 +21,7 @@ const SOURCE_STYLES = {
   kalshi: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Kalshi' },
 }
 
-function formatVolume(v) {
-  if (!v) return null
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`
-  return `$${v}`
-}
+const formatVolume = (v) => fmtVolume(v)
 
 function MarketCard({ market }) {
   const source = SOURCE_STYLES[market.source] || { bg: 'bg-stone-100', text: 'text-stone-600', label: market.source }

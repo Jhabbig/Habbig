@@ -10,6 +10,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import urllib.request
 try:
     from defusedxml.ElementTree import fromstring as _xml_fromstring
@@ -20,16 +21,21 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from infrastructure_data import (
     UNDERSEA_CABLES as _INFRA_CABLES,
     OIL_GAS_PIPELINES as _INFRA_PIPELINES,
     OIL_RARE_EARTH_FIELDS as _INFRA_FIELDS,
 )
+import cross_dashboard
 
 app = FastAPI(title="World State Dashboard")
 
 HTML_PATH = Path(__file__).parent / "index.html"
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
@@ -97,8 +103,9 @@ def _parse_date(pub_date: str):
 
 def fetch_news():
     now = time.time()
-    if NEWS_CACHE["data"] and (now - NEWS_CACHE["fetched_at"]) < NEWS_CACHE_TTL:
-        return NEWS_CACHE["data"]
+    with _cache_lock:
+        if NEWS_CACHE["data"] and (now - NEWS_CACHE["fetched_at"]) < NEWS_CACHE_TTL:
+            return NEWS_CACHE["data"]
 
     all_items = []
     for feed in NEWS_FEEDS:
@@ -126,6 +133,9 @@ def fetch_news():
 
                 if not title:
                     continue
+                # Validate link scheme to prevent javascript: URI injection
+                if link and not link.startswith(("http://", "https://")):
+                    link = ""
 
                 all_items.append({
                     "source": feed["name"],
@@ -138,8 +148,9 @@ def fetch_news():
             print(f"[news] {feed['name']} failed: {e}")
 
     all_items.sort(key=lambda x: _parse_date(x["pub_date"]), reverse=True)
-    NEWS_CACHE["data"] = all_items[:60]
-    NEWS_CACHE["fetched_at"] = now
+    with _cache_lock:
+        NEWS_CACHE["data"] = all_items[:60]
+        NEWS_CACHE["fetched_at"] = now
     return NEWS_CACHE["data"]
 
 
@@ -170,8 +181,9 @@ def _poly_is_political(market: dict) -> bool:
 
 def fetch_polymarket():
     now = time.time()
-    if POLYMARKET_CACHE["data"] and (now - POLYMARKET_CACHE["fetched_at"]) < POLYMARKET_CACHE_TTL:
-        return POLYMARKET_CACHE["data"]
+    with _cache_lock:
+        if POLYMARKET_CACHE["data"] and (now - POLYMARKET_CACHE["fetched_at"]) < POLYMARKET_CACHE_TTL:
+            return POLYMARKET_CACHE["data"]
 
     results = []
     try:
@@ -202,9 +214,16 @@ def fetch_polymarket():
                     except Exception:
                         float_prices.append(0.0)
 
-                top_idx = float_prices.index(max(float_prices)) if float_prices else 0
-                top_outcome = outcomes[top_idx] if top_idx < len(outcomes) else "Yes"
-                top_price = float_prices[top_idx] if float_prices else 0.0
+                if float_prices:
+                    top_idx = float_prices.index(max(float_prices))
+                    top_price = float_prices[top_idx]
+                else:
+                    top_idx = 0
+                    top_price = 0.0
+                if outcomes and 0 <= top_idx < len(outcomes):
+                    top_outcome = outcomes[top_idx]
+                else:
+                    top_outcome = "Yes"
 
                 vol_24h = m.get("volume24hr") or m.get("volumeNum") or m.get("volume") or 0
                 try:
@@ -245,8 +264,9 @@ def fetch_polymarket():
     except Exception as e:
         print(f"[polymarket] fetch failed: {e}")
 
-    POLYMARKET_CACHE["data"] = results
-    POLYMARKET_CACHE["fetched_at"] = now
+    with _cache_lock:
+        POLYMARKET_CACHE["data"] = results
+        POLYMARKET_CACHE["fetched_at"] = now
     return results
 
 
@@ -422,8 +442,9 @@ _USER_ID_CACHE = {"ids": {}, "resolved": False}
 def fetch_xfeed():
     """Fetch recent posts from key geopolitical figures on X."""
     now = time.time()
-    if XFEED_CACHE["data"] and (now - XFEED_CACHE["fetched_at"]) < XFEED_CACHE_TTL:
-        return XFEED_CACHE["data"]
+    with _cache_lock:
+        if XFEED_CACHE["data"] and (now - XFEED_CACHE["fetched_at"]) < XFEED_CACHE_TTL:
+            return XFEED_CACHE["data"]
 
     if not X_BEARER_TOKEN:
         print("[xfeed] No X_BEARER_TOKEN set — skipping X feed")
@@ -435,6 +456,7 @@ def fetch_xfeed():
         # Resolve user IDs if needed
         if not _USER_ID_CACHE["resolved"]:
             handles = [a["handle"] for a in X_ACCOUNTS]
+            all_resolved = True
             # Batch in groups of 100
             for i in range(0, len(handles), 100):
                 batch = handles[i:i+100]
@@ -443,7 +465,9 @@ def fetch_xfeed():
                     _USER_ID_CACHE["ids"].update(resolved)
                 except Exception as e:
                     print(f"[xfeed] user resolve batch {i} failed: {e}")
-            _USER_ID_CACHE["resolved"] = True
+                    all_resolved = False
+            if all_resolved:
+                _USER_ID_CACHE["resolved"] = True
 
         # Build handle→account lookup
         account_lookup = {a["handle"].lower(): a for a in X_ACCOUNTS}
@@ -467,7 +491,7 @@ def fetch_xfeed():
             query = " OR ".join(chunk)
             url = (
                 f"https://api.x.com/2/tweets/search/recent"
-                f"?query={urllib.request.quote(query)}"
+                f"?query={urllib.parse.quote(query)}"
                 f"&max_results=50"
                 f"&tweet.fields=created_at,public_metrics,author_id,lang"
                 f"&expansions=author_id"
@@ -533,8 +557,9 @@ def fetch_xfeed():
     except Exception as e:
         print(f"[xfeed] fetch failed: {e}")
 
-    XFEED_CACHE["data"] = results
-    XFEED_CACHE["fetched_at"] = now
+    with _cache_lock:
+        XFEED_CACHE["data"] = results
+        XFEED_CACHE["fetched_at"] = now
     return results
 
 
@@ -4487,6 +4512,66 @@ VESSEL_DEPLOYMENTS = [
     # ── India (additional) ──
     {"name": "INS Vikramaditya (R33)", "country": "IN", "type": "carrier", "lat": 13.0, "lng": 84.0, "heading": 90, "speed_kts": 14, "detail": "Eastern Fleet Bay of Bengal; Modified Kiev-class; Eastern Fleet flagship", "vessels": "R33"},
     {"name": "INS Arihant (S73)", "country": "IN", "type": "submarine", "lat": 10.0, "lng": 82.0, "heading": 180, "speed_kts": 6, "detail": "Bay of Bengal SSBN patrol; Arihant-class SSBN; India's sea-based nuclear deterrent", "vessels": "S73"},
+
+    # ── Latin America ──
+    {"name": "ARA Almirante Irízar Q-5", "country": "AR", "type": "surface_group", "lat": -55.0, "lng": -65.0, "heading": 180, "speed_kts": 12, "detail": "South Atlantic / Antarctic; icebreaker + ARA Bouchard; Antarctic patrol", "vessels": "Q-5 + Bouchard"},
+    {"name": "ARA Espora SAG", "country": "AR", "type": "surface_group", "lat": -38.0, "lng": -57.0, "heading": 90, "speed_kts": 14, "detail": "Argentine EEZ patrol; MEKO 140 corvettes; rebuilding fleet", "vessels": "MEKO 140 corvettes"},
+    {"name": "Almirante Cochrane FFG-05", "country": "CL", "type": "surface_group", "lat": -33.0, "lng": -72.0, "heading": 270, "speed_kts": 16, "detail": "Pacific Chilean EEZ; Type 23 frigate (ex-RN); fleet flagship", "vessels": "FFG-05"},
+    {"name": "Almirante Williams FF-19", "country": "CL", "type": "surface_group", "lat": -53.0, "lng": -71.0, "heading": 0, "speed_kts": 12, "detail": "Drake Passage / Magellan Strait; Type 22 frigate (ex-RN)", "vessels": "FF-19"},
+    {"name": "ARC 7 de Agosto FM-53", "country": "CO", "type": "surface_group", "lat": 11.5, "lng": -73.0, "heading": 90, "speed_kts": 14, "detail": "Caribbean counter-narcotics; Almirante Padilla-class corvette", "vessels": "FM-53"},
+    {"name": "ARC Pacific Patrol", "country": "CO", "type": "surface_group", "lat": 4.0, "lng": -78.0, "heading": 180, "speed_kts": 12, "detail": "Pacific counter-narcotics; OPV-80 + Riohacha-class", "vessels": "Pacific OPV"},
+    {"name": "ARM Reformador POLA-101", "country": "MX", "type": "surface_group", "lat": 22.0, "lng": -97.0, "heading": 90, "speed_kts": 18, "detail": "Gulf of Mexico; long-range patrol; Damen Sigma 10514", "vessels": "POLA-101"},
+    {"name": "BNS Maranhão", "country": "BR", "type": "amphibious", "lat": -22.0, "lng": -42.0, "heading": 180, "speed_kts": 14, "detail": "Brazilian Atlantic; Bahia-class LPD (ex-French Foudre)", "vessels": "G40"},
+    {"name": "BAP Almirante Grau (CLM-81)", "country": "PE", "type": "surface_group", "lat": -12.0, "lng": -77.5, "heading": 270, "speed_kts": 14, "detail": "Pacific Peruvian EEZ; Lupo-class frigates; ex-Italian", "vessels": "Lupo frigates"},
+
+    # ── Southeast Asia / Pacific ──
+    {"name": "RTN HTMS Chakri Naruebet (911)", "country": "TH", "type": "carrier", "lat": 12.0, "lng": 100.5, "heading": 180, "speed_kts": 8, "detail": "Gulf of Thailand; smallest carrier in service; helicopter ops only", "vessels": "911"},
+    {"name": "TNI-AL Diponegoro Sigma-class", "country": "ID", "type": "surface_group", "lat": -3.0, "lng": 116.0, "heading": 90, "speed_kts": 16, "detail": "Java Sea; Sigma 9113 corvettes; ASEAN patrol", "vessels": "365-368"},
+    {"name": "TNI-AL KRI Nagapasa-class SSK", "country": "ID", "type": "submarine", "lat": -8.0, "lng": 115.0, "heading": 90, "speed_kts": 8, "detail": "Lombok Strait SLOC; Type 209/1400 South Korean-built", "vessels": "Nagapasa SSK"},
+    {"name": "RSN Formidable-class FFG", "country": "SG", "type": "surface_group", "lat": 1.2, "lng": 104.0, "heading": 90, "speed_kts": 18, "detail": "Singapore Strait; La Fayette stealth frigate", "vessels": "Formidable FFG"},
+    {"name": "RSN Invincible-class SSK", "country": "SG", "type": "submarine", "lat": 1.0, "lng": 105.0, "heading": 90, "speed_kts": 8, "detail": "Singapore Strait; Type 218SG; AIP-equipped", "vessels": "Invincible SSK"},
+    {"name": "PLAN Type 075 Anhui (33)", "country": "CN", "type": "amphibious", "lat": 22.0, "lng": 118.0, "heading": 0, "speed_kts": 14, "detail": "Taiwan Strait; third Type 075 LHD; rapid amphibious build", "vessels": "33"},
+    {"name": "PLAN Type 071 Yuzhao LPD", "country": "CN", "type": "amphibious", "lat": 18.0, "lng": 110.0, "heading": 180, "speed_kts": 14, "detail": "Hainan; 8x Type 071 LPDs; amphibious lift", "vessels": "Type 071 LPD"},
+
+    # ── Middle East / North Africa ──
+    {"name": "MM Mohammed VI FREMM", "country": "MA", "type": "surface_group", "lat": 33.5, "lng": -7.5, "heading": 270, "speed_kts": 18, "detail": "Atlantic Morocco; FREMM frigate; most capable in N Africa", "vessels": "Mohammed VI"},
+    {"name": "Algerian Navy Kalaat-class LPD", "country": "DZ", "type": "amphibious", "lat": 36.5, "lng": 3.0, "heading": 90, "speed_kts": 14, "detail": "Mediterranean; San Giorgio-class LPD; Russian/Chinese mix fleet", "vessels": "Kalaat Beni Abbes"},
+    {"name": "Algerian Kilo-class SSK", "country": "DZ", "type": "submarine", "lat": 36.0, "lng": 5.0, "heading": 0, "speed_kts": 6, "detail": "Western Mediterranean; 6x Kilo SSK fleet; largest sub force in Africa", "vessels": "Kilo SSK"},
+    {"name": "Iranian IRIS Makran", "country": "IR", "type": "surface_group", "lat": 25.0, "lng": 56.0, "heading": 90, "speed_kts": 12, "detail": "Strait of Hormuz; converted oil tanker forward base; helicopter mothership", "vessels": "Makran"},
+    {"name": "Iranian IRGC Boats Hormuz", "country": "IR", "type": "surface_group", "lat": 26.5, "lng": 56.5, "heading": 0, "speed_kts": 30, "detail": "Strait of Hormuz; swarm boats + anti-ship cruise missiles", "vessels": "IRGC FAC"},
+
+    # ── Africa ──
+    {"name": "SAS Spioenkop F147", "country": "ZA", "type": "surface_group", "lat": -34.0, "lng": 18.0, "heading": 270, "speed_kts": 16, "detail": "Cape of Good Hope; Valour-class frigate (MEKO A-200); SLOC chokepoint", "vessels": "F147"},
+    {"name": "Nigerian NNS Unity", "country": "NG", "type": "surface_group", "lat": 6.0, "lng": 4.0, "heading": 270, "speed_kts": 14, "detail": "Gulf of Guinea anti-piracy; ex-USCG Hamilton-class cutter", "vessels": "F92"},
+
+    # ── Europe (additional) ──
+    {"name": "FS Suffren SSN", "country": "FR", "type": "submarine", "lat": 38.0, "lng": 5.0, "heading": 90, "speed_kts": 8, "detail": "Western Mediterranean; Barracuda-class SSN; cruise missile capable", "vessels": "Suffren"},
+    {"name": "FS Triomphant SSBN Patrol", "country": "FR", "type": "submarine", "lat": 48.0, "lng": -10.0, "heading": 270, "speed_kts": 6, "detail": "Bay of Biscay; Force océanique stratégique SSBN; M51 SLBMs", "vessels": "Triomphant SSBN"},
+    {"name": "HMS Astute SSN", "country": "GB", "type": "submarine", "lat": 60.0, "lng": -5.0, "heading": 0, "speed_kts": 10, "detail": "GIUK Gap; Astute-class SSN; Tomahawk-capable", "vessels": "Astute SSN"},
+    {"name": "HMS Vigilant SSBN", "country": "GB", "type": "submarine", "lat": 56.0, "lng": -8.0, "heading": 270, "speed_kts": 5, "detail": "North Atlantic CASD; Vanguard-class SSBN; Trident D5", "vessels": "Vigilant"},
+    {"name": "FGS Bayern F217", "country": "DE", "type": "surface_group", "lat": 5.0, "lng": 95.0, "heading": 90, "speed_kts": 16, "detail": "Indian Ocean Indo-Pacific deployment; Brandenburg-class; FONOP", "vessels": "F217"},
+    {"name": "ESPS Méndez Núñez F104", "country": "ES", "type": "surface_group", "lat": 40.0, "lng": 2.0, "heading": 270, "speed_kts": 18, "detail": "Western Mediterranean; F100 Álvaro de Bazán-class AAW; SM-2 capable", "vessels": "F104"},
+    {"name": "HNoMS Maud (A530)", "country": "NO", "type": "surface_group", "lat": 70.0, "lng": 25.0, "heading": 90, "speed_kts": 14, "detail": "Norwegian Sea; logistics replenishment; NATO Northern Flank", "vessels": "A530"},
+    {"name": "HMS Polish Orkan FFG", "country": "PL", "type": "surface_group", "lat": 54.5, "lng": 18.5, "heading": 0, "speed_kts": 18, "detail": "Baltic Sea; Tarantul-class FAC; Saab RBS-15 anti-ship", "vessels": "Orkan"},
+    {"name": "ROS Mărăşeşti F111", "country": "RO", "type": "surface_group", "lat": 44.0, "lng": 30.0, "heading": 90, "speed_kts": 14, "detail": "Black Sea Romanian EEZ; Mărăşeşti frigate; only Romanian-built capital ship", "vessels": "F111"},
+    {"name": "Bulgarian Drazki F41", "country": "BG", "type": "surface_group", "lat": 43.0, "lng": 28.5, "heading": 90, "speed_kts": 14, "detail": "Black Sea; Wielingen-class frigate (ex-Belgian); NATO BSF", "vessels": "F41"},
+    {"name": "Ukrainian Magura V5 USV swarm", "country": "UA", "type": "surface_group", "lat": 44.5, "lng": 33.0, "heading": 180, "speed_kts": 35, "detail": "Black Sea; uncrewed surface drones; sank/damaged Russian Black Sea Fleet vessels", "vessels": "Magura V5 USV"},
+
+    # ── North America (additional) ──
+    {"name": "HMCS Halifax-class Atlantic", "country": "CA", "type": "surface_group", "lat": 45.0, "lng": -55.0, "heading": 90, "speed_kts": 16, "detail": "North Atlantic NATO SNMG; Halifax-class FFH; CSC replacement coming", "vessels": "Halifax FFH"},
+    {"name": "HMCS Victoria SSK", "country": "CA", "type": "submarine", "lat": 48.0, "lng": -125.0, "heading": 270, "speed_kts": 8, "detail": "Eastern Pacific; ex-RN Upholder-class; aging fleet"},
+
+    # ── Asia (additional) ──
+    {"name": "JS Kaga DDH-184", "country": "JP", "type": "carrier", "lat": 32.0, "lng": 132.0, "heading": 180, "speed_kts": 14, "detail": "East China Sea; Izumo-class converted to F-35B carrier", "vessels": "DDH-184"},
+    {"name": "JS Sōryū SSK", "country": "JP", "type": "submarine", "lat": 30.0, "lng": 130.0, "heading": 90, "speed_kts": 8, "detail": "East China Sea; Soryu-class AIP SSK; world-class conventional sub", "vessels": "Sōryū"},
+    {"name": "ROKS Dokdo LPH-6111", "country": "KR", "type": "amphibious", "lat": 35.0, "lng": 130.0, "heading": 0, "speed_kts": 14, "detail": "Sea of Japan; Dokdo-class LPH; named after disputed islets", "vessels": "LPH-6111"},
+    {"name": "ROKS Dosan Ahn Changho SS-083", "country": "KR", "type": "submarine", "lat": 35.0, "lng": 129.0, "heading": 0, "speed_kts": 8, "detail": "Sea of Japan; KSS-III AIP SSK; SLBM-capable (K-SLBM)", "vessels": "SS-083"},
+    {"name": "VPN Gepard 3.9 frigate", "country": "VN", "type": "surface_group", "lat": 12.0, "lng": 110.0, "heading": 0, "speed_kts": 16, "detail": "South China Sea / Spratlys; Russian Gepard; coastal defense", "vessels": "Gepard 3.9"},
+    {"name": "VPN Kilo 636 SSK", "country": "VN", "type": "submarine", "lat": 11.0, "lng": 109.0, "heading": 90, "speed_kts": 6, "detail": "South China Sea; 6x Kilo SSK; A2/AD against PLAN", "vessels": "Kilo 636"},
+    {"name": "PNS Agosta-90B SSK", "country": "PK", "type": "submarine", "lat": 24.0, "lng": 65.0, "heading": 90, "speed_kts": 8, "detail": "Arabian Sea; French Agosta + Hangor-class (Chinese) coming online", "vessels": "Agosta-90B SSK"},
+    {"name": "BNS Mongla F112", "country": "BD", "type": "surface_group", "lat": 22.0, "lng": 91.5, "heading": 180, "speed_kts": 14, "detail": "Bay of Bengal; Type 053H3 frigate (ex-Chinese); EEZ patrol", "vessels": "F112"},
+    {"name": "Sri Lanka Navy SLNS Sayurala", "country": "LK", "type": "surface_group", "lat": 7.5, "lng": 79.5, "heading": 0, "speed_kts": 14, "detail": "Indian Ocean SLOC; Sayurala-class OPV; counter-piracy", "vessels": "SLNS Sayurala"},
+    {"name": "Myanmar Navy Aung Zeya FF-1", "country": "MM", "type": "surface_group", "lat": 16.0, "lng": 96.0, "heading": 270, "speed_kts": 14, "detail": "Andaman Sea; Aung Zeya frigate; junta-controlled", "vessels": "FF-1"},
 ]
 
 
@@ -4537,8 +4622,9 @@ def fetch_opensky():
                 "type_desc": cat_names.get(cat, ""),
                 "on_ground": s[8],
             })
-        OPENSKY_CACHE["data"] = results
-        OPENSKY_CACHE["fetched_at"] = now
+        with _cache_lock:
+            OPENSKY_CACHE["data"] = results
+            OPENSKY_CACHE["fetched_at"] = now
     except Exception as e:
         print(f"[OpenSky] Error: {e}")
         # Return cache even if stale
@@ -4639,8 +4725,9 @@ def fetch_eonet():
                 "magnitude_unit": latest.get("magnitudeUnit", ""),
                 "link": ev.get("link", ""),
             })
-        EONET_CACHE["data"] = results
-        EONET_CACHE["fetched_at"] = now
+        with _cache_lock:
+            EONET_CACHE["data"] = results
+            EONET_CACHE["fetched_at"] = now
     except Exception as e:
         print(f"[EONET] Error: {e}")
     return EONET_CACHE["data"]
@@ -4742,10 +4829,1643 @@ def fetch_satellites():
                 })
         except Exception as e:
             print(f"[CelesTrak:{group_name}] Error: {e}")
-    SATELLITE_CACHE["data"] = results
-    SATELLITE_CACHE["fetched_at"] = now
+    with _cache_lock:
+        SATELLITE_CACHE["data"] = results
+        SATELLITE_CACHE["fetched_at"] = now
     print(f"[CelesTrak] Computed positions for {len(results)} satellites")
     return SATELLITE_CACHE["data"]
+
+
+# ═══════════════ USGS – LIVE EARTHQUAKES ═══════════════
+EARTHQUAKE_CACHE = {"data": [], "fetched_at": 0.0}
+EARTHQUAKE_CACHE_TTL = 300  # 5 minutes
+
+def fetch_earthquakes():
+    now = time.time()
+    if EARTHQUAKE_CACHE["data"] and (now - EARTHQUAKE_CACHE["fetched_at"]) < EARTHQUAKE_CACHE_TTL:
+        return EARTHQUAKE_CACHE["data"]
+    results = []
+    try:
+        # USGS feed: M2.5+ in past day (free, no key)
+        url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
+        req = urllib.request.Request(url, headers={"User-Agent": "WorldMonitor/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = json.loads(resp.read())
+        for feat in raw.get("features", []):
+            props = feat.get("properties", {})
+            geom = feat.get("geometry", {})
+            coords = geom.get("coordinates", [])
+            if len(coords) < 2:
+                continue
+            mag = props.get("mag")
+            if mag is None or mag < 2.5:
+                continue
+            results.append({
+                "id": feat.get("id", ""),
+                "place": props.get("place", "")[:80],
+                "mag": round(float(mag), 1),
+                "depth_km": round(float(coords[2] or 0), 1) if len(coords) > 2 else 0,
+                "lat": round(coords[1], 3),
+                "lng": round(coords[0], 3),
+                "time": props.get("time", 0),
+                "tsunami": props.get("tsunami", 0) == 1,
+                "felt": props.get("felt") or 0,
+                "alert": props.get("alert", ""),
+                "url": props.get("url", ""),
+            })
+        results.sort(key=lambda x: x["mag"], reverse=True)
+        with _cache_lock:
+            EARTHQUAKE_CACHE["data"] = results
+            EARTHQUAKE_CACHE["fetched_at"] = now
+        print(f"[USGS] Fetched {len(results)} earthquakes (M2.5+)")
+    except Exception as e:
+        print(f"[USGS] Error: {e}")
+    return EARTHQUAKE_CACHE["data"]
+
+
+# ═══════════════ NASA FIRMS – ACTIVE WILDFIRES ═══════════════
+WILDFIRE_CACHE = {"data": [], "fetched_at": 0.0}
+WILDFIRE_CACHE_TTL = 1800  # 30 minutes
+
+def fetch_wildfires():
+    now = time.time()
+    if WILDFIRE_CACHE["data"] and (now - WILDFIRE_CACHE["fetched_at"]) < WILDFIRE_CACHE_TTL:
+        return WILDFIRE_CACHE["data"]
+    results = []
+    try:
+        # NASA FIRMS: VIIRS_SNPP_NRT, last 24h, global. CSV format.
+        # Free, no key required for public 24h feed via firms.modaps.eosdis.nasa.gov
+        url = "https://firms.modaps.eosdis.nasa.gov/data/active_fire/suomi-npp-viirs-c2/csv/SUOMI_VIIRS_C2_Global_24h.csv"
+        req = urllib.request.Request(url, headers={"User-Agent": "WorldMonitor/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            text = resp.read().decode("utf-8", errors="ignore")
+        lines = text.strip().split("\n")
+        if len(lines) < 2:
+            return []
+        # Header: latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight
+        # Confidence values: "high" / "nominal" / "low"
+        sampled = []
+        for line in lines[1:]:
+            parts = line.split(",")
+            if len(parts) < 13:
+                continue
+            try:
+                lat = float(parts[0])
+                lng = float(parts[1])
+                conf = parts[8].strip().lower()
+                frp = float(parts[11]) if parts[11] else 0  # Fire Radiative Power
+                # Keep high-confidence + nominal-confidence fires with FRP >= 20 MW
+                if conf not in ("high", "nominal") or frp < 20:
+                    continue
+                sampled.append({
+                    "lat": round(lat, 3),
+                    "lng": round(lng, 3),
+                    "frp": round(frp, 1),
+                    "brightness": round(float(parts[2]), 1) if parts[2] else 0,
+                    "date": parts[5],
+                    "time": parts[6],
+                    "daynight": parts[12].strip() if len(parts) > 12 else "",
+                })
+            except (ValueError, IndexError):
+                continue
+        # Cap at 500 hottest
+        sampled.sort(key=lambda x: x["frp"], reverse=True)
+        results = sampled[:500]
+        with _cache_lock:
+            WILDFIRE_CACHE["data"] = results
+            WILDFIRE_CACHE["fetched_at"] = now
+        print(f"[FIRMS] Fetched {len(results)} active wildfires (high confidence, FRP>30)")
+    except Exception as e:
+        print(f"[FIRMS] Error: {e}")
+    return WILDFIRE_CACHE["data"]
+
+
+# ═══════════════ STRATEGIC CHOKEPOINTS ═══════════════
+# Critical maritime/land chokepoints — bottlenecks for global trade and military movement
+STRATEGIC_CHOKEPOINTS = [
+    {"name": "Strait of Hormuz", "lat": 26.57, "lng": 56.25, "type": "maritime", "country": "IR/OM",
+     "throughput": "21 Mbpd oil (~21% world supply)", "risk": "EXTREME", "detail": "Iran threatens closure during conflicts; US 5th Fleet patrols"},
+    {"name": "Suez Canal", "lat": 30.59, "lng": 32.27, "type": "maritime", "country": "EG",
+     "throughput": "12% global trade; 30% container traffic", "risk": "HIGH", "detail": "Houthi threats to Red Sea since 2023; Ever Given grounding"},
+    {"name": "Strait of Malacca", "lat": 2.50, "lng": 101.50, "type": "maritime", "country": "SG/MY/ID",
+     "throughput": "16 Mbpd oil; 25% world trade", "risk": "HIGH", "detail": "China's 'Malacca Dilemma'; piracy hotspot"},
+    {"name": "Bab el-Mandeb", "lat": 12.58, "lng": 43.33, "type": "maritime", "country": "YE/DJ",
+     "throughput": "9% seaborne oil trade; Red Sea entrance", "risk": "EXTREME", "detail": "Houthi missile/drone attacks ongoing; vessels rerouting Cape route"},
+    {"name": "Bosphorus Strait", "lat": 41.12, "lng": 29.07, "type": "maritime", "country": "TR",
+     "throughput": "3% world oil; only Black Sea access", "risk": "HIGH", "detail": "Montreux Convention; Russian Black Sea Fleet access"},
+    {"name": "Strait of Gibraltar", "lat": 35.97, "lng": -5.50, "type": "maritime", "country": "ES/MA",
+     "throughput": "Mediterranean entrance; 100k+ ships/yr", "risk": "MEDIUM", "detail": "NATO controls; UK base at Gibraltar"},
+    {"name": "Panama Canal", "lat": 9.08, "lng": -79.68, "type": "maritime", "country": "PA",
+     "throughput": "5% global trade; 14k ships/yr", "risk": "MEDIUM", "detail": "Drought-induced capacity restrictions 2024; US-China tensions over ports"},
+    {"name": "Strait of Dover", "lat": 51.00, "lng": 1.50, "type": "maritime", "country": "GB/FR",
+     "throughput": "Busiest shipping lane; 400+ ships/day", "risk": "LOW", "detail": "Channel Tunnel; English Channel"},
+    {"name": "Strait of Magellan", "lat": -53.80, "lng": -70.95, "type": "maritime", "country": "CL/AR",
+     "throughput": "Cape Horn alternative; Antarctic gateway", "risk": "LOW", "detail": "Strategic in Cape Horn rerouting scenarios"},
+    {"name": "Singapore Strait", "lat": 1.27, "lng": 104.00, "type": "maritime", "country": "SG/MY/ID",
+     "throughput": "Eastern Malacca; 1000+ ships/day", "risk": "MEDIUM", "detail": "Piracy; container hub Singapore"},
+    {"name": "Taiwan Strait", "lat": 24.50, "lng": 119.50, "type": "maritime", "country": "TW/CN",
+     "throughput": "50% global container traffic", "risk": "EXTREME", "detail": "PLA naval/air drills; US FONOPs"},
+    {"name": "Luzon Strait", "lat": 20.50, "lng": 121.00, "type": "maritime", "country": "PH/TW",
+     "throughput": "South China Sea ↔ Pacific", "risk": "HIGH", "detail": "Critical for US Pacific access; Bashi Channel"},
+    {"name": "Lombok Strait", "lat": -8.50, "lng": 115.85, "type": "maritime", "country": "ID",
+     "throughput": "Deep alternative to Malacca", "risk": "LOW", "detail": "Used by VLCCs too deep for Malacca"},
+    {"name": "Sunda Strait", "lat": -6.00, "lng": 105.85, "type": "maritime", "country": "ID",
+     "throughput": "Java↔Sumatra; alternative passage", "risk": "LOW", "detail": "Anak Krakatoa volcanic risk"},
+    {"name": "Strait of Tiran", "lat": 27.97, "lng": 34.50, "type": "maritime", "country": "EG/SA",
+     "throughput": "Gulf of Aqaba access; Eilat/Aqaba", "risk": "HIGH", "detail": "Saudi-Egypt tunnel project; Israeli access"},
+    {"name": "Kerch Strait", "lat": 45.30, "lng": 36.55, "type": "maritime", "country": "RU/UA",
+     "throughput": "Sea of Azov access", "risk": "EXTREME", "detail": "Crimea bridge; Ukrainian strikes; closed to Ukraine"},
+    {"name": "Danish Straits", "lat": 56.00, "lng": 11.00, "type": "maritime", "country": "DK/SE",
+     "throughput": "Baltic-North Sea; Russian oil exports", "risk": "MEDIUM", "detail": "Nord Stream area; sanctions enforcement"},
+    {"name": "Northwest Passage", "lat": 74.00, "lng": -95.00, "type": "maritime", "country": "CA",
+     "throughput": "Arctic shortcut (seasonal)", "risk": "MEDIUM", "detail": "Climate change opening; Canada/US dispute"},
+    {"name": "Northern Sea Route", "lat": 76.00, "lng": 100.00, "type": "maritime", "country": "RU",
+     "throughput": "Russia Arctic; China-EU shortcut", "risk": "MEDIUM", "detail": "Russia controls; nuclear icebreakers"},
+    {"name": "Khyber Pass", "lat": 34.10, "lng": 71.10, "type": "land", "country": "PK/AF",
+     "throughput": "Pakistan-Afghanistan land route", "risk": "HIGH", "detail": "Historic invasion route; Taliban control"},
+    {"name": "Wakhan Corridor", "lat": 37.10, "lng": 73.50, "type": "land", "country": "AF/CN",
+     "throughput": "Afghanistan↔China only land link", "risk": "HIGH", "detail": "Belt and Road; Pamir mountains"},
+]
+
+
+# ═══════════════ STOCK EXCHANGES & FINANCIAL CENTERS ═══════════════
+STOCK_EXCHANGES = [
+    {"name": "NYSE", "city": "New York", "country": "US", "lat": 40.71, "lng": -74.01, "mcap": "$28.4T", "tier": 1, "detail": "World's largest by market cap"},
+    {"name": "NASDAQ", "city": "New York", "country": "US", "lat": 40.76, "lng": -73.99, "mcap": "$22.5T", "tier": 1, "detail": "Tech-heavy; AAPL, MSFT, NVDA"},
+    {"name": "Shanghai SE", "city": "Shanghai", "country": "CN", "lat": 31.23, "lng": 121.50, "mcap": "$7.4T", "tier": 1, "detail": "China A-shares; SSE Composite"},
+    {"name": "Euronext", "city": "Amsterdam", "country": "NL", "lat": 52.37, "lng": 4.89, "mcap": "$6.5T", "tier": 1, "detail": "Pan-European exchange (Paris/Amsterdam/Brussels/Lisbon/Milan/Oslo/Dublin)"},
+    {"name": "Japan Exchange", "city": "Tokyo", "country": "JP", "lat": 35.68, "lng": 139.77, "mcap": "$6.2T", "tier": 1, "detail": "Nikkei 225; TOPIX"},
+    {"name": "Shenzhen SE", "city": "Shenzhen", "country": "CN", "lat": 22.54, "lng": 114.05, "mcap": "$4.8T", "tier": 1, "detail": "China growth/tech stocks; ChiNext"},
+    {"name": "Hong Kong Ex", "city": "Hong Kong", "country": "HK", "lat": 22.28, "lng": 114.16, "mcap": "$4.5T", "tier": 1, "detail": "Hang Seng; China gateway"},
+    {"name": "LSE", "city": "London", "country": "GB", "lat": 51.51, "lng": -0.10, "mcap": "$3.4T", "tier": 1, "detail": "FTSE 100; oldest major exchange"},
+    {"name": "TSX", "city": "Toronto", "country": "CA", "lat": 43.65, "lng": -79.38, "mcap": "$3.1T", "tier": 2, "detail": "Resource-heavy; mining/energy"},
+    {"name": "NSE India", "city": "Mumbai", "country": "IN", "lat": 19.06, "lng": 72.86, "mcap": "$4.6T", "tier": 1, "detail": "Nifty 50; world's most active by volume"},
+    {"name": "BSE India", "city": "Mumbai", "country": "IN", "lat": 18.93, "lng": 72.83, "mcap": "$4.7T", "tier": 1, "detail": "Sensex; oldest in Asia"},
+    {"name": "Saudi Tadawul", "city": "Riyadh", "country": "SA", "lat": 24.71, "lng": 46.67, "mcap": "$2.7T", "tier": 2, "detail": "Aramco listed; largest in MENA"},
+    {"name": "Deutsche Börse", "city": "Frankfurt", "country": "DE", "lat": 50.11, "lng": 8.67, "mcap": "$2.3T", "tier": 2, "detail": "DAX 40; Xetra trading"},
+    {"name": "SIX Swiss Ex", "city": "Zurich", "country": "CH", "lat": 47.38, "lng": 8.54, "mcap": "$2.2T", "tier": 2, "detail": "SMI; Nestle, Roche, Novartis"},
+    {"name": "Korea Exchange", "city": "Seoul", "country": "KR", "lat": 37.51, "lng": 127.06, "mcap": "$2.1T", "tier": 2, "detail": "KOSPI; Samsung dominant"},
+    {"name": "ASX", "city": "Sydney", "country": "AU", "lat": -33.87, "lng": 151.21, "mcap": "$1.8T", "tier": 2, "detail": "ASX 200; mining/banking heavy"},
+    {"name": "Taiwan SE", "city": "Taipei", "country": "TW", "lat": 25.04, "lng": 121.51, "mcap": "$2.3T", "tier": 2, "detail": "TAIEX; TSMC dominant"},
+    {"name": "Brasil B3", "city": "São Paulo", "country": "BR", "lat": -23.55, "lng": -46.63, "mcap": "$0.9T", "tier": 2, "detail": "Bovespa; Latam largest"},
+    {"name": "Johannesburg SE", "city": "Johannesburg", "country": "ZA", "lat": -26.10, "lng": 28.05, "mcap": "$1.0T", "tier": 2, "detail": "JSE; African mining; Naspers"},
+    {"name": "Moscow Exchange", "city": "Moscow", "country": "RU", "lat": 55.75, "lng": 37.62, "mcap": "$0.5T", "tier": 3, "detail": "MOEX; sanctioned; reduced foreign access"},
+    {"name": "Borsa İstanbul", "city": "Istanbul", "country": "TR", "lat": 41.08, "lng": 29.02, "mcap": "$0.4T", "tier": 3, "detail": "BIST 100; high inflation volatility"},
+    {"name": "Tel Aviv SE", "city": "Tel Aviv", "country": "IL", "lat": 32.07, "lng": 34.79, "mcap": "$0.3T", "tier": 3, "detail": "TA-35; tech/defense"},
+    {"name": "Singapore Ex", "city": "Singapore", "country": "SG", "lat": 1.28, "lng": 103.85, "mcap": "$0.6T", "tier": 2, "detail": "STI; ASEAN financial hub"},
+    {"name": "DFM Dubai", "city": "Dubai", "country": "AE", "lat": 25.22, "lng": 55.28, "mcap": "$0.2T", "tier": 3, "detail": "DFM; Middle East commerce hub"},
+    {"name": "QSE Doha", "city": "Doha", "country": "QA", "lat": 25.30, "lng": 51.53, "mcap": "$0.16T", "tier": 3, "detail": "Qatar Stock Exchange"},
+]
+
+CENTRAL_BANKS = [
+    {"name": "Federal Reserve", "city": "Washington D.C.", "country": "US", "lat": 38.89, "lng": -77.04, "rate": "5.25-5.50%", "currency": "USD", "detail": "Sets global benchmark; FOMC"},
+    {"name": "ECB", "city": "Frankfurt", "country": "DE", "lat": 50.11, "lng": 8.68, "rate": "4.00%", "currency": "EUR", "detail": "Eurozone 20 members"},
+    {"name": "Bank of England", "city": "London", "country": "GB", "lat": 51.51, "lng": -0.09, "rate": "5.00%", "currency": "GBP", "detail": "Oldest central bank (1694)"},
+    {"name": "Bank of Japan", "city": "Tokyo", "country": "JP", "lat": 35.68, "lng": 139.77, "rate": "0.25%", "currency": "JPY", "detail": "Exited NIRP 2024; YCC ended"},
+    {"name": "PBOC", "city": "Beijing", "country": "CN", "lat": 39.92, "lng": 116.39, "rate": "3.10% LPR", "currency": "CNY", "detail": "People's Bank of China; MLF rate"},
+    {"name": "SNB", "city": "Bern", "country": "CH", "lat": 46.95, "lng": 7.44, "rate": "1.00%", "currency": "CHF", "detail": "Swiss National Bank"},
+    {"name": "Bank of Canada", "city": "Ottawa", "country": "CA", "lat": 45.42, "lng": -75.70, "rate": "3.75%", "currency": "CAD", "detail": "BoC; cutting cycle 2024"},
+    {"name": "RBA", "city": "Sydney", "country": "AU", "lat": -33.87, "lng": 151.21, "rate": "4.35%", "currency": "AUD", "detail": "Reserve Bank of Australia"},
+    {"name": "RBI India", "city": "Mumbai", "country": "IN", "lat": 18.93, "lng": 72.84, "rate": "6.50%", "currency": "INR", "detail": "Reserve Bank of India"},
+    {"name": "BCB Brazil", "city": "Brasília", "country": "BR", "lat": -15.78, "lng": -47.93, "rate": "11.25%", "currency": "BRL", "detail": "Banco Central do Brasil; Selic"},
+    {"name": "CBR Russia", "city": "Moscow", "country": "RU", "lat": 55.75, "lng": 37.62, "rate": "21.00%", "currency": "RUB", "detail": "Hiking aggressively; war economy"},
+    {"name": "Turkey CBRT", "city": "Ankara", "country": "TR", "lat": 39.93, "lng": 32.86, "rate": "50.00%", "currency": "TRY", "detail": "Anti-inflation tightening 2024"},
+    {"name": "BoK Korea", "city": "Seoul", "country": "KR", "lat": 37.57, "lng": 126.98, "rate": "3.25%", "currency": "KRW", "detail": "Bank of Korea"},
+    {"name": "SAMA", "city": "Riyadh", "country": "SA", "lat": 24.71, "lng": 46.68, "rate": "5.50%", "currency": "SAR", "detail": "Saudi Central Bank; USD peg"},
+]
+
+
+# ═══════════════ MINING SITES & CRITICAL MINERALS ═══════════════
+MINING_SITES = [
+    # Lithium
+    {"name": "Salar de Atacama", "country": "CL", "lat": -23.50, "lng": -68.20, "mineral": "Lithium", "operator": "SQM/Albemarle", "detail": "World's largest lithium brine; ~30% global supply"},
+    {"name": "Greenbushes", "country": "AU", "lat": -33.85, "lng": 116.07, "mineral": "Lithium", "operator": "Talison (Tianqi/Albemarle)", "detail": "Largest hard-rock lithium mine"},
+    {"name": "Salar de Uyuni", "country": "BO", "lat": -20.13, "lng": -67.49, "mineral": "Lithium", "operator": "YLB", "detail": "Largest lithium reserve untapped (~21Mt)"},
+    {"name": "Salar del Hombre Muerto", "country": "AR", "lat": -25.40, "lng": -67.07, "mineral": "Lithium", "operator": "Livent/Allkem", "detail": "Argentina lithium triangle"},
+    # Rare Earths
+    {"name": "Bayan Obo", "country": "CN", "lat": 41.77, "lng": 109.95, "mineral": "Rare Earths", "operator": "China Northern", "detail": "World's largest REE mine; 70%+ global supply"},
+    {"name": "Mountain Pass", "country": "US", "lat": 35.48, "lng": -115.53, "mineral": "Rare Earths", "operator": "MP Materials", "detail": "Only US REE mine; DoD strategic"},
+    {"name": "Mount Weld", "country": "AU", "lat": -28.86, "lng": 122.55, "mineral": "Rare Earths", "operator": "Lynas Rare Earths", "detail": "Largest non-Chinese REE producer"},
+    {"name": "Nechalacho", "country": "CA", "lat": 62.65, "lng": -112.34, "mineral": "Rare Earths", "operator": "Vital Metals", "detail": "Canadian heavy REE source"},
+    # Cobalt / Copper
+    {"name": "Mutanda Mine", "country": "CD", "lat": -10.83, "lng": 25.72, "mineral": "Cobalt/Copper", "operator": "Glencore", "detail": "DRC copper belt; 20% global cobalt"},
+    {"name": "Tenke Fungurume", "country": "CD", "lat": -10.61, "lng": 26.18, "mineral": "Cobalt/Copper", "operator": "CMOC (China)", "detail": "Chinese-controlled; 2nd largest cobalt"},
+    {"name": "Kamoa-Kakula", "country": "CD", "lat": -10.75, "lng": 25.27, "mineral": "Copper", "operator": "Ivanhoe Mines", "detail": "Highest-grade major copper mine"},
+    {"name": "Escondida", "country": "CL", "lat": -24.27, "lng": -69.07, "mineral": "Copper", "operator": "BHP", "detail": "World's largest copper mine"},
+    {"name": "Grasberg", "country": "ID", "lat": -4.06, "lng": 137.12, "mineral": "Copper/Gold", "operator": "Freeport-McMoRan", "detail": "World's 2nd largest copper; largest gold"},
+    # Nickel
+    {"name": "Sudbury Basin", "country": "CA", "lat": 46.50, "lng": -81.00, "mineral": "Nickel", "operator": "Vale/Glencore", "detail": "Canada nickel/PGM hub"},
+    {"name": "Norilsk", "country": "RU", "lat": 69.35, "lng": 88.20, "mineral": "Nickel/Palladium", "operator": "Nornickel", "detail": "Largest palladium producer; 11% world nickel"},
+    {"name": "Sorowako", "country": "ID", "lat": -2.53, "lng": 121.36, "mineral": "Nickel", "operator": "Vale/PT Vale", "detail": "Indonesia nickel boom; EV battery supply"},
+    # Gold/PGM
+    {"name": "Witwatersrand", "country": "ZA", "lat": -26.20, "lng": 27.50, "mineral": "Gold/Platinum", "operator": "Various", "detail": "Historic 40% world gold; deep mines"},
+    {"name": "Carlin Trend", "country": "US", "lat": 40.83, "lng": -116.10, "mineral": "Gold", "operator": "Newmont/Barrick", "detail": "Largest US gold producing district"},
+    # Uranium
+    {"name": "Cigar Lake", "country": "CA", "lat": 58.05, "lng": -104.48, "mineral": "Uranium", "operator": "Cameco", "detail": "World's highest-grade uranium"},
+    {"name": "Olympic Dam", "country": "AU", "lat": -30.44, "lng": 136.88, "mineral": "Uranium/Copper", "operator": "BHP", "detail": "Largest known uranium deposit"},
+    # Iron
+    {"name": "Carajás Mine", "country": "BR", "lat": -6.07, "lng": -50.16, "mineral": "Iron Ore", "operator": "Vale", "detail": "World's largest iron ore mine"},
+    {"name": "Pilbara Iron", "country": "AU", "lat": -22.60, "lng": 117.80, "mineral": "Iron Ore", "operator": "BHP/Rio Tinto/FMG", "detail": "Pilbara region; 60% seaborne iron trade"},
+    # Tin
+    {"name": "Bangka-Belitung", "country": "ID", "lat": -2.74, "lng": 106.45, "mineral": "Tin", "operator": "PT Timah", "detail": "Largest tin producer; offshore dredging"},
+    # Niobium
+    {"name": "Araxá", "country": "BR", "lat": -19.59, "lng": -46.95, "mineral": "Niobium", "operator": "CBMM", "detail": "85% of world niobium; steel additive"},
+    # Graphite
+    {"name": "Balama", "country": "MZ", "lat": -13.34, "lng": 38.55, "mineral": "Graphite", "operator": "Syrah Resources", "detail": "Largest graphite mine outside China"},
+]
+
+
+# ═══════════════ DISEASE OUTBREAKS ═══════════════
+# Tracked from WHO/CDC/ECDC reports — significant ongoing/recent outbreaks
+DISEASE_OUTBREAKS = [
+    {"name": "Mpox (Clade Ib)", "country": "CD", "lat": -4.04, "lng": 21.76, "disease": "Mpox", "severity": "HIGH",
+     "cases": "30,000+", "detail": "WHO PHEIC 2024; Clade Ib spreading via close contact; Central/East Africa"},
+    {"name": "Marburg Outbreak", "country": "RW", "lat": -1.95, "lng": 30.06, "disease": "Marburg virus", "severity": "EXTREME",
+     "cases": "60+", "detail": "Rwanda 2024; healthcare workers affected; 30% CFR"},
+    {"name": "H5N1 in dairy cattle", "country": "US", "lat": 40.00, "lng": -100.00, "disease": "H5N1 Avian Flu", "severity": "MEDIUM",
+     "cases": "Cattle/poultry + 50+ humans", "detail": "Bovine spread unprecedented; California/Colorado"},
+    {"name": "Cholera Sudan", "country": "SD", "lat": 15.50, "lng": 32.56, "disease": "Cholera", "severity": "HIGH",
+     "cases": "20,000+", "detail": "Civil war collapse of WASH; flooding"},
+    {"name": "Dengue Brazil", "country": "BR", "lat": -15.78, "lng": -47.93, "disease": "Dengue", "severity": "HIGH",
+     "cases": "10M+ in 2024", "detail": "Worst outbreak in history; climate-linked"},
+    {"name": "Ebola Uganda", "country": "UG", "lat": 0.32, "lng": 32.58, "disease": "Ebola", "severity": "HIGH",
+     "cases": "Sporadic", "detail": "Sudan ebolavirus; Mubende district historic outbreak"},
+    {"name": "Polio Pakistan", "country": "PK", "lat": 33.70, "lng": 73.06, "disease": "Wild Poliovirus", "severity": "HIGH",
+     "cases": "60+", "detail": "Pakistan/Afghanistan only WPV1 endemic; vaccine refusal"},
+    {"name": "Measles Europe", "country": "RO", "lat": 44.43, "lng": 26.10, "disease": "Measles", "severity": "MEDIUM",
+     "cases": "30,000+ EU/EEA", "detail": "Vaccine hesitancy; Romania, UK, France worst hit"},
+    {"name": "MERS-CoV", "country": "SA", "lat": 24.71, "lng": 46.67, "disease": "MERS Coronavirus", "severity": "MEDIUM",
+     "cases": "Sporadic", "detail": "Camel reservoir; healthcare-associated clusters"},
+    {"name": "Nipah Kerala", "country": "IN", "lat": 11.41, "lng": 75.69, "disease": "Nipah virus", "severity": "HIGH",
+     "cases": "Cluster", "detail": "Bat-borne; ~70% CFR; Kerala recurrent outbreaks"},
+    {"name": "Lassa Fever", "country": "NG", "lat": 9.08, "lng": 8.68, "disease": "Lassa", "severity": "MEDIUM",
+     "cases": "1000+", "detail": "Endemic West Africa; rodent-borne"},
+    {"name": "Yellow Fever Colombia", "country": "CO", "lat": 4.71, "lng": -74.07, "disease": "Yellow fever", "severity": "MEDIUM",
+     "cases": "Sporadic", "detail": "Tolima/Putumayo regions; vaccine campaigns"},
+    {"name": "Crimean-Congo HF", "country": "TR", "lat": 39.93, "lng": 32.86, "disease": "CCHF", "severity": "MEDIUM",
+     "cases": "Hundreds", "detail": "Tick-borne; agricultural workers; Anatolia"},
+    {"name": "Zika Resurgence", "country": "TH", "lat": 13.75, "lng": 100.50, "disease": "Zika virus", "severity": "MEDIUM",
+     "cases": "Hundreds", "detail": "Aedes mosquito; Bangkok/Phuket"},
+    {"name": "Diphtheria Yemen", "country": "YE", "lat": 15.37, "lng": 44.19, "disease": "Diphtheria", "severity": "HIGH",
+     "cases": "Thousands", "detail": "Civil war collapse of immunization"},
+]
+
+
+# ═══════════════ PROTESTS / CIVIL UNREST ═══════════════
+# Major ongoing or recent significant protest movements
+PROTEST_EVENTS = [
+    {"name": "Georgia EU Protests", "country": "GE", "lat": 41.72, "lng": 44.79, "size": "100k+", "duration": "ongoing",
+     "detail": "Pro-EU demonstrations against gov suspending EU accession; Tbilisi"},
+    {"name": "Romania Election Crisis", "country": "RO", "lat": 44.43, "lng": 26.10, "size": "10k+", "duration": "2024-2025",
+     "detail": "Election annulment; Călin Georgescu controversy"},
+    {"name": "South Korea Martial Law Aftermath", "country": "KR", "lat": 37.57, "lng": 126.98, "size": "1M+", "duration": "ongoing",
+     "detail": "Yoon impeachment protests; National Assembly"},
+    {"name": "Bangladesh Quota Protests", "country": "BD", "lat": 23.81, "lng": 90.41, "size": "Mass", "duration": "2024",
+     "detail": "Student-led; toppled Sheikh Hasina; interim Yunus government"},
+    {"name": "Kenya Finance Bill Protests", "country": "KE", "lat": -1.29, "lng": 36.82, "size": "Mass", "duration": "ongoing",
+     "detail": "Gen-Z led; tax hikes; parliament stormed"},
+    {"name": "Mozambique Election Unrest", "country": "MZ", "lat": -25.97, "lng": 32.58, "size": "Wide", "duration": "ongoing",
+     "detail": "Frelimo win disputed; deaths in clashes"},
+    {"name": "Argentina Anti-Austerity", "country": "AR", "lat": -34.61, "lng": -58.40, "size": "Recurring", "duration": "ongoing",
+     "detail": "Milei reform protests; pension/labor"},
+    {"name": "France Pension Aftermath", "country": "FR", "lat": 48.86, "lng": 2.35, "size": "Recurring", "duration": "ongoing",
+     "detail": "Macron unpopular; budget crisis"},
+    {"name": "Iran Hijab Protests", "country": "IR", "lat": 35.69, "lng": 51.39, "size": "Underground", "duration": "ongoing",
+     "detail": "Mahsa Amini legacy; women defying laws"},
+    {"name": "Hong Kong Continued", "country": "HK", "lat": 22.32, "lng": 114.17, "size": "Suppressed", "duration": "ongoing",
+     "detail": "National Security Law dissent; Article 23"},
+    {"name": "Israel Hostage Protests", "country": "IL", "lat": 32.07, "lng": 34.79, "size": "100k+", "duration": "ongoing",
+     "detail": "Tel Aviv weekly; demanding hostage deal"},
+    {"name": "Serbia EU Protests", "country": "RS", "lat": 44.79, "lng": 20.45, "size": "10k+", "duration": "ongoing",
+     "detail": "Novi Sad station collapse; anti-Vučić"},
+]
+
+
+# ═══════════════ INTERNET OUTAGES / GPS JAMMING ═══════════════
+# Known persistent internet disruption / GPS jamming hotspots
+INTERNET_OUTAGES = [
+    {"name": "Kaliningrad GPS Jamming", "country": "RU", "lat": 54.71, "lng": 20.51, "type": "gps_jam", "severity": "HIGH",
+     "detail": "Russian electronic warfare; affects Baltic aviation/maritime"},
+    {"name": "Eastern Mediterranean GPS", "country": "Multi", "lat": 33.50, "lng": 34.50, "type": "gps_jam", "severity": "HIGH",
+     "detail": "Israeli/Hezbollah EW; civil aviation impacts"},
+    {"name": "Black Sea GPS", "country": "Multi", "lat": 44.00, "lng": 35.00, "type": "gps_jam", "severity": "HIGH",
+     "detail": "Russian jamming during Ukraine war"},
+    {"name": "Iran Internet Throttling", "country": "IR", "lat": 35.69, "lng": 51.39, "type": "throttle", "severity": "EXTREME",
+     "detail": "Persistent during protests; full blackouts during unrest"},
+    {"name": "Myanmar Internet Restrictions", "country": "MM", "lat": 19.75, "lng": 96.10, "type": "blackout", "severity": "EXTREME",
+     "detail": "Junta-imposed; rotating regional blackouts since 2021"},
+    {"name": "Sudan Internet Collapse", "country": "SD", "lat": 15.50, "lng": 32.56, "type": "blackout", "severity": "EXTREME",
+     "detail": "Civil war infrastructure damage; nationwide outages"},
+    {"name": "Pakistan Social Media Ban", "country": "PK", "lat": 33.70, "lng": 73.06, "type": "block", "severity": "HIGH",
+     "detail": "X/Twitter persistent block since 2024"},
+    {"name": "Russia VPN Crackdown", "country": "RU", "lat": 55.75, "lng": 37.62, "type": "block", "severity": "HIGH",
+     "detail": "VPN protocols increasingly blocked; YouTube degraded"},
+    {"name": "Cuba Internet Restrictions", "country": "CU", "lat": 23.13, "lng": -82.38, "type": "throttle", "severity": "HIGH",
+     "detail": "ETECSA monopoly; routine throttling during dissent"},
+    {"name": "North Korea Air Gap", "country": "KP", "lat": 39.02, "lng": 125.75, "type": "blackout", "severity": "EXTREME",
+     "detail": "No public internet; Kwangmyong intranet only"},
+    {"name": "Ethiopia Tigray", "country": "ET", "lat": 13.50, "lng": 39.47, "type": "blackout", "severity": "HIGH",
+     "detail": "Periodic shutdowns since 2020; Amhara region similar"},
+    {"name": "Afghanistan Restrictions", "country": "AF", "lat": 34.53, "lng": 69.17, "type": "block", "severity": "HIGH",
+     "detail": "Taliban controls; Facebook/select apps blocked"},
+]
+
+
+# ═══════════════ CYBER THREAT ADVISORIES ═══════════════
+CYBER_ADVISORIES = [
+    {"id": "CISA-AA26-094A", "severity": "CRITICAL", "title": "Volt Typhoon — China-state living-off-the-land",
+     "vendor": "Multi (US infra)", "country": "US", "lat": 38.90, "lng": -77.04,
+     "actor": "China APT (Volt Typhoon)", "vector": "Compromised SOHO routers + LOTL",
+     "detail": "Targeting US critical infrastructure — water, power, comms — for pre-positioning"},
+    {"id": "CISA-AA26-088B", "severity": "CRITICAL", "title": "Ivanti Connect Secure — RCE chain",
+     "vendor": "Ivanti", "country": "US", "lat": 39.04, "lng": -77.49,
+     "actor": "China nation-state", "vector": "CVE-2026-21887 + CVE-2024-46805",
+     "detail": "Auth bypass + command injection; mass exploitation; thousands of devices compromised"},
+    {"id": "CVE-2026-3094", "severity": "CRITICAL", "title": "XZ Utils backdoor recurrence",
+     "vendor": "OSS supply chain", "country": "Multi", "lat": 50.11, "lng": 8.68,
+     "actor": "Suspected nation-state", "vector": "Upstream tarball injection",
+     "detail": "Hidden SSH auth bypass in libxz; affects Debian/Fedora unstable; sshd RCE"},
+    {"id": "CISA-AA26-072C", "severity": "HIGH", "title": "MOVEit Transfer — new auth bypass",
+     "vendor": "Progress", "country": "US", "lat": 42.36, "lng": -71.06,
+     "actor": "Cl0p ransomware", "vector": "SQL injection + privesc",
+     "detail": "Mass data theft from managed file transfer servers; 200+ orgs hit"},
+    {"id": "CERT-EU-26-018", "severity": "HIGH", "title": "Russian APT28 phishing — EU government",
+     "vendor": "Microsoft 365", "country": "BE", "lat": 50.85, "lng": 4.35,
+     "actor": "APT28 (Fancy Bear, GRU)", "vector": "Spear-phishing + token theft",
+     "detail": "Targeting EU foreign ministries and Ukraine support orgs"},
+    {"id": "CISA-AA26-058D", "severity": "HIGH", "title": "Fortinet FortiOS — pre-auth RCE",
+     "vendor": "Fortinet", "country": "US", "lat": 37.42, "lng": -122.08,
+     "actor": "Multiple", "vector": "CVE-2026-21762 heap overflow",
+     "detail": "Pre-auth RCE on SSL VPN; actively exploited; CISA emergency directive"},
+    {"id": "NCSC-UK-26-009", "severity": "HIGH", "title": "Iranian APT34 espionage — Gulf telecoms",
+     "vendor": "Cisco/Juniper", "country": "AE", "lat": 25.27, "lng": 55.30,
+     "actor": "APT34 (OilRig, MOIS)", "vector": "Supply chain + watering hole",
+     "detail": "Long-term access to Gulf telecom carriers for SIGINT"},
+    {"id": "CVE-2026-1234", "severity": "CRITICAL", "title": "Microsoft Outlook NTLM relay",
+     "vendor": "Microsoft", "country": "US", "lat": 47.64, "lng": -122.13,
+     "actor": "APT29 (Cozy Bear, SVR)", "vector": "Specially crafted email triggers NTLM auth",
+     "detail": "0-click; preview pane is enough; credential theft + lateral movement"},
+    {"id": "CISA-AA26-035E", "severity": "MEDIUM", "title": "BlackCat (ALPHV) ransomware revival",
+     "vendor": "Healthcare sector", "country": "US", "lat": 41.88, "lng": -87.63,
+     "actor": "BlackCat affiliates", "vector": "Initial access broker + double extortion",
+     "detail": "Hospital networks; HHS warning; $2M+ avg ransom demand"},
+    {"id": "CERT-FR-26-022", "severity": "HIGH", "title": "Lazarus Group cryptocurrency theft",
+     "vendor": "Crypto exchanges", "country": "KP", "lat": 39.02, "lng": 125.75,
+     "actor": "Lazarus Group (DPRK)", "vector": "Social engineering + malicious npm packages",
+     "detail": "$680M stolen YTD 2026; funds DPRK weapons program"},
+    {"id": "CVE-2026-2156", "severity": "HIGH", "title": "VMware vCenter heap overflow",
+     "vendor": "VMware/Broadcom", "country": "Multi", "lat": 37.42, "lng": -122.08,
+     "actor": "Multiple", "vector": "DCERPC heap overflow",
+     "detail": "Pre-auth RCE on vCenter Server; widespread enterprise impact"},
+    {"id": "CERT-AU-26-005", "severity": "MEDIUM", "title": "Optus follow-up — Medibank-style breach",
+     "vendor": "Telco/Healthcare", "country": "AU", "lat": -33.87, "lng": 151.21,
+     "actor": "Unknown ransomware", "vector": "API enumeration",
+     "detail": "10M customer records exfiltrated; sensitive health data leaked"},
+    {"id": "CISA-AA26-019F", "severity": "HIGH", "title": "Cisco IOS XE web UI",
+     "vendor": "Cisco", "country": "US", "lat": 37.42, "lng": -122.08,
+     "actor": "Unknown", "vector": "CVE-2026-20198 implant chain",
+     "detail": "Privilege escalation via web management; tens of thousands compromised"},
+    {"id": "BSI-26-014", "severity": "HIGH", "title": "German energy sector phishing wave",
+     "vendor": "SCADA/ICS", "country": "DE", "lat": 52.52, "lng": 13.41,
+     "actor": "Sandworm (GRU)", "vector": "Spear-phishing + ICS-targeting malware",
+     "detail": "Targeting Energiewende infrastructure; BSI HIGH alert"},
+    {"id": "JPCERT-26-008", "severity": "MEDIUM", "title": "Japanese semiconductor supply chain",
+     "vendor": "Multi (chip equipment)", "country": "JP", "lat": 35.68, "lng": 139.69,
+     "actor": "BlackTech (China)", "vector": "Router firmware backdoors",
+     "detail": "Long-term implants in branch routers; semi-equipment IP theft"},
+]
+
+
+# ═══════════════ GPS JAMMING ZONES ═══════════════
+GPS_JAMMING_ZONES = [
+    {"name": "Kaliningrad EW Hub", "country": "RU", "lat": 54.71, "lng": 20.51, "radius_km": 180,
+     "actor": "Russian Western MD", "intensity": "EXTREME",
+     "detail": "Krasukha-4 + Murmansk-BN; affects Baltic aviation/maritime; Finnair routinely diverts"},
+    {"name": "Eastern Med GPS spoofing", "country": "Multi", "lat": 33.50, "lng": 34.50, "radius_km": 280,
+     "actor": "IDF + Hezbollah EW", "intensity": "EXTREME",
+     "detail": "Ben Gurion arrivals affected; ships report GPS phantom positions"},
+    {"name": "Black Sea NW", "country": "RU/UA", "lat": 45.20, "lng": 33.00, "radius_km": 320,
+     "actor": "Russian Black Sea Fleet", "intensity": "EXTREME",
+     "detail": "Crimea-based jamming; affects civil aviation Romania/Bulgaria; ship AIS spoofing"},
+    {"name": "Persian Gulf", "country": "IR/Multi", "lat": 26.50, "lng": 53.00, "radius_km": 250,
+     "actor": "IRGC EW", "intensity": "HIGH",
+     "detail": "Tanker GPS spoofing near Hormuz; vessels falsely reported in Iranian waters"},
+    {"name": "Korean DMZ", "country": "KP", "lat": 38.32, "lng": 127.30, "radius_km": 90,
+     "actor": "DPRK", "intensity": "HIGH",
+     "detail": "Periodic large-scale jamming; KCNA confirmed exercises 2024-25"},
+    {"name": "Murmansk / Kola", "country": "RU", "lat": 68.97, "lng": 33.08, "radius_km": 220,
+     "actor": "Russian Northern Fleet", "intensity": "HIGH",
+     "detail": "Arctic NATO exercises trigger jamming; Norwegian airspace affected"},
+    {"name": "Sahel insurgency belt", "country": "Multi", "lat": 14.50, "lng": 4.00, "radius_km": 350,
+     "actor": "JNIM/ISGS + Russian PMC", "intensity": "MEDIUM",
+     "detail": "Localized jamming around military convoys; UAV countermeasures"},
+    {"name": "Syrian airspace", "country": "SY", "lat": 35.00, "lng": 38.50, "radius_km": 280,
+     "actor": "Russian Khmeimim", "intensity": "HIGH",
+     "detail": "Krasukha-2/4 deployed; affects civil aviation E. Med"},
+    {"name": "Crimea peninsula", "country": "UA/RU", "lat": 45.00, "lng": 34.00, "radius_km": 200,
+     "actor": "Russian forces", "intensity": "EXTREME",
+     "detail": "Continuous EW; navigation denied for Ukrainian drones and missiles"},
+    {"name": "Baltic Sea center", "country": "Multi", "lat": 57.00, "lng": 19.50, "radius_km": 200,
+     "actor": "Russian Baltic Fleet", "intensity": "MEDIUM",
+     "detail": "Episodes during Russian naval exercises; AIS spoofing"},
+]
+
+
+# ═══════════════ DISPLACEMENT / REFUGEE FLOWS ═══════════════
+DISPLACEMENT_FLOWS = [
+    {"name": "Syria → Türkiye", "from_country": "SY", "to_country": "TR",
+     "from_lat": 36.20, "from_lng": 37.16, "to_lat": 37.06, "to_lng": 37.38,
+     "population": 3200000, "year_started": 2011, "status": "ongoing",
+     "detail": "Largest single refugee population in any country"},
+    {"name": "Ukraine → Poland", "from_country": "UA", "to_country": "PL",
+     "from_lat": 50.45, "from_lng": 30.52, "to_lat": 52.23, "to_lng": 21.01,
+     "population": 1600000, "year_started": 2022, "status": "ongoing",
+     "detail": "Post-Feb 2022 invasion; mostly women and children"},
+    {"name": "Ukraine → Germany", "from_country": "UA", "to_country": "DE",
+     "from_lat": 49.84, "from_lng": 24.03, "to_lat": 52.52, "to_lng": 13.41,
+     "population": 1100000, "year_started": 2022, "status": "ongoing",
+     "detail": "Second-largest UA destination in EU"},
+    {"name": "Sudan → Chad", "from_country": "SD", "to_country": "TD",
+     "from_lat": 13.45, "from_lng": 22.45, "to_lat": 12.13, "to_lng": 15.05,
+     "population": 720000, "year_started": 2023, "status": "ongoing",
+     "detail": "Darfur conflict + RSF/SAF civil war"},
+    {"name": "Myanmar → Bangladesh (Rohingya)", "from_country": "MM", "to_country": "BD",
+     "from_lat": 20.85, "from_lng": 92.36, "to_lat": 21.20, "to_lng": 92.16,
+     "population": 960000, "year_started": 2017, "status": "ongoing",
+     "detail": "Cox's Bazar camps; world's largest refugee settlement"},
+    {"name": "Venezuela → Colombia", "from_country": "VE", "to_country": "CO",
+     "from_lat": 10.50, "from_lng": -66.93, "to_lat": 4.71, "to_lng": -74.07,
+     "population": 2900000, "year_started": 2015, "status": "ongoing",
+     "detail": "Largest displacement crisis in the Western Hemisphere"},
+    {"name": "Afghanistan → Pakistan", "from_country": "AF", "to_country": "PK",
+     "from_lat": 34.52, "from_lng": 69.18, "to_lat": 33.69, "to_lng": 73.05,
+     "population": 1700000, "year_started": 2021, "status": "ongoing",
+     "detail": "Post-Taliban takeover; PK now deporting many"},
+    {"name": "Afghanistan → Iran", "from_country": "AF", "to_country": "IR",
+     "from_lat": 34.52, "from_lng": 69.18, "to_lat": 35.69, "to_lng": 51.39,
+     "population": 3800000, "year_started": 2021, "status": "ongoing",
+     "detail": "Iran hosts more Afghans than any other country"},
+    {"name": "South Sudan → Uganda", "from_country": "SS", "to_country": "UG",
+     "from_lat": 4.85, "from_lng": 31.58, "to_lat": 0.32, "to_lng": 32.58,
+     "population": 940000, "year_started": 2013, "status": "ongoing",
+     "detail": "Bidi Bidi camp — largest in Africa"},
+    {"name": "DRC → Uganda", "from_country": "CD", "to_country": "UG",
+     "from_lat": -1.68, "from_lng": 29.22, "to_lat": 0.32, "to_lng": 32.58,
+     "population": 510000, "year_started": 2017, "status": "ongoing",
+     "detail": "Ituri/North Kivu armed groups; M23 resurgence"},
+    {"name": "Gaza internal displacement", "from_country": "PS", "to_country": "PS",
+     "from_lat": 31.50, "from_lng": 34.47, "to_lat": 31.34, "to_lng": 34.30,
+     "population": 1900000, "year_started": 2023, "status": "active",
+     "detail": "85% of Gaza population displaced; multiple displacement events"},
+    {"name": "Somalia → Kenya", "from_country": "SO", "to_country": "KE",
+     "from_lat": 2.05, "from_lng": 45.32, "to_lat": -0.06, "to_lng": 40.32,
+     "population": 280000, "year_started": 1991, "status": "ongoing",
+     "detail": "Dadaab camp complex; multi-decade crisis"},
+    {"name": "Eritrea → Ethiopia", "from_country": "ER", "to_country": "ET",
+     "from_lat": 15.32, "from_lng": 38.93, "to_lat": 13.50, "to_lng": 39.47,
+     "population": 150000, "year_started": 2000, "status": "ongoing",
+     "detail": "National conscription escapees; Tigray war complications"},
+    {"name": "Haiti → Dominican Republic", "from_country": "HT", "to_country": "DO",
+     "from_lat": 18.59, "from_lng": -72.30, "to_lat": 18.74, "to_lng": -70.16,
+     "population": 500000, "year_started": 2010, "status": "ongoing",
+     "detail": "Gang collapse + earthquake aftermath; DR mass deportations"},
+]
+
+
+# ═══════════════ AIR QUALITY (PM2.5 readings, major cities) ═══════════════
+AIR_QUALITY = [
+    {"name": "New Delhi", "country": "IN", "lat": 28.61, "lng": 77.21, "pm25": 178, "aqi_label": "Hazardous",
+     "detail": "Crop burning + diesel + dust; perennial winter crisis"},
+    {"name": "Lahore", "country": "PK", "lat": 31.55, "lng": 74.34, "pm25": 195, "aqi_label": "Hazardous",
+     "detail": "Worst-ranked global city most days; smog seasons drive shutdowns"},
+    {"name": "Dhaka", "country": "BD", "lat": 23.81, "lng": 90.41, "pm25": 142, "aqi_label": "Hazardous",
+     "detail": "Brick kilns + traffic; pre-monsoon peak"},
+    {"name": "Beijing", "country": "CN", "lat": 39.91, "lng": 116.39, "pm25": 58, "aqi_label": "Unhealthy",
+     "detail": "Improved from 2013 peaks but still 10x WHO guideline"},
+    {"name": "Jakarta", "country": "ID", "lat": -6.21, "lng": 106.85, "pm25": 76, "aqi_label": "Unhealthy",
+     "detail": "Coal plants + traffic; legal action against gov 2023"},
+    {"name": "Mumbai", "country": "IN", "lat": 19.08, "lng": 72.88, "pm25": 95, "aqi_label": "Very Unhealthy", "detail": ""},
+    {"name": "Kolkata", "country": "IN", "lat": 22.57, "lng": 88.36, "pm25": 105, "aqi_label": "Very Unhealthy", "detail": ""},
+    {"name": "Karachi", "country": "PK", "lat": 24.86, "lng": 67.01, "pm25": 88, "aqi_label": "Very Unhealthy", "detail": ""},
+    {"name": "Cairo", "country": "EG", "lat": 30.04, "lng": 31.24, "pm25": 65, "aqi_label": "Unhealthy", "detail": ""},
+    {"name": "Tehran", "country": "IR", "lat": 35.69, "lng": 51.39, "pm25": 72, "aqi_label": "Unhealthy", "detail": ""},
+    {"name": "Mexico City", "country": "MX", "lat": 19.43, "lng": -99.13, "pm25": 32, "aqi_label": "USG", "detail": ""},
+    {"name": "Santiago", "country": "CL", "lat": -33.45, "lng": -70.67, "pm25": 38, "aqi_label": "USG",
+     "detail": "Winter inversions trap pollution in valley"},
+    {"name": "Bangkok", "country": "TH", "lat": 13.75, "lng": 100.50, "pm25": 48, "aqi_label": "Unhealthy", "detail": ""},
+    {"name": "Hanoi", "country": "VN", "lat": 21.03, "lng": 105.85, "pm25": 56, "aqi_label": "Unhealthy", "detail": ""},
+    {"name": "Ulaanbaatar", "country": "MN", "lat": 47.92, "lng": 106.92, "pm25": 168, "aqi_label": "Hazardous",
+     "detail": "Coal-burning yurt heating; -40°C winters"},
+    {"name": "Los Angeles", "country": "US", "lat": 34.05, "lng": -118.24, "pm25": 14, "aqi_label": "Moderate", "detail": ""},
+    {"name": "New York", "country": "US", "lat": 40.71, "lng": -74.01, "pm25": 11, "aqi_label": "Moderate", "detail": ""},
+    {"name": "London", "country": "GB", "lat": 51.51, "lng": -0.13, "pm25": 13, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Paris", "country": "FR", "lat": 48.86, "lng": 2.35, "pm25": 15, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Berlin", "country": "DE", "lat": 52.52, "lng": 13.41, "pm25": 12, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Tokyo", "country": "JP", "lat": 35.68, "lng": 139.69, "pm25": 10, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Seoul", "country": "KR", "lat": 37.57, "lng": 126.98, "pm25": 24, "aqi_label": "Moderate",
+     "detail": "Includes contribution from Chinese transboundary haze"},
+    {"name": "Sydney", "country": "AU", "lat": -33.87, "lng": 151.21, "pm25": 8, "aqi_label": "Good",
+     "detail": "Bushfire seasons spike to Hazardous"},
+    {"name": "Reykjavík", "country": "IS", "lat": 64.13, "lng": -21.82, "pm25": 4, "aqi_label": "Good", "detail": ""},
+    {"name": "Helsinki", "country": "FI", "lat": 60.17, "lng": 24.94, "pm25": 5, "aqi_label": "Good", "detail": ""},
+    {"name": "Oslo", "country": "NO", "lat": 59.91, "lng": 10.75, "pm25": 6, "aqi_label": "Good", "detail": ""},
+    {"name": "São Paulo", "country": "BR", "lat": -23.55, "lng": -46.63, "pm25": 22, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Buenos Aires", "country": "AR", "lat": -34.60, "lng": -58.38, "pm25": 16, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Lagos", "country": "NG", "lat": 6.45, "lng": 3.40, "pm25": 68, "aqi_label": "Unhealthy", "detail": ""},
+    {"name": "Johannesburg", "country": "ZA", "lat": -26.20, "lng": 28.05, "pm25": 35, "aqi_label": "USG", "detail": ""},
+    {"name": "Istanbul", "country": "TR", "lat": 41.00, "lng": 28.98, "pm25": 30, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Moscow", "country": "RU", "lat": 55.76, "lng": 37.62, "pm25": 18, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Madrid", "country": "ES", "lat": 40.42, "lng": -3.70, "pm25": 11, "aqi_label": "Moderate", "detail": ""},
+    {"name": "Dubai", "country": "AE", "lat": 25.27, "lng": 55.30, "pm25": 42, "aqi_label": "Unhealthy",
+     "detail": "Sandstorms drive episodic spikes"},
+    {"name": "Singapore", "country": "SG", "lat": 1.35, "lng": 103.82, "pm25": 18, "aqi_label": "Moderate",
+     "detail": "Indonesian haze events spike to Hazardous"},
+]
+
+
+# ═══════════════ SEA ICE (polar climate snapshot) ═══════════════
+ARCTIC_SEA_ICE = {
+    "name": "Arctic Sea Ice (March 2026 max)",
+    "extent_million_km2": 14.1,
+    "anomaly_pct": -7.8,
+    "edge_lat": 70.5,
+    "detail": "Below 1981-2010 median; thinning multiyear ice; Arctic Amplification accelerating",
+}
+
+ANTARCTIC_SEA_ICE = {
+    "name": "Antarctic Sea Ice (Sep 2025 max)",
+    "extent_million_km2": 17.0,
+    "anomaly_pct": -11.2,
+    "edge_lat": -66.0,
+    "detail": "Record-low extent for 4th year running; previously stable, now in regime shift",
+}
+
+
+# ═══════════════ SUPPLY CHAIN DISRUPTIONS ═══════════════
+SUPPLY_CHAIN_DISRUPTIONS = [
+    {"name": "Houthi Red Sea attacks", "lat": 13.50, "lng": 43.10, "severity": "EXTREME",
+     "type": "armed_conflict", "country": "YE",
+     "detail": "Container traffic via Suez down 65% YoY; major lines diverting via Cape of Good Hope (+10-14 days, +20% fuel)"},
+    {"name": "Panama Canal drought", "lat": 9.10, "lng": -79.70, "severity": "HIGH",
+     "type": "climate", "country": "PA",
+     "detail": "Gatun Lake levels low; transits limited; queue surcharges; partially relieved 2025"},
+    {"name": "Strait of Hormuz tensions", "lat": 26.60, "lng": 56.30, "severity": "HIGH",
+     "type": "geopolitical", "country": "IR",
+     "detail": "IRGC vessel boardings; insurance war-risk premiums elevated"},
+    {"name": "Black Sea grain corridor", "lat": 44.60, "lng": 33.60, "severity": "HIGH",
+     "type": "armed_conflict", "country": "UA",
+     "detail": "Russian missile/drone strikes on Odesa port infrastructure; grain exports volatile"},
+    {"name": "Bab-el-Mandeb mining", "lat": 12.60, "lng": 43.50, "severity": "HIGH",
+     "type": "armed_conflict", "country": "YE",
+     "detail": "Houthi naval mines + UUVs; dive teams cleared multiple"},
+    {"name": "Taiwan Strait military exercises", "lat": 24.50, "lng": 119.50, "severity": "MEDIUM",
+     "type": "geopolitical", "country": "TW",
+     "detail": "PLA blockade drills disrupt container schedules; semi supply chain risk"},
+    {"name": "TSMC Taiwan earthquake risk", "lat": 24.77, "lng": 121.01, "severity": "MEDIUM",
+     "type": "natural", "country": "TW",
+     "detail": "April 2024 quake briefly halted fab output; concentration risk for advanced chips"},
+    {"name": "Suez tanker grounding (recurring)", "lat": 30.40, "lng": 32.35, "severity": "MEDIUM",
+     "type": "navigation", "country": "EG",
+     "detail": "Wind-driven grounding events; Ever Given precedent; multi-day delays"},
+    {"name": "Baltimore Key Bridge collapse", "lat": 39.22, "lng": -76.53, "severity": "HIGH",
+     "type": "infrastructure", "country": "US",
+     "detail": "March 2024 ship strike; port cleared but rebuild ongoing; auto/coal exports affected"},
+    {"name": "Chinese rare-earth export curbs", "lat": 41.13, "lng": 109.84, "severity": "HIGH",
+     "type": "trade_policy", "country": "CN",
+     "detail": "Bayan Obo region; gallium/germanium/graphite controls; downstream chip impacts"},
+    {"name": "DRC cobalt production swings", "lat": -10.72, "lng": 25.47, "severity": "MEDIUM",
+     "type": "resource", "country": "CD",
+     "detail": "Glencore Kamoto + Mutanda; 70% global cobalt; M23 conflict edges in"},
+    {"name": "Chile copper drought", "lat": -22.46, "lng": -68.92, "severity": "MEDIUM",
+     "type": "climate", "country": "CL",
+     "detail": "Atacama mines water-rationed; Codelco production revised down"},
+    {"name": "Philippine semiconductor flooding", "lat": 14.60, "lng": 121.00, "severity": "MEDIUM",
+     "type": "natural", "country": "PH",
+     "detail": "Typhoon-driven backend assembly disruption; auto chips affected"},
+    {"name": "Mexico northbound rail backlog", "lat": 28.45, "lng": -106.42, "severity": "MEDIUM",
+     "type": "logistics", "country": "MX",
+     "detail": "USBP closures cause cross-border rail backups; auto JIT disruption"},
+]
+
+
+# ═══════════════ ACTIVE VOLCANOES ═══════════════
+ACTIVE_VOLCANOES = [
+    {"name": "Kilauea", "country": "US", "lat": 19.421, "lng": -155.287, "elev_m": 1222, "vtype": "shield", "status": "ERUPTING", "detail": "Halemaʻumaʻu summit lava lake activity"},
+    {"name": "Mauna Loa", "country": "US", "lat": 19.475, "lng": -155.608, "elev_m": 4170, "vtype": "shield", "status": "UNREST", "detail": "World's largest volcano; elevated seismicity"},
+    {"name": "Mount St. Helens", "country": "US", "lat": 46.200, "lng": -122.188, "elev_m": 2549, "vtype": "stratovolcano", "status": "MONITOR", "detail": "Cascade Range; 1980 eruption"},
+    {"name": "Yellowstone Caldera", "country": "US", "lat": 44.428, "lng": -110.588, "elev_m": 2805, "vtype": "caldera", "status": "MONITOR", "detail": "Supervolcano; hydrothermal swarms tracked weekly"},
+    {"name": "Mount Rainier", "country": "US", "lat": 46.852, "lng": -121.760, "elev_m": 4392, "vtype": "stratovolcano", "status": "MONITOR", "detail": "Lahar threat to Seattle metro"},
+    {"name": "Popocatépetl", "country": "MX", "lat": 19.023, "lng": -98.628, "elev_m": 5426, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Persistent ash plumes; CDMX/Puebla exclusion"},
+    {"name": "Colima", "country": "MX", "lat": 19.514, "lng": -103.620, "elev_m": 3850, "vtype": "stratovolcano", "status": "UNREST", "detail": "Frequent vulcanian explosions"},
+    {"name": "Fuego", "country": "GT", "lat": 14.473, "lng": -90.880, "elev_m": 3763, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Daily strombolian; 2018 deadly PDC"},
+    {"name": "Pacaya", "country": "GT", "lat": 14.381, "lng": -90.601, "elev_m": 2552, "vtype": "complex", "status": "UNREST", "detail": "Tourist volcano near Guatemala City"},
+    {"name": "Santiaguito", "country": "GT", "lat": 14.739, "lng": -91.568, "elev_m": 2500, "vtype": "lava dome", "status": "ERUPTING", "detail": "Active lava dome complex"},
+    {"name": "Arenal", "country": "CR", "lat": 10.463, "lng": -84.703, "elev_m": 1670, "vtype": "stratovolcano", "status": "MONITOR", "detail": "Resting since 2010"},
+    {"name": "Poás", "country": "CR", "lat": 10.200, "lng": -84.233, "elev_m": 2708, "vtype": "stratovolcano", "status": "UNREST", "detail": "Acid crater lake; phreatic events"},
+    {"name": "Nevado del Ruiz", "country": "CO", "lat": 4.892, "lng": -75.324, "elev_m": 5321, "vtype": "stratovolcano", "status": "UNREST", "detail": "1985 Armero lahar killed 23,000"},
+    {"name": "Galeras", "country": "CO", "lat": 1.220, "lng": -77.359, "elev_m": 4276, "vtype": "stratovolcano", "status": "UNREST", "detail": "Pasto city under threat"},
+    {"name": "Sangay", "country": "EC", "lat": -2.005, "lng": -78.341, "elev_m": 5286, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Continuous activity since 1934"},
+    {"name": "Cotopaxi", "country": "EC", "lat": -0.683, "lng": -78.437, "elev_m": 5897, "vtype": "stratovolcano", "status": "UNREST", "detail": "Glacier-clad; lahar risk to Quito"},
+    {"name": "Reventador", "country": "EC", "lat": -0.078, "lng": -77.656, "elev_m": 3562, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Persistent vulcanian explosions"},
+    {"name": "Sabancaya", "country": "PE", "lat": -15.787, "lng": -71.857, "elev_m": 5967, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Ash plumes affect Arequipa"},
+    {"name": "Ubinas", "country": "PE", "lat": -16.355, "lng": -70.903, "elev_m": 5672, "vtype": "stratovolcano", "status": "UNREST", "detail": "Peru's most active volcano"},
+    {"name": "Villarrica", "country": "CL", "lat": -39.420, "lng": -71.930, "elev_m": 2847, "vtype": "stratovolcano", "status": "UNREST", "detail": "Lava lake; tourist hub Pucón"},
+    {"name": "Etna", "country": "IT", "lat": 37.751, "lng": 14.994, "elev_m": 3357, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Europe's most active; Catania airport closures"},
+    {"name": "Stromboli", "country": "IT", "lat": 38.789, "lng": 15.213, "elev_m": 924, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Continuous activity for >2000 years"},
+    {"name": "Vesuvius", "country": "IT", "lat": 40.821, "lng": 14.426, "elev_m": 1281, "vtype": "stratovolcano", "status": "MONITOR", "detail": "3M people in red zone; 79 AD Pompeii"},
+    {"name": "Campi Flegrei", "country": "IT", "lat": 40.827, "lng": 14.139, "elev_m": 458, "vtype": "caldera", "status": "UNREST", "detail": "Bradyseism; 500K residents over caldera"},
+    {"name": "Santorini", "country": "GR", "lat": 36.404, "lng": 25.396, "elev_m": 367, "vtype": "caldera", "status": "UNREST", "detail": "Earthquake swarm 2025"},
+    {"name": "Mount Cameroon", "country": "CM", "lat": 4.203, "lng": 9.170, "elev_m": 4040, "vtype": "stratovolcano", "status": "MONITOR", "detail": "West Africa's most active"},
+    {"name": "Nyiragongo", "country": "CD", "lat": -1.520, "lng": 29.250, "elev_m": 3470, "vtype": "stratovolcano", "status": "UNREST", "detail": "World's largest lava lake; threatens Goma"},
+    {"name": "Erta Ale", "country": "ET", "lat": 13.601, "lng": 40.671, "elev_m": 613, "vtype": "shield", "status": "ERUPTING", "detail": "Persistent lava lake in Danakil"},
+    {"name": "Ol Doinyo Lengai", "country": "TZ", "lat": -2.764, "lng": 35.914, "elev_m": 2962, "vtype": "stratovolcano", "status": "UNREST", "detail": "Only natrocarbonatite volcano on Earth"},
+    {"name": "Ambrym", "country": "VU", "lat": -16.250, "lng": 168.120, "elev_m": 1334, "vtype": "caldera", "status": "ERUPTING", "detail": "Twin lava lakes typically active"},
+    {"name": "Yasur", "country": "VU", "lat": -19.532, "lng": 169.447, "elev_m": 361, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Continuous strombolian for centuries"},
+    {"name": "Krakatau (Anak)", "country": "ID", "lat": -6.102, "lng": 105.423, "elev_m": 813, "vtype": "caldera", "status": "ERUPTING", "detail": "2018 collapse → tsunami; cone rebuilding"},
+    {"name": "Merapi", "country": "ID", "lat": -7.540, "lng": 110.446, "elev_m": 2910, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Java's deadliest; Yogyakarta"},
+    {"name": "Sinabung", "country": "ID", "lat": 3.170, "lng": 98.392, "elev_m": 2460, "vtype": "stratovolcano", "status": "UNREST", "detail": "Reawakened 2010"},
+    {"name": "Marapi", "country": "ID", "lat": -0.381, "lng": 100.473, "elev_m": 2891, "vtype": "complex", "status": "ERUPTING", "detail": "Sumatra; 2023 deadly eruption"},
+    {"name": "Semeru", "country": "ID", "lat": -8.108, "lng": 112.922, "elev_m": 3676, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "East Java; daily explosions"},
+    {"name": "Lewotobi", "country": "ID", "lat": -8.530, "lng": 122.775, "elev_m": 1703, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Flores; 2024 deadly paroxysm"},
+    {"name": "Taal", "country": "PH", "lat": 14.002, "lng": 120.993, "elev_m": 311, "vtype": "caldera", "status": "UNREST", "detail": "2020 eruption affected Manila"},
+    {"name": "Mayon", "country": "PH", "lat": 13.257, "lng": 123.685, "elev_m": 2462, "vtype": "stratovolcano", "status": "UNREST", "detail": "Symmetric cone; lahar/PDC threat"},
+    {"name": "Pinatubo", "country": "PH", "lat": 15.143, "lng": 120.350, "elev_m": 1486, "vtype": "stratovolcano", "status": "MONITOR", "detail": "1991 second-largest 20th C eruption"},
+    {"name": "Kanlaon", "country": "PH", "lat": 10.412, "lng": 123.132, "elev_m": 2435, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Negros island; 2024 eruption"},
+    {"name": "Sakurajima", "country": "JP", "lat": 31.585, "lng": 130.657, "elev_m": 1117, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "600K Kagoshima residents nearby"},
+    {"name": "Aso", "country": "JP", "lat": 32.884, "lng": 131.104, "elev_m": 1592, "vtype": "caldera", "status": "UNREST", "detail": "World's largest active caldera"},
+    {"name": "Suwanosejima", "country": "JP", "lat": 29.638, "lng": 129.714, "elev_m": 796, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Persistent strombolian"},
+    {"name": "Shiveluch", "country": "RU", "lat": 56.653, "lng": 161.360, "elev_m": 3283, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Kamchatka; major 2023 eruption"},
+    {"name": "Klyuchevskoy", "country": "RU", "lat": 56.056, "lng": 160.642, "elev_m": 4754, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Eurasia's tallest active volcano"},
+    {"name": "Bezymianny", "country": "RU", "lat": 55.972, "lng": 160.595, "elev_m": 2882, "vtype": "stratovolcano", "status": "ERUPTING", "detail": "Kamchatka; major paroxysms"},
+    {"name": "Grímsvötn", "country": "IS", "lat": 64.416, "lng": -17.316, "elev_m": 1725, "vtype": "subglacial", "status": "MONITOR", "detail": "Iceland's most frequent; jokulhlaup risk"},
+    {"name": "Reykjanes Peninsula", "country": "IS", "lat": 63.870, "lng": -22.270, "elev_m": 200, "vtype": "fissure", "status": "ERUPTING", "detail": "Sundhnúkur fissure; Grindavík evacuated"},
+]
+
+
+# ═══════════════ AI DATA CENTERS / GPU CLUSTERS ═══════════════
+AI_DATA_CENTERS = [
+    {"name": "OpenAI/Microsoft Mt. Pleasant", "operator": "Microsoft", "country": "US", "lat": 42.73, "lng": -87.92, "chip": "H100/B200", "chip_count": 100000, "power_mw": 300, "status": "ACTIVE"},
+    {"name": "xAI Memphis Colossus", "operator": "xAI", "country": "US", "lat": 35.13, "lng": -90.05, "chip": "H100", "chip_count": 200000, "power_mw": 400, "status": "ACTIVE"},
+    {"name": "Meta Mesa", "operator": "Meta", "country": "US", "lat": 33.39, "lng": -111.61, "chip": "H100", "chip_count": 60000, "power_mw": 200, "status": "ACTIVE"},
+    {"name": "Meta Eagle Mountain", "operator": "Meta", "country": "US", "lat": 40.31, "lng": -112.04, "chip": "H100", "chip_count": 50000, "power_mw": 180, "status": "ACTIVE"},
+    {"name": "Google Council Bluffs", "operator": "Google", "country": "US", "lat": 41.26, "lng": -95.84, "chip": "TPU v5p", "chip_count": 100000, "power_mw": 250, "status": "ACTIVE"},
+    {"name": "Google Pryor Creek", "operator": "Google", "country": "US", "lat": 36.31, "lng": -95.31, "chip": "TPU v5", "chip_count": 80000, "power_mw": 200, "status": "ACTIVE"},
+    {"name": "AWS Ashburn", "operator": "AWS", "country": "US", "lat": 39.04, "lng": -77.49, "chip": "Trainium/H100", "chip_count": 150000, "power_mw": 400, "status": "ACTIVE"},
+    {"name": "Stargate Abilene", "operator": "Microsoft/OpenAI", "country": "US", "lat": 32.45, "lng": -99.74, "chip": "B200", "chip_count": 400000, "power_mw": 1200, "status": "BUILDING"},
+    {"name": "AWS Seattle HQ", "operator": "AWS", "country": "US", "lat": 47.62, "lng": -122.34, "chip": "Trainium2", "chip_count": 60000, "power_mw": 150, "status": "ACTIVE"},
+    {"name": "Oracle Salt Lake", "operator": "Oracle", "country": "US", "lat": 40.76, "lng": -111.89, "chip": "H100", "chip_count": 30000, "power_mw": 100, "status": "ACTIVE"},
+    {"name": "CoreWeave Plano", "operator": "CoreWeave", "country": "US", "lat": 33.02, "lng": -96.70, "chip": "H100/H200", "chip_count": 45000, "power_mw": 120, "status": "ACTIVE"},
+    {"name": "Crusoe Abilene", "operator": "Crusoe", "country": "US", "lat": 32.45, "lng": -99.74, "chip": "H100", "chip_count": 100000, "power_mw": 200, "status": "BUILDING"},
+    {"name": "Lambda San Francisco", "operator": "Lambda", "country": "US", "lat": 37.77, "lng": -122.42, "chip": "H100", "chip_count": 20000, "power_mw": 60, "status": "ACTIVE"},
+    {"name": "Microsoft Quincy", "operator": "Microsoft", "country": "US", "lat": 47.23, "lng": -119.85, "chip": "H100", "chip_count": 80000, "power_mw": 250, "status": "ACTIVE"},
+    {"name": "Microsoft San Antonio", "operator": "Microsoft", "country": "US", "lat": 29.42, "lng": -98.49, "chip": "H100", "chip_count": 70000, "power_mw": 220, "status": "ACTIVE"},
+    {"name": "Google Mons", "operator": "Google", "country": "BE", "lat": 50.45, "lng": 3.95, "chip": "TPU v5", "chip_count": 40000, "power_mw": 120, "status": "ACTIVE"},
+    {"name": "Microsoft Dublin", "operator": "Microsoft", "country": "IE", "lat": 53.35, "lng": -6.26, "chip": "H100", "chip_count": 30000, "power_mw": 100, "status": "ACTIVE"},
+    {"name": "AWS Frankfurt", "operator": "AWS", "country": "DE", "lat": 50.11, "lng": 8.68, "chip": "H100/Trainium", "chip_count": 50000, "power_mw": 150, "status": "ACTIVE"},
+    {"name": "Mistral Paris", "operator": "Mistral", "country": "FR", "lat": 48.86, "lng": 2.35, "chip": "H100", "chip_count": 8000, "power_mw": 25, "status": "ACTIVE"},
+    {"name": "G42 Abu Dhabi", "operator": "G42", "country": "AE", "lat": 24.47, "lng": 54.37, "chip": "H100/B200", "chip_count": 50000, "power_mw": 150, "status": "ACTIVE"},
+    {"name": "Saudi HUMAIN", "operator": "PIF/HUMAIN", "country": "SA", "lat": 24.71, "lng": 46.68, "chip": "B200", "chip_count": 100000, "power_mw": 300, "status": "BUILDING"},
+    {"name": "Equinix Singapore", "operator": "Equinix", "country": "SG", "lat": 1.35, "lng": 103.82, "chip": "H100", "chip_count": 25000, "power_mw": 80, "status": "ACTIVE"},
+    {"name": "Alibaba Hangzhou", "operator": "Alibaba", "country": "CN", "lat": 30.27, "lng": 120.15, "chip": "H800/Ascend", "chip_count": 100000, "power_mw": 250, "status": "ACTIVE"},
+    {"name": "ByteDance AI Cluster", "operator": "ByteDance", "country": "CN", "lat": 39.92, "lng": 116.39, "chip": "H800", "chip_count": 150000, "power_mw": 350, "status": "ACTIVE"},
+    {"name": "Huawei Atlas Shenzhen", "operator": "Huawei", "country": "CN", "lat": 22.54, "lng": 114.06, "chip": "Ascend 910B", "chip_count": 80000, "power_mw": 200, "status": "ACTIVE"},
+    {"name": "Tencent Tianjin", "operator": "Tencent", "country": "CN", "lat": 39.13, "lng": 117.20, "chip": "H800", "chip_count": 60000, "power_mw": 180, "status": "ACTIVE"},
+    {"name": "Baidu Beijing", "operator": "Baidu", "country": "CN", "lat": 40.05, "lng": 116.30, "chip": "Kunlun/Ascend", "chip_count": 40000, "power_mw": 130, "status": "ACTIVE"},
+    {"name": "Yandex Vladimir", "operator": "Yandex", "country": "RU", "lat": 56.13, "lng": 40.41, "chip": "H100/A100", "chip_count": 15000, "power_mw": 50, "status": "ACTIVE"},
+    {"name": "Sber Moscow", "operator": "Sber", "country": "RU", "lat": 55.76, "lng": 37.62, "chip": "A100", "chip_count": 10000, "power_mw": 35, "status": "ACTIVE"},
+    {"name": "NAVER Sejong", "operator": "NAVER", "country": "KR", "lat": 36.48, "lng": 127.29, "chip": "H100", "chip_count": 30000, "power_mw": 100, "status": "ACTIVE"},
+    {"name": "SoftBank Hokkaido", "operator": "SoftBank", "country": "JP", "lat": 42.78, "lng": 141.69, "chip": "B200", "chip_count": 50000, "power_mw": 150, "status": "BUILDING"},
+    {"name": "Reliance Jamnagar AI", "operator": "Reliance", "country": "IN", "lat": 22.47, "lng": 70.07, "chip": "B200", "chip_count": 100000, "power_mw": 300, "status": "BUILDING"},
+    {"name": "Tata Hyderabad", "operator": "Tata", "country": "IN", "lat": 17.39, "lng": 78.49, "chip": "H100", "chip_count": 25000, "power_mw": 80, "status": "ACTIVE"},
+    {"name": "Yotta Maharashtra", "operator": "Yotta", "country": "IN", "lat": 19.04, "lng": 73.07, "chip": "H100", "chip_count": 16000, "power_mw": 50, "status": "ACTIVE"},
+    {"name": "Stargate UAE", "operator": "OpenAI/G42", "country": "AE", "lat": 24.47, "lng": 54.37, "chip": "B200", "chip_count": 200000, "power_mw": 600, "status": "PLANNED"},
+]
+
+
+# ═══════════════ TECH HEADQUARTERS ═══════════════
+TECH_HQS = [
+    {"name": "Apple", "country": "US", "lat": 37.3349, "lng": -122.0090, "category": "Hardware/Services", "mcap": 3500},
+    {"name": "Microsoft", "country": "US", "lat": 47.6396, "lng": -122.1283, "category": "Software/Cloud", "mcap": 3300},
+    {"name": "NVIDIA", "country": "US", "lat": 37.3704, "lng": -121.9636, "category": "AI Chips", "mcap": 3200},
+    {"name": "Alphabet (Google)", "country": "US", "lat": 37.4220, "lng": -122.0841, "category": "Search/Cloud", "mcap": 2200},
+    {"name": "Amazon", "country": "US", "lat": 47.6225, "lng": -122.3361, "category": "E-commerce/Cloud", "mcap": 2100},
+    {"name": "Meta", "country": "US", "lat": 37.4848, "lng": -122.1484, "category": "Social/AR", "mcap": 1500},
+    {"name": "TSMC", "country": "TW", "lat": 24.7741, "lng": 121.0167, "category": "Semiconductors", "mcap": 950},
+    {"name": "Tesla", "country": "US", "lat": 30.2226, "lng": -97.6197, "category": "EV/AI", "mcap": 1100},
+    {"name": "Broadcom", "country": "US", "lat": 37.3500, "lng": -122.0000, "category": "Chips/Software", "mcap": 850},
+    {"name": "Oracle", "country": "US", "lat": 37.5293, "lng": -122.2645, "category": "Database/Cloud", "mcap": 480},
+    {"name": "Samsung", "country": "KR", "lat": 37.2580, "lng": 127.0610, "category": "Hardware/Memory", "mcap": 380},
+    {"name": "ASML", "country": "NL", "lat": 51.4111, "lng": 5.4536, "category": "EUV Lithography", "mcap": 300},
+    {"name": "Tencent", "country": "CN", "lat": 22.5410, "lng": 113.9340, "category": "Social/Gaming", "mcap": 480},
+    {"name": "Alibaba", "country": "CN", "lat": 30.1830, "lng": 120.0680, "category": "E-commerce/Cloud", "mcap": 220},
+    {"name": "Salesforce", "country": "US", "lat": 37.7898, "lng": -122.3942, "category": "CRM/AI", "mcap": 290},
+    {"name": "AMD", "country": "US", "lat": 37.4030, "lng": -121.9806, "category": "CPUs/GPUs", "mcap": 250},
+    {"name": "Adobe", "country": "US", "lat": 37.3318, "lng": -121.8917, "category": "Creative SaaS", "mcap": 220},
+    {"name": "SAP", "country": "DE", "lat": 49.2944, "lng": 8.6433, "category": "Enterprise SW", "mcap": 240},
+    {"name": "Intel", "country": "US", "lat": 37.3879, "lng": -121.9636, "category": "CPUs/Foundry", "mcap": 130},
+    {"name": "Cisco", "country": "US", "lat": 37.4106, "lng": -121.9528, "category": "Networking", "mcap": 200},
+    {"name": "IBM", "country": "US", "lat": 41.1090, "lng": -73.7220, "category": "Enterprise/Quantum", "mcap": 200},
+    {"name": "Sony", "country": "JP", "lat": 35.6313, "lng": 139.7423, "category": "Entertainment/Sensors", "mcap": 110},
+    {"name": "Netflix", "country": "US", "lat": 37.2562, "lng": -121.9651, "category": "Streaming", "mcap": 290},
+    {"name": "ServiceNow", "country": "US", "lat": 37.4031, "lng": -121.9810, "category": "Workflow SaaS", "mcap": 200},
+    {"name": "Palantir", "country": "US", "lat": 38.8800, "lng": -104.7700, "category": "Analytics/Defense", "mcap": 180},
+    {"name": "Shopify", "country": "CA", "lat": 45.4172, "lng": -75.7011, "category": "E-commerce", "mcap": 130},
+    {"name": "Spotify", "country": "SE", "lat": 59.3293, "lng": 18.0686, "category": "Audio Streaming", "mcap": 90},
+    {"name": "Booking.com", "country": "NL", "lat": 52.3676, "lng": 4.9041, "category": "Travel", "mcap": 130},
+    {"name": "Sea Limited (Shopee)", "country": "SG", "lat": 1.2966, "lng": 103.7764, "category": "SE Asia tech", "mcap": 60},
+    {"name": "MercadoLibre", "country": "AR", "lat": -34.6037, "lng": -58.3816, "category": "LatAm e-com", "mcap": 80},
+]
+
+
+# ═══════════════ STARTUP / TECH HUBS ═══════════════
+STARTUP_HUBS = [
+    {"name": "Silicon Valley", "country": "US", "lat": 37.39, "lng": -122.08, "rank": 1, "unicorns": 360},
+    {"name": "New York", "country": "US", "lat": 40.71, "lng": -74.01, "rank": 2, "unicorns": 130},
+    {"name": "London", "country": "GB", "lat": 51.51, "lng": -0.13, "rank": 3, "unicorns": 75},
+    {"name": "Boston", "country": "US", "lat": 42.36, "lng": -71.06, "rank": 4, "unicorns": 35},
+    {"name": "Beijing", "country": "CN", "lat": 39.91, "lng": 116.39, "rank": 5, "unicorns": 90},
+    {"name": "Shanghai", "country": "CN", "lat": 31.23, "lng": 121.47, "rank": 6, "unicorns": 50},
+    {"name": "Los Angeles", "country": "US", "lat": 34.05, "lng": -118.24, "rank": 7, "unicorns": 50},
+    {"name": "Tel Aviv", "country": "IL", "lat": 32.08, "lng": 34.78, "rank": 8, "unicorns": 30},
+    {"name": "Bangalore", "country": "IN", "lat": 12.97, "lng": 77.59, "rank": 9, "unicorns": 40},
+    {"name": "Seoul", "country": "KR", "lat": 37.57, "lng": 126.98, "rank": 10, "unicorns": 25},
+    {"name": "Berlin", "country": "DE", "lat": 52.52, "lng": 13.41, "rank": 11, "unicorns": 28},
+    {"name": "Singapore", "country": "SG", "lat": 1.35, "lng": 103.82, "rank": 12, "unicorns": 30},
+    {"name": "Paris", "country": "FR", "lat": 48.86, "lng": 2.35, "rank": 13, "unicorns": 32},
+    {"name": "Stockholm", "country": "SE", "lat": 59.33, "lng": 18.07, "rank": 14, "unicorns": 15},
+    {"name": "Tokyo", "country": "JP", "lat": 35.68, "lng": 139.69, "rank": 15, "unicorns": 18},
+    {"name": "Toronto", "country": "CA", "lat": 43.65, "lng": -79.38, "rank": 16, "unicorns": 22},
+    {"name": "Amsterdam", "country": "NL", "lat": 52.37, "lng": 4.90, "rank": 17, "unicorns": 18},
+    {"name": "Sydney", "country": "AU", "lat": -33.87, "lng": 151.21, "rank": 18, "unicorns": 12},
+    {"name": "Dubai", "country": "AE", "lat": 25.20, "lng": 55.27, "rank": 19, "unicorns": 8},
+    {"name": "São Paulo", "country": "BR", "lat": -23.55, "lng": -46.63, "rank": 20, "unicorns": 18},
+    {"name": "Mexico City", "country": "MX", "lat": 19.43, "lng": -99.13, "rank": 21, "unicorns": 8},
+    {"name": "Austin", "country": "US", "lat": 30.27, "lng": -97.74, "rank": 22, "unicorns": 25},
+    {"name": "Miami", "country": "US", "lat": 25.76, "lng": -80.19, "rank": 23, "unicorns": 12},
+    {"name": "Hong Kong", "country": "HK", "lat": 22.32, "lng": 114.17, "rank": 24, "unicorns": 18},
+]
+
+
+# ═══════════════ FINANCIAL CENTERS ═══════════════
+FINANCIAL_CENTERS = [
+    {"name": "New York", "country": "US", "lat": 40.71, "lng": -74.01, "ftype": "primary", "aum": 36.5},
+    {"name": "London", "country": "GB", "lat": 51.51, "lng": -0.13, "ftype": "primary", "aum": 15.2},
+    {"name": "Hong Kong", "country": "HK", "lat": 22.32, "lng": 114.17, "ftype": "primary", "aum": 12.0},
+    {"name": "Singapore", "country": "SG", "lat": 1.35, "lng": 103.82, "ftype": "primary", "aum": 5.4},
+    {"name": "Tokyo", "country": "JP", "lat": 35.68, "lng": 139.69, "ftype": "primary", "aum": 7.5},
+    {"name": "Shanghai", "country": "CN", "lat": 31.23, "lng": 121.47, "ftype": "primary", "aum": 7.0},
+    {"name": "Frankfurt", "country": "DE", "lat": 50.11, "lng": 8.68, "ftype": "primary", "aum": 2.6},
+    {"name": "Zurich", "country": "CH", "lat": 47.37, "lng": 8.55, "ftype": "primary", "aum": 4.0},
+    {"name": "Geneva", "country": "CH", "lat": 46.20, "lng": 6.15, "ftype": "primary", "aum": 3.5},
+    {"name": "Dubai (DIFC)", "country": "AE", "lat": 25.21, "lng": 55.28, "ftype": "primary", "aum": 0.4},
+    {"name": "Luxembourg", "country": "LU", "lat": 49.61, "lng": 6.13, "ftype": "offshore", "aum": 5.5},
+    {"name": "Cayman Islands", "country": "KY", "lat": 19.31, "lng": -81.25, "ftype": "offshore", "aum": 5.0},
+    {"name": "Jersey", "country": "JE", "lat": 49.21, "lng": -2.13, "ftype": "offshore", "aum": 0.5},
+    {"name": "Guernsey", "country": "GG", "lat": 49.45, "lng": -2.59, "ftype": "offshore", "aum": 0.4},
+    {"name": "Isle of Man", "country": "IM", "lat": 54.24, "lng": -4.55, "ftype": "offshore", "aum": 0.1},
+    {"name": "Bermuda", "country": "BM", "lat": 32.31, "lng": -64.78, "ftype": "offshore", "aum": 0.4},
+    {"name": "BVI", "country": "VG", "lat": 18.42, "lng": -64.62, "ftype": "offshore", "aum": 1.5},
+]
+
+
+# ═══════════════ COMMODITY HUBS ═══════════════
+COMMODITY_HUBS = [
+    {"name": "Rotterdam", "country": "NL", "lat": 51.92, "lng": 4.48, "commodity": "Oil/Container", "detail": "Europe's largest port; oil refining hub"},
+    {"name": "Singapore (Bunkering)", "country": "SG", "lat": 1.35, "lng": 103.82, "commodity": "Oil trading", "detail": "Asia oil pricing benchmark"},
+    {"name": "Houston", "country": "US", "lat": 29.76, "lng": -95.37, "commodity": "Oil/LNG", "detail": "US oil capital"},
+    {"name": "Cushing", "country": "US", "lat": 35.98, "lng": -96.77, "commodity": "WTI delivery", "detail": "WTI futures delivery point"},
+    {"name": "Chicago (CBOT)", "country": "US", "lat": 41.88, "lng": -87.63, "commodity": "Grains", "detail": "CBOT corn/wheat/soy"},
+    {"name": "Geneva (Trading)", "country": "CH", "lat": 46.20, "lng": 6.15, "commodity": "Trading HQs", "detail": "Glencore/Vitol/Trafigura HQs"},
+    {"name": "London (LME)", "country": "GB", "lat": 51.51, "lng": -0.09, "commodity": "Base metals", "detail": "London Metal Exchange"},
+    {"name": "Shanghai (SHFE)", "country": "CN", "lat": 31.23, "lng": 121.47, "commodity": "Metals/Energy", "detail": "Shanghai Futures Exchange"},
+    {"name": "Dalian (DCE)", "country": "CN", "lat": 38.91, "lng": 121.61, "commodity": "Iron ore/Soy", "detail": "DCE iron ore benchmark"},
+    {"name": "Antwerp", "country": "BE", "lat": 51.22, "lng": 4.40, "commodity": "Chemicals/Diamonds", "detail": "World's diamond capital"},
+    {"name": "Fujairah", "country": "AE", "lat": 25.13, "lng": 56.33, "commodity": "Bunker/Oil", "detail": "Middle East bunkering hub"},
+]
+
+
+# ═══════════════ TRADE ROUTES ═══════════════
+TRADE_ROUTES = [
+    {"name": "Asia-Europe Suez", "rtype": "sea", "tonnage_pa": 1200,
+     "waypoints": [[121.47, 31.23], [103.82, 1.35], [56.25, 26.57], [32.55, 30.05], [13.41, 35.85], [-5.35, 36.13], [-0.13, 51.51]]},
+    {"name": "Trans-Pacific (CN-US)", "rtype": "sea", "tonnage_pa": 950,
+     "waypoints": [[121.47, 31.23], [139.69, 35.68], [-157.86, 21.31], [-118.24, 33.74]]},
+    {"name": "Trans-Atlantic", "rtype": "sea", "tonnage_pa": 600,
+     "waypoints": [[-74.01, 40.71], [-9.14, 38.72], [-0.13, 51.51], [4.48, 51.92]]},
+    {"name": "Russia-China Power of Siberia", "rtype": "pipeline", "tonnage_pa": 60,
+     "waypoints": [[78.36, 65.50], [101.59, 52.27], [116.39, 39.91]]},
+    {"name": "BRI Land Bridge (CN-EU Rail)", "rtype": "rail", "tonnage_pa": 18,
+     "waypoints": [[114.06, 22.54], [85.99, 41.83], [76.95, 43.26], [76.94, 49.81], [37.62, 55.76], [16.37, 48.21], [13.41, 52.52]]},
+    {"name": "INSTC (India-Iran-Russia)", "rtype": "multi", "tonnage_pa": 30,
+     "waypoints": [[72.88, 19.08], [60.59, 25.30], [51.39, 35.69], [49.65, 40.40], [37.62, 55.76]]},
+    {"name": "Strait of Hormuz Tankers", "rtype": "sea", "tonnage_pa": 850,
+     "waypoints": [[50.10, 26.40], [56.25, 26.57], [60.59, 25.30], [72.88, 19.08]]},
+    {"name": "Bab el-Mandeb Suez Approach", "rtype": "sea", "tonnage_pa": 480,
+     "waypoints": [[103.82, 1.35], [78.16, 8.78], [43.32, 12.58], [32.55, 30.05]]},
+    {"name": "Cape of Good Hope (Suez Diversion)", "rtype": "sea", "tonnage_pa": 280,
+     "waypoints": [[103.82, 1.35], [78.16, 8.78], [55.45, -4.62], [18.42, -33.92], [-9.14, 38.72]]},
+    {"name": "Northern Sea Route", "rtype": "sea", "tonnage_pa": 35,
+     "waypoints": [[101.59, 52.27], [69.30, 73.50], [50.05, 70.97], [33.08, 68.97], [4.48, 51.92]]},
+    {"name": "Panama Canal", "rtype": "sea", "tonnage_pa": 520,
+     "waypoints": [[121.47, 31.23], [139.69, 35.68], [-79.50, 9.08], [-74.01, 40.71]]},
+    {"name": "Mexico-US Land", "rtype": "land", "tonnage_pa": 720,
+     "waypoints": [[-99.13, 19.43], [-100.32, 25.69], [-97.50, 30.27], [-95.37, 29.76], [-87.63, 41.88]]},
+]
+
+
+# ═══════════════ INTEL HOTSPOTS ═══════════════
+INTEL_HOTSPOTS = [
+    {"name": "Langley (CIA)", "country": "US", "lat": 38.95, "lng": -77.15, "category": "intel_hq"},
+    {"name": "Fort Meade (NSA)", "country": "US", "lat": 39.11, "lng": -76.77, "category": "intel_hq"},
+    {"name": "Vauxhall Cross (MI6)", "country": "GB", "lat": 51.49, "lng": -0.12, "category": "intel_hq"},
+    {"name": "Cheltenham (GCHQ)", "country": "GB", "lat": 51.90, "lng": -2.12, "category": "intel_hq"},
+    {"name": "Yasenevo (SVR)", "country": "RU", "lat": 55.61, "lng": 37.55, "category": "intel_hq"},
+    {"name": "Lubyanka (FSB)", "country": "RU", "lat": 55.76, "lng": 37.63, "category": "intel_hq"},
+    {"name": "Pullach (BND)", "country": "DE", "lat": 48.05, "lng": 11.52, "category": "intel_hq"},
+    {"name": "DGSE Paris", "country": "FR", "lat": 48.88, "lng": 2.40, "category": "intel_hq"},
+    {"name": "Glilot (Mossad)", "country": "IL", "lat": 32.13, "lng": 34.81, "category": "intel_hq"},
+    {"name": "Tel Aviv (Unit 8200)", "country": "IL", "lat": 32.08, "lng": 34.78, "category": "intel_hq"},
+    {"name": "MSS Beijing", "country": "CN", "lat": 39.92, "lng": 116.39, "category": "intel_hq"},
+    {"name": "MOIS Tehran", "country": "IR", "lat": 35.69, "lng": 51.39, "category": "intel_hq"},
+    {"name": "ISI Islamabad", "country": "PK", "lat": 33.69, "lng": 73.04, "category": "intel_hq"},
+    {"name": "RAW New Delhi", "country": "IN", "lat": 28.61, "lng": 77.21, "category": "intel_hq"},
+    {"name": "Pyongyang (RGB)", "country": "KP", "lat": 39.02, "lng": 125.75, "category": "intel_hq"},
+    {"name": "Vienna UN/IAEA", "country": "AT", "lat": 48.23, "lng": 16.41, "category": "diplomatic"},
+    {"name": "Geneva UN", "country": "CH", "lat": 46.22, "lng": 6.14, "category": "diplomatic"},
+    {"name": "Brussels (NATO HQ)", "country": "BE", "lat": 50.88, "lng": 4.42, "category": "military_hq"},
+    {"name": "SHAPE Mons", "country": "BE", "lat": 50.46, "lng": 3.94, "category": "military_hq"},
+    {"name": "EUCOM Stuttgart", "country": "DE", "lat": 48.78, "lng": 9.18, "category": "military_hq"},
+    {"name": "AFRICOM Stuttgart", "country": "DE", "lat": 48.78, "lng": 9.19, "category": "military_hq"},
+    {"name": "CENTCOM Tampa", "country": "US", "lat": 27.85, "lng": -82.50, "category": "military_hq"},
+    {"name": "INDOPACOM Honolulu", "country": "US", "lat": 21.34, "lng": -157.94, "category": "military_hq"},
+    {"name": "USCYBERCOM Fort Meade", "country": "US", "lat": 39.11, "lng": -76.78, "category": "military_hq"},
+    {"name": "Pentagon", "country": "US", "lat": 38.87, "lng": -77.06, "category": "military_hq"},
+    {"name": "Kremlin", "country": "RU", "lat": 55.75, "lng": 37.62, "category": "political_hq"},
+    {"name": "Zhongnanhai", "country": "CN", "lat": 39.92, "lng": 116.38, "category": "political_hq"},
+    {"name": "Camp David", "country": "US", "lat": 39.65, "lng": -77.47, "category": "political_hq"},
+    {"name": "Davos nexus", "country": "CH", "lat": 46.80, "lng": 9.83, "category": "diplomatic"},
+    {"name": "Qatar diplomatic hub", "country": "QA", "lat": 25.29, "lng": 51.53, "category": "diplomatic"},
+]
+
+
+# ═══════════════ SANCTIONS PRESSURE ═══════════════
+SANCTIONS_PRESSURE = [
+    {"country": "Russia", "iso": "RU", "lat": 61.52, "lng": 105.32, "score": 95, "programs": ["US OFAC", "EU", "UK", "G7", "AU"]},
+    {"country": "Iran", "iso": "IR", "lat": 32.43, "lng": 53.69, "score": 92, "programs": ["US OFAC", "EU", "UN", "UK"]},
+    {"country": "North Korea", "iso": "KP", "lat": 40.34, "lng": 127.51, "score": 98, "programs": ["UN", "US OFAC", "EU", "JP", "KR"]},
+    {"country": "Belarus", "iso": "BY", "lat": 53.71, "lng": 27.95, "score": 85, "programs": ["US OFAC", "EU", "UK"]},
+    {"country": "Syria", "iso": "SY", "lat": 34.80, "lng": 38.99, "score": 90, "programs": ["US OFAC", "EU", "AL"]},
+    {"country": "Venezuela", "iso": "VE", "lat": 6.42, "lng": -66.59, "score": 80, "programs": ["US OFAC", "EU", "CA"]},
+    {"country": "Cuba", "iso": "CU", "lat": 21.52, "lng": -77.78, "score": 75, "programs": ["US OFAC"]},
+    {"country": "Myanmar", "iso": "MM", "lat": 21.91, "lng": 95.95, "score": 70, "programs": ["US OFAC", "EU", "UK"]},
+    {"country": "Sudan", "iso": "SD", "lat": 12.86, "lng": 30.22, "score": 65, "programs": ["US OFAC", "EU"]},
+    {"country": "Afghanistan", "iso": "AF", "lat": 33.93, "lng": 67.71, "score": 65, "programs": ["UN", "US OFAC"]},
+    {"country": "South Sudan", "iso": "SS", "lat": 6.88, "lng": 31.31, "score": 55, "programs": ["UN", "US OFAC", "EU"]},
+    {"country": "Somalia", "iso": "SO", "lat": 5.15, "lng": 46.20, "score": 50, "programs": ["UN", "US OFAC"]},
+    {"country": "Mali", "iso": "ML", "lat": 17.57, "lng": -3.99, "score": 50, "programs": ["UN", "EU"]},
+    {"country": "Nicaragua", "iso": "NI", "lat": 12.87, "lng": -85.21, "score": 50, "programs": ["US OFAC", "EU"]},
+    {"country": "Eritrea", "iso": "ER", "lat": 15.18, "lng": 39.78, "score": 60, "programs": ["EU", "US OFAC"]},
+    {"country": "Libya", "iso": "LY", "lat": 26.34, "lng": 17.23, "score": 55, "programs": ["UN", "US OFAC", "EU"]},
+    {"country": "Iraq", "iso": "IQ", "lat": 33.22, "lng": 43.68, "score": 35, "programs": ["UN legacy"]},
+    {"country": "Lebanon (Hezb)", "iso": "LB", "lat": 33.85, "lng": 35.86, "score": 45, "programs": ["US OFAC sectoral"]},
+    {"country": "Yemen (Houthis)", "iso": "YE", "lat": 15.55, "lng": 48.52, "score": 60, "programs": ["UN", "US OFAC"]},
+    {"country": "Zimbabwe", "iso": "ZW", "lat": -19.02, "lng": 29.15, "score": 35, "programs": ["US OFAC", "EU"]},
+    {"country": "C. African Rep", "iso": "CF", "lat": 6.61, "lng": 20.94, "score": 40, "programs": ["UN", "US OFAC"]},
+]
+
+
+# ═══════════════ LIVE STRATEGIC WEBCAMS ═══════════════
+LIVE_WEBCAMS = [
+    {"name": "Times Square NYC", "country": "US", "lat": 40.758, "lng": -73.985, "category": "city", "url": "https://www.earthcam.com/usa/newyork/timessquare/"},
+    {"name": "White House", "country": "US", "lat": 38.898, "lng": -77.037, "category": "political", "url": "https://www.earthcam.com/usa/dc/whitehouse/"},
+    {"name": "Trafalgar Square London", "country": "GB", "lat": 51.508, "lng": -0.128, "category": "city", "url": "https://www.skylinewebcams.com/en/webcam/united-kingdom/england/london.html"},
+    {"name": "Tokyo Shibuya Crossing", "country": "JP", "lat": 35.660, "lng": 139.700, "category": "city", "url": "https://www.skylinewebcams.com/en/webcam/japan/tokyo.html"},
+    {"name": "Red Square Moscow", "country": "RU", "lat": 55.754, "lng": 37.620, "category": "political", "url": "https://moscowtv.ru/webcam/"},
+    {"name": "Tiananmen Square", "country": "CN", "lat": 39.906, "lng": 116.391, "category": "political", "url": "https://www.beijing-cam.com/"},
+    {"name": "Hong Kong Harbor", "country": "HK", "lat": 22.295, "lng": 114.169, "category": "city", "url": "https://www.skylinewebcams.com/en/webcam/china/hong-kong.html"},
+    {"name": "Suez Canal Approach", "country": "EG", "lat": 30.580, "lng": 32.350, "category": "shipping", "url": "https://www.shipspotting.com/"},
+    {"name": "Panama Canal", "country": "PA", "lat": 9.082, "lng": -79.679, "category": "shipping", "url": "https://www.pancanal.com/"},
+    {"name": "Bosphorus Strait", "country": "TR", "lat": 41.045, "lng": 29.034, "category": "shipping", "url": "https://www.skylinewebcams.com/en/webcam/turkey/istanbul.html"},
+    {"name": "Etna Volcano", "country": "IT", "lat": 37.751, "lng": 14.994, "category": "volcano", "url": "https://www.skylinewebcams.com/en/webcam/italia/sicilia/catania/etna.html"},
+    {"name": "Stromboli", "country": "IT", "lat": 38.789, "lng": 15.213, "category": "volcano", "url": "https://www.skylinewebcams.com/en/webcam/italia/sicilia/messina/stromboli.html"},
+    {"name": "Sakurajima Volcano", "country": "JP", "lat": 31.585, "lng": 130.657, "category": "volcano", "url": "https://www.youtube.com/results?search_query=sakurajima+live"},
+    {"name": "Old Faithful Yellowstone", "country": "US", "lat": 44.460, "lng": -110.828, "category": "nature", "url": "https://www.nps.gov/yell/learn/photosmultimedia/webcams.htm"},
+    {"name": "Niagara Falls", "country": "US", "lat": 43.082, "lng": -79.071, "category": "nature", "url": "https://www.earthcam.com/usa/newyork/niagarafalls/"},
+    {"name": "ISS Live", "country": "Orbital", "lat": 0.0, "lng": 0.0, "category": "space", "url": "https://www.nasa.gov/multimedia/nasatv/iss_ustream.html"},
+]
+
+
+# ═══════════════ APT GROUPS (Cyber Threat Actors) ═══════════════
+APT_GROUPS = [
+    {"id": "APT28", "name": "APT28 (Fancy Bear)", "sponsor": "RU", "agency": "GRU Unit 26165", "lat": 55.755, "lng": 37.617, "targets": "Govt, military, NATO, election infra", "first_seen": 2008, "severity": "CRITICAL"},
+    {"id": "APT29", "name": "APT29 (Cozy Bear / Midnight Blizzard)", "sponsor": "RU", "agency": "SVR", "lat": 55.760, "lng": 37.620, "targets": "Govt, think tanks, SolarWinds supply-chain", "first_seen": 2008, "severity": "CRITICAL"},
+    {"id": "Sandworm", "name": "Sandworm (Voodoo Bear)", "sponsor": "RU", "agency": "GRU Unit 74455", "lat": 55.770, "lng": 37.610, "targets": "ICS/SCADA, Ukraine power grid, NotPetya", "first_seen": 2009, "severity": "EXTREME"},
+    {"id": "APT41", "name": "APT41 (Double Dragon / Wicked Panda)", "sponsor": "CN", "agency": "MSS contractors", "lat": 39.906, "lng": 116.391, "targets": "Healthcare, telecom, supply-chain", "first_seen": 2012, "severity": "HIGH"},
+    {"id": "APT40", "name": "APT40 (Leviathan / Kryptonite Panda)", "sponsor": "CN", "agency": "MSS Hainan", "lat": 20.040, "lng": 110.330, "targets": "Maritime, defense, naval", "first_seen": 2013, "severity": "HIGH"},
+    {"id": "APT10", "name": "APT10 (Stone Panda / MenuPass)", "sponsor": "CN", "agency": "MSS Tianjin", "lat": 39.343, "lng": 117.361, "targets": "Managed service providers, cloud", "first_seen": 2009, "severity": "HIGH"},
+    {"id": "VoltTyphoon", "name": "Volt Typhoon", "sponsor": "CN", "agency": "PLA", "lat": 39.910, "lng": 116.400, "targets": "US critical infra (water, power, comms)", "first_seen": 2021, "severity": "EXTREME"},
+    {"id": "FloodTyphoon", "name": "Flax Typhoon", "sponsor": "CN", "agency": "PLA", "lat": 39.911, "lng": 116.405, "targets": "Routers, IoT, edge devices for botnets", "first_seen": 2023, "severity": "HIGH"},
+    {"id": "Lazarus", "name": "Lazarus Group", "sponsor": "KP", "agency": "RGB Bureau 121", "lat": 39.020, "lng": 125.750, "targets": "Crypto exchanges, SWIFT, defense", "first_seen": 2009, "severity": "CRITICAL"},
+    {"id": "APT37", "name": "APT37 (Reaper / ScarCruft)", "sponsor": "KP", "agency": "RGB", "lat": 39.022, "lng": 125.755, "targets": "South Korea, Japan, defectors", "first_seen": 2012, "severity": "HIGH"},
+    {"id": "APT38", "name": "APT38 (BlueNoroff)", "sponsor": "KP", "agency": "Lazarus subgroup", "lat": 39.023, "lng": 125.760, "targets": "Banks, financial heists", "first_seen": 2014, "severity": "HIGH"},
+    {"id": "APT33", "name": "APT33 (Elfin / Refined Kitten)", "sponsor": "IR", "agency": "IRGC", "lat": 35.689, "lng": 51.388, "targets": "Aerospace, energy, petrochem", "first_seen": 2013, "severity": "HIGH"},
+    {"id": "APT34", "name": "APT34 (OilRig / Helix Kitten)", "sponsor": "IR", "agency": "MOIS", "lat": 35.700, "lng": 51.420, "targets": "Middle East govts, telecom", "first_seen": 2014, "severity": "HIGH"},
+    {"id": "APT35", "name": "APT35 (Charming Kitten / Phosphorus)", "sponsor": "IR", "agency": "IRGC IO", "lat": 35.690, "lng": 51.390, "targets": "Journalists, dissidents, govt", "first_seen": 2014, "severity": "HIGH"},
+    {"id": "MuddyWater", "name": "MuddyWater (TEMP.Zagros)", "sponsor": "IR", "agency": "MOIS", "lat": 35.710, "lng": 51.430, "targets": "Govt, telecom (Middle East/Asia)", "first_seen": 2017, "severity": "MEDIUM"},
+    {"id": "Equation", "name": "Equation Group", "sponsor": "US", "agency": "NSA TAO", "lat": 39.108, "lng": -76.770, "targets": "Foreign govts (attributed by Kaspersky)", "first_seen": 2001, "severity": "EXTREME"},
+    {"id": "TurlaSnake", "name": "Turla (Snake / Venomous Bear)", "sponsor": "RU", "agency": "FSB Center 16", "lat": 55.752, "lng": 37.618, "targets": "Govt, embassies, research", "first_seen": 2004, "severity": "HIGH"},
+    {"id": "GamaredonAPT", "name": "Gamaredon (Primitive Bear)", "sponsor": "RU", "agency": "FSB", "lat": 44.952, "lng": 34.102, "targets": "Ukraine govt, military", "first_seen": 2013, "severity": "HIGH"},
+]
+
+
+# ═══════════════ NASA FIRMS THERMAL HOTSPOTS ═══════════════
+# VIIRS-style fire detection samples (curated, not live API)
+NASA_FIRMS_FIRES = [
+    {"lat": -3.45, "lng": -62.21, "country": "BR", "frp": 124.5, "confidence": "high", "biome": "Amazon", "detail": "Amazonas state deforestation fire"},
+    {"lat": -10.92, "lng": -51.34, "country": "BR", "frp": 89.2, "confidence": "high", "biome": "Cerrado", "detail": "Mato Grosso savanna burn"},
+    {"lat": -16.42, "lng": -56.38, "country": "BR", "frp": 156.8, "confidence": "high", "biome": "Pantanal", "detail": "Pantanal wetland mega-fire"},
+    {"lat": -2.51, "lng": 23.71, "country": "CD", "frp": 67.3, "confidence": "medium", "biome": "Congo", "detail": "DRC slash-and-burn"},
+    {"lat": -12.34, "lng": 31.45, "country": "ZM", "frp": 45.7, "confidence": "medium", "biome": "Miombo", "detail": "Zambia agricultural burn"},
+    {"lat": 60.42, "lng": 106.78, "country": "RU", "frp": 234.6, "confidence": "high", "biome": "Boreal", "detail": "Krasnoyarsk taiga megafire"},
+    {"lat": 62.18, "lng": 129.56, "country": "RU", "frp": 187.2, "confidence": "high", "biome": "Boreal", "detail": "Yakutia permafrost fire"},
+    {"lat": 38.75, "lng": -122.42, "country": "US", "frp": 312.8, "confidence": "high", "biome": "Mediterranean", "detail": "Northern California wildfire"},
+    {"lat": 34.21, "lng": -117.85, "country": "US", "frp": 198.4, "confidence": "high", "biome": "Chaparral", "detail": "Southern Cal Santa Ana fire"},
+    {"lat": 49.12, "lng": -120.45, "country": "CA", "frp": 145.2, "confidence": "high", "biome": "Boreal", "detail": "BC interior wildfire"},
+    {"lat": 56.78, "lng": -111.32, "country": "CA", "frp": 178.9, "confidence": "high", "biome": "Boreal", "detail": "Alberta oil sands region fire"},
+    {"lat": -33.92, "lng": 150.55, "country": "AU", "frp": 87.6, "confidence": "medium", "biome": "Eucalypt", "detail": "NSW bushfire"},
+    {"lat": 40.18, "lng": 22.45, "country": "GR", "frp": 92.4, "confidence": "high", "biome": "Mediterranean", "detail": "Greek island wildfire"},
+    {"lat": 37.92, "lng": -8.12, "country": "PT", "frp": 76.3, "confidence": "high", "biome": "Mediterranean", "detail": "Portugal Algarve fire"},
+    {"lat": 36.45, "lng": 4.21, "country": "DZ", "frp": 56.8, "confidence": "medium", "biome": "Mediterranean", "detail": "Kabylie region fire"},
+    {"lat": 28.34, "lng": 77.12, "country": "IN", "frp": 67.4, "confidence": "low", "biome": "Agricultural", "detail": "Punjab stubble burning"},
+    {"lat": -1.23, "lng": 113.45, "country": "ID", "frp": 142.7, "confidence": "high", "biome": "Peat", "detail": "Kalimantan peat fire"},
+    {"lat": 0.21, "lng": 101.78, "country": "ID", "frp": 98.2, "confidence": "high", "biome": "Peat", "detail": "Sumatra haze source"},
+    {"lat": 23.45, "lng": -104.82, "country": "MX", "frp": 65.4, "confidence": "medium", "biome": "Pine-oak", "detail": "Sierra Madre fire"},
+    {"lat": 11.72, "lng": -1.45, "country": "BF", "frp": 34.2, "confidence": "low", "biome": "Sahel", "detail": "Burkina Faso savanna burn"},
+]
+
+
+# ═══════════════ AVIATION INTELLIGENCE ═══════════════
+AVIATION_AIRPORTS = [
+    {"iata": "JFK", "name": "JFK New York", "country": "US", "lat": 40.641, "lng": -73.778, "delay_min": 24, "delay_status": "MODERATE", "ground_stop": False, "notams": 4, "passengers_m": 62.5},
+    {"iata": "LAX", "name": "LA International", "country": "US", "lat": 33.942, "lng": -118.408, "delay_min": 31, "delay_status": "MODERATE", "ground_stop": False, "notams": 3, "passengers_m": 75.1},
+    {"iata": "ORD", "name": "Chicago O'Hare", "country": "US", "lat": 41.978, "lng": -87.904, "delay_min": 67, "delay_status": "SEVERE", "ground_stop": True, "notams": 7, "passengers_m": 73.9},
+    {"iata": "ATL", "name": "Atlanta Hartsfield-Jackson", "country": "US", "lat": 33.640, "lng": -84.428, "delay_min": 18, "delay_status": "MINOR", "ground_stop": False, "notams": 2, "passengers_m": 93.7},
+    {"iata": "DFW", "name": "Dallas/Fort Worth", "country": "US", "lat": 32.897, "lng": -97.038, "delay_min": 22, "delay_status": "MINOR", "ground_stop": False, "notams": 3, "passengers_m": 73.4},
+    {"iata": "DEN", "name": "Denver", "country": "US", "lat": 39.862, "lng": -104.673, "delay_min": 45, "delay_status": "MAJOR", "ground_stop": False, "notams": 5, "passengers_m": 77.8},
+    {"iata": "SFO", "name": "San Francisco", "country": "US", "lat": 37.622, "lng": -122.375, "delay_min": 38, "delay_status": "MAJOR", "ground_stop": False, "notams": 4, "passengers_m": 50.0},
+    {"iata": "LHR", "name": "London Heathrow", "country": "GB", "lat": 51.470, "lng": -0.454, "delay_min": 28, "delay_status": "MODERATE", "ground_stop": False, "notams": 3, "passengers_m": 79.2},
+    {"iata": "CDG", "name": "Paris CDG", "country": "FR", "lat": 49.010, "lng": 2.548, "delay_min": 19, "delay_status": "MINOR", "ground_stop": False, "notams": 2, "passengers_m": 67.4},
+    {"iata": "FRA", "name": "Frankfurt", "country": "DE", "lat": 50.038, "lng": 8.562, "delay_min": 21, "delay_status": "MINOR", "ground_stop": False, "notams": 4, "passengers_m": 60.7},
+    {"iata": "AMS", "name": "Amsterdam Schiphol", "country": "NL", "lat": 52.310, "lng": 4.768, "delay_min": 26, "delay_status": "MODERATE", "ground_stop": False, "notams": 3, "passengers_m": 71.7},
+    {"iata": "DXB", "name": "Dubai Intl", "country": "AE", "lat": 25.253, "lng": 55.365, "delay_min": 12, "delay_status": "MINOR", "ground_stop": False, "notams": 2, "passengers_m": 86.9},
+    {"iata": "HND", "name": "Tokyo Haneda", "country": "JP", "lat": 35.549, "lng": 139.779, "delay_min": 8, "delay_status": "MINOR", "ground_stop": False, "notams": 1, "passengers_m": 87.0},
+    {"iata": "PEK", "name": "Beijing Capital", "country": "CN", "lat": 40.080, "lng": 116.585, "delay_min": 35, "delay_status": "MODERATE", "ground_stop": False, "notams": 3, "passengers_m": 100.0},
+    {"iata": "PVG", "name": "Shanghai Pudong", "country": "CN", "lat": 31.143, "lng": 121.805, "delay_min": 41, "delay_status": "MAJOR", "ground_stop": False, "notams": 4, "passengers_m": 76.2},
+    {"iata": "ICN", "name": "Seoul Incheon", "country": "KR", "lat": 37.469, "lng": 126.450, "delay_min": 14, "delay_status": "MINOR", "ground_stop": False, "notams": 2, "passengers_m": 71.2},
+    {"iata": "SIN", "name": "Singapore Changi", "country": "SG", "lat": 1.359, "lng": 103.989, "delay_min": 9, "delay_status": "MINOR", "ground_stop": False, "notams": 1, "passengers_m": 68.3},
+    {"iata": "DOH", "name": "Doha Hamad", "country": "QA", "lat": 25.273, "lng": 51.608, "delay_min": 11, "delay_status": "MINOR", "ground_stop": False, "notams": 1, "passengers_m": 45.9},
+    {"iata": "IST", "name": "Istanbul Airport", "country": "TR", "lat": 41.275, "lng": 28.752, "delay_min": 33, "delay_status": "MODERATE", "ground_stop": False, "notams": 4, "passengers_m": 76.1},
+    {"iata": "TLV", "name": "Tel Aviv Ben Gurion", "country": "IL", "lat": 32.011, "lng": 34.887, "delay_min": 52, "delay_status": "SEVERE", "ground_stop": False, "notams": 9, "passengers_m": 24.8},
+    {"iata": "BEY", "name": "Beirut Rafic Hariri", "country": "LB", "lat": 33.821, "lng": 35.488, "delay_min": 78, "delay_status": "SEVERE", "ground_stop": True, "notams": 12, "passengers_m": 8.0},
+    {"iata": "DAM", "name": "Damascus Intl", "country": "SY", "lat": 33.411, "lng": 36.514, "delay_min": 0, "delay_status": "CLOSED", "ground_stop": True, "notams": 14, "passengers_m": 0.0},
+    {"iata": "TGD", "name": "Podgorica (Balkans)", "country": "ME", "lat": 42.359, "lng": 19.252, "delay_min": 15, "delay_status": "MINOR", "ground_stop": False, "notams": 2, "passengers_m": 1.8},
+    {"iata": "DME", "name": "Moscow Domodedovo", "country": "RU", "lat": 55.408, "lng": 37.906, "delay_min": 47, "delay_status": "MAJOR", "ground_stop": False, "notams": 6, "passengers_m": 19.5},
+    {"iata": "KBP", "name": "Kyiv Boryspil", "country": "UA", "lat": 50.345, "lng": 30.894, "delay_min": 0, "delay_status": "CLOSED", "ground_stop": True, "notams": 18, "passengers_m": 0.0},
+]
+
+NOTAM_CLOSURES = [
+    {"airport": "DAM", "type": "CLOSED", "reason": "Airspace conflict; civilian operations suspended", "since": "2024-12-08"},
+    {"airport": "KBP", "type": "CLOSED", "reason": "Russian invasion; airspace closed since 2022-02-24", "since": "2022-02-24"},
+    {"airport": "BEY", "type": "RESTRICTED", "reason": "Israel-Lebanon escalation; intermittent ground stops", "since": "2024-09-23"},
+    {"airport": "SHA", "type": "RESTRICTED", "reason": "PLA exercises; airspace congestion", "since": "2026-03-15"},
+    {"airport": "EVN", "type": "RESTRICTED", "reason": "Caucasus tensions", "since": "2024-08-12"},
+    {"airport": "TLV", "type": "RESTRICTED", "reason": "Iron Dome launches; periodic closures", "since": "2024-04-13"},
+    {"airport": "MNL", "type": "RESTRICTED", "reason": "Typhoon Pepito approach", "since": "2026-04-05"},
+    {"airport": "TPE", "type": "RESTRICTED", "reason": "PLA missile drills around Taiwan Strait", "since": "2026-03-22"},
+    {"airport": "MMD", "type": "CLOSED", "reason": "Volcanic ash from Mount Marapi", "since": "2026-04-01"},
+    {"airport": "SVX", "type": "RESTRICTED", "reason": "Unspecified military activity", "since": "2026-03-30"},
+]
+
+
+# ═══════════════ CLIMATE ANOMALIES (ERA5-style baseline deviations) ═══════════════
+CLIMATE_ANOMALIES = [
+    {"zone": "Arctic", "lat": 80.0, "lng": 0.0, "temp_anom_c": 7.4, "precip_anom_pct": 18, "severity": "EXTREME", "detail": "Polar amplification 4× global avg"},
+    {"zone": "West Antarctica", "lat": -78.0, "lng": -100.0, "temp_anom_c": 3.2, "precip_anom_pct": -5, "severity": "HIGH", "detail": "Thwaites/Pine Island accelerating"},
+    {"zone": "Greenland", "lat": 72.0, "lng": -42.0, "temp_anom_c": 4.8, "precip_anom_pct": 12, "severity": "HIGH", "detail": "Surface melt extent record-breaking"},
+    {"zone": "Western Europe", "lat": 47.0, "lng": 5.0, "temp_anom_c": 2.1, "precip_anom_pct": -22, "severity": "HIGH", "detail": "Persistent drought; aquifer depletion"},
+    {"zone": "Mediterranean", "lat": 38.0, "lng": 15.0, "temp_anom_c": 2.6, "precip_anom_pct": -28, "severity": "HIGH", "detail": "Heat dome events; agriculture stressed"},
+    {"zone": "Sahel", "lat": 14.0, "lng": 0.0, "temp_anom_c": 1.8, "precip_anom_pct": -15, "severity": "MEDIUM", "detail": "Desertification accelerating south"},
+    {"zone": "Horn of Africa", "lat": 5.0, "lng": 40.0, "temp_anom_c": 2.2, "precip_anom_pct": -32, "severity": "EXTREME", "detail": "5+ failed rainy seasons"},
+    {"zone": "Amazon Basin", "lat": -5.0, "lng": -60.0, "temp_anom_c": 1.9, "precip_anom_pct": -35, "severity": "EXTREME", "detail": "Drought + deforestation tipping risk"},
+    {"zone": "Pantanal", "lat": -17.0, "lng": -56.0, "temp_anom_c": 2.4, "precip_anom_pct": -40, "severity": "EXTREME", "detail": "Wetland 30% burned in 2024"},
+    {"zone": "South Asia", "lat": 22.0, "lng": 80.0, "temp_anom_c": 1.5, "precip_anom_pct": 8, "severity": "MEDIUM", "detail": "Monsoon variability increasing"},
+    {"zone": "Australian Outback", "lat": -25.0, "lng": 135.0, "temp_anom_c": 1.7, "precip_anom_pct": -18, "severity": "MEDIUM", "detail": "Fire danger index elevated"},
+    {"zone": "Pacific NW (USA)", "lat": 47.0, "lng": -122.0, "temp_anom_c": 2.0, "precip_anom_pct": -10, "severity": "MEDIUM", "detail": "Heat domes; salmon run collapse"},
+    {"zone": "California", "lat": 36.0, "lng": -120.0, "temp_anom_c": 1.6, "precip_anom_pct": -25, "severity": "HIGH", "detail": "Megadrought 23+ years"},
+    {"zone": "East Africa", "lat": -3.0, "lng": 36.0, "temp_anom_c": 1.4, "precip_anom_pct": -20, "severity": "MEDIUM", "detail": "Glacier retreat on Kilimanjaro"},
+    {"zone": "Southeast Asia", "lat": 5.0, "lng": 110.0, "temp_anom_c": 1.3, "precip_anom_pct": 15, "severity": "MEDIUM", "detail": "Typhoon intensification"},
+]
+
+
+# ═══════════════ WTO TRADE POLICY (Active Restrictions) ═══════════════
+WTO_TRADE_RESTRICTIONS = [
+    {"id": "WTO-2026-EU-CN-EV", "from_country": "EU", "to_country": "CN", "type": "TARIFF", "product": "Electric vehicles", "rate_pct": 38.1, "since": "2024-10", "status": "ACTIVE", "detail": "Anti-subsidy duties on Chinese-made EVs"},
+    {"id": "WTO-2026-US-CN-SEMI", "from_country": "US", "to_country": "CN", "type": "EXPORT_CONTROL", "product": "Advanced semiconductors", "rate_pct": 100, "since": "2022-10", "status": "ACTIVE", "detail": "Export restrictions on EUV/sub-7nm chips, AI accelerators"},
+    {"id": "WTO-2026-CN-US-RARE", "from_country": "CN", "to_country": "US", "type": "EXPORT_CONTROL", "product": "Gallium, germanium, rare earths", "rate_pct": 100, "since": "2023-08", "status": "ACTIVE", "detail": "Critical minerals counter-restrictions"},
+    {"id": "WTO-2026-US-MX-STEEL", "from_country": "US", "to_country": "MX", "type": "TARIFF", "product": "Steel, aluminum", "rate_pct": 25, "since": "2024-07", "status": "ACTIVE", "detail": "Section 232 reinstated"},
+    {"id": "WTO-2026-IN-CN-SOLAR", "from_country": "IN", "to_country": "CN", "type": "TARIFF", "product": "Solar modules", "rate_pct": 40, "since": "2024-04", "status": "ACTIVE", "detail": "Anti-dumping safeguard"},
+    {"id": "WTO-2026-EU-RU-OIL", "from_country": "EU", "to_country": "RU", "type": "EMBARGO", "product": "Crude oil, refined products", "rate_pct": 100, "since": "2022-12", "status": "ACTIVE", "detail": "G7 price cap + EU embargo"},
+    {"id": "WTO-2026-US-RU-TECH", "from_country": "US", "to_country": "RU", "type": "EXPORT_CONTROL", "product": "Dual-use tech, chips", "rate_pct": 100, "since": "2022-02", "status": "ACTIVE", "detail": "Severe export controls"},
+    {"id": "WTO-2026-AU-CN-WINE", "from_country": "CN", "to_country": "AU", "type": "TARIFF", "product": "Wine", "rate_pct": 0, "since": "2024-03", "status": "LIFTED", "detail": "Anti-dumping duties removed after 3 years"},
+    {"id": "WTO-2026-BR-AR-AGRI", "from_country": "BR", "to_country": "AR", "type": "TARIFF", "product": "Wheat, soy", "rate_pct": 12, "since": "2024-09", "status": "ACTIVE", "detail": "Mercosur dispute"},
+    {"id": "WTO-2026-EU-BR-DEFOR", "from_country": "EU", "to_country": "BR", "type": "REGULATION", "product": "Beef, soy, palm oil", "rate_pct": 0, "since": "2025-01", "status": "ACTIVE", "detail": "EUDR deforestation regulation"},
+    {"id": "WTO-2026-TR-EU-CITRUS", "from_country": "EU", "to_country": "TR", "type": "SPS", "product": "Citrus, vegetables", "rate_pct": 0, "since": "2024-11", "status": "ACTIVE", "detail": "Pesticide residue findings"},
+    {"id": "WTO-2026-KR-JP-CHEM", "from_country": "JP", "to_country": "KR", "type": "EXPORT_CONTROL", "product": "Hydrogen fluoride, photoresists", "rate_pct": 0, "since": "2019-07", "status": "EASED", "detail": "Eased in 2023 after détente"},
+    {"id": "WTO-2026-IN-US-DAIRY", "from_country": "IN", "to_country": "US", "type": "TARIFF", "product": "Dairy, almonds", "rate_pct": 70, "since": "2019-06", "status": "ACTIVE", "detail": "Retaliation over GSP withdrawal"},
+    {"id": "WTO-2026-VN-US-FUR", "from_country": "US", "to_country": "VN", "type": "TARIFF", "product": "Furniture, plywood", "rate_pct": 22, "since": "2024-12", "status": "ACTIVE", "detail": "Anti-dumping; transshipment from China"},
+]
+
+
+# ═══════════════ BIS / CENTRAL BANK POLICY RATES ═══════════════
+BIS_POLICY_RATES = [
+    {"bank": "Federal Reserve", "country": "US", "rate_pct": 4.25, "delta_bps": -25, "next_meeting": "2026-05-01", "stance": "DOVISH", "balance_sheet_t": 6.8},
+    {"bank": "European Central Bank", "country": "EU", "rate_pct": 2.50, "delta_bps": -25, "next_meeting": "2026-04-17", "stance": "DOVISH", "balance_sheet_t": 6.4},
+    {"bank": "Bank of England", "country": "GB", "rate_pct": 4.00, "delta_bps": -25, "next_meeting": "2026-05-08", "stance": "NEUTRAL", "balance_sheet_t": 0.7},
+    {"bank": "Bank of Japan", "country": "JP", "rate_pct": 0.50, "delta_bps": 25, "next_meeting": "2026-04-30", "stance": "HAWKISH", "balance_sheet_t": 5.2},
+    {"bank": "People's Bank of China", "country": "CN", "rate_pct": 3.10, "delta_bps": -10, "next_meeting": "2026-04-21", "stance": "DOVISH", "balance_sheet_t": 6.1},
+    {"bank": "Swiss National Bank", "country": "CH", "rate_pct": 0.25, "delta_bps": -25, "next_meeting": "2026-06-19", "stance": "DOVISH", "balance_sheet_t": 0.9},
+    {"bank": "Bank of Canada", "country": "CA", "rate_pct": 2.75, "delta_bps": -25, "next_meeting": "2026-04-16", "stance": "DOVISH", "balance_sheet_t": 0.4},
+    {"bank": "Reserve Bank of Australia", "country": "AU", "rate_pct": 4.00, "delta_bps": -25, "next_meeting": "2026-05-20", "stance": "NEUTRAL", "balance_sheet_t": 0.4},
+    {"bank": "Reserve Bank of India", "country": "IN", "rate_pct": 6.00, "delta_bps": -25, "next_meeting": "2026-06-06", "stance": "NEUTRAL", "balance_sheet_t": 0.8},
+    {"bank": "Banco Central do Brasil", "country": "BR", "rate_pct": 14.25, "delta_bps": 100, "next_meeting": "2026-05-07", "stance": "HAWKISH", "balance_sheet_t": 0.3},
+    {"bank": "Bank of Korea", "country": "KR", "rate_pct": 2.75, "delta_bps": -25, "next_meeting": "2026-04-24", "stance": "DOVISH", "balance_sheet_t": 0.5},
+    {"bank": "Banco de México", "country": "MX", "rate_pct": 9.00, "delta_bps": -50, "next_meeting": "2026-05-15", "stance": "DOVISH", "balance_sheet_t": 0.2},
+    {"bank": "Norges Bank", "country": "NO", "rate_pct": 4.25, "delta_bps": -25, "next_meeting": "2026-05-08", "stance": "NEUTRAL", "balance_sheet_t": 0.1},
+    {"bank": "Riksbank", "country": "SE", "rate_pct": 2.25, "delta_bps": -25, "next_meeting": "2026-05-08", "stance": "DOVISH", "balance_sheet_t": 0.1},
+]
+
+
+# ═══════════════ MARKET DATA — SECTORS, OIL, BTC ETF, STABLECOINS ═══════════════
+SECTOR_HEATMAP = [
+    {"ticker": "XLK", "name": "Technology", "change_pct": 1.42, "ytd_pct": 12.4, "weight_pct": 30.8},
+    {"ticker": "XLF", "name": "Financials", "change_pct": 0.68, "ytd_pct": 8.2, "weight_pct": 13.5},
+    {"ticker": "XLV", "name": "Health Care", "change_pct": -0.45, "ytd_pct": 4.1, "weight_pct": 11.7},
+    {"ticker": "XLY", "name": "Consumer Discretionary", "change_pct": 0.92, "ytd_pct": 9.6, "weight_pct": 10.8},
+    {"ticker": "XLC", "name": "Communication Services", "change_pct": 1.18, "ytd_pct": 14.2, "weight_pct": 9.2},
+    {"ticker": "XLI", "name": "Industrials", "change_pct": 0.34, "ytd_pct": 6.8, "weight_pct": 8.4},
+    {"ticker": "XLP", "name": "Consumer Staples", "change_pct": -0.12, "ytd_pct": 2.3, "weight_pct": 6.1},
+    {"ticker": "XLE", "name": "Energy", "change_pct": -1.65, "ytd_pct": -8.4, "weight_pct": 3.6},
+    {"ticker": "XLU", "name": "Utilities", "change_pct": 0.21, "ytd_pct": 5.7, "weight_pct": 2.5},
+    {"ticker": "XLB", "name": "Materials", "change_pct": -0.78, "ytd_pct": -2.1, "weight_pct": 2.3},
+    {"ticker": "XLRE", "name": "Real Estate", "change_pct": 0.45, "ytd_pct": 3.4, "weight_pct": 2.2},
+]
+
+OIL_ANALYTICS = {
+    "wti_spot": 64.20, "wti_change_pct": -0.85, "wti_ytd_pct": -8.2,
+    "brent_spot": 68.10, "brent_change_pct": -0.72, "brent_ytd_pct": -7.4,
+    "us_production_mbd": 13.45, "us_production_change": -0.12,
+    "us_inventory_mb": 442.3, "us_inventory_change": 2.8,
+    "spr_mb": 393.6, "spr_change": 0.4,
+    "rig_count": 581, "rig_count_change": -3,
+    "opec_production_mbd": 27.18, "non_opec_production_mbd": 53.42,
+    "demand_2026e_mbd": 103.8, "supply_2026e_mbd": 104.2,
+    "spread_brent_wti": 3.90,
+    "detail": "Soft demand outlook + OPEC+ unwind keeping prices range-bound",
+}
+
+BTC_ETF_FLOWS = [
+    {"ticker": "IBIT", "name": "iShares Bitcoin Trust", "issuer": "BlackRock", "aum_b": 58.4, "flow_24h_m": 142.6, "flow_7d_m": 425.8, "expense_pct": 0.25},
+    {"ticker": "FBTC", "name": "Fidelity Wise Origin Bitcoin", "issuer": "Fidelity", "aum_b": 19.7, "flow_24h_m": 38.2, "flow_7d_m": 156.3, "expense_pct": 0.25},
+    {"ticker": "ARKB", "name": "ARK 21Shares Bitcoin", "issuer": "ARK/21Shares", "aum_b": 4.2, "flow_24h_m": 8.4, "flow_7d_m": 32.1, "expense_pct": 0.21},
+    {"ticker": "BITB", "name": "Bitwise Bitcoin", "issuer": "Bitwise", "aum_b": 3.8, "flow_24h_m": 6.7, "flow_7d_m": 28.4, "expense_pct": 0.20},
+    {"ticker": "GBTC", "name": "Grayscale Bitcoin Trust", "issuer": "Grayscale", "aum_b": 17.2, "flow_24h_m": -42.1, "flow_7d_m": -187.3, "expense_pct": 1.50},
+    {"ticker": "HODL", "name": "VanEck Bitcoin", "issuer": "VanEck", "aum_b": 1.4, "flow_24h_m": 2.3, "flow_7d_m": 11.2, "expense_pct": 0.20},
+    {"ticker": "BRRR", "name": "Valkyrie Bitcoin", "issuer": "Valkyrie", "aum_b": 0.8, "flow_24h_m": 1.1, "flow_7d_m": 4.3, "expense_pct": 0.25},
+    {"ticker": "EZBC", "name": "Franklin Bitcoin", "issuer": "Franklin Templeton", "aum_b": 0.6, "flow_24h_m": 0.9, "flow_7d_m": 3.8, "expense_pct": 0.19},
+    {"ticker": "BTCO", "name": "Invesco Galaxy Bitcoin", "issuer": "Invesco/Galaxy", "aum_b": 0.7, "flow_24h_m": 1.2, "flow_7d_m": 4.7, "expense_pct": 0.25},
+    {"ticker": "ETHA", "name": "iShares Ethereum Trust", "issuer": "BlackRock", "aum_b": 8.4, "flow_24h_m": 18.6, "flow_7d_m": 67.2, "expense_pct": 0.25},
+    {"ticker": "FETH", "name": "Fidelity Ethereum", "issuer": "Fidelity", "aum_b": 1.9, "flow_24h_m": 3.2, "flow_7d_m": 12.4, "expense_pct": 0.25},
+]
+
+STABLECOINS = [
+    {"symbol": "USDT", "name": "Tether", "issuer": "Tether Ltd", "marketcap_b": 142.6, "share_pct": 67.2, "chain": "Multi", "backing": "Cash + T-bills + commercial"},
+    {"symbol": "USDC", "name": "USD Coin", "issuer": "Circle", "marketcap_b": 47.8, "share_pct": 22.5, "chain": "Multi", "backing": "Cash + short T-bills (audited)"},
+    {"symbol": "DAI", "name": "MakerDAO Dai", "issuer": "MakerDAO", "marketcap_b": 5.4, "share_pct": 2.5, "chain": "Ethereum", "backing": "Crypto-collateralized + RWA"},
+    {"symbol": "USDe", "name": "Ethena USDe", "issuer": "Ethena Labs", "marketcap_b": 4.8, "share_pct": 2.3, "chain": "Multi", "backing": "Delta-neutral synthetic"},
+    {"symbol": "FDUSD", "name": "First Digital USD", "issuer": "First Digital", "marketcap_b": 2.1, "share_pct": 1.0, "chain": "Multi", "backing": "Cash + T-bills"},
+    {"symbol": "PYUSD", "name": "PayPal USD", "issuer": "Paxos", "marketcap_b": 1.8, "share_pct": 0.8, "chain": "Multi", "backing": "Cash + T-bills"},
+    {"symbol": "TUSD", "name": "TrueUSD", "issuer": "Archblock", "marketcap_b": 0.5, "share_pct": 0.2, "chain": "Multi", "backing": "Cash equivalents"},
+    {"symbol": "USDP", "name": "Pax Dollar", "issuer": "Paxos", "marketcap_b": 0.3, "share_pct": 0.1, "chain": "Ethereum", "backing": "Cash + T-bills"},
+    {"symbol": "GUSD", "name": "Gemini Dollar", "issuer": "Gemini", "marketcap_b": 0.1, "share_pct": 0.05, "chain": "Ethereum", "backing": "Cash + T-bills"},
+    {"symbol": "EURS", "name": "STASIS EURS", "issuer": "STASIS", "marketcap_b": 0.1, "share_pct": 0.05, "chain": "Multi", "backing": "EUR cash"},
+]
+
+
+# ═══════════════ GOVERNMENT SPENDING / USASPENDING ═══════════════
+GOV_SPENDING = [
+    {"recipient": "Lockheed Martin", "amount_m": 4280, "agency": "DOD", "date": "2026-03-28", "purpose": "F-35 Lot 19 production", "country": "US"},
+    {"recipient": "RTX (Raytheon)", "amount_m": 2150, "agency": "DOD", "date": "2026-03-25", "purpose": "Patriot/PAC-3 missile production for allies", "country": "US"},
+    {"recipient": "Northrop Grumman", "amount_m": 1820, "agency": "DOD", "date": "2026-03-22", "purpose": "B-21 Raider production milestone", "country": "US"},
+    {"recipient": "General Dynamics", "amount_m": 1640, "agency": "DOD", "date": "2026-03-19", "purpose": "Virginia-class submarine block VI", "country": "US"},
+    {"recipient": "Boeing Defense", "amount_m": 1280, "agency": "DOD", "date": "2026-03-15", "purpose": "KC-46 tanker fleet sustainment", "country": "US"},
+    {"recipient": "L3Harris", "amount_m": 760, "agency": "DOD", "date": "2026-03-12", "purpose": "Tactical comms, EW systems", "country": "US"},
+    {"recipient": "Anduril Industries", "amount_m": 645, "agency": "DOD", "date": "2026-03-10", "purpose": "CCA (Collaborative Combat Aircraft) Lot 1", "country": "US"},
+    {"recipient": "Palantir Technologies", "amount_m": 480, "agency": "DOD", "date": "2026-03-08", "purpose": "Maven Smart System expansion", "country": "US"},
+    {"recipient": "SpaceX", "amount_m": 1150, "agency": "USSF/NASA", "date": "2026-03-05", "purpose": "NSSL launches + Starship lunar", "country": "US"},
+    {"recipient": "Booz Allen Hamilton", "amount_m": 320, "agency": "DOD/Intel", "date": "2026-03-03", "purpose": "Cyber operations support", "country": "US"},
+    {"recipient": "Microsoft", "amount_m": 410, "agency": "DOD", "date": "2026-02-28", "purpose": "Azure Government cloud expansion", "country": "US"},
+    {"recipient": "Oracle", "amount_m": 280, "agency": "DOD", "date": "2026-02-25", "purpose": "JWCC compute allocation", "country": "US"},
+    {"recipient": "Amazon Web Services", "amount_m": 365, "agency": "Intel", "date": "2026-02-22", "purpose": "C2S top-secret cloud", "country": "US"},
+    {"recipient": "BAE Systems", "amount_m": 540, "agency": "DOD", "date": "2026-02-20", "purpose": "M88 Hercules recovery vehicle", "country": "US"},
+    {"recipient": "Huntington Ingalls", "amount_m": 920, "agency": "USN", "date": "2026-02-18", "purpose": "DDG-51 Flight III destroyer", "country": "US"},
+]
+
+
+# ═══════════════ LAYOFFS TRACKER ═══════════════
+LAYOFFS_TRACKER = [
+    {"company": "Microsoft", "country": "US", "count": 6800, "date": "2026-04-02", "sector": "Tech", "reason": "AI restructuring; Azure team consolidation"},
+    {"company": "Meta", "country": "US", "count": 4200, "date": "2026-03-28", "sector": "Tech", "reason": "Reality Labs efficiency push"},
+    {"company": "Google", "country": "US", "count": 3500, "date": "2026-03-25", "sector": "Tech", "reason": "Hardware + Pixel team layoffs"},
+    {"company": "Salesforce", "country": "US", "count": 2400, "date": "2026-03-20", "sector": "Tech", "reason": "Sales + customer success cuts"},
+    {"company": "Amazon", "country": "US", "count": 5800, "date": "2026-03-18", "sector": "Tech", "reason": "AWS restructure; books team"},
+    {"company": "Intel", "country": "US", "count": 3200, "date": "2026-03-15", "sector": "Semi", "reason": "Foundry losses; manufacturing consolidation"},
+    {"company": "Tesla", "country": "US", "count": 2800, "date": "2026-03-12", "sector": "Auto", "reason": "Q1 deliveries miss; cost cuts"},
+    {"company": "Ford", "country": "US", "count": 1900, "date": "2026-03-10", "sector": "Auto", "reason": "EV slowdown; F-150 Lightning team"},
+    {"company": "Citigroup", "country": "US", "count": 2200, "date": "2026-03-08", "sector": "Finance", "reason": "Org simplification continues"},
+    {"company": "Goldman Sachs", "country": "US", "count": 1800, "date": "2026-03-05", "sector": "Finance", "reason": "Performance reviews + market downturn"},
+    {"company": "Boeing", "country": "US", "count": 4100, "date": "2026-03-01", "sector": "Aero", "reason": "Defense + commercial cuts post-strike"},
+    {"company": "SAP", "country": "DE", "count": 8000, "date": "2026-02-25", "sector": "Tech", "reason": "AI-driven roles transformation"},
+    {"company": "Spotify", "country": "SE", "count": 1500, "date": "2026-02-22", "sector": "Tech", "reason": "R&D consolidation"},
+    {"company": "Block (Square)", "country": "US", "count": 1200, "date": "2026-02-18", "sector": "Fintech", "reason": "Cash App + Square reorg"},
+    {"company": "Stripe", "country": "US", "count": 980, "date": "2026-02-15", "sector": "Fintech", "reason": "Cost discipline ahead of IPO"},
+    {"company": "Workday", "country": "US", "count": 1100, "date": "2026-02-12", "sector": "Tech", "reason": "Re-org around AI agents"},
+]
+
+
+# ═══════════════ ISRAEL SIRENS / RED ALERT ═══════════════
+ISRAEL_SIRENS = [
+    {"location": "Tel Aviv", "lat": 32.085, "lng": 34.781, "time": "2026-04-08T22:14:00Z", "threat": "Rocket fire", "origin": "Gaza"},
+    {"location": "Sderot", "lat": 31.525, "lng": 34.595, "time": "2026-04-08T20:42:00Z", "threat": "Mortar fire", "origin": "Gaza"},
+    {"location": "Ashkelon", "lat": 31.668, "lng": 34.572, "time": "2026-04-08T18:33:00Z", "threat": "Rocket fire", "origin": "Gaza"},
+    {"location": "Kiryat Shmona", "lat": 33.207, "lng": 35.572, "time": "2026-04-07T15:21:00Z", "threat": "Anti-tank fire", "origin": "Lebanon"},
+    {"location": "Metula", "lat": 33.279, "lng": 35.580, "time": "2026-04-07T11:08:00Z", "threat": "UAV intrusion", "origin": "Lebanon"},
+    {"location": "Haifa", "lat": 32.794, "lng": 34.989, "time": "2026-04-06T19:45:00Z", "threat": "Hostile UAV", "origin": "Lebanon"},
+    {"location": "Eilat", "lat": 29.557, "lng": 34.952, "time": "2026-04-05T08:30:00Z", "threat": "Cruise missile", "origin": "Yemen"},
+    {"location": "Be'er Sheva", "lat": 31.252, "lng": 34.792, "time": "2026-04-04T21:12:00Z", "threat": "Ballistic missile", "origin": "Yemen"},
+    {"location": "Netivot", "lat": 31.422, "lng": 34.589, "time": "2026-04-03T16:55:00Z", "threat": "Rocket fire", "origin": "Gaza"},
+    {"location": "Nahariya", "lat": 33.006, "lng": 35.094, "time": "2026-04-02T13:20:00Z", "threat": "Anti-tank fire", "origin": "Lebanon"},
+]
+
+
+# ═══════════════ TELEGRAM INTEL CHANNELS ═══════════════
+TELEGRAM_INTEL = [
+    {"channel": "@war_monitor", "subscribers_k": 480, "category": "Conflict", "language": "EN/RU", "last_update": "2026-04-08T22:00:00Z", "summary": "Russian glide bomb strikes on Kharkiv overnight; 14 dead"},
+    {"channel": "@bellingcat", "subscribers_k": 320, "category": "OSINT", "language": "EN", "last_update": "2026-04-08T19:30:00Z", "summary": "Geolocated Russian S-400 system near Crimea bridge"},
+    {"channel": "@conflicts_news", "subscribers_k": 760, "category": "Conflict", "language": "EN", "last_update": "2026-04-08T21:15:00Z", "summary": "IDF strikes on Hezbollah positions in southern Lebanon"},
+    {"channel": "@military_news_x", "subscribers_k": 540, "category": "Military", "language": "EN", "last_update": "2026-04-08T20:00:00Z", "summary": "PLA Navy Type 003 carrier sea trials extending"},
+    {"channel": "@nuclear_radio", "subscribers_k": 220, "category": "Nuclear", "language": "EN", "last_update": "2026-04-08T17:45:00Z", "summary": "IAEA Zaporizhzhia inspection report flags safety regress"},
+    {"channel": "@osint_drones", "subscribers_k": 180, "category": "OSINT/UAV", "language": "EN", "last_update": "2026-04-08T18:30:00Z", "summary": "New Iranian Shahed-238 jet variant photographed"},
+    {"channel": "@kyiv_independent_news", "subscribers_k": 410, "category": "Ukraine", "language": "EN", "last_update": "2026-04-08T22:30:00Z", "summary": "Frontline situation report Donetsk axis"},
+    {"channel": "@anti_corruption_kr", "subscribers_k": 95, "category": "DPRK", "language": "KO/EN", "last_update": "2026-04-07T16:20:00Z", "summary": "Pyongyang grain shipments tracked via satellite"},
+    {"channel": "@gaza_now", "subscribers_k": 680, "category": "Gaza", "language": "AR/EN", "last_update": "2026-04-08T21:50:00Z", "summary": "Strikes on Khan Yunis; UNRWA aid convoy blocked"},
+    {"channel": "@maritime_intel", "subscribers_k": 240, "category": "Maritime", "language": "EN", "last_update": "2026-04-08T15:30:00Z", "summary": "Houthi anti-ship missile attempt on tanker MV Polaris"},
+    {"channel": "@cyber_threat_news", "subscribers_k": 165, "category": "Cyber", "language": "EN", "last_update": "2026-04-08T14:00:00Z", "summary": "Volt Typhoon TTPs targeting US water utilities updated"},
+    {"channel": "@africa_intel", "subscribers_k": 88, "category": "Africa", "language": "EN/FR", "last_update": "2026-04-08T12:30:00Z", "summary": "Wagner/Africa Corps activity near Bamako"},
+    {"channel": "@taiwan_strait_watch", "subscribers_k": 130, "category": "Asia", "language": "EN", "last_update": "2026-04-08T11:00:00Z", "summary": "PLA aircraft sortie count: 38 in 24h, 12 crossing median line"},
+    {"channel": "@arctic_intel", "subscribers_k": 42, "category": "Arctic", "language": "EN", "last_update": "2026-04-07T20:15:00Z", "summary": "Russian Northern Fleet exercises in Barents Sea"},
+    {"channel": "@dronewatch_il", "subscribers_k": 76, "category": "Israel", "language": "EN", "last_update": "2026-04-08T22:10:00Z", "summary": "Iron Dome interceptions over central Israel — 4 launches"},
+]
+
+
+# ═══════════════ TECH READINESS LEVEL TRACKER ═══════════════
+TECH_READINESS = [
+    {"tech": "Quantum computing (logical qubits)", "trl": 5, "leader": "Google/IBM/Quantinuum", "status": "Crossed error-correction threshold (2024)", "year_field": 2030},
+    {"tech": "Fusion (commercial Q>1)", "trl": 4, "leader": "Commonwealth/Helion/TAE", "status": "Net-energy demonstrated (NIF 2022); commercial pilots designed", "year_field": 2032},
+    {"tech": "AGI (Level-5 reasoning)", "trl": 6, "leader": "OpenAI/Anthropic/Google DeepMind", "status": "Frontier models passing professional exams; persistent gaps in long-horizon planning", "year_field": 2028},
+    {"tech": "Self-driving (L4 unrestricted)", "trl": 7, "leader": "Waymo/Cruise/Tesla", "status": "Geofenced L4 in 5 US cities; weather/night limits remain", "year_field": 2027},
+    {"tech": "mRNA vaccines (cancer)", "trl": 7, "leader": "Moderna/BioNTech", "status": "Phase 3 melanoma + colorectal trials", "year_field": 2027},
+    {"tech": "Direct air capture", "trl": 6, "leader": "Climeworks/Heirloom/1PointFive", "status": "Mammoth (36kt/y) operational; cost still ~$600/t", "year_field": 2030},
+    {"tech": "SMRs (commercial)", "trl": 6, "leader": "NuScale/X-Energy/TerraPower", "status": "Several NRC design certifications; first ops site by 2029", "year_field": 2029},
+    {"tech": "Hypersonics (mass production)", "trl": 7, "leader": "RU/CN deployed; US LRHW initial fielding", "status": "Russia Avangard/Kinzhal operational; US fielding delays", "year_field": 2026},
+    {"tech": "Brain-computer interface (clinical)", "trl": 6, "leader": "Neuralink/Synchron/Blackrock", "status": "First in-human implants 2024; ALS communication trials", "year_field": 2028},
+    {"tech": "Solid-state batteries (auto)", "trl": 6, "leader": "Toyota/QuantumScape/SES", "status": "Pilot lines 2026; mass production targeted 2027-2028", "year_field": 2028},
+    {"tech": "Lab-grown meat (price parity)", "trl": 5, "leader": "UPSIDE/Eat Just/Mosa Meat", "status": "Singapore + US approvals; cost still 100×+ conventional", "year_field": 2032},
+    {"tech": "Asteroid mining (return sample)", "trl": 4, "leader": "AstroForge/TransAstra", "status": "OSIRIS-REx returned Bennu sample 2023; commercial yet to demonstrate", "year_field": 2035},
+]
+
+
+# ═══════════════ STRATEGIC POSTURE THEATERS ═══════════════
+STRATEGIC_POSTURE = [
+    {"theater": "Indo-Pacific", "lat": 20, "lng": 140, "us_forces": 375000, "rival": "PRC", "rival_forces": 2200000, "alert": "ELEVATED", "summary": "Fleet rotation Carrier Strike Groups 11 + 9 + 5; Marine Littoral Regiment forward; PLA Navy at 360 ships"},
+    {"theater": "Europe (NATO)", "lat": 52, "lng": 15, "us_forces": 100000, "rival": "RUS", "rival_forces": 550000, "alert": "HIGH", "summary": "V Corps fwd HQ Poznan; 2 ABCTs rotational; 3 ROK battle group; UK Op INTERFLEX training Ukrainians"},
+    {"theater": "Middle East (CENTCOM)", "lat": 28, "lng": 50, "us_forces": 45000, "rival": "IRN", "rival_forces": 580000, "alert": "HIGH", "summary": "CSG Truman in 5th Fleet AOR; Patriot/THAAD in Kuwait/UAE/SA; F-22/F-35 surge"},
+    {"theater": "Africa (AFRICOM)", "lat": 5, "lng": 25, "us_forces": 6500, "rival": "Wagner/Africa Corps", "rival_forces": 8000, "alert": "MEDIUM", "summary": "Camp Lemonnier hub; Sahel withdrawal; ISWAP/AQIM monitoring"},
+    {"theater": "Latin America (SOUTHCOM)", "lat": 5, "lng": -75, "us_forces": 2000, "rival": "Cartels/Maduro", "rival_forces": 0, "alert": "MEDIUM", "summary": "Counter-narcotics + Venezuela posture; HMS Lancaster in Caribbean"},
+    {"theater": "Arctic", "lat": 80, "lng": 0, "us_forces": 5000, "rival": "RUS", "rival_forces": 27000, "alert": "MEDIUM", "summary": "Eielson F-35s; submarine ICEX exercises; Russian Northern Fleet posture"},
+]
+
+
+# ═══════════════ LIVE INTELLIGENCE FEEDS (GDELT-style topical) ═══════════════
+LIVE_INTELLIGENCE_FEEDS = {
+    "military": [
+        {"headline": "PLA Navy Type 076 amphib begins sea trials at Jiangnan shipyard", "source": "Janes", "time": "2026-04-08T20:30:00Z", "country": "CN"},
+        {"headline": "US 7th Fleet conducts FONOP in South China Sea near Mischief Reef", "source": "USNI", "time": "2026-04-08T18:00:00Z", "country": "CN"},
+        {"headline": "Russian Iskander launches confirmed near Belgorod", "source": "GUR", "time": "2026-04-08T16:00:00Z", "country": "RU"},
+        {"headline": "IDF announces Lebanese front escalation; northern reservists called up", "source": "IDF", "time": "2026-04-08T15:30:00Z", "country": "IL"},
+        {"headline": "North Korean ICBM test from Sino-ri site reported", "source": "NIS", "time": "2026-04-07T22:00:00Z", "country": "KP"},
+        {"headline": "UK Type 26 frigate HMS Glasgow handover delayed Q3 2026", "source": "RN", "time": "2026-04-07T15:00:00Z", "country": "GB"},
+    ],
+    "cyber": [
+        {"headline": "CISA warns of active Volt Typhoon water utility intrusions", "source": "CISA", "time": "2026-04-08T19:00:00Z", "country": "US"},
+        {"headline": "Microsoft patches zero-day actively exploited by APT29", "source": "MSRC", "time": "2026-04-08T16:30:00Z", "country": "US"},
+        {"headline": "EU NIS2 directive enforcement begins for medium-size critical entities", "source": "ENISA", "time": "2026-04-08T12:00:00Z", "country": "EU"},
+        {"headline": "Lazarus Group cryptocurrency theft tops $1.4B in 2026 YTD", "source": "Chainalysis", "time": "2026-04-07T20:00:00Z", "country": "KP"},
+        {"headline": "Brazil PIX system DDoS attempt; central bank confirms degraded service", "source": "BCB", "time": "2026-04-07T14:00:00Z", "country": "BR"},
+    ],
+    "nuclear": [
+        {"headline": "IAEA flags safety regress at Zaporizhzhia NPP unit 6", "source": "IAEA", "time": "2026-04-08T18:30:00Z", "country": "UA"},
+        {"headline": "US-UK AUKUS pillar 1 SSN-AUKUS first cut steel 2026", "source": "DOD", "time": "2026-04-08T11:00:00Z", "country": "AU"},
+        {"headline": "Iran enriches uranium to 84% at Fordow per IAEA", "source": "IAEA", "time": "2026-04-07T19:00:00Z", "country": "IR"},
+        {"headline": "China expanding Lop Nur missile silo field; commercial imagery", "source": "FAS", "time": "2026-04-07T13:00:00Z", "country": "CN"},
+        {"headline": "Russia reaffirms doctrine on lower nuclear use threshold", "source": "TASS", "time": "2026-04-06T17:00:00Z", "country": "RU"},
+    ],
+    "sanctions": [
+        {"headline": "OFAC adds 84 entities to Russia secondary sanctions list", "source": "Treasury", "time": "2026-04-08T17:00:00Z", "country": "US"},
+        {"headline": "EU 14th sanctions package targets shadow fleet vessels", "source": "EU Council", "time": "2026-04-08T13:00:00Z", "country": "EU"},
+        {"headline": "UK designates 4 Iranian banks under Iran sanctions", "source": "FCDO", "time": "2026-04-07T11:00:00Z", "country": "GB"},
+        {"headline": "OFAC settles with crypto exchange for $24M sanctions violations", "source": "Treasury", "time": "2026-04-06T15:00:00Z", "country": "US"},
+        {"headline": "Switzerland adopts EU sanctions on Russia's shadow fleet", "source": "SECO", "time": "2026-04-05T10:00:00Z", "country": "CH"},
+    ],
+}
+
+
+# ═══════════════ POPULATION EXPOSURE (at-risk metrics) ═══════════════
+POPULATION_EXPOSURE = [
+    {"region": "Bangladesh delta (sea level rise)", "country": "BD", "lat": 23.685, "lng": 90.356, "population_m": 32, "hazard": "Coastal flood", "horizon_y": 30},
+    {"region": "Jakarta (subsidence + flood)", "country": "ID", "lat": -6.21, "lng": 106.85, "population_m": 11, "hazard": "Subsidence + sea level", "horizon_y": 20},
+    {"region": "Sahel (food insecurity)", "country": "Multi", "lat": 14, "lng": 0, "population_m": 50, "hazard": "Drought + conflict", "horizon_y": 5},
+    {"region": "Tokyo (megaquake risk)", "country": "JP", "lat": 35.68, "lng": 139.69, "population_m": 37, "hazard": "M9 Nankai trough", "horizon_y": 30},
+    {"region": "Cascadia subduction zone", "country": "US", "lat": 45, "lng": -123, "population_m": 8, "hazard": "M9 earthquake/tsunami", "horizon_y": 50},
+    {"region": "Manila (typhoon)", "country": "PH", "lat": 14.6, "lng": 121.0, "population_m": 14, "hazard": "Typhoon", "horizon_y": 5},
+    {"region": "Karachi (heat dome)", "country": "PK", "lat": 24.86, "lng": 67.0, "population_m": 17, "hazard": "Wet-bulb extreme heat", "horizon_y": 10},
+    {"region": "Kinshasa (food + water)", "country": "CD", "lat": -4.32, "lng": 15.32, "population_m": 17, "hazard": "Urban food/water crisis", "horizon_y": 10},
+    {"region": "Lagos (sea level + flood)", "country": "NG", "lat": 6.5, "lng": 3.4, "population_m": 22, "hazard": "Coastal flood", "horizon_y": 30},
+    {"region": "Cairo (heat + Nile)", "country": "EG", "lat": 30.04, "lng": 31.24, "population_m": 21, "hazard": "Water stress + heat", "horizon_y": 20},
+]
+
+
+# ═══════════════ GLOBAL MARKET INDICES ═══════════════
+MARKET_INDICES = [
+    {"symbol": "SPX",     "name": "S&P 500",          "region": "US",      "country": "US", "value": 5723.50, "ch_pct":  0.35, "ytd_pct":  20.1},
+    {"symbol": "IXIC",    "name": "NASDAQ Composite", "region": "US",      "country": "US", "value": 18113.0, "ch_pct":  0.42, "ytd_pct":  20.5},
+    {"symbol": "DJI",     "name": "Dow Jones",        "region": "US",      "country": "US", "value": 42060.0, "ch_pct":  0.18, "ytd_pct":  11.6},
+    {"symbol": "RUT",     "name": "Russell 2000",     "region": "US",      "country": "US", "value":  2230.0, "ch_pct": -0.12, "ytd_pct":  10.5},
+    {"symbol": "VIX",     "name": "VIX Volatility",   "region": "US",      "country": "US", "value":    16.4, "ch_pct": -2.10, "ytd_pct":  31.0},
+    {"symbol": "FTSE",    "name": "FTSE 100",         "region": "Europe",  "country": "GB", "value":  8275.0, "ch_pct":  0.20, "ytd_pct":   7.0},
+    {"symbol": "DAX",     "name": "DAX 40",           "region": "Europe",  "country": "DE", "value": 19120.0, "ch_pct":  0.15, "ytd_pct":  14.0},
+    {"symbol": "CAC",     "name": "CAC 40",           "region": "Europe",  "country": "FR", "value":  7600.0, "ch_pct":  0.10, "ytd_pct":   1.5},
+    {"symbol": "IBEX",    "name": "IBEX 35",          "region": "Europe",  "country": "ES", "value": 11800.0, "ch_pct":  0.18, "ytd_pct":  16.0},
+    {"symbol": "FTSEMIB", "name": "FTSE MIB",         "region": "Europe",  "country": "IT", "value": 33950.0, "ch_pct":  0.25, "ytd_pct":  11.7},
+    {"symbol": "AEX",     "name": "AEX 25",           "region": "Europe",  "country": "NL", "value":   895.0, "ch_pct":  0.30, "ytd_pct":  13.4},
+    {"symbol": "SMI",     "name": "Swiss Market",     "region": "Europe",  "country": "CH", "value": 12100.0, "ch_pct":  0.10, "ytd_pct":   8.7},
+    {"symbol": "OMXS30",  "name": "OMX Stockholm 30", "region": "Europe",  "country": "SE", "value":  2580.0, "ch_pct":  0.40, "ytd_pct":   8.0},
+    {"symbol": "WIG20",   "name": "WIG20",            "region": "Europe",  "country": "PL", "value":  2500.0, "ch_pct":  0.15, "ytd_pct":   7.4},
+    {"symbol": "MOEX",    "name": "MOEX Russia",      "region": "Europe",  "country": "RU", "value":  2750.0, "ch_pct": -0.50, "ytd_pct":  -8.0},
+    {"symbol": "N225",    "name": "Nikkei 225",       "region": "Asia",    "country": "JP", "value": 38000.0, "ch_pct":  0.50, "ytd_pct":  13.5},
+    {"symbol": "TOPIX",   "name": "TOPIX",            "region": "Asia",    "country": "JP", "value":  2660.0, "ch_pct":  0.45, "ytd_pct":  12.6},
+    {"symbol": "HSI",     "name": "Hang Seng",        "region": "Asia",    "country": "HK", "value": 21500.0, "ch_pct":  0.65, "ytd_pct":  26.0},
+    {"symbol": "SHCOMP",  "name": "Shanghai SSE",     "region": "Asia",    "country": "CN", "value":  3270.0, "ch_pct":  0.30, "ytd_pct":   9.8},
+    {"symbol": "SZCOMP",  "name": "Shenzhen SZSE",    "region": "Asia",    "country": "CN", "value": 10100.0, "ch_pct":  0.40, "ytd_pct":  15.2},
+    {"symbol": "KOSPI",   "name": "KOSPI",            "region": "Asia",    "country": "KR", "value":  2680.0, "ch_pct":  0.15, "ytd_pct":   1.0},
+    {"symbol": "TWII",    "name": "Taiwan Weighted",  "region": "Asia",    "country": "TW", "value": 22850.0, "ch_pct":  0.55, "ytd_pct":  27.5},
+    {"symbol": "SENSEX",  "name": "BSE Sensex",       "region": "Asia",    "country": "IN", "value": 82000.0, "ch_pct":  0.20, "ytd_pct":  13.5},
+    {"symbol": "NIFTY",   "name": "Nifty 50",         "region": "Asia",    "country": "IN", "value": 25100.0, "ch_pct":  0.25, "ytd_pct":  15.5},
+    {"symbol": "STI",     "name": "Straits Times",    "region": "Asia",    "country": "SG", "value":  3580.0, "ch_pct":  0.10, "ytd_pct":  10.5},
+    {"symbol": "AXJO",    "name": "ASX 200",          "region": "Oceania", "country": "AU", "value":  8200.0, "ch_pct":  0.30, "ytd_pct":   8.0},
+    {"symbol": "TSX",     "name": "S&P/TSX",          "region": "Americas","country": "CA", "value": 23800.0, "ch_pct":  0.20, "ytd_pct":  13.5},
+    {"symbol": "BOVESPA", "name": "Bovespa",          "region": "Americas","country": "BR", "value":131500.0, "ch_pct": -0.10, "ytd_pct":  -2.0},
+    {"symbol": "MEXBOL",  "name": "IPC Mexico",       "region": "Americas","country": "MX", "value": 51500.0, "ch_pct":  0.05, "ytd_pct":  -9.5},
+    {"symbol": "TA35",    "name": "TA-35 Tel Aviv",   "region": "MENA",    "country": "IL", "value":  2100.0, "ch_pct":  0.20, "ytd_pct":  10.0},
+    {"symbol": "TASI",    "name": "Tadawul",          "region": "MENA",    "country": "SA", "value": 12100.0, "ch_pct": -0.20, "ytd_pct":   1.0},
+    {"symbol": "JSE40",   "name": "JSE Top 40",       "region": "Africa",  "country": "ZA", "value": 73500.0, "ch_pct":  0.10, "ytd_pct":  11.5},
+]
+
+
+# ═══════════════ FEAR & GREED INDEX ═══════════════
+FEAR_GREED_INDEX = {
+    "value": 64,
+    "level": "Greed",
+    "previous_close": 62,
+    "one_week_ago": 58,
+    "one_month_ago": 51,
+    "one_year_ago": 45,
+    "components": {
+        "market_momentum":      {"value": 72, "level": "Greed"},
+        "stock_price_strength": {"value": 68, "level": "Greed"},
+        "stock_price_breadth":  {"value": 60, "level": "Greed"},
+        "put_call_ratio":       {"value": 55, "level": "Neutral"},
+        "junk_bond_demand":     {"value": 70, "level": "Greed"},
+        "market_volatility":    {"value": 76, "level": "Extreme Greed"},
+        "safe_haven_demand":    {"value": 47, "level": "Neutral"},
+    },
+}
+
+
+# ═══════════════ US TREASURY YIELD CURVE ═══════════════
+YIELD_CURVE_US = [
+    {"tenor": "1M",  "yield": 4.78, "ch_bp": -2},
+    {"tenor": "3M",  "yield": 4.65, "ch_bp": -1},
+    {"tenor": "6M",  "yield": 4.45, "ch_bp": -1},
+    {"tenor": "1Y",  "yield": 4.10, "ch_bp": -2},
+    {"tenor": "2Y",  "yield": 3.62, "ch_bp": -3},
+    {"tenor": "3Y",  "yield": 3.51, "ch_bp": -3},
+    {"tenor": "5Y",  "yield": 3.55, "ch_bp": -2},
+    {"tenor": "7Y",  "yield": 3.68, "ch_bp": -2},
+    {"tenor": "10Y", "yield": 3.78, "ch_bp": -1},
+    {"tenor": "20Y", "yield": 4.12, "ch_bp":  0},
+    {"tenor": "30Y", "yield": 4.10, "ch_bp":  1},
+]
+
+
+# ═══════════════ GLOBAL 10Y BOND YIELDS ═══════════════
+GLOBAL_BOND_YIELDS = [
+    {"country": "US", "tenor": "10Y", "yield": 3.78, "ch_bp": -1},
+    {"country": "DE", "tenor": "10Y", "yield": 2.18, "ch_bp": -1},
+    {"country": "GB", "tenor": "10Y", "yield": 4.02, "ch_bp": -2},
+    {"country": "FR", "tenor": "10Y", "yield": 2.95, "ch_bp": -1},
+    {"country": "IT", "tenor": "10Y", "yield": 3.55, "ch_bp": -2},
+    {"country": "ES", "tenor": "10Y", "yield": 2.95, "ch_bp": -1},
+    {"country": "JP", "tenor": "10Y", "yield": 0.85, "ch_bp":  1},
+    {"country": "CN", "tenor": "10Y", "yield": 2.15, "ch_bp": -1},
+    {"country": "IN", "tenor": "10Y", "yield": 6.78, "ch_bp": -1},
+    {"country": "BR", "tenor": "10Y", "yield": 12.45,"ch_bp":  3},
+    {"country": "MX", "tenor": "10Y", "yield": 9.65, "ch_bp":  2},
+    {"country": "TR", "tenor": "10Y", "yield": 28.90,"ch_bp": 10},
+    {"country": "RU", "tenor": "10Y", "yield": 16.20,"ch_bp":  5},
+    {"country": "CA", "tenor": "10Y", "yield": 2.95, "ch_bp": -1},
+    {"country": "AU", "tenor": "10Y", "yield": 3.90, "ch_bp":  0},
+    {"country": "ZA", "tenor": "10Y", "yield": 9.55, "ch_bp":  2},
+]
+
+
+# ═══════════════ COMMODITY PRICES ═══════════════
+COMMODITY_PRICES = [
+    {"symbol": "CL",  "name": "WTI Crude Oil",   "category": "energy",     "value":  72.50, "unit": "$/bbl",   "ch_pct":  0.85, "ytd_pct":  1.4},
+    {"symbol": "BZ",  "name": "Brent Crude",     "category": "energy",     "value":  76.30, "unit": "$/bbl",   "ch_pct":  0.75, "ytd_pct":  1.2},
+    {"symbol": "NG",  "name": "Natural Gas",     "category": "energy",     "value":   2.85, "unit": "$/MMBtu", "ch_pct": -1.10, "ytd_pct": 13.5},
+    {"symbol": "HO",  "name": "Heating Oil",     "category": "energy",     "value":   2.21, "unit": "$/gal",   "ch_pct":  0.40, "ytd_pct": -8.5},
+    {"symbol": "RB",  "name": "RBOB Gasoline",   "category": "energy",     "value":   2.05, "unit": "$/gal",   "ch_pct":  0.55, "ytd_pct": -2.5},
+    {"symbol": "GC",  "name": "Gold",            "category": "metals",     "value": 2645.0, "unit": "$/oz",    "ch_pct":  0.30, "ytd_pct": 28.2},
+    {"symbol": "SI",  "name": "Silver",          "category": "metals",     "value":  31.20, "unit": "$/oz",    "ch_pct":  0.60, "ytd_pct": 31.5},
+    {"symbol": "PL",  "name": "Platinum",        "category": "metals",     "value":  990.0, "unit": "$/oz",    "ch_pct":  0.20, "ytd_pct":  0.1},
+    {"symbol": "PA",  "name": "Palladium",       "category": "metals",     "value": 1020.0, "unit": "$/oz",    "ch_pct": -0.30, "ytd_pct":  0.5},
+    {"symbol": "HG",  "name": "Copper",          "category": "metals",     "value":   4.45, "unit": "$/lb",    "ch_pct":  0.85, "ytd_pct": 14.0},
+    {"symbol": "ALI", "name": "Aluminum",        "category": "metals",     "value": 2620.0, "unit": "$/t",     "ch_pct":  0.40, "ytd_pct": 12.0},
+    {"symbol": "ZN",  "name": "Zinc",            "category": "metals",     "value": 3060.0, "unit": "$/t",     "ch_pct":  0.50, "ytd_pct": 14.5},
+    {"symbol": "NI",  "name": "Nickel",          "category": "metals",     "value":17200.0, "unit": "$/t",     "ch_pct": -0.30, "ytd_pct":  4.5},
+    {"symbol": "URA", "name": "Uranium U3O8",    "category": "metals",     "value":  82.50, "unit": "$/lb",    "ch_pct":  0.20, "ytd_pct": -8.0},
+    {"symbol": "ZW",  "name": "Wheat",           "category": "agriculture","value": 580.0,  "unit": "¢/bu",    "ch_pct": -0.40, "ytd_pct": -7.5},
+    {"symbol": "ZC",  "name": "Corn",            "category": "agriculture","value": 412.0,  "unit": "¢/bu",    "ch_pct": -0.20, "ytd_pct":-13.0},
+    {"symbol": "ZS",  "name": "Soybeans",        "category": "agriculture","value":1015.0,  "unit": "¢/bu",    "ch_pct": -0.10, "ytd_pct":-21.5},
+    {"symbol": "KC",  "name": "Coffee",          "category": "agriculture","value": 268.0,  "unit": "¢/lb",    "ch_pct":  1.20, "ytd_pct": 41.5},
+    {"symbol": "CC",  "name": "Cocoa",           "category": "agriculture","value":7850.0,  "unit": "$/t",     "ch_pct":  0.50, "ytd_pct": 84.5},
+    {"symbol": "SB",  "name": "Sugar",           "category": "agriculture","value":  22.40, "unit": "¢/lb",    "ch_pct":  0.30, "ytd_pct":  9.0},
+    {"symbol": "CT",  "name": "Cotton",          "category": "agriculture","value":  72.50, "unit": "¢/lb",    "ch_pct": -0.20, "ytd_pct": -8.5},
+    {"symbol": "LE",  "name": "Live Cattle",    "category": "agriculture","value": 184.5,  "unit": "¢/lb",    "ch_pct":  0.10, "ytd_pct":  9.5},
+    {"symbol": "LH",  "name": "Lean Hogs",       "category": "agriculture","value":  84.0,  "unit": "¢/lb",    "ch_pct": -0.30, "ytd_pct":  6.5},
+    {"symbol": "LBR", "name": "Lumber",          "category": "agriculture","value": 510.0,  "unit": "$/kbf",   "ch_pct":  1.40, "ytd_pct":-11.5},
+]
+
+
+# ═══════════════ ETF FLOWS (broad) ═══════════════
+ETF_FLOWS = [
+    {"symbol": "SPY",  "name": "SPDR S&P 500",                "category": "us_equity", "aum_b": 580.0, "flow_5d_b":  1.20, "flow_ytd_b":  8.5},
+    {"symbol": "VOO",  "name": "Vanguard S&P 500",            "category": "us_equity", "aum_b": 510.0, "flow_5d_b":  2.10, "flow_ytd_b": 72.5},
+    {"symbol": "IVV",  "name": "iShares Core S&P 500",        "category": "us_equity", "aum_b": 480.0, "flow_5d_b":  1.45, "flow_ytd_b": 41.0},
+    {"symbol": "QQQ",  "name": "Invesco QQQ (Nasdaq 100)",    "category": "us_equity", "aum_b": 295.0, "flow_5d_b":  0.85, "flow_ytd_b": 19.0},
+    {"symbol": "VTI",  "name": "Vanguard Total Stock Market", "category": "us_equity", "aum_b": 410.0, "flow_5d_b":  1.10, "flow_ytd_b": 20.5},
+    {"symbol": "IWM",  "name": "iShares Russell 2000",        "category": "us_equity", "aum_b":  60.0, "flow_5d_b": -0.30, "flow_ytd_b": -3.5},
+    {"symbol": "VEA",  "name": "Vanguard FTSE Developed",     "category": "intl_eq",   "aum_b": 130.0, "flow_5d_b":  0.45, "flow_ytd_b":  8.0},
+    {"symbol": "VWO",  "name": "Vanguard FTSE Emerging Mkts", "category": "intl_eq",   "aum_b":  85.0, "flow_5d_b":  0.40, "flow_ytd_b":  5.5},
+    {"symbol": "EEM",  "name": "iShares MSCI Emerging Mkts",  "category": "intl_eq",   "aum_b":  17.5, "flow_5d_b":  0.30, "flow_ytd_b":  1.2},
+    {"symbol": "FXI",  "name": "iShares China Large-Cap",     "category": "intl_eq",   "aum_b":   6.5, "flow_5d_b":  0.35, "flow_ytd_b":  0.8},
+    {"symbol": "AGG",  "name": "iShares US Aggregate Bond",   "category": "fixed_inc", "aum_b": 115.0, "flow_5d_b":  0.50, "flow_ytd_b":  4.5},
+    {"symbol": "BND",  "name": "Vanguard Total Bond Market",  "category": "fixed_inc", "aum_b": 120.0, "flow_5d_b":  0.55, "flow_ytd_b": 16.5},
+    {"symbol": "TLT",  "name": "iShares 20+ Year Treasury",   "category": "fixed_inc", "aum_b":  60.0, "flow_5d_b":  0.45, "flow_ytd_b":  6.0},
+    {"symbol": "HYG",  "name": "iShares iBoxx HY Corp",       "category": "fixed_inc", "aum_b":  17.5, "flow_5d_b":  0.05, "flow_ytd_b": -1.5},
+    {"symbol": "GLD",  "name": "SPDR Gold Shares",            "category": "commodity", "aum_b":  78.0, "flow_5d_b":  0.65, "flow_ytd_b":  2.5},
+    {"symbol": "IAU",  "name": "iShares Gold Trust",          "category": "commodity", "aum_b":  32.0, "flow_5d_b":  0.30, "flow_ytd_b":  1.5},
+    {"symbol": "SLV",  "name": "iShares Silver Trust",        "category": "commodity", "aum_b":  13.0, "flow_5d_b":  0.10, "flow_ytd_b":  0.4},
+    {"symbol": "USO",  "name": "US Oil Fund",                 "category": "commodity", "aum_b":   1.4, "flow_5d_b": -0.05, "flow_ytd_b": -0.5},
+]
+
+
+# ═══════════════ EARNINGS CALENDAR ═══════════════
+EARNINGS_CALENDAR = [
+    {"ticker": "AAPL",  "name": "Apple",          "date": "2026-04-30", "session": "AMC", "eps_est":  1.55, "rev_est_b":  98.5,  "importance": "high"},
+    {"ticker": "MSFT",  "name": "Microsoft",      "date": "2026-04-23", "session": "AMC", "eps_est":  3.10, "rev_est_b":  68.5,  "importance": "high"},
+    {"ticker": "GOOGL", "name": "Alphabet",       "date": "2026-04-24", "session": "AMC", "eps_est":  2.05, "rev_est_b":  88.5,  "importance": "high"},
+    {"ticker": "AMZN",  "name": "Amazon",         "date": "2026-05-01", "session": "AMC", "eps_est":  1.40, "rev_est_b": 156.0,  "importance": "high"},
+    {"ticker": "META",  "name": "Meta Platforms", "date": "2026-04-30", "session": "AMC", "eps_est":  5.40, "rev_est_b":  41.5,  "importance": "high"},
+    {"ticker": "NVDA",  "name": "NVIDIA",         "date": "2026-05-21", "session": "AMC", "eps_est":  0.85, "rev_est_b":  46.5,  "importance": "high"},
+    {"ticker": "TSLA",  "name": "Tesla",          "date": "2026-04-22", "session": "AMC", "eps_est":  0.55, "rev_est_b":  24.5,  "importance": "high"},
+    {"ticker": "AVGO",  "name": "Broadcom",       "date": "2026-06-05", "session": "AMC", "eps_est":  1.65, "rev_est_b":  14.0,  "importance": "high"},
+    {"ticker": "TSM",   "name": "TSMC",           "date": "2026-04-17", "session": "BMO", "eps_est":  2.05, "rev_est_b":  25.5,  "importance": "high"},
+    {"ticker": "JPM",   "name": "JPMorgan",       "date": "2026-04-12", "session": "BMO", "eps_est":  4.25, "rev_est_b":  41.5,  "importance": "high"},
+    {"ticker": "BAC",   "name": "Bank of America","date": "2026-04-15", "session": "BMO", "eps_est":  0.81, "rev_est_b":  25.5,  "importance": "high"},
+    {"ticker": "WFC",   "name": "Wells Fargo",    "date": "2026-04-12", "session": "BMO", "eps_est":  1.20, "rev_est_b":  20.0,  "importance": "med"},
+    {"ticker": "C",     "name": "Citigroup",      "date": "2026-04-12", "session": "BMO", "eps_est":  1.30, "rev_est_b":  20.5,  "importance": "med"},
+    {"ticker": "GS",    "name": "Goldman Sachs",  "date": "2026-04-15", "session": "BMO", "eps_est":  8.55, "rev_est_b":  12.5,  "importance": "high"},
+    {"ticker": "MS",    "name": "Morgan Stanley", "date": "2026-04-16", "session": "BMO", "eps_est":  1.65, "rev_est_b":  14.5,  "importance": "med"},
+    {"ticker": "BLK",   "name": "BlackRock",      "date": "2026-04-12", "session": "BMO", "eps_est": 10.05, "rev_est_b":   4.7,  "importance": "med"},
+    {"ticker": "JNJ",   "name": "Johnson&Johnson","date": "2026-04-16", "session": "BMO", "eps_est":  2.50, "rev_est_b":  21.5,  "importance": "high"},
+    {"ticker": "PG",    "name": "Procter&Gamble", "date": "2026-04-19", "session": "BMO", "eps_est":  1.40, "rev_est_b":  20.0,  "importance": "med"},
+    {"ticker": "KO",    "name": "Coca-Cola",      "date": "2026-04-30", "session": "BMO", "eps_est":  0.69, "rev_est_b":  11.0,  "importance": "med"},
+    {"ticker": "PEP",   "name": "PepsiCo",        "date": "2026-04-23", "session": "BMO", "eps_est":  1.55, "rev_est_b":  18.0,  "importance": "med"},
+    {"ticker": "XOM",   "name": "Exxon Mobil",    "date": "2026-05-03", "session": "BMO", "eps_est":  2.05, "rev_est_b":  85.5,  "importance": "high"},
+    {"ticker": "CVX",   "name": "Chevron",        "date": "2026-05-03", "session": "BMO", "eps_est":  2.85, "rev_est_b":  48.5,  "importance": "high"},
+    {"ticker": "LMT",   "name": "Lockheed Martin","date": "2026-04-23", "session": "BMO", "eps_est":  6.45, "rev_est_b":  17.0,  "importance": "med"},
+    {"ticker": "RTX",   "name": "RTX Corp",       "date": "2026-04-23", "session": "BMO", "eps_est":  1.35, "rev_est_b":  20.0,  "importance": "med"},
+    {"ticker": "BA",    "name": "Boeing",         "date": "2026-04-24", "session": "BMO", "eps_est": -1.85, "rev_est_b":  17.0,  "importance": "high"},
+]
+
+
+# ═══════════════ COT REPORT (Commitments of Traders) ═══════════════
+COT_REPORT = [
+    {"contract": "S&P 500 E-mini",   "category": "equity_index","large_spec_long": 920000, "large_spec_short": 1010000, "net_position":  -90000, "ch_week":  -8500},
+    {"contract": "Nasdaq 100 E-mini","category": "equity_index","large_spec_long": 250000, "large_spec_short":  235000, "net_position":   15000, "ch_week":   2300},
+    {"contract": "Russell 2000",     "category": "equity_index","large_spec_long":  64000, "large_spec_short":   78000, "net_position":  -14000, "ch_week":  -2100},
+    {"contract": "10Y Treasury Note","category": "rates",       "large_spec_long": 605000, "large_spec_short":  720000, "net_position": -115000, "ch_week":  12500},
+    {"contract": "30Y Treasury Bond","category": "rates",       "large_spec_long": 220000, "large_spec_short":  280000, "net_position":  -60000, "ch_week":   3500},
+    {"contract": "Eurodollar/SOFR",  "category": "rates",       "large_spec_long": 905000, "large_spec_short":  720000, "net_position":  185000, "ch_week":  18000},
+    {"contract": "Gold",             "category": "metals",      "large_spec_long": 245000, "large_spec_short":   45000, "net_position":  200000, "ch_week":   3500},
+    {"contract": "Silver",           "category": "metals",      "large_spec_long":  75000, "large_spec_short":   25000, "net_position":   50000, "ch_week":   1200},
+    {"contract": "Copper",           "category": "metals",      "large_spec_long":  82000, "large_spec_short":   45000, "net_position":   37000, "ch_week":   2100},
+    {"contract": "WTI Crude Oil",    "category": "energy",      "large_spec_long": 290000, "large_spec_short":   95000, "net_position":  195000, "ch_week":  -4500},
+    {"contract": "Natural Gas",      "category": "energy",      "large_spec_long": 215000, "large_spec_short":  385000, "net_position": -170000, "ch_week":  -3500},
+    {"contract": "EUR/USD",          "category": "fx",          "large_spec_long": 198000, "large_spec_short":  130000, "net_position":   68000, "ch_week":   1500},
+    {"contract": "JPY/USD",          "category": "fx",          "large_spec_long":  85000, "large_spec_short":  155000, "net_position":  -70000, "ch_week":   8500},
+    {"contract": "GBP/USD",          "category": "fx",          "large_spec_long":  90000, "large_spec_short":   55000, "net_position":   35000, "ch_week":    900},
+    {"contract": "Wheat",            "category": "agriculture", "large_spec_long":  85000, "large_spec_short":  130000, "net_position":  -45000, "ch_week":  -1500},
+    {"contract": "Corn",             "category": "agriculture", "large_spec_long": 320000, "large_spec_short":  385000, "net_position":  -65000, "ch_week":   4500},
+    {"contract": "Soybeans",         "category": "agriculture", "large_spec_long": 145000, "large_spec_short":  235000, "net_position":  -90000, "ch_week":  -2500},
+]
+
+
+# ═══════════════ GDELT-STYLE EVENTS ═══════════════
+GDELT_EVENTS = [
+    {"date": "2026-04-09", "actor1": "USA", "actor2": "CHN", "event_type": "Statement",       "tone": -3.2, "goldstein": -2.0, "summary": "US trade rep criticizes Beijing semiconductor controls"},
+    {"date": "2026-04-09", "actor1": "RUS", "actor2": "UKR", "event_type": "Military Action", "tone": -7.5, "goldstein": -8.5, "summary": "Drone strikes reported on Kharkiv power infrastructure"},
+    {"date": "2026-04-09", "actor1": "ISR", "actor2": "LBN", "event_type": "Diplomatic",      "tone": -1.2, "goldstein":  1.0, "summary": "Cross-border talks announced via French mediation"},
+    {"date": "2026-04-09", "actor1": "IRN", "actor2": "USA", "event_type": "Statement",       "tone": -4.5, "goldstein": -1.0, "summary": "Tehran rejects new IAEA inspection terms"},
+    {"date": "2026-04-09", "actor1": "PRK", "actor2": "KOR", "event_type": "Military Posture","tone": -5.5, "goldstein": -3.0, "summary": "Pyongyang launches short-range ballistic test"},
+    {"date": "2026-04-09", "actor1": "CHN", "actor2": "TWN", "event_type": "Military Posture","tone": -3.8, "goldstein": -2.0, "summary": "PLAN warships transit Taiwan Strait median"},
+    {"date": "2026-04-09", "actor1": "IND", "actor2": "PAK", "event_type": "Statement",       "tone": -2.1, "goldstein": -1.0, "summary": "Border tensions escalate after LOC firing exchange"},
+    {"date": "2026-04-09", "actor1": "TUR", "actor2": "GRC", "event_type": "Diplomatic",      "tone":  0.5, "goldstein":  2.0, "summary": "Athens-Ankara energy dispute talks resume"},
+    {"date": "2026-04-09", "actor1": "VEN", "actor2": "GUY", "event_type": "Statement",       "tone": -3.5, "goldstein": -2.0, "summary": "Caracas reasserts Essequibo claim ahead of vote"},
+    {"date": "2026-04-09", "actor1": "ETH", "actor2": "ERI", "event_type": "Diplomatic",      "tone": -1.5, "goldstein": -1.0, "summary": "Tigray border tensions return after peace deal lapses"},
+    {"date": "2026-04-09", "actor1": "FRA", "actor2": "MLI", "event_type": "Diplomatic",      "tone": -2.5, "goldstein": -1.0, "summary": "Paris withdraws remaining advisors after junta ultimatum"},
+    {"date": "2026-04-09", "actor1": "DEU", "actor2": "RUS", "event_type": "Statement",       "tone": -3.0, "goldstein": -1.0, "summary": "Berlin condemns continued targeting of civilians"},
+    {"date": "2026-04-09", "actor1": "JPN", "actor2": "CHN", "event_type": "Statement",       "tone": -1.8, "goldstein": -1.0, "summary": "Tokyo files protest over Senkaku coast guard incursion"},
+    {"date": "2026-04-09", "actor1": "AUS", "actor2": "USA", "event_type": "Cooperation",     "tone":  4.5, "goldstein":  6.0, "summary": "AUKUS sub deal accelerates production timeline"},
+    {"date": "2026-04-09", "actor1": "SAU", "actor2": "IRN", "event_type": "Diplomatic",      "tone":  2.0, "goldstein":  3.0, "summary": "Riyadh-Tehran rapprochement extended to security matters"},
+    {"date": "2026-04-09", "actor1": "EGY", "actor2": "ETH", "event_type": "Statement",       "tone": -2.5, "goldstein": -1.0, "summary": "Cairo warns of GERD fourth filling consequences"},
+    {"date": "2026-04-09", "actor1": "POL", "actor2": "BLR", "event_type": "Border Incident", "tone": -3.0, "goldstein": -2.0, "summary": "Polish border guard reports migrant push attempt"},
+    {"date": "2026-04-09", "actor1": "MDA", "actor2": "RUS", "event_type": "Statement",       "tone": -2.8, "goldstein": -1.0, "summary": "Chisinau warns of hybrid attacks ahead of EU vote"},
+    {"date": "2026-04-09", "actor1": "GBR", "actor2": "EU",  "event_type": "Cooperation",     "tone":  3.5, "goldstein":  4.0, "summary": "London-Brussels defence pact talks advance"},
+    {"date": "2026-04-09", "actor1": "MEX", "actor2": "USA", "event_type": "Diplomatic",      "tone":  1.5, "goldstein":  2.0, "summary": "Cross-border fentanyl task force expanded"},
+    {"date": "2026-04-09", "actor1": "BRA", "actor2": "ARG", "event_type": "Cooperation",     "tone":  2.5, "goldstein":  3.0, "summary": "Mercosur trade bloc reform talks begin"},
+    {"date": "2026-04-09", "actor1": "ZAF", "actor2": "USA", "event_type": "Statement",       "tone": -2.0, "goldstein": -1.0, "summary": "Pretoria responds to AGOA review concerns"},
+    {"date": "2026-04-09", "actor1": "VNM", "actor2": "CHN", "event_type": "Statement",       "tone": -2.5, "goldstein": -1.0, "summary": "Hanoi protests new South China Sea baseline"},
+    {"date": "2026-04-09", "actor1": "PHL", "actor2": "CHN", "event_type": "Naval Incident",  "tone": -4.0, "goldstein": -3.0, "summary": "Coast guard collision near Scarborough Shoal"},
+    {"date": "2026-04-09", "actor1": "HUN", "actor2": "EU",  "event_type": "Statement",       "tone": -2.0, "goldstein": -1.0, "summary": "Budapest blocks new aid tranche for Kyiv"},
+    {"date": "2026-04-09", "actor1": "SDN", "actor2": "TCD", "event_type": "Refugee Flow",    "tone": -5.0, "goldstein": -3.0, "summary": "200K cross border into Chad amid Darfur fighting"},
+    {"date": "2026-04-09", "actor1": "YEM", "actor2": "ISR", "event_type": "Military Action", "tone": -6.0, "goldstein": -7.0, "summary": "Houthi missile intercepted over Eilat"},
+    {"date": "2026-04-09", "actor1": "SYR", "actor2": "TUR", "event_type": "Diplomatic",      "tone": -1.5, "goldstein": -1.0, "summary": "Ankara-Damascus normalization talks stall"},
+    {"date": "2026-04-09", "actor1": "GEO", "actor2": "RUS", "event_type": "Statement",       "tone": -2.5, "goldstein": -1.0, "summary": "Tbilisi warns of foreign agent law backlash"},
+    {"date": "2026-04-09", "actor1": "NIC", "actor2": "CRI", "event_type": "Border Incident", "tone": -2.0, "goldstein": -1.0, "summary": "Cross-border incursion reported in Río San Juan"},
+]
+
+
+# ═══════════════ GLOBAL CONFLICT INDEX (per country) ═══════════════
+GLOBAL_CONFLICT_INDEX = [
+    {"country": "Ukraine",        "iso": "UA", "score": 98, "trend": "high", "events_30d": 1840, "fatalities_30d": 4250},
+    {"country": "Russia",         "iso": "RU", "score": 96, "trend": "high", "events_30d": 1620, "fatalities_30d": 3850},
+    {"country": "Sudan",          "iso": "SD", "score": 95, "trend": "high", "events_30d": 1240, "fatalities_30d": 2150},
+    {"country": "Gaza/Palestine", "iso": "PS", "score": 94, "trend": "high", "events_30d":  980, "fatalities_30d": 1850},
+    {"country": "Israel",         "iso": "IL", "score": 88, "trend": "high", "events_30d":  720, "fatalities_30d":  220},
+    {"country": "Syria",          "iso": "SY", "score": 86, "trend": "med",  "events_30d":  640, "fatalities_30d":  580},
+    {"country": "Yemen",          "iso": "YE", "score": 85, "trend": "high", "events_30d":  550, "fatalities_30d":  410},
+    {"country": "Myanmar",        "iso": "MM", "score": 84, "trend": "high", "events_30d":  720, "fatalities_30d":  680},
+    {"country": "DR Congo",       "iso": "CD", "score": 83, "trend": "high", "events_30d":  610, "fatalities_30d":  720},
+    {"country": "Somalia",        "iso": "SO", "score": 82, "trend": "med",  "events_30d":  490, "fatalities_30d":  340},
+    {"country": "Mali",           "iso": "ML", "score": 80, "trend": "med",  "events_30d":  410, "fatalities_30d":  280},
+    {"country": "Burkina Faso",   "iso": "BF", "score": 79, "trend": "high", "events_30d":  390, "fatalities_30d":  310},
+    {"country": "Nigeria",        "iso": "NG", "score": 76, "trend": "med",  "events_30d":  520, "fatalities_30d":  390},
+    {"country": "Lebanon",        "iso": "LB", "score": 75, "trend": "high", "events_30d":  280, "fatalities_30d":  150},
+    {"country": "Iran",           "iso": "IR", "score": 73, "trend": "med",  "events_30d":  220, "fatalities_30d":   45},
+    {"country": "Afghanistan",    "iso": "AF", "score": 72, "trend": "med",  "events_30d":  340, "fatalities_30d":  185},
+    {"country": "Iraq",           "iso": "IQ", "score": 70, "trend": "med",  "events_30d":  260, "fatalities_30d":   95},
+    {"country": "Mozambique",     "iso": "MZ", "score": 68, "trend": "med",  "events_30d":  220, "fatalities_30d":  140},
+    {"country": "Ethiopia",       "iso": "ET", "score": 67, "trend": "med",  "events_30d":  280, "fatalities_30d":  175},
+    {"country": "Cameroon",       "iso": "CM", "score": 65, "trend": "low",  "events_30d":  180, "fatalities_30d":   85},
+    {"country": "Pakistan",       "iso": "PK", "score": 64, "trend": "med",  "events_30d":  240, "fatalities_30d":  120},
+    {"country": "Venezuela",      "iso": "VE", "score": 62, "trend": "low",  "events_30d":  150, "fatalities_30d":   25},
+    {"country": "Colombia",       "iso": "CO", "score": 60, "trend": "low",  "events_30d":  210, "fatalities_30d":   95},
+    {"country": "Mexico",         "iso": "MX", "score": 60, "trend": "med",  "events_30d":  340, "fatalities_30d":  280},
+    {"country": "Haiti",          "iso": "HT", "score": 58, "trend": "high", "events_30d":  170, "fatalities_30d":  140},
+]
+
+
+# ═══════════════ HUMANITARIAN CRISES ═══════════════
+HUMANITARIAN_CRISES = [
+    {"country": "Sudan",          "iso": "SD", "people_in_need_m": 24.8, "displaced_m": 10.7, "food_insecure_m": 17.7, "funding_required_b": 4.1, "funding_pct": 28},
+    {"country": "Yemen",          "iso": "YE", "people_in_need_m": 18.2, "displaced_m":  4.5, "food_insecure_m": 17.0, "funding_required_b": 2.7, "funding_pct": 35},
+    {"country": "Afghanistan",    "iso": "AF", "people_in_need_m": 23.7, "displaced_m":  3.2, "food_insecure_m": 15.8, "funding_required_b": 3.0, "funding_pct": 32},
+    {"country": "Syria",          "iso": "SY", "people_in_need_m": 16.7, "displaced_m":  7.2, "food_insecure_m": 12.9, "funding_required_b": 4.1, "funding_pct": 30},
+    {"country": "Ethiopia",       "iso": "ET", "people_in_need_m": 21.4, "displaced_m":  4.4, "food_insecure_m": 15.8, "funding_required_b": 3.2, "funding_pct": 38},
+    {"country": "Ukraine",        "iso": "UA", "people_in_need_m": 14.6, "displaced_m":  5.9, "food_insecure_m":  7.8, "funding_required_b": 3.1, "funding_pct": 42},
+    {"country": "Gaza/Palestine", "iso": "PS", "people_in_need_m":  3.0, "displaced_m":  1.9, "food_insecure_m":  2.2, "funding_required_b": 2.8, "funding_pct": 41},
+    {"country": "DR Congo",       "iso": "CD", "people_in_need_m": 25.4, "displaced_m":  6.3, "food_insecure_m": 25.8, "funding_required_b": 2.6, "funding_pct": 33},
+    {"country": "Somalia",        "iso": "SO", "people_in_need_m":  6.9, "displaced_m":  3.9, "food_insecure_m":  4.4, "funding_required_b": 1.6, "funding_pct": 36},
+    {"country": "Myanmar",        "iso": "MM", "people_in_need_m": 18.6, "displaced_m":  3.4, "food_insecure_m": 12.9, "funding_required_b": 1.0, "funding_pct": 22},
+    {"country": "Nigeria",        "iso": "NG", "people_in_need_m":  8.3, "displaced_m":  3.4, "food_insecure_m": 26.5, "funding_required_b": 0.9, "funding_pct": 41},
+    {"country": "Burkina Faso",   "iso": "BF", "people_in_need_m":  6.3, "displaced_m":  2.1, "food_insecure_m":  3.4, "funding_required_b": 0.8, "funding_pct": 28},
+    {"country": "Mali",           "iso": "ML", "people_in_need_m":  7.1, "displaced_m":  0.4, "food_insecure_m":  1.4, "funding_required_b": 0.7, "funding_pct": 32},
+    {"country": "Haiti",          "iso": "HT", "people_in_need_m":  5.5, "displaced_m":  0.6, "food_insecure_m":  4.4, "funding_required_b": 0.7, "funding_pct": 25},
+    {"country": "Venezuela",      "iso": "VE", "people_in_need_m":  7.7, "displaced_m":  0.4, "food_insecure_m":  6.5, "funding_required_b": 0.6, "funding_pct": 30},
+]
+
+
+# ═══════════════ WORLD CLOCK ZONES ═══════════════
+WORLD_CLOCK_ZONES = [
+    {"city": "New York",     "country": "US", "tz": "America/New_York",     "utc_offset": -5, "lat":  40.71, "lng":  -74.01, "is_dst": True},
+    {"city": "Chicago",      "country": "US", "tz": "America/Chicago",      "utc_offset": -6, "lat":  41.88, "lng":  -87.63, "is_dst": True},
+    {"city": "Los Angeles",  "country": "US", "tz": "America/Los_Angeles",  "utc_offset": -8, "lat":  34.05, "lng": -118.24, "is_dst": True},
+    {"city": "Anchorage",    "country": "US", "tz": "America/Anchorage",    "utc_offset": -9, "lat":  61.22, "lng": -149.90, "is_dst": True},
+    {"city": "Honolulu",     "country": "US", "tz": "Pacific/Honolulu",     "utc_offset": -10,"lat":  21.31, "lng": -157.86, "is_dst": False},
+    {"city": "Toronto",      "country": "CA", "tz": "America/Toronto",      "utc_offset": -5, "lat":  43.65, "lng":  -79.38, "is_dst": True},
+    {"city": "Mexico City",  "country": "MX", "tz": "America/Mexico_City",  "utc_offset": -6, "lat":  19.43, "lng":  -99.13, "is_dst": False},
+    {"city": "São Paulo",    "country": "BR", "tz": "America/Sao_Paulo",    "utc_offset": -3, "lat": -23.55, "lng":  -46.63, "is_dst": False},
+    {"city": "Buenos Aires", "country": "AR", "tz": "America/Buenos_Aires", "utc_offset": -3, "lat": -34.60, "lng":  -58.38, "is_dst": False},
+    {"city": "London",       "country": "GB", "tz": "Europe/London",        "utc_offset":  1, "lat":  51.51, "lng":   -0.13, "is_dst": True},
+    {"city": "Dublin",       "country": "IE", "tz": "Europe/Dublin",        "utc_offset":  1, "lat":  53.35, "lng":   -6.26, "is_dst": True},
+    {"city": "Paris",        "country": "FR", "tz": "Europe/Paris",         "utc_offset":  2, "lat":  48.86, "lng":    2.35, "is_dst": True},
+    {"city": "Berlin",       "country": "DE", "tz": "Europe/Berlin",        "utc_offset":  2, "lat":  52.52, "lng":   13.41, "is_dst": True},
+    {"city": "Rome",         "country": "IT", "tz": "Europe/Rome",          "utc_offset":  2, "lat":  41.90, "lng":   12.50, "is_dst": True},
+    {"city": "Madrid",       "country": "ES", "tz": "Europe/Madrid",        "utc_offset":  2, "lat":  40.42, "lng":   -3.70, "is_dst": True},
+    {"city": "Moscow",       "country": "RU", "tz": "Europe/Moscow",        "utc_offset":  3, "lat":  55.76, "lng":   37.62, "is_dst": False},
+    {"city": "Istanbul",     "country": "TR", "tz": "Europe/Istanbul",      "utc_offset":  3, "lat":  41.01, "lng":   28.98, "is_dst": False},
+    {"city": "Dubai",        "country": "AE", "tz": "Asia/Dubai",           "utc_offset":  4, "lat":  25.20, "lng":   55.27, "is_dst": False},
+    {"city": "Riyadh",       "country": "SA", "tz": "Asia/Riyadh",          "utc_offset":  3, "lat":  24.69, "lng":   46.72, "is_dst": False},
+    {"city": "Tehran",       "country": "IR", "tz": "Asia/Tehran",          "utc_offset":  3, "lat":  35.69, "lng":   51.39, "is_dst": False},
+    {"city": "Mumbai",       "country": "IN", "tz": "Asia/Kolkata",         "utc_offset":  5, "lat":  19.08, "lng":   72.88, "is_dst": False},
+    {"city": "Bangkok",      "country": "TH", "tz": "Asia/Bangkok",         "utc_offset":  7, "lat":  13.75, "lng":  100.50, "is_dst": False},
+    {"city": "Singapore",    "country": "SG", "tz": "Asia/Singapore",       "utc_offset":  8, "lat":   1.35, "lng":  103.82, "is_dst": False},
+    {"city": "Beijing",      "country": "CN", "tz": "Asia/Shanghai",        "utc_offset":  8, "lat":  39.91, "lng":  116.39, "is_dst": False},
+    {"city": "Hong Kong",    "country": "HK", "tz": "Asia/Hong_Kong",       "utc_offset":  8, "lat":  22.30, "lng":  114.17, "is_dst": False},
+    {"city": "Tokyo",        "country": "JP", "tz": "Asia/Tokyo",           "utc_offset":  9, "lat":  35.68, "lng":  139.69, "is_dst": False},
+    {"city": "Seoul",        "country": "KR", "tz": "Asia/Seoul",           "utc_offset":  9, "lat":  37.57, "lng":  126.98, "is_dst": False},
+    {"city": "Sydney",       "country": "AU", "tz": "Australia/Sydney",     "utc_offset": 10, "lat": -33.87, "lng":  151.21, "is_dst": False},
+    {"city": "Auckland",     "country": "NZ", "tz": "Pacific/Auckland",     "utc_offset": 12, "lat": -36.85, "lng":  174.76, "is_dst": False},
+    {"city": "Cape Town",    "country": "ZA", "tz": "Africa/Johannesburg",  "utc_offset":  2, "lat": -33.92, "lng":   18.42, "is_dst": False},
+    {"city": "Lagos",        "country": "NG", "tz": "Africa/Lagos",         "utc_offset":  1, "lat":   6.45, "lng":    3.40, "is_dst": False},
+    {"city": "Cairo",        "country": "EG", "tz": "Africa/Cairo",         "utc_offset":  3, "lat":  30.04, "lng":   31.24, "is_dst": False},
+    {"city": "Reykjavik",    "country": "IS", "tz": "Atlantic/Reykjavik",   "utc_offset":  0, "lat":  64.13, "lng":  -21.94, "is_dst": False},
+]
+
+
+# ═══════════════ NATIONAL DEBT (top 28 economies) ═══════════════
+NATIONAL_DEBT = [
+    {"country": "United States", "iso": "US", "debt_t": 35.80, "debt_gdp_pct": 122, "debt_pc": 106800, "ch_yoy_pct":  6.5},
+    {"country": "China",         "iso": "CN", "debt_t": 14.20, "debt_gdp_pct":  84, "debt_pc":  10100, "ch_yoy_pct":  9.5},
+    {"country": "Japan",         "iso": "JP", "debt_t": 10.60, "debt_gdp_pct": 263, "debt_pc":  85100, "ch_yoy_pct":  3.0},
+    {"country": "United Kingdom","iso": "GB", "debt_t":  3.45, "debt_gdp_pct": 102, "debt_pc":  50800, "ch_yoy_pct":  4.5},
+    {"country": "France",        "iso": "FR", "debt_t":  3.55, "debt_gdp_pct": 112, "debt_pc":  52400, "ch_yoy_pct":  4.0},
+    {"country": "Italy",         "iso": "IT", "debt_t":  3.10, "debt_gdp_pct": 137, "debt_pc":  52600, "ch_yoy_pct":  3.5},
+    {"country": "Germany",       "iso": "DE", "debt_t":  2.90, "debt_gdp_pct":  64, "debt_pc":  34800, "ch_yoy_pct":  3.0},
+    {"country": "India",         "iso": "IN", "debt_t":  3.10, "debt_gdp_pct":  82, "debt_pc":   2200, "ch_yoy_pct":  8.5},
+    {"country": "Brazil",        "iso": "BR", "debt_t":  2.05, "debt_gdp_pct":  88, "debt_pc":   9500, "ch_yoy_pct":  9.0},
+    {"country": "Canada",        "iso": "CA", "debt_t":  2.20, "debt_gdp_pct": 107, "debt_pc":  56500, "ch_yoy_pct":  3.5},
+    {"country": "Spain",         "iso": "ES", "debt_t":  1.65, "debt_gdp_pct": 105, "debt_pc":  34800, "ch_yoy_pct":  3.0},
+    {"country": "Mexico",        "iso": "MX", "debt_t":  0.85, "debt_gdp_pct":  53, "debt_pc":   6500, "ch_yoy_pct":  6.5},
+    {"country": "Australia",     "iso": "AU", "debt_t":  0.95, "debt_gdp_pct":  56, "debt_pc":  36500, "ch_yoy_pct":  4.5},
+    {"country": "South Korea",   "iso": "KR", "debt_t":  0.85, "debt_gdp_pct":  52, "debt_pc":  16500, "ch_yoy_pct":  6.0},
+    {"country": "Russia",        "iso": "RU", "debt_t":  0.32, "debt_gdp_pct":  18, "debt_pc":   2200, "ch_yoy_pct":  9.5},
+    {"country": "Turkey",        "iso": "TR", "debt_t":  0.42, "debt_gdp_pct":  31, "debt_pc":   4900, "ch_yoy_pct": 14.5},
+    {"country": "Indonesia",     "iso": "ID", "debt_t":  0.51, "debt_gdp_pct":  39, "debt_pc":   1850, "ch_yoy_pct":  7.5},
+    {"country": "Saudi Arabia",  "iso": "SA", "debt_t":  0.32, "debt_gdp_pct":  29, "debt_pc":   8500, "ch_yoy_pct":  5.5},
+    {"country": "Switzerland",   "iso": "CH", "debt_t":  0.18, "debt_gdp_pct":  39, "debt_pc":  20100, "ch_yoy_pct":  1.5},
+    {"country": "Netherlands",   "iso": "NL", "debt_t":  0.46, "debt_gdp_pct":  47, "debt_pc":  26000, "ch_yoy_pct":  2.5},
+    {"country": "Belgium",       "iso": "BE", "debt_t":  0.62, "debt_gdp_pct": 106, "debt_pc":  53000, "ch_yoy_pct":  3.5},
+    {"country": "Greece",        "iso": "GR", "debt_t":  0.41, "debt_gdp_pct": 162, "debt_pc":  39000, "ch_yoy_pct":  2.0},
+    {"country": "Argentina",     "iso": "AR", "debt_t":  0.39, "debt_gdp_pct":  87, "debt_pc":   8500, "ch_yoy_pct": 22.5},
+    {"country": "Egypt",         "iso": "EG", "debt_t":  0.42, "debt_gdp_pct":  96, "debt_pc":   3800, "ch_yoy_pct": 18.5},
+    {"country": "Pakistan",      "iso": "PK", "debt_t":  0.27, "debt_gdp_pct":  77, "debt_pc":   1100, "ch_yoy_pct": 16.5},
+    {"country": "Nigeria",       "iso": "NG", "debt_t":  0.16, "debt_gdp_pct":  46, "debt_pc":    750, "ch_yoy_pct": 12.5},
+    {"country": "South Africa",  "iso": "ZA", "debt_t":  0.27, "debt_gdp_pct":  74, "debt_pc":   4500, "ch_yoy_pct":  9.5},
+    {"country": "Singapore",     "iso": "SG", "debt_t":  0.51, "debt_gdp_pct": 158, "debt_pc":  86500, "ch_yoy_pct":  3.0},
+]
 
 
 # ═══════════════ CRITICAL INFRASTRUCTURE ═══════════════
@@ -4810,71 +6530,9 @@ MAJOR_DATA_CENTERS = [
     {"name": "Luleå (Meta)", "country": "SE", "lat": 65.58, "lng": 22.15, "operator": "Meta", "detail": "Arctic cooling; hydro-powered"},
 ]
 
-UNDERSEA_CABLES = [
-    {"name": "FLAG Atlantic-1 (FA-1)", "landing_a": {"lat": 40.57, "lng": -73.97, "loc": "New York"}, "landing_b": {"lat": 51.35, "lng": 1.43, "loc": "Whitstable, UK"}, "capacity": "10 Tbps", "length_km": 6300},
-    {"name": "TAT-14", "landing_a": {"lat": 40.57, "lng": -73.97, "loc": "New Jersey"}, "landing_b": {"lat": 53.57, "lng": 8.10, "loc": "Norden, Germany"}, "capacity": "3.2 Tbps", "length_km": 15428},
-    {"name": "MAREA", "landing_a": {"lat": 39.29, "lng": -74.45, "loc": "Virginia Beach"}, "landing_b": {"lat": 43.37, "lng": -3.21, "loc": "Bilbao, Spain"}, "capacity": "200 Tbps", "length_km": 6600},
-    {"name": "Dunant", "landing_a": {"lat": 39.29, "lng": -74.45, "loc": "Virginia Beach"}, "landing_b": {"lat": 47.29, "lng": -2.52, "loc": "Saint-Hilaire, France"}, "capacity": "250 Tbps", "length_km": 6400},
-    {"name": "SEA-ME-WE 3", "landing_a": {"lat": 1.35, "lng": 103.82, "loc": "Singapore"}, "landing_b": {"lat": 50.85, "lng": 1.59, "loc": "Calais, France"}, "capacity": "480 Gbps", "length_km": 39000},
-    {"name": "SEA-ME-WE 6", "landing_a": {"lat": 1.35, "lng": 103.82, "loc": "Singapore"}, "landing_b": {"lat": 45.44, "lng": 12.32, "loc": "Venice, Italy"}, "capacity": "100+ Tbps", "length_km": 19200},
-    {"name": "PEACE Cable", "landing_a": {"lat": 39.93, "lng": 32.85, "loc": "Pakistan"}, "landing_b": {"lat": 45.44, "lng": 12.32, "loc": "Marseille, France"}, "capacity": "96 Tbps", "length_km": 15000},
-    {"name": "2Africa", "landing_a": {"lat": 51.35, "lng": 1.43, "loc": "UK"}, "landing_b": {"lat": -33.92, "lng": 18.42, "loc": "Cape Town"}, "capacity": "180 Tbps", "length_km": 45000},
-    {"name": "JUPITER", "landing_a": {"lat": 35.68, "lng": 139.69, "loc": "Tokyo"}, "landing_b": {"lat": 47.61, "lng": -122.33, "loc": "Seattle"}, "capacity": "60 Tbps", "length_km": 14000},
-    {"name": "SJC (Southeast Asia-Japan Cable)", "landing_a": {"lat": 1.35, "lng": 103.82, "loc": "Singapore"}, "landing_b": {"lat": 35.68, "lng": 139.69, "loc": "Tokyo"}, "capacity": "28 Tbps", "length_km": 9700},
-    {"name": "ARCTIC CONNECT (planned)", "landing_a": {"lat": 60.17, "lng": 24.94, "loc": "Helsinki"}, "landing_b": {"lat": 35.68, "lng": 139.69, "loc": "Tokyo"}, "capacity": "200 Tbps", "length_km": 14000},
-    {"name": "Southern Cross NEXT", "landing_a": {"lat": -33.87, "lng": 151.21, "loc": "Sydney"}, "landing_b": {"lat": 33.77, "lng": -118.19, "loc": "Los Angeles"}, "capacity": "72 Tbps", "length_km": 13000},
-    {"name": "EllaLink", "landing_a": {"lat": -2.50, "lng": -44.28, "loc": "Fortaleza, Brazil"}, "landing_b": {"lat": 38.72, "lng": -9.14, "loc": "Lisbon"}, "capacity": "72 Tbps", "length_km": 6000},
-]
-
-OIL_GAS_PIPELINES = [
-    {"name": "Druzhba Pipeline", "type": "oil", "from_loc": {"lat": 52.23, "lng": 49.10, "name": "Samara, Russia"}, "to_loc": {"lat": 50.08, "lng": 14.44, "name": "Central Europe"}, "capacity": "1.2M bpd", "detail": "World's longest oil pipeline; supplies EU via Belarus/Ukraine"},
-    {"name": "Nord Stream (destroyed)", "type": "gas", "from_loc": {"lat": 59.93, "lng": 30.32, "name": "Vyborg, Russia"}, "to_loc": {"lat": 54.11, "lng": 13.43, "name": "Greifswald, Germany"}, "capacity": "55 bcm/yr", "detail": "Sabotaged Sep 2022; not operational"},
-    {"name": "TurkStream", "type": "gas", "from_loc": {"lat": 44.62, "lng": 37.78, "name": "Anapa, Russia"}, "to_loc": {"lat": 41.18, "lng": 28.97, "name": "Istanbul, Turkey"}, "capacity": "31.5 bcm/yr", "detail": "Operational; critical EU gas route via Turkey"},
-    {"name": "Trans-Anatolian (TANAP)", "type": "gas", "from_loc": {"lat": 40.41, "lng": 49.87, "name": "Baku, Azerbaijan"}, "to_loc": {"lat": 39.93, "lng": 32.85, "name": "Turkey/EU"}, "capacity": "16 bcm/yr", "detail": "Southern Gas Corridor; feeds TAP to Italy"},
-    {"name": "Keystone XL (cancelled) / Keystone", "type": "oil", "from_loc": {"lat": 52.27, "lng": -113.81, "name": "Hardisty, Alberta"}, "to_loc": {"lat": 29.76, "lng": -95.37, "name": "Houston, Texas"}, "capacity": "590K bpd", "detail": "Existing Keystone operational; XL expansion cancelled 2021"},
-    {"name": "Dakota Access (DAPL)", "type": "oil", "from_loc": {"lat": 47.92, "lng": -103.98, "name": "Bakken, ND"}, "to_loc": {"lat": 40.46, "lng": -90.67, "name": "Patoka, IL"}, "capacity": "750K bpd", "detail": "Controversial; operational since 2017"},
-    {"name": "East-West Pipeline (Saudi)", "type": "oil", "from_loc": {"lat": 25.38, "lng": 49.98, "name": "Abqaiq, Saudi Arabia"}, "to_loc": {"lat": 21.52, "lng": 39.16, "name": "Yanbu, Red Sea"}, "capacity": "5M bpd", "detail": "Strategic bypass for Strait of Hormuz"},
-    {"name": "BTC Pipeline", "type": "oil", "from_loc": {"lat": 40.41, "lng": 49.87, "name": "Baku, Azerbaijan"}, "to_loc": {"lat": 36.85, "lng": 36.15, "name": "Ceyhan, Turkey"}, "capacity": "1.2M bpd", "detail": "Major Caspian oil export route avoiding Russia/Iran"},
-    {"name": "ESPO Pipeline", "type": "oil", "from_loc": {"lat": 56.27, "lng": 44.12, "name": "Taishet, Russia"}, "to_loc": {"lat": 46.94, "lng": 134.32, "name": "Kozmino, Pacific"}, "capacity": "1.6M bpd", "detail": "Eastern Siberia–Pacific; feeds China/Japan/Korea"},
-    {"name": "Power of Siberia", "type": "gas", "from_loc": {"lat": 62.04, "lng": 129.74, "name": "Yakutia, Russia"}, "to_loc": {"lat": 45.75, "lng": 126.65, "name": "Heilongjiang, China"}, "capacity": "38 bcm/yr", "detail": "Russia–China gas pipeline; ramping to full capacity"},
-    {"name": "Trans-Mediterranean (Transmed)", "type": "gas", "from_loc": {"lat": 36.75, "lng": 3.06, "name": "Algeria"}, "to_loc": {"lat": 37.50, "lng": 15.09, "name": "Sicily, Italy"}, "capacity": "33 bcm/yr", "detail": "Major Algeria-to-Europe gas route via Tunisia"},
-    # ── Africa ──
-    {"name": "Trans-Saharan Gas Pipeline (planned)", "type": "gas", "from_loc": {"lat": 4.76, "lng": 7.01, "name": "Warri, Nigeria"}, "to_loc": {"lat": 36.75, "lng": 3.06, "name": "Algiers, Algeria"}, "capacity": "30 bcm/yr", "detail": "4,128 km planned pipeline; Nigeria-Niger-Algeria to feed Europe"},
-    {"name": "West African Gas Pipeline", "type": "gas", "from_loc": {"lat": 6.45, "lng": 3.39, "name": "Lagos, Nigeria"}, "to_loc": {"lat": 5.56, "lng": -0.19, "name": "Accra, Ghana"}, "capacity": "5 bcm/yr", "detail": "Supplies Benin, Togo, Ghana from Nigeria's Escravos field"},
-    {"name": "East African Crude Oil Pipeline (EACOP)", "type": "oil", "from_loc": {"lat": 1.57, "lng": 31.46, "name": "Hoima, Uganda"}, "to_loc": {"lat": -5.07, "lng": 39.10, "name": "Tanga, Tanzania"}, "capacity": "216K bpd", "detail": "1,443 km heated pipeline; world's longest heated crude pipeline; controversial"},
-    {"name": "GreenStream", "type": "gas", "from_loc": {"lat": 32.90, "lng": 12.09, "name": "Mellitah, Libya"}, "to_loc": {"lat": 37.50, "lng": 15.09, "name": "Gela, Sicily"}, "capacity": "11 bcm/yr", "detail": "Libya-Italy subsea gas pipeline; intermittent due to Libyan instability"},
-    {"name": "Mozambique-South Africa Pipeline (planned)", "type": "gas", "from_loc": {"lat": -12.97, "lng": 40.52, "name": "Cabo Delgado, Mozambique"}, "to_loc": {"lat": -26.20, "lng": 28.04, "name": "Johannesburg, South Africa"}, "capacity": "10 bcm/yr", "detail": "Planned pipeline to monetize Rovuma Basin LNG discoveries"},
-    # ── North America ──
-    {"name": "Trans-Alaska Pipeline (TAPS)", "type": "oil", "from_loc": {"lat": 70.26, "lng": -148.33, "name": "Prudhoe Bay, Alaska"}, "to_loc": {"lat": 61.13, "lng": -146.35, "name": "Valdez, Alaska"}, "capacity": "600K bpd", "detail": "1,288 km; operational since 1977; declining throughput from peak 2.1M bpd"},
-    {"name": "Colonial Pipeline", "type": "oil", "from_loc": {"lat": 29.76, "lng": -95.37, "name": "Houston, Texas"}, "to_loc": {"lat": 40.74, "lng": -74.00, "name": "New York Harbor"}, "capacity": "2.5M bpd", "detail": "8,851 km; largest refined products pipeline in US; 2021 ransomware attack"},
-    {"name": "Permian Basin - Corpus Christi (Cactus II)", "type": "oil", "from_loc": {"lat": 31.99, "lng": -102.08, "name": "Permian Basin, TX"}, "to_loc": {"lat": 27.80, "lng": -97.40, "name": "Corpus Christi, TX"}, "capacity": "670K bpd", "detail": "Key Permian export pipeline to Gulf Coast export terminals"},
-    {"name": "Enbridge Line 5", "type": "oil", "from_loc": {"lat": 46.49, "lng": -87.09, "name": "Superior, WI"}, "to_loc": {"lat": 42.98, "lng": -82.42, "name": "Sarnia, Ontario"}, "capacity": "540K bpd", "detail": "Controversial pipeline crossing Straits of Mackinac; Michigan wants shutdown"},
-    {"name": "TC Energy Mainline (NGTL)", "type": "gas", "from_loc": {"lat": 52.27, "lng": -113.81, "name": "Alberta, Canada"}, "to_loc": {"lat": 45.42, "lng": -75.70, "name": "Ottawa, Ontario"}, "capacity": "28 bcm/yr", "detail": "Canada's major west-east natural gas transmission system"},
-    {"name": "Trans Mountain Expansion (TMX)", "type": "oil", "from_loc": {"lat": 53.55, "lng": -113.49, "name": "Edmonton, Alberta"}, "to_loc": {"lat": 49.29, "lng": -122.95, "name": "Burnaby, BC"}, "capacity": "890K bpd", "detail": "Tripled capacity; completed 2024; crude export to Pacific markets"},
-    # ── Russia / Europe ──
-    {"name": "Yamal-Europe", "type": "gas", "from_loc": {"lat": 67.50, "lng": 72.00, "name": "Yamal Peninsula, Russia"}, "to_loc": {"lat": 52.23, "lng": 21.01, "name": "Mallnow, Germany (via Poland)"}, "capacity": "33 bcm/yr", "detail": "4,107 km; Russia-Belarus-Poland-Germany; flows reversed post-2022"},
-    {"name": "Blue Stream", "type": "gas", "from_loc": {"lat": 44.60, "lng": 38.00, "name": "Beregovaya, Russia"}, "to_loc": {"lat": 42.03, "lng": 35.12, "name": "Samsun, Turkey"}, "capacity": "16 bcm/yr", "detail": "Black Sea subsea pipeline; 396 km offshore section"},
-    {"name": "Nord Stream 2 (destroyed)", "type": "gas", "from_loc": {"lat": 59.73, "lng": 28.38, "name": "Ust-Luga, Russia"}, "to_loc": {"lat": 54.11, "lng": 13.43, "name": "Greifswald, Germany"}, "capacity": "55 bcm/yr", "detail": "Never entered service; sabotaged Sep 2022 alongside Nord Stream 1"},
-    {"name": "Southern Gas Corridor (TAP section)", "type": "gas", "from_loc": {"lat": 39.93, "lng": 32.85, "name": "Turkey-Greece border"}, "to_loc": {"lat": 40.85, "lng": 17.40, "name": "Brindisi, Italy"}, "capacity": "10 bcm/yr", "detail": "878 km Trans Adriatic Pipeline; Caspian gas to Europe bypassing Russia"},
-    {"name": "Soyuz Pipeline", "type": "gas", "from_loc": {"lat": 51.16, "lng": 51.37, "name": "Orenburg, Russia"}, "to_loc": {"lat": 48.68, "lng": 16.77, "name": "Baumgarten, Austria"}, "capacity": "26 bcm/yr", "detail": "Central Asian gas via Russia to Europe; declining flows post-2022"},
-    # ── Middle East / Central-South Asia ──
-    {"name": "Iran-Turkey Gas Pipeline (Tabriz-Ankara)", "type": "gas", "from_loc": {"lat": 38.08, "lng": 46.29, "name": "Tabriz, Iran"}, "to_loc": {"lat": 39.93, "lng": 32.85, "name": "Ankara, Turkey"}, "capacity": "14 bcm/yr", "detail": "Operational since 2001; frequent sabotage attacks on Turkish section"},
-    {"name": "HBJ Pipeline (India)", "type": "gas", "from_loc": {"lat": 21.17, "lng": 72.83, "name": "Hazira, Gujarat"}, "to_loc": {"lat": 26.85, "lng": 80.91, "name": "Jagdishpur, UP"}, "capacity": "18 bcm/yr", "detail": "India's 2,700 km backbone gas pipeline; GAIL-operated"},
-    {"name": "Dolphin Gas Pipeline", "type": "gas", "from_loc": {"lat": 25.92, "lng": 51.53, "name": "Ras Laffan, Qatar"}, "to_loc": {"lat": 24.47, "lng": 54.37, "name": "Abu Dhabi, UAE"}, "capacity": "19 bcm/yr", "detail": "Only cross-border pipeline in the Gulf; also feeds Oman"},
-    # ── China / East Asia ──
-    {"name": "China-Myanmar Oil & Gas Pipeline", "type": "oil", "from_loc": {"lat": 19.76, "lng": 93.12, "name": "Kyaukphyu, Myanmar"}, "to_loc": {"lat": 25.04, "lng": 102.68, "name": "Kunming, China"}, "capacity": "440K bpd oil + 12 bcm/yr gas", "detail": "771 km; allows China to bypass Strait of Malacca"},
-    {"name": "China-Central Asia Gas Pipeline (Lines A/B/C)", "type": "gas", "from_loc": {"lat": 39.77, "lng": 64.42, "name": "Turkmenistan"}, "to_loc": {"lat": 43.80, "lng": 87.60, "name": "Khorgos, China (Xinjiang)"}, "capacity": "55 bcm/yr", "detail": "1,833 km across Uzbekistan/Kazakhstan; Turkmen gas to China"},
-    {"name": "Power of Siberia 2 (planned)", "type": "gas", "from_loc": {"lat": 61.52, "lng": 90.22, "name": "Western Siberia, Russia"}, "to_loc": {"lat": 40.18, "lng": 116.41, "name": "Beijing, China (via Mongolia)"}, "capacity": "50 bcm/yr", "detail": "Planned via Mongolia; would redirect EU-bound Yamal gas to China"},
-    {"name": "West-East Gas Pipeline (China)", "type": "gas", "from_loc": {"lat": 38.93, "lng": 75.99, "name": "Tarim Basin, Xinjiang"}, "to_loc": {"lat": 31.23, "lng": 121.47, "name": "Shanghai"}, "capacity": "30 bcm/yr", "detail": "4,000 km; China's domestic backbone; 3 parallel lines"},
-    {"name": "Sakhalin-Khabarovsk-Vladivostok", "type": "gas", "from_loc": {"lat": 52.03, "lng": 142.68, "name": "Sakhalin Island, Russia"}, "to_loc": {"lat": 43.12, "lng": 131.87, "name": "Vladivostok, Russia"}, "capacity": "6 bcm/yr", "detail": "1,830 km; feeds Russian Far East and potential LNG exports to Asia"},
-    # ── South America ──
-    {"name": "Bolivia-Brazil Pipeline (GASBOL)", "type": "gas", "from_loc": {"lat": -17.78, "lng": -63.18, "name": "Santa Cruz, Bolivia"}, "to_loc": {"lat": -23.55, "lng": -46.63, "name": "Sao Paulo, Brazil"}, "capacity": "30 bcm/yr", "detail": "3,150 km; Bolivia's main gas export route; declining production"},
-    {"name": "Trans-Andean Pipeline (OTC)", "type": "oil", "from_loc": {"lat": -38.93, "lng": -68.13, "name": "Neuquen, Argentina"}, "to_loc": {"lat": -36.62, "lng": -73.08, "name": "Concepcion, Chile"}, "capacity": "113K bpd", "detail": "Crosses Andes at 2,500m elevation; crude from Vaca Muerta"},
-    {"name": "Camisea Pipeline (Peru)", "type": "gas", "from_loc": {"lat": -11.80, "lng": -72.68, "name": "Camisea, Peru"}, "to_loc": {"lat": -12.04, "lng": -77.03, "name": "Lima, Peru"}, "capacity": "12 bcm/yr", "detail": "730 km from Amazon jungle across Andes to coast; feeds Peru LNG"},
-    # ── Southeast Asia ──
-    {"name": "Trans-ASEAN Gas Pipeline (Yadana)", "type": "gas", "from_loc": {"lat": 12.34, "lng": 97.22, "name": "Yadana Field, Myanmar"}, "to_loc": {"lat": 13.76, "lng": 100.50, "name": "Bangkok, Thailand"}, "capacity": "7 bcm/yr", "detail": "346 km; Thailand's largest single gas source; production declining"},
-    {"name": "Sabah-Sarawak Gas Pipeline (Malaysia)", "type": "gas", "from_loc": {"lat": 5.95, "lng": 116.08, "name": "Kota Kinabalu, Sabah"}, "to_loc": {"lat": 2.30, "lng": 111.84, "name": "Bintulu, Sarawak"}, "capacity": "3 bcm/yr", "detail": "512 km offshore; feeds Bintulu LNG complex"},
-]
+UNDERSEA_CABLES = _INFRA_CABLES
+OIL_GAS_PIPELINES = _INFRA_PIPELINES
+OIL_RARE_EARTH_FIELDS = _INFRA_FIELDS
 
 NUCLEAR_REACTORS = [
     {"name": "Zaporizhzhia NPP", "country": "UA", "lat": 47.51, "lng": 34.59, "capacity_mw": 5700, "status": "occupied", "detail": "Europe's largest NPP; Russian-occupied; IAEA monitoring"},
@@ -4979,36 +6637,6 @@ ECONOMIC_ZONES = [
     {"name": "Shenzhen Qianhai Cooperation Zone", "country": "CN", "lat": 22.52, "lng": 113.90, "type": "ftz", "detail": "HK-Shenzhen cooperation zone; fintech, legal services; 15% corporate tax"},
 ]
 
-# ═══════════════ OIL FIELDS & RARE EARTH DEPOSITS ═══════════════
-OIL_RARE_EARTH_FIELDS = [
-    # ── Major Oil Fields ──
-    {"name": "Ghawar Field", "country": "SA", "lat": 25.38, "lng": 49.40, "type": "oil", "reserves": "~75B barrels", "detail": "World's largest conventional oil field; Saudi Aramco; 3.8M bpd peak"},
-    {"name": "Burgan Field", "country": "KW", "lat": 28.98, "lng": 47.98, "type": "oil", "reserves": "~70B barrels", "detail": "World's 2nd-largest oil field; Kuwait Petroleum Corp; 1.7M bpd capacity"},
-    {"name": "Safaniya Field", "country": "SA", "lat": 27.85, "lng": 49.70, "type": "oil", "reserves": "~37B barrels", "detail": "World's largest offshore oil field; Arabian heavy crude; Saudi Aramco"},
-    {"name": "Prudhoe Bay", "country": "US", "lat": 70.26, "lng": -148.33, "type": "oil", "reserves": "~25B barrels (original)", "detail": "North America's largest oil field; Trans-Alaska Pipeline source; declining production"},
-    {"name": "Cantarell Complex", "country": "MX", "lat": 20.17, "lng": -91.58, "type": "oil", "reserves": "~18B barrels (original)", "detail": "Once world's 2nd-largest; dramatic decline from 2.1M bpd (2004) to ~100K bpd"},
-    {"name": "Pre-salt Santos Basin", "country": "BR", "lat": -25.25, "lng": -44.50, "type": "oil", "reserves": "~15B barrels", "detail": "Ultra-deepwater; Lula/Buzios fields; Petrobras; 5-7 km below sea level"},
-    {"name": "Kashagan Field", "country": "KZ", "lat": 46.10, "lng": 51.50, "type": "oil", "reserves": "~13B barrels", "detail": "World's most expensive oil project ($55B); toxic H2S; Caspian Sea; multinational consortium"},
-    {"name": "West Qurna Field", "country": "IQ", "lat": 30.95, "lng": 47.30, "type": "oil", "reserves": "~43B barrels", "detail": "World's 4th-largest; phases 1&2; ExxonMobil/Lukoil/CNPC operators"},
-    {"name": "Permian Basin", "country": "US", "lat": 31.90, "lng": -102.30, "type": "oil", "reserves": "~46B barrels (recoverable)", "detail": "US shale revolution epicenter; Texas/New Mexico; 6M bpd; world's top-producing basin"},
-    {"name": "Vaca Muerta", "country": "AR", "lat": -38.50, "lng": -69.00, "type": "oil/gas", "reserves": "~16B barrels oil + 308T cf gas", "detail": "World's 2nd-largest shale gas, 4th-largest shale oil; Patagonia; YPF/Shell/Chevron"},
-    {"name": "North Sea Brent Field", "country": "GB/NO", "lat": 61.04, "lng": 1.72, "type": "oil", "reserves": "~4B barrels (original)", "detail": "Benchmark crude pricing (Brent crude); UK/Norway; declining; decommissioning phase"},
-    {"name": "Tengiz Field", "country": "KZ", "lat": 46.27, "lng": 53.38, "type": "oil", "reserves": "~25B barrels", "detail": "Chevron-led TCO consortium; CPC pipeline to Black Sea; $48B Future Growth Project"},
-    {"name": "Rumaila Field", "country": "IQ", "lat": 30.60, "lng": 47.38, "type": "oil", "reserves": "~17B barrels", "detail": "Iraq's largest producing field; 1.4M bpd; BP/CNPC operators"},
-    {"name": "Johan Sverdrup", "country": "NO", "lat": 58.89, "lng": 2.52, "type": "oil", "reserves": "~2.7B barrels", "detail": "Norway's largest discovery in decades; powered by shore hydroelectricity; low carbon"},
-    # ── Rare Earth & Critical Mineral Deposits ──
-    {"name": "Bayan Obo Mine", "country": "CN", "lat": 41.78, "lng": 109.97, "type": "rare_earth", "reserves": "~48M tonnes REO", "detail": "World's largest rare earth deposit; 60% of global supply; Inner Mongolia; iron ore co-product"},
-    {"name": "Mountain Pass Mine", "country": "US", "lat": 35.48, "lng": -115.53, "type": "rare_earth", "reserves": "~1.4M tonnes REO", "detail": "US's only active rare earth mine; MP Materials; DOD strategic interest; California"},
-    {"name": "Mount Weld", "country": "AU", "lat": -28.77, "lng": 122.02, "type": "rare_earth", "reserves": "~1.7M tonnes REO", "detail": "World's richest known rare earth deposit by grade; Lynas Corp; processed in Malaysia"},
-    {"name": "Norra Karr", "country": "SE", "lat": 58.10, "lng": 14.60, "type": "rare_earth", "reserves": "~0.5M tonnes REO", "detail": "Heavy rare earth deposit; EU critical minerals; permitting challenges; Leading Edge Materials"},
-    {"name": "Kvanefjeld (Kuannersuit)", "country": "GL", "lat": 60.98, "lng": -46.02, "type": "rare_earth", "reserves": "~0.7M tonnes REO", "detail": "One of world's largest undeveloped deposits; Greenland banned uranium mining; political controversy"},
-    {"name": "Steenkampskraal", "country": "ZA", "lat": -31.30, "lng": 18.75, "type": "rare_earth", "reserves": "~0.1M tonnes REO", "detail": "High-grade monazite deposit; thorium co-product; small-scale restart underway"},
-    {"name": "Serra Verde", "country": "BR", "lat": -13.80, "lng": -48.50, "type": "rare_earth", "reserves": "~0.3M tonnes REO", "detail": "Ionic clay deposit; low-cost extraction; Goias state; diversification from China"},
-    {"name": "Kolwezi Cobalt Belt", "country": "CD", "lat": -10.72, "lng": 25.47, "type": "cobalt/copper", "reserves": "70% of global cobalt reserves", "detail": "DRC copper-cobalt belt; critical for EV batteries; child labor concerns; CMOC, Glencore"},
-    {"name": "Pilbara Lithium Province", "country": "AU", "lat": -21.83, "lng": 119.02, "type": "lithium", "reserves": "Major spodumene deposits", "detail": "Greenbushes, Pilgangoora, Wodgina mines; world's #1 hard-rock lithium producer"},
-    {"name": "Atacama Lithium Triangle", "country": "CL", "lat": -23.50, "lng": -68.20, "type": "lithium", "reserves": "~50% global lithium reserves", "detail": "Salar de Atacama; SQM/Albemarle; Chile, Argentina, Bolivia triangle; brine extraction"},
-    {"name": "Bushveld Complex (PGMs)", "country": "ZA", "lat": -24.90, "lng": 29.45, "type": "platinum_group", "reserves": "75% of global platinum reserves", "detail": "World's largest PGM deposit; platinum, palladium, rhodium; Anglo American, Impala, Sibanye"},
-]
 
 
 # ═══════════════ SPACEPORTS & LAUNCH FACILITIES ═══════════════
@@ -5076,6 +6704,178 @@ SPACEPORTS = [
 ]
 
 
+# ═══════════════ WORLD ARMIES (GROUND FORCES) ═══════════════
+# Active personnel + reserves + key equipment for all nations with standing armies
+# Sources: IISS Military Balance, SIPRI, GlobalFirepower, national MoDs (open sources)
+WORLD_ARMIES = [
+    # ── Top 20 by personnel/capability ──
+    {"country": "CN", "name": "People's Liberation Army Ground Force (PLAGF)", "active": 965000, "reserves": 510000, "paramilitary": 660000, "tanks": 4800, "ifv_apc": 8200, "artillery": 9700, "mlrs": 3050, "key_equipment": "Type 99A2, Type 96B, ZTQ-15, ZBD-04A, PLZ-05, PHL-16, DF-21D/26, HQ-9", "detail": "World's largest ground force; rapid mechanization; strategic rocket force separate (PLARF)"},
+    {"country": "IN", "name": "Indian Army", "active": 1237000, "reserves": 960000, "paramilitary": 1585000, "tanks": 4614, "ifv_apc": 8686, "artillery": 4060, "mlrs": 264, "key_equipment": "T-90S Bhishma, T-72M1, Arjun Mk1A, BMP-2 Sarath, K9 Vajra, Pinaka, Dhanush, BrahMos", "detail": "Second-largest standing army; Himalayan/Pakistan border; nuclear capable"},
+    {"country": "RU", "name": "Russian Ground Forces (incl. Airborne, Naval Inf)", "active": 550000, "reserves": 1500000, "paramilitary": 554000, "tanks": 12420, "ifv_apc": 30122, "artillery": 14774, "mlrs": 3391, "key_equipment": "T-90M, T-80BVM, T-72B3M, T-14 Armata (limited), BMP-3, BMD-4M, 2S19 Msta, BM-30 Smerch, Iskander-M", "detail": "Heavy attrition in Ukraine; massive reserves; large tank stockpile (most still Soviet)"},
+    {"country": "KP", "name": "Korean People's Army Ground Force", "active": 950000, "reserves": 600000, "paramilitary": 5700000, "tanks": 6045, "ifv_apc": 2500, "artillery": 21100, "mlrs": 5500, "key_equipment": "Pokpung-ho, Chonma-ho, Songun-ho, T-62, BTR-80A, M1989 Koksan, KN-25 600mm MLRS, Hwasong-17", "detail": "Massive but technologically dated; world's largest artillery park; nuclear capable"},
+    {"country": "US", "name": "US Army + USMC Ground", "active": 624000, "reserves": 522000, "paramilitary": 0, "tanks": 4640, "ifv_apc": 13980, "artillery": 1339, "mlrs": 698, "key_equipment": "M1A2 SEPv3 Abrams, M2A4 Bradley, Stryker, AMPV, M109A7 Paladin, M270 MLRS, HIMARS, Patriot, THAAD", "detail": "Most technologically advanced; global power projection; AMPV replacing M113"},
+    {"country": "PK", "name": "Pakistan Army", "active": 560000, "reserves": 550000, "paramilitary": 291000, "tanks": 3742, "ifv_apc": 2828, "artillery": 4619, "mlrs": 600, "key_equipment": "VT-4 (Haider), Al-Khalid, T-80UD, Type 85, M113, A100E MLRS, Nasr (Hatf-IX), Shaheen-III", "detail": "Nuclear capable; FATA counter-insurgency; rapid Chinese modernization"},
+    {"country": "KR", "name": "Republic of Korea Army (ROKA)", "active": 420000, "reserves": 3100000, "paramilitary": 0, "tanks": 2200, "ifv_apc": 3200, "artillery": 5959, "mlrs": 575, "key_equipment": "K2 Black Panther, K1A2, K21 IFV, K9 Thunder SPH, K239 Chunmoo MLRS, Hyunmoo-2/4 SRBM", "detail": "Best-armed peninsula force; conscript-based; Chunmoo HIMARS-class; counter-NK posture"},
+    {"country": "VN", "name": "People's Army of Vietnam (VPA Ground)", "active": 412000, "reserves": 5040000, "paramilitary": 40000, "tanks": 2155, "ifv_apc": 2700, "artillery": 3370, "mlrs": 950, "key_equipment": "T-90S/SK, T-62, T-54/55 (modernized), BMP-1/2, 2S3 Akatsiya, EXTRA, S-300PMU1, Bastion-P", "detail": "Massive reserve mobilization; T-90 modernization; coastal defense focused"},
+    {"country": "IR", "name": "Iranian Army (Artesh) + IRGC Ground Force", "active": 610000, "reserves": 350000, "paramilitary": 220000, "tanks": 1996, "ifv_apc": 1380, "artillery": 6798, "mlrs": 1900, "key_equipment": "Karrar, Zulfiqar-3, T-72S, BMP-2 (Boragh), Fajr-5, Naze'at, Fateh-110/313, Zelzal-2/3, Shahed-136", "detail": "Aging armor; massive missile/rocket force; proxy operations; Basij volunteers"},
+    {"country": "EG", "name": "Egyptian Army", "active": 310000, "reserves": 480000, "paramilitary": 397000, "tanks": 4694, "ifv_apc": 4500, "artillery": 4480, "mlrs": 1500, "key_equipment": "M1A1 Abrams (locally assembled), M60A3, T-80U, K9 Thunder (planned), M109A5, BM-21 Grad, Sakr", "detail": "Africa's largest mechanized force; Sinai counter-insurgency; mixed US/Russian/Korean"},
+    {"country": "TR", "name": "Turkish Army (Türk Kara Kuvvetleri)", "active": 260200, "reserves": 378700, "paramilitary": 156800, "tanks": 2238, "ifv_apc": 8456, "artillery": 2800, "mlrs": 538, "key_equipment": "Altay (entering), Leopard 2A4, M60T Sabra, M48A5, ACV-15, Kaplan-20, T-155 Fırtına, T-300 Kasırga, Bayraktar TB2", "detail": "Indigenous Altay MBT; PKK/Syria operations; drone integration; NATO 2nd-largest"},
+    {"country": "SY", "name": "Syrian Arab Army (legacy + post-Assad fragmented)", "active": 130000, "reserves": 100000, "paramilitary": 50000, "tanks": 2700, "ifv_apc": 2000, "artillery": 3050, "mlrs": 500, "key_equipment": "T-72/72M1, T-90A (Russian-supplied), BMP-1/2, 2S1, BM-21, Tochka-U", "detail": "Severely degraded; post-Assad fragmentation; heavy attrition"},
+    {"country": "TW", "name": "Republic of China Army (ROCA)", "active": 88000, "reserves": 1657000, "paramilitary": 11800, "tanks": 1100, "ifv_apc": 1300, "artillery": 1800, "mlrs": 305, "key_equipment": "M1A2T Abrams (delivering), CM-11/12, M60A3 TTS, CM-32 Yunpao, M109A6, Thunderbolt-2000 MLRS", "detail": "Conscript reserve mobilization; M1A2T from US; cross-strait deterrence"},
+    {"country": "BR", "name": "Brazilian Army (Exército Brasileiro)", "active": 219000, "reserves": 1340000, "paramilitary": 395000, "tanks": 469, "ifv_apc": 2168, "artillery": 1830, "mlrs": 75, "key_equipment": "Leopard 1A5BR, M60A3 TTS, M113BR, Guarani 6×6, M109A5, ASTROS II MLRS", "detail": "Largest in Latin America; Amazon/border patrol; ASTROS exports"},
+    {"country": "FR", "name": "French Army (Armée de Terre)", "active": 118600, "reserves": 31000, "paramilitary": 105000, "tanks": 222, "ifv_apc": 6322, "artillery": 109, "mlrs": 13, "key_equipment": "Leclerc XLR, VBCI, Griffon, Jaguar, Serval, CAESAR 155mm SPH, LRU MLRS", "detail": "Scorpion modernization; expeditionary; Sahel/Mali (withdrawn); CAESAR exported"},
+    {"country": "DE", "name": "German Army (Deutsches Heer)", "active": 62500, "reserves": 30050, "paramilitary": 0, "tanks": 296, "ifv_apc": 2156, "artillery": 121, "mlrs": 26, "key_equipment": "Leopard 2A6/A7V, Puma IFV, Boxer, Marder (retiring), PzH 2000, MARS II MLRS", "detail": "Zeitenwende €100B special fund; Puma reliability issues; Leopard 2 to Ukraine"},
+    {"country": "GB", "name": "British Army", "active": 76000, "reserves": 31000, "paramilitary": 0, "tanks": 213, "ifv_apc": 4750, "artillery": 89, "mlrs": 35, "key_equipment": "Challenger 2/3 (upgrading), Warrior IFV, Boxer (replacing), AS-90, M270 MLRS, Apache AH-64E", "detail": "Smallest in centuries; Challenger 3 upgrade; Boxer/Ajax acquisition"},
+    {"country": "IT", "name": "Italian Army (Esercito Italiano)", "active": 96400, "reserves": 18300, "paramilitary": 175750, "tanks": 200, "ifv_apc": 3145, "artillery": 220, "mlrs": 21, "key_equipment": "Ariete (limited), Leopard 2A8 (ordered), Centauro II, Dardo IFV, Freccia, PzH 2000, M270", "detail": "Carabinieri paramilitary largest; Ariete replacement Leopard 2A8; Centauro II"},
+    {"country": "PL", "name": "Polish Land Forces (Wojska Lądowe)", "active": 122000, "reserves": 35000, "paramilitary": 16000, "tanks": 614, "ifv_apc": 1600, "artillery": 884, "mlrs": 220, "key_equipment": "K2 Black Panther (PL), M1A2 SEPv3, Leopard 2PL, T-72M1R, Borsuk IFV, K9, HIMARS, Krab SPH", "detail": "Largest NATO eastern flank force; massive K2/M1A2 buy; HIMARS expansion"},
+    {"country": "JP", "name": "Japan Ground Self-Defense Force (JGSDF)", "active": 150000, "reserves": 56000, "paramilitary": 12650, "tanks": 524, "ifv_apc": 1077, "artillery": 543, "mlrs": 99, "key_equipment": "Type 10, Type 90, Type 16 MCV, Type 89 IFV, Type 99 SPH, Type 19 wheeled SPH, Type 12 SSM", "detail": "Type 12 SSM with 1500km extended range planned; islands defense; UH-2 utility heli"},
+
+    # ── Major NATO/EU ──
+    {"country": "ES", "name": "Spanish Army (Ejército de Tierra)", "active": 79075, "reserves": 14600, "paramilitary": 75800, "tanks": 327, "ifv_apc": 2340, "artillery": 222, "mlrs": 14, "key_equipment": "Leopard 2A4/2E, Pizarro IFV, BMR, M109A5, MLRS, NH90, Tigre", "detail": "Leopard 2E indigenous variant; Sahel/Iraq deployments; Guardia Civil paramilitary"},
+    {"country": "NL", "name": "Royal Netherlands Army (KL)", "active": 21300, "reserves": 6275, "paramilitary": 5910, "tanks": 18, "ifv_apc": 612, "artillery": 27, "mlrs": 0, "key_equipment": "Leopard 2A6 (leased from Germany), CV9035NL, Boxer, PzH 2000, Fennek scout", "detail": "Tank-light; integrated with German tank battalions; PzH 2000 to Ukraine"},
+    {"country": "BE", "name": "Belgian Land Component", "active": 9550, "reserves": 4750, "paramilitary": 0, "tanks": 0, "ifv_apc": 690, "artillery": 14, "mlrs": 0, "key_equipment": "Piranha IIIC, Dingo 2, Pandur, Mortier 105mm LG", "detail": "No tanks since 2014; CaMo program French Scorpion; light/wheeled focus"},
+    {"country": "DK", "name": "Royal Danish Army", "active": 16500, "reserves": 11400, "paramilitary": 50500, "tanks": 51, "ifv_apc": 240, "artillery": 12, "mlrs": 0, "key_equipment": "Leopard 2A7, CV9035DK, Piranha V, M109A5, Caesar 8×8 (ordered)", "detail": "Donated artillery + Leopard 1 to Ukraine; Caesar SPH ordered; HQ deployed Latvia"},
+    {"country": "NO", "name": "Norwegian Army (Hæren)", "active": 9290, "reserves": 40000, "paramilitary": 0, "tanks": 36, "ifv_apc": 240, "artillery": 24, "mlrs": 12, "key_equipment": "Leopard 2A4NO, K2 Black Panther (54 ordered), CV9030N, K9 Thunder, MLRS (ordered)", "detail": "K2 deal 2023 (€1.65B); Arctic warfare; northern Norway Russian border"},
+    {"country": "FI", "name": "Finnish Army (Maavoimat)", "active": 23800, "reserves": 238000, "paramilitary": 2700, "tanks": 200, "ifv_apc": 1262, "artillery": 700, "mlrs": 109, "key_equipment": "Leopard 2A4/2A6, BMP-2MD, CV9030FIN, Pasi XA-180, K9 Moukari, M270 MLRS", "detail": "Largest reserve mobilization in Europe; long Russia border; 1300km artillery range"},
+    {"country": "SE", "name": "Swedish Army (Armén)", "active": 16000, "reserves": 11200, "paramilitary": 22000, "tanks": 110, "ifv_apc": 904, "artillery": 26, "mlrs": 0, "key_equipment": "Strv 122 (Leopard 2A5), CV9040, Patgb 360 Pansarterrängbil, Archer 8×8 SPH, BvS10", "detail": "Conscript revival; Archer SPH innovative; new NATO member"},
+    {"country": "GR", "name": "Hellenic Army", "active": 93000, "reserves": 220900, "paramilitary": 4000, "tanks": 1244, "ifv_apc": 2100, "artillery": 1920, "mlrs": 152, "key_equipment": "Leopard 2A6 HEL, Leopard 1A5, M48A5, BMP-1, M270 MLRS, PzH 2000, M109A5", "detail": "Largest tank fleet in EU; Aegean defense vs Turkey; conscript backbone"},
+    {"country": "RO", "name": "Romanian Land Forces", "active": 35000, "reserves": 50000, "paramilitary": 79900, "tanks": 437, "ifv_apc": 1545, "artillery": 838, "mlrs": 188, "key_equipment": "TR-85M1 Bizonul, T-55, M1A2 SEPv3 (54 ordered), MLI-84, Piranha V, ATMOS 2000, HIMARS", "detail": "Black Sea NATO; HIMARS deployed; M1A2 acquisition; Russian border"},
+    {"country": "HU", "name": "Hungarian Defence Forces (ground)", "active": 22700, "reserves": 20000, "paramilitary": 12000, "tanks": 44, "ifv_apc": 365, "artillery": 30, "mlrs": 0, "key_equipment": "Leopard 2A7+, T-72M1 (retiring), Lynx KF41, Gidrán 4×4, PzH 2000, BTR-80", "detail": "Lynx KF41 produced locally with Rheinmetall; Leopard 2A7 modernization"},
+    {"country": "CZ", "name": "Czech Land Forces", "active": 24400, "reserves": 4800, "paramilitary": 3100, "tanks": 119, "ifv_apc": 460, "artillery": 90, "mlrs": 0, "key_equipment": "T-72M4CZ, Leopard 2A4 (15 from Germany), CV9030CZ (ordered), Pandur II, DANA SPH", "detail": "Leopard 2A4 from Germany 'ring exchange'; CV90 acquisition; ammo hub for Ukraine"},
+    {"country": "SK", "name": "Slovak Land Forces", "active": 12000, "reserves": 0, "paramilitary": 0, "tanks": 22, "ifv_apc": 327, "artillery": 68, "mlrs": 26, "key_equipment": "T-72M (most donated to Ukraine), BVP-2, Patria AMV (ordered), Zuzana 2 SPH, RM-70 MLRS", "detail": "Zuzana 2 sold to Ukraine; T-72 donated; Leopard 2A4 from Germany; Patria AMV"},
+    {"country": "BG", "name": "Bulgarian Land Forces", "active": 16300, "reserves": 3000, "paramilitary": 1500, "tanks": 90, "ifv_apc": 600, "artillery": 416, "mlrs": 24, "key_equipment": "T-72M1/M2, BMP-1/23, MT-LB, 2S1 Gvozdika, BM-21, Stryker (ordered)", "detail": "Stryker acquisition; Black Sea posture; Soviet-era fleet"},
+    {"country": "PT", "name": "Portuguese Army", "active": 16200, "reserves": 211900, "paramilitary": 24700, "tanks": 37, "ifv_apc": 360, "artillery": 90, "mlrs": 0, "key_equipment": "Leopard 2A6, M60A3 (retired), Pandur II, M113, M114 howitzers, M109A5", "detail": "Leopard 2A6 from Netherlands; expeditionary CAR/Mali; small but capable"},
+    {"country": "AT", "name": "Austrian Land Forces (Bundesheer Heer)", "active": 14800, "reserves": 144900, "paramilitary": 0, "tanks": 56, "ifv_apc": 477, "artillery": 90, "mlrs": 0, "key_equipment": "Leopard 2A4, Ulan IFV, Pandur, M109A5", "detail": "Neutral; conscript-based; militia mobilization; €16B modernization 2024-2032"},
+    {"country": "CH", "name": "Swiss Army", "active": 21000, "reserves": 110000, "paramilitary": 0, "tanks": 134, "ifv_apc": 1041, "artillery": 213, "mlrs": 0, "key_equipment": "Pz 87 Leopard 2 WE (upgraded), Schützenpanzer 2000 (CV90), Piranha IIIC, M109 KAWEST", "detail": "Conscript militia; alpine defense; CV90 indigenous variant; neutrality"},
+    {"country": "HR", "name": "Croatian Land Army", "active": 11250, "reserves": 18343, "paramilitary": 0, "tanks": 75, "ifv_apc": 282, "artillery": 86, "mlrs": 18, "key_equipment": "M-84A4, M-95 Degman, Patria AMV, BVP M-80, PzH 2000 (ordered 12), HIMARS (8 ordered)", "detail": "PzH 2000 + HIMARS NATO upgrade; Patria AMV; Bradley acquisition (89 from US)"},
+    {"country": "SI", "name": "Slovenian Armed Forces (ground)", "active": 5500, "reserves": 1500, "paramilitary": 4400, "tanks": 75, "ifv_apc": 217, "artillery": 18, "mlrs": 0, "key_equipment": "M-84, T-55S1 (retired), Pandur, Patria AMV-XP (ordered), Centauro II, F-2000", "detail": "Boxer 8×8 program; Centauro II from Italy; small Alpine NATO force"},
+    {"country": "EE", "name": "Estonian Land Forces (Maavägi)", "active": 6000, "reserves": 25000, "paramilitary": 12000, "tanks": 0, "ifv_apc": 137, "artillery": 76, "mlrs": 18, "key_equipment": "CV9035EE, K9 Kõu (24 from S.Korea), Patria Pasi, K-300P Bastion (ordered), HIMARS (6 ordered)", "detail": "K9 Korean SPH; HIMARS first Baltic operator; Kaitseliit volunteer corps"},
+    {"country": "LV", "name": "Latvian Land Forces", "active": 7100, "reserves": 5500, "paramilitary": 8000, "tanks": 4, "ifv_apc": 300, "artillery": 47, "mlrs": 6, "key_equipment": "CVR(T) Scimitar/Spartan, ASCOD 2 (ordered), K9 Thunder (47 ordered), HIMARS (6 ordered)", "detail": "K9 Korean SPH; HIMARS acquisition; Zemessardze National Guard; conscription"},
+    {"country": "LT", "name": "Lithuanian Land Forces", "active": 14150, "reserves": 7050, "paramilitary": 14400, "tanks": 0, "ifv_apc": 305, "artillery": 42, "mlrs": 8, "key_equipment": "Boxer Vilkas, M113A2, PzH 2000 (ex-German), Caesar 8×8 (18 ordered), HIMARS (8 ordered)", "detail": "PzH 2000 from Germany; Boxer Vilkas indigenous variant; HIMARS; NATO eFP host"},
+
+    # ── Eurasia & ex-Soviet ──
+    {"country": "UA", "name": "Ukrainian Ground Forces", "active": 850000, "reserves": 900000, "paramilitary": 102000, "tanks": 1200, "ifv_apc": 5000, "artillery": 3500, "mlrs": 360, "key_equipment": "T-72/64BV, T-80BV, T-84 Oplot, Leopard 2A6, Challenger 2, Abrams M1A1, BMP-2, CV90, M2 Bradley, PzH 2000, Caesar, HIMARS, M270, Bohdana", "detail": "Largest land war in Europe since WWII; mixed Western/Soviet inventory; mass mobilization"},
+    {"country": "BY", "name": "Belarus Ground Forces", "active": 45350, "reserves": 289500, "paramilitary": 110000, "tanks": 595, "ifv_apc": 1490, "artillery": 600, "mlrs": 348, "key_equipment": "T-72BM/B3, BMP-2, BMP-3, BTR-80, 2S19 Msta-S, Polonez (Chinese A200), Iskander-M (Russian)", "detail": "Hosts Russian tactical nukes; Wagner group based; Union State Army training"},
+    {"country": "AM", "name": "Armed Forces of Armenia (ground)", "active": 41850, "reserves": 210000, "paramilitary": 4300, "tanks": 109, "ifv_apc": 345, "artillery": 343, "mlrs": 80, "key_equipment": "T-72A/B, BMP-1/2, BTR-70, 2S1 Gvozdika, BM-21, Iskander-E, TOS-1A", "detail": "Heavy losses 2020 Nagorno-Karabakh war; Russian withdrawal; pivoting West"},
+    {"country": "AZ", "name": "Azerbaijani Land Forces", "active": 66950, "reserves": 300000, "paramilitary": 15000, "tanks": 570, "ifv_apc": 1431, "artillery": 740, "mlrs": 230, "key_equipment": "T-90S, T-72M1 (Belarus upgrade), BMP-3, BTR-80A, 2S19 Msta-S, T-122 Sakarya, Lynx, Bayraktar TB2", "detail": "Won 2020 Nagorno-Karabakh war; drone-centric doctrine; Israeli/Turkish supplied"},
+    {"country": "GE", "name": "Georgian Defense Forces (ground)", "active": 20650, "reserves": 0, "paramilitary": 11700, "tanks": 174, "ifv_apc": 137, "artillery": 350, "mlrs": 33, "key_equipment": "T-72-SIM-1, BMP-1/2, Cobra II, ZTS Dana SPH, GRADLAR, RM-70 Vampir", "detail": "Post-2008 reform; NATO partnership; light force; abandoned conscription 2016"},
+    {"country": "MD", "name": "National Army of Moldova", "active": 5150, "reserves": 0, "paramilitary": 2100, "tanks": 0, "ifv_apc": 270, "artillery": 148, "mlrs": 11, "key_equipment": "BMD-1 (limited), TAB-71 (Romanian), 2S9 Nona, BM-21 Grad", "detail": "Smallest in Europe; constitutionally neutral; Transnistria frozen conflict"},
+    {"country": "KZ", "name": "Kazakhstan Ground Forces", "active": 39000, "reserves": 0, "paramilitary": 31500, "tanks": 1240, "ifv_apc": 2000, "artillery": 970, "mlrs": 600, "key_equipment": "T-72BA/B, BTR-80A, BMP-2, 2S5 Hyacinth-S, BM-21, Smerch, Iskander-M (alleged)", "detail": "Largest Central Asian; Russian-trained; Belarus/Ukraine rebalance ongoing"},
+    {"country": "UZ", "name": "Uzbekistan Ground Forces", "active": 38000, "reserves": 0, "paramilitary": 20000, "tanks": 420, "ifv_apc": 715, "artillery": 487, "mlrs": 108, "key_equipment": "T-72, T-64, BMP-2, BTR-80, 2S3 Akatsiya, BM-21, Tochka-U", "detail": "Largest Central Asian by personnel; Russian-supplied; Afghan border"},
+    {"country": "TM", "name": "Turkmenistan Ground Forces", "active": 36500, "reserves": 0, "paramilitary": 0, "tanks": 670, "ifv_apc": 1116, "artillery": 269, "mlrs": 80, "key_equipment": "T-90S, T-72, BMP-1/2, BTR-80, 2S1, BM-21 Grad", "detail": "T-90 acquisition; isolationist neutrality; Iran/Afghan border"},
+    {"country": "KG", "name": "Kyrgyz Land Forces", "active": 8500, "reserves": 0, "paramilitary": 9500, "tanks": 150, "ifv_apc": 387, "artillery": 251, "mlrs": 21, "key_equipment": "T-72, BMP-1/2, BRDM-2, 2S1 Gvozdika, BM-21, Bayraktar TB2 (recent)", "detail": "Tajik border clashes 2022; Bayraktar acquisition; CSTO member"},
+    {"country": "TJ", "name": "Tajik Ground Forces", "active": 7300, "reserves": 0, "paramilitary": 7500, "tanks": 30, "ifv_apc": 33, "artillery": 23, "mlrs": 10, "key_equipment": "T-72, BMP-1, BTR-60/70, BM-21, D-30 howitzer", "detail": "Smallest CSTO; Russian 201st Base hosted; Afghan border"},
+
+    # ── Middle East ──
+    {"country": "SA", "name": "Royal Saudi Land Forces (RSLF)", "active": 75000, "reserves": 25000, "paramilitary": 130000, "tanks": 1062, "ifv_apc": 4900, "artillery": 1135, "mlrs": 270, "key_equipment": "M1A2S Abrams, AMX-30S, M2 Bradley, LAV-25, M109A5, M270 MLRS, ASTROS II, PLZ-45", "detail": "Mixed US/French/Chinese; Yemen ops; SANG separate national guard"},
+    {"country": "AE", "name": "UAE Land Forces", "active": 44000, "reserves": 0, "paramilitary": 0, "tanks": 540, "ifv_apc": 1538, "artillery": 405, "mlrs": 121, "key_equipment": "Leclerc, BMP-3, Patria AMV, NIMR, G6 Rhino SPH, ASTROS II, Caracal", "detail": "Modernized 'Little Sparta'; Yemen ops; expeditionary"},
+    {"country": "IL", "name": "Israel Defence Forces (IDF Ground)", "active": 126000, "reserves": 360000, "paramilitary": 8000, "tanks": 1370, "ifv_apc": 11420, "artillery": 530, "mlrs": 30, "key_equipment": "Merkava Mk IV Barak, Namer APC, Eitan 8×8, Achzarit, M109A5, MARS II MLRS, PULS", "detail": "Highly mechanized; multi-front war (Gaza/Lebanon); Trophy APS innovation"},
+    {"country": "JO", "name": "Royal Jordanian Land Force", "active": 65000, "reserves": 65000, "paramilitary": 15000, "tanks": 390, "ifv_apc": 1250, "artillery": 595, "mlrs": 16, "key_equipment": "Challenger 1 (Al Hussein), M60A3 Phoenix, M109A5, Mistral, Type 90 (Chinese)", "detail": "British-influenced; Iraq/Syria border; KAFAT special ops"},
+    {"country": "IQ", "name": "Iraqi Ground Forces", "active": 193000, "reserves": 0, "paramilitary": 232000, "tanks": 327, "ifv_apc": 2200, "artillery": 245, "mlrs": 33, "key_equipment": "M1A1M Abrams, T-72M1, BMP-1, BTR-94, M109A5, BM-21, Hawkei (Australian)", "detail": "Post-ISIS rebuild; PMF (Hashd) parallel; Iran-aligned militias"},
+    {"country": "KW", "name": "Kuwait Army", "active": 17500, "reserves": 23700, "paramilitary": 7100, "tanks": 218, "ifv_apc": 633, "artillery": 218, "mlrs": 27, "key_equipment": "M1A2K Abrams, BMP-3, Desert Warrior, M109A5, Smerch", "detail": "Small but advanced; US ally; M1A2K Abrams; Iraqi border"},
+    {"country": "QA", "name": "Qatar Land Force", "active": 12000, "reserves": 0, "paramilitary": 5000, "tanks": 90, "ifv_apc": 730, "artillery": 100, "mlrs": 4, "key_equipment": "Leopard 2A7, AMX-30 (retired), VBCI, AMX-10P, PzH 2000, ASTROS II", "detail": "Leopard 2A7 buyer; small but rich; gas field defense"},
+    {"country": "OM", "name": "Royal Army of Oman", "active": 25000, "reserves": 0, "paramilitary": 4400, "tanks": 117, "ifv_apc": 351, "artillery": 233, "mlrs": 0, "key_equipment": "M60A3, Challenger 2 OM, Piranha, M109A5, FH-77B howitzer", "detail": "British-trained; Hormuz Strait; Yemeni border; Royal Guard separate"},
+    {"country": "BH", "name": "Royal Bahraini Army", "active": 8500, "reserves": 0, "paramilitary": 11000, "tanks": 180, "ifv_apc": 290, "artillery": 100, "mlrs": 9, "key_equipment": "M60A3 TTS, M113, AIFV-B-C25, M109A5, ASTROS II", "detail": "Small US ally; royal protection; 5th Fleet host"},
+    {"country": "LB", "name": "Lebanese Armed Forces (ground)", "active": 60000, "reserves": 0, "paramilitary": 20000, "tanks": 357, "ifv_apc": 1244, "artillery": 235, "mlrs": 25, "key_equipment": "M48A5 Patton, T-54/55, M113, Marder (donated), M198, M109A5, BM-21", "detail": "US/French aid; Hezbollah parallel structure; economic crisis"},
+    {"country": "YE", "name": "Yemen Armed Forces (govt + factional)", "active": 80000, "reserves": 0, "paramilitary": 71200, "tanks": 700, "ifv_apc": 1150, "artillery": 1100, "mlrs": 295, "key_equipment": "T-55/72, M60A1, BMP-2, BTR-60, BM-21, 2S1, Houthi captured Russian/Chinese mix", "detail": "Civil war fragmented; Houthi-controlled north; Saudi-backed govt south"},
+    {"country": "AF", "name": "Afghanistan Armed Forces (Taliban Islamic Emirate)", "active": 150000, "reserves": 0, "paramilitary": 0, "tanks": 175, "ifv_apc": 700, "artillery": 240, "mlrs": 0, "key_equipment": "T-55/62 (limited), M113 (US legacy), Humvee, M-30/M-20 howitzers, captured Western gear", "detail": "US-supplied legacy fleet; ISKP counter-insurgency; women excluded"},
+
+    # ── Africa ──
+    {"country": "DZ", "name": "Algerian People's National Army (ground)", "active": 130000, "reserves": 150000, "paramilitary": 187200, "tanks": 880, "ifv_apc": 2030, "artillery": 1000, "mlrs": 282, "key_equipment": "T-90SA, T-72M, BMP-2, BTR-80, 2S3 Akatsiya, BM-30 Smerch, Iskander-E", "detail": "Africa's largest; Russian-equipped; Sahel border security; Mali tensions"},
+    {"country": "MA", "name": "Royal Moroccan Army (FAR ground)", "active": 175000, "reserves": 150000, "paramilitary": 50000, "tanks": 894, "ifv_apc": 1668, "artillery": 1226, "mlrs": 92, "key_equipment": "M1A2 SEPv3 Abrams (delivering), M60A3, VAB, Ratel, M109A5, ATMOS 2000", "detail": "M1A2 acquisition; Western Sahara walls; US/French/Israeli equipped"},
+    {"country": "ET", "name": "Ethiopian National Defence Force (ground)", "active": 162000, "reserves": 0, "paramilitary": 75000, "tanks": 400, "ifv_apc": 600, "artillery": 700, "mlrs": 50, "key_equipment": "T-72, T-62, T-55, BMP-1, BRDM, 2S1 Gvozdika, BM-21, BM-30 (limited)", "detail": "Tigray war legacy; Eritrea/Sudan tensions; Russian-equipped"},
+    {"country": "ER", "name": "Eritrean Ground Forces", "active": 200000, "reserves": 120000, "paramilitary": 0, "tanks": 270, "ifv_apc": 100, "artillery": 250, "mlrs": 75, "key_equipment": "T-54/55, T-72, BMP-1, BTR-152, D-30, BM-21", "detail": "Massive conscription; 'Africa's North Korea'; Tigray war participant"},
+    {"country": "NG", "name": "Nigerian Army", "active": 130000, "reserves": 0, "paramilitary": 82000, "tanks": 286, "ifv_apc": 956, "artillery": 339, "mlrs": 21, "key_equipment": "T-72, Vickers Mk 3, Type 69-II, AML-90, VT-4 (ordered), Otokar Cobra, BMP-3", "detail": "Boko Haram counter-insurgency; ECOWAS lead; VT-4 Chinese MBT acquisition"},
+    {"country": "ZA", "name": "South African National Defence Force (army)", "active": 40250, "reserves": 12000, "paramilitary": 0, "tanks": 195, "ifv_apc": 1750, "artillery": 191, "mlrs": 65, "key_equipment": "Olifant Mk 2, Ratel IFV, Mamba APC, G6 Rhino SPH, Bateleur MLRS, Badger (Hoefyster)", "detail": "Aging equipment; capability decline; G6 SPH exports"},
+    {"country": "AO", "name": "Angolan Army", "active": 100000, "reserves": 0, "paramilitary": 10000, "tanks": 350, "ifv_apc": 530, "artillery": 970, "mlrs": 99, "key_equipment": "T-72M, T-62, BMP-1/2, BMP-3, BTR-80, 2S1, BM-21, BM-27 Uragan", "detail": "Largest in central Africa; Soviet legacy; Cabinda enclave; Cuban legacy"},
+    {"country": "SD", "name": "Sudanese Armed Forces (SAF)", "active": 102500, "reserves": 0, "paramilitary": 70000, "tanks": 460, "ifv_apc": 410, "artillery": 778, "mlrs": 660, "key_equipment": "T-72AV, Type 96, Type 85, BMP-2, BTR-80, 2S1, BM-21, WS-2 (Chinese MLRS)", "detail": "Active civil war vs RSF; UAE/Egypt backing; air support critical"},
+    {"country": "TN", "name": "Tunisian Army", "active": 27000, "reserves": 12000, "paramilitary": 12000, "tanks": 84, "ifv_apc": 530, "artillery": 217, "mlrs": 0, "key_equipment": "M60A3 Patton, AML-90, M113, M109A5, M114 howitzer", "detail": "US-trained; Libya border; ISIS counter-terror in Sahel"},
+    {"country": "LY", "name": "Libyan Forces (GNU/LNA split)", "active": 35000, "reserves": 0, "paramilitary": 0, "tanks": 150, "ifv_apc": 1000, "artillery": 500, "mlrs": 60, "key_equipment": "T-72, T-55, BMP-1, BM-21 Grad, M114 howitzer, mixed Russian/Egyptian/Turkish supply", "detail": "Civil war fragmented; GNU (Tripoli) vs LNA (Tobruk); Wagner/UAE/Turkish proxies"},
+    {"country": "KE", "name": "Kenya Defence Forces (army)", "active": 24100, "reserves": 0, "paramilitary": 0, "tanks": 78, "ifv_apc": 282, "artillery": 64, "mlrs": 0, "key_equipment": "Vickers Mk 3, Cadillac Gage Stingray, Panhard AML, M-46 130mm, Bofors L40", "detail": "Al-Shabaab counter-terror in Somalia; British-trained; AMISOM lead"},
+    {"country": "TZ", "name": "Tanzania People's Defence Force (army)", "active": 23000, "reserves": 80000, "paramilitary": 1400, "tanks": 60, "ifv_apc": 80, "artillery": 200, "mlrs": 75, "key_equipment": "Type 59 (Chinese), Type 62, BTR-152, Type 63 SPG, BM-21, JN-45 SPH (Chinese)", "detail": "Chinese-supplied; SADC peacekeeping; Mozambique deployment"},
+    {"country": "UG", "name": "Uganda People's Defence Force (army)", "active": 45000, "reserves": 10000, "paramilitary": 1800, "tanks": 239, "ifv_apc": 92, "artillery": 252, "mlrs": 12, "key_equipment": "T-90S, T-72M1, T-55, BMP-2, BTR-60, D-30, BM-21", "detail": "T-90 only sub-Saharan operator (with Uganda); ADF/DRC ops; AMISOM"},
+    {"country": "RW", "name": "Rwanda Defence Force (RDF ground)", "active": 33000, "reserves": 0, "paramilitary": 2000, "tanks": 50, "ifv_apc": 200, "artillery": 95, "mlrs": 16, "key_equipment": "T-55, T-72 (limited), BMP, RG-31 Nyala, D-30, BM-21", "detail": "Mozambique counter-insurgency; DRC tensions; well-trained for size"},
+    {"country": "GH", "name": "Ghana Army", "active": 11500, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 138, "artillery": 84, "mlrs": 0, "key_equipment": "Tarantula, MOWAG Piranha, Ratel, M-46 130mm, ZPU-2 AAA", "detail": "Light force; ECOWAS lead; UN peacekeeping (Mali, CAR, Lebanon)"},
+    {"country": "SN", "name": "Senegalese Army", "active": 13800, "reserves": 0, "paramilitary": 5000, "tanks": 0, "ifv_apc": 235, "artillery": 30, "mlrs": 0, "key_equipment": "AML-60/90, M3 Panhard, PT-76, M-101 howitzer, Mistral SAM", "detail": "Light expeditionary; ECOMIG Gambia; UN peacekeeping; French training"},
+    {"country": "CI", "name": "Côte d'Ivoire Army", "active": 22000, "reserves": 12000, "paramilitary": 1500, "tanks": 10, "ifv_apc": 41, "artillery": 36, "mlrs": 6, "key_equipment": "T-55, AMX-13, Mamba APC, BTR-80, M-3, BM-21", "detail": "Post-civil war rebuild; French support; ECOWAS member"},
+    {"country": "CM", "name": "Cameroonian Army", "active": 14200, "reserves": 0, "paramilitary": 9000, "tanks": 80, "ifv_apc": 250, "artillery": 100, "mlrs": 6, "key_equipment": "Type 63 (Chinese), T-55, V-150, Ratel, M101, RM-70 MLRS", "detail": "Boko Haram operations; Anglophone crisis; French/Chinese mix"},
+    {"country": "TD", "name": "Chad National Army (ANT)", "active": 35000, "reserves": 0, "paramilitary": 9500, "tanks": 60, "ifv_apc": 230, "artillery": 5, "mlrs": 0, "key_equipment": "T-55, AML-60/90, BMP-1, ERC-90, mortars", "detail": "G5 Sahel core; counter-Boko Haram; French support; rebel pressure"},
+    {"country": "NE", "name": "Nigerien Armed Forces", "active": 12000, "reserves": 0, "paramilitary": 5400, "tanks": 0, "ifv_apc": 180, "artillery": 17, "mlrs": 0, "key_equipment": "AML-60/90, BTR-3, RG-31, M-3 howitzer, mortars", "detail": "2023 coup; French withdrawal; Wagner replacement; Sahel jihadist threats"},
+    {"country": "ML", "name": "Malian Armed Forces (FAMa)", "active": 13000, "reserves": 0, "paramilitary": 7800, "tanks": 33, "ifv_apc": 175, "artillery": 26, "mlrs": 4, "key_equipment": "T-55, T-72 (Russian-supplied), BTR-60/152, BMP-1, BM-21, Su-25 air support", "detail": "Coup junta; Wagner-supported; Russia pivot; jihadist insurgency"},
+    {"country": "BF", "name": "Burkina Faso Armed Forces", "active": 12000, "reserves": 0, "paramilitary": 250, "tanks": 0, "ifv_apc": 90, "artillery": 18, "mlrs": 0, "key_equipment": "AML-90, EE-9, M3 Panhard, mortars, Volunteer Defenders (VDP)", "detail": "Coup junta; AES alliance with Mali/Niger; jihadist crisis; Russian pivot"},
+    {"country": "MR", "name": "Mauritanian Army", "active": 16000, "reserves": 0, "paramilitary": 5000, "tanks": 35, "ifv_apc": 75, "artillery": 220, "mlrs": 0, "key_equipment": "T-55, T-54, AML-60/90, M101, D-74, mortars", "detail": "G5 Sahel; AQIM border ops; French training; small but stable"},
+    {"country": "BJ", "name": "Beninese Armed Forces", "active": 7000, "reserves": 0, "paramilitary": 2500, "tanks": 0, "ifv_apc": 32, "artillery": 12, "mlrs": 0, "key_equipment": "M-8 Greyhound, BTR-60, BRDM-2, mortars", "detail": "Northern jihadist threats; small force; ECOWAS member"},
+    {"country": "TG", "name": "Togolese Armed Forces", "active": 8550, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 68, "artillery": 4, "mlrs": 0, "key_equipment": "M-8, AML-90, EE-9 Cascavel, EE-3 Jararaca, mortars", "detail": "Northern jihadist spillover; ECOMOG legacy"},
+    {"country": "GA", "name": "Gabonese Armed Forces", "active": 6500, "reserves": 0, "paramilitary": 2000, "tanks": 0, "ifv_apc": 70, "artillery": 4, "mlrs": 0, "key_equipment": "AML-60/90, EE-9, VAB, mortars, Mistral SAM", "detail": "2023 coup; French training; small Gulf of Guinea force"},
+    {"country": "CG", "name": "Republic of Congo Army", "active": 8000, "reserves": 0, "paramilitary": 2000, "tanks": 25, "ifv_apc": 80, "artillery": 20, "mlrs": 4, "key_equipment": "T-54/55, T-34 (legacy), BTR-152, BTR-60, D-30, BM-21", "detail": "Brazzaville; Russian/Cuban legacy"},
+    {"country": "CD", "name": "Armed Forces of the DR Congo (FARDC)", "active": 134000, "reserves": 0, "paramilitary": 0, "tanks": 153, "ifv_apc": 252, "artillery": 158, "mlrs": 24, "key_equipment": "T-72, T-55, PT-76, BMP-1, BTR-60, D-30, BM-21, Wagner support", "detail": "M23/Rwanda war; Wagner instructors; vast eastern conflict zones"},
+    {"country": "CF", "name": "Central African Armed Forces (FACA)", "active": 8150, "reserves": 0, "paramilitary": 1000, "tanks": 0, "ifv_apc": 39, "artillery": 0, "mlrs": 0, "key_equipment": "BRDM-2, ACMAT VLRA, technicals, Wagner support", "detail": "Wagner-stabilized; rebel groups; small French legacy force"},
+    {"country": "SS", "name": "South Sudan People's Defence Force", "active": 185000, "reserves": 0, "paramilitary": 0, "tanks": 110, "ifv_apc": 130, "artillery": 60, "mlrs": 13, "key_equipment": "T-72, T-55, BMP-1, BTR-80, BM-21 Grad, mortars (Ukrainian/Belarusian-supplied)", "detail": "Civil war veterans; oil-funded; Sudan border; Israeli-trained elite"},
+    {"country": "MZ", "name": "Mozambique Armed Defence Forces", "active": 11200, "reserves": 0, "paramilitary": 0, "tanks": 80, "ifv_apc": 140, "artillery": 110, "mlrs": 0, "key_equipment": "T-55, BMP-1, BTR-60/152, D-30, BM-21 (limited)", "detail": "Cabo Delgado ISIS-Mozambique; SADC/Rwanda support"},
+    {"country": "ZW", "name": "Zimbabwe Defence Forces", "active": 30000, "reserves": 0, "paramilitary": 21800, "tanks": 40, "ifv_apc": 280, "artillery": 230, "mlrs": 60, "key_equipment": "Type 59 (Chinese), Type 69, BTR-152, EE-9, RM-70, BM-21", "detail": "Chinese-trained; aging Russian/Chinese mix; SADC peacekeeping"},
+    {"country": "ZM", "name": "Zambia Army", "active": 13500, "reserves": 0, "paramilitary": 1400, "tanks": 75, "ifv_apc": 70, "artillery": 95, "mlrs": 50, "key_equipment": "T-54/55, Type 59, BTR-60, D-30, BM-21", "detail": "Light infantry; Chinese-supplied; landlocked SADC"},
+    {"country": "BW", "name": "Botswana Defence Force", "active": 9000, "reserves": 0, "paramilitary": 0, "tanks": 26, "ifv_apc": 85, "artillery": 18, "mlrs": 0, "key_equipment": "SK-105 Kürassier, RAM-2000, V-150 Commando, M-110A2 (retired)", "detail": "Small but professional; anti-poaching; Mozambique deployment"},
+    {"country": "NA", "name": "Namibian Army", "active": 9200, "reserves": 0, "paramilitary": 6000, "tanks": 12, "ifv_apc": 25, "artillery": 67, "mlrs": 5, "key_equipment": "T-34 (legacy), T-54 (limited), BTR-60, Casspir, D-30, BM-21", "detail": "Small post-independence force; SADC member; anti-poaching"},
+
+    # ── Asia (additional) ──
+    {"country": "ID", "name": "Indonesian Army (TNI-AD)", "active": 300000, "reserves": 400000, "paramilitary": 280000, "tanks": 332, "ifv_apc": 1430, "artillery": 800, "mlrs": 86, "key_equipment": "Leopard 2RI, AMX-13, Marder 1A3 (German-supplied), Pindad Anoa 6×6, Caesar, ASTROS II, RM-70 Vampir", "detail": "Largest in SE Asia; KOSTRAD strike force; Papua/Aceh ops"},
+    {"country": "TH", "name": "Royal Thai Army", "active": 245000, "reserves": 200000, "paramilitary": 113700, "tanks": 805, "ifv_apc": 1350, "artillery": 2473, "mlrs": 60, "key_equipment": "VT-4 (Chinese), M60A3, T-84 Oplot-T, BTR-3E1, M109A5, ATMOS 2000, WS-1B (Chinese MLRS)", "detail": "Junta-influenced; China pivot (VT-4); Myanmar border tensions"},
+    {"country": "MY", "name": "Malaysian Army (TDM)", "active": 80000, "reserves": 51600, "paramilitary": 24600, "tanks": 48, "ifv_apc": 1170, "artillery": 414, "mlrs": 36, "key_equipment": "PT-91M Pendekar, Adnan IFV, Condor, AV8 Gempita, ASTROS II, FH-2000", "detail": "Conscription suspended; Sabah ESSCOM ops; mixed inventory"},
+    {"country": "PH", "name": "Philippine Army", "active": 100000, "reserves": 100000, "paramilitary": 40000, "tanks": 26, "ifv_apc": 760, "artillery": 282, "mlrs": 12, "key_equipment": "Sabrah light tank (Israeli), M113A2, V-150 Commando, M-101A1, ATMOS 2000, BrahMos (ordered)", "detail": "BrahMos first ASEAN buyer; Mindanao counter-insurgency; SCS posture"},
+    {"country": "MM", "name": "Myanmar Army (Tatmadaw Kyi)", "active": 350000, "reserves": 0, "paramilitary": 107250, "tanks": 555, "ifv_apc": 1380, "artillery": 1700, "mlrs": 80, "key_equipment": "T-72S, T-55, MBT-2000 (Chinese), BTR-3, BTR-80, M-46 130mm, BM-21, SH-1 SPH", "detail": "Civil war; PDF/EAOs resistance; Russian/Chinese supply; junta rule"},
+    {"country": "BD", "name": "Bangladesh Army", "active": 160000, "reserves": 0, "paramilitary": 63900, "tanks": 320, "ifv_apc": 535, "artillery": 1335, "mlrs": 70, "key_equipment": "MBT-2000 (Chinese), Type 69, Type 59, BTR-80, Otokar Cobra, WS-22 MLRS", "detail": "UN peacekeeping leader; Forces Goal 2030; Chinese-supplied"},
+    {"country": "LK", "name": "Sri Lanka Army", "active": 200000, "reserves": 5500, "paramilitary": 11000, "tanks": 122, "ifv_apc": 339, "artillery": 921, "mlrs": 22, "key_equipment": "T-55AM2, Type 69-II, Type 63, BMP-1/2, RM-70, Type 81 SPH", "detail": "Post-LTTE downsizing; financial crisis; Indian/Chinese balancing"},
+    {"country": "NP", "name": "Nepal Army", "active": 96800, "reserves": 0, "paramilitary": 92000, "tanks": 0, "ifv_apc": 165, "artillery": 95, "mlrs": 0, "key_equipment": "WZ-551, Casspir, M114, M101 howitzers, mortars", "detail": "UN peacekeeping major contributor; Maoist legacy; non-aligned"},
+    {"country": "KH", "name": "Royal Cambodian Army", "active": 75000, "reserves": 0, "paramilitary": 67000, "tanks": 200, "ifv_apc": 224, "artillery": 428, "mlrs": 30, "key_equipment": "T-54/55, Type 59, BMP-1, BTR-60, D-30, BM-21, Type 90 (Chinese)", "detail": "Chinese-supplied; Ream Naval Base controversy; border with Thailand"},
+    {"country": "LA", "name": "Lao People's Armed Forces", "active": 29100, "reserves": 0, "paramilitary": 100000, "tanks": 130, "ifv_apc": 70, "artillery": 100, "mlrs": 9, "key_equipment": "T-72B (Russian-supplied recently), T-54/55, PT-76, BMP-1, M-46, BM-21", "detail": "T-72B acquisition; Vietnam-aligned; Mekong river ops"},
+    {"country": "BT", "name": "Royal Bhutan Army", "active": 8000, "reserves": 0, "paramilitary": 1000, "tanks": 0, "ifv_apc": 0, "artillery": 12, "mlrs": 0, "key_equipment": "Mortars, light arms, rifles; trained by India", "detail": "India-trained; landlocked; small Doklam border"},
+    {"country": "BN", "name": "Royal Brunei Land Force", "active": 4900, "reserves": 700, "paramilitary": 2250, "tanks": 0, "ifv_apc": 90, "artillery": 24, "mlrs": 0, "key_equipment": "VAB, Black Hawk for transport, mortars, light arms", "detail": "Tiny but well-funded oil state; British/Singapore ties"},
+    {"country": "TL", "name": "Timor-Leste Defence Force", "active": 2200, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 0, "artillery": 0, "mlrs": 0, "key_equipment": "Light arms, patrol boats, F-FDTL", "detail": "Post-independence; Portuguese/Australian support; tiny coastal force"},
+    {"country": "MV", "name": "Maldives National Defence Force", "active": 4000, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 6, "artillery": 0, "mlrs": 0, "key_equipment": "Light arms, patrol boats, helicopters; Indian-trained", "detail": "Coast guard role primary; Indian Ocean security; pro-China shift"},
+    {"country": "MN", "name": "Mongolian Armed Forces", "active": 9700, "reserves": 137000, "paramilitary": 7500, "tanks": 480, "ifv_apc": 320, "artillery": 760, "mlrs": 130, "key_equipment": "T-72A, T-55, BMP-1, BTR-60, D-30, BM-21 Grad", "detail": "Steppe Eagle exercise; Russian-supplied; small but extensive equipment"},
+
+    # ── Latin America ──
+    {"country": "MX", "name": "Mexican Army (SEDENA Ground)", "active": 217000, "reserves": 81000, "paramilitary": 0, "tanks": 0, "ifv_apc": 1295, "artillery": 165, "mlrs": 0, "key_equipment": "DN-XI Caballo, Sandcat, M-37, M101 howitzer, Otomelara 105mm", "detail": "Cartel war; National Guard separate (paramilitary); no MBTs"},
+    {"country": "AR", "name": "Argentine Army (Ejército Argentino)", "active": 41000, "reserves": 0, "paramilitary": 31250, "tanks": 269, "ifv_apc": 587, "artillery": 285, "mlrs": 4, "key_equipment": "TAM 2C, M113A2, AMX-13, Patagón, M101 105mm, CITER 155mm", "detail": "Indigenous TAM medium tank; Falklands legacy; rebuilding capability"},
+    {"country": "CL", "name": "Chilean Army (Ejército de Chile)", "active": 45478, "reserves": 0, "paramilitary": 60500, "tanks": 322, "ifv_apc": 1230, "artillery": 350, "mlrs": 12, "key_equipment": "Leopard 2A4 CHL, Marder 1A3, Piranha IIIC, M109A5, LAR-160 (Israeli MLRS)", "detail": "Most modernized in S.America; Leopard 2A4; mountain warfare"},
+    {"country": "PE", "name": "Peruvian Army (EP)", "active": 75000, "reserves": 188000, "paramilitary": 77000, "tanks": 320, "ifv_apc": 470, "artillery": 470, "mlrs": 24, "key_equipment": "T-55, T-54, AMX-13, BMP-1, BTR-60, M101, M-46, BM-21 Grad", "detail": "Sendero Luminoso legacy; Russian/Chinese mix; modernization stalled"},
+    {"country": "CO", "name": "Colombian National Army", "active": 235000, "reserves": 35000, "paramilitary": 158000, "tanks": 0, "ifv_apc": 1010, "artillery": 130, "mlrs": 0, "key_equipment": "Cascavel, M113A2, Hummer, M101, M-30 howitzer", "detail": "FARC/ELN/cartels counter-insurgency; US-trained; no MBTs (Andes terrain)"},
+    {"country": "VE", "name": "Bolivarian Army of Venezuela", "active": 63000, "reserves": 220000, "paramilitary": 220000, "tanks": 178, "ifv_apc": 480, "artillery": 376, "mlrs": 25, "key_equipment": "T-72B1V, AMX-30V, BMP-3M, BTR-80A, 2S19 Msta, Smerch, BM-21", "detail": "Russian rebuild; Maduro regime; sanctions impact; Guyana Esequibo claims"},
+    {"country": "EC", "name": "Ecuadorian Army", "active": 24750, "reserves": 0, "paramilitary": 100, "tanks": 75, "ifv_apc": 184, "artillery": 290, "mlrs": 6, "key_equipment": "AMX-13, EE-9 Cascavel, M-114, M-198 howitzer, mortars", "detail": "Internal armed conflict 2024 (cartels); state of emergency ops"},
+    {"country": "BO", "name": "Bolivian Army", "active": 26000, "reserves": 0, "paramilitary": 37100, "tanks": 0, "ifv_apc": 167, "artillery": 132, "mlrs": 0, "key_equipment": "EE-9 Cascavel, V-150, M101, mortars", "detail": "Conscription; coca eradication; Chinese-supplied"},
+    {"country": "UY", "name": "Uruguayan Army (Ejército Nacional)", "active": 14500, "reserves": 0, "paramilitary": 800, "tanks": 35, "ifv_apc": 175, "artillery": 75, "mlrs": 0, "key_equipment": "Tiran-5 (Israeli), M24 Chaffee, M113, Otokar Cobra, M101", "detail": "UN peacekeeping (DRC, Haiti); small professional"},
+    {"country": "PY", "name": "Paraguayan Army", "active": 7600, "reserves": 0, "paramilitary": 14800, "tanks": 12, "ifv_apc": 30, "artillery": 109, "mlrs": 0, "key_equipment": "M-4 Sherman (museum), EE-9 Cascavel, M-101 howitzer", "detail": "Tiny force; Chaco region; Brazil/Argentina balanced"},
+    {"country": "CU", "name": "Cuban Revolutionary Armed Forces (army)", "active": 38000, "reserves": 39000, "paramilitary": 26500, "tanks": 900, "ifv_apc": 700, "artillery": 1700, "mlrs": 175, "key_equipment": "T-72M, T-62, T-55, BMP-1, BTR-60, D-30, BM-21", "detail": "Aging Soviet legacy; sanctions impact maintenance; large reserves"},
+    {"country": "DO", "name": "Dominican Army (Ejército)", "active": 28000, "reserves": 0, "paramilitary": 15000, "tanks": 0, "ifv_apc": 36, "artillery": 28, "mlrs": 0, "key_equipment": "Cadillac Gage Commando, M3 Stuart (museum), M101 howitzer", "detail": "Haitian border crisis; UN peacekeeping; small US-aligned"},
+    {"country": "GT", "name": "Guatemalan Army", "active": 17000, "reserves": 0, "paramilitary": 25000, "tanks": 0, "ifv_apc": 65, "artillery": 76, "mlrs": 0, "key_equipment": "M8 Greyhound (museum), V-150, M101 howitzer", "detail": "Counter-narcotics; Mexico border; small force"},
+    {"country": "HN", "name": "Honduran Army", "active": 8000, "reserves": 60000, "paramilitary": 8000, "tanks": 12, "ifv_apc": 16, "artillery": 45, "mlrs": 0, "key_equipment": "Scorpion light tank, RBY Mk1, M101 howitzer", "detail": "Counter-narcotics; gang violence; US-aligned"},
+    {"country": "NI", "name": "Nicaraguan Army", "active": 12000, "reserves": 0, "paramilitary": 0, "tanks": 127, "ifv_apc": 166, "artillery": 800, "mlrs": 33, "key_equipment": "T-72B1, T-55, BTR-60, BMP-1, D-30, BM-21", "detail": "Russian-supplied; Ortega regime; recent T-72B1 acquisition"},
+    {"country": "SV", "name": "Salvadoran Army", "active": 20500, "reserves": 0, "paramilitary": 17000, "tanks": 0, "ifv_apc": 70, "artillery": 102, "mlrs": 0, "key_equipment": "AML-90, M37, M114 howitzer, mortars", "detail": "Bukele anti-gang state of exception; small force"},
+    {"country": "GY", "name": "Guyana Defence Force", "active": 3400, "reserves": 670, "paramilitary": 0, "tanks": 0, "ifv_apc": 9, "artillery": 6, "mlrs": 0, "key_equipment": "Shorland S-55, M-46 130mm (limited)", "detail": "Tiny force; Esequibo dispute with Venezuela; oil-driven expansion"},
+    {"country": "SR", "name": "Suriname National Army", "active": 1840, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 12, "artillery": 0, "mlrs": 0, "key_equipment": "EE-9 Cascavel, EE-11 Urutu, mortars", "detail": "Tiny; Dutch legacy; Atlantic coast"},
+    {"country": "TT", "name": "Trinidad and Tobago Defence Force", "active": 4063, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 0, "artillery": 0, "mlrs": 0, "key_equipment": "Light arms, patrol boats, helicopters", "detail": "Coast guard primary role; oil state security"},
+
+    # ── Oceania ──
+    {"country": "AU", "name": "Australian Army", "active": 30700, "reserves": 19425, "paramilitary": 0, "tanks": 59, "ifv_apc": 1100, "artillery": 60, "mlrs": 12, "key_equipment": "M1A1 SA Abrams (M1A2 SEPv3 ordered), Boxer CRV, AS21 Redback (ordered), M777A2, HIMARS (ordered)", "detail": "AUKUS pillar; Project Land 400 modernization; HIMARS acquisition"},
+    {"country": "NZ", "name": "New Zealand Army", "active": 4500, "reserves": 1900, "paramilitary": 0, "tanks": 0, "ifv_apc": 105, "artillery": 24, "mlrs": 0, "key_equipment": "NZLAV (LAV III), Bushmaster PMV, L118 105mm Light Gun, mortars", "detail": "No tanks; light expeditionary; Pacific peacekeeping"},
+    {"country": "FJ", "name": "Republic of Fiji Military Forces", "active": 3500, "reserves": 6000, "paramilitary": 0, "tanks": 0, "ifv_apc": 7, "artillery": 0, "mlrs": 0, "key_equipment": "Light arms, mortars, BTR-50 (limited), Chinese supplied", "detail": "UN peacekeeping (Sinai, Iraq, Lebanon); China/Australia balancing"},
+    {"country": "PG", "name": "Papua New Guinea Defence Force", "active": 3600, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 8, "artillery": 0, "mlrs": 0, "key_equipment": "Light arms, patrol boats, Bushmaster (Australian-supplied)", "detail": "Tiny force; Australian assistance; tribal security focus"},
+
+    # ── Other smaller forces (selected) ──
+    {"country": "AL", "name": "Albanian Land Forces", "active": 6500, "reserves": 0, "paramilitary": 500, "tanks": 0, "ifv_apc": 30, "artillery": 30, "mlrs": 0, "key_equipment": "T-55 (retired), BTR-60, M-30 howitzer, mortars", "detail": "NATO member; light force; modernization underway"},
+    {"country": "BA", "name": "Armed Forces of Bosnia and Herzegovina", "active": 9200, "reserves": 5000, "paramilitary": 0, "tanks": 70, "ifv_apc": 130, "artillery": 230, "mlrs": 22, "key_equipment": "M-84, T-55, M113, BVP M-80, M-109A5, M-46, M-65, BM-21", "detail": "Post-Dayton; multi-ethnic; NATO partnership; large legacy stocks"},
+    {"country": "MK", "name": "Army of the Republic of North Macedonia", "active": 8000, "reserves": 4850, "paramilitary": 0, "tanks": 31, "ifv_apc": 184, "artillery": 144, "mlrs": 0, "key_equipment": "T-72A (Ukraine donation), BTR-70, M113, M-30, MT-LB, JLTV (US supplied)", "detail": "Newest NATO member; Stryker acquisition; donated T-72 to Ukraine"},
+    {"country": "ME", "name": "Armed Forces of Montenegro", "active": 2350, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 6, "artillery": 12, "mlrs": 0, "key_equipment": "M93 howitzer, MORS mortars, Oshkosh M-ATV", "detail": "NATO member; tiny force; coastal defense"},
+    {"country": "RS", "name": "Serbian Army (Vojska Srbije ground)", "active": 28150, "reserves": 50150, "paramilitary": 0, "tanks": 232, "ifv_apc": 590, "artillery": 410, "mlrs": 130, "key_equipment": "M-84A4, T-72, BVP M-80, Lazar 3, NORA-B52, OGANJ M-77, FK-3 (HQ-22)", "detail": "Largest in Balkans; Russian/Chinese SAMs; non-NATO neutral"},
+    {"country": "XK", "name": "Kosovo Security Force", "active": 3000, "reserves": 800, "paramilitary": 0, "tanks": 0, "ifv_apc": 51, "artillery": 12, "mlrs": 0, "key_equipment": "Bayraktar TB2 (ordered), JLTV, mortars, M119 105mm", "detail": "Transitioning to army; KFOR-mentored; Serbia tensions; TB2 drone acquisition"},
+    {"country": "CY", "name": "Cyprus National Guard", "active": 12000, "reserves": 50000, "paramilitary": 750, "tanks": 134, "ifv_apc": 396, "artillery": 234, "mlrs": 12, "key_equipment": "T-80U, AMX-30B2, BMP-3, VAB, M114, M109A5, BM-21", "detail": "Conscription; T-80U largest in Europe outside Russia; Buffer Zone"},
+    {"country": "MT", "name": "Armed Forces of Malta", "active": 1950, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 0, "artillery": 0, "mlrs": 0, "key_equipment": "Light arms, patrol boats, Skyranger AAA", "detail": "Tiny force; coast guard primary; EU member"},
+    {"country": "IS", "name": "Iceland Coast Guard (no army)", "active": 250, "reserves": 0, "paramilitary": 0, "tanks": 0, "ifv_apc": 0, "artillery": 0, "mlrs": 0, "key_equipment": "Patrol vessels, Bombardier Dash 8 Q300, AS332 Super Puma", "detail": "No standing army; NATO airbase Keflavík; coast guard only"},
+    {"country": "IE", "name": "Irish Defence Forces (army)", "active": 7300, "reserves": 1700, "paramilitary": 0, "tanks": 0, "ifv_apc": 80, "artillery": 12, "mlrs": 0, "key_equipment": "Mowag Piranha III, RG-32M Galten, L118 105mm Light Gun", "detail": "Neutral; UN peacekeeping; light infantry; no air defense"},
+    {"country": "LU", "name": "Luxembourg Army", "active": 900, "reserves": 0, "paramilitary": 612, "tanks": 0, "ifv_apc": 48, "artillery": 0, "mlrs": 0, "key_equipment": "Dingo 2, Hummer, light arms", "detail": "Tiny NATO; reconnaissance/light infantry; Eurocorps"},
+]
+
+
 # ═══════════════ WORLD AIR FORCES ═══════════════
 # Key data for major air forces worldwide (inventory estimates from open sources)
 WORLD_AIR_FORCES = [
@@ -5109,6 +6909,154 @@ WORLD_AIR_FORCES = [
     {"country": "ES", "name": "Spanish Air Force (EdA)", "total_aircraft": 343, "fighters": 84, "bombers": 0, "attack": 0, "transport": 42, "helicopters": 126, "tankers": 3, "special_mission": 18, "awacs": 0, "key_types": "Typhoon, F/A-18 Hornet, A400M, C-130, KC-130, AV-8B+ (Navy), NH90, Tiger", "detail": "FCAS/SCAF 6th-gen partner; Canary Islands defense; Rota base support"},
     {"country": "SG", "name": "Republic of Singapore Air Force (RSAF)", "total_aircraft": 222, "fighters": 98, "bombers": 0, "attack": 0, "transport": 22, "helicopters": 68, "tankers": 4, "special_mission": 15, "awacs": 4, "key_types": "F-35B (ordered), F-15SG, F-16C/D, G550 AEW, KC-135, AH-64D, CH-47SD", "detail": "Most advanced SE Asian air force; F-35B replacing F-16; Guam training detachment"},
     {"country": "ID", "name": "Indonesian Air Force (TNI-AU)", "total_aircraft": 447, "fighters": 33, "bombers": 0, "attack": 32, "transport": 96, "helicopters": 195, "tankers": 0, "special_mission": 15, "awacs": 0, "key_types": "Su-27/30, F-16C/D, Rafale (ordered), T-50i, CN-235, C-130, Super Tucano", "detail": "Archipelago coverage; Rafale deal replacing aging fleet; maritime patrol focus"},
+
+    # ── Additional Europe ──
+    {"country": "NL", "name": "Royal Netherlands Air Force (KLu)", "total_aircraft": 195, "fighters": 46, "bombers": 0, "attack": 0, "transport": 14, "helicopters": 79, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "F-35A (52 ordered), F-16AM/BM, AH-64E, CH-47F, NH90, A330 MRTT (MMU pool)", "detail": "F-35A replacing F-16; nuclear sharing role; A330 MRTT pooled with Lux/DE/NO/CZ/BE"},
+    {"country": "BE", "name": "Belgian Air Component", "total_aircraft": 138, "fighters": 49, "bombers": 0, "attack": 0, "transport": 11, "helicopters": 60, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "F-16AM/BM, F-35A (34 ordered), A400M, NH90, A109", "detail": "Aging F-16s; F-35A from 2025; nuclear sharing role"},
+    {"country": "FI", "name": "Finnish Air Force (Ilmavoimat)", "total_aircraft": 158, "fighters": 55, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 14, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "F/A-18C/D Hornet, F-35A (64 ordered), Hawk Mk 51/66, NH90, C-295M", "detail": "New NATO member; F-35A replacing Hornet; long Russia border; air-defense focused"},
+    {"country": "DK", "name": "Royal Danish Air Force (Flyvevåbnet)", "total_aircraft": 99, "fighters": 30, "bombers": 0, "attack": 0, "transport": 8, "helicopters": 30, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "F-16A/B (retiring), F-35A (27 received), MH-60R, EH-101 Merlin, C-130J", "detail": "F-35A operational; Greenland/Arctic sovereignty; donated F-16s to Ukraine"},
+    {"country": "CH", "name": "Swiss Air Force", "total_aircraft": 162, "fighters": 56, "bombers": 0, "attack": 0, "transport": 0, "helicopters": 86, "tankers": 0, "special_mission": 5, "awacs": 0, "key_types": "F/A-18C/D Hornet, F-5E/F Tiger II, F-35A (36 ordered), Super Puma, EC635", "detail": "Neutral; F-35A controversial purchase; air policing focus; alpine terrain ops"},
+    {"country": "AT", "name": "Austrian Air Force", "total_aircraft": 153, "fighters": 15, "bombers": 0, "attack": 0, "transport": 8, "helicopters": 80, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "Eurofighter Typhoon Tranche 1, Saab 105 (retiring), C-130K, OH-58, S-70 Black Hawk", "detail": "Neutral; small Typhoon fleet; alpine SAR; €560M modernization plan"},
+    {"country": "RO", "name": "Romanian Air Force", "total_aircraft": 134, "fighters": 35, "bombers": 0, "attack": 0, "transport": 16, "helicopters": 70, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "F-16AM/BM, MiG-21 (retired), F-35A (32 ordered), C-27J, C-130, IAR-330 Puma", "detail": "Black Sea NATO frontline; F-16 expansion ex-Norway; F-35A from 2030s"},
+    {"country": "CZ", "name": "Czech Air Force", "total_aircraft": 100, "fighters": 14, "bombers": 0, "attack": 0, "transport": 14, "helicopters": 49, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "JAS-39 Gripen C/D (leased), L-159 ALCA, F-35A (24 ordered), C-295, Mi-171, H-1Z (ordered)", "detail": "Gripen lease ending; F-35A from 2031; AH-1Z attack helo procurement"},
+    {"country": "HU", "name": "Hungarian Air Force", "total_aircraft": 80, "fighters": 14, "bombers": 0, "attack": 0, "transport": 8, "helicopters": 40, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "JAS-39 Gripen C/D, A319, A350 (ordered), H145M, H225M, KC-390 (ordered)", "detail": "Small Gripen fleet; Embraer KC-390 multi-role tankers; modernization push"},
+    {"country": "SK", "name": "Slovak Air Force", "total_aircraft": 35, "fighters": 0, "bombers": 0, "attack": 0, "transport": 8, "helicopters": 23, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "F-16C/D Block 70 (delivering), Mi-17, UH-60M, L-39 (retired), C-27J Spartan", "detail": "MiG-29 transferred to Ukraine; F-16 Block 70 from 2024; air policing gap"},
+    {"country": "BG", "name": "Bulgarian Air Force", "total_aircraft": 70, "fighters": 14, "bombers": 0, "attack": 6, "transport": 6, "helicopters": 38, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "MiG-29, Su-25, F-16 Block 70 (ordered 16), C-27J, AS532 Cougar, Mi-17", "detail": "MiG-29 aging; F-16 Block 70 from 2025; Black Sea air policing"},
+    {"country": "HR", "name": "Croatian Air Force", "total_aircraft": 75, "fighters": 12, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 50, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "Rafale F3-R (12 ex-French), MiG-21 (retired), Mi-171Sh, OH-58D, Pilatus PC-9", "detail": "Rafale operational; F-16 deal collapsed; small but modernizing"},
+    {"country": "PT", "name": "Portuguese Air Force", "total_aircraft": 110, "fighters": 28, "bombers": 0, "attack": 0, "transport": 16, "helicopters": 50, "tankers": 1, "special_mission": 12, "awacs": 0, "key_types": "F-16AM/BM Block 15 MLU, P-3C Orion, C-130H, C-295M, EH-101 Merlin, KC-390 (ordered)", "detail": "Atlantic/maritime patrol focus; F-16 MLU mid-life upgrade; KC-390 Embraer"},
+    {"country": "RS", "name": "Serbian Air Force & Air Defence", "total_aircraft": 88, "fighters": 18, "bombers": 0, "attack": 27, "transport": 5, "helicopters": 35, "tankers": 0, "special_mission": 3, "awacs": 0, "key_types": "MiG-29 (Russian transfer), J-22 Orao, G-4 Super Galeb, Mi-17, Rafale (12 ordered)", "detail": "Rafale deal 2024 (€2.7B); shifting from Russian to French"},
+    {"country": "FI", "name": "Finnish Border Guard Air Wing", "total_aircraft": 25, "fighters": 0, "bombers": 0, "attack": 0, "transport": 0, "helicopters": 20, "tankers": 0, "special_mission": 5, "awacs": 0, "key_types": "AB/B412, AS332L1, Dornier 228", "detail": "Maritime/border surveillance; SAR; not main air force"},
+    {"country": "BY", "name": "Belarus Air Force & Air Defence", "total_aircraft": 173, "fighters": 35, "bombers": 0, "attack": 24, "transport": 14, "helicopters": 92, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "MiG-29, Su-30SM (Russian), Su-25K, Yak-130, Mi-24, Mi-8, Su-24M (returned)", "detail": "Russian-supplied; nuclear capable Su-30SM; tactical nukes hosted"},
+    {"country": "LT", "name": "Lithuanian Air Force", "total_aircraft": 18, "fighters": 0, "bombers": 0, "attack": 0, "transport": 5, "helicopters": 13, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "L-39ZA Albatros, Mi-8 (retired), C-27J Spartan, Black Hawk", "detail": "No fighters; relies on NATO Baltic Air Policing; UH-60M expansion"},
+    {"country": "LV", "name": "Latvian Air Force", "total_aircraft": 12, "fighters": 0, "bombers": 0, "attack": 0, "transport": 0, "helicopters": 12, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-17 (retired), UH-60M Black Hawk, AN/TPS-77 radar", "detail": "Tiny force; NATO air policing dependency; UH-60M Black Hawks"},
+    {"country": "EE", "name": "Estonian Air Force", "total_aircraft": 10, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 4, "tankers": 0, "special_mission": 2, "awacs": 0, "key_types": "An-2, R-44 Robinson, IAI Heron 1 (ordered)", "detail": "Smallest Baltic force; NATO Baltic Air Policing host (Ämari)"},
+    {"country": "BG", "name": "Bulgarian Naval Aviation", "total_aircraft": 12, "fighters": 0, "bombers": 0, "attack": 0, "transport": 0, "helicopters": 12, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "AS565MB Panther, Mi-14 Haze (retired)", "detail": "Black Sea ASW; small force"},
+
+    # ── Africa (major) ──
+    {"country": "DZ", "name": "Algerian Air Force", "total_aircraft": 540, "fighters": 89, "bombers": 0, "attack": 39, "transport": 78, "helicopters": 230, "tankers": 6, "special_mission": 8, "awacs": 0, "key_types": "Su-30MKA, MiG-29S/UB, Su-24MK, Yak-130, Il-78MP, Mi-28NE, Mi-26", "detail": "Africa's 2nd-largest; predominantly Russian; Sahel security"},
+    {"country": "ZA", "name": "South African Air Force (SAAF)", "total_aircraft": 217, "fighters": 26, "bombers": 0, "attack": 13, "transport": 21, "helicopters": 110, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "JAS-39 Gripen C/D, BAE Hawk Mk 120, Rooivalk attack heli, A109LUH, Oryx, C-130BZ", "detail": "Most advanced sub-Saharan; Gripen serviceability issues; rated decline"},
+    {"country": "MA", "name": "Royal Moroccan Air Force", "total_aircraft": 251, "fighters": 73, "bombers": 0, "attack": 24, "transport": 64, "helicopters": 79, "tankers": 4, "special_mission": 7, "awacs": 0, "key_types": "F-16C/D Block 52+, Mirage F1, F-5E, AH-64E Apache, KC-130, C-130", "detail": "F-16V upgrade; Apache from 2024; Western Sahara ops; key US ally"},
+    {"country": "NG", "name": "Nigerian Air Force", "total_aircraft": 184, "fighters": 23, "bombers": 0, "attack": 14, "transport": 25, "helicopters": 95, "tankers": 0, "special_mission": 27, "awacs": 0, "key_types": "JF-17 Thunder, F-7Ni, Alpha Jet, A-29 Super Tucano, Mi-35, AW109", "detail": "Counter-insurgency Boko Haram; JF-17 from Pakistan; A-29 from US"},
+    {"country": "ET", "name": "Ethiopian Air Force", "total_aircraft": 90, "fighters": 22, "bombers": 0, "attack": 7, "transport": 14, "helicopters": 40, "tankers": 0, "special_mission": 7, "awacs": 0, "key_types": "Su-27, MiG-23, Mi-35, Y-12, An-12, Mi-8/17, Bayraktar TB2", "detail": "Tigray war veteran; Eritrea border tensions; TB2 drones critical"},
+    {"country": "AO", "name": "Angolan Air Force", "total_aircraft": 295, "fighters": 78, "bombers": 0, "attack": 13, "transport": 30, "helicopters": 85, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "Su-30K, MiG-23, Su-24MK, Mi-24/35, Alouette III, C-295, Embraer EMB-314", "detail": "Largest in central Africa; Russian-derived; UNITA legacy procurement"},
+    {"country": "SD", "name": "Sudanese Air Force", "total_aircraft": 198, "fighters": 50, "bombers": 0, "attack": 25, "transport": 18, "helicopters": 65, "tankers": 0, "special_mission": 10, "awacs": 0, "key_types": "MiG-29, Su-25, Su-24M, A-5 Fantan, Mi-24, Mi-17", "detail": "Active civil war (SAF vs RSF); equipment losses; Saudi/Egyptian support"},
+    {"country": "LY", "name": "Libyan Air Force (split)", "total_aircraft": 117, "fighters": 5, "bombers": 0, "attack": 11, "transport": 11, "helicopters": 30, "tankers": 0, "special_mission": 5, "awacs": 0, "key_types": "MiG-23, Su-22 (limited operational), Mi-25, Mirage F1 (LNA), Wing Loong II UAVs", "detail": "Split between GNU (Tripoli) and LNA (Tobruk); UAE/Russian/Turkish drones"},
+    {"country": "TN", "name": "Tunisian Air Force", "total_aircraft": 154, "fighters": 12, "bombers": 0, "attack": 16, "transport": 5, "helicopters": 105, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "F-5E/F Tiger II, T-6C Texan II, OH-58D, UH-1N, AB-205, Westland Scout", "detail": "Small force; US training partner; T-6C light attack adoption"},
+    {"country": "KE", "name": "Kenya Air Force", "total_aircraft": 110, "fighters": 24, "bombers": 0, "attack": 0, "transport": 11, "helicopters": 60, "tankers": 0, "special_mission": 7, "awacs": 0, "key_types": "F-5E/F, Hawk Mk52, Tucano, MD500, Z-9, AT-802L Longsword", "detail": "Al-Shabaab counter-terrorism in Somalia; aging F-5 fleet"},
+    {"country": "TZ", "name": "Tanzania People's Defence Air Force", "total_aircraft": 35, "fighters": 11, "bombers": 0, "attack": 0, "transport": 6, "helicopters": 14, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "J-7G, F-7TZ (Chinese), K-8E, Y-12, Bell 206, Robinson R44", "detail": "Small force; Chinese-supplied; trains in Zimbabwe"},
+    {"country": "UG", "name": "Uganda People's Defence Air Force", "total_aircraft": 65, "fighters": 11, "bombers": 0, "attack": 0, "transport": 5, "helicopters": 35, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "Su-30MK2, MiG-21 (retired), Bell 412, Mi-24, AT-802", "detail": "Su-30 only sub-Saharan operator; AMISOM Somalia ops; ADF in DRC"},
+    {"country": "GH", "name": "Ghana Air Force", "total_aircraft": 32, "fighters": 0, "bombers": 0, "attack": 0, "transport": 12, "helicopters": 14, "tankers": 0, "special_mission": 6, "awacs": 0, "key_types": "K-8, MB-339, Bell 412, Z-9, AS350 Ecureuil, A330 (presidential)", "detail": "Trainers and transport only; ECOMOG legacy; UN peacekeeping support"},
+    {"country": "SN", "name": "Senegalese Air Force", "total_aircraft": 24, "fighters": 0, "bombers": 0, "attack": 0, "transport": 8, "helicopters": 14, "tankers": 0, "special_mission": 2, "awacs": 0, "key_types": "EMB-314 Super Tucano, R-235 Guerrier, Mi-35P, AS355", "detail": "Light strike Tucanos; ECOWAS rapid reaction"},
+    {"country": "CI", "name": "Côte d'Ivoire Air Force", "total_aircraft": 12, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 6, "tankers": 0, "special_mission": 2, "awacs": 0, "key_types": "Mi-24 (limited), Mi-8/17, Cessna 421, Embraer ERJ-135", "detail": "Small force; rebuilt after civil war; French support"},
+    {"country": "CM", "name": "Cameroonian Air Force", "total_aircraft": 50, "fighters": 7, "bombers": 0, "attack": 0, "transport": 12, "helicopters": 28, "tankers": 0, "special_mission": 3, "awacs": 0, "key_types": "Alpha Jet, MB-326, Z-9, Mi-17, A-29 Super Tucano (ordered)", "detail": "Boko Haram operations; A-29 acquisition; aging Alpha Jets"},
+    {"country": "RW", "name": "Rwanda Air Force", "total_aircraft": 22, "fighters": 0, "bombers": 0, "attack": 0, "transport": 6, "helicopters": 14, "tankers": 0, "special_mission": 2, "awacs": 0, "key_types": "Mi-24V, Mi-17, BN-2 Defender, Cessna 208, AS350, R-44", "detail": "Mozambique counter-insurgency expedition; small but active"},
+
+    # ── Middle East ──
+    {"country": "JO", "name": "Royal Jordanian Air Force (RJAF)", "total_aircraft": 247, "fighters": 53, "bombers": 0, "attack": 0, "transport": 18, "helicopters": 161, "tankers": 0, "special_mission": 9, "awacs": 0, "key_types": "F-16AM/BM, F-16V Block 70 (8 ordered), AH-1F Cobra, UH-60M, AT-802", "detail": "Strong US ally; F-16V deliveries; Black Hawk fleet; Iraq/Syria border"},
+    {"country": "KW", "name": "Kuwait Air Force", "total_aircraft": 109, "fighters": 39, "bombers": 0, "attack": 0, "transport": 12, "helicopters": 50, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "F/A-18C/D Hornet, Eurofighter Typhoon (28 delivered), AH-64D, KC-130J, Caracal", "detail": "Hornet + Typhoon mixed force; F-35 program declined"},
+    {"country": "QA", "name": "Qatar Emiri Air Force (QEAF)", "total_aircraft": 162, "fighters": 67, "bombers": 0, "attack": 0, "transport": 24, "helicopters": 49, "tankers": 4, "special_mission": 12, "awacs": 0, "key_types": "Rafale, F-15QA, Eurofighter Typhoon, AH-64E, NH90, A330 MRTT", "detail": "Triple-source modernization; F-15QA most advanced Eagle; CENTCOM hub"},
+    {"country": "OM", "name": "Royal Air Force of Oman", "total_aircraft": 116, "fighters": 23, "bombers": 0, "attack": 0, "transport": 14, "helicopters": 65, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "F-16C/D Block 50, Eurofighter Typhoon, Hawk Mk 203, NH90, Super Lynx, C-130", "detail": "Hormuz Strait surveillance; Typhoon + F-16 mix; UK partnership"},
+    {"country": "BH", "name": "Royal Bahraini Air Force (RBAF)", "total_aircraft": 50, "fighters": 22, "bombers": 0, "attack": 0, "transport": 6, "helicopters": 18, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "F-16C/D Block 40, F-16V Block 70 (16 ordered), AH-1E Cobra, F-5E, AB-212", "detail": "5th Fleet HQ; F-16V upgrade; small but central US ally"},
+    {"country": "IQ", "name": "Iraqi Air Force", "total_aircraft": 175, "fighters": 35, "bombers": 0, "attack": 18, "transport": 25, "helicopters": 88, "tankers": 0, "special_mission": 9, "awacs": 0, "key_types": "F-16IQ, T-50IQ, KAI T-50, EMB-314 Super Tucano, Mi-17/35, AC-208", "detail": "Rebuilding post-2014; ISIS legacy ops; F-16IQ readiness issues; KF-21 interest"},
+    {"country": "SY", "name": "Syrian Arab Air Force", "total_aircraft": 326, "fighters": 53, "bombers": 0, "attack": 30, "transport": 14, "helicopters": 165, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "MiG-29, MiG-23, Su-22, MiG-21, Mi-25, Mi-17", "detail": "Heavy attrition civil war; Russian air support legacy; degraded readiness post-Assad"},
+    {"country": "LB", "name": "Lebanese Air Force", "total_aircraft": 65, "fighters": 0, "bombers": 0, "attack": 6, "transport": 6, "helicopters": 50, "tankers": 0, "special_mission": 3, "awacs": 0, "key_types": "A-29 Super Tucano, AC-208, UH-1H Huey II, R-44, AW139, Cessna 208", "detail": "Light strike only; counter-Hezbollah/IS borders; US support"},
+    {"country": "YE", "name": "Yemeni Air Force (Hadi gov)", "total_aircraft": 30, "fighters": 8, "bombers": 0, "attack": 6, "transport": 4, "helicopters": 12, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "MiG-29SMT, F-5E, Su-22 (legacy), Mi-17/24", "detail": "Civil war fragmented; Saudi-aligned; Houthi captures"},
+    {"country": "AF", "name": "Afghanistan Air Force (Taliban)", "total_aircraft": 60, "fighters": 0, "bombers": 0, "attack": 5, "transport": 8, "helicopters": 47, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-17, Mi-35 (limited), MD-530F, A-29 Super Tucano, C-208 (degraded)", "detail": "US-supplied legacy fleet; limited operational; ISKP counter-insurgency"},
+
+    # ── Asia (additional) ──
+    {"country": "VN", "name": "Vietnam People's Air Force", "total_aircraft": 271, "fighters": 75, "bombers": 0, "attack": 35, "transport": 35, "helicopters": 110, "tankers": 0, "special_mission": 16, "awacs": 0, "key_types": "Su-30MK2V, Su-22M4, MiG-21 (retired), Mi-8/17, Yak-130, T-6C", "detail": "South China Sea posture; T-6C from US (post-2017 thaw); aging Russian fleet"},
+    {"country": "MY", "name": "Royal Malaysian Air Force (TUDM)", "total_aircraft": 185, "fighters": 43, "bombers": 0, "attack": 13, "transport": 22, "helicopters": 71, "tankers": 4, "special_mission": 12, "awacs": 0, "key_types": "Su-30MKM, F/A-18D Hornet, BAE Hawk 100/200, FA-50 (18 ordered), CN-235", "detail": "FA-50 Block 20 from S.Korea; F/A-18 + Su-30 mix; LCA program"},
+    {"country": "PH", "name": "Philippine Air Force (PAF)", "total_aircraft": 198, "fighters": 12, "bombers": 0, "attack": 19, "transport": 28, "helicopters": 110, "tankers": 0, "special_mission": 12, "awacs": 0, "key_types": "FA-50PH, A-29 Super Tucano, S-211 (retired), C-130J, AW109, Black Hawk", "detail": "South China Sea tensions; FA-50 upgrade plan; US-Philippine training"},
+    {"country": "MM", "name": "Myanmar Air Force (Tatmadaw Lay)", "total_aircraft": 282, "fighters": 60, "bombers": 0, "attack": 35, "transport": 25, "helicopters": 115, "tankers": 0, "special_mission": 22, "awacs": 0, "key_types": "MiG-29B/SE, JF-17M, Su-30SME (ordered), K-8W, F-7M, Mi-35, Yak-130", "detail": "Civil war ground attack; Russian/Chinese supply; sanctions impact"},
+    {"country": "BD", "name": "Bangladesh Air Force", "total_aircraft": 166, "fighters": 44, "bombers": 0, "attack": 10, "transport": 17, "helicopters": 65, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "F-7BG/BGI, MiG-29UB/SE, Yak-130, K-8W, L-39ZA, Mi-17, Bell 212", "detail": "F-7 fleet aging; Forces Goal 2030 modernization; Chinese-supplied"},
+    {"country": "LK", "name": "Sri Lanka Air Force", "total_aircraft": 102, "fighters": 8, "bombers": 0, "attack": 12, "transport": 11, "helicopters": 56, "tankers": 0, "special_mission": 5, "awacs": 0, "key_types": "F-7BS Skybolt, Kfir C2/C7, MiG-27 (retired), Mi-17, Bell 212/412, K-8", "detail": "Post-LTTE; aging fleet; financial constraints; Indian Ocean patrols"},
+    {"country": "KH", "name": "Royal Cambodian Air Force", "total_aircraft": 30, "fighters": 0, "bombers": 0, "attack": 0, "transport": 6, "helicopters": 22, "tankers": 0, "special_mission": 2, "awacs": 0, "key_types": "Z-9, Mi-17, Y-12, AS350, BN-2 Islander", "detail": "Tiny force; Chinese-supplied; Ream Naval Base controversy"},
+    {"country": "KZ", "name": "Kazakhstan Air Defence Forces", "total_aircraft": 235, "fighters": 96, "bombers": 0, "attack": 14, "transport": 14, "helicopters": 90, "tankers": 0, "special_mission": 11, "awacs": 0, "key_types": "Su-30SM, Su-27, MiG-31, MiG-29, Su-25, Mi-35M, EC145", "detail": "Largest Central Asian; Russian + EU dual procurement; Su-30SM new"},
+    {"country": "UZ", "name": "Uzbekistan Air & Air Defence Forces", "total_aircraft": 175, "fighters": 30, "bombers": 0, "attack": 27, "transport": 12, "helicopters": 95, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "Su-27, MiG-29, Su-25, Su-24, Mi-24, Mi-8/17", "detail": "Soviet legacy; balanced Russia/US; modernization slow"},
+    {"country": "TM", "name": "Turkmenistan Air Force", "total_aircraft": 90, "fighters": 24, "bombers": 0, "attack": 35, "transport": 5, "helicopters": 22, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "MiG-29, Su-25 (largest operator), Mi-24, Mi-8, Bayraktar TB2", "detail": "Su-25 frogfoot largest fleet; Iranian/Afghan border; TB2 drones"},
+    {"country": "MN", "name": "Mongolian Air Force", "total_aircraft": 27, "fighters": 8, "bombers": 0, "attack": 0, "transport": 11, "helicopters": 8, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "MiG-21 (limited), An-26, Y-12, Mi-8, Mi-24 (retired)", "detail": "Tiny force; Russian/Chinese mix; Steppe Eagle exercise"},
+    {"country": "NZ", "name": "Royal New Zealand Air Force (RNZAF)", "total_aircraft": 47, "fighters": 0, "bombers": 0, "attack": 0, "transport": 12, "helicopters": 26, "tankers": 0, "special_mission": 9, "awacs": 0, "key_types": "P-8A Poseidon, C-130J-30, NH90, A109, T-6C Texan II, KC-130 (retired)", "detail": "No combat jets since 2001; P-8A maritime patrol; Pacific security"},
+
+    # ── Latin America ──
+    {"country": "MX", "name": "Mexican Air Force (FAM)", "total_aircraft": 354, "fighters": 6, "bombers": 0, "attack": 47, "transport": 44, "helicopters": 235, "tankers": 0, "special_mission": 22, "awacs": 0, "key_types": "F-5E (limited), PC-7, T-6C, EMB-145MP, Black Hawk, MD-530F, EC725", "detail": "Counter-narcotics focus; aging F-5; PC-7 trainers; Sedena operations"},
+    {"country": "AR", "name": "Argentine Air Force (FAA)", "total_aircraft": 158, "fighters": 24, "bombers": 0, "attack": 16, "transport": 28, "helicopters": 60, "tankers": 1, "special_mission": 17, "awacs": 0, "key_types": "F-16AM/BM (24 from Denmark), A-4AR Fightinghawk (retired), IA-63 Pampa, KC-130, Bell 412", "detail": "F-16AM acquisition 2024; Falklands legacy; rebuilding capability"},
+    {"country": "CL", "name": "Chilean Air Force (FACh)", "total_aircraft": 270, "fighters": 46, "bombers": 0, "attack": 0, "transport": 24, "helicopters": 70, "tankers": 4, "special_mission": 10, "awacs": 0, "key_types": "F-16C/D Block 50, F-16AM/BM (Dutch), F-5E Tigre III, A-29 Super Tucano, KC-135E, C-130", "detail": "Most advanced South American; F-16 fleet; Antarctic ops"},
+    {"country": "PE", "name": "Peruvian Air Force (FAP)", "total_aircraft": 232, "fighters": 27, "bombers": 0, "attack": 25, "transport": 20, "helicopters": 100, "tankers": 4, "special_mission": 15, "awacs": 0, "key_types": "MiG-29SE/UB, Mirage 2000P, Su-25, A-37B Dragonfly, KC-130, Mi-17", "detail": "Mixed Russian/French; Mirage upgrade; modernization stalled"},
+    {"country": "VE", "name": "Venezuelan Bolivarian Military Aviation", "total_aircraft": 229, "fighters": 21, "bombers": 0, "attack": 23, "transport": 28, "helicopters": 109, "tankers": 0, "special_mission": 10, "awacs": 0, "key_types": "Su-30MK2, F-16A/B (limited), F-5E, K-8W, Mi-17, Mi-35M2", "detail": "Russian-supplied; F-16 grounded; sanctions impact maintenance"},
+    {"country": "EC", "name": "Ecuadorian Air Force (FAE)", "total_aircraft": 88, "fighters": 21, "bombers": 0, "attack": 9, "transport": 9, "helicopters": 30, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "Atlas Cheetah C, Kfir CE/TE, EMB-314 Super Tucano, A-29B, Bell 412, Dhruv", "detail": "Galápagos ops; Cheetah retired; Tucano backbone"},
+    {"country": "CO", "name": "Colombian Aerospace Force (FAC)", "total_aircraft": 270, "fighters": 22, "bombers": 0, "attack": 60, "transport": 36, "helicopters": 130, "tankers": 0, "special_mission": 18, "awacs": 0, "key_types": "Kfir C10/C12, A-29B Super Tucano, AC-47T Spooky, Black Hawk, Mi-17, Cougar", "detail": "Counter-narcotics + FARC legacy; Tucano deep strike; F-16 acquisition planned"},
+    {"country": "BO", "name": "Bolivian Air Force", "total_aircraft": 58, "fighters": 0, "bombers": 0, "attack": 6, "transport": 18, "helicopters": 24, "tankers": 0, "special_mission": 6, "awacs": 0, "key_types": "K-8VB Karakorum, T-33 (retired), C-130, Bell UH-1H, Eurocopter AS350", "detail": "Light force; counter-narcotics; coca eradication"},
+    {"country": "UY", "name": "Uruguayan Air Force", "total_aircraft": 33, "fighters": 0, "bombers": 0, "attack": 4, "transport": 8, "helicopters": 12, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "A-37B Dragonfly, IA-58 Pucará, C-95 Bandeirante, AS532, Bell 212", "detail": "Tiny force; A-37 retiring; modernization needed"},
+    {"country": "DO", "name": "Dominican Air Force (FARD)", "total_aircraft": 39, "fighters": 0, "bombers": 0, "attack": 8, "transport": 6, "helicopters": 18, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "EMB-314 Super Tucano, OH-58 Kiowa, Bell 407, T-35 Pillán, C-208 Caravan", "detail": "Counter-narcotics; A-29 strike; Haitian border"},
+    {"country": "GT", "name": "Guatemalan Air Force", "total_aircraft": 24, "fighters": 0, "bombers": 0, "attack": 2, "transport": 8, "helicopters": 11, "tankers": 0, "special_mission": 3, "awacs": 0, "key_types": "PC-7 Turbo Trainer, Bell 412/206, T-65 Buckeye, A-37 (retired)", "detail": "Tiny; counter-narcotics support"},
+
+    # ── Oceania ──
+    {"country": "FJ", "name": "Republic of Fiji Military Air Wing", "total_aircraft": 6, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 2, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Y-12 (Chinese), AS355 Squirrel", "detail": "Smallest in Pacific; UN peacekeeping support"},
+    {"country": "PG", "name": "PNG Defence Force Air Element", "total_aircraft": 8, "fighters": 0, "bombers": 0, "attack": 0, "transport": 6, "helicopters": 2, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "PAC P-750 XSTOL, IAI Arava (retired), Bell UH-1", "detail": "Maritime/transport; Australian assistance"},
+
+    # ── Asia (additional) ──
+    {"country": "TH", "name": "Royal Thai Air Force (RTAF)", "total_aircraft": 277, "fighters": 70, "bombers": 0, "attack": 30, "transport": 39, "helicopters": 87, "tankers": 0, "special_mission": 16, "awacs": 2, "key_types": "JAS-39 C/D Gripen, F-16A/B ADF, F-5E/F TH, Alpha Jet, Saab 340 Erieye, T-50TH, AU-23A", "detail": "Most modern in SE Asia after Singapore; Gripen + Erieye AWACS; F-35 considered then deferred"},
+    {"country": "KP", "name": "Korean People's Army Air Force (KPAAF)", "total_aircraft": 940, "fighters": 458, "bombers": 80, "attack": 114, "transport": 100, "helicopters": 202, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "MiG-29, MiG-23, MiG-21/F-7, Su-25, Il-28, H-5, An-24, Mi-8/17, Hughes 500", "detail": "Massive but obsolete; fuel/parts shortages limit sortie rate; tunnel-based airfields; air defense focus"},
+    {"country": "NP", "name": "Nepalese Army Air Service", "total_aircraft": 18, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 14, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-17, HAL Dhruv, Bell 206, Eurocopter AS350, Y-12", "detail": "No combat aircraft; HADR/UN peacekeeping focus; Himalayan rescue ops"},
+    {"country": "BN", "name": "Royal Brunei Air Force", "total_aircraft": 18, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 12, "tankers": 0, "special_mission": 2, "awacs": 0, "key_types": "PC-7 Mk II, S-70i Black Hawk, Bell 212/214, CN-235M, Bo 105", "detail": "Tiny coastal force; British training; oil revenue funded"},
+    {"country": "LA", "name": "Lao People's Liberation Army Air Force", "total_aircraft": 31, "fighters": 0, "bombers": 0, "attack": 4, "transport": 10, "helicopters": 17, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "MiG-21 (retired), Yak-130 (4), An-26, Mi-17, Ka-32, Z-9", "detail": "Tiny mostly Russian-supplied; Yak-130 light attack from Russia 2017"},
+    {"country": "TJ", "name": "Air and Air Defence Forces of Tajikistan", "total_aircraft": 18, "fighters": 0, "bombers": 0, "attack": 4, "transport": 4, "helicopters": 10, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Su-25 (4), Mi-8/17, Mi-24 (limited), L-39", "detail": "Tiny; CSTO; Russian 201st Base provides cover; Afghan border focus"},
+    {"country": "KG", "name": "Kyrgyz Air Force", "total_aircraft": 14, "fighters": 0, "bombers": 0, "attack": 4, "transport": 2, "helicopters": 8, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "MiG-21 (storage), L-39 Albatros, Mi-8/17, An-26", "detail": "Practically defunct; CSTO; Russian Kant Air Base; Bayraktar TB2 acquisition 2022"},
+
+    # ── Caucasus ──
+    {"country": "AZ", "name": "Azerbaijan Air Forces", "total_aircraft": 147, "fighters": 19, "bombers": 0, "attack": 19, "transport": 26, "helicopters": 70, "tankers": 0, "special_mission": 13, "awacs": 0, "key_types": "MiG-29, Su-25, Mi-35M, Mi-17V, Bayraktar TB2, Harop loitering munition, JF-17 (planned)", "detail": "Drone-heavy; decisive in 2020 Karabakh war; TB2 + Harop + Israeli LORA; JF-17 deal with Pakistan 2024"},
+    {"country": "AM", "name": "Armenian Air Force", "total_aircraft": 64, "fighters": 5, "bombers": 0, "attack": 14, "transport": 6, "helicopters": 39, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Su-30SM (4 from Russia), Su-25, Mi-24, Mi-8/17, Yak-130", "detail": "Lost 2020 war; Su-30 little used; pivoting to French/Indian arms post-Russia rift"},
+    {"country": "GE", "name": "Georgian Air Force (Defence Forces aviation)", "total_aircraft": 36, "fighters": 0, "bombers": 0, "attack": 12, "transport": 6, "helicopters": 18, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Su-25KM Scorpion (Israeli upgrade), L-39, Mi-24, Mi-8, Iroquois", "detail": "Lost much in 2008 war; Su-25KM is Israeli-upgraded; NATO-aspirant training"},
+
+    # ── Africa (Horn / East) ──
+    {"country": "ER", "name": "Eritrean Air Force", "total_aircraft": 18, "fighters": 8, "bombers": 0, "attack": 4, "transport": 2, "helicopters": 4, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "MiG-29, Su-27 (limited), MB-339, Mi-17, Y-12", "detail": "Small Soviet-vintage; isolated regime; sanctions impact"},
+    {"country": "DJ", "name": "Djibouti Air Force", "total_aircraft": 8, "fighters": 0, "bombers": 0, "attack": 0, "transport": 3, "helicopters": 5, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Cessna 208, AS355, Mi-17, Y-12", "detail": "Tiny; hosts US/French/Chinese/Japanese bases; key Red Sea chokepoint"},
+    {"country": "SO", "name": "Somali Air Force (rebuilding)", "total_aircraft": 4, "fighters": 0, "bombers": 0, "attack": 0, "transport": 2, "helicopters": 2, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Cessna 208, Mi-17 (limited)", "detail": "Effectively non-existent; reconstituting under Turkish/UAE/Egyptian assistance"},
+    {"country": "SS", "name": "South Sudan People's Defence Forces Air Wing", "total_aircraft": 16, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 12, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-17, Mi-24 (some), Cessna 208", "detail": "Limited to helicopter ops; civil war legacy"},
+
+    # ── Africa (West / Sahel) ──
+    {"country": "ML", "name": "Mali Air Force", "total_aircraft": 24, "fighters": 0, "bombers": 0, "attack": 6, "transport": 6, "helicopters": 12, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "L-39, Su-25 (Russian), Mi-24P, Mi-8/17, Bayraktar TB2 (Turkish)", "detail": "Junta-led; Wagner/Africa Corps support; TB2 + Su-25 from Russia 2022-23"},
+    {"country": "BF", "name": "Burkina Faso Air Force", "total_aircraft": 18, "fighters": 0, "bombers": 0, "attack": 5, "transport": 4, "helicopters": 9, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "A-29B Super Tucano (3), Mi-17, Mi-35, Bell 412, AT-802L Longsword, Bayraktar Akinci", "detail": "Junta; Russian/Turkish pivot; TB2 + Akinci drone use against jihadists"},
+    {"country": "NE", "name": "Niger Air Force", "total_aircraft": 14, "fighters": 0, "bombers": 0, "attack": 2, "transport": 4, "helicopters": 8, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "AS350, Mi-17, C-130H, Cessna 208, Diamond DA42", "detail": "Junta 2023; expelled French/US bases; pivoting Russian"},
+    {"country": "TD", "name": "Chadian Air Force", "total_aircraft": 12, "fighters": 0, "bombers": 0, "attack": 4, "transport": 3, "helicopters": 5, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Su-25 (limited), Mi-24, PC-7, AS355, C-27J", "detail": "French support; Sahel intervention; small but battle-experienced"},
+    {"country": "MR", "name": "Islamic Air Force of Mauritania", "total_aircraft": 16, "fighters": 0, "bombers": 0, "attack": 4, "transport": 4, "helicopters": 8, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "EMB-314 Super Tucano, BT-67 Basler, Y-12, Cessna 208", "detail": "Light counter-terror force; Sahel coalition"},
+    {"country": "BJ", "name": "Beninese Air Force", "total_aircraft": 6, "fighters": 0, "bombers": 0, "attack": 0, "transport": 2, "helicopters": 4, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Do-128, AS350, Cessna 208", "detail": "Tiny; coastal patrol; ECOWAS"},
+    {"country": "TG", "name": "Togolese Air Force", "total_aircraft": 8, "fighters": 0, "bombers": 0, "attack": 4, "transport": 2, "helicopters": 2, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Alpha Jet, EMB-326GB, AS350", "detail": "Tiny; limited Alpha Jet airframes"},
+
+    # ── Africa (Central / Southern) ──
+    {"country": "CD", "name": "Democratic Republic of Congo Air Force (FAC)", "total_aircraft": 32, "fighters": 4, "bombers": 0, "attack": 6, "transport": 8, "helicopters": 14, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Su-25 (limited), MiG-23 (storage), Mi-24, Mi-8, An-26, L-39", "detail": "Mostly grounded; M23 conflict; UN MONUSCO winding down"},
+    {"country": "CF", "name": "Central African Air Force", "total_aircraft": 4, "fighters": 0, "bombers": 0, "attack": 0, "transport": 2, "helicopters": 2, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Cessna 337, Mi-8 (limited)", "detail": "Effectively non-existent; Wagner support; civil war legacy"},
+    {"country": "GQ", "name": "Equatorial Guinea Air Force", "total_aircraft": 10, "fighters": 4, "bombers": 0, "attack": 2, "transport": 2, "helicopters": 2, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Su-25 (4 Ukrainian), An-72, Mi-24, AW139", "detail": "Oil-funded; Russian/Ukrainian/Israeli mix; coup attempt 2024"},
+    {"country": "ZM", "name": "Zambian Air Force", "total_aircraft": 70, "fighters": 18, "bombers": 0, "attack": 10, "transport": 12, "helicopters": 24, "tankers": 0, "special_mission": 6, "awacs": 0, "key_types": "K-8 Karakorum, MB-326 (retired), Mi-17, MA60, Y-12", "detail": "Chinese-supplied; K-8 trainer/light attack"},
+    {"country": "ZW", "name": "Air Force of Zimbabwe", "total_aircraft": 50, "fighters": 8, "bombers": 0, "attack": 8, "transport": 6, "helicopters": 22, "tankers": 0, "special_mission": 6, "awacs": 0, "key_types": "Chengdu F-7 (J-7), Hawk Mk60, K-8, Mi-35P, AB-412", "detail": "Sanctions-impacted; Chinese spares; F-7 + Hawk legacy"},
+    {"country": "MZ", "name": "Mozambique Defence Armed Forces Air Wing", "total_aircraft": 20, "fighters": 0, "bombers": 0, "attack": 4, "transport": 4, "helicopters": 12, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-24, Mi-17, An-26, Cessna 182, Bayraktar TB2", "detail": "Cabo Delgado insurgency; SAMIM/Rwandan support; TB2 acquired 2024"},
+    {"country": "MG", "name": "Malagasy Air Force", "total_aircraft": 12, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 8, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "An-26, Cessna 337, Mi-8", "detail": "Coastal patrol; piracy response"},
+    {"country": "NA", "name": "Namibian Air Force", "total_aircraft": 18, "fighters": 4, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 10, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Chengdu F-7NM, K-8, Mi-25, Cheetah, Cessna 337", "detail": "Chinese-supplied; F-7 fighters"},
+    {"country": "BW", "name": "Botswana Defence Force Air Wing", "total_aircraft": 40, "fighters": 13, "bombers": 0, "attack": 0, "transport": 8, "helicopters": 14, "tankers": 0, "special_mission": 5, "awacs": 0, "key_types": "F-5A/B Tigershark, BD-700 Global Express, PC-7, Bell 412, AS350", "detail": "F-5 fleet aging; Saab Gripen acquisition rumored"},
+
+    # ── Latin America (additional) ──
+    {"country": "CU", "name": "Cuban Revolutionary Air and Air Defence Force", "total_aircraft": 96, "fighters": 16, "bombers": 0, "attack": 8, "transport": 12, "helicopters": 50, "tankers": 0, "special_mission": 10, "awacs": 0, "key_types": "MiG-29 (4), MiG-23ML, MiG-21 (storage), Mi-8/17, Mi-35", "detail": "Mostly grounded; sanctions-driven cannibalization; Russian-vintage"},
+    {"country": "PY", "name": "Paraguayan Air Force", "total_aircraft": 30, "fighters": 0, "bombers": 0, "attack": 4, "transport": 6, "helicopters": 12, "tankers": 0, "special_mission": 8, "awacs": 0, "key_types": "EMB-312 Tucano, A-37B (retired), Bell 205, Cessna 402, T-35", "detail": "Tiny; counter-narcotics"},
+    {"country": "HN", "name": "Honduran Air Force (FAH)", "total_aircraft": 60, "fighters": 8, "bombers": 0, "attack": 6, "transport": 10, "helicopters": 30, "tankers": 0, "special_mission": 6, "awacs": 0, "key_types": "F-5E Tiger II, A-37B, EMB-312 Tucano, Bell UH-1H, MD-500", "detail": "F-5 oldest in service worldwide; counter-narcotics"},
+    {"country": "NI", "name": "Nicaraguan Air Force (FAN)", "total_aircraft": 15, "fighters": 0, "bombers": 0, "attack": 4, "transport": 4, "helicopters": 7, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-17, Mi-24 (some), An-26, Cessna 337", "detail": "Russian-aligned; small force"},
+    {"country": "SV", "name": "Salvadoran Air Force (FAS)", "total_aircraft": 30, "fighters": 0, "bombers": 0, "attack": 8, "transport": 6, "helicopters": 12, "tankers": 0, "special_mission": 4, "awacs": 0, "key_types": "A-37B Dragonfly, OA-37, MD-500, Bell UH-1H, Cessna 210", "detail": "A-37 oldest in service; gang interdiction"},
+    {"country": "JM", "name": "Jamaica Defence Force Air Wing", "total_aircraft": 16, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 12, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Bell 206/407/412, AS355, BN-2 Islander, DA-42", "detail": "Coastal patrol; counter-narcotics; no combat aircraft"},
+    {"country": "BS", "name": "Royal Bahamas Defence Force Air Wing", "total_aircraft": 6, "fighters": 0, "bombers": 0, "attack": 0, "transport": 2, "helicopters": 4, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "AW139, BN-2T Islander", "detail": "Maritime patrol; drug interdiction with US"},
+    {"country": "GY", "name": "Guyana Defence Force Air Corps", "total_aircraft": 8, "fighters": 0, "bombers": 0, "attack": 0, "transport": 3, "helicopters": 5, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Bell 206/412, Y-12, Britten-Norman Islander", "detail": "Tiny; Venezuela border tension; oil boom funding modernization"},
+    {"country": "TT", "name": "Trinidad and Tobago Air Guard", "total_aircraft": 7, "fighters": 0, "bombers": 0, "attack": 0, "transport": 2, "helicopters": 5, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "AW139, S-76, C-26 Metroliner", "detail": "Maritime patrol; oil platform security"},
+
+    # ── Europe (additional) ──
+    {"country": "AL", "name": "Albanian Air Force", "total_aircraft": 19, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 15, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "AB-205, AB-206, BO 105, Eurocopter Cougar, Bell 222", "detail": "NATO; no combat aircraft since MiG retirement; helicopter-only"},
+    {"country": "BA", "name": "Armed Forces of Bosnia and Herzegovina Air Force", "total_aircraft": 24, "fighters": 0, "bombers": 0, "attack": 4, "transport": 4, "helicopters": 16, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "J-22 Orao (retired), Mi-8/17, UH-1H, Bell 205, Gazelle", "detail": "NATO partner; Orao grounded; helicopter focus"},
+    {"country": "MK", "name": "North Macedonia Air Brigade", "total_aircraft": 18, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 14, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-8/17, Mi-24V (retired), UH-60M Black Hawk (incoming), Zlin 242", "detail": "NATO since 2020; UH-60M acquisition; transitioning to Western kit"},
+    {"country": "ME", "name": "Air Force of Montenegro", "total_aircraft": 8, "fighters": 0, "bombers": 0, "attack": 0, "transport": 2, "helicopters": 6, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Bell 412, Gazelle, G-4 Super Galeb (retired)", "detail": "NATO since 2017; tiny; no combat aircraft"},
+    {"country": "XK", "name": "Kosovo Security Force Air Element", "total_aircraft": 4, "fighters": 0, "bombers": 0, "attack": 0, "transport": 0, "helicopters": 4, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Bayraktar TB2 (5 ordered), Bell 206 (limited)", "detail": "Tiny; KFOR-supported; TB2 acquired 2023 amid Serbia tensions"},
+    {"country": "CY", "name": "Cyprus Air Forces Command", "total_aircraft": 16, "fighters": 0, "bombers": 0, "attack": 4, "transport": 2, "helicopters": 10, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "SA342L Gazelle (HOT missile), Bell 206, AW139, Mi-35P (retired), PC-9", "detail": "EU non-NATO; HOT-armed Gazelles; defense pact with France/Greece"},
+    {"country": "MT", "name": "Armed Forces of Malta Air Wing", "total_aircraft": 11, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 7, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "AW139, BN-2 Islander, King Air 200, AS350", "detail": "Maritime SAR; migrant interdiction; EU non-NATO"},
+    {"country": "IE", "name": "Irish Air Corps", "total_aircraft": 27, "fighters": 0, "bombers": 0, "attack": 0, "transport": 6, "helicopters": 15, "tankers": 0, "special_mission": 6, "awacs": 0, "key_types": "PC-9M, PC-12, CN-235MPA, AW139, EC135, Britten-Norman Defender", "detail": "Neutral; no fighters; UK-RAF QRA covers Irish airspace; PC-12 acquisition planned"},
+    {"country": "LU", "name": "Luxembourg Army Aviation (NATO contribution)", "total_aircraft": 19, "fighters": 0, "bombers": 0, "attack": 0, "transport": 4, "helicopters": 1, "tankers": 0, "special_mission": 14, "awacs": 0, "key_types": "A330 MRTT (NATO MMF), A400M, NH90, Bombardier Global 7500 (planned)", "detail": "Hosts NATO MMF MRTT pool with Netherlands/Germany; no combat aircraft"},
+    {"country": "MD", "name": "Moldovan Air Force", "total_aircraft": 9, "fighters": 0, "bombers": 0, "attack": 0, "transport": 2, "helicopters": 7, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "Mi-8, An-2, An-26 (retired)", "detail": "Tiny; no combat aircraft; neutral but Western-leaning post-Ukraine war"},
+    {"country": "PS", "name": "Palestinian Civil Aviation Authority (no air force)", "total_aircraft": 2, "fighters": 0, "bombers": 0, "attack": 0, "transport": 0, "helicopters": 2, "tankers": 0, "special_mission": 0, "awacs": 0, "key_types": "VIP helicopters (Mi-8 historic, mostly destroyed)", "detail": "No military air force; Gaza war devastated remaining assets"},
 ]
 
 
@@ -5589,17 +7537,201 @@ def compute_military_trends():
     return {"trends": trends, "projections": projections, "total_vessels": len(VESSEL_DEPLOYMENTS), "moving_vessels": len(moving_vessels)}
 
 
+# ── Country Intelligence Index + Correlation Engine ───────────────────────────
+
+def compute_country_intel_index() -> dict:
+    """Composite per-country risk index from multiple existing data streams.
+    Higher score = higher instability/risk."""
+    scores: dict = {}
+
+    def _bump(code: str, weight: float, driver: str):
+        if not code:
+            return
+        entry = scores.setdefault(code, {"score": 0.0, "drivers": []})
+        entry["score"] += weight
+        if driver and driver not in entry["drivers"]:
+            entry["drivers"].append(driver)
+
+    for code, idx in COUNTRY_INDICES.items():
+        s = scores.setdefault(code, {"score": 0.0, "drivers": []})
+        fs = idx.get("fragile_state", 50)
+        s["score"] += min(30.0, fs * 0.25)
+        di = idx.get("democracy_index", 5.0)
+        s["score"] += (10 - di) * 1.0
+        cpi = idx.get("corruption_cpi", 50)
+        s["score"] += (100 - cpi) * 0.10
+        pf = idx.get("press_freedom", 30)
+        s["score"] += pf * 0.08
+
+    for h in HOTSPOTS:
+        intensity = h.get("intensity", 3)
+        _bump(h.get("country", ""), intensity * 2.5, f"Hotspot: {h.get('name', '')}")
+    for m in MILITIAS:
+        _bump(m.get("country", ""), 2.0, f"Armed group: {m.get('name', '')}")
+    for d in DISEASE_OUTBREAKS:
+        sev = d.get("severity", "MEDIUM")
+        weight = {"LOW": 1.0, "MEDIUM": 2.0, "HIGH": 4.0, "EXTREME": 6.0}.get(sev, 2.0)
+        _bump(d.get("country", ""), weight, f"Outbreak: {d.get('disease', '')}")
+    for p in PROTEST_EVENTS:
+        _bump(p.get("country", ""), 2.5, f"Protest: {p.get('name', '')}")
+    for o in INTERNET_OUTAGES:
+        sev = o.get("severity", "MEDIUM")
+        weight = {"LOW": 1.0, "MEDIUM": 2.0, "HIGH": 3.5, "EXTREME": 5.0}.get(sev, 2.0)
+        _bump(o.get("country", ""), weight, f"{o.get('type', 'outage').upper()}: {o.get('name', '')}")
+    for s_entry in SANCTIONS:
+        code = s_entry.get("country") or s_entry.get("target") or ""
+        _bump(code, 3.0, f"Sanctioned: {s_entry.get('name', s_entry.get('target', ''))}")
+    for c in CYBER_ADVISORIES:
+        sev = c.get("severity", "MEDIUM")
+        weight = {"MEDIUM": 1.5, "HIGH": 3.0, "CRITICAL": 5.0}.get(sev, 1.5)
+        _bump(c.get("country", ""), weight, f"Cyber: {c.get('id', '')}")
+    for g in GPS_JAMMING_ZONES:
+        code = (g.get("country") or "").split("/")[0]
+        intensity = g.get("intensity", "MEDIUM")
+        weight = {"MEDIUM": 1.0, "HIGH": 2.5, "EXTREME": 4.0}.get(intensity, 1.0)
+        _bump(code, weight, f"GPS jamming: {g.get('name', '')}")
+    for f in DISPLACEMENT_FLOWS:
+        pop = f.get("population", 0)
+        weight = min(8.0, math.log10(max(1, pop)) * 1.5)
+        _bump(f.get("from_country", ""), weight, f"Refugee origin ({pop:,})")
+        _bump(f.get("to_country", ""), weight * 0.4, f"Refugee host ({pop:,})")
+    for a in AIR_QUALITY:
+        pm = a.get("pm25", 0)
+        if pm >= 50:
+            _bump(a.get("country", ""), min(6.0, (pm - 50) * 0.05), f"PM2.5 {pm} µg/m³ in {a.get('name', '')}")
+    for d in SUPPLY_CHAIN_DISRUPTIONS:
+        sev = d.get("severity", "MEDIUM")
+        weight = {"MEDIUM": 1.5, "HIGH": 3.0, "EXTREME": 5.0}.get(sev, 1.5)
+        _bump(d.get("country", ""), weight, f"Supply chain: {d.get('name', '')}")
+
+    for code in scores:
+        scores[code]["score"] = round(min(100.0, scores[code]["score"]), 1)
+        scores[code]["drivers"] = scores[code]["drivers"][:8]
+
+    ranked = sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True)
+    for i, (code, _data) in enumerate(ranked):
+        scores[code]["rank"] = i + 1
+    return scores
+
+
+def compute_correlation_signals() -> list:
+    """Cross-stream correlation engine: detect countries with multiple convergent signals."""
+    by_country: dict = {}
+
+    def _add(code: str, signal_type: str, label: str):
+        if not code:
+            return
+        entry = by_country.setdefault(code, {"signals": {}, "labels": []})
+        entry["signals"][signal_type] = entry["signals"].get(signal_type, 0) + 1
+        entry["labels"].append(f"{signal_type}: {label}")
+
+    for h in HOTSPOTS:
+        _add(h.get("country", ""), "armed_conflict", h.get("name", ""))
+    for m in MILITIAS:
+        _add(m.get("country", ""), "armed_group", m.get("name", ""))
+    for d in DISEASE_OUTBREAKS:
+        _add(d.get("country", ""), "outbreak", d.get("disease", ""))
+    for p in PROTEST_EVENTS:
+        _add(p.get("country", ""), "civil_unrest", p.get("name", ""))
+    for o in INTERNET_OUTAGES:
+        _add(o.get("country", ""), "cyber_outage", o.get("name", ""))
+    for s_entry in SANCTIONS:
+        _add(s_entry.get("country", "") or s_entry.get("target", ""), "sanctions", s_entry.get("name", s_entry.get("target", "")))
+    for c in CYBER_ADVISORIES:
+        _add(c.get("country", ""), "cyber_threat", c.get("title", ""))
+    for f in DISPLACEMENT_FLOWS:
+        _add(f.get("from_country", ""), "displacement", f.get("name", ""))
+    for d in SUPPLY_CHAIN_DISRUPTIONS:
+        _add(d.get("country", ""), "supply_chain", d.get("name", ""))
+    for a in AIR_QUALITY:
+        if a.get("pm25", 0) >= 100:
+            _add(a.get("country", ""), "air_pollution", f"{a.get('name', '')} PM2.5 {a.get('pm25', 0)}")
+    for g in GPS_JAMMING_ZONES:
+        c0 = (g.get("country") or "").split("/")[0]
+        _add(c0, "gps_jamming", g.get("name", ""))
+
+    alerts = []
+    for code, info in by_country.items():
+        signals = info["signals"]
+        signal_count = len(signals)
+        total = sum(signals.values())
+        if signal_count >= 3:
+            severity = "EXTREME" if signal_count >= 6 else ("HIGH" if signal_count >= 5 else "MEDIUM")
+            alerts.append({
+                "country": code,
+                "signal_types": signal_count,
+                "total_signals": total,
+                "severity": severity,
+                "signals": signals,
+                "labels": info["labels"][:10],
+            })
+    alerts.sort(key=lambda x: (x["signal_types"], x["total_signals"]), reverse=True)
+    return alerts
+
+
 # ── API Routes ────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
     if not HTML_PATH.exists():
         return HTMLResponse("<h1>index.html not found</h1>", status_code=500)
-    return HTML_PATH.read_text()
+    return HTMLResponse(HTML_PATH.read_text())
 
 
 def _json(data):
     return Response(content=json.dumps(data, ensure_ascii=True), media_type="application/json")
+
+
+# ── FX rates proxy (frankfurter.dev) ────────────────────────────────────
+_FX_CACHE: dict = {"data": None, "fetched_at": 0.0}
+_FX_TTL = 3600  # 1 hour
+_FX_FALLBACK = {
+    "base": "USD",
+    "date": "fallback",
+    "rates": {
+        "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
+        "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
+        "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
+        "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
+        "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
+        "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+    },
+}
+
+
+def _fetch_fx_blocking() -> dict | None:
+    """Fetch latest USD-base FX rates from frankfurter.dev (blocking)."""
+    try:
+        req = urllib.request.Request(
+            "https://api.frankfurter.dev/v1/latest?base=USD",
+            headers={"User-Agent": "narve-world-state/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                data.setdefault("rates", {})
+                data["rates"]["USD"] = 1.0
+                return data
+    except Exception as e:
+        logging.warning("FX rate fetch failed: %s", e)
+    return None
+
+
+@app.get("/api/fx-rates")
+async def get_fx_rates():
+    """USD-base FX rates, cached for 1h. Source: frankfurter.dev."""
+    now = time.time()
+    cached = _FX_CACHE["data"]
+    if cached and (now - _FX_CACHE["fetched_at"]) < _FX_TTL:
+        return cached
+    data = await asyncio.to_thread(_fetch_fx_blocking)
+    if data:
+        _FX_CACHE["data"] = data
+        _FX_CACHE["fetched_at"] = now
+        return data
+    if cached:
+        return cached
+    return _FX_FALLBACK
 
 
 @app.get("/api/conflicts")
@@ -5701,7 +7833,7 @@ async def get_aircraft():
 
 @app.get("/api/facilities")
 async def get_facilities():
-    return _json({"facilities": NUCLEAR_FACILITIES, "bases": MILITARY_BASES, "vessels": VESSEL_DEPLOYMENTS, "spaceports": SPACEPORTS, "air_forces": WORLD_AIR_FORCES})
+    return _json({"facilities": NUCLEAR_FACILITIES, "bases": MILITARY_BASES, "vessels": VESSEL_DEPLOYMENTS, "spaceports": SPACEPORTS, "air_forces": WORLD_AIR_FORCES, "armies": WORLD_ARMIES})
 
 
 @app.get("/api/disasters")
@@ -5714,6 +7846,31 @@ async def get_disasters():
 async def get_satellites():
     sats = await asyncio.to_thread(fetch_satellites)
     return _json({"satellites": sats, "count": len(sats)})
+
+
+@app.get("/api/earthquakes")
+async def get_earthquakes():
+    quakes = await asyncio.to_thread(fetch_earthquakes)
+    return _json({"earthquakes": quakes, "count": len(quakes)})
+
+
+@app.get("/api/wildfires")
+async def get_wildfires():
+    fires = await asyncio.to_thread(fetch_wildfires)
+    return _json({"wildfires": fires, "count": len(fires)})
+
+
+@app.get("/api/world-state")
+async def get_world_state():
+    return _json({
+        "chokepoints": STRATEGIC_CHOKEPOINTS,
+        "stock_exchanges": STOCK_EXCHANGES,
+        "central_banks": CENTRAL_BANKS,
+        "mining_sites": MINING_SITES,
+        "diseases": DISEASE_OUTBREAKS,
+        "protests": PROTEST_EVENTS,
+        "internet_outages": INTERNET_OUTAGES,
+    })
 
 
 @app.get("/api/infrastructure")
@@ -5733,7 +7890,24 @@ async def get_infrastructure():
 
 @app.get("/api/all")
 async def get_all():
+    # Fetch live data in parallel (including cross-dashboard)
+    quakes_task = asyncio.to_thread(fetch_earthquakes)
+    fires_task = asyncio.to_thread(fetch_wildfires)
+    cross_task = cross_dashboard.fetch_all()
+    quakes, fires, cross_data = await asyncio.gather(
+        quakes_task, fires_task, cross_task, return_exceptions=True
+    )
+    if isinstance(quakes, Exception):
+        quakes = []
+    if isinstance(fires, Exception):
+        fires = []
+    if isinstance(cross_data, Exception):
+        cross_data = {}
     return _json({
+        # ── Cross-dashboard live data ──
+        "midterm_elections": cross_data.get("midterm_elections", {}),
+        "crypto_signals": cross_data.get("crypto_signals", {}),
+        "_cross_meta": cross_data.get("_cross_meta", {}),
         "conflicts": CONFLICTS,
         "hotspots": HOTSPOTS,
         "indicators": INDICATORS,
@@ -5761,11 +7935,557 @@ async def get_all():
         "oil_rare_earth": OIL_RARE_EARTH_FIELDS,
         "spaceports": SPACEPORTS,
         "air_forces": WORLD_AIR_FORCES,
+        "armies": WORLD_ARMIES,
+        "earthquakes": quakes,
+        "wildfires": fires,
+        "chokepoints": STRATEGIC_CHOKEPOINTS,
+        "stock_exchanges": STOCK_EXCHANGES,
+        "central_banks": CENTRAL_BANKS,
+        "mining_sites": MINING_SITES,
+        "diseases": DISEASE_OUTBREAKS,
+        "protests": PROTEST_EVENTS,
+        "internet_outages": INTERNET_OUTAGES,
+        "cyber_advisories": CYBER_ADVISORIES,
+        "gps_jamming": GPS_JAMMING_ZONES,
+        "displacement_flows": DISPLACEMENT_FLOWS,
+        "air_quality": AIR_QUALITY,
+        "supply_chain": SUPPLY_CHAIN_DISRUPTIONS,
+        "sea_ice_arctic": ARCTIC_SEA_ICE,
+        "sea_ice_antarctic": ANTARCTIC_SEA_ICE,
+        "volcanoes": ACTIVE_VOLCANOES,
+        "ai_datacenters": AI_DATA_CENTERS,
+        "tech_hqs": TECH_HQS,
+        "startup_hubs": STARTUP_HUBS,
+        "financial_centers": FINANCIAL_CENTERS,
+        "commodity_hubs": COMMODITY_HUBS,
+        "trade_routes": TRADE_ROUTES,
+        "intel_hotspots": INTEL_HOTSPOTS,
+        "sanctions_pressure": SANCTIONS_PRESSURE,
+        "live_webcams": LIVE_WEBCAMS,
+        "country_intel_index": compute_country_intel_index(),
+        "correlation_alerts": compute_correlation_signals(),
+        "apt_groups": APT_GROUPS,
+        "firms_fires": NASA_FIRMS_FIRES,
+        "aviation_airports": AVIATION_AIRPORTS,
+        "notam_closures": NOTAM_CLOSURES,
+        "climate_anomalies": CLIMATE_ANOMALIES,
+        "wto_restrictions": WTO_TRADE_RESTRICTIONS,
+        "bis_rates": BIS_POLICY_RATES,
+        "sector_heatmap": SECTOR_HEATMAP,
+        "oil_analytics": OIL_ANALYTICS,
+        "btc_etfs": BTC_ETF_FLOWS,
+        "stablecoins": STABLECOINS,
+        "gov_spending": GOV_SPENDING,
+        "layoffs": LAYOFFS_TRACKER,
+        "israel_sirens": ISRAEL_SIRENS,
+        "telegram_intel": TELEGRAM_INTEL,
+        "tech_readiness": TECH_READINESS,
+        "strategic_posture": STRATEGIC_POSTURE,
+        "live_intel_feeds": LIVE_INTELLIGENCE_FEEDS,
+        "population_exposure": POPULATION_EXPOSURE,
+        "strategic_risk": _compute_strategic_risk(),
+        "market_indices": MARKET_INDICES,
+        "fear_greed": FEAR_GREED_INDEX,
+        "yield_curve_us": YIELD_CURVE_US,
+        "global_bond_yields": GLOBAL_BOND_YIELDS,
+        "commodity_prices": COMMODITY_PRICES,
+        "etf_flows": ETF_FLOWS,
+        "earnings_calendar": EARNINGS_CALENDAR,
+        "cot_report": COT_REPORT,
+        "gdelt_events": GDELT_EVENTS,
+        "global_conflict_index": GLOBAL_CONFLICT_INDEX,
+        "humanitarian_crises": HUMANITARIAN_CRISES,
+        "world_clock_zones": WORLD_CLOCK_ZONES,
+        "national_debt": NATIONAL_DEBT,
         "threat_level": "ELEVATED",
         "threat_note": "Multiple active high-intensity conflicts. Elevated nuclear rhetoric. Global trade disruptions.",
         "xfeed_accounts": len(X_ACCOUNTS),
         "xfeed_has_token": bool(X_BEARER_TOKEN),
     })
+
+
+# ── New endpoints (worldmonitor-style features) ──────────────────────────────
+
+@app.get("/api/cyber-advisories")
+async def get_cyber_advisories():
+    return _json({"advisories": CYBER_ADVISORIES, "count": len(CYBER_ADVISORIES)})
+
+
+@app.get("/api/gps-jamming")
+async def get_gps_jamming():
+    return _json({"zones": GPS_JAMMING_ZONES, "count": len(GPS_JAMMING_ZONES)})
+
+
+@app.get("/api/displacement")
+async def get_displacement():
+    total = sum(f.get("population", 0) for f in DISPLACEMENT_FLOWS)
+    return _json({"flows": DISPLACEMENT_FLOWS, "count": len(DISPLACEMENT_FLOWS), "total_displaced": total})
+
+
+@app.get("/api/air-quality")
+async def get_air_quality():
+    return _json({"readings": AIR_QUALITY, "count": len(AIR_QUALITY)})
+
+
+@app.get("/api/sea-ice")
+async def get_sea_ice():
+    return _json({"arctic": ARCTIC_SEA_ICE, "antarctic": ANTARCTIC_SEA_ICE})
+
+
+@app.get("/api/supply-chain")
+async def get_supply_chain():
+    return _json({"disruptions": SUPPLY_CHAIN_DISRUPTIONS, "count": len(SUPPLY_CHAIN_DISRUPTIONS)})
+
+
+@app.get("/api/volcanoes")
+async def get_volcanoes():
+    erupting = [v for v in ACTIVE_VOLCANOES if v.get("status") == "ERUPTING"]
+    return _json({"volcanoes": ACTIVE_VOLCANOES, "count": len(ACTIVE_VOLCANOES), "erupting": len(erupting)})
+
+
+@app.get("/api/ai-datacenters")
+async def get_ai_datacenters():
+    total_chips = sum(d.get("chip_count", 0) for d in AI_DATA_CENTERS)
+    total_mw = sum(d.get("power_mw", 0) for d in AI_DATA_CENTERS)
+    return _json({"datacenters": AI_DATA_CENTERS, "count": len(AI_DATA_CENTERS), "total_chips": total_chips, "total_mw": total_mw})
+
+
+@app.get("/api/tech-hqs")
+async def get_tech_hqs():
+    total_mcap = sum(h.get("mcap", 0) for h in TECH_HQS)
+    return _json({"hqs": TECH_HQS, "count": len(TECH_HQS), "total_mcap_b": total_mcap})
+
+
+@app.get("/api/startup-hubs")
+async def get_startup_hubs():
+    return _json({"hubs": STARTUP_HUBS, "count": len(STARTUP_HUBS)})
+
+
+@app.get("/api/financial-centers")
+async def get_financial_centers():
+    return _json({"centers": FINANCIAL_CENTERS, "count": len(FINANCIAL_CENTERS)})
+
+
+@app.get("/api/commodity-hubs")
+async def get_commodity_hubs():
+    return _json({"hubs": COMMODITY_HUBS, "count": len(COMMODITY_HUBS)})
+
+
+@app.get("/api/trade-routes")
+async def get_trade_routes():
+    return _json({"routes": TRADE_ROUTES, "count": len(TRADE_ROUTES)})
+
+
+@app.get("/api/intel-hotspots")
+async def get_intel_hotspots():
+    return _json({"hotspots": INTEL_HOTSPOTS, "count": len(INTEL_HOTSPOTS)})
+
+
+@app.get("/api/sanctions-pressure")
+async def get_sanctions_pressure():
+    return _json({"countries": SANCTIONS_PRESSURE, "count": len(SANCTIONS_PRESSURE)})
+
+
+@app.get("/api/webcams")
+async def get_webcams():
+    return _json({"webcams": LIVE_WEBCAMS, "count": len(LIVE_WEBCAMS)})
+
+
+@app.get("/api/intel-index")
+async def get_intel_index():
+    idx = compute_country_intel_index()
+    top10 = sorted(
+        [{"country": c, **info} for c, info in idx.items()],
+        key=lambda x: x["score"],
+        reverse=True,
+    )[:10]
+    return _json({"index": idx, "top_10": top10, "country_count": len(idx)})
+
+
+@app.get("/api/correlations")
+async def get_correlations():
+    alerts = compute_correlation_signals()
+    return _json({"alerts": alerts, "count": len(alerts)})
+
+
+@app.get("/api/sanctions/search")
+async def search_sanctions(q: str = ""):
+    """OFAC-style entity search across our SANCTIONS list."""
+    q_low = (q or "").strip().lower()
+    if not q_low:
+        return _json({"query": "", "results": [], "count": 0})
+    out = []
+    for s in SANCTIONS:
+        hay = " ".join([
+            str(s.get("name", "")),
+            str(s.get("target", "")),
+            str(s.get("country", "")),
+            str(s.get("type", "")),
+            str(s.get("detail", "")),
+        ]).lower()
+        if q_low in hay:
+            out.append(s)
+    return _json({"query": q, "results": out, "count": len(out)})
+
+
+# ── Phase 3: extended worldmonitor-parity endpoints ──────────────────────────
+
+
+@app.get("/api/apt-groups")
+async def get_apt_groups():
+    return _json({"groups": APT_GROUPS, "count": len(APT_GROUPS)})
+
+
+@app.get("/api/firms-fires")
+async def get_firms_fires():
+    return _json({"fires": NASA_FIRMS_FIRES, "count": len(NASA_FIRMS_FIRES)})
+
+
+@app.get("/api/aviation")
+async def get_aviation():
+    closed = [a for a in AVIATION_AIRPORTS if a.get("ground_stop")]
+    severe = [a for a in AVIATION_AIRPORTS if a.get("delay_status") in ("SEVERE", "MAJOR")]
+    return _json({
+        "airports": AVIATION_AIRPORTS,
+        "notams": NOTAM_CLOSURES,
+        "ground_stops": len(closed),
+        "severe_delays": len(severe),
+        "count": len(AVIATION_AIRPORTS),
+    })
+
+
+@app.get("/api/climate-anomalies")
+async def get_climate_anomalies():
+    return _json({"anomalies": CLIMATE_ANOMALIES, "count": len(CLIMATE_ANOMALIES)})
+
+
+@app.get("/api/wto-restrictions")
+async def get_wto_restrictions():
+    active = [w for w in WTO_TRADE_RESTRICTIONS if w.get("status") == "ACTIVE"]
+    return _json({"restrictions": WTO_TRADE_RESTRICTIONS, "active": len(active), "count": len(WTO_TRADE_RESTRICTIONS)})
+
+
+@app.get("/api/bis-rates")
+async def get_bis_rates():
+    avg = sum(b["rate_pct"] for b in BIS_POLICY_RATES) / max(1, len(BIS_POLICY_RATES))
+    return _json({"banks": BIS_POLICY_RATES, "global_avg_rate_pct": round(avg, 2), "count": len(BIS_POLICY_RATES)})
+
+
+@app.get("/api/sector-heatmap")
+async def get_sector_heatmap():
+    return _json({"sectors": SECTOR_HEATMAP, "count": len(SECTOR_HEATMAP)})
+
+
+@app.get("/api/oil-analytics")
+async def get_oil_analytics():
+    return _json(OIL_ANALYTICS)
+
+
+@app.get("/api/btc-etfs")
+async def get_btc_etfs():
+    total_aum = sum(e["aum_b"] for e in BTC_ETF_FLOWS)
+    flow_24h = sum(e["flow_24h_m"] for e in BTC_ETF_FLOWS)
+    return _json({"etfs": BTC_ETF_FLOWS, "total_aum_b": round(total_aum, 2), "net_flow_24h_m": round(flow_24h, 2), "count": len(BTC_ETF_FLOWS)})
+
+
+@app.get("/api/stablecoins")
+async def get_stablecoins():
+    total = sum(s["marketcap_b"] for s in STABLECOINS)
+    return _json({"stablecoins": STABLECOINS, "total_marketcap_b": round(total, 2), "count": len(STABLECOINS)})
+
+
+@app.get("/api/gov-spending")
+async def get_gov_spending():
+    total = sum(g["amount_m"] for g in GOV_SPENDING)
+    return _json({"contracts": GOV_SPENDING, "total_m": total, "count": len(GOV_SPENDING)})
+
+
+@app.get("/api/layoffs")
+async def get_layoffs():
+    total = sum(l["count"] for l in LAYOFFS_TRACKER)
+    return _json({"layoffs": LAYOFFS_TRACKER, "total_jobs": total, "count": len(LAYOFFS_TRACKER)})
+
+
+@app.get("/api/israel-sirens")
+async def get_israel_sirens():
+    return _json({"sirens": ISRAEL_SIRENS, "count": len(ISRAEL_SIRENS)})
+
+
+@app.get("/api/telegram-intel")
+async def get_telegram_intel():
+    return _json({"channels": TELEGRAM_INTEL, "count": len(TELEGRAM_INTEL)})
+
+
+@app.get("/api/tech-readiness")
+async def get_tech_readiness():
+    return _json({"tech": TECH_READINESS, "count": len(TECH_READINESS)})
+
+
+@app.get("/api/strategic-posture")
+async def get_strategic_posture():
+    return _json({"theaters": STRATEGIC_POSTURE, "count": len(STRATEGIC_POSTURE)})
+
+
+@app.get("/api/live-intel")
+async def get_live_intel(topic: str = ""):
+    t = (topic or "").strip().lower()
+    if t and t in LIVE_INTELLIGENCE_FEEDS:
+        return _json({"topic": t, "items": LIVE_INTELLIGENCE_FEEDS[t]})
+    return _json({"feeds": LIVE_INTELLIGENCE_FEEDS, "topics": list(LIVE_INTELLIGENCE_FEEDS.keys())})
+
+
+@app.get("/api/population-exposure")
+async def get_population_exposure():
+    return _json({"regions": POPULATION_EXPOSURE, "count": len(POPULATION_EXPOSURE)})
+
+
+def _compute_strategic_risk():
+    """Composite risk score across modules. Used by /api/all and /api/strategic-risk."""
+    try:
+        intel = compute_country_intel_index()
+        avg_score = sum(c["score"] for c in intel.values()) / max(1, len(intel))
+        high_intel_countries = sum(1 for c in intel.values() if c["score"] >= 50)
+    except Exception:
+        avg_score = 0.0
+        high_intel_countries = 0
+    erupting_volcanoes = sum(1 for v in ACTIVE_VOLCANOES if v.get("status") == "ERUPTING")
+    extreme_climate = sum(1 for c in CLIMATE_ANOMALIES if (c.get("severity") or "").upper() == "EXTREME")
+    extreme_supply = sum(1 for s in SUPPLY_CHAIN_DISRUPTIONS if (s.get("severity") or "").upper() == "EXTREME")
+    critical_cyber = sum(1 for c in CYBER_ADVISORIES if (c.get("severity") or "").upper() == "CRITICAL")
+    active_conflicts = len(CONFLICTS)
+    grounded = sum(1 for a in AVIATION_AIRPORTS if a.get("ground_stop"))
+    composite = min(100, round(
+        avg_score * 0.30
+        + high_intel_countries * 1.5
+        + erupting_volcanoes * 0.6
+        + extreme_climate * 1.8
+        + extreme_supply * 2.4
+        + critical_cyber * 1.6
+        + active_conflicts * 1.2
+        + grounded * 1.0,
+        1,
+    ))
+    if composite >= 75:
+        level = "CRITICAL"
+    elif composite >= 60:
+        level = "HIGH"
+    elif composite >= 40:
+        level = "ELEVATED"
+    elif composite >= 20:
+        level = "MODERATE"
+    else:
+        level = "LOW"
+    return {
+        "composite": composite,
+        "level": level,
+        "modules": {
+            "country_intel": round(avg_score, 1),
+            "high_intel": high_intel_countries,
+            "conflicts": active_conflicts,
+            "supply": extreme_supply,
+            "climate": extreme_climate,
+            "volcanoes": erupting_volcanoes,
+            "cyber": critical_cyber,
+            "grounded": grounded,
+        },
+    }
+
+
+@app.get("/api/strategic-risk")
+async def get_strategic_risk():
+    return _json(_compute_strategic_risk())
+
+
+@app.get("/api/country-brief")
+async def get_country_brief(code: str = ""):
+    """Generate a country brief: profile + indicators + intel score + recent events."""
+    code = (code or "").upper().strip()
+    if not code:
+        return _json({"error": "code parameter required"})
+    profile = COUNTRY_PROFILES.get(code) if "COUNTRY_PROFILES" in globals() else None
+    indices = COUNTRY_INDICES.get(code) if "COUNTRY_INDICES" in globals() else None
+    intel = compute_country_intel_index().get(code)
+    cyber = [c for c in CYBER_ADVISORIES if c.get("country") == code]
+    sanctions = [s for s in SANCTIONS if s.get("country") == code or s.get("target") == code]
+    militias = [m for m in MILITIAS if m.get("country") == code]
+    outbreaks = [d for d in DISEASE_OUTBREAKS if d.get("country") == code]
+    apts = [a for a in APT_GROUPS if a.get("sponsor") == code]
+    layoffs = [l for l in LAYOFFS_TRACKER if l.get("country") == code]
+    return _json({
+        "code": code,
+        "profile": profile,
+        "indices": indices,
+        "intel_index": intel,
+        "cyber_advisories": cyber,
+        "sanctions": sanctions[:10],
+        "militias": militias,
+        "outbreaks": outbreaks,
+        "apt_groups": apts,
+        "recent_layoffs": layoffs,
+    })
+
+
+# ── Tier 2 markets / intel / utility endpoints ────────────────────────────────
+
+@app.get("/api/market-indices")
+async def get_market_indices():
+    by_region: dict[str, list] = {}
+    for idx in MARKET_INDICES:
+        by_region.setdefault(idx.get("region", "Other"), []).append(idx)
+    advancers = sum(1 for idx in MARKET_INDICES if idx.get("ch_pct", 0) > 0)
+    decliners = sum(1 for idx in MARKET_INDICES if idx.get("ch_pct", 0) < 0)
+    return _json({
+        "indices": MARKET_INDICES,
+        "by_region": by_region,
+        "advancers": advancers,
+        "decliners": decliners,
+        "count": len(MARKET_INDICES),
+    })
+
+
+@app.get("/api/fear-greed")
+async def get_fear_greed():
+    return _json(FEAR_GREED_INDEX)
+
+
+@app.get("/api/yield-curve")
+async def get_yield_curve():
+    twos = next((y["yield"] for y in YIELD_CURVE_US if y["tenor"] == "2Y"), None)
+    tens = next((y["yield"] for y in YIELD_CURVE_US if y["tenor"] == "10Y"), None)
+    spread_10y_2y = round(tens - twos, 2) if tens is not None and twos is not None else None
+    inverted = spread_10y_2y is not None and spread_10y_2y < 0
+    return _json({
+        "us_curve": YIELD_CURVE_US,
+        "global_10y": GLOBAL_BOND_YIELDS,
+        "spread_10y_2y": spread_10y_2y,
+        "inverted": inverted,
+    })
+
+
+@app.get("/api/commodities")
+async def get_commodities():
+    by_cat: dict[str, list] = {}
+    for c in COMMODITY_PRICES:
+        by_cat.setdefault(c.get("category", "other"), []).append(c)
+    return _json({
+        "commodities": COMMODITY_PRICES,
+        "by_category": by_cat,
+        "count": len(COMMODITY_PRICES),
+    })
+
+
+@app.get("/api/etf-flows")
+async def get_etf_flows():
+    by_cat: dict[str, list] = {}
+    for e in ETF_FLOWS:
+        by_cat.setdefault(e.get("category", "other"), []).append(e)
+    total_aum = sum(e.get("aum_b", 0) for e in ETF_FLOWS)
+    total_5d_flow = sum(e.get("flow_5d_b", 0) for e in ETF_FLOWS)
+    return _json({
+        "etfs": ETF_FLOWS,
+        "by_category": by_cat,
+        "total_aum_b": round(total_aum, 1),
+        "total_5d_flow_b": round(total_5d_flow, 2),
+        "count": len(ETF_FLOWS),
+    })
+
+
+@app.get("/api/earnings-calendar")
+async def get_earnings_calendar():
+    high = [e for e in EARNINGS_CALENDAR if e.get("importance") == "high"]
+    return _json({
+        "calendar": EARNINGS_CALENDAR,
+        "high_importance_count": len(high),
+        "count": len(EARNINGS_CALENDAR),
+    })
+
+
+@app.get("/api/cot-report")
+async def get_cot_report():
+    by_cat: dict[str, list] = {}
+    for c in COT_REPORT:
+        by_cat.setdefault(c.get("category", "other"), []).append(c)
+    return _json({
+        "contracts": COT_REPORT,
+        "by_category": by_cat,
+        "count": len(COT_REPORT),
+    })
+
+
+@app.get("/api/gdelt-events")
+async def get_gdelt_events():
+    avg_tone = round(sum(e.get("tone", 0) for e in GDELT_EVENTS) / max(1, len(GDELT_EVENTS)), 2)
+    avg_goldstein = round(sum(e.get("goldstein", 0) for e in GDELT_EVENTS) / max(1, len(GDELT_EVENTS)), 2)
+    return _json({
+        "events": GDELT_EVENTS,
+        "count": len(GDELT_EVENTS),
+        "avg_tone": avg_tone,
+        "avg_goldstein": avg_goldstein,
+    })
+
+
+@app.get("/api/global-conflict-index")
+async def get_global_conflict_index():
+    high = [c for c in GLOBAL_CONFLICT_INDEX if c.get("score", 0) >= 80]
+    total_fatalities = sum(c.get("fatalities_30d", 0) for c in GLOBAL_CONFLICT_INDEX)
+    return _json({
+        "countries": GLOBAL_CONFLICT_INDEX,
+        "high_conflict_count": len(high),
+        "total_fatalities_30d": total_fatalities,
+        "count": len(GLOBAL_CONFLICT_INDEX),
+    })
+
+
+@app.get("/api/humanitarian-crises")
+async def get_humanitarian_crises():
+    total_in_need = sum(h.get("people_in_need_m", 0) for h in HUMANITARIAN_CRISES)
+    total_displaced = sum(h.get("displaced_m", 0) for h in HUMANITARIAN_CRISES)
+    total_funding_required = sum(h.get("funding_required_b", 0) for h in HUMANITARIAN_CRISES)
+    avg_funding_pct = round(sum(h.get("funding_pct", 0) for h in HUMANITARIAN_CRISES) / max(1, len(HUMANITARIAN_CRISES)), 1)
+    return _json({
+        "crises": HUMANITARIAN_CRISES,
+        "total_in_need_m": round(total_in_need, 1),
+        "total_displaced_m": round(total_displaced, 1),
+        "total_funding_required_b": round(total_funding_required, 1),
+        "avg_funding_pct": avg_funding_pct,
+        "count": len(HUMANITARIAN_CRISES),
+    })
+
+
+@app.get("/api/world-clock")
+async def get_world_clock():
+    from datetime import datetime, timezone, timedelta
+    now_utc = datetime.now(timezone.utc)
+    zones = []
+    for z in WORLD_CLOCK_ZONES:
+        offset_hours = z.get("utc_offset", 0)
+        local = now_utc + timedelta(hours=offset_hours)
+        zones.append({
+            **z,
+            "local_iso": local.strftime("%Y-%m-%dT%H:%M:%S"),
+            "local_hour": local.hour,
+            "local_minute": local.minute,
+            "is_business_hours": 9 <= local.hour < 17 and local.weekday() < 5,
+        })
+    return _json({"zones": zones, "utc_now": now_utc.isoformat(), "count": len(zones)})
+
+
+@app.get("/api/national-debt")
+async def get_national_debt():
+    total_debt = sum(d.get("debt_t", 0) for d in NATIONAL_DEBT)
+    avg_debt_gdp = round(sum(d.get("debt_gdp_pct", 0) for d in NATIONAL_DEBT) / max(1, len(NATIONAL_DEBT)), 1)
+    return _json({
+        "debts": NATIONAL_DEBT,
+        "total_debt_t": round(total_debt, 1),
+        "avg_debt_gdp_pct": avg_debt_gdp,
+        "count": len(NATIONAL_DEBT),
+    })
+
+
+@app.get("/api/cross-dashboard")
+async def get_cross_dashboard():
+    data = await cross_dashboard.fetch_all()
+    return _json(data)
 
 
 if __name__ == "__main__":

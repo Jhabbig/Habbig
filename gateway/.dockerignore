@@ -1,0 +1,12 @@
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+*.log
+.git
+.DS_Store
+config.json
+setup_cloudflare.sh

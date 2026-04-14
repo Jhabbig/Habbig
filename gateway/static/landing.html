@@ -4,71 +4,359 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>narve.ai</title>
-  <meta name="description" content="Something is coming.">
-  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <link rel="icon" type="image/png" href="/_gateway_static/favicon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fraunces:ital,opsz,wght@1,9..144,400&family=Jost:wght@300;400;500;600&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
   <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
+    :root {
+      --bg-void: #f5f5f5;
+      --text-primary: #0d0d0d;
+      --text-secondary: #5a5a5a;
+      --text-tertiary: #9a9a9a;
+      --border-default: #e0e0e0;
+      --border-strong: #b0b0b0;
+      --interactive-bg: #0d0d0d;
+      --interactive-text: #f5f5f5;
+      --interactive-ghost: rgba(0, 0, 0, 0.05);
+      --font-ui: 'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-display: 'Lora', 'Georgia', serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); display: flex; flex-direction: column; justify-content: center; align-items: center; overflow-x: hidden; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Logo */
+    .pr-logo {
+      position: fixed;
+      top: 28px;
+      left: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      z-index: 10;
+    }
+    .pr-logo-icon { width: 48px; height: 48px; border-radius: 6px; }
+    .pr-logo-text {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 1.5rem;
+      letter-spacing: -0.04em;
+      color: var(--text-primary);
+    }
+
+    /* Admin login */
+    .pr-admin {
+      position: fixed;
+      top: 32px;
+      right: 28px;
+      font-family: var(--font-ui);
+      font-size: 0.85rem;
+      font-weight: 400;
+      color: rgba(0, 0, 0, 0.3);
+      text-decoration: none;
+      transition: color 0.2s ease;
+      z-index: 10;
+    }
+    .pr-admin:hover { color: rgba(0, 0, 0, 0.8); }
+
+    /* Hero */
+    .pr-hero { text-align: center; padding: 32px; max-width: 720px; }
+    .pr-line1 {
+      font-family: var(--font-ui);
+      font-weight: 300;
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: var(--text-primary);
+      animation: fadeUp 0.8s ease-out 0.3s both;
+    }
+    .pr-line2 {
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: var(--text-primary);
+      margin-top: 0.05em;
+      animation: fadeUp 0.8s ease-out 0.8s both;
+    }
+    .pr-line2-start {
+      font-family: var(--font-ui);
+      font-weight: 300;
+    }
+    .pr-line2-end {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-weight: 400;
+    }
+    .pr-soon {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-weight: 400;
+      font-size: 1.05rem;
+      letter-spacing: 0.1em;
+      color: var(--text-tertiary);
+      margin-top: 3rem;
+      animation: fadeUp 0.8s ease-out 1.3s both;
+    }
+
+    /* Email signup */
+    .pr-signup {
+      margin-top: 2.5rem;
       display: flex;
       flex-direction: column;
+      gap: 22px;
       align-items: center;
       justify-content: center;
-      background: var(--bg-primary, #0a0b14);
-      color: var(--text-primary, #e2e4ea);
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      animation: fadeUp 0.8s ease-out 1.6s both;
     }
-    .teaser {
+    .pr-input {
+      display: none;
+      height: 52px;
+      padding: 0 4px 8px;
+      border: none;
+      border-bottom: 1px solid var(--border-strong);
+      border-radius: 0;
+      background: transparent;
+      font-family: var(--font-ui);
+      font-size: 1.05rem;
+      color: var(--text-primary);
+      width: 280px;
+      outline: none;
       text-align: center;
-      padding: 32px;
+      transition: border-color 0.15s;
     }
-    .teaser-logo {
-      width: 64px;
-      height: 64px;
-      border-radius: 16px;
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 28px;
-      font-weight: 700;
-      color: white;
-      margin: 0 auto 40px;
-    }
-    .teaser h1 {
-      font-size: clamp(28px, 5vw, 48px);
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      margin: 0 0 16px;
-      color: var(--text-primary, #e2e4ea);
-    }
-    .teaser p {
-      font-size: 16px;
-      color: var(--text-muted, #5a5e72);
-      margin: 0 0 40px;
-    }
-    .teaser-login {
-      display: inline-block;
-      font-size: 14px;
+    .pr-input.visible { display: inline-block; }
+    .pr-input:focus { border-bottom-color: var(--text-primary); }
+    .pr-input::placeholder { color: var(--text-tertiary); font-family: var(--font-display); font-style: italic; }
+    .pr-btn {
+      background: transparent;
+      color: var(--text-primary);
+      border: none;
+      padding: 4px 0;
+      font-family: var(--font-display);
+      font-style: italic;
+      font-size: 1.15rem;
       font-weight: 500;
-      color: var(--accent, #6366f1);
-      text-decoration: none;
-      border: 1px solid var(--accent, #6366f1);
-      padding: 10px 24px;
-      border-radius: 8px;
-      transition: background 0.15s;
+      cursor: pointer;
+      white-space: nowrap;
+      position: relative;
+      transition: opacity 0.15s;
     }
-    .teaser-login:hover {
-      background: rgba(99, 102, 241, 0.08);
+    .pr-btn::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 1px;
+      background: var(--text-primary);
+      transform: scaleX(0.4);
+      transform-origin: center;
+      transition: transform 0.25s ease;
+    }
+    .pr-btn:hover::after { transform: scaleX(1); }
+    .pr-error { font-size: 0.8rem; color: var(--text-secondary); margin-top: 10px; display: none; text-align: center; }
+    .pr-error.visible { display: block; }
+    .pr-success {
+      font-family: var(--font-ui);
+      font-weight: 400;
+      font-size: 0.85rem;
+      letter-spacing: 0.01em;
+      color: var(--text-secondary);
+      display: none;
+      margin-top: 2.5rem;
+      text-align: center;
+      max-width: 420px;
+    }
+    .pr-success.visible { display: block; }
+    .pr-success-title { font-family: var(--font-ui); font-weight: 500; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 24px; }
+    .pr-position-block { padding: 24px 0; }
+    .pr-position-number { font-family: 'Fraunces', 'Lora', serif; font-style: italic; font-size: 5rem; line-height: 1; color: var(--text-primary); letter-spacing: -0.04em; }
+    .pr-position-label { font-size: 0.7rem; color: var(--text-tertiary); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 8px; }
+    .pr-ref-row { display: flex; align-items: center; gap: 8px; margin-top: 24px; padding: 10px 14px; background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; }
+    .pr-ref-url { flex: 1; font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+    .pr-ref-copy { background: transparent; border: none; color: var(--text-tertiary); font-size: 0.75rem; cursor: pointer; padding: 4px 8px; font-family: inherit; }
+    .pr-ref-copy:hover { color: var(--text-primary); }
+    .pr-ref-hint { font-size: 0.72rem; color: var(--text-tertiary); line-height: 1.6; margin-top: 16px; }
+    .pr-share-row { display: flex; gap: 8px; margin-top: 18px; justify-content: center; }
+    .pr-share-btn { padding: 8px 16px; background: transparent; border: 1px solid rgba(0,0,0,0.2); border-radius: 6px; color: var(--text-secondary); font-size: 0.75rem; text-decoration: none; font-family: inherit; cursor: pointer; }
+    .pr-share-btn:hover { border-color: var(--text-primary); color: var(--text-primary); }
+
+    @media (max-width: 520px) {
+      .pr-input.visible { width: 85%; max-width: 320px; }
     }
   </style>
 </head>
-<body class="landing-body">
-  <div class="teaser">
-    <div class="teaser-logo">H</div>
-    <h1>Something is coming.</h1>
-    <p>Stay tuned.</p>
-    <a href="/gate" class="teaser-login">Client Login</a>
+<body>
+  <a href="/" class="pr-logo">
+    <img class="pr-logo-icon" src="/_gateway_static/img/logo.png" alt="narve.ai">
+    <span class="pr-logo-text">narve.ai</span>
+  </a>
+  <a href="/gate" class="pr-admin">Admin Login</a>
+
+  <canvas id="particles" style="position:fixed;inset:0;z-index:-1;pointer-events:none"></canvas>
+
+  <div class="pr-hero">
+    <div class="pr-line1">Stop guessing who's right.</div>
+    <div class="pr-line2">
+      <span class="pr-line2-start">Start </span><span class="pr-line2-end">knowing.</span>
+    </div>
+    <div class="pr-soon">coming soon.</div>
+
+    <div id="signup-wrap">
+      <form class="pr-signup newsletter-form" id="signup-form" onsubmit="return submitEmail(event)">
+        <input class="pr-input" type="email" id="pr-email" placeholder="Enter your email">
+        <button class="pr-btn" type="submit" id="pr-btn">Notify me</button>
+      </form>
+      <div class="pr-error" id="pr-error"></div>
+    </div>
+    <div class="pr-success" id="pr-success">
+      <div class="pr-success-title">You're on the list.</div>
+      <div class="pr-position-block">
+        <div class="pr-position-number">#<span id="pr-position">—</span></div>
+        <div class="pr-position-label">on the waitlist</div>
+      </div>
+      <div style="font-size:0.78rem;color:var(--text-tertiary);margin-top:4px">Share your spot:</div>
+      <div class="pr-ref-row">
+        <div class="pr-ref-url" id="pr-ref-url">—</div>
+        <button class="pr-ref-copy" type="button" onclick="copyRef()">📋 Copy</button>
+      </div>
+      <div class="pr-ref-hint">
+        Move up the list by referring friends. Each person who signs up with your link
+        moves you <strong style="color:var(--text-secondary)">5 places forward</strong>.
+      </div>
+      <div class="pr-share-row">
+        <a class="pr-share-btn" id="pr-share-x" href="#" target="_blank" rel="noopener">Share on X →</a>
+        <a class="pr-share-btn" id="pr-share-wa" href="#" target="_blank" rel="noopener">Share on WhatsApp →</a>
+      </div>
+    </div>
   </div>
+  <div style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(0,0,0,0.35);z-index:5;font-family:var(--font-ui);letter-spacing:0.02em">
+    <a href="/terms" style="color:rgba(0,0,0,0.55);margin:0 10px;text-decoration:none">Terms</a>
+    <span style="color:rgba(0,0,0,0.25)">·</span>
+    <a href="/privacy" style="color:rgba(0,0,0,0.55);margin:0 10px;text-decoration:none">Privacy</a>
+  </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var canvas = document.getElementById('particles');
+  var ctx = canvas.getContext('2d');
+  var particles = [];
+  var count = 60;
+
+  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+
+  for (var i = 0; i < count; i++) {
+    particles.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: 1.5 + Math.random() * 1.5,
+      vx: (Math.random() - 0.5) * 0.3 + (Math.random() > 0.5 ? 0.08 : -0.08),
+      vy: (Math.random() - 0.5) * 0.3 + (Math.random() > 0.5 ? 0.08 : -0.08)
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = canvas.width;
+      if (p.x > canvas.width) p.x = 0;
+      if (p.y < 0) p.y = canvas.height;
+      if (p.y > canvas.height) p.y = 0;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    requestAnimationFrame(draw);
+  }
+  draw();
+});
+
+function getCsrf() {
+  var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+function getRefFromUrl() {
+  var params = new URLSearchParams(window.location.search);
+  return (params.get('ref') || '').trim().toUpperCase();
+}
+
+function copyRef() {
+  var url = document.getElementById('pr-ref-url').textContent;
+  if (!url || url === '—') return;
+  navigator.clipboard.writeText(url).then(function() {
+    var btn = document.querySelector('.pr-ref-copy');
+    var old = btn.textContent;
+    btn.textContent = '✓ Copied';
+    setTimeout(function() { btn.textContent = old; }, 1600);
+  });
+}
+
+function submitEmail(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  var input = document.getElementById('pr-email');
+  var errEl = document.getElementById('pr-error');
+  var btn = document.getElementById('pr-btn');
+
+  // First click: reveal the hidden email input and focus it.
+  if (!input.classList.contains('visible')) {
+    input.classList.add('visible');
+    setTimeout(function() { input.focus(); }, 60);
+    return false;
+  }
+
+  var email = input.value.trim();
+  if (!email) { input.focus(); return false; }
+
+  errEl.classList.remove('visible');
+  btn.disabled = true; btn.textContent = '...';
+
+  var formBody = new URLSearchParams();
+  formBody.append('email', email);
+  var ref = getRefFromUrl();
+  if (ref) formBody.append('ref', ref);
+  formBody.append('_csrf', getCsrf());
+
+  fetch('/api/newsletter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': getCsrf() },
+    body: formBody.toString()
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+  .then(function(res) {
+    if (res.ok && res.data.success) {
+      document.getElementById('signup-wrap').style.display = 'none';
+      document.getElementById('pr-position').textContent = res.data.position;
+      var shareUrl = res.data.share_url || '';
+      document.getElementById('pr-ref-url').textContent = shareUrl;
+      var shareText = "I'm #" + res.data.position + " on the narve.ai waitlist — AI-powered prediction market intelligence. Join here and we both move up:";
+      document.getElementById('pr-share-x').href =
+        'https://twitter.com/intent/tweet?text=' + encodeURIComponent(shareText + ' ' + shareUrl);
+      document.getElementById('pr-share-wa').href =
+        'https://wa.me/?text=' + encodeURIComponent(shareText + ' ' + shareUrl);
+      document.getElementById('pr-success').classList.add('visible');
+    } else {
+      errEl.textContent = res.data.error || 'Something went wrong. Try again.';
+      errEl.classList.add('visible');
+      btn.disabled = false; btn.textContent = 'Notify me';
+    }
+  })
+  .catch(function() {
+    errEl.textContent = 'Something went wrong. Try again.';
+    errEl.classList.add('visible');
+    btn.disabled = false; btn.textContent = 'Notify me';
+  });
+  return false;
+}
+</script>
 </body>
 </html>

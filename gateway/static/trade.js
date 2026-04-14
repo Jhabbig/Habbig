@@ -16,6 +16,18 @@
 (function () {
   'use strict';
 
+  /* ── CSRF token (provided by the gateway switcher injection) ── */
+  function csrfToken() {
+    return (window.__hbSwitcher && window.__hbSwitcher.csrf_token) || '';
+  }
+
+  /* ── HTML escaping ─────────────────────────────────────────── */
+  function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = String(s == null ? '' : s);
+    return d.innerHTML;
+  }
+
   /* ── URL builders ──────────────────────────────────────────── */
   function polyUrl(slug) { return 'https://polymarket.com/event/' + encodeURIComponent(slug); }
   function kalshiUrl(slug) { return 'https://kalshi.com/events/' + encodeURIComponent(slug); }
@@ -459,7 +471,7 @@
       credWarning.style.display = '';
       credWarning.innerHTML = '<div style="font-size:20px;margin-bottom:8px;opacity:0.3">' + (activeTab === 'kalshi' ? 'K' : 'P') + '</div>'
         + '<div>Connect your <strong>' + (activeTab === 'kalshi' ? 'Kalshi' : 'Polymarket') + '</strong> account to trade directly.</div>'
-        + '<a href="/profile#trading" class="tp-cred-link">Add API Keys &rarr;</a>';
+        + '<a href="/settings#trading" class="tp-cred-link">Add API Keys &rarr;</a>';
       formWrap.style.display = 'none';
       summary.style.display = 'none';
       submitBtn.style.display = 'none';
@@ -493,6 +505,7 @@
       amount: amt,
       price: prc,
       question: currentMarket.question || '',
+      source_dashboard: (window.__hbSwitcher && window.__hbSwitcher.current) || '',
     };
 
     if (activeTab === 'kalshi') {
@@ -502,7 +515,7 @@
     fetch('/api/trading/place', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': csrfToken() },
       body: JSON.stringify(payload),
     })
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
@@ -553,11 +566,11 @@
           var ts = o.created_at ? new Date(o.created_at * 1000).toLocaleString() : '';
           html += '<div class="tp-order">'
             + '<div class="tp-order-head">'
-            + '<span class="tp-order-side ' + sideClass + '">' + (o.side || '').toUpperCase() + ' on ' + (o.platform || '') + '</span>'
-            + '<span class="tp-order-status ' + statusClass + '">' + (o.status || 'pending') + '</span>'
+            + '<span class="tp-order-side ' + sideClass + '">' + escHtml((o.side || '').toUpperCase()) + ' on ' + escHtml(o.platform || '') + '</span>'
+            + '<span class="tp-order-status ' + statusClass + '">' + escHtml(o.status || 'pending') + '</span>'
             + '</div>'
-            + '<div class="tp-order-q">' + (o.market_question || o.market_slug || '').substring(0, 60) + '</div>'
-            + '<div class="tp-order-meta">$' + (o.amount || 0).toFixed(2) + ' @ $' + (o.price || 0).toFixed(2) + ' &middot; ' + ts + '</div>'
+            + '<div class="tp-order-q">' + escHtml((o.market_question || o.market_slug || '').substring(0, 60)) + '</div>'
+            + '<div class="tp-order-meta">$' + (o.amount || 0).toFixed(2) + ' @ $' + (o.price || 0).toFixed(2) + ' &middot; ' + escHtml(ts) + '</div>'
             + '</div>';
         });
         historyWrap.innerHTML = html;

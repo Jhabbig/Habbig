@@ -142,8 +142,8 @@ def extract_window_features(prices_in_window):
     # ── 18-19: FIRST/LAST 60 SECONDS MOMENTUM ──
     first_60 = min(60, n // 3)
     last_60 = min(60, n // 3)
-    first_60s_return = (p[first_60] - p[0]) / p[0] * 10000 if first_60 > 0 else 0
-    last_60s_return = (p[-1] - p[-last_60]) / p[-last_60] * 10000 if last_60 > 0 else 0
+    first_60s_return = (p[first_60] - p[0]) / p[0] * 10000 if first_60 > 0 and p[0] != 0 else 0
+    last_60s_return = (p[-1] - p[-last_60]) / p[-last_60] * 10000 if last_60 > 0 and p[-last_60] != 0 else 0
 
     # ── 20: ACCELERATION ──
     # First half return vs second half return
@@ -173,7 +173,9 @@ def extract_window_features(prices_in_window):
 
     # ── 25: SKEWNESS of returns ──
     if len(returns_1s) > 2 and volatility > 0:
-        skewness = np.mean(((returns_1s - returns_1s.mean()) / volatility) ** 3)
+        skewness = float(np.mean(((returns_1s - returns_1s.mean()) / volatility) ** 3))
+        if np.isnan(skewness) or np.isinf(skewness):
+            skewness = 0
     else:
         skewness = 0
 
@@ -350,10 +352,12 @@ def build_training_samples(window_features, window_outcomes, window_times, lookb
         recent_outcomes = window_outcomes[i - lookback:i]
         f.append(np.mean(recent_outcomes))  # win rate of recent windows
 
-        # Streak
+        # Streak (use previous window's outcome to avoid lookahead)
         streak = 0
-        direction = window_outcomes[i]
-        for j in range(i, max(i - 10, 0), -1):
+        direction = window_outcomes[i - 1] if i > 0 else 0
+        for j in range(i - 1, max(i - 11, -1), -1):
+            if j < 0:
+                break
             if window_outcomes[j] == direction:
                 streak += 1
             else:
@@ -597,7 +601,18 @@ def predict_gbt(trained, X_current):
     if trained is None:
         return 0.5
     X_scaled = trained["scaler"].transform(X_current.reshape(1, -1))
-    return trained["model"].predict_proba(X_scaled)[0][1]
+    proba = trained["model"].predict_proba(X_scaled)[0]
+    if len(proba) < 2:
+        # Single-class model (training data was all one class). proba[0] is
+        # the model's certainty in classes_[0]. If that class is the positive
+        # class (1), the probability of UP is proba[0]; otherwise the model
+        # has learned only the negative class, so probability of UP is
+        # 1 - proba[0] (which equals 0.0 for the typical near-1 certainty).
+        classes = getattr(trained["model"], "classes_", None)
+        if classes is not None and len(classes) == 1:
+            return float(proba[0]) if classes[0] == 1 else float(1.0 - proba[0])
+        return 0.5
+    return float(proba[1])
 
 
 # ─── LSTM sequence model ─────────────────────────────────────────────
@@ -845,6 +860,17 @@ class StatisticalProfile:
             vals = window_features[:, feat_idx]
             # Create 5 bins
             percentiles = np.percentile(vals, [20, 40, 60, 80])
+            # Skip features whose distribution has collapsed (constant values
+            # cause every percentile to equal one another, which makes
+            # np.digitize bin everything into 0 or 4 and produces a useless
+            # bin_stats with degenerate (c, c) val_range).
+            if len(np.unique(percentiles)) < 4:
+                self.stats["feature_bins"][feat_name] = {
+                    "constant": True,
+                    "percentiles": percentiles.tolist(),
+                    "bins": {},
+                }
+                continue
             bins = np.digitize(vals, percentiles)  # 0-4
             bin_stats = {}
             for b in range(5):
@@ -860,11 +886,8 @@ class StatisticalProfile:
                 "bins": bin_stats,
             }
 
-        # ── 5. MOMENTUM CONTINUATION: P(next UP | current window momentum) ──
-        # Using total_return feature (index 10)
-        returns = window_features[:, 10]
-        for i in range(1, n):
-            pass  # already captured in feature bins
+        # ── 5. MOMENTUM CONTINUATION: already captured in feature bins above
+        # (legacy dead loop removed) ──
 
         # ── 6. VOLATILITY REGIME: P(UP | high/low vol regime) ──
         vols = window_features[:, 20]
@@ -889,14 +912,15 @@ class StatisticalProfile:
         if n > 100:
             uptick = window_features[:, 21]
             uptick_med = np.median(uptick)
+            returns_feat = window_features[:, 10]  # total return per window
             combined_bull = np.zeros(n - 1, dtype=bool)
             combined_bear = np.zeros(n - 1, dtype=bool)
             for i in range(n - 1):
                 is_prev_up = outcomes[i] == 1
                 is_high_uptick = uptick[i] > uptick_med
-                is_pos_return = returns[i] > 0
+                is_pos_return = returns_feat[i] > 0
                 combined_bull[i] = is_prev_up and is_high_uptick and is_pos_return
-                combined_bear[i] = (not is_prev_up) and (not is_high_uptick) and returns[i] < 0
+                combined_bear[i] = (not is_prev_up) and (not is_high_uptick) and returns_feat[i] < 0
             if combined_bull.sum() > 30:
                 self.stats["p_up_combined_bull"] = next_out[combined_bull].mean()
             else:

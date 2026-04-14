@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Polymarket · Top Traders</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
   :root {
     --bg: #0c0d10;
@@ -95,8 +96,193 @@
     color: var(--red);
     border-bottom-color: var(--red);
   }
+  .tab-btn.good.active {
+    color: var(--green);
+    border-bottom-color: var(--green);
+  }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
+
+  /* Volume / PnL toggle on Top Traders */
+  .rank-toggle-bar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .rank-label {
+    font-size: 12px; color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 0.05em; font-weight: 600;
+  }
+  .rank-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .rank-btn:hover { color: var(--text); border-color: var(--text-dim); }
+  .rank-btn.active {
+    background: var(--brand);
+    color: #0b0f14;
+    border-color: var(--brand);
+  }
+  .rank-hint {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  .good-info { border-left: 3px solid var(--green) !important; }
+
+  /* Quality (good traders) table */
+  .quality-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .quality-table th, .quality-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .quality-table th {
+    background: var(--panel-2);
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  .quality-table tr:hover td { background: rgba(52, 211, 153, 0.04); }
+  .quality-score-pill {
+    display: inline-block;
+    min-width: 36px;
+    text-align: center;
+    padding: 4px 9px;
+    border-radius: 6px;
+    background: var(--green);
+    color: #0b0f14;
+    font-weight: 700;
+  }
+  .quality-score-pill.mid { background: rgba(52, 211, 153, 0.4); color: var(--green); }
+  .quality-score-pill.low { background: rgba(120, 130, 150, 0.2); color: var(--text-dim); }
+  .pos-pnl { color: var(--green); font-weight: 700; }
+  .neg-pnl { color: var(--red); font-weight: 700; }
+
+  /* Smart money flow cards */
+  .smart-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  .smart-card-head {
+    display: flex; justify-content: space-between; gap: 12px;
+    align-items: flex-start;
+  }
+  .smart-title {
+    font-size: 14px; font-weight: 600; color: var(--text);
+    line-height: 1.35;
+  }
+  .smart-meta {
+    margin-top: 6px;
+    font-size: 11px; color: var(--text-dim);
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .smart-meta strong { color: var(--text); }
+  .smart-outcome-pill {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(52, 211, 153, 0.18);
+    color: var(--green);
+    font-weight: 700;
+    font-size: 12px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .smart-wallets {
+    margin-top: 10px;
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .smart-wallet-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .smart-wallet-chip:hover { border-color: var(--green); color: var(--green); }
+  .smart-wallet-chip .qs {
+    background: var(--green);
+    color: #0b0f14;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-weight: 700;
+    font-size: 10px;
+  }
+
+  /* Calibration plot in wallet modal */
+  .calibration-plot {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .cal-bin {
+    background: var(--panel-2);
+    border-radius: 6px;
+    padding: 8px 6px;
+    text-align: center;
+    border: 1px solid var(--border);
+  }
+  .cal-bin .cal-range { font-size: 10px; color: var(--text-dim); }
+  .cal-bin .cal-bars {
+    display: flex;
+    gap: 3px;
+    height: 40px;
+    align-items: flex-end;
+    justify-content: center;
+    margin: 6px 0 4px;
+  }
+  .cal-bin .cal-bar {
+    width: 14px;
+    background: var(--brand);
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .cal-bin .cal-bar.actual { background: var(--green); }
+  .cal-bin .cal-bar.actual.under { background: var(--red); }
+  .cal-bin .cal-count { font-size: 10px; color: var(--text-dim); }
+  .cal-legend {
+    display: flex;
+    gap: 14px;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 8px;
+    justify-content: center;
+  }
+  .cal-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .cal-legend .swatch {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 2px;
+  }
 
   main {
     padding: 20px 24px 60px;
@@ -305,36 +491,633 @@
   }
   .score-high { color: var(--red); font-weight: 700; }
   .score-mid { color: var(--gold); font-weight: 700; }
+
+  /* ─── Platform toggle (Polymarket / Kalshi) ─── */
+  .platform-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--panel-2);
+  }
+  .platform-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: transparent;
+    color: var(--text-dim);
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .platform-btn + .platform-btn { border-left: 1px solid var(--border); }
+  .platform-btn:hover { color: var(--text); }
+  .platform-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    display: inline-block;
+  }
+  .platform-btn.poly .platform-dot { background: var(--brand); }
+  .platform-btn.kalshi .platform-dot { background: var(--green); }
+  .platform-btn.poly.active {
+    background: rgba(129, 140, 248, 0.15);
+    color: var(--brand);
+  }
+  .platform-btn.kalshi.active {
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--green);
+  }
+  .tab-btn.kalshi-tab.active {
+    color: var(--green);
+    border-bottom-color: var(--green);
+  }
+  .kalshi-info {
+    background: rgba(52, 211, 153, 0.08) !important;
+    border: 1px solid rgba(52, 211, 153, 0.25) !important;
+    border-left: 3px solid var(--green) !important;
+  }
+  .kalshi-info code {
+    background: rgba(52, 211, 153, 0.12);
+    color: var(--green);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+
+  /* Kalshi · Connect form */
+  .kalshi-connect-card {
+    background: var(--panel);
+    border: 1px solid rgba(52, 211, 153, 0.25);
+    border-radius: 10px;
+    padding: 24px;
+    max-width: 720px;
+    margin: 12px auto;
+  }
+  .kalshi-connect-card h3 {
+    margin: 0 0 8px;
+    color: var(--green);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .kalshi-connect-card p {
+    color: var(--text-dim);
+    font-size: 12px;
+    line-height: 1.55;
+    margin: 0 0 16px;
+  }
+  .kalshi-connect-card label {
+    display: block;
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 12px 0 6px;
+    font-weight: 600;
+  }
+  .kalshi-connect-card input,
+  .kalshi-connect-card textarea {
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+  .kalshi-connect-card textarea {
+    min-height: 140px;
+    resize: vertical;
+    line-height: 1.4;
+  }
+  .kalshi-connect-card input:focus,
+  .kalshi-connect-card textarea:focus {
+    border-color: var(--green);
+    outline: none;
+  }
+  .kalshi-btn {
+    background: var(--green);
+    color: #0b0f14;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 14px;
+    transition: opacity 0.15s;
+  }
+  .kalshi-btn:hover { opacity: 0.85; }
+  .kalshi-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .kalshi-btn.secondary {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  .kalshi-btn.secondary:hover { color: var(--red); border-color: var(--red); }
+  .kalshi-form-msg {
+    margin-top: 10px;
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+  }
+  .kalshi-form-msg.err {
+    background: rgba(248, 113, 113, 0.1);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    color: var(--red);
+  }
+  .kalshi-form-msg.ok {
+    background: rgba(52, 211, 153, 0.1);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    color: var(--green);
+  }
+
+  /* Kalshi · Portfolio summary stat tiles */
+  .kalshi-stat {
+    background: var(--panel);
+    border: 1px solid rgba(52, 211, 153, 0.25);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .kalshi-stat .label {
+    color: var(--text-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .kalshi-stat .value {
+    font-size: 1.3em;
+    font-weight: 700;
+    color: var(--green);
+  }
+  .kalshi-stat .detail {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .kalshi-stat.neutral .value { color: var(--text); }
+  .kalshi-stat.neg .value { color: var(--red); }
+
+  .kalshi-positions-wrap {
+    overflow-x: auto;
+    border: 1px solid rgba(52, 211, 153, 0.25);
+    border-radius: 8px;
+    margin-top: 16px;
+  }
+  .kalshi-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .kalshi-table th {
+    background: var(--panel-2);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-size: 10px;
+    padding: 10px 8px;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .kalshi-table td {
+    padding: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .kalshi-table tr:hover td { background: rgba(52, 211, 153, 0.04); }
+  .kalshi-side-yes { color: var(--green); font-weight: 700; text-transform: uppercase; }
+  .kalshi-side-no { color: var(--red); font-weight: 700; text-transform: uppercase; }
+
+  .kalshi-disconnect-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .kalshi-disconnect-bar .hint {
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .kalshi-disconnect-bar code {
+    background: var(--panel-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 11px;
+  }
+
+  /* Kalshi · Top markets list */
+  .kalshi-market-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+  }
+  .kalshi-market-card .km-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .kalshi-market-card .km-meta {
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .kalshi-market-card .km-meta code {
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-right: 6px;
+  }
+  .kalshi-market-card .km-prices {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    text-align: right;
+  }
+  .kalshi-market-card .km-price-block {
+    min-width: 70px;
+  }
+  .kalshi-market-card .km-price-label {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .kalshi-market-card .km-price-yes { font-size: 16px; font-weight: 700; color: var(--green); }
+  .kalshi-market-card .km-price-no  { font-size: 16px; font-weight: 700; color: var(--red); }
+  .kalshi-market-card .km-vol {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Kalshi · Cross-venue arbitrage cards */
+  .arb-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+  }
+  .arb-card.kalshi-favored { border-left: 3px solid var(--green); }
+  .arb-card.poly-favored { border-left: 3px solid var(--brand); }
+  .arb-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+    gap: 12px;
+  }
+  .arb-head .arb-spread {
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .arb-head .arb-spread .spread-val {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .arb-head .arb-spread .spread-val.pos { color: var(--green); }
+  .arb-head .arb-spread .spread-val.neg { color: var(--brand); }
+  .arb-head .arb-spread .spread-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 3px;
+  }
+  .arb-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .arb-side {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .arb-side.kalshi { border-left: 2px solid var(--green); }
+  .arb-side.poly { border-left: 2px solid var(--brand); }
+  .arb-side .venue-tag {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .arb-side.kalshi .venue-tag { color: var(--green); }
+  .arb-side.poly .venue-tag { color: var(--brand); }
+  .arb-side .arb-title {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.35;
+    margin-bottom: 8px;
+    min-height: 32px;
+  }
+  .arb-side .arb-yes {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .arb-side .arb-vol {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .arb-meta {
+    display: flex;
+    gap: 14px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .arb-meta strong { color: var(--text); }
+
+  /* ─── Wallet click affordance ─── */
+  .wallet-link {
+    color: var(--text);
+    cursor: pointer;
+    border-bottom: 1px dashed rgba(248, 113, 113, 0.4);
+    transition: color 0.12s;
+  }
+  .wallet-link:hover { color: var(--red); }
+
+  /* ─── Wallet detail modal ─── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    z-index: 1000;
+    overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: min(960px, 100%);
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--panel-2);
+    z-index: 1;
+  }
+  .modal-head h2 { margin: 0; font-size: 16px; color: var(--text); }
+  .modal-head .addr { font-family: monospace; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .modal-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); border-color: var(--red); }
+  .modal-body { padding: 20px 22px; }
+  .modal-section { margin-bottom: 22px; }
+  .modal-section h3 {
+    margin: 0 0 10px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+  .modal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .modal-stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .modal-stat .label { font-size: 10px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.05em; }
+  .modal-stat .value { font-size: 16px; font-weight: 700; margin-top: 3px; color: var(--text); }
+  .modal-stat .detail { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+  .modal-empty { color: var(--text-dim); font-size: 12px; padding: 10px 0; }
+
+  /* ─── Cluster cards ─── */
+  .cluster-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--red);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  .cluster-card.recurring {
+    border-left-width: 5px;
+    box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.35);
+  }
+  .recurring-badge {
+    display: inline-block;
+    background: var(--red);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .cluster-trades {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .cluster-trades-header {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .cluster-trade-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 10px;
+    padding: 6px 0;
+    font-size: 11px;
+    border-bottom: 1px dashed var(--border);
+    align-items: center;
+  }
+  .cluster-trade-row:last-child { border-bottom: none; }
+  .cluster-trade-row .ct-title { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cluster-trade-row .ct-meta { color: var(--text-dim); white-space: nowrap; }
+  .cluster-trade-row .ct-delta { color: var(--red); font-weight: 700; white-space: nowrap; }
+  .cluster-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .cluster-title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .cluster-score-pill {
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--red);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .cluster-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 6px;
+  }
+  .cluster-meta strong { color: var(--text); font-weight: 600; }
+  .cluster-reasons {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0 0;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .cluster-reasons li:before { content: "▸ "; color: var(--red); }
+  .cluster-wallets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .cluster-wallets .wlt {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .cluster-wallets .wlt:hover { border-color: var(--red); color: var(--red); }
+
+  /* ─── Unit Toggle ─── */
+  .unit-toggle {
+    display: flex;
+    gap: 0;
+    margin-left: 8px;
+  }
+  .unit-btn {
+    background: var(--panel-2);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    line-height: 1;
+  }
+  .unit-btn:first-child {
+    border-radius: 6px 0 0 6px;
+    border-right: none;
+  }
+  .unit-btn:last-child {
+    border-radius: 0 6px 6px 0;
+  }
+  .unit-btn.active {
+    background: var(--brand);
+    color: #fff;
+    border-color: var(--brand);
+  }
+  .unit-btn:hover:not(.active) {
+    color: var(--text);
+  }
 </style>
 </head>
 <body>
 
 <header>
   <div>
-    <h1>Polymarket · Top Traders</h1>
-    <div class="sub">Leaderboard, live trades, and suspicious trade scanner</div>
+    <h1 id="platform-title">Polymarket · Top Traders</h1>
+    <div class="sub" id="platform-sub">Leaderboard, live trades, and suspicious trade scanner</div>
+  </div>
+  <div class="platform-toggle" role="tablist" aria-label="Trading venue">
+    <button class="platform-btn poly active" id="platform-polymarket" onclick="setPlatform('polymarket')" role="tab" aria-selected="true">
+      <span class="platform-dot"></span>Polymarket
+    </button>
+    <button class="platform-btn kalshi" id="platform-kalshi" onclick="setPlatform('kalshi')" role="tab" aria-selected="false">
+      <span class="platform-dot"></span>Kalshi
+    </button>
   </div>
   <div class="controls">
-    <label for="window">Window</label>
+    <label for="window" data-i18n="ctrl.window">Window</label>
     <select id="window">
-      <option value="all">All time</option>
-      <option value="30d">30 days</option>
-      <option value="7d">7 days</option>
-      <option value="1d">1 day</option>
+      <option value="all" data-i18n="win.all">All time</option>
+      <option value="30d" data-i18n="win.30d">30 days</option>
+      <option value="7d" data-i18n="win.7d">7 days</option>
+      <option value="1d" data-i18n="win.1d">1 day</option>
     </select>
-    <label for="limit">Trades</label>
+    <label for="limit" data-i18n="ctrl.trades">Trades</label>
     <select id="limit">
       <option value="25">25</option>
       <option value="50">50</option>
       <option value="100">100</option>
     </select>
+    <div class="unit-toggle">
+      <button class="unit-btn active" id="unit-american" onclick="setUnits('american')" title="US format (1,000.00)">&#x1F1FA;&#x1F1F8;</button>
+      <button class="unit-btn" id="unit-european" onclick="setUnits('european')" title="EU format (1.000,00)">&#x1F1EA;&#x1F1FA;</button>
+    </div>
+    <select id="currency-select" onchange="setCurrency(this.value)" title="Currency (markets are USD, converted at live rates)" style="background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;margin-left:4px"></select>
+    <select id="language-select" onchange="setLanguage(this.value)" title="Language" style="background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;margin-left:4px;max-width:110px"></select>
     <span class="status" id="status">—</span>
   </div>
 </header>
 
-<div class="tab-bar">
-  <button class="tab-btn active" onclick="switchTab('traders')">Top 3 Traders</button>
-  <button class="tab-btn sus" onclick="switchTab('suspicious')">Suspicious Trades</button>
+<div class="tab-bar" id="tab-bar-polymarket">
+  <button class="tab-btn active" onclick="switchTab('traders')" data-i18n="tab.top3">Top 3 Traders</button>
+  <button class="tab-btn good" onclick="switchTab('quality')" data-i18n="tab.good">Good Traders</button>
+  <button class="tab-btn good" onclick="switchTab('smart')" data-i18n="tab.smart">Smart Money</button>
+  <button class="tab-btn sus" onclick="switchTab('suspicious')" data-i18n="tab.suspicious">Suspicious Trades</button>
+  <button class="tab-btn sus" onclick="switchTab('retroactive')" data-i18n="tab.retroactive">Repeat Winners</button>
+  <button class="tab-btn sus" onclick="switchTab('ml')" data-i18n="tab.ml">ML Rankings</button>
+  <button class="tab-btn sus" onclick="switchTab('clusters')" data-i18n="tab.clusters">Sybil Clusters</button>
+</div>
+
+<div class="tab-bar" id="tab-bar-kalshi" style="display:none;">
+  <button class="tab-btn kalshi-tab active" onclick="switchKalshiTab('portfolio')" data-i18n="kalshi.portfolio">My Portfolio</button>
+  <button class="tab-btn kalshi-tab" onclick="switchKalshiTab('markets')" data-i18n="kalshi.markets">Top Markets</button>
+  <button class="tab-btn kalshi-tab" onclick="switchKalshiTab('arbitrage')" data-i18n="kalshi.arbitrage">Cross-Venue Spread</button>
 </div>
 
 <main>
@@ -342,9 +1125,45 @@
 
   <!-- Top Traders Panel -->
   <div class="tab-panel active" id="panel-traders">
+    <div class="rank-toggle-bar">
+      <span class="rank-label">Rank by:</span>
+      <button class="rank-btn active" id="rank-volume" onclick="setRankBy('volume')">Volume</button>
+      <button class="rank-btn" id="rank-profit" onclick="setRankBy('profit')">Realized PnL</button>
+      <span class="rank-hint">Volume = biggest gamblers · PnL = actually winning</span>
+    </div>
     <div class="grid" id="grid">
       <div class="loading">Loading top traders...</div>
     </div>
+  </div>
+
+  <!-- Good Traders (sustainable edge) Panel -->
+  <div class="tab-panel" id="panel-quality">
+    <div class="sus-info good-info">
+      <strong style="color:var(--green);">Sustainable-edge ranking.</strong>
+      Wallets scored on resolved-market PnL: edge over implied probability,
+      ROI, calibration, Sharpe-like consistency, and sample size. Wallets in
+      sybil clusters are excluded automatically — copy-trade these, not the
+      <em>biggest gamblers</em>.
+    </div>
+    <div class="sus-stats" id="quality-stats">
+      <div class="loading">Loading trader quality scores...</div>
+    </div>
+    <div id="quality-table-container"></div>
+  </div>
+
+  <!-- Smart Money Flow Panel -->
+  <div class="tab-panel" id="panel-smart">
+    <div class="sus-info good-info">
+      <strong style="color:var(--green);">Smart-money flow.</strong>
+      For every market that ≥2 high-quality traders are positioned in, we
+      aggregate their stakes and direction. The <em>actionable</em> view: where
+      proven copy-trade targets are putting their money <strong>right now</strong>,
+      before resolution.
+    </div>
+    <div class="sus-stats" id="smart-stats">
+      <div class="loading">Loading smart-money flow...</div>
+    </div>
+    <div id="smart-list-container"></div>
   </div>
 
   <!-- Suspicious Trades Panel -->
@@ -352,16 +1171,281 @@
     <div class="sus-info">
       Trades are ranked by <strong style="color:var(--red);">potential profit</strong>, not just size.
       A $1,000 bet at 20:1 odds = $20,000 potential profit — way more suspicious than a $10,000 bet at even odds.
-      New accounts making large long-shot bets get extra suspicion points.
+      Live trades are now enriched with <strong>Bayesian edge</strong> and <strong>ML anomaly</strong> scores when available.
     </div>
     <div class="sus-stats" id="sus-stats">
       <div class="loading">Loading scanner results...</div>
     </div>
     <div id="sus-table-container"></div>
   </div>
+
+  <!-- Retroactive Winners Panel -->
+  <div class="tab-panel" id="panel-retroactive">
+    <div class="sus-info">
+      <strong style="color:var(--red);">Retroactive insider detection.</strong>
+      We scan resolved markets and find wallets that <em>repeatedly won long-shot bets</em>
+      (≤25% odds, ≥$200 stake) on outcomes that ended up resolving in their favor.
+      One lucky win is noise. <em>Multiple</em> wins across <em>different</em> markets is signal.
+    </div>
+    <div class="sus-stats" id="retro-stats">
+      <div class="loading">Loading retroactive scan...</div>
+    </div>
+    <div id="retro-table-container"></div>
+  </div>
+
+  <!-- ML / Bayesian Panel -->
+  <div class="tab-panel" id="panel-ml">
+    <div class="sus-info">
+      <strong style="color:var(--red);">Statistical wallet ranking.</strong>
+      Two complementary models. <strong>Bayesian</strong> updates a Beta posterior on each
+      wallet's true long-shot win rate — small samples don't get fooled by frequentist
+      flukes. <strong>Isolation Forest + XGBoost</strong> rank wallets by how anomalous their
+      feature signatures are vs the bulk of traders.
+    </div>
+    <div class="sus-stats" id="ml-stats">
+      <div class="loading">Loading ML rankings...</div>
+    </div>
+    <h3 style="margin-top:24px;color:var(--text-dim);font-size:13px;text-transform:uppercase;letter-spacing:0.05em;">Bayesian — Top Wallets by P(edge &gt; baseline)</h3>
+    <div id="bayesian-table-container"></div>
+    <h3 style="margin-top:24px;color:var(--text-dim);font-size:13px;text-transform:uppercase;letter-spacing:0.05em;">ML — Top Wallets (Isolation Forest + XGBoost combined)</h3>
+    <div id="ml-table-container"></div>
+  </div>
+
+  <!-- Sybil Clusters Panel -->
+  <div class="tab-panel" id="panel-clusters">
+    <div class="sus-info">
+      <strong style="color:var(--red);">Co-trading sybil detection.</strong>
+      Builds a graph where nodes are wallets and edges connect wallets that
+      bought the <em>same outcome within 60 minutes</em> of each other. Connected
+      components of ≥3 wallets are flagged as potential coordination rings.
+      Density, time deltas, long-shot bias, and shared volume drive the score.
+    </div>
+    <div class="sus-stats" id="cluster-stats">
+      <div class="loading">Loading clusters...</div>
+    </div>
+    <div id="cluster-list-container"></div>
+  </div>
+
+  <!-- ─── KALSHI · My Portfolio ─── -->
+  <div class="tab-panel" id="panel-kalshi-portfolio">
+    <div class="sus-info kalshi-info">
+      <strong style="color:var(--green);">Your Kalshi portfolio.</strong>
+      Connect a read-only Kalshi API key (RSA-PSS) to see your live balance,
+      open positions, and recent fills. Credentials are stored
+      <strong>encrypted at rest</strong> on this server using Fernet — they
+      never leave the dashboard. Read-only operations only; no orders are
+      ever placed.
+    </div>
+    <div id="kalshi-portfolio-container">
+      <div class="loading">Checking Kalshi connection...</div>
+    </div>
+  </div>
+
+  <!-- ─── KALSHI · Top Markets ─── -->
+  <div class="tab-panel" id="panel-kalshi-markets">
+    <div class="sus-info kalshi-info">
+      <strong style="color:var(--green);">Top open Kalshi markets.</strong>
+      Sorted by 24-hour volume. Pulled from <code>/trade-api/v2/events</code>
+      with nested markets so we get real human-named events instead of the
+      thousands of multi-game parlay tickers Kalshi auto-generates.
+    </div>
+    <div class="sus-stats" id="kalshi-markets-stats">
+      <div class="loading">Loading top Kalshi markets...</div>
+    </div>
+    <div id="kalshi-markets-list"></div>
+  </div>
+
+  <!-- ─── KALSHI · Cross-Venue Spread ─── -->
+  <div class="tab-panel" id="panel-kalshi-arbitrage">
+    <div class="sus-info kalshi-info">
+      <strong style="color:var(--green);">Cross-venue arbitrage scanner.</strong>
+      Pairs each top Kalshi market with the closest Polymarket market via
+      Jaccard title-token similarity (min score 0.55, ≥4 shared tokens) and
+      computes the YES-side spread. Sorted by
+      <code>|spread| × √min(volume)</code> so high-confidence opportunities
+      surface first. <em>Title matching is fuzzy — verify each pair before
+      trading.</em>
+    </div>
+    <div class="sus-stats" id="kalshi-arb-stats">
+      <div class="loading">Scanning Polymarket and Kalshi for spreads...</div>
+    </div>
+    <div id="kalshi-arb-list"></div>
+  </div>
 </main>
 
+<!-- Wallet drill-down modal -->
+<div class="modal-overlay" id="wallet-modal" onclick="if (event.target === this) closeWalletModal()">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h2 id="wallet-modal-name">Wallet</h2>
+        <div class="addr" id="wallet-modal-addr"></div>
+      </div>
+      <button class="modal-close" onclick="closeWalletModal()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body" id="wallet-modal-body">
+      <div class="loading">Loading wallet details...</div>
+    </div>
+  </div>
+</div>
+
 <script>
+// ─── Unit System Toggle ───
+let unitSystem = localStorage.getItem('narve_units') || 'american';
+function isMetric() { return unitSystem === 'european'; }
+function setUnits(sys) {
+  unitSystem = sys;
+  localStorage.setItem('narve_units', sys);
+  document.getElementById('unit-american').classList.toggle('active', sys === 'american');
+  document.getElementById('unit-european').classList.toggle('active', sys === 'european');
+  _susLoaded = false; // force re-render of suspicious tab too
+  loadData();
+  if (document.getElementById('panel-suspicious').classList.contains('active')) {
+    loadSuspicious();
+  }
+}
+
+// ─── Currency (frankfurter.dev via /api/fx-rates) ───
+const CURRENCIES = [
+  ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+  ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],
+  ['CNY','Chinese Yuan'],['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],
+  ['SEK','Swedish Krona'],['KRW','South Korean Won'],['SGD','Singapore Dollar'],
+  ['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+  ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],
+  ['DKK','Danish Krone'],['PLN','Polish Zloty'],['THB','Thai Baht'],
+  ['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],['CZK','Czech Koruna'],
+  ['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+  ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+];
+let currencyCode = localStorage.getItem('narve_currency') || 'USD';
+let _fxRates = { USD: 1 };
+const _FX_KEY = 'narve_fx_rates';
+const _FX_TTL_MS = 3600 * 1000;
+try {
+  const raw = localStorage.getItem(_FX_KEY);
+  if (raw) { const c = JSON.parse(raw); if (c && c.rates) _fxRates = c.rates; }
+} catch {}
+async function ensureFxRates() {
+  try {
+    const raw = localStorage.getItem(_FX_KEY);
+    if (raw) {
+      const c = JSON.parse(raw);
+      if (c && c.fetched_at && Date.now() - c.fetched_at < _FX_TTL_MS) {
+        _fxRates = c.rates || _fxRates;
+        return _fxRates;
+      }
+    }
+  } catch {}
+  try {
+    const r = await fetch('/api/fx-rates');
+    if (r.ok) {
+      const d = await r.json();
+      const rates = d.rates || {};
+      rates.USD = 1;
+      _fxRates = rates;
+      localStorage.setItem(_FX_KEY, JSON.stringify({ rates, fetched_at: Date.now() }));
+    }
+  } catch {}
+  return _fxRates;
+}
+function convertUSD(amount) {
+  if (amount == null || isNaN(amount)) return null;
+  if (currencyCode === 'USD') return Number(amount);
+  const r = _fxRates[currencyCode];
+  return r ? Number(amount) * r : Number(amount);
+}
+function fxLocale() { return isMetric() ? 'de-DE' : 'en-US'; }
+function setCurrency(code) {
+  currencyCode = code;
+  localStorage.setItem('narve_currency', code);
+  _susLoaded = false;
+  loadData();
+  if (document.getElementById('panel-suspicious').classList.contains('active')) {
+    loadSuspicious();
+  }
+}
+function populateCurrencyPicker() {
+  const sel = document.getElementById('currency-select');
+  if (!sel || sel.options.length) return;
+  for (const [code, name] of CURRENCIES) {
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = `${code} \u00b7 ${name}`;
+    sel.appendChild(opt);
+  }
+  sel.value = currencyCode;
+}
+
+// ─── Language / i18n (20 languages) ───
+const LANGUAGES = [
+  ['en','English'],['es','Español'],['de','Deutsch'],['fr','Français'],
+  ['it','Italiano'],['pt','Português'],['nl','Nederlands'],['pl','Polski'],
+  ['ja','日本語'],['ko','한국어'],['zh','中文'],['ru','Русский'],
+  ['hi','हिन्दी'],['ar','العربية'],['bn','বাংলা'],['ur','اردو'],
+  ['id','Bahasa Indonesia'],['tr','Türkçe'],['vi','Tiếng Việt'],['th','ไทย'],
+];
+const I18N = {
+  en: {'ctrl.window':'Window','ctrl.trades':'Trades','win.all':'All time','win.30d':'30 days','win.7d':'7 days','win.1d':'1 day','tab.top3':'Top 3 Traders','tab.good':'Good Traders','tab.smart':'Smart Money','tab.suspicious':'Suspicious Trades','tab.retroactive':'Repeat Winners','tab.ml':'ML Rankings','tab.clusters':'Sybil Clusters','kalshi.portfolio':'My Portfolio','kalshi.markets':'Top Markets','kalshi.arbitrage':'Cross-Venue Spread'},
+  es: {'ctrl.window':'Período','ctrl.trades':'Operaciones','win.all':'Todo el tiempo','win.30d':'30 días','win.7d':'7 días','win.1d':'1 día','tab.top3':'Top 3 Traders','tab.good':'Buenos traders','tab.smart':'Dinero inteligente','tab.suspicious':'Operaciones sospechosas','tab.retroactive':'Ganadores repetidos','tab.ml':'Ranking ML','tab.clusters':'Clústeres Sybil','kalshi.portfolio':'Mi cartera','kalshi.markets':'Mercados destacados','kalshi.arbitrage':'Diferencial entre venues'},
+  de: {'ctrl.window':'Zeitraum','ctrl.trades':'Trades','win.all':'Gesamt','win.30d':'30 Tage','win.7d':'7 Tage','win.1d':'1 Tag','tab.top3':'Top 3 Trader','tab.good':'Gute Trader','tab.smart':'Smart Money','tab.suspicious':'Verdächtige Trades','tab.retroactive':'Wiederholungssieger','tab.ml':'ML-Rangliste','tab.clusters':'Sybil-Cluster','kalshi.portfolio':'Mein Portfolio','kalshi.markets':'Top-Märkte','kalshi.arbitrage':'Venue-Spread'},
+  fr: {'ctrl.window':'Période','ctrl.trades':'Trades','win.all':'Tout le temps','win.30d':'30 jours','win.7d':'7 jours','win.1d':'1 jour','tab.top3':'Top 3 Traders','tab.good':'Bons traders','tab.smart':'Argent intelligent','tab.suspicious':'Trades suspects','tab.retroactive':'Gagnants récurrents','tab.ml':'Classement ML','tab.clusters':'Clusters Sybil','kalshi.portfolio':'Mon portefeuille','kalshi.markets':'Marchés en vue','kalshi.arbitrage':'Écart inter-plateformes'},
+  it: {'ctrl.window':'Periodo','ctrl.trades':'Operazioni','win.all':'Sempre','win.30d':'30 giorni','win.7d':'7 giorni','win.1d':'1 giorno','tab.top3':'Top 3 Trader','tab.good':'Buoni trader','tab.smart':'Smart Money','tab.suspicious':'Operazioni sospette','tab.retroactive':'Vincitori ripetuti','tab.ml':'Classifica ML','tab.clusters':'Cluster Sybil','kalshi.portfolio':'Il mio portafoglio','kalshi.markets':'Mercati principali','kalshi.arbitrage':'Spread tra venue'},
+  pt: {'ctrl.window':'Período','ctrl.trades':'Negociações','win.all':'Todo o tempo','win.30d':'30 dias','win.7d':'7 dias','win.1d':'1 dia','tab.top3':'Top 3 Traders','tab.good':'Bons traders','tab.smart':'Dinheiro inteligente','tab.suspicious':'Negociações suspeitas','tab.retroactive':'Vencedores recorrentes','tab.ml':'Ranking ML','tab.clusters':'Clusters Sybil','kalshi.portfolio':'Meu portfólio','kalshi.markets':'Mercados em destaque','kalshi.arbitrage':'Spread entre venues'},
+  nl: {'ctrl.window':'Periode','ctrl.trades':'Trades','win.all':'Altijd','win.30d':'30 dagen','win.7d':'7 dagen','win.1d':'1 dag','tab.top3':'Top 3 Traders','tab.good':'Goede traders','tab.smart':'Smart Money','tab.suspicious':'Verdachte trades','tab.retroactive':'Herhaalde winnaars','tab.ml':'ML-ranglijst','tab.clusters':'Sybil-clusters','kalshi.portfolio':'Mijn portfolio','kalshi.markets':'Topmarkten','kalshi.arbitrage':'Spread tussen venues'},
+  pl: {'ctrl.window':'Okres','ctrl.trades':'Transakcje','win.all':'Cały czas','win.30d':'30 dni','win.7d':'7 dni','win.1d':'1 dzień','tab.top3':'Top 3 traderów','tab.good':'Dobrzy traderzy','tab.smart':'Smart Money','tab.suspicious':'Podejrzane transakcje','tab.retroactive':'Powtarzający się zwycięzcy','tab.ml':'Ranking ML','tab.clusters':'Klastry Sybil','kalshi.portfolio':'Mój portfel','kalshi.markets':'Najlepsze rynki','kalshi.arbitrage':'Spread między giełdami'},
+  ja: {'ctrl.window':'期間','ctrl.trades':'取引','win.all':'全期間','win.30d':'30日','win.7d':'7日','win.1d':'1日','tab.top3':'トップ3トレーダー','tab.good':'優良トレーダー','tab.smart':'スマートマネー','tab.suspicious':'疑わしい取引','tab.retroactive':'常勝者','tab.ml':'MLランキング','tab.clusters':'シビルクラスタ','kalshi.portfolio':'マイポートフォリオ','kalshi.markets':'人気マーケット','kalshi.arbitrage':'取引所間スプレッド'},
+  ko: {'ctrl.window':'기간','ctrl.trades':'거래','win.all':'전체','win.30d':'30일','win.7d':'7일','win.1d':'1일','tab.top3':'상위 3 트레이더','tab.good':'우수 트레이더','tab.smart':'스마트 머니','tab.suspicious':'의심스러운 거래','tab.retroactive':'반복 우승자','tab.ml':'ML 순위','tab.clusters':'시빌 클러스터','kalshi.portfolio':'내 포트폴리오','kalshi.markets':'인기 마켓','kalshi.arbitrage':'거래소 간 스프레드'},
+  zh: {'ctrl.window':'时段','ctrl.trades':'交易','win.all':'全部时间','win.30d':'30天','win.7d':'7天','win.1d':'1天','tab.top3':'前三名交易者','tab.good':'优质交易者','tab.smart':'聪明钱','tab.suspicious':'可疑交易','tab.retroactive':'连胜者','tab.ml':'机器学习排名','tab.clusters':'女巫集群','kalshi.portfolio':'我的持仓','kalshi.markets':'热门市场','kalshi.arbitrage':'跨交易所价差'},
+  ru: {'ctrl.window':'Период','ctrl.trades':'Сделки','win.all':'За всё время','win.30d':'30 дней','win.7d':'7 дней','win.1d':'1 день','tab.top3':'Топ-3 трейдеров','tab.good':'Хорошие трейдеры','tab.smart':'Умные деньги','tab.suspicious':'Подозрительные сделки','tab.retroactive':'Постоянные победители','tab.ml':'Рейтинг ML','tab.clusters':'Sybil-кластеры','kalshi.portfolio':'Мой портфель','kalshi.markets':'Топ-рынки','kalshi.arbitrage':'Спред между площадками'},
+  hi: {'ctrl.window':'अवधि','ctrl.trades':'ट्रेड','win.all':'सभी समय','win.30d':'30 दिन','win.7d':'7 दिन','win.1d':'1 दिन','tab.top3':'शीर्ष 3 ट्रेडर','tab.good':'अच्छे ट्रेडर','tab.smart':'स्मार्ट मनी','tab.suspicious':'संदिग्ध ट्रेड','tab.retroactive':'बार-बार विजेता','tab.ml':'ML रैंकिंग','tab.clusters':'सिबिल क्लस्टर','kalshi.portfolio':'मेरा पोर्टफोलियो','kalshi.markets':'शीर्ष बाज़ार','kalshi.arbitrage':'क्रॉस-वेन्यू स्प्रेड'},
+  ar: {'ctrl.window':'الفترة','ctrl.trades':'الصفقات','win.all':'كل الأوقات','win.30d':'30 يومًا','win.7d':'7 أيام','win.1d':'يوم واحد','tab.top3':'أفضل 3 متداولين','tab.good':'متداولون جيدون','tab.smart':'الأموال الذكية','tab.suspicious':'صفقات مشبوهة','tab.retroactive':'فائزون متكررون','tab.ml':'تصنيف ML','tab.clusters':'مجموعات سيبيل','kalshi.portfolio':'محفظتي','kalshi.markets':'أبرز الأسواق','kalshi.arbitrage':'فارق بين المنصات'},
+  bn: {'ctrl.window':'সময়কাল','ctrl.trades':'ট্রেড','win.all':'সর্বকালীন','win.30d':'30 দিন','win.7d':'7 দিন','win.1d':'1 দিন','tab.top3':'শীর্ষ 3 ট্রেডার','tab.good':'ভালো ট্রেডার','tab.smart':'স্মার্ট মানি','tab.suspicious':'সন্দেহজনক ট্রেড','tab.retroactive':'বারবার বিজয়ী','tab.ml':'ML র‍্যাঙ্কিং','tab.clusters':'সিবিল ক্লাস্টার','kalshi.portfolio':'আমার পোর্টফোলিও','kalshi.markets':'শীর্ষ বাজার','kalshi.arbitrage':'ক্রস-ভেন্যু স্প্রেড'},
+  ur: {'ctrl.window':'مدت','ctrl.trades':'ٹریڈز','win.all':'تمام وقت','win.30d':'30 دن','win.7d':'7 دن','win.1d':'1 دن','tab.top3':'سرفہرست 3 ٹریڈر','tab.good':'اچھے ٹریڈر','tab.smart':'سمارٹ منی','tab.suspicious':'مشکوک ٹریڈز','tab.retroactive':'بار بار فاتح','tab.ml':'ML درجہ بندی','tab.clusters':'سبیل کلسٹر','kalshi.portfolio':'میرا پورٹ فولیو','kalshi.markets':'سرفہرست بازار','kalshi.arbitrage':'کراس وینیو اسپریڈ'},
+  id: {'ctrl.window':'Periode','ctrl.trades':'Perdagangan','win.all':'Semua waktu','win.30d':'30 hari','win.7d':'7 hari','win.1d':'1 hari','tab.top3':'3 Trader Teratas','tab.good':'Trader Bagus','tab.smart':'Smart Money','tab.suspicious':'Perdagangan Mencurigakan','tab.retroactive':'Pemenang Berulang','tab.ml':'Peringkat ML','tab.clusters':'Kluster Sybil','kalshi.portfolio':'Portofolio Saya','kalshi.markets':'Pasar Teratas','kalshi.arbitrage':'Spread Antar Venue'},
+  tr: {'ctrl.window':'Periyot','ctrl.trades':'İşlemler','win.all':'Tüm zamanlar','win.30d':'30 gün','win.7d':'7 gün','win.1d':'1 gün','tab.top3':'En İyi 3 Trader','tab.good':'İyi Traderlar','tab.smart':'Akıllı Para','tab.suspicious':'Şüpheli İşlemler','tab.retroactive':'Tekrarlayan Kazananlar','tab.ml':'ML Sıralaması','tab.clusters':'Sybil Kümeleri','kalshi.portfolio':'Portföyüm','kalshi.markets':'En İyi Piyasalar','kalshi.arbitrage':'Mekanlar Arası Fark'},
+  vi: {'ctrl.window':'Khoảng thời gian','ctrl.trades':'Giao dịch','win.all':'Toàn bộ','win.30d':'30 ngày','win.7d':'7 ngày','win.1d':'1 ngày','tab.top3':'Top 3 Nhà giao dịch','tab.good':'Nhà giao dịch tốt','tab.smart':'Tiền thông minh','tab.suspicious':'Giao dịch đáng ngờ','tab.retroactive':'Người thắng lặp lại','tab.ml':'Xếp hạng ML','tab.clusters':'Cụm Sybil','kalshi.portfolio':'Danh mục của tôi','kalshi.markets':'Thị trường hàng đầu','kalshi.arbitrage':'Chênh lệch liên sàn'},
+  th: {'ctrl.window':'ช่วงเวลา','ctrl.trades':'การเทรด','win.all':'ทั้งหมด','win.30d':'30 วัน','win.7d':'7 วัน','win.1d':'1 วัน','tab.top3':'3 เทรดเดอร์อันดับต้น','tab.good':'เทรดเดอร์ที่ดี','tab.smart':'Smart Money','tab.suspicious':'การเทรดที่น่าสงสัย','tab.retroactive':'ผู้ชนะซ้ำ','tab.ml':'อันดับ ML','tab.clusters':'คลัสเตอร์ Sybil','kalshi.portfolio':'พอร์ตของฉัน','kalshi.markets':'ตลาดยอดนิยม','kalshi.arbitrage':'สเปรดข้ามแพลตฟอร์ม'},
+};
+let langCode = localStorage.getItem('narve_language') || 'en';
+function t(key) {
+  const dict = I18N[langCode] || I18N.en;
+  return dict[key] || I18N.en[key] || key;
+}
+function applyTranslations(root) {
+  root = root || document;
+  root.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const v = t(key);
+    if (v) el.textContent = v;
+  });
+  root.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    const v = t(key);
+    if (v) el.setAttribute('title', v);
+  });
+}
+function setLanguage(code) {
+  langCode = code;
+  localStorage.setItem('narve_language', code);
+  document.documentElement.lang = code;
+  applyTranslations();
+}
+function populateLanguagePicker() {
+  const sel = document.getElementById('language-select');
+  if (!sel || sel.options.length) return;
+  for (const [code, name] of LANGUAGES) {
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  sel.value = langCode;
+}
+window.t = t;
+window.setNarveLanguage = setLanguage;
+window.applyNarveTranslations = applyTranslations;
+
 const grid    = document.getElementById("grid");
 const errBox  = document.getElementById("err-box");
 const status  = document.getElementById("status");
@@ -372,27 +1456,80 @@ const limSel  = document.getElementById("limit");
 function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  if (tab === 'suspicious') {
-    document.querySelector('.tab-btn.sus').classList.add('active');
+  // Determine which button corresponds to this tab by index
+  const tabIndex = { 'traders': 0, 'quality': 1, 'smart': 2, 'suspicious': 3, 'retroactive': 4, 'ml': 5, 'clusters': 6 };
+  const btns = document.querySelectorAll('.tab-bar .tab-btn');
+  const idx = tabIndex[tab];
+  if (idx != null && btns[idx]) btns[idx].classList.add('active');
+
+  if (tab === 'quality') {
+    document.getElementById('panel-quality').classList.add('active');
+    loadQuality();
+  } else if (tab === 'smart') {
+    document.getElementById('panel-smart').classList.add('active');
+    loadSmartMoney();
+  } else if (tab === 'suspicious') {
     document.getElementById('panel-suspicious').classList.add('active');
     loadSuspicious();
+  } else if (tab === 'retroactive') {
+    document.getElementById('panel-retroactive').classList.add('active');
+    loadRetroactive();
+  } else if (tab === 'ml') {
+    document.getElementById('panel-ml').classList.add('active');
+    loadML();
+  } else if (tab === 'clusters') {
+    document.getElementById('panel-clusters').classList.add('active');
+    loadClusters();
   } else {
-    document.querySelector('.tab-btn:not(.sus)').classList.add('active');
     document.getElementById('panel-traders').classList.add('active');
   }
 }
 
+// ─── Top Traders rank-by toggle (volume vs PnL) ───
+let rankBy = localStorage.getItem('narve_rankby') || 'volume';
+function setRankBy(mode) {
+  rankBy = mode;
+  localStorage.setItem('narve_rankby', mode);
+  document.getElementById('rank-volume').classList.toggle('active', mode === 'volume');
+  document.getElementById('rank-profit').classList.toggle('active', mode === 'profit');
+  loadData();
+}
+
 // ─── Helpers ───
+// fmtMoney: input is a USD amount; we convert + format compact (B/M/K)
+// in the user's chosen currency, with the locale driven by the unit toggle.
 const fmtMoney = (n) => {
-  if (n == null) return "—";
-  const num = Number(n);
-  if (num >= 1e9) return "$" + (num / 1e9).toFixed(2) + "B";
-  if (num >= 1e6) return "$" + (num / 1e6).toFixed(2) + "M";
-  if (num >= 1e3) return "$" + (num / 1e3).toFixed(1) + "K";
-  return "$" + num.toFixed(2);
+  if (n == null) return "\u2014";
+  const value = convertUSD(n);
+  if (value == null) return "\u2014";
+  let suffix = "", scaled = value;
+  if (Math.abs(value) >= 1e9) { scaled = value / 1e9; suffix = "B"; }
+  else if (Math.abs(value) >= 1e6) { scaled = value / 1e6; suffix = "M"; }
+  else if (Math.abs(value) >= 1e3) { scaled = value / 1e3; suffix = "K"; }
+  const decimals = suffix === "B" ? 2 : suffix === "M" ? 2 : suffix === "K" ? 1 : 2;
+  const loc = fxLocale();
+  try {
+    const fmt = new Intl.NumberFormat(loc, {
+      style: "currency", currency: currencyCode,
+      maximumFractionDigits: decimals, minimumFractionDigits: decimals,
+    });
+    const parts = fmt.formatToParts(0);
+    const symPart = parts.find(p => p.type === "currency");
+    const sym = symPart ? symPart.value : currencyCode;
+    const symFirst = parts.findIndex(p => p.type === "currency") < parts.findIndex(p => p.type === "integer");
+    const numStr = scaled.toLocaleString(loc, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    return symFirst ? `${sym}${numStr}${suffix}` : `${numStr}${suffix} ${sym}`;
+  } catch {
+    return `${currencyCode} ${scaled.toLocaleString(loc)}${suffix}`;
+  }
 };
 
-const fmtPrice = (p) => (p == null ? "—" : (Number(p) * 100).toFixed(1) + "¢");
+const fmtPrice = (p) => {
+  if (p == null) return "\u2014";
+  const val = (Number(p) * 100);
+  if (isMetric()) return val.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "\u00A2";
+  return val.toFixed(1) + "\u00A2";
+};
 
 const fmtAgo = (ts) => {
   if (!ts) return "—";
@@ -421,13 +1558,42 @@ function escapeHtml(s) {
     .replace(/'/g, "&#039;");
 }
 
+// Sanitize a URL before embedding it as an image src. Reject anything that
+// isn't an http(s) URL — javascript:, data:, vbscript: etc. would all give
+// an attacker XSS via a market icon or wallet profile picture, both of
+// which are user-controlled inputs from the upstream API. We also escape
+// the result so a bare `"` can't break out of the attribute.
+function safeImageUrl(u) {
+  if (typeof u !== "string") return "";
+  const trimmed = u.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return "";
+  return trimmed.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Escape a string so it's safe to embed inside a single-quoted JS string
+// literal that itself sits inside an HTML attribute. The previous
+// `replace(/'/g, "\\'")` only handled single quotes — a trailing backslash
+// or `<\/script>` could still break out. We escape backslashes first (so the
+// quote-escape doesn't get re-escaped), then quotes, then HTML-encode the
+// remaining structural chars.
+function jsAttrEscape(s) {
+  return String(s == null ? "" : s)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 // ─── Top Traders ───
 function renderTrade(t) {
   const side = (t.side || "").toUpperCase();
   const sideCls = side === "BUY" ? "pill-buy" : "pill-sell";
   const notional = (Number(t.size) || 0) * (Number(t.price) || 0);
-  const icon = t.icon
-    ? `<img class="trade-icon" src="${t.icon}" onerror="this.style.display='none'" />`
+  const safeIconUrl = safeImageUrl(t.icon);
+  const icon = safeIconUrl
+    ? `<img class="trade-icon" src="${safeIconUrl}" onerror="this.style.display='none'" />`
     : `<div class="trade-icon"></div>`;
 
   return `
@@ -449,13 +1615,20 @@ function renderTrade(t) {
 
 function renderTraderCard(trader) {
   const rank = trader.rank;
-  const avatar = trader.profileImage
-    ? `<img class="avatar" src="${trader.profileImage}" onerror="this.style.display='none'" />`
+  const safeAvatarUrl = safeImageUrl(trader.profileImage);
+  const avatar = safeAvatarUrl
+    ? `<img class="avatar" src="${safeAvatarUrl}" onerror="this.style.display='none'" />`
     : `<div class="avatar"></div>`;
   const trades = trader.trades || [];
   const tradesHtml = trades.length
     ? trades.map(renderTrade).join("")
     : `<div class="empty">No recent trades</div>`;
+
+  // Show whichever metric we ranked by
+  const isPnL = (trader.metric_label === "PnL");
+  const metricVal = isPnL ? trader.profit : trader.volume;
+  const metricLabel = isPnL ? "realized PnL" : "volume";
+  const metricStyle = isPnL && metricVal < 0 ? "color:var(--red);" : "";
 
   return `
     <div class="trader-card">
@@ -463,9 +1636,9 @@ function renderTraderCard(trader) {
         <div class="rank-badge rank-${rank}">${rank}</div>
         ${avatar}
         <div class="trader-meta">
-          <div class="trader-name">${escapeHtml(trader.name || "Anonymous")}</div>
+          <div class="trader-name"><span class="wallet-link" onclick="openWalletModal('${jsAttrEscape(trader.proxyWallet)}', '${jsAttrEscape(trader.name || "Anonymous")}')">${escapeHtml(trader.name || "Anonymous")}</span></div>
           <div class="trader-wallet">${shortAddr(trader.proxyWallet)}</div>
-          <div class="trader-volume">${fmtMoney(trader.volume)} volume</div>
+          <div class="trader-volume" style="${metricStyle}">${fmtMoney(metricVal)} ${metricLabel}</div>
         </div>
       </div>
       <div class="trades-list">${tradesHtml}</div>
@@ -480,7 +1653,7 @@ async function loadData() {
   errBox.innerHTML = "";
 
   try {
-    const r = await fetch(`/api/top-traders?window=${window_}&trades_per_trader=${limit}`);
+    const r = await fetch(`/api/top-traders?window=${window_}&trades_per_trader=${limit}&rank=${rankBy}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     const traders = data.traders || [];
@@ -491,7 +1664,7 @@ async function loadData() {
       grid.innerHTML = traders.map(renderTraderCard).join("");
     }
 
-    const ts = new Date(data.fetched_at * 1000).toLocaleTimeString();
+    const ts = new Date(data.fetched_at * 1000).toLocaleTimeString(isMetric() ? 'de-DE' : 'en-US');
     status.textContent = `updated ${ts}`;
   } catch (e) {
     errBox.innerHTML = `<div class="err">Failed to load data: ${escapeHtml(e.message)}</div>`;
@@ -524,6 +1697,7 @@ async function loadSuspicious() {
 
     const trades = data.suspicious_trades || [];
     const agg = data.aggregate_stats || {};
+    const totalScanned = data.total_trades_scanned || 0;
 
     if (!trades.length) {
       statsEl.innerHTML = '<div class="empty">No suspicious trades detected yet. The scanner runs every 30 minutes.</div>';
@@ -540,7 +1714,7 @@ async function loadSuspicious() {
       <div class="sus-stat">
         <div class="label">Flagged Trades</div>
         <div class="value" style="color:var(--red);">${agg.total_flagged || trades.length}</div>
-        <div class="detail">From ${(agg.total_trades_scanned || 0).toLocaleString()} scanned</div>
+        <div class="detail">From ${totalScanned.toLocaleString(isMetric() ? 'de-DE' : 'en-US')} scanned</div>
       </div>
       <div class="sus-stat">
         <div class="label">Total Potential Profit</div>
@@ -587,8 +1761,12 @@ async function loadSuspicious() {
       const profit = t.potential_profit || 0;
       const profitCls = profit >= 20000 ? "score-high" : (profit >= 5000 ? "score-mid" : "");
       const wallet = t.wallet ? t.wallet.slice(0, 8) + "..." : "?";
-      const name = escapeHtml(t.pseudonym || t.name || wallet);
+      const rawName = t.pseudonym || t.name || wallet;
+      const name = escapeHtml(rawName);
       const reasons = (t.reasons || []).slice(0, 3).map(escapeHtml).join("; ");
+      const walletCell = t.wallet
+        ? `<span class="wallet-link" onclick="openWalletModal('${jsAttrEscape(t.wallet)}', '${jsAttrEscape(rawName)}')">${name}</span>`
+        : name;
 
       return `<tr>
         <td class="${scCls}">${sc}</td>
@@ -598,7 +1776,7 @@ async function loadSuspicious() {
         <td style="font-weight:700;">${fmtMoney(t.usd_value)}</td>
         <td style="font-weight:600;">${escapeHtml(odds)}</td>
         <td class="${profitCls}">${fmtMoney(profit)}</td>
-        <td title="${escapeHtml(t.wallet || "")}">${name}</td>
+        <td title="${escapeHtml(t.wallet || "")}">${walletCell}</td>
         <td style="font-size:11px;color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;">${reasons}</td>
       </tr>`;
     }).join("");
@@ -623,13 +1801,1476 @@ async function loadSuspicious() {
 }
 
 // Reload suspicious data periodically
-setInterval(() => { _susLoaded = false; }, 300000); // invalidate every 5 min
+setInterval(() => {
+  _susLoaded = false;
+  _retroLoaded = false;
+  _mlLoaded = false;
+  _clustersLoaded = false;
+  _qualityLoaded = false;
+  _smartLoaded = false;
+}, 300000); // invalidate every 5 min
+
+// ─── Good Traders (sustainable edge) ───
+let _qualityLoaded = false;
+
+function qsClass(score) {
+  if (score >= 70) return "";
+  if (score >= 40) return "mid";
+  return "low";
+}
+
+async function loadQuality() {
+  const statsEl = document.getElementById("quality-stats");
+  const tableEl = document.getElementById("quality-table-container");
+  if (_qualityLoaded) return;
+
+  statsEl.innerHTML = '<div class="loading">Scoring resolved-market PnL...</div>';
+  tableEl.innerHTML = "";
+
+  try {
+    const r = await fetch("/api/trader-quality?limit=50&min_bets=5");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const traders = data.traders || [];
+    const summary = data.summary || {};
+
+    if (!traders.length) {
+      statsEl.innerHTML = '<div class="empty">No quality scores yet. The scanner runs every 30 minutes and seeds quality data from resolved long-shot + high-volume markets.</div>';
+      _qualityLoaded = true;
+      return;
+    }
+
+    const totalPnL = traders.reduce((s, t) => s + (t.realized_pnl || 0), 0);
+    const top = traders[0] || {};
+
+    statsEl.innerHTML = `
+      <div class="sus-stat">
+        <div class="label">Wallets Scored</div>
+        <div class="value" style="color:var(--green);">${summary.wallets_with_min_bets || traders.length}</div>
+        <div class="detail">Of ${summary.total_wallets || 0} tracked, &ge; ${summary.min_bets || 5} bets</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Total Realized PnL</div>
+        <div class="value" style="color:${(summary.total_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)'};">${fmtMoney(summary.total_pnl || 0)}</div>
+        <div class="detail">Across ${summary.total_bets || 0} resolved bets</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Top Wallet PnL</div>
+        <div class="value" style="color:${(top.realized_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)'};">${fmtMoney(top.realized_pnl || 0)}</div>
+        <div class="detail">${escapeHtml(top.pseudonym || "anon")} · score ${top.quality_score || 0}</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Excluded Sybils</div>
+        <div class="value">${data.excluded_cluster_wallets || 0}</div>
+        <div class="detail">Wallets in active clusters filtered out</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Top-${traders.length} PnL Sum</div>
+        <div class="value" style="color:${totalPnL >= 0 ? 'var(--green)' : 'var(--red)'};">${fmtMoney(totalPnL)}</div>
+        <div class="detail">Among shown leaderboard</div>
+      </div>
+    `;
+
+    const rows = traders.map((t, i) => {
+      const sc = t.quality_score || 0;
+      const cls = qsClass(sc);
+      const pnl = t.realized_pnl || 0;
+      const pnlCls = pnl >= 0 ? "pos-pnl" : "neg-pnl";
+      const wr = (t.win_rate || 0) * 100;
+      const avgP = (t.avg_buy_price || 0) * 100;
+      const roi = (t.roi || 0) * 100;
+      const sharpe = (t.sharpe_like || 0).toFixed(2);
+      const calErr = ((t.calibration_error || 0) * 100).toFixed(1);
+      const rawName = t.pseudonym || t.name || (t.address ? t.address.slice(0, 8) + "…" : "anon");
+      const name = escapeHtml(rawName);
+      const reasons = (t.reasons || []).slice(0, 2).map(escapeHtml).join("; ");
+      const walletCell = t.address
+        ? `<span class="wallet-link" onclick="openWalletModal('${jsAttrEscape(t.address)}', '${jsAttrEscape(rawName)}')">${name}</span>`
+        : name;
+      return `<tr>
+        <td style="font-weight:700;color:var(--text-dim);">${i + 1}</td>
+        <td><span class="quality-score-pill ${cls}">${sc}</span></td>
+        <td title="${escapeHtml(t.address || "")}">${walletCell}</td>
+        <td>${t.total_bets || 0}</td>
+        <td>${wr.toFixed(0)}%</td>
+        <td>${avgP.toFixed(0)}%</td>
+        <td>${roi >= 0 ? "+" : ""}${roi.toFixed(0)}%</td>
+        <td>${sharpe}</td>
+        <td>${calErr}%</td>
+        <td class="${pnlCls}">${fmtMoney(pnl)}</td>
+        <td style="font-size:11px;color:var(--text-dim);max-width:240px;overflow:hidden;text-overflow:ellipsis;">${reasons}</td>
+      </tr>`;
+    }).join("");
+
+    tableEl.innerHTML = `
+      <div class="sus-table-wrap">
+        <table class="quality-table">
+          <thead><tr>
+            <th>#</th><th>Quality</th><th>Wallet</th><th>Bets</th><th>Win%</th>
+            <th>Avg Odds</th><th>ROI</th><th>Sharpe</th><th>Cal Err</th>
+            <th>Realized PnL</th><th>Why Good</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+
+    _qualityLoaded = true;
+  } catch (e) {
+    statsEl.innerHTML = `<div class="err">Failed to load trader quality: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ─── Smart Money Flow ───
+let _smartLoaded = false;
+
+async function loadSmartMoney() {
+  const statsEl = document.getElementById("smart-stats");
+  const listEl = document.getElementById("smart-list-container");
+  if (_smartLoaded) return;
+
+  statsEl.innerHTML = '<div class="loading">Aggregating open positions of high-quality traders...</div>';
+  listEl.innerHTML = "";
+
+  try {
+    const r = await fetch("/api/smart-money");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const flows = data.flows || [];
+
+    if (!flows.length) {
+      statsEl.innerHTML = '<div class="empty">No smart-money consensus yet. The scanner pulls open positions of top-quality wallets every 30 minutes — at least 2 must agree on a market+outcome.</div>';
+      _smartLoaded = true;
+      return;
+    }
+
+    const totalUsd = flows.reduce((s, f) => s + (f.total_position_usd || 0), 0);
+    const avgQ = flows.reduce((s, f) => s + (f.avg_quality_score || 0), 0) / flows.length;
+
+    statsEl.innerHTML = `
+      <div class="sus-stat">
+        <div class="label">Consensus Markets</div>
+        <div class="value" style="color:var(--green);">${data.consensus_markets || flows.length}</div>
+        <div class="detail">&ge;2 quality wallets agree</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Wallets Scanned</div>
+        <div class="value">${data.wallets_scanned || 0}</div>
+        <div class="detail">Top quality traders</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Total Open Positions</div>
+        <div class="value">${data.total_positions || 0}</div>
+        <div class="detail">Live, pre-resolution</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Aggregate Stake</div>
+        <div class="value" style="color:var(--green);">${fmtMoney(totalUsd)}</div>
+        <div class="detail">All consensus flows combined</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Avg Quality of Flows</div>
+        <div class="value">${avgQ.toFixed(0)}/100</div>
+        <div class="detail">Mean wallet quality score</div>
+      </div>
+    `;
+
+    listEl.innerHTML = flows.slice(0, 30).map(f => {
+      const wallets = (f.wallets || []).slice(0, 8).map(w => {
+        const rawName = w.pseudonym || (w.address || "").slice(0, 8) + "…";
+        const name = escapeHtml(rawName);
+        return `<span class="smart-wallet-chip" onclick="openWalletModal('${jsAttrEscape(w.address)}', '${jsAttrEscape(rawName)}')">
+          <span class="qs">${w.quality_score || 0}</span>${name}
+        </span>`;
+      }).join("");
+      const overflow = (f.wallets || []).length > 8 ? `<span class="smart-wallet-chip" style="cursor:default;">+${f.wallets.length - 8} more</span>` : "";
+      return `
+        <div class="smart-card">
+          <div class="smart-card-head">
+            <div>
+              <div class="smart-title">${escapeHtml(f.market_title || "Unknown market")}</div>
+              <div class="smart-meta">
+                <span><strong>${f.smart_wallet_count || 0}</strong> smart wallets</span>
+                <span>Total stake <strong>${fmtMoney(f.total_position_usd || 0)}</strong></span>
+                <span>Avg shares <strong>${(f.avg_shares || 0).toLocaleString(isMetric() ? 'de-DE' : 'en-US', {maximumFractionDigits: 0})}</strong></span>
+                <span>Avg quality <strong>${(f.avg_quality_score || 0).toFixed(0)}</strong></span>
+              </div>
+            </div>
+            <div class="smart-outcome-pill">${escapeHtml(f.outcome || "?")}</div>
+          </div>
+          <div class="smart-wallets">${wallets}${overflow}</div>
+        </div>
+      `;
+    }).join("");
+
+    _smartLoaded = true;
+  } catch (e) {
+    statsEl.innerHTML = `<div class="err">Failed to load smart-money flow: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ─── Retroactive Repeat Winners ───
+let _retroLoaded = false;
+
+async function loadRetroactive() {
+  const statsEl = document.getElementById("retro-stats");
+  const tableEl = document.getElementById("retro-table-container");
+  if (_retroLoaded) return;
+
+  statsEl.innerHTML = '<div class="loading">Scanning resolved markets...</div>';
+  tableEl.innerHTML = "";
+
+  try {
+    const r = await fetch("/api/retroactive-winners");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const profiles = data.profiles || [];
+
+    if (!profiles.length) {
+      statsEl.innerHTML = '<div class="empty">No retroactive winners yet. The scanner runs every 30 minutes and analyzes the last 60 days of resolved markets.</div>';
+      _retroLoaded = true;
+      return;
+    }
+
+    const totalRealized = profiles.reduce((s, p) => s + (p.total_realized_profit || 0), 0);
+    const repeatWinners = profiles.filter(p => (p.unique_markets_won || 0) >= 2).length;
+    const highSus = profiles.filter(p => (p.insider_score || 0) >= 50).length;
+
+    statsEl.innerHTML = `
+      <div class="sus-stat">
+        <div class="label">Markets Scanned</div>
+        <div class="value">${data.markets_scanned || 0}</div>
+        <div class="detail">Last ${data.lookback_days || 60} days</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Long-Shot Winners</div>
+        <div class="value" style="color:var(--red);">${data.total_winners || 0}</div>
+        <div class="detail">Bets at &le;25% odds that won</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Unique Wallets</div>
+        <div class="value">${data.unique_winning_wallets || 0}</div>
+        <div class="detail">${repeatWinners} won &ge;2 markets</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Realized Long-Shot Profit</div>
+        <div class="value" style="color:var(--red);">${fmtMoney(totalRealized)}</div>
+        <div class="detail">Across all flagged wallets</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">High-Suspicion Profiles</div>
+        <div class="value" style="color:${highSus > 0 ? 'var(--red)' : 'var(--text)'};">${highSus}</div>
+        <div class="detail">Insider score &ge; 50</div>
+      </div>
+    `;
+
+    const rows = profiles.slice(0, 50).map((p, i) => {
+      const sc = p.insider_score || 0;
+      const scCls = scoreClass(sc);
+      const rawName = p.pseudonym || p.name || (p.wallet ? p.wallet.slice(0, 8) + "…" : "anon");
+      const name = escapeHtml(rawName);
+      const reasons = (p.reasons || []).slice(0, 3).map(escapeHtml).join("; ");
+      const walletCell = p.wallet
+        ? `<span class="wallet-link" onclick="openWalletModal('${jsAttrEscape(p.wallet)}', '${jsAttrEscape(rawName)}')">${name}</span>`
+        : name;
+      return `<tr>
+        <td style="font-weight:700;color:var(--text-dim);">${i + 1}</td>
+        <td class="${scCls}">${sc}</td>
+        <td title="${escapeHtml(p.wallet || "")}">${walletCell}</td>
+        <td>${p.win_count || 0}</td>
+        <td>${p.unique_markets_won || 0}</td>
+        <td>${((p.avg_buy_price || 0) * 100).toFixed(1)}%</td>
+        <td style="font-weight:700;">${fmtMoney(p.total_staked || 0)}</td>
+        <td style="font-weight:700;color:var(--red);">${fmtMoney(p.total_realized_profit || 0)}</td>
+        <td>${p.late_bet_count || 0}</td>
+        <td style="font-size:11px;color:var(--text-dim);max-width:240px;overflow:hidden;text-overflow:ellipsis;">${reasons}</td>
+      </tr>`;
+    }).join("");
+
+    tableEl.innerHTML = `
+      <div class="sus-table-wrap">
+        <table class="sus-table">
+          <thead><tr>
+            <th>#</th><th>Score</th><th>Wallet</th><th>Wins</th><th>Markets</th>
+            <th>Avg Odds</th><th>Staked</th><th>Realized</th><th>Late Bets</th><th>Why Suspicious</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+
+    _retroLoaded = true;
+  } catch (e) {
+    statsEl.innerHTML = `<div class="err">Failed to load retroactive scan: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ─── ML / Bayesian ───
+let _mlLoaded = false;
+
+async function loadML() {
+  const statsEl = document.getElementById("ml-stats");
+  const bayesEl = document.getElementById("bayesian-table-container");
+  const mlTableEl = document.getElementById("ml-table-container");
+  if (_mlLoaded) return;
+
+  statsEl.innerHTML = '<div class="loading">Loading ML rankings...</div>';
+  bayesEl.innerHTML = "";
+  mlTableEl.innerHTML = "";
+
+  try {
+    const [bayesResp, mlResp] = await Promise.all([
+      fetch("/api/bayesian-scores?min_bets=1&limit=50"),
+      fetch("/api/wallet-ml-scores"),
+    ]);
+    if (!bayesResp.ok) throw new Error(`Bayesian HTTP ${bayesResp.status}`);
+    if (!mlResp.ok) throw new Error(`ML HTTP ${mlResp.status}`);
+    const bayes = await bayesResp.json();
+    const ml = await mlResp.json();
+
+    const bWallets = bayes.wallets || [];
+    const bSummary = bayes.summary || {};
+    const mlCombined = ml.combined || [];
+    const models = ml.available_models || {};
+
+    const highConf = bWallets.filter(w => w.high_confidence).length;
+    const skModel = models.sklearn ? "scikit-learn" : "z-score fallback";
+    const xgModel = models.xgboost ? "xgboost" : "linear fallback";
+
+    statsEl.innerHTML = `
+      <div class="sus-stat">
+        <div class="label">Tracked Wallets</div>
+        <div class="value">${bSummary.total_wallets || 0}</div>
+        <div class="detail">${bSummary.wallets_with_3plus_bets || 0} with &ge;3 bets</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">High-Confidence Edge</div>
+        <div class="value" style="color:${highConf > 0 ? 'var(--red)' : 'var(--text)'};">${highConf}</div>
+        <div class="detail">P(edge &gt; baseline) &ge; 95%</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Total Long-Shot Bets</div>
+        <div class="value">${bSummary.total_bets || 0}</div>
+        <div class="detail">${bSummary.total_wins || 0} resolved as wins</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Baseline Win Rate</div>
+        <div class="value">${((bSummary.baseline_win_rate || 0.12) * 100).toFixed(0)}%</div>
+        <div class="detail">Beta(3, 22) prior</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Anomaly Model</div>
+        <div class="value" style="font-size:13px;">${skModel}</div>
+        <div class="detail">${ml.wallet_count || 0} wallets ranked</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Ranker Model</div>
+        <div class="value" style="font-size:13px;">${xgModel}</div>
+        <div class="detail">Trained on retroactive labels</div>
+      </div>
+    `;
+
+    if (!bWallets.length) {
+      bayesEl.innerHTML = '<div class="empty" style="padding:20px;">No Bayesian scores yet — waiting for retroactive scan to populate.</div>';
+    } else {
+      const bRows = bWallets.slice(0, 30).map((w, i) => {
+        const rawName = w.pseudonym || w.name || (w.address ? w.address.slice(0, 8) + "…" : "anon");
+        const name = escapeHtml(rawName);
+        const pct = ((w.posterior_mean || 0) * 100).toFixed(1);
+        const pAbove = ((w.prob_above_baseline || 0) * 100).toFixed(1);
+        const lift = (w.edge_lift || 1).toFixed(1);
+        const conf = w.high_confidence ? '<span class="pill pill-buy">HIGH</span>' : '';
+        const walletCell = w.address
+          ? `<span class="wallet-link" onclick="openWalletModal('${jsAttrEscape(w.address)}', '${jsAttrEscape(rawName)}')">${name}</span>`
+          : name;
+        return `<tr>
+          <td style="font-weight:700;color:var(--text-dim);">${i + 1}</td>
+          <td title="${escapeHtml(w.address || "")}">${walletCell}</td>
+          <td>${w.longshot_wins || 0}/${w.longshot_bets || 0}</td>
+          <td style="font-weight:700;">${pct}%</td>
+          <td style="font-weight:700;${(w.prob_above_baseline || 0) >= 0.95 ? 'color:var(--red);' : ''}">${pAbove}%</td>
+          <td style="font-weight:700;">${lift}×</td>
+          <td>${conf}</td>
+          <td style="font-weight:700;color:var(--red);">${fmtMoney(w.total_realized_usd || 0)}</td>
+        </tr>`;
+      }).join("");
+      bayesEl.innerHTML = `
+        <div class="sus-table-wrap">
+          <table class="sus-table">
+            <thead><tr>
+              <th>#</th><th>Wallet</th><th>Wins/Bets</th><th>Posterior Mean</th>
+              <th>P(edge &gt; 12%)</th><th>Lift</th><th>Confidence</th><th>Realized</th>
+            </tr></thead>
+            <tbody>${bRows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    if (!mlCombined.length) {
+      mlTableEl.innerHTML = '<div class="empty" style="padding:20px;">No ML rankings yet — waiting for retroactive scan to populate.</div>';
+    } else {
+      const mlRows = mlCombined.slice(0, 30).map((w, i) => {
+        const f = w.features || {};
+        const anomBadge = w.is_anomaly ? '<span class="pill pill-sell">ANOMALY</span>' : '';
+        const rawShortName = (w.wallet || "").slice(0, 10) + "…";
+        const shortName = escapeHtml(rawShortName);
+        const walletCell = w.wallet
+          ? `<span class="wallet-link" onclick="openWalletModal('${jsAttrEscape(w.wallet)}', '${jsAttrEscape(rawShortName)}')">${shortName}</span>`
+          : shortName;
+        return `<tr>
+          <td style="font-weight:700;color:var(--text-dim);">${i + 1}</td>
+          <td title="${escapeHtml(w.wallet || "")}">${walletCell}</td>
+          <td style="font-weight:700;color:var(--red);">${(w.combined_score || 0).toFixed(0)}</td>
+          <td>${(w.isolation_score || 0).toFixed(0)}</td>
+          <td>${(w.xgboost_score || 0).toFixed(0)}</td>
+          <td>${f.unique_markets || 0}</td>
+          <td>${((f.avg_buy_price || 0) * 100).toFixed(1)}%</td>
+          <td>${((f.late_bet_ratio || 0) * 100).toFixed(0)}%</td>
+          <td>${fmtMoney(f.total_realized_usd || 0)}</td>
+          <td>${anomBadge}</td>
+        </tr>`;
+      }).join("");
+      mlTableEl.innerHTML = `
+        <div class="sus-table-wrap">
+          <table class="sus-table">
+            <thead><tr>
+              <th>#</th><th>Wallet</th><th>Combined</th><th>Iso Forest</th><th>XGBoost</th>
+              <th>Markets</th><th>Avg Odds</th><th>Late Bet %</th><th>Realized</th><th>Flag</th>
+            </tr></thead>
+            <tbody>${mlRows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    _mlLoaded = true;
+  } catch (e) {
+    statsEl.innerHTML = `<div class="err">Failed to load ML data: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ─── Sybil Clusters ───
+let _clustersLoaded = false;
+
+async function loadClusters() {
+  const statsEl = document.getElementById("cluster-stats");
+  const listEl = document.getElementById("cluster-list-container");
+  if (_clustersLoaded) return;
+
+  statsEl.innerHTML = '<div class="loading">Building co-trading graph...</div>';
+  listEl.innerHTML = "";
+
+  try {
+    const r = await fetch("/api/wallet-clusters");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const clusters = data.clusters || [];
+
+    const totalUsd = clusters.reduce((s, c) => s + (c.total_usd || 0), 0);
+    const highScore = clusters.filter(c => (c.score || 0) >= 70).length;
+    const recurringNow = clusters.filter(c => c.is_recurring).length;
+    const params = data.params || {};
+    const windowMin = params.window_seconds ? Math.round(params.window_seconds / 60) : 60;
+    const hist = data.history_summary || {};
+
+    statsEl.innerHTML = `
+      <div class="sus-stat">
+        <div class="label">Clusters Found</div>
+        <div class="value" style="color:${clusters.length > 0 ? 'var(--red)' : 'var(--text)'};">${data.cluster_count || 0}</div>
+        <div class="detail">${data.edges_total || 0} co-trade edges</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Wallets in Clusters</div>
+        <div class="value">${data.wallets_in_clusters || 0}</div>
+        <div class="detail">Across all rings</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Recurring Rings</div>
+        <div class="value" style="color:${recurringNow > 0 ? 'var(--red)' : 'var(--text)'};">${recurringNow}</div>
+        <div class="detail">Seen in this scan</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">High-Score Rings</div>
+        <div class="value" style="color:${highScore > 0 ? 'var(--red)' : 'var(--text)'};">${highScore}</div>
+        <div class="detail">Score &ge; 70</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Total Cluster Volume</div>
+        <div class="value" style="color:var(--red);">${fmtMoney(totalUsd)}</div>
+        <div class="detail">Sum across rings</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">History DB</div>
+        <div class="value">${hist.total_clusters_tracked || 0}</div>
+        <div class="detail">${hist.recurring_clusters || 0} ever recurring · max seen ${hist.max_seen_count || 0}×</div>
+      </div>
+      <div class="sus-stat">
+        <div class="label">Co-trade Window</div>
+        <div class="value">${windowMin}m</div>
+        <div class="detail">Min ${params.min_cluster_size || 3} wallets</div>
+      </div>
+    `;
+
+    if (!clusters.length) {
+      listEl.innerHTML = '<div class="empty" style="padding:20px;">No co-trading clusters detected in the current scan window.</div>';
+      _clustersLoaded = true;
+      return;
+    }
+
+    const cards = clusters.map((c, i) => {
+      const reasons = (c.reasons || []).map(r => `<li>${escapeHtml(r)}</li>`).join("");
+      const wallets = (c.wallets || []).map(addr => {
+        const nm = (c.names && c.names[addr]) || (addr.slice(0, 6) + "…" + addr.slice(-4));
+        return `<span class="wlt" onclick="openWalletModal('${jsAttrEscape(addr)}', '${jsAttrEscape(nm)}')" title="${escapeHtml(addr)}">${escapeHtml(nm)}</span>`;
+      }).join("");
+      const minDelta = c.min_delta_seconds || 0;
+      const deltaStr = minDelta < 60 ? `${minDelta}s` : `${Math.round(minDelta / 60)}m`;
+
+      const recurring = !!c.is_recurring;
+      const seen = c.seen_count || 0;
+      const recBadge = recurring ? `<span class="recurring-badge">RECURRING ×${seen}</span>` : "";
+      const firstSeen = c.first_seen_ts
+        ? `<span>first seen <strong>${fmtAgo(c.first_seen_ts)}</strong></span>`
+        : "";
+
+      // Sample coordinated trades — drop in a small inline table
+      const samples = (c.sample_trades || []).slice(0, 4);
+      const sampleHtml = samples.length ? `
+        <div class="cluster-trades">
+          <div class="cluster-trades-header">Sample coordinated trades</div>
+          ${samples.map(t => {
+            const dlt = t.delta_seconds || 0;
+            const dltStr = dlt < 60 ? `Δ ${dlt}s` : `Δ ${Math.round(dlt / 60)}m`;
+            const usd = (t.usd_a || 0) + (t.usd_b || 0);
+            return `
+              <div class="cluster-trade-row">
+                <div class="ct-title" title="${escapeHtml(t.title || "")}">${escapeHtml((t.title || "untitled market").slice(0, 70))}</div>
+                <div class="ct-meta">${escapeHtml(t.outcome || "")}</div>
+                <div class="ct-meta">${fmtMoney(usd)} @ ${((t.price_a || 0) * 100).toFixed(0)}%</div>
+                <div class="ct-delta">${dltStr}</div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      ` : "";
+
+      return `
+        <div class="cluster-card${recurring ? ' recurring' : ''}">
+          <div class="cluster-head">
+            <div>
+              <div class="cluster-title">${recBadge}Cluster #${i + 1} — ${c.wallet_count || 0} wallets</div>
+              <div class="cluster-meta">
+                <span><strong>${c.co_markets || 0}</strong> shared markets</span>
+                <span><strong>${((c.density || 0) * 100).toFixed(0)}%</strong> density</span>
+                <span>min Δ <strong>${deltaStr}</strong></span>
+                <span>avg odds <strong>${((c.avg_buy_price || 0) * 100).toFixed(0)}%</strong></span>
+                <span>vol <strong>${fmtMoney(c.total_usd || 0)}</strong></span>
+                <span>edges <strong>${c.edge_count || 0}</strong></span>
+                ${firstSeen}
+              </div>
+            </div>
+            <span class="cluster-score-pill">${c.score || 0}</span>
+          </div>
+          ${reasons ? `<ul class="cluster-reasons">${reasons}</ul>` : ""}
+          <div class="cluster-wallets">${wallets}</div>
+          ${sampleHtml}
+        </div>
+      `;
+    }).join("");
+
+    listEl.innerHTML = cards;
+    _clustersLoaded = true;
+  } catch (e) {
+    statsEl.innerHTML = `<div class="err">Failed to load clusters: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ─── Wallet drill-down modal ───
+function openWalletModal(address, displayName) {
+  const overlay = document.getElementById("wallet-modal");
+  const nameEl = document.getElementById("wallet-modal-name");
+  const addrEl = document.getElementById("wallet-modal-addr");
+  const bodyEl = document.getElementById("wallet-modal-body");
+
+  nameEl.textContent = displayName || "Wallet";
+  addrEl.textContent = address;
+  bodyEl.innerHTML = '<div class="loading">Loading wallet details...</div>';
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+
+  fetch(`/api/wallet-detail?address=${encodeURIComponent(address)}`)
+    .then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
+    .then(d => renderWalletModal(d))
+    .catch(e => {
+      bodyEl.innerHTML = `<div class="err">Failed to load wallet: ${escapeHtml(e.message)}</div>`;
+    });
+}
+
+function closeWalletModal() {
+  document.getElementById("wallet-modal").classList.remove("open");
+  document.body.style.overflow = "";
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeWalletModal();
+});
+
+function renderWalletModal(d) {
+  const bodyEl = document.getElementById("wallet-modal-body");
+  const sections = [];
+
+  // ── Cluster membership warning (if part of an active sybil ring) ──
+  if (d.cluster_membership) {
+    const cm = d.cluster_membership;
+    sections.push(`
+      <div class="modal-section" style="border-left:3px solid var(--red); padding-left:14px;">
+        <h3 style="color:var(--red);">⚠ Active Sybil Cluster Member</h3>
+        <div class="modal-grid">
+          <div class="modal-stat">
+            <div class="label">Cluster ID</div>
+            <div class="value" style="font-family:'SF Mono',monospace;font-size:13px;">${escapeHtml(String(cm.cluster_id || "—"))}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Cluster Size</div>
+            <div class="value">${cm.size || 0}</div>
+            <div class="detail">co-trading wallets</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Cluster Score</div>
+            <div class="value" style="color:var(--red);">${cm.score || 0}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Persistence</div>
+            <div class="value">${cm.is_recurring ? "RECURRING" : "new"}</div>
+            <div class="detail">seen ${cm.seen_count || 1}× across scans</div>
+          </div>
+        </div>
+        <p style="margin:10px 0 0;font-size:11px;color:var(--text-dim);">
+          This wallet is part of a coordinated co-trading group — <strong>excluded from copy-trade rankings.</strong>
+        </p>
+      </div>
+    `);
+  }
+
+  // ── Sustainable-edge quality section ──
+  if (d.quality) {
+    const q = d.quality;
+    const sc = q.quality_score || 0;
+    const cls = sc >= 70 ? "" : (sc >= 40 ? "mid" : "low");
+    const wr = (q.win_rate || 0) * 100;
+    const avgP = (q.avg_buy_price || 0) * 100;
+    const roi = (q.roi || 0) * 100;
+    const calBins = q.calibration_bins || [];
+    const reasons = (q.reasons || []).map(r => `<li>${escapeHtml(r)}</li>`).join("");
+
+    // Calibration plot — 5 bins, implied vs actual
+    const calPlot = calBins.length ? `
+      <div style="margin-top:14px;">
+        <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.04em;">Calibration: implied odds vs actual win rate</div>
+        <div class="calibration-plot">
+          ${calBins.map(b => {
+            const impH = Math.max(2, (b.implied || 0) * 40);
+            const actH = Math.max(2, (b.actual || 0) * 40);
+            const under = (b.actual || 0) < (b.implied || 0);
+            const range = `${(b.lo * 100).toFixed(0)}-${(b.hi * 100).toFixed(0)}%`;
+            return `
+              <div class="cal-bin">
+                <div class="cal-range">${range}</div>
+                <div class="cal-bars">
+                  <div class="cal-bar" style="height:${impH}px;" title="implied ${(b.implied * 100).toFixed(0)}%"></div>
+                  <div class="cal-bar actual ${under ? 'under' : ''}" style="height:${actH}px;" title="actual ${(b.actual * 100).toFixed(0)}%"></div>
+                </div>
+                <div class="cal-count">n=${b.count || 0}</div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+        <div class="cal-legend">
+          <span><span class="swatch" style="background:var(--brand);"></span>implied (entry price)</span>
+          <span><span class="swatch" style="background:var(--green);"></span>actual win rate (over)</span>
+          <span><span class="swatch" style="background:var(--red);"></span>actual (under)</span>
+        </div>
+      </div>
+    ` : "";
+
+    sections.push(`
+      <div class="modal-section" style="border-left:3px solid var(--green); padding-left:14px;">
+        <h3 style="color:var(--green);">Sustainable Edge (Copy-Trade Score)</h3>
+        <div class="modal-grid">
+          <div class="modal-stat">
+            <div class="label">Quality Score</div>
+            <div class="value"><span class="quality-score-pill ${cls}">${sc}</span></div>
+            <div class="detail">/100</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Realized PnL</div>
+            <div class="value" style="color:${(q.realized_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)'};">${fmtMoney(q.realized_pnl || 0)}</div>
+            <div class="detail">${roi >= 0 ? "+" : ""}${roi.toFixed(0)}% ROI</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Win Rate</div>
+            <div class="value">${wr.toFixed(0)}%</div>
+            <div class="detail">${q.wins || 0}/${q.total_bets || 0} bets</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Avg Entry Odds</div>
+            <div class="value">${avgP.toFixed(0)}%</div>
+            <div class="detail">implied prob</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Sharpe-like</div>
+            <div class="value">${(q.sharpe_like || 0).toFixed(2)}</div>
+            <div class="detail">consistency</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Calibration Err</div>
+            <div class="value">${((q.calibration_error || 0) * 100).toFixed(1)}%</div>
+            <div class="detail">|actual − implied|</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Markets</div>
+            <div class="value">${q.unique_markets || 0}</div>
+            <div class="detail">distinct events</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Total Staked</div>
+            <div class="value">${fmtMoney(q.total_staked || 0)}</div>
+          </div>
+        </div>
+        ${reasons ? `<ul class="cluster-reasons" style="margin-top:10px;">${reasons}</ul>` : ""}
+        ${calPlot}
+      </div>
+    `);
+  }
+
+  // ── On-chain wallet metadata (Polygonscan) ──
+  if (d.metadata) {
+    const m = d.metadata;
+    const ageDays = m.first_tx_ts ? Math.floor((Date.now() / 1000 - m.first_tx_ts) / 86400) : null;
+    const firstDate = m.first_tx_ts ? new Date(m.first_tx_ts * 1000).toLocaleDateString(isMetric() ? 'de-DE' : 'en-US') : "—";
+    sections.push(`
+      <div class="modal-section">
+        <h3>On-Chain Identity</h3>
+        <div class="modal-grid">
+          <div class="modal-stat">
+            <div class="label">Wallet Age</div>
+            <div class="value">${ageDays != null ? ageDays + 'd' : '—'}</div>
+            <div class="detail">first tx ${firstDate}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Funding Source</div>
+            <div class="value" style="font-size:13px;">${escapeHtml(m.funding_source || "unknown")}</div>
+            <div class="detail">first inbound</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">First Tx Hash</div>
+            <div class="value" style="font-family:'SF Mono',monospace;font-size:11px;">${m.first_tx_hash ? m.first_tx_hash.slice(0, 12) + "…" : "—"}</div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // ── Bayesian section ──
+  if (d.bayesian) {
+    const b = d.bayesian;
+    sections.push(`
+      <div class="modal-section">
+        <h3>Bayesian Edge</h3>
+        <div class="modal-grid">
+          <div class="modal-stat">
+            <div class="label">Posterior mean</div>
+            <div class="value">${((b.posterior_mean || 0) * 100).toFixed(1)}%</div>
+            <div class="detail">vs ${((b.baseline_rate || 0.12) * 100).toFixed(0)}% baseline</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">P(edge &gt; baseline)</div>
+            <div class="value" style="color:${(b.prob_above_baseline || 0) >= 0.95 ? 'var(--red)' : 'var(--text)'};">${((b.prob_above_baseline || 0) * 100).toFixed(1)}%</div>
+            <div class="detail">${b.high_confidence ? "HIGH confidence" : "low confidence"}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Long-shot bets</div>
+            <div class="value">${b.longshot_wins || 0}/${b.longshot_bets || 0}</div>
+            <div class="detail">wins / total</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Lift over baseline</div>
+            <div class="value">${(b.edge_lift || 1).toFixed(2)}×</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Realized USD</div>
+            <div class="value" style="color:var(--red);">${fmtMoney(b.total_realized_usd || 0)}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Staked USD</div>
+            <div class="value">${fmtMoney(b.total_staked_usd || 0)}</div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // ── ML section ──
+  if (d.ml) {
+    const m = d.ml;
+    const f = m.features || {};
+    sections.push(`
+      <div class="modal-section">
+        <h3>ML Anomaly + Ranking</h3>
+        <div class="modal-grid">
+          <div class="modal-stat">
+            <div class="label">Combined Score</div>
+            <div class="value" style="color:var(--red);">${(m.combined_score || 0).toFixed(0)}/100</div>
+            <div class="detail">${m.is_anomaly ? "ANOMALY" : "normal"}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Isolation Forest</div>
+            <div class="value">${(m.isolation_score || 0).toFixed(0)}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">XGBoost</div>
+            <div class="value">${(m.xgboost_score || 0).toFixed(0)}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Unique markets</div>
+            <div class="value">${f.unique_markets || 0}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Avg buy odds</div>
+            <div class="value">${((f.avg_buy_price || 0) * 100).toFixed(1)}%</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Late-bet ratio</div>
+            <div class="value">${((f.late_bet_ratio || 0) * 100).toFixed(0)}%</div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // ── Retroactive winner profile ──
+  if (d.retroactive_profile) {
+    const p = d.retroactive_profile;
+    const reasons = (p.reasons || []).map(r => `<li>${escapeHtml(r)}</li>`).join("");
+    sections.push(`
+      <div class="modal-section">
+        <h3>Retroactive Long-Shot Winner</h3>
+        <div class="modal-grid">
+          <div class="modal-stat">
+            <div class="label">Insider score</div>
+            <div class="value" style="color:var(--red);">${p.insider_score || 0}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Wins</div>
+            <div class="value">${p.win_count || 0}</div>
+            <div class="detail">${p.unique_markets_won || 0} markets</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Realized profit</div>
+            <div class="value" style="color:var(--red);">${fmtMoney(p.total_realized_profit || 0)}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Avg buy odds</div>
+            <div class="value">${((p.avg_buy_price || 0) * 100).toFixed(1)}%</div>
+          </div>
+        </div>
+        ${reasons ? `<ul class="cluster-reasons" style="margin-top:10px;">${reasons}</ul>` : ""}
+      </div>
+    `);
+  }
+
+  // ── Live flagged trades ──
+  if (d.flagged_trades && d.flagged_trades.length) {
+    const rows = d.flagged_trades.slice(0, 12).map(t => {
+      const odds = t.odds_str || ((t.price || 0) * 100).toFixed(0) + "%";
+      return `<tr>
+        <td class="${scoreClass(t.score || 0)}">${t.score || 0}</td>
+        <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml((t.title || "").slice(0, 60))}</td>
+        <td>${escapeHtml(t.outcome || "")}</td>
+        <td>${fmtMoney(t.usd_value)}</td>
+        <td>${escapeHtml(odds)}</td>
+        <td style="color:var(--red);">${fmtMoney(t.potential_profit || 0)}</td>
+      </tr>`;
+    }).join("");
+    sections.push(`
+      <div class="modal-section">
+        <h3>Live Flagged Trades (${d.flagged_trades.length})</h3>
+        <div class="sus-table-wrap">
+          <table class="sus-table">
+            <thead><tr><th>Score</th><th>Market</th><th>Outcome</th><th>Bet</th><th>Odds</th><th>Profit</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    `);
+  }
+
+  // ── Wallet investigation summary ──
+  if (d.investigation) {
+    const inv = d.investigation;
+    sections.push(`
+      <div class="modal-section">
+        <h3>Wallet History</h3>
+        <div class="modal-grid">
+          <div class="modal-stat">
+            <div class="label">Total trades</div>
+            <div class="value">${inv.total_trades || 0}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Account age</div>
+            <div class="value">${inv.account_age_days != null ? inv.account_age_days + 'd' : '—'}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Total volume</div>
+            <div class="value">${fmtMoney(inv.total_volume || 0)}</div>
+          </div>
+          <div class="modal-stat">
+            <div class="label">Markets traded</div>
+            <div class="value">${inv.unique_markets || 0}</div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  if (!sections.length) {
+    bodyEl.innerHTML = '<div class="modal-empty">No data available for this wallet across any source.</div>';
+  } else {
+    bodyEl.innerHTML = sections.join("");
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ─── KALSHI INTEGRATION ───────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
+
+let _kalshiPortfolioLoaded = false;
+let _kalshiMarketsLoaded   = false;
+let _kalshiArbLoaded       = false;
+let _currentPlatform = localStorage.getItem('narve_platform') || 'polymarket';
+let _currentKalshiTab = 'portfolio';
+
+// ─── Platform switching (Polymarket / Kalshi) ───
+function setPlatform(mode) {
+  _currentPlatform = mode;
+  localStorage.setItem('narve_platform', mode);
+
+  // Toggle button active states
+  document.getElementById('platform-polymarket').classList.toggle('active', mode === 'polymarket');
+  document.getElementById('platform-polymarket').setAttribute('aria-selected', mode === 'polymarket');
+  document.getElementById('platform-kalshi').classList.toggle('active', mode === 'kalshi');
+  document.getElementById('platform-kalshi').setAttribute('aria-selected', mode === 'kalshi');
+
+  // Toggle tab bars
+  document.getElementById('tab-bar-polymarket').style.display = mode === 'polymarket' ? '' : 'none';
+  document.getElementById('tab-bar-kalshi').style.display     = mode === 'kalshi'     ? '' : 'none';
+
+  // Hide/show all panels by prefix
+  const polyPanels = ['panel-traders', 'panel-quality', 'panel-smart', 'panel-suspicious',
+                      'panel-retroactive', 'panel-ml', 'panel-clusters'];
+  const kalshiPanels = ['panel-kalshi-portfolio', 'panel-kalshi-markets', 'panel-kalshi-arbitrage'];
+
+  if (mode === 'polymarket') {
+    document.getElementById('platform-title').textContent = 'Polymarket · Top Traders';
+    document.getElementById('platform-sub').textContent   = 'Leaderboard, live trades, and suspicious trade scanner';
+    // Restore poly panels: clear inline display so .active CSS rule takes over
+    polyPanels.forEach(p => document.getElementById(p).style.display = '');
+    // Hide kalshi panels (don't strip .active — display:none is enough)
+    kalshiPanels.forEach(p => {
+      const el = document.getElementById(p);
+      if (el) el.style.display = 'none';
+    });
+    // Defensive: if no Poly panel is active (e.g. first time), default to traders
+    if (!document.querySelector('.tab-panel[id^="panel-"]:not([id^="panel-kalshi"]).active')) {
+      switchTab('traders');
+    }
+  } else {
+    document.getElementById('platform-title').textContent = 'Kalshi · Portfolio & Markets';
+    document.getElementById('platform-sub').textContent   = 'Your wallet, top markets, and Kalshi↔Polymarket arbitrage';
+    // Hide poly panels (don't strip .active — display:none is enough)
+    polyPanels.forEach(p => {
+      const el = document.getElementById(p);
+      if (el) el.style.display = 'none';
+    });
+    // Restore kalshi panels: clear inline display
+    kalshiPanels.forEach(p => document.getElementById(p).style.display = '');
+    switchKalshiTab(_currentKalshiTab || 'portfolio');
+  }
+}
+
+// ─── Kalshi sub-tab switching ───
+function switchKalshiTab(tab) {
+  _currentKalshiTab = tab;
+  document.querySelectorAll('#tab-bar-kalshi .tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('[id^="panel-kalshi-"]').forEach(p => p.classList.remove('active'));
+
+  const tabIndex = { 'portfolio': 0, 'markets': 1, 'arbitrage': 2 };
+  const btns = document.querySelectorAll('#tab-bar-kalshi .tab-btn');
+  const idx = tabIndex[tab];
+  if (idx != null && btns[idx]) btns[idx].classList.add('active');
+
+  if (tab === 'portfolio') {
+    document.getElementById('panel-kalshi-portfolio').classList.add('active');
+    loadKalshiPortfolio();
+  } else if (tab === 'markets') {
+    document.getElementById('panel-kalshi-markets').classList.add('active');
+    loadKalshiMarkets();
+  } else if (tab === 'arbitrage') {
+    document.getElementById('panel-kalshi-arbitrage').classList.add('active');
+    loadKalshiArbitrage();
+  }
+}
+
+// ─── Connect / disconnect form ───
+function renderKalshiConnectForm(container, errorMsg) {
+  container.innerHTML = `
+    <div class="kalshi-connect-card">
+      <h3>Connect your Kalshi account</h3>
+      <p>
+        Generate a read-only API key in
+        <strong>Kalshi → Settings → API Keys</strong>. You'll be given an
+        <em>API key ID</em> and an <em>RSA private key</em> (PEM file). Paste both
+        below — they're encrypted at rest using Fernet on this server and never
+        leave the dashboard. We use them only for read-only portfolio queries.
+      </p>
+      <form onsubmit="event.preventDefault(); connectKalshi();">
+        <label for="kalshi-api-key-input">API key ID</label>
+        <input type="text" id="kalshi-api-key-input" placeholder="3a1b2c4d-..." autocomplete="off" spellcheck="false" />
+        <label for="kalshi-pem-input">RSA private key (PEM)</label>
+        <textarea id="kalshi-pem-input" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----" spellcheck="false"></textarea>
+        <button type="submit" class="kalshi-btn" id="kalshi-connect-btn">Connect (test &amp; save)</button>
+        <div id="kalshi-form-msg" class="kalshi-form-msg" style="display:${errorMsg ? 'block' : 'none'};" data-state="${errorMsg ? 'err' : ''}">${escapeHtml(errorMsg || '')}</div>
+      </form>
+    </div>
+  `;
+  if (errorMsg) {
+    const msg = document.getElementById('kalshi-form-msg');
+    msg.classList.add('err');
+  }
+}
+
+async function connectKalshi() {
+  const btn = document.getElementById('kalshi-connect-btn');
+  const msg = document.getElementById('kalshi-form-msg');
+  const apiKey = document.getElementById('kalshi-api-key-input').value.trim();
+  const pem    = document.getElementById('kalshi-pem-input').value.trim();
+
+  msg.classList.remove('ok', 'err');
+  msg.style.display = 'none';
+
+  if (!apiKey || !pem) {
+    msg.textContent = 'Both the API key and the PEM private key are required.';
+    msg.classList.add('err');
+    msg.style.display = 'block';
+    return;
+  }
+  if (!pem.includes('BEGIN') || !pem.includes('PRIVATE KEY')) {
+    msg.textContent = 'That doesn\'t look like a PEM key. It should start with -----BEGIN RSA PRIVATE KEY-----.';
+    msg.classList.add('err');
+    msg.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Testing connection...';
+  try {
+    const r = await fetch('/api/kalshi/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, private_key_pem: pem }),
+    });
+    const data = await r.json();
+    if (!r.ok || data.ok === false) {
+      const errTxt = (data && (data.error || data.detail)) || `HTTP ${r.status}`;
+      msg.textContent = 'Could not connect: ' + errTxt;
+      msg.classList.add('err');
+      msg.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Connect (test & save)';
+      return;
+    }
+    // Success — wipe inputs and reload portfolio view
+    msg.textContent = 'Connected. Loading your portfolio...';
+    msg.classList.add('ok');
+    msg.style.display = 'block';
+    _kalshiPortfolioLoaded = false;
+    setTimeout(loadKalshiPortfolio, 600);
+  } catch (e) {
+    msg.textContent = 'Network error: ' + (e.message || e);
+    msg.classList.add('err');
+    msg.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Connect (test & save)';
+  }
+}
+
+async function disconnectKalshi() {
+  if (!confirm('Disconnect your Kalshi account? Your encrypted credentials will be deleted from this server.')) return;
+  try {
+    await fetch('/api/kalshi/connect', { method: 'DELETE' });
+  } catch (e) {
+    alert('Could not disconnect: ' + (e.message || e));
+  }
+  // Always reset UI to connect form regardless of success/failure
+  _kalshiPortfolioLoaded = false;
+  loadKalshiPortfolio();
+}
+
+// ─── Portfolio loading ───
+let _kalshiPortfolioLoading = false;
+async function loadKalshiPortfolio() {
+  const container = document.getElementById('kalshi-portfolio-container');
+  if (_kalshiPortfolioLoaded || _kalshiPortfolioLoading) return;
+  _kalshiPortfolioLoading = true;
+
+  container.innerHTML = '<div class="loading">Checking Kalshi connection...</div>';
+
+  try {
+    const connResp = await fetch('/api/kalshi/connection');
+    const conn = await connResp.json();
+
+    if (!conn.available) {
+      container.innerHTML = `<div class="empty">Kalshi integration is unavailable on this server (missing 'cryptography' package).</div>`;
+      return;
+    }
+    if (!conn.connected) {
+      renderKalshiConnectForm(container, null);
+      return;
+    }
+
+    // Connected — load portfolio
+    container.innerHTML = '<div class="loading">Loading your Kalshi portfolio...</div>';
+    const portResp = await fetch('/api/kalshi/portfolio');
+    const port = await portResp.json();
+
+    if (!port.ok) {
+      // Connection bad — let user reconnect
+      const errTxt = (port.error ? JSON.stringify(port.error) : port.detail || 'Unknown error').slice(0, 200);
+      renderKalshiConnectForm(container, 'Saved credentials failed: ' + errTxt);
+      return;
+    }
+
+    _kalshiPortfolioLoaded = true;
+    renderKalshiPortfolio(container, port, conn);
+  } catch (e) {
+    container.innerHTML = `<div class="error">Failed to load Kalshi portfolio: ${escapeHtml(e.message || String(e))}</div>`;
+  } finally {
+    _kalshiPortfolioLoading = false;
+  }
+}
+
+function renderKalshiPortfolio(container, port, conn) {
+  const bal = port.balance || {};
+  const sm  = port.summary || {};
+  const positions = port.positions || [];
+  const fills = port.fills || [];
+
+  const updatedAgo = conn.updated_at ? fmtAgo(conn.updated_at) : '—';
+  const apiHint = conn.api_key_hint ? `…${conn.api_key_hint}` : '????';
+
+  const stats = `
+    <div class="sus-stats">
+      <div class="kalshi-stat">
+        <div class="label">Cash balance</div>
+        <div class="value">${fmtMoney(bal.balance_dollars || 0)}</div>
+      </div>
+      <div class="kalshi-stat ${(sm.realized_pnl_dollars || 0) < 0 ? 'neg' : ''}">
+        <div class="label">Realized P&amp;L</div>
+        <div class="value">${fmtMoney(sm.realized_pnl_dollars || 0)}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Open exposure</div>
+        <div class="value">${fmtMoney(sm.exposure_dollars || 0)}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Open positions</div>
+        <div class="value">${sm.open_positions || 0}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Fees paid</div>
+        <div class="value">${fmtMoney(sm.fees_paid_dollars || 0)}</div>
+      </div>
+    </div>
+  `;
+
+  let posTable = '';
+  if (positions.length) {
+    const rows = positions.map(p => {
+      const sideClass = p.side === 'yes' ? 'kalshi-side-yes' : 'kalshi-side-no';
+      const pnlCls = (p.realized_pnl_dollars || 0) >= 0 ? 'pos-pnl' : 'neg-pnl';
+      return `<tr>
+        <td><code style="font-size:10px;color:var(--text-dim);">${escapeHtml(p.ticker || '')}</code><br/>${escapeHtml((p.market_title || '').slice(0, 70))}</td>
+        <td><span class="${sideClass}">${escapeHtml(p.side || '')}</span></td>
+        <td>${Math.abs(p.position || 0).toLocaleString()}</td>
+        <td>${fmtMoney(p.avg_cost_dollars || 0)}</td>
+        <td>${fmtMoney(p.exposure_dollars || 0)}</td>
+        <td class="${pnlCls}">${fmtMoney(p.realized_pnl_dollars || 0)}</td>
+      </tr>`;
+    }).join('');
+    posTable = `
+      <h3 style="margin-top:24px;color:var(--text-dim);font-size:13px;text-transform:uppercase;letter-spacing:0.05em;">Open positions (${positions.length})</h3>
+      <div class="kalshi-positions-wrap">
+        <table class="kalshi-table">
+          <thead><tr><th>Market</th><th>Side</th><th>Contracts</th><th>Avg cost</th><th>Exposure</th><th>Realized P&amp;L</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } else {
+    posTable = `<div class="empty" style="margin-top:20px;">No open positions.</div>`;
+  }
+
+  let fillTable = '';
+  if (fills.length) {
+    const rows = fills.slice(0, 20).map(f => {
+      const ts = f.created_time ? new Date(f.created_time).toLocaleString() : '—';
+      const sideClass = f.side === 'yes' ? 'kalshi-side-yes' : 'kalshi-side-no';
+      return `<tr>
+        <td style="color:var(--text-dim);font-size:10px;">${escapeHtml(ts)}</td>
+        <td><code style="font-size:10px;">${escapeHtml(f.ticker || '')}</code></td>
+        <td><span class="${sideClass}">${escapeHtml(f.side || '')}</span></td>
+        <td>${escapeHtml(f.action || '')}</td>
+        <td>${(f.count || 0).toLocaleString()}</td>
+        <td>${(f.price_cents || 0)}¢</td>
+      </tr>`;
+    }).join('');
+    fillTable = `
+      <h3 style="margin-top:24px;color:var(--text-dim);font-size:13px;text-transform:uppercase;letter-spacing:0.05em;">Recent fills (${fills.length})</h3>
+      <div class="kalshi-positions-wrap">
+        <table class="kalshi-table">
+          <thead><tr><th>When</th><th>Ticker</th><th>Side</th><th>Action</th><th>Count</th><th>Price</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  container.innerHTML = `
+    <div class="kalshi-disconnect-bar">
+      <div class="hint">Connected · key <code>${escapeHtml(apiHint)}</code> · synced ${escapeHtml(updatedAgo)}</div>
+      <button class="kalshi-btn secondary" onclick="disconnectKalshi()">Disconnect</button>
+    </div>
+    ${stats}
+    ${posTable}
+    ${fillTable}
+  `;
+}
+
+// ─── Top markets ───
+async function loadKalshiMarkets() {
+  const statsEl = document.getElementById('kalshi-markets-stats');
+  const listEl  = document.getElementById('kalshi-markets-list');
+  if (_kalshiMarketsLoaded) return;
+
+  statsEl.innerHTML = '<div class="loading">Fetching top Kalshi markets...</div>';
+  listEl.innerHTML = '';
+
+  try {
+    const r = await fetch('/api/kalshi/top-markets?limit=50');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const markets = data.markets || [];
+
+    if (!markets.length) {
+      statsEl.innerHTML = '';
+      listEl.innerHTML = '<div class="empty">No markets returned from Kalshi.</div>';
+      _kalshiMarketsLoaded = true;
+      return;
+    }
+
+    const totalVol24h = markets.reduce((s, m) => s + (m.volume_24h || 0), 0);
+    const totalVol = markets.reduce((s, m) => s + (m.volume || 0), 0);
+    const totalOI = markets.reduce((s, m) => s + (m.open_interest || 0), 0);
+
+    statsEl.innerHTML = `
+      <div class="kalshi-stat">
+        <div class="label">Markets shown</div>
+        <div class="value">${markets.length}</div>
+      </div>
+      <div class="kalshi-stat">
+        <div class="label">Total 24h volume</div>
+        <div class="value">${fmtMoney(totalVol24h)}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Lifetime volume</div>
+        <div class="value">${fmtMoney(totalVol)}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Open interest (sum)</div>
+        <div class="value">${fmtMoney(totalOI)}</div>
+      </div>
+    `;
+
+    listEl.innerHTML = markets.map(m => {
+      const yes = ((m.yes_price || 0) * 100).toFixed(0);
+      const no  = ((m.no_price || 0) * 100).toFixed(0);
+      const sub = m.subtitle || '';
+      const cat = m.category || '';
+      return `
+        <div class="kalshi-market-card">
+          <div>
+            <div class="km-title">${escapeHtml(m.title || '')}${sub ? ' — ' + escapeHtml(sub) : ''}</div>
+            <div class="km-meta">
+              <code>${escapeHtml(m.ticker || '')}</code>
+              ${cat ? `· ${escapeHtml(cat)}` : ''}
+              ${m.event_title ? '· ' + escapeHtml(m.event_title.slice(0, 60)) : ''}
+            </div>
+            <div class="km-vol">24h vol ${fmtMoney(m.volume_24h || 0)} · OI ${fmtMoney(m.open_interest || 0)}</div>
+          </div>
+          <div class="km-prices">
+            <div class="km-price-block">
+              <div class="km-price-label">Yes</div>
+              <div class="km-price-yes">${yes}¢</div>
+            </div>
+            <div class="km-price-block">
+              <div class="km-price-label">No</div>
+              <div class="km-price-no">${no}¢</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    _kalshiMarketsLoaded = true;
+  } catch (e) {
+    statsEl.innerHTML = '';
+    listEl.innerHTML = `<div class="error">Failed to load Kalshi markets: ${escapeHtml(e.message || String(e))}</div>`;
+  }
+}
+
+// ─── Cross-venue arbitrage ───
+async function loadKalshiArbitrage() {
+  const statsEl = document.getElementById('kalshi-arb-stats');
+  const listEl  = document.getElementById('kalshi-arb-list');
+  if (_kalshiArbLoaded) return;
+
+  statsEl.innerHTML = '<div class="loading">Scanning Kalshi vs Polymarket for spreads (this can take 10-20 sec)...</div>';
+  listEl.innerHTML = '';
+
+  try {
+    const r = await fetch('/api/kalshi/cross-venue');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const opps = data.opportunities || [];
+
+    statsEl.innerHTML = `
+      <div class="kalshi-stat">
+        <div class="label">Opportunities</div>
+        <div class="value">${opps.length}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Kalshi markets scanned</div>
+        <div class="value">${data.kalshi_markets_scanned || 0}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Polymarket markets scanned</div>
+        <div class="value">${data.polymarket_markets_scanned || 0}</div>
+      </div>
+      <div class="kalshi-stat neutral">
+        <div class="label">Largest spread</div>
+        <div class="value">${opps.length ? (opps[0].abs_spread * 100).toFixed(1) + '¢' : '—'}</div>
+      </div>
+    `;
+
+    if (!opps.length) {
+      listEl.innerHTML = `<div class="empty">No spreads above the confidence threshold right now. Try again in a few minutes — markets move.</div>`;
+      _kalshiArbLoaded = true;
+      return;
+    }
+
+    listEl.innerHTML = opps.map(o => {
+      const favored = o.favored_venue === 'kalshi' ? 'kalshi-favored' : 'poly-favored';
+      const spreadCls = o.spread > 0 ? 'pos' : 'neg';
+      const spreadAbs = Math.abs(o.spread * 100).toFixed(1);
+      const direction = o.favored_venue === 'kalshi'
+        ? 'BUY Polymarket / SELL Kalshi YES'
+        : 'BUY Kalshi / SELL Polymarket YES';
+      const polyUrl = o.poly_slug ? `https://polymarket.com/event/${encodeURIComponent(o.poly_slug)}` : `https://polymarket.com/markets`;
+      const kalshiUrl = `https://kalshi.com/markets/${encodeURIComponent((o.kalshi_ticker || '').toLowerCase())}`;
+      return `
+        <div class="arb-card ${favored}">
+          <div class="arb-head">
+            <div style="font-size:13px;color:var(--text-dim);">
+              <strong style="color:var(--text);font-size:14px;">Spread opportunity</strong><br/>
+              <span style="font-size:11px;">${escapeHtml(direction)}</span>
+            </div>
+            <div class="arb-spread">
+              <div class="spread-val ${spreadCls}">${spreadAbs}¢</div>
+              <div class="spread-label">YES spread</div>
+            </div>
+          </div>
+          <div class="arb-pair">
+            <div class="arb-side kalshi">
+              <div class="venue-tag">Kalshi</div>
+              <div class="arb-title"><a href="${escapeHtml(kalshiUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${escapeHtml(o.kalshi_title || '')}</a></div>
+              <div class="arb-yes">${((o.kalshi_yes_price || 0) * 100).toFixed(0)}¢ YES</div>
+              <div class="arb-vol">24h vol ${fmtMoney(o.kalshi_volume_24h || 0)}</div>
+            </div>
+            <div class="arb-side poly">
+              <div class="venue-tag">Polymarket</div>
+              <div class="arb-title"><a href="${escapeHtml(polyUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${escapeHtml(o.poly_title || '')}</a></div>
+              <div class="arb-yes">${((o.poly_yes_price || 0) * 100).toFixed(0)}¢ YES</div>
+              <div class="arb-vol">24h vol ${fmtMoney(o.poly_volume_24h || 0)}</div>
+            </div>
+          </div>
+          <div class="arb-meta">
+            <span>Match score <strong>${(o.match_score || 0).toFixed(2)}</strong></span>
+            <span>·</span>
+            <span><strong>${o.shared_tokens || 0}</strong> shared title tokens</span>
+            <span>·</span>
+            <span>Confidence vol <strong>${fmtMoney(o.confidence_vol || 0)}</strong></span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    _kalshiArbLoaded = true;
+  } catch (e) {
+    statsEl.innerHTML = '';
+    listEl.innerHTML = `<div class="error">Failed to scan cross-venue spreads: ${escapeHtml(e.message || String(e))}</div>`;
+  }
+}
+
+// Cache invalidation for Kalshi tabs (5 min markets, 10 min arb, 2 min portfolio)
+// When flag flips, re-fetch if that tab is currently visible
+setInterval(() => {
+  _kalshiMarketsLoaded = false;
+  if (_currentPlatform === 'kalshi' && _currentKalshiTab === 'markets') loadKalshiMarkets();
+}, 300000);
+setInterval(() => {
+  _kalshiArbLoaded = false;
+  if (_currentPlatform === 'kalshi' && _currentKalshiTab === 'arbitrage') loadKalshiArbitrage();
+}, 600000);
+setInterval(() => {
+  _kalshiPortfolioLoaded = false;
+  if (_currentPlatform === 'kalshi' && _currentKalshiTab === 'portfolio') loadKalshiPortfolio();
+}, 120000);
 
 // ─── Init ───
+// Apply saved unit system on page load
+document.documentElement.lang = langCode;
+document.getElementById('unit-american').classList.toggle('active', unitSystem === 'american');
+document.getElementById('unit-european').classList.toggle('active', unitSystem === 'european');
+populateCurrencyPicker();
+populateLanguagePicker();
+applyTranslations();
+// Fetch FX rates in the background; re-render once they land so any
+// already-rendered USD-fallback amounts switch to the user's currency.
+ensureFxRates().then(() => { try { loadData(); } catch {} });
+
 winSel.addEventListener("change", loadData);
 limSel.addEventListener("change", loadData);
 loadData();
 setInterval(loadData, 30000);
+
+// Restore platform from localStorage on load
+if (_currentPlatform === 'kalshi') {
+  // Wait a tick so the rest of the DOM is settled
+  setTimeout(() => setPlatform('kalshi'), 0);
+}
 </script>
 </body>
 </html>

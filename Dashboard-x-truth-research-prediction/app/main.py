@@ -12,6 +12,8 @@ import os
 import re as _re
 import secrets
 import time
+import urllib.parse
+import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +23,7 @@ from cryptography.fernet import Fernet
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import func, select
 
@@ -98,7 +101,15 @@ async def lifespan(app: FastAPI):
             if not admin_pass:
                 admin_pass = settings.get("DASHBOARD_PASSWORD", "").strip() if settings.get("DASHBOARD_PASSWORD", "").strip() else ""
             if not admin_pass:
-                raise RuntimeError("DASHBOARD_PASSWORD must be set in environment")
+                # Generate a random password and log it ONCE so the operator can grab it
+                # from startup logs. This avoids the well-known 'changeme' default which
+                # was a hardcoded credential bypass for anyone who knew about it.
+                admin_pass = secrets.token_urlsafe(24)
+                logger.warning(
+                    "DASHBOARD_PASSWORD not set -- generated a random one-time admin password "
+                    "for user %r. Save it now (it will not be shown again): %s",
+                    admin_user, admin_pass,
+                )
             session.add(User(
                 username=admin_user,
                 email="",
@@ -126,7 +137,11 @@ async def _initial_run():
 
 
 app = FastAPI(title="Polymarket Prediction Intelligence Dashboard", lifespan=lifespan)
-templates = Jinja2Templates(directory=str(__import__("pathlib").Path(__file__).parent / "templates"))
+_app_dir = Path(__file__).parent
+templates = Jinja2Templates(directory=str(_app_dir / "templates"))
+_static_dir = _app_dir / "static"
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 # ---------------------------------------------------------------------------
@@ -142,10 +157,15 @@ def _hash_password(password: str, salt: str | None = None) -> str:
 
 def _verify_password(password: str, stored: str) -> bool:
     """Verify password against stored 'salt$hash' string."""
+    if not stored or not isinstance(stored, str):
+        return False
     if "$" not in stored:
         # Legacy SHA256 hash — verify and return True to allow migration
         return hashlib.sha256(password.encode()).hexdigest() == stored
-    salt, _ = stored.split("$", 1)
+    parts = stored.split("$", 1)
+    if len(parts) != 2 or not parts[0]:
+        return False
+    salt = parts[0]
     return hmac.compare_digest(_hash_password(password, salt), stored)
 
 
@@ -159,13 +179,17 @@ def _make_csrf_token(session_token: str) -> str:
     return hashlib.sha256(f"{session_token}:{_CSRF_SECRET}".encode()).hexdigest()[:32]
 
 
-def _get_csrf_token(request: Request) -> str:
+def _get_csrf_token(request: Request, response=None) -> str:
     """Get or create a CSRF token for the current request/session.
 
     For authenticated users the token is derived from their session cookie.
     For unauthenticated visitors (login/register pages) a temporary token is
     stored in a separate cookie so that the CSRF check survives the stateless
     round-trip.
+
+    If *response* is provided and a new seed must be generated, the seed is
+    persisted as a ``_csrf_seed`` cookie on that response so it can be
+    validated on the next submission.
     """
     session_token = request.cookies.get("session")
     if session_token and session_token in _active_sessions:
@@ -174,8 +198,11 @@ def _get_csrf_token(request: Request) -> str:
     csrf_cookie = request.cookies.get("_csrf_seed")
     if csrf_cookie:
         return _make_csrf_token(csrf_cookie)
-    # Will be set as a cookie by the caller via _set_csrf_cookie
+    # Generate a new seed and persist it so validation works on the next request
     seed = secrets.token_urlsafe(32)
+    if response is not None:
+        is_secure = request.url.scheme == "https"
+        response.set_cookie("_csrf_seed", seed, httponly=True, samesite="strict", max_age=3600, secure=is_secure)
     return _make_csrf_token(seed)
 
 
@@ -209,6 +236,27 @@ def _validate_csrf(request: Request, form_token: str) -> bool:
     return False
 
 
+def _client_identity(request: Request) -> str:
+    """Identify the caller for login throttling.
+
+    When this dashboard runs behind the gateway every request appears to
+    originate from the gateway's single IP, which silently merges every
+    user's failed-login budget into one global counter. We instead trust
+    X-Forwarded-For only when the gateway HMAC header validates, then
+    fall back to the raw socket peer.
+    """
+    secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+    if secret:
+        provided = request.headers.get("x-gateway-secret", "")
+        if provided and hmac.compare_digest(provided, secret):
+            xff = request.headers.get("x-forwarded-for", "")
+            if xff:
+                first = xff.split(",")[0].strip()
+                if first:
+                    return first
+    return request.client.host if request.client else "unknown"
+
+
 def _check_rate_limit(ip: str) -> bool:
     """Returns True if rate limit exceeded."""
     now = time.time()
@@ -225,6 +273,7 @@ def _check_rate_limit(ip: str) -> bool:
 # Active sessions: token -> (username, created_timestamp)
 _active_sessions: dict[str, tuple[str, float]] = {}
 _SESSION_MAX_AGE = 86400 * 7  # 7 days, matches cookie max_age
+_SESSION_MAX_SIZE = 5000  # cap to prevent unbounded memory growth
 
 
 def _prune_expired_sessions() -> None:
@@ -233,6 +282,11 @@ def _prune_expired_sessions() -> None:
     expired = [t for t, (_, ts) in _active_sessions.items() if now - ts > _SESSION_MAX_AGE]
     for t in expired:
         del _active_sessions[t]
+    # Hard cap: if still too large, evict oldest sessions
+    if len(_active_sessions) > _SESSION_MAX_SIZE:
+        sorted_tokens = sorted(_active_sessions, key=lambda t: _active_sessions[t][1])
+        for t in sorted_tokens[:len(_active_sessions) - _SESSION_MAX_SIZE]:
+            del _active_sessions[t]
     # Also prune login attempts
     stale = [ip for ip, attempts in _login_attempts.items()
              if not attempts or (now - attempts[-1]) > 600]
@@ -271,8 +325,6 @@ async def auth_middleware(request: Request, call_next):
     public_paths = {"/login", "/register", "/forgot-password", "/health", "/favicon.ico"}
     if request.url.path in public_paths:
         return await call_next(request)
-    if request.url.path in ("/login", "/register") and request.method == "POST":
-        return await call_next(request)
     token = request.cookies.get("session")
     if token and token in _active_sessions:
         return await call_next(request)
@@ -310,7 +362,7 @@ async def login_submit(request: Request, session: AsyncSession = Depends(get_ses
         csrf_token = _get_csrf_token(request)
         return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid form submission. Please try again.", "msg": "", "csrf_token": csrf_token})
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_identity(request)
     if _check_rate_limit(client_ip):
         csrf_token = _get_csrf_token(request)
         return templates.TemplateResponse("login.html", {"request": request, "error": "Too many login attempts. Try again in 5 minutes.", "msg": "", "csrf_token": csrf_token})
@@ -508,6 +560,10 @@ async def profile_password(request: Request, current_password: str = Form(""), n
 async def update_preferences(request: Request):
     if request.headers.get("X-Requested-With") != "XMLHttpRequest":
         return JSONResponse({"error": "Forbidden"}, status_code=403)
+    # Validate CSRF token from header (AJAX requests send it as X-CSRF-Token)
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not csrf_token or not _validate_csrf(request, csrf_token):
+        return JSONResponse({"error": "Invalid CSRF token"}, status_code=403)
     user = await _get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -609,7 +665,8 @@ async def feed(request: Request, session: AsyncSession = Depends(get_session), _
         ec = "text-green-400" if (pred.ev_score or 0) > 0 else "text-red-400" if (pred.ev_score or 0) < 0 else "text-gray-500"
         rh = ""
         if pred.risk_flag:
-            rh = f'<span class="text-amber-400 cursor-help" title="{_esc(", ".join(_esc(r) for r in (pred.risk_reasons or [])))}"><svg class="w-3.5 h-3.5 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg></span>'
+            _rr = pred.risk_reasons if isinstance(pred.risk_reasons, list) else []
+            rh = f'<span class="text-amber-400 cursor-help" title="{_esc(", ".join(_esc(r) for r in _rr))}"><svg class="w-3.5 h-3.5 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg></span>'
         pl = '<span class="text-blue-400 text-xs">X</span>' if post.platform == "twitter" else '<span class="text-purple-400 text-xs">TS</span>'
         mk = f'<a href="https://polymarket.com/event/{pred.market_slug}" target="_blank" class="text-blue-400 hover:text-blue-300">{_esc((pred.market_question or "")[:45])}</a>' if pred.market_slug else '<span class="text-gray-600">\u2014</span>'
         html_rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02]"><td class="px-4 py-3 max-w-[280px]"><div class="truncate text-gray-300">{_esc(pred.predicted_outcome)}: {_esc(post.content[:70])}</div></td><td class="px-4 py-3 text-sm text-gray-400">@{_esc(post.author_handle)}</td><td class="px-4 py-3 text-center">{pl}</td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{_esc(pred.category)}</span></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full {cc}">{pred.global_credibility_at_time:.2f}</span></td><td class="px-4 py-3 font-mono text-sm {ec}">{ev}</td><td class="px-4 py-3 text-center">{rh}</td><td class="px-4 py-3 text-xs">{mk}</td><td class="px-4 py-3 text-xs text-gray-500">{_time_ago(pred.extracted_at)}</td></tr>')
@@ -757,11 +814,14 @@ async def markets(request: Request, session: AsyncSession = Depends(get_session)
     for m in all_markets:
         close_str = m.close_time.strftime("%b %d, %Y") if m.close_time else "\u2014"
         pc = "text-green-400" if m.yes_price >= 0.6 else "text-red-400" if m.yes_price <= 0.4 else "text-gray-300"
-        rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02] cursor-pointer" hx-get="/feed?market={_esc(m.market_question[:50])}" hx-target="#feed-body" hx-swap="innerHTML" onclick="switchTab(\'feed\')"><td class="px-4 py-3 max-w-[300px]"><div class="truncate text-gray-300">{_esc(m.market_question[:65])}</div></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{m.category}</span></td><td class="px-4 py-3"><div class="flex items-center gap-2"><div class="w-16 bg-gray-700/30 rounded-full h-1.5"><div class="bg-[#2D64F3] h-1.5 rounded-full" style="width:{int(m.yes_price*100)}%"></div></div><span class="font-mono text-sm {pc}">{m.yes_price:.0%}</span></div></td><td class="px-4 py-3 text-sm text-gray-400">${m.volume_usd:,.0f}</td><td class="px-4 py-3 text-xs text-gray-500">{close_str}</td><td class="px-4 py-3"><button hx-get="/markets/{m.market_slug}/chart" hx-target="#market-chart" hx-swap="innerHTML" class="text-xs text-blue-400 hover:text-blue-300">Chart</button></td></tr>')
+        rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02] cursor-pointer" hx-get="/feed?market={_esc(m.market_question[:50])}" hx-target="#feed-body" hx-swap="innerHTML" onclick="switchTab(\'feed\')"><td class="px-4 py-3 max-w-[300px]"><div class="truncate text-gray-300">{_esc(m.market_question[:65])}</div></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{m.category}</span></td><td class="px-4 py-3"><div class="flex items-center gap-2"><div class="w-16 bg-gray-700/30 rounded-full h-1.5"><div class="bg-[#2D64F3] h-1.5 rounded-full" style="width:{int(m.yes_price*100)}%"></div></div><span class="font-mono text-sm {pc}">{m.yes_price:.0%}</span></div></td><td class="px-4 py-3 text-sm text-gray-400"><span class="narve-money" data-usd="{m.volume_usd or 0}">${m.volume_usd:,.0f}</span></td><td class="px-4 py-3 text-xs text-gray-500">{close_str}</td><td class="px-4 py-3"><button hx-get="/markets/{m.market_slug}/chart" hx-target="#market-chart" hx-swap="innerHTML" class="text-xs text-blue-400 hover:text-blue-300">Chart</button></td></tr>')
 
     # Pagination row
-    prev_btn = f'<button hx-get="/markets?page={page-1}&per_page={per_page}&category={category}&search={search}&sort={sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">&laquo; Prev</button>' if page > 1 else '<span class="px-2 py-1 text-xs text-gray-700">&laquo; Prev</span>'
-    next_btn = f'<button hx-get="/markets?page={page+1}&per_page={per_page}&category={category}&search={search}&sort={sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">Next &raquo;</button>' if page < total_pages else '<span class="px-2 py-1 text-xs text-gray-700">Next &raquo;</span>'
+    safe_cat = _esc(category)
+    safe_search = _esc(search)
+    safe_sort = _esc(sort)
+    prev_btn = f'<button hx-get="/markets?page={page-1}&per_page={per_page}&category={safe_cat}&search={safe_search}&sort={safe_sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">&laquo; Prev</button>' if page > 1 else '<span class="px-2 py-1 text-xs text-gray-700">&laquo; Prev</span>'
+    next_btn = f'<button hx-get="/markets?page={page+1}&per_page={per_page}&category={safe_cat}&search={safe_search}&sort={safe_sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">Next &raquo;</button>' if page < total_pages else '<span class="px-2 py-1 text-xs text-gray-700">Next &raquo;</span>'
     rows.append(f'<tr><td colspan="6" class="px-4 py-3"><div class="flex items-center justify-between"><span class="text-xs text-gray-500">{total} markets &middot; Page {page} of {total_pages}</span><div class="flex gap-2">{prev_btn}{next_btn}</div></div></td></tr>')
 
     return HTMLResponse("\n".join(rows))
@@ -770,13 +830,56 @@ async def markets(request: Request, session: AsyncSession = Depends(get_session)
 @app.get("/markets/{slug:path}/chart", response_class=HTMLResponse)
 async def market_chart(slug: str, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth)):
     result = await session.exec(select(MarketSnapshot).where(MarketSnapshot.market_slug == slug).order_by(MarketSnapshot.snapshotted_at.asc()).limit(100))
-    snapshots = result.all()
+    snapshots = list(result.all() or [])
     if not snapshots:
         return HTMLResponse('<div class="text-gray-600 text-sm p-4">No history.</div>')
     labels = _json.dumps([s.snapshotted_at.strftime("%m/%d %H:%M") for s in snapshots])
     prices = _json.dumps([s.yes_price for s in snapshots])
-    title = _esc(snapshots[0].market_question[:60])
+    title = _esc((snapshots[0].market_question or "")[:60])
     return HTMLResponse(f'<div class="mt-4 bg-gray-800/50 rounded-xl p-5 border border-white/5"><h4 class="text-sm font-semibold text-gray-300 mb-3">{title}</h4><canvas id="market-odds-chart" height="120"></canvas><script>if(window._mktChart)window._mktChart.destroy();window._mktChart=new Chart(document.getElementById("market-odds-chart"),{{type:"line",data:{{labels:{labels},datasets:[{{label:"Yes",data:{prices},borderColor:"#2D64F3",borderWidth:2,fill:true,backgroundColor:"rgba(45,100,243,0.08)",tension:0.3,pointRadius:1}}]}},options:{{responsive:true,plugins:{{legend:{{display:false}}}},scales:{{y:{{min:0,max:1,grid:{{color:"rgba(255,255,255,0.03)"}},ticks:{{color:"#6b7280"}}}},x:{{grid:{{display:false}},ticks:{{color:"#6b7280",maxRotation:45}}}}}}}}}});</script></div>')
+
+
+# ---------------------------------------------------------------------------
+# FX rates (frankfurter.dev) — for client-side currency picker
+# ---------------------------------------------------------------------------
+_FX_CACHE: dict = {"rates": None, "fetched_at": 0.0}
+_FX_TTL = 3600  # 1 hour
+_FX_FALLBACK = {
+    "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
+    "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
+    "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
+    "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
+    "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
+    "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+}
+
+
+def _fetch_fx_blocking() -> dict:
+    try:
+        url = "https://api.frankfurter.dev/v1/latest?" + urllib.parse.urlencode({"base": "USD"})
+        req = urllib.request.Request(url, headers={"User-Agent": "narve-polymarket/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        rates = dict(data.get("rates") or {})
+        rates["USD"] = 1.0
+        return rates
+    except Exception as exc:
+        logger.warning("FX fetch failed, using fallback: %s", exc)
+        return dict(_FX_FALLBACK)
+
+
+@app.get("/api/fx-rates")
+async def api_fx_rates(_user: str = Depends(require_auth)):
+    """USD-base FX rates with 1h server cache."""
+    now = time.time()
+    cached = _FX_CACHE.get("rates")
+    fetched = _FX_CACHE.get("fetched_at", 0.0)
+    if cached and (now - fetched) < _FX_TTL:
+        return JSONResponse({"base": "USD", "rates": cached, "fetched_at": fetched})
+    rates = await asyncio.to_thread(_fetch_fx_blocking)
+    _FX_CACHE["rates"] = rates
+    _FX_CACHE["fetched_at"] = now
+    return JSONResponse({"base": "USD", "rates": rates, "fetched_at": now})
 
 
 # ---------------------------------------------------------------------------

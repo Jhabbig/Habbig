@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
+import { fmtVolume } from '../lib/settings'
 import { AlertTriangle, ArrowRight, BarChart3, Newspaper, TrendingUp } from 'lucide-react'
 
 const SOURCE_COLORS = {
@@ -104,7 +105,7 @@ function SourceMarketSection({ title, sourceKey, markets, color }) {
                 <div className="flex items-center gap-2 mt-0.5">
                   {m.state && <span className="text-[10px] text-stone-400 uppercase">{m.state}</span>}
                   <span className="text-[10px] text-stone-400 capitalize">{m.race_type}</span>
-                  {m.volume > 0 && <span className="text-[10px] text-stone-300">${(m.volume / 1000).toFixed(0)}k</span>}
+                  {m.volume > 0 && <span className="text-[10px] text-stone-300">{fmtVolume(m.volume)}</span>}
                 </div>
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
@@ -343,7 +344,7 @@ export default function Dashboard() {
                         ) : <span className="text-xs text-stone-300">—</span>}
                       </td>
                       <td className="px-4 py-2.5 text-right text-[10px] text-stone-400">
-                        {m.volume > 0 ? `$${(m.volume / 1000).toFixed(0)}k` : '—'}
+                        {m.volume > 0 ? fmtVolume(m.volume) : '—'}
                       </td>
                     </tr>
                   )

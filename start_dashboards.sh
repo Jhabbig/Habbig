@@ -107,7 +107,7 @@ start_all() {
     # 7. World State Dashboard (port 7050)
     echo -e "${GREEN}[7/8]${NC} Starting World State Dashboard on port 7050..."
     cd "$SCRIPT_DIR/world-state-dashboard"
-    python3 -m uvicorn server:app --host 0.0.0.0 --port 7050 > /tmp/dashboard_world.log 2>&1 &
+    python3 -m uvicorn server:app --host 127.0.0.1 --port 7050 > /tmp/dashboard_world.log 2>&1 &
     echo $! > /tmp/dashboard_world.pid
     echo "       PID: $(cat /tmp/dashboard_world.pid)"
     cd "$SCRIPT_DIR"

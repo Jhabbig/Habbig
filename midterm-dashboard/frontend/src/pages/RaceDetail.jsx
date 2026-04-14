@@ -558,6 +558,20 @@ export default function RaceDetail() {
                       {c.extract && (
                         <p className="text-xs text-stone-600 mt-1 line-clamp-2 leading-snug">{c.extract}</p>
                       )}
+                      {c.fec && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-[10px] text-stone-500">
+                          <span title="Total raised">
+                            <span className="font-semibold text-emerald-700">
+                              {c.fec.receipts >= 1e6 ? `$${(c.fec.receipts / 1e6).toFixed(1)}M` : `$${Math.round(c.fec.receipts / 1e3)}k`}
+                            </span> raised
+                          </span>
+                          <span title="Cash on hand">
+                            <span className="font-semibold text-stone-700">
+                              {c.fec.cash_on_hand >= 1e6 ? `$${(c.fec.cash_on_hand / 1e6).toFixed(1)}M` : `$${Math.round(c.fec.cash_on_hand / 1e3)}k`}
+                            </span> cash
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </a>
@@ -823,6 +837,84 @@ export default function RaceDetail() {
               </div>
             </div>
           )}
+
+          {/* Past Winners — per-race results parsed from Wikipedia Election boxes */}
+          {(() => {
+            const pastWinners = race?.race_type === 'senate' ? districtProfile.senate_past_winners
+              : race?.race_type === 'governor' ? districtProfile.governor_past_winners
+              : districtProfile.past_winners
+            if (!pastWinners?.length) return null
+            const label = race?.race_type === 'senate' ? 'Senate' : race?.race_type === 'governor' ? 'Governor' : 'District'
+            return (
+            <div className="mt-5 pt-4 border-t border-stone-100">
+              <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <Trophy className="h-3.5 w-3.5" /> Past {label} Winners
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {pastWinners.map((w, i) => {
+                  const isDem = w.party?.toLowerCase().startsWith('democrat')
+                  const isRep = w.party?.toLowerCase().startsWith('republic')
+                  const cardColor = isDem ? 'bg-blue-50 border-blue-200' : isRep ? 'bg-red-50 border-red-200' : 'bg-stone-50 border-stone-200'
+                  const partyBadge = isDem ? 'bg-blue-600 text-white' : isRep ? 'bg-red-600 text-white' : 'bg-stone-600 text-white'
+                  return (
+                    <a
+                      key={i}
+                      href={w.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`block border rounded-lg p-3 hover:shadow-sm transition-shadow ${cardColor}`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-stone-500">{w.year}</span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${partyBadge}`}>
+                          {isDem ? 'D' : isRep ? 'R' : (w.party?.[0] || '?')}
+                        </span>
+                      </div>
+                      <div className="text-sm font-semibold text-stone-800 leading-tight">{w.candidate}</div>
+                      <div className="text-xs text-stone-500 mt-0.5">
+                        {w.percentage != null && <>{w.percentage.toFixed(1)}%</>}
+                        {w.votes != null && <> &middot; {(w.votes / 1000).toFixed(0)}k votes</>}
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {w.incumbent && (
+                          <span className="text-[9px] font-semibold text-stone-600 bg-white border border-stone-200 px-1.5 py-0.5 rounded">incumbent</span>
+                        )}
+                        {w.flip_from && (
+                          <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                            flipped from {w.flip_from[0]}
+                          </span>
+                        )}
+                      </div>
+                    </a>
+                  )
+                })}
+              </div>
+              {/* Trend analysis */}
+              {pastWinners.length >= 2 && (() => {
+                const dWins = pastWinners.filter(w => w.party?.toLowerCase().startsWith('democrat')).length
+                const rWins = pastWinners.filter(w => w.party?.toLowerCase().startsWith('republic')).length
+                const flips = pastWinners.filter(w => w.flip_from).length
+                const latestPct = pastWinners[0]?.percentage
+                const prevPct = pastWinners[1]?.percentage
+                const sameParty = pastWinners[0]?.party === pastWinners[1]?.party
+                const marginShift = (latestPct != null && prevPct != null && sameParty) ? (latestPct - prevPct).toFixed(1) : null
+                return (
+                  <div className="mt-3 pt-2 border-t border-stone-100 flex flex-wrap items-center gap-3 text-xs text-stone-500">
+                    <span>{pastWinners.length} elections:</span>
+                    {dWins > 0 && <span className="text-blue-700 font-semibold">{dWins}D</span>}
+                    {rWins > 0 && <span className="text-red-700 font-semibold">{rWins}R</span>}
+                    {flips > 0 && <span className="text-amber-600 font-semibold">{flips} flip{flips > 1 ? 's' : ''}</span>}
+                    {marginShift !== null && (
+                      <span className={Number(marginShift) > 0 ? 'text-emerald-600' : Number(marginShift) < 0 ? 'text-red-600' : ''}>
+                        {Number(marginShift) > 0 ? '+' : ''}{marginShift}% margin shift
+                      </span>
+                    )}
+                  </div>
+                )
+              })()}
+            </div>
+            )
+          })()}
 
           {/* Recent Elections — Wikipedia history (US states, US districts, countries) */}
           {districtProfile.recent_elections?.length > 0 && (

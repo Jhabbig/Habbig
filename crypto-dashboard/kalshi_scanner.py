@@ -57,8 +57,15 @@ def fetch_markets(limit=200, status="open"):
     if cache_file.exists():
         age = time.time() - cache_file.stat().st_mtime
         if age < CACHE_TTL:
-            with open(cache_file) as f:
-                return json.load(f)
+            try:
+                with open(cache_file) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"  [Kalshi] Corrupt cache {cache_file.name}: {e}; refetching")
+                try:
+                    cache_file.unlink()
+                except OSError:
+                    pass
 
     print("  [Kalshi] Fetching markets...")
     all_markets = []
@@ -87,20 +94,12 @@ def fetch_markets(limit=200, status="open"):
     processed = []
     for m in all_markets:
         try:
-            yes_price = m.get("yes_ask", 0) or m.get("last_price", 0) or 0
-            # Normalize to cents: yes_ask is 0-100 cents, last_price can be 0-1 decimal
-            if 0 < yes_price < 1:
-                yes_price = yes_price * 100  # convert decimal to cents
-
-            no_price = m.get("no_ask", 0)
-            if no_price and 0 < no_price < 1:
-                no_price = no_price * 100  # convert decimal to cents
-            if not no_price:
-                no_price = (100 - yes_price) if yes_price else 0
-
-            # Convert cents to probability
-            yes_prob = yes_price / 100
-            no_prob = no_price / 100
+            yes_prob = _normalize_kalshi_price(
+                m.get("yes_ask", 0) or m.get("last_price", 0) or 0
+            )
+            no_prob = _normalize_kalshi_price(m.get("no_ask", 0))
+            if not no_prob:
+                no_prob = round(1.0 - yes_prob, 3) if yes_prob else 0.0
 
             processed.append({
                 "ticker": m.get("ticker", ""),
@@ -108,10 +107,10 @@ def fetch_markets(limit=200, status="open"):
                 "subtitle": m.get("subtitle", ""),
                 "category": m.get("category", ""),
                 "status": m.get("status", ""),
-                "yes_price": round(yes_prob, 3),
-                "no_price": round(no_prob, 3),
-                "yes_bid": (m.get("yes_bid", 0) or 0) / 100,
-                "yes_ask": (m.get("yes_ask", 0) or 0) / 100,
+                "yes_price": yes_prob,
+                "no_price": no_prob,
+                "yes_bid": _normalize_kalshi_price(m.get("yes_bid", 0) or 0),
+                "yes_ask": _normalize_kalshi_price(m.get("yes_ask", 0) or 0),
                 "volume": m.get("volume", 0) or 0,
                 "volume_24h": m.get("volume_24h", 0) or 0,
                 "open_interest": m.get("open_interest", 0) or 0,
@@ -149,7 +148,7 @@ def _normalize_kalshi_price(raw_price):
     """
     if raw_price is None or raw_price == 0:
         return 0.0
-    if 0 < raw_price < 1:
+    if 0 < raw_price <= 1:
         return round(raw_price, 3)  # already decimal
     return round(raw_price / 100, 3)  # cents to decimal
 
@@ -162,8 +161,15 @@ def fetch_events(limit=100, status="open"):
     if cache_file.exists():
         age = time.time() - cache_file.stat().st_mtime
         if age < CACHE_TTL:
-            with open(cache_file) as f:
-                return json.load(f)
+            try:
+                with open(cache_file) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"  [Kalshi] Corrupt events cache {cache_file.name}: {e}; refetching")
+                try:
+                    cache_file.unlink()
+                except OSError:
+                    pass
 
     print("  [Kalshi] Fetching events...")
     data = _get("/events", {"limit": limit, "status": status})

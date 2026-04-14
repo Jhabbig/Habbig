@@ -5,6 +5,8 @@
 #
 set -e
 
+if [ "$(id -u)" -ne 0 ]; then echo "Error: must run as root (sudo)"; exit 1; fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICES="narve-gateway narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock"
 

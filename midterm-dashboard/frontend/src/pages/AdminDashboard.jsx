@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { api } from '../lib/api'
+import { getCurrencySymbol, getLocale } from '../lib/settings'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { Users, DollarSign, TrendingUp, Activity, Shield, Search } from 'lucide-react'
 
@@ -51,7 +52,9 @@ export default function AdminDashboard() {
   const handleTierChange = async (userId, newTier) => {
     try {
       await api.adminSetTier(userId, newTier)
-      setUsers(users.map(u => u.id === userId ? { ...u, tier: newTier } : u))
+      // Functional setter so concurrent edits don't clobber each other via a
+      // stale `users` snapshot captured by the closure at render time.
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, tier: newTier } : u))
     } catch (e) { alert('Failed: ' + e.message) }
   }
 
@@ -67,7 +70,7 @@ export default function AdminDashboard() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard icon={Users} label="Total Users" value={stats?.total_users || 0} color="text-stone-900" />
-        <StatCard icon={DollarSign} label="Est. MRR" value={`$${(stats?.estimated_mrr || 0).toFixed(2)}`} sub={`${stats?.users_by_tier?.premium || 0} premium`} color="text-emerald-600" />
+        <StatCard icon={DollarSign} label="Est. MRR" value={`${getCurrencySymbol()}${(stats?.estimated_mrr || 0).toLocaleString(getLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub={`${stats?.users_by_tier?.premium || 0} premium`} color="text-emerald-600" />
         <StatCard icon={TrendingUp} label="New (7d)" value={stats?.new_users_7d || 0} color="text-amber-600" />
         <StatCard icon={Activity} label="Active Sessions" value={stats?.active_sessions || 0} color="text-violet-600" />
       </div>

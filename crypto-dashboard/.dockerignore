@@ -1,0 +1,17 @@
+.env
+.env.*
+.secret_key
+*.db
+*.db-wal
+*.db-shm
+cache/
+*.pkl
+*.log
+bot_activity.log
+trades.json
+poly_trades.json
+signals.json
+__pycache__/
+*.pyc
+.git
+.DS_Store

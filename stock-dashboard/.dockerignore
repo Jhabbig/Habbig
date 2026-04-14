@@ -1,0 +1,12 @@
+.env
+.env.*
+*.db
+ml_models/
+*.pkl
+*.log
+stock_trades.json
+stock_bot_activity.log
+__pycache__/
+*.pyc
+.git
+.DS_Store

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Polymarket Signal</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
     <!-- Tailwind CDN is a dynamic script and does not support SRI hashes -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
@@ -67,6 +68,10 @@
         </div>
         <div class="flex items-center gap-3">
             <div id="refresh-status" class="text-xs"></div>
+            <!-- Language picker -->
+            <select id="narve-language-select" title="Language" class="themed-card themed-border border text-xs px-2 py-1.5 rounded-lg" style="color:var(--text-secondary);background:var(--bg-card)"></select>
+            <!-- Currency picker (USD market values converted via live ECB rates) -->
+            <select id="narve-currency-select" title="Display currency" class="themed-card themed-border border text-xs px-2 py-1.5 rounded-lg" style="color:var(--text-secondary);background:var(--bg-card)"></select>
             <!-- Theme toggle -->
             <button onclick="toggleTheme()" class="w-7 h-7 rounded-lg flex items-center justify-center themed-card themed-border border transition-colors hover:border-[var(--border-hover)]" title="Toggle theme">
                 <svg id="theme-icon-dark" class="{{ 'hidden' if preferred_theme == 'light' }}" width="14" height="14" fill="var(--text-secondary)" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"/></svg>
@@ -112,10 +117,10 @@
 <!-- ===== TAB NAV ===== -->
 <nav class="border-b themed-border" style="background:var(--bg-primary)">
     <div class="max-w-[1600px] mx-auto px-6 flex gap-0">
-        <button data-tab="feed" onclick="switchTab('feed')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 transition-all accent-border" style="color:var(--text-primary)">Feed</button>
-        <button data-tab="best-bets" onclick="switchTab('best-bets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)">Best Bets</button>
-        <button data-tab="leaderboard" onclick="switchTab('leaderboard')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)">Leaderboard</button>
-        <button data-tab="markets" onclick="switchTab('markets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)">Markets</button>
+        <button data-tab="feed" onclick="switchTab('feed')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 transition-all accent-border" style="color:var(--text-primary)" data-i18n="tab.feed">Feed</button>
+        <button data-tab="best-bets" onclick="switchTab('best-bets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.bestBets">Best Bets</button>
+        <button data-tab="leaderboard" onclick="switchTab('leaderboard')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.leaderboard">Leaderboard</button>
+        <button data-tab="markets" onclick="switchTab('markets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.markets">Markets</button>
     </div>
 </nav>
 
@@ -238,6 +243,179 @@ function toggleTheme() {
 
 // Close dropdown on outside click
 document.addEventListener('click', e => { if (!document.getElementById('profile-menu')?.contains(e.target)) document.getElementById('profile-dropdown')?.classList.add('hidden'); });
+
+/* ===== i18n + Currency picker (narve_language, narve_currency) ===== */
+(function() {
+  /* ----- Language / i18n ----- */
+  const NARVE_LANGUAGES = [
+    ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+    ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+    ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+    ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
+    ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
+  ];
+  const NARVE_I18N = {
+    en: {'tab.feed':'Feed','tab.bestBets':'Best Bets','tab.leaderboard':'Leaderboard','tab.markets':'Markets','common.loading':'Loading...','common.filters':'Filters','common.reset':'Reset all'},
+    es: {'tab.feed':'Noticias','tab.bestBets':'Mejores apuestas','tab.leaderboard':'Clasificaci\u00f3n','tab.markets':'Mercados','common.loading':'Cargando...','common.filters':'Filtros','common.reset':'Restablecer'},
+    de: {'tab.feed':'Feed','tab.bestBets':'Beste Wetten','tab.leaderboard':'Bestenliste','tab.markets':'M\u00e4rkte','common.loading':'Wird geladen...','common.filters':'Filter','common.reset':'Zur\u00fccksetzen'},
+    fr: {'tab.feed':'Flux','tab.bestBets':'Meilleurs paris','tab.leaderboard':'Classement','tab.markets':'March\u00e9s','common.loading':'Chargement...','common.filters':'Filtres','common.reset':'R\u00e9initialiser'},
+    it: {'tab.feed':'Feed','tab.bestBets':'Migliori scommesse','tab.leaderboard':'Classifica','tab.markets':'Mercati','common.loading':'Caricamento...','common.filters':'Filtri','common.reset':'Reimposta'},
+    pt: {'tab.feed':'Feed','tab.bestBets':'Melhores apostas','tab.leaderboard':'Classifica\u00e7\u00e3o','tab.markets':'Mercados','common.loading':'Carregando...','common.filters':'Filtros','common.reset':'Redefinir'},
+    nl: {'tab.feed':'Feed','tab.bestBets':'Beste weddenschappen','tab.leaderboard':'Klassement','tab.markets':'Markten','common.loading':'Laden...','common.filters':'Filters','common.reset':'Herstellen'},
+    pl: {'tab.feed':'Aktualno\u015bci','tab.bestBets':'Najlepsze zak\u0142ady','tab.leaderboard':'Ranking','tab.markets':'Rynki','common.loading':'\u0141adowanie...','common.filters':'Filtry','common.reset':'Resetuj'},
+    ja: {'tab.feed':'\u30d5\u30a3\u30fc\u30c9','tab.bestBets':'\u30d9\u30b9\u30c8\u30d9\u30c3\u30c8','tab.leaderboard':'\u30ea\u30fc\u30c0\u30fc\u30dc\u30fc\u30c9','tab.markets':'\u5e02\u5834','common.loading':'\u8aad\u307f\u8fbc\u307f\u4e2d...','common.filters':'\u30d5\u30a3\u30eb\u30bf\u30fc','common.reset':'\u30ea\u30bb\u30c3\u30c8'},
+    ko: {'tab.feed':'\ud53c\ub4dc','tab.bestBets':'\ucd5c\uace0\uc758 \ubca0\ud305','tab.leaderboard':'\uc21c\uc704','tab.markets':'\uc2dc\uc7a5','common.loading':'\ub85c\ub529 \uc911...','common.filters':'\ud544\ud130','common.reset':'\uc7ac\uc124\uc815'},
+    zh: {'tab.feed':'\u52a8\u6001','tab.bestBets':'\u6700\u4f73\u6295\u6ce8','tab.leaderboard':'\u6392\u884c\u699c','tab.markets':'\u5e02\u573a','common.loading':'\u52a0\u8f7d\u4e2d...','common.filters':'\u8fc7\u6ee4\u5668','common.reset':'\u91cd\u7f6e'},
+    ru: {'tab.feed':'\u041b\u0435\u043d\u0442\u0430','tab.bestBets':'\u041b\u0443\u0447\u0448\u0438\u0435 \u0441\u0442\u0430\u0432\u043a\u0438','tab.leaderboard':'\u0420\u0435\u0439\u0442\u0438\u043d\u0433','tab.markets':'\u0420\u044b\u043d\u043a\u0438','common.loading':'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...','common.filters':'\u0424\u0438\u043b\u044c\u0442\u0440\u044b','common.reset':'\u0421\u0431\u0440\u043e\u0441'},
+    hi: {'tab.feed':'\u092b\u093c\u0940\u0921','tab.bestBets':'\u0938\u0930\u094d\u0935\u0936\u094d\u0930\u0947\u0937\u094d\u0920 \u0926\u093e\u0901\u0935','tab.leaderboard':'\u0932\u0940\u0921\u0930\u092c\u094b\u0930\u094d\u0921','tab.markets':'\u092c\u093e\u091c\u093c\u093e\u0930','common.loading':'\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...','common.filters':'\u092b\u093c\u093f\u0932\u094d\u091f\u0930','common.reset':'\u0930\u0940\u0938\u0947\u091f \u0915\u0930\u0947\u0902'},
+    ar: {'tab.feed':'\u0627\u0644\u062e\u0644\u0627\u0635\u0629','tab.bestBets':'\u0623\u0641\u0636\u0644 \u0627\u0644\u0631\u0647\u0627\u0646\u0627\u062a','tab.leaderboard':'\u0627\u0644\u062a\u0631\u062a\u064a\u0628','tab.markets':'\u0627\u0644\u0623\u0633\u0648\u0627\u0642','common.loading':'\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0645\u064a\u0644...','common.filters':'\u0627\u0644\u0641\u0644\u0627\u062a\u0631','common.reset':'\u0625\u0639\u0627\u062f\u0629 \u0627\u0644\u062a\u0639\u064a\u064a\u0646'},
+    bn: {'tab.feed':'\u09ab\u09bf\u09a1','tab.bestBets':'\u09b8\u09c7\u09b0\u09be \u09ac\u09be\u099c\u09bf','tab.leaderboard':'\u09b2\u09bf\u09a1\u09be\u09b0\u09ac\u09cb\u09b0\u09cd\u09a1','tab.markets':'\u09ac\u09be\u099c\u09be\u09b0','common.loading':'\u09b2\u09cb\u09a1 \u09b9\u099a\u09cd\u099b\u09c7...','common.filters':'\u09ab\u09bf\u09b2\u09cd\u099f\u09be\u09b0','common.reset':'\u09b0\u09bf\u09b8\u09c7\u099f \u0995\u09b0\u09c1\u09a8'},
+    ur: {'tab.feed':'\u0641\u06cc\u0688','tab.bestBets':'\u0628\u06c1\u062a\u0631\u06cc\u0646 \u0634\u0631\u0637','tab.leaderboard':'\u0644\u06cc\u0688\u0631\u0628\u0648\u0631\u0688','tab.markets':'\u0645\u0627\u0631\u06a9\u06cc\u0679\u0633','common.loading':'\u0644\u0648\u0688 \u06c1\u0648 \u0631\u06c1\u0627 \u06c1\u06d2...','common.filters':'\u0641\u0644\u0679\u0631\u0632','common.reset':'\u0631\u06cc\u0633\u06cc\u0679 \u06a9\u0631\u06cc\u06ba'},
+    id: {'tab.feed':'Feed','tab.bestBets':'Taruhan Terbaik','tab.leaderboard':'Papan Peringkat','tab.markets':'Pasar','common.loading':'Memuat...','common.filters':'Filter','common.reset':'Atur ulang'},
+    tr: {'tab.feed':'Ak\u0131\u015f','tab.bestBets':'En \u0130yi Bahisler','tab.leaderboard':'S\u0131ralama','tab.markets':'Piyasalar','common.loading':'Y\u00fckleniyor...','common.filters':'Filtreler','common.reset':'S\u0131f\u0131rla'},
+    vi: {'tab.feed':'B\u1ea3ng tin','tab.bestBets':'C\u01b0\u1ee3c t\u1ed1t nh\u1ea5t','tab.leaderboard':'B\u1ea3ng x\u1ebfp h\u1ea1ng','tab.markets':'Th\u1ecb tr\u01b0\u1eddng','common.loading':'\u0110ang t\u1ea3i...','common.filters':'B\u1ed9 l\u1ecdc','common.reset':'\u0110\u1eb7t l\u1ea1i'},
+    th: {'tab.feed':'\u0e1f\u0e35\u0e14','tab.bestBets':'\u0e40\u0e14\u0e34\u0e21\u0e1e\u0e31\u0e19\u0e22\u0e2d\u0e14\u0e40\u0e22\u0e35\u0e48\u0e22\u0e21','tab.leaderboard':'\u0e2d\u0e31\u0e19\u0e14\u0e31\u0e1a','tab.markets':'\u0e15\u0e25\u0e32\u0e14','common.loading':'\u0e01\u0e33\u0e25\u0e31\u0e07\u0e42\u0e2b\u0e25\u0e14...','common.filters':'\u0e15\u0e31\u0e27\u0e01\u0e23\u0e2d\u0e07','common.reset':'\u0e23\u0e35\u0e40\u0e0b\u0e47\u0e15'},
+  };
+  let _narveLang = localStorage.getItem('narve_language') || 'en';
+  function t(key) {
+    const dict = NARVE_I18N[_narveLang] || NARVE_I18N.en;
+    return dict[key] || NARVE_I18N.en[key] || key;
+  }
+  function applyTranslations(root) {
+    const scope = root || document;
+    scope.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      const v = t(key);
+      if (v) el.textContent = v;
+    });
+    scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      const v = t(el.getAttribute('data-i18n-placeholder'));
+      if (v) el.placeholder = v;
+    });
+  }
+  function setNarveLanguage(code) {
+    if (!NARVE_I18N[code]) return;
+    _narveLang = code;
+    localStorage.setItem('narve_language', code);
+    document.documentElement.lang = code;
+    applyTranslations();
+  }
+  function populateLanguageSelect() {
+    const sel = document.getElementById('narve-language-select');
+    if (!sel) return;
+    sel.innerHTML = NARVE_LANGUAGES.map(l =>
+      '<option value="' + l[0] + '"' + (l[0] === _narveLang ? ' selected' : '') + '>' + l[1] + '</option>'
+    ).join('');
+    sel.addEventListener('change', e => setNarveLanguage(e.target.value));
+  }
+  // Expose globally so other scripts can read current language
+  window.setNarveLanguage = setNarveLanguage;
+  window.t = t;
+
+  /* ----- Currency ----- */
+  const NARVE_CURRENCIES = [
+    ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+    ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],['CNY','Chinese Yuan'],
+    ['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],['SEK','Swedish Krona'],['KRW','South Korean Won'],
+    ['SGD','Singapore Dollar'],['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+    ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],['DKK','Danish Krone'],
+    ['PLN','Polish Zloty'],['THB','Thai Baht'],['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],
+    ['CZK','Czech Koruna'],['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+    ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+  ];
+  const FX_FALLBACK = {
+    USD:1.0, EUR:0.92, GBP:0.79, JPY:150, AUD:1.52, CAD:1.36, CHF:0.88, CNY:7.20,
+    HKD:7.83, NZD:1.65, SEK:10.5, KRW:1340, SGD:1.34, NOK:10.6, MXN:17.0,
+    INR:83.0, ZAR:18.5, TRY:32.0, BRL:5.0, DKK:6.85, PLN:3.95, THB:35.0,
+    IDR:15700, HUF:360, CZK:23.0, ILS:3.7, PHP:56.0, MYR:4.7, RON:4.6, ISK:137,
+  };
+  let _fxRates = FX_FALLBACK;
+  let currencyCode = localStorage.getItem('narve_currency') || 'USD';
+  // Locale used for number formatting — keyed off existing narve_units flag.
+  function getLocale() { return (localStorage.getItem('narve_units') === 'european') ? 'de-DE' : 'en-US'; }
+  function getRate(code) {
+    if (!code || code === 'USD') return 1;
+    return (_fxRates && _fxRates[code]) || FX_FALLBACK[code] || 1;
+  }
+  function getSymbol(code) {
+    try {
+      const parts = new Intl.NumberFormat(getLocale(), { style: 'currency', currency: code }).formatToParts(0);
+      const sym = parts.find(p => p.type === 'currency');
+      if (sym) return sym.value;
+    } catch (e) {}
+    return code;
+  }
+  function symFirst(code) {
+    try {
+      const parts = new Intl.NumberFormat(getLocale(), { style: 'currency', currency: code }).formatToParts(0);
+      const cIdx = parts.findIndex(p => p.type === 'currency');
+      const nIdx = parts.findIndex(p => p.type === 'integer');
+      return cIdx < nIdx;
+    } catch (e) { return true; }
+  }
+  function fmtMoney(usd) {
+    if (usd == null || isNaN(Number(usd))) return '-';
+    const v = Number(usd) * getRate(currencyCode);
+    const sym = getSymbol(currencyCode);
+    const formatted = v.toLocaleString(getLocale(), { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    return symFirst(currencyCode) ? sym + formatted : formatted + ' ' + sym;
+  }
+  // Replace text on every span.narve-money in the document.
+  function applyConversions(root) {
+    const scope = root || document;
+    scope.querySelectorAll('.narve-money').forEach(el => {
+      const usd = parseFloat(el.dataset.usd);
+      if (!isNaN(usd)) el.textContent = fmtMoney(usd);
+    });
+  }
+  function _readCache() {
+    try { return JSON.parse(localStorage.getItem('narve_fx_rates') || 'null'); } catch (e) { return null; }
+  }
+  function _writeCache(rates) {
+    try { localStorage.setItem('narve_fx_rates', JSON.stringify({ rates: rates, fetched_at: Date.now() })); } catch (e) {}
+  }
+  async function ensureRates() {
+    const cached = _readCache();
+    if (cached && cached.rates && Date.now() - cached.fetched_at < 3600000) {
+      _fxRates = cached.rates;
+      return _fxRates;
+    }
+    try {
+      const r = await fetch('/api/fx-rates', { credentials: 'same-origin' });
+      if (r.ok) {
+        const data = await r.json();
+        _fxRates = data.rates || FX_FALLBACK;
+        _fxRates.USD = 1.0;
+        _writeCache(_fxRates);
+      }
+    } catch (e) {}
+    return _fxRates;
+  }
+  function populateSelect() {
+    const sel = document.getElementById('narve-currency-select');
+    if (!sel) return;
+    sel.innerHTML = NARVE_CURRENCIES.map(c =>
+      '<option value="' + c[0] + '"' + (c[0] === currencyCode ? ' selected' : '') + '>' + c[0] + '</option>'
+    ).join('');
+    sel.addEventListener('change', e => {
+      currencyCode = e.target.value;
+      localStorage.setItem('narve_currency', currencyCode);
+      applyConversions();
+    });
+  }
+  // Re-run conversions and translations after every htmx swap (markets table reloads via htmx).
+  document.body.addEventListener('htmx:afterSwap', e => {
+    applyConversions(e.target);
+    applyTranslations(e.target);
+  });
+  // Init
+  document.documentElement.lang = _narveLang;
+  populateLanguageSelect();
+  applyTranslations();
+  populateSelect();
+  applyConversions();
+  ensureRates().then(() => applyConversions());
+})();
 </script>
 </body>
 </html>

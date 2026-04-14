@@ -2,6 +2,7 @@ from __future__ import annotations
 import aiohttp
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -199,7 +200,12 @@ class PolymarketAggregator:
 
                 outcome_data = []
                 for i, outcome in enumerate(outcomes):
-                    price = float(prices[i]) if i < len(prices) else None
+                    price = None
+                    if i < len(prices) and prices[i] is not None:
+                        try:
+                            price = float(prices[i])
+                        except (TypeError, ValueError):
+                            price = None
                     tid = token_ids[i] if i < len(token_ids) else None
                     outcome_data.append({
                         "name": outcome,
@@ -332,7 +338,12 @@ class PolymarketAggregator:
 
                 outcome_data = []
                 for i, outcome in enumerate(outcomes):
-                    price = float(prices[i]) if i < len(prices) else None
+                    price = None
+                    if i < len(prices) and prices[i] is not None:
+                        try:
+                            price = float(prices[i])
+                        except (TypeError, ValueError):
+                            price = None
                     tid = token_ids[i] if i < len(token_ids) else None
                     outcome_data.append({
                         "name": outcome,
@@ -414,10 +425,17 @@ class PolymarketAggregator:
             "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
             "Wisconsin": "WI", "Wyoming": "WY"
         }
-        # Check full state names first (no false positives)
+        # Check full state names first. Use word-boundary regex so e.g.
+        # "New York" doesn't shadow "York"-something, and explicitly skip
+        # the "Washington" → WA mapping when the title is about Washington
+        # D.C. (which isn't a state).
         title_lower = title.lower()
+        is_dc_title = "washington d.c." in title_lower or "washington, d.c." in title_lower
         for name, abbr in states.items():
-            if name.lower() in title_lower:
+            name_lower = name.lower()
+            if name_lower == "washington" and is_dc_title:
+                continue
+            if re.search(rf"\b{re.escape(name_lower)}\b", title_lower):
                 return abbr
         # Only check abbreviations that won't match common English words
         ambiguous_abbrs = {"IN", "OR", "ME", "OH", "AL", "OK", "HI", "ID", "PA", "MA"}

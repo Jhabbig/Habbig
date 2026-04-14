@@ -4,7 +4,310 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Settings — narve.ai</title>
+  <link rel="icon" type="image/png" href="/_gateway_static/favicon.png">
   <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    /* Trading credentials styling — keeps the section visually consistent
+       with the profile page since neither the profile classes nor setup-*
+       classes live in gateway.css. */
+    .settings-card .profile-section-title {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .settings-card .profile-section-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      margin-bottom: 20px;
+    }
+    .settings-card .profile-field { margin-bottom: 0; }
+    .settings-card .profile-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .settings-card .profile-input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 14px;
+      background: var(--surface);
+      color: var(--text-primary);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .settings-card .profile-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-light);
+    }
+    .settings-card .profile-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 4px;
+    }
+    .setup-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 12px;
+      letter-spacing: 0.2px;
+    }
+    .setup-status.on {
+      background: var(--green-bg, rgba(16,185,129,0.12));
+      color: var(--green, #10b981);
+    }
+    .setup-status.off {
+      background: var(--surface-hover, rgba(255,255,255,0.04));
+      color: var(--text-muted, #94a3b8);
+    }
+    .setup-btn-remove {
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      background: transparent;
+      color: var(--red, #ef4444);
+      border: 1px solid var(--red, #ef4444);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .setup-btn-remove:hover {
+      background: rgba(239,68,68,0.08);
+    }
+    .notice { margin-bottom: 16px; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; }
+    .notice-success { background: var(--green-bg); border: 1px solid var(--green); color: var(--green); }
+    .notice-error { background: var(--red-bg); border: 1px solid var(--red); color: var(--red); }
+    .notice:empty { display: none; }
+
+    /* ── Trading onboarding ─────────────────────────────────────────────── */
+    .tx-intro {
+      background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.08));
+      border: 1px solid rgba(139,92,246,0.25);
+      border-radius: var(--radius-sm);
+      padding: 18px 20px;
+      margin-bottom: 20px;
+    }
+    .tx-intro-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+    .tx-intro-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .tx-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .tx-step-num {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .tx-intro-security {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      padding-top: 12px;
+      border-top: 1px solid rgba(139,92,246,0.15);
+    }
+    .tx-intro-security svg {
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .tx-platform {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .tx-platform-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .tx-platform-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .tx-platform-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .tx-platform-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .tx-required {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--red, #ef4444);
+      background: rgba(239,68,68,0.08);
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    .tx-help {
+      margin: 12px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-hover, rgba(255,255,255,0.02));
+    }
+    .tx-help summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent, #6366f1);
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tx-help summary::-webkit-details-marker { display: none; }
+    .tx-help summary::before {
+      content: "▸";
+      display: inline-block;
+      transition: transform 0.15s;
+      font-size: 11px;
+    }
+    .tx-help[open] summary::before { transform: rotate(90deg); }
+    .tx-help summary:hover { color: var(--text-primary); }
+    .tx-help-body {
+      padding: 4px 16px 16px 32px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .tx-help-body ol {
+      margin: 0 0 12px 0;
+      padding-left: 18px;
+    }
+    .tx-help-body ol li { margin-bottom: 6px; }
+    .tx-help-body p { margin: 0 0 12px 0; }
+    .tx-help-body .profile-field { margin-top: 12px; }
+    .tx-help-body a { color: var(--accent); }
+
+    .tx-callout {
+      font-size: 12px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: rgba(99,102,241,0.06);
+      border: 1px solid rgba(99,102,241,0.2);
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin: 12px 0;
+    }
+    .tx-callout-warn {
+      background: rgba(239,68,68,0.06);
+      border-color: rgba(239,68,68,0.25);
+      color: var(--text-primary);
+    }
+    .tx-callout strong { color: var(--text-primary); }
+
+    .tx-option {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      margin-bottom: 4px;
+    }
+    .tx-option-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .tx-option-letter {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .tx-option-tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--green, #10b981);
+      background: rgba(16,185,129,0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      margin-left: 4px;
+      vertical-align: middle;
+    }
+    .tx-option-or {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 8px 0;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+    }
+
+    .tx-poly-btn {
+      padding: 10px 20px;
+      font-size: 13px;
+      background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      border: none;
+    }
+    .tx-kalshi-btn {
+      padding: 10px 20px;
+      font-size: 13px;
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      border: none;
+    }
+  </style>
 </head>
 <body>
   <header class="gw-header">
@@ -49,6 +352,205 @@
         <button type="submit" class="btn btn-primary">Save settings</button>
       </div>
     </form>
+
+    <!-- Trading API Keys — single source of truth for both Polymarket & Kalshi.
+         Once saved here, every dashboard's in-app trade panel can place orders
+         through the gateway without re-prompting for keys. -->
+    <div class="settings-card" id="trading">
+      <div class="profile-section-title" style="display:flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        Trading Credentials
+      </div>
+
+      <!-- Onboarding intro: 3-step pitch + security reassurance -->
+      <div class="tx-intro">
+        <div class="tx-intro-title">Set up trading once. Trade across every dashboard.</div>
+        <div class="tx-intro-steps">
+          <div class="tx-step"><span class="tx-step-num">1</span><span>Connect your Polymarket wallet and/or Kalshi account below — it takes about 60 seconds.</span></div>
+          <div class="tx-step"><span class="tx-step-num">2</span><span>Open any narve dashboard and click a market you want to trade.</span></div>
+          <div class="tx-step"><span class="tx-step-num">3</span><span>The trade panel slides in, ready to place an order. No re-login, ever.</span></div>
+        </div>
+        <div class="tx-intro-security">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span><strong style="color:var(--text-secondary)">Encrypted at rest.</strong> Your keys are encrypted with Fernet (AES-128) before they hit the database. They're decrypted server-side only when you place an order, and never sent back to your browser or written to logs.</span>
+        </div>
+      </div>
+
+      {{ raw_trading_banner }}
+
+      <!-- Polymarket -->
+      <div class="tx-platform">
+        <div class="tx-platform-header">
+          <div class="tx-platform-title">
+            <span class="tx-platform-dot" style="background:#8b5cf6"></span>
+            Polymarket
+          </div>
+          {{ raw_poly_status }}
+        </div>
+        <div class="tx-platform-desc">Trade prediction markets on Polymarket using your existing Ethereum wallet. We only need your wallet's private key.</div>
+
+        <form method="post" action="/settings/trading/polymarket" style="display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+
+          <div class="profile-field">
+            <label class="profile-label">Wallet Private Key<span class="tx-required">required</span></label>
+            <input class="profile-input" type="password" name="private_key" placeholder="0x..." autocomplete="off">
+          </div>
+
+          <details class="tx-help">
+            <summary>Where do I find my private key? (MetaMask, 30 seconds)</summary>
+            <div class="tx-help-body">
+              <ol>
+                <li>Open the MetaMask browser extension and click your account icon (top right circle).</li>
+                <li>Click the three-dot menu next to your account name, then choose <strong>Account details</strong>.</li>
+                <li>Click the <strong>Show private key</strong> button.</li>
+                <li>Enter your MetaMask password to unlock it.</li>
+                <li>Copy the long string of letters and numbers, then paste it into the field above.</li>
+              </ol>
+              <div class="tx-callout tx-callout-warn">
+                <strong>Important — use a dedicated trading wallet.</strong> Don't paste your main wallet's private key. Create a fresh wallet, fund it only with the USDC you intend to trade, and use that key here. If anything ever goes wrong, only the funds in that one wallet are at risk.
+              </div>
+              <p style="font-size:12px;color:var(--text-muted)">Don't have a Polymarket wallet yet? Sign up at <a href="https://polymarket.com" target="_blank" rel="noopener noreferrer">polymarket.com</a> — they'll walk you through creating an embedded wallet you can export the key from.</p>
+            </div>
+          </details>
+
+          <details class="tx-help">
+            <summary>Advanced — I already have CLOB API keys</summary>
+            <div class="tx-help-body">
+              <p>Most users should leave this section alone. We'll auto-derive a CLOB API key from your private key on your first trade. Only fill these in if you've already minted CLOB credentials elsewhere and want to reuse them.</p>
+              <div class="profile-field">
+                <label class="profile-label">CLOB API Key</label>
+                <input class="profile-input" type="password" name="api_key" placeholder="Optional" autocomplete="off">
+              </div>
+              <div class="profile-field">
+                <label class="profile-label">CLOB API Secret</label>
+                <input class="profile-input" type="password" name="api_secret" placeholder="Optional" autocomplete="off">
+              </div>
+              <div class="profile-field">
+                <label class="profile-label">CLOB API Passphrase</label>
+                <input class="profile-input" type="password" name="api_passphrase" placeholder="Optional" autocomplete="off">
+              </div>
+            </div>
+          </details>
+
+          <div class="profile-actions">
+            <button type="submit" class="btn btn-primary tx-poly-btn">Save Polymarket Wallet</button>
+            {{ raw_poly_delete }}
+          </div>
+        </form>
+      </div>
+
+      <!-- Kalshi -->
+      <div class="tx-platform">
+        <div class="tx-platform-header">
+          <div class="tx-platform-title">
+            <span class="tx-platform-dot" style="background:#3b82f6"></span>
+            Kalshi
+          </div>
+          {{ raw_kalshi_status }}
+        </div>
+        <div class="tx-platform-desc">Trade event contracts on Kalshi. Pick whichever option below is easier — both work the same.</div>
+
+        <form method="post" action="/settings/trading/kalshi" style="display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+
+          <!-- Option A: API Key -->
+          <div class="tx-option">
+            <div class="tx-option-label">
+              <span class="tx-option-letter">A</span>
+              <span>API Key<span class="tx-option-tag">recommended</span></span>
+            </div>
+            <div class="profile-field">
+              <input class="profile-input" type="password" name="api_key" placeholder="Paste your Kalshi API key here" autocomplete="off">
+            </div>
+            <details class="tx-help">
+              <summary>How do I get a Kalshi API key?</summary>
+              <div class="tx-help-body">
+                <ol>
+                  <li>Sign in to your account at <a href="https://kalshi.com" target="_blank" rel="noopener noreferrer">kalshi.com</a>.</li>
+                  <li>Click your profile icon in the top right, then <strong>API Keys</strong> (or visit <a href="https://kalshi.com/account/profile" target="_blank" rel="noopener noreferrer">Account → Profile</a>).</li>
+                  <li>Click <strong>Generate New Key</strong> and give it a name like "narve.ai".</li>
+                  <li>Copy the key Kalshi shows you and paste it into the field above.</li>
+                </ol>
+                <p style="font-size:12px;color:var(--text-muted)">Don't have a Kalshi account? <a href="https://kalshi.com" target="_blank" rel="noopener noreferrer">Sign up here</a> — it takes a few minutes including ID verification.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="tx-option-or">— OR —</div>
+
+          <!-- Option B: Email + Password -->
+          <div class="tx-option">
+            <div class="tx-option-label">
+              <span class="tx-option-letter" style="background:linear-gradient(135deg,#64748b,#475569)">B</span>
+              <span>Email + Password</span>
+            </div>
+            <div class="tx-callout">We use these once to fetch a session token, then store the token. Your password is encrypted just like any other field. If you'd rather not share a password at all, use Option A.</div>
+            <div class="profile-field">
+              <label class="profile-label">Kalshi Email</label>
+              <input class="profile-input" type="email" name="email" placeholder="your@email.com" autocomplete="off">
+            </div>
+            <div class="profile-field">
+              <label class="profile-label">Kalshi Password</label>
+              <input class="profile-input" type="password" name="password" placeholder="Your Kalshi password" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="profile-actions">
+            <button type="submit" class="btn btn-primary tx-kalshi-btn">Save Kalshi Account</button>
+            {{ raw_kalshi_delete }}
+          </div>
+        </form>
+      </div>
+
+      <!-- Alpaca (Stock Broker) -->
+      <div class="tx-platform">
+        <div class="tx-platform-header">
+          <div class="tx-platform-title">
+            <span class="tx-platform-dot" style="background:#f59e0b"></span>
+            Alpaca
+          </div>
+          {{ raw_alpaca_status }}
+        </div>
+        <div class="tx-platform-desc">Trade US stocks, ETFs, and crypto through your Alpaca brokerage account. Paper trading is enabled by default — switch to live when you're ready.</div>
+
+        <form method="post" action="/settings/trading/alpaca" style="display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+
+          <div class="tx-option">
+            <div class="tx-option-label">
+              <span class="tx-option-letter" style="background:linear-gradient(135deg,#f59e0b,#d97706)">1</span>
+              <span>API Key + Secret</span>
+            </div>
+            <div class="profile-field">
+              <label class="profile-label">API Key ID</label>
+              <input class="profile-input" type="password" name="api_key" placeholder="PK..." autocomplete="off">
+            </div>
+            <div class="profile-field">
+              <label class="profile-label">API Secret Key</label>
+              <input class="profile-input" type="password" name="api_secret" placeholder="Your Alpaca secret key" autocomplete="off">
+            </div>
+            <details class="tx-help">
+              <summary>How do I get Alpaca API keys?</summary>
+              <div class="tx-help-body">
+                <ol>
+                  <li>Sign up at <a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">alpaca.markets</a> (free).</li>
+                  <li>In the dashboard, go to <strong>Paper Trading</strong> (or Live if funded).</li>
+                  <li>Click <strong>View API Keys</strong>, then <strong>Generate New Key</strong>.</li>
+                  <li>Copy the <strong>API Key ID</strong> and <strong>Secret Key</strong> and paste them above.</li>
+                </ol>
+                <p style="font-size:12px;color:var(--text-muted)">We recommend starting with <strong>Paper Trading</strong> keys to test risk-free with virtual funds. You can switch to live keys later in your Alpaca dashboard.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="profile-actions">
+            <button type="submit" class="btn btn-primary" style="background:linear-gradient(135deg,#f59e0b,#d97706)">Save Alpaca Account</button>
+            {{ raw_alpaca_delete }}
+          </div>
+        </form>
+      </div>
+    </div>
 
     <div class="settings-hints">
       <div class="settings-hint">

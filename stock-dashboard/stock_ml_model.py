@@ -50,7 +50,8 @@ def safe_pickle_load(filepath):
         expected = _hmac.new(_pickle_hmac_key(), raw, hashlib.sha256).digest()
         if _hmac.compare_digest(sig, expected):
             return pickle.loads(raw)
-    return pickle.loads(content)
+    print(f"[SECURITY] Rejecting unsigned pickle file: {filepath} — delete and regenerate")
+    return None
 
 try:
     import yfinance as yf

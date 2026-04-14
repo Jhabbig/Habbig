@@ -219,17 +219,24 @@ def find_stock_markets():
             prices = m.get("outcomePrices", [])
 
             # Both fields may be JSON strings
-            if isinstance(outcomes, str):
-                outcomes = json.loads(outcomes)
-            if isinstance(prices, str):
-                prices = json.loads(prices)
+            try:
+                if isinstance(outcomes, str):
+                    outcomes = json.loads(outcomes)
+                if isinstance(prices, str):
+                    prices = json.loads(prices)
+            except (json.JSONDecodeError, TypeError):
+                continue
 
             if not isinstance(outcomes, list) or not isinstance(prices, list):
                 continue
             if len(outcomes) >= 2 and len(prices) >= 2:
                 try:
-                    up_price = float(prices[0]) if outcomes[0] == "Up" else float(prices[1])
-                    down_price = float(prices[1]) if outcomes[0] == "Up" else float(prices[0])
+                    up_idx = next((i for i, o in enumerate(outcomes) if o == "Up"), None)
+                    down_idx = next((i for i, o in enumerate(outcomes) if o == "Down"), None)
+                    if up_idx is None or down_idx is None:
+                        continue
+                    up_price = float(prices[up_idx])
+                    down_price = float(prices[down_idx])
                 except (TypeError, ValueError):
                     continue
 
@@ -450,9 +457,18 @@ def get_market_correlation_signal(spy_data, stock_data):
         spy_returns = np.diff(spy_closes[-min_len:]) / spy_closes[-min_len:-1]
         stock_returns = np.diff(stock_closes[-min_len:]) / stock_closes[-min_len:-1]
 
-        correlation = np.corrcoef(spy_returns, stock_returns)[0, 1]
+        # Guard against zero-variance inputs (flat prices) which make corrcoef/var return NaN/0.
+        spy_var = float(np.var(spy_returns))
+        if spy_var <= 0 or float(np.var(stock_returns)) <= 0:
+            return 0.0, 0.0
+
+        correlation = float(np.corrcoef(spy_returns, stock_returns)[0, 1])
+        if np.isnan(correlation):
+            correlation = 0.0
         # Beta = covariance / variance of market
-        beta = np.cov(stock_returns, spy_returns)[0, 1] / np.var(spy_returns)
+        beta = float(np.cov(stock_returns, spy_returns)[0, 1]) / spy_var
+        if np.isnan(beta):
+            beta = 0.0
         return correlation, beta
     except Exception:
         return 0.0, 0.0
@@ -588,15 +604,31 @@ def predict_direction(ticker, ticker_yf, spy_data=None):
     # If SPY data available and correlation is high, use SPY momentum
     if spy_data is not None and correlation > 0.5:
         spy_closes = spy_data["Close"].values.astype(float)
-        spy_mom = (spy_closes[-1] - spy_closes[-2]) / spy_closes[-2] if len(spy_closes) >= 2 else 0
+        # Need at least two bars AND a non-zero prior close to compute momentum
+        if len(spy_closes) >= 2 and spy_closes[-2]:
+            spy_mom = (spy_closes[-1] - spy_closes[-2]) / spy_closes[-2]
+        else:
+            spy_mom = 0
         if abs(spy_mom) > 0.002:
             spy_score = np.sign(spy_mom) * min(abs(spy_mom) * 3, 0.2) * correlation
             scores.append(("spy_momentum", spy_score, 1.5))
             signals["spy_mom"] = round(spy_mom * 100, 3)
 
     # 11. Intraday range analysis (volatility)
-    if len(highs) >= 5 and len(lows) >= 5:
-        avg_range = np.mean((highs[-5:] - lows[-5:]) / closes[-5:])
+    if len(highs) >= 5 and len(lows) >= 5 and len(closes) >= 5:
+        # Skip bars where the close is 0 (halts, missing data) — dividing by
+        # them produces inf and would poison the mean.
+        recent_highs = highs[-5:]
+        recent_lows = lows[-5:]
+        recent_closes = closes[-5:]
+        nonzero_mask = recent_closes != 0
+        if nonzero_mask.any():
+            avg_range = float(np.mean(
+                (recent_highs[nonzero_mask] - recent_lows[nonzero_mask])
+                / recent_closes[nonzero_mask]
+            ))
+        else:
+            avg_range = 0.0
         signals["avg_range_pct"] = round(avg_range * 100, 2)
         # High volatility → mean reversion more likely
         if avg_range > 0.03:  # >3% daily range
@@ -639,6 +671,13 @@ def predict_direction(ticker, ticker_yf, spy_data=None):
     total_weight = sum(w for _, _, w in scores)
     raw_score = weighted_sum / total_weight if total_weight > 0 else 0
 
+    # Guard against NaN/inf seeping in from upstream signals — they would make
+    # the sigmoid blow up or return NaN, which then poisons every downstream
+    # decision. Clamp raw_score to a sane range so math.exp can never overflow.
+    if math.isnan(raw_score) or math.isinf(raw_score):
+        raw_score = 0.0
+    raw_score = max(-5.0, min(5.0, raw_score))
+
     # Convert to probability using sigmoid-like function
     # raw_score range roughly [-0.3, 0.3] → map to [0.35, 0.65]
     up_probability = 1 / (1 + math.exp(-raw_score * 8))
@@ -657,13 +696,21 @@ def evaluate_bet(ticker, prediction, confidence, market_info, state):
     """Decide whether to place a bet based on edge over market price."""
     if prediction is None or confidence < MIN_CONFIDENCE:
         return None
+    if not isinstance(market_info, dict):
+        return None
 
     if prediction == "up":
-        market_prob = market_info["up_price"]
+        market_prob = market_info.get("up_price")
         our_prob = confidence
     else:
-        market_prob = market_info["down_price"]
+        market_prob = market_info.get("down_price")
         our_prob = confidence
+    if market_prob is None:
+        return None
+    try:
+        market_prob = float(market_prob)
+    except (TypeError, ValueError):
+        return None
 
     edge = our_prob - market_prob
     if edge < MIN_EDGE:
@@ -703,7 +750,8 @@ def resolve_pending_bets(state):
     today = datetime.now(_et).strftime("%Y-%m-%d")
     for ticker, bet in list(state.pending.items()):
         bet_date = bet.get("date", "")
-
+        if not bet_date:
+            continue  # Skip bets with missing date
         if bet_date >= today:
             continue  # Not yet resolvable
 
@@ -752,8 +800,21 @@ def resolve_pending_bets(state):
                 if hist_date == bet_date:
                     prev_close = float(hist["Close"].iloc[i - 1])
                     actual_close = float(hist["Close"].iloc[i])
-                    actual_direction = "up" if actual_close > prev_close else "down"
+                    if actual_close > prev_close:
+                        actual_direction = "up"
+                    elif actual_close < prev_close:
+                        actual_direction = "down"
+                    else:
+                        actual_direction = "flat"
 
+                    # Flat day = push: return the stake, no win or loss
+                    if actual_direction == "flat":
+                        state.balance += bet["bet_size"]
+                        log(f"  — PUSH {ticker.upper()}: flat close, stake returned")
+                        bet["resolved"] = True
+                        bet["result"] = "push"
+                        bet["actual_direction"] = actual_direction
+                        break
                     won = actual_direction == bet["direction"]
                     if won:
                         # Net profit = full_payout - stake = stake * (1/market_prob - 1)
@@ -982,6 +1043,10 @@ def run_cycle(state):
             bet = evaluate_bet(ticker, prediction, confidence, market_info, state)
 
         if bet:
+            # Skip if we already have a pending bet for this ticker
+            if ticker in state.pending:
+                log(f"    → SKIP {ticker}: already have pending bet")
+                continue
             concordance_str = f", concordance={bet.get('concordance', 0):.0%}" if 'concordance' in bet else ""
             log(f"    → BET ${bet['bet_size']:.0f} on {bet['direction'].upper()} "
                 f"(edge={bet['edge']:+.1%}, kelly={bet.get('kelly', 0):.1%}{concordance_str})")

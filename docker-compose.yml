@@ -1,11 +1,12 @@
 services:
   redis:
     image: redis:7-alpine
-    command: redis-server --requirepass "${REDIS_PASSWORD:-changeme}"
+    command: redis-server --requirepass "${REDIS_PASSWORD:?Set REDIS_PASSWORD env var}"
     expose:
       - "6379"
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD env var}", "ping"]
       interval: 10s
       retries: 3
 
@@ -16,23 +17,24 @@ services:
     env_file: ./gateway/.env
     volumes:
       - gateway-data:/app/data
+    restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy
       crypto:
-        condition: service_started
+        condition: service_healthy
       stock:
-        condition: service_started
+        condition: service_healthy
       midterm:
-        condition: service_started
+        condition: service_healthy
       top-traders:
-        condition: service_started
+        condition: service_healthy
       weather:
-        condition: service_started
+        condition: service_healthy
       sports:
-        condition: service_started
+        condition: service_healthy
       world:
-        condition: service_started
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -41,37 +43,84 @@ services:
     env_file: ./crypto-dashboard/.env
     volumes:
       - crypto-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   stock:
     build: ./stock-dashboard
     expose:
       - "8050"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8050/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   midterm:
     build: ./midterm-dashboard
     expose:
       - "8051"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8051/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   top-traders:
     build: ./top-traders-dashboard
     expose:
       - "8052"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8052/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   weather:
     build: ./polymarket_weather_dashboard
     expose:
       - "5050"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   sports:
     build: ./sports-dashboard
     expose:
       - "8888"
     env_file: ./sports-dashboard/.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   world:
     build: ./world-state-dashboard
     expose:
       - "7050"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7050/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   gateway-data:

@@ -70,7 +70,10 @@ class DashboardCache:
             )
             self._r.ping()
             self._available = True
-            log.info("Redis connected at %s", self._url)
+            # Mask credentials in URL before logging
+            import re
+            safe_url = re.sub(r"://[^@]+@", "://****@", self._url)
+            log.info("Redis connected at %s", safe_url)
             return True
         except (redis.ConnectionError, redis.TimeoutError) as e:
             log.warning("Redis unavailable (%s) — caching disabled, SSE won't fire", e)
@@ -92,10 +95,9 @@ class DashboardCache:
             return None
         try:
             key = self._api_key(dashboard, path)
-            data = self._r.get(key)
+            data, meta = self._r.mget(key, key + ":meta")
             if data is None:
                 return None
-            meta = self._r.get(key + ":meta")
             content_type = meta.decode() if meta else "application/json"
             return data, content_type
         except redis.RedisError as e:

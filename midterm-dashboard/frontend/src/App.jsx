@@ -2,6 +2,7 @@ import React, { useState, useEffect, createContext, useContext } from 'react'
 import { Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
 import { api } from './lib/api'
 import { SettingsProvider } from './lib/settings'
+import { useT } from './lib/i18n'
 import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History } from 'lucide-react'
 
 import Dashboard from './pages/Dashboard'
@@ -65,18 +66,19 @@ function AuthProvider({ children }) {
 function Nav() {
   const { user, logout } = useAuth()
   const location = useLocation()
+  const t = useT()
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const links = [
-    { to: '/', label: 'Overview', icon: Home },
-    { to: '/races', label: 'Races', icon: BarChart3 },
-    { to: '/divergence', label: 'Divergence', icon: GitCompare },
-    { to: '/world', label: 'World', icon: Globe },
-    { to: '/historical', label: 'Historical', icon: History },
+    { to: '/', label: t('nav.overview'), icon: Home },
+    { to: '/races', label: t('nav.races'), icon: BarChart3 },
+    { to: '/divergence', label: t('nav.divergence'), icon: GitCompare },
+    { to: '/world', label: t('nav.world'), icon: Globe },
+    { to: '/historical', label: t('nav.historical'), icon: History },
   ]
 
   if (user?.tier === 'admin') {
-    links.push({ to: '/admin', label: 'Admin', icon: Shield })
+    links.push({ to: '/admin', label: t('nav.admin'), icon: Shield })
   }
 
   const isActive = (path) => location.pathname === path
@@ -113,8 +115,8 @@ function Nav() {
               </>
             ) : (
               <>
-                <Link to="/login" className="text-sm text-stone-500 hover:text-stone-800 transition-colors">Log in</Link>
-                <Link to="/register" className="btn-primary text-sm">Get started</Link>
+                <Link to="/login" className="text-sm text-stone-500 hover:text-stone-800 transition-colors">{t('nav.login')}</Link>
+                <Link to="/register" className="btn-primary text-sm">{t('nav.signup')}</Link>
               </>
             )}
           </div>
@@ -136,12 +138,12 @@ function Nav() {
             ))}
             {user ? (
               <button onClick={() => { logout(); setMobileOpen(false) }} className="block px-3 py-2 text-sm text-stone-500 w-full text-left">
-                Log out
+                {t('nav.logout')}
               </button>
             ) : (
               <div className="flex gap-2 px-3 pt-2">
-                <Link to="/login" onClick={() => setMobileOpen(false)} className="btn-secondary flex-1 text-center text-sm">Log in</Link>
-                <Link to="/register" onClick={() => setMobileOpen(false)} className="btn-primary flex-1 text-center text-sm">Get started</Link>
+                <Link to="/login" onClick={() => setMobileOpen(false)} className="btn-secondary flex-1 text-center text-sm">{t('nav.login')}</Link>
+                <Link to="/register" onClick={() => setMobileOpen(false)} className="btn-primary flex-1 text-center text-sm">{t('nav.signup')}</Link>
               </div>
             )}
           </div>

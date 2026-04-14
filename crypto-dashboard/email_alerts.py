@@ -8,8 +8,10 @@ Configure via environment variables or .env file.
 import html as _html
 import os
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from datetime import datetime, timezone
 
 # SMTP config — set via env vars or .env
@@ -60,14 +62,14 @@ def send_alert_email(to_email: str, subject: str, ticker: str, direction: str,
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
+    msg["From"] = formataddr((FROM_NAME, FROM_EMAIL))
     msg["To"] = to_email
     msg.attach(MIMEText(f"{ticker}: {dir_label} signal ({confidence}% confidence). Delta: {delta}", "plain"))
     msg.attach(MIMEText(html, "html"))
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.starttls()
+            server.starttls(context=ssl.create_default_context())
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
         return True
@@ -82,19 +84,20 @@ def send_news_trade_alert(to_email: str, alert: dict):
         return False
 
     score = alert.get("score", 0)
-    title = alert.get("title", "Unknown")
-    source = alert.get("source", "Unknown")
-    reasons = alert.get("reasons", [])
-    related = alert.get("related_markets", [])
-    link = alert.get("link", "")
+    title = alert.get("title") or "Unknown"
+    source = alert.get("source") or "Unknown"
+    reasons = alert.get("reasons") or []
+    related = alert.get("related_markets") or []
+    link = alert.get("link") or ""
 
     reasons_html = "".join(f"<li>{_html.escape(r)}</li>" for r in reasons[:5])
     markets_html = ""
     if related:
         markets_html = "<tr><td style='padding:8px;color:#8b949e;vertical-align:top;'>Related Markets</td><td style='padding:8px;'>"
         for m in related[:3]:
-            poly_url = f"https://polymarket.com/event/{m.get('slug', '')}"
-            markets_html += f"<a href='{poly_url}' style='color:#58a6ff;text-decoration:none;display:block;margin-bottom:4px;'>{_html.escape(m.get('market_question', '')[:60])}</a>"
+            slug = _html.escape(m.get('slug', ''))
+            poly_url = f"https://polymarket.com/event/{slug}"
+            markets_html += f'<a href="{_html.escape(poly_url)}" style="color:#58a6ff;text-decoration:none;display:block;margin-bottom:4px;">{_html.escape(m.get("market_question", "")[:60])}</a>'
         markets_html += "</td></tr>"
 
     subject = f"News-Trade Alert [{score}/100]: {title[:50]}"
@@ -120,14 +123,14 @@ def send_news_trade_alert(to_email: str, alert: dict):
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
+    msg["From"] = formataddr((FROM_NAME, FROM_EMAIL))
     msg["To"] = to_email
     msg.attach(MIMEText(f"News-Trade Alert [{score}/100]: {title}", "plain"))
     msg.attach(MIMEText(html, "html"))
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.starttls()
+            server.starttls(context=ssl.create_default_context())
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
         return True
@@ -161,14 +164,14 @@ def send_suspicious_trade_alert(to_email: str, trade: dict):
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
+    msg["From"] = formataddr((FROM_NAME, FROM_EMAIL))
     msg["To"] = to_email
     msg.attach(MIMEText(subject, "plain"))
     msg.attach(MIMEText(html, "html"))
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.starttls()
+            server.starttls(context=ssl.create_default_context())
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
         return True

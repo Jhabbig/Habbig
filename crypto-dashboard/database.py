@@ -176,6 +176,13 @@ CREATE TABLE IF NOT EXISTS clob_favorites (
 );
 
 CREATE INDEX IF NOT EXISTS idx_clob_favorites_user ON clob_favorites(user_id);
+
+CREATE TABLE IF NOT EXISTS kalshi_credentials (
+    user_id      TEXT PRIMARY KEY,
+    encrypted    TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -618,14 +625,14 @@ def add_to_news_watchlist(user_id: str, alert_id: str, notes: str = "",
     """Add an alert to a user's watchlist. Returns True if added, False if duplicate."""
     try:
         with _conn() as c:
-            c.execute(
+            cursor = c.execute(
                 """INSERT OR IGNORE INTO news_trade_watchlist
                    (user_id, alert_id, notes, notify_email, notify_push)
                    VALUES (?, ?, ?, ?, ?)""",
                 (user_id, alert_id, notes,
                  1 if notify_email else 0, 1 if notify_push else 0),
             )
-        return True
+        return cursor.rowcount > 0
     except Exception:
         return False
 
@@ -689,6 +696,47 @@ def has_clob_credentials(user_id: str) -> bool:
     with _conn() as c:
         row = c.execute(
             "SELECT 1 FROM clob_credentials WHERE user_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return row is not None
+
+
+# ─── Kalshi Credentials ──────────────────────────────────────────────
+
+def save_kalshi_credentials(user_id: str, encrypted: str):
+    """Save encrypted Kalshi API credentials for a user."""
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO kalshi_credentials (user_id, encrypted, updated_at)
+               VALUES (?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                   encrypted = excluded.encrypted,
+                   updated_at = datetime('now')""",
+            (user_id, encrypted),
+        )
+
+
+def get_kalshi_credentials(user_id: str) -> Optional[str]:
+    """Get encrypted Kalshi credentials for a user. Returns the encrypted blob."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT encrypted FROM kalshi_credentials WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return row["encrypted"] if row else None
+
+
+def delete_kalshi_credentials(user_id: str):
+    """Delete Kalshi credentials for a user."""
+    with _conn() as c:
+        c.execute("DELETE FROM kalshi_credentials WHERE user_id = ?", (user_id,))
+
+
+def has_kalshi_credentials(user_id: str) -> bool:
+    """Check if a user has Kalshi credentials stored."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM kalshi_credentials WHERE user_id = ? LIMIT 1",
             (user_id,),
         ).fetchone()
     return row is not None

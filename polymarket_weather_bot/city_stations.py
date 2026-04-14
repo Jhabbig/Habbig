@@ -18,6 +18,7 @@ STATION_MAP: dict = {
     "miami":         (25.7959, -80.2870, "KMIA", "Miami International"),
     "los angeles":   (33.9425, -118.4081, "KLAX", "LAX"),
     "la":            (33.9425, -118.4081, "KLAX", "LAX"),
+    "denver":        (39.8561, -104.6737, "KDEN", "Denver International"),
     # International stations
     "london":        (51.5053, -0.0553,  "EGLC", "London City Airport"),
     "paris":         (48.7233, 2.3794,   "LFPO", "Paris-Orly"),
