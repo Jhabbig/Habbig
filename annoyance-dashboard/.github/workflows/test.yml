@@ -1,0 +1,51 @@
+name: annoyance-dashboard-tests
+
+on:
+  push:
+    paths:
+      - 'annoyance-dashboard/**'
+      - '.github/workflows/annoyance-dashboard-tests.yml'
+  pull_request:
+    paths:
+      - 'annoyance-dashboard/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: annoyance-dashboard
+    strategy:
+      matrix:
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run unit + integration tests
+        run: |
+          pytest -ra --tb=short tests/unit tests/integration
+
+      - name: Run backtest (informational)
+        run: |
+          pytest -ra --tb=short -m backtest tests/backtest
+        continue-on-error: true
+
+      - name: Upload backtest report (if produced)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-report-${{ matrix.python }}
+          path: annoyance-dashboard/reports/backtest_*.md
+          if-no-files-found: ignore

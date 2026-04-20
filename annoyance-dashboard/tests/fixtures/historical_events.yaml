@@ -1,0 +1,441 @@
+# Historical ground-truth events for the annoyance-dashboard backtest.
+#
+# Each entry represents a real public-frustration moment the detector should
+# have flagged had it been running. The ``target_window_iso`` is the hour we
+# expect a spike for ``entity`` to have fired. ``corpus_posts`` is a seed
+# list of representative social-media-style complaints — the backtest
+# replays them through classify → aggregate → detect to check whether a
+# spike fires for that entity in the target hour.
+#
+# Calibration (DECISIONS.md #9): 5–10 spikes/day at full production scale.
+# The backtest prints per-event hit/miss AND a simulated daily rate against
+# the current gate thresholds (z>=3, mult>=3, count>=5, multi-source).
+#
+# ``severity`` informs expected confidence_score only — not whether the
+# spike fires. Values: minor | moderate | major | watershed.
+
+events:
+
+  # ── Airlines ───────────────────────────────────────────────────────────────
+  - id: crowdstrike-delta-2024
+    entity: Delta Air Lines
+    severity: watershed
+    category: outage
+    target_window_iso: "2024-07-19T14:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Delta cancelled my flight because of the CrowdStrike mess. 5 hour wait on hold."
+      - source: reddit
+        content: "Delta is a complete mess right now. Gate agents don't know what's happening."
+      - source: bluesky
+        content: "Delta ground stop extending into a fourth day is unacceptable."
+      - source: reddit
+        content: "Delta Airlines just called it 'logistical issues'. It's Crowdstrike. Say the words."
+      - source: bluesky
+        content: "Another Delta cancellation. Rebooked for Thursday on a Wednesday flight."
+
+  - id: united-ceo-comments-2017
+    entity: United Airlines
+    severity: major
+    category: pr_incident
+    target_window_iso: "2017-04-10T15:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "United just dragged a passenger off a plane. Never flying them again."
+      - source: reddit
+        content: "United Airlines statement calling it 're-accommodating' is insulting."
+      - source: bluesky
+        content: "United CEO's reaction is somehow making it worse."
+      - source: reddit
+        content: "United bumped me last month. Pattern of behavior."
+      - source: bluesky
+        content: "United Airlines lost ~1B in market cap overnight."
+
+  - id: southwest-christmas-2022
+    entity: Southwest Airlines
+    severity: watershed
+    category: operations
+    target_window_iso: "2022-12-26T18:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Southwest cancelled 2800 flights today. They've broken their own scheduling system."
+      - source: reddit
+        content: "Southwest Airlines is in full meltdown. Their ops are running on fax machines."
+      - source: bluesky
+        content: "Southwest Christmas disaster. Four days stranded in Denver."
+      - source: reddit
+        content: "Southwest refunds: 'we'll get back to you'. Sure."
+      - source: bluesky
+        content: "Southwest's union has been warning about this exact failure for years."
+
+  - id: american-itops-2024
+    entity: American Airlines
+    severity: major
+    category: outage
+    target_window_iso: "2024-12-24T09:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "American Airlines just grounded every plane for a 'network issue'. Christmas Eve."
+      - source: bluesky
+        content: "American Airlines IT failure, nobody knows when we're moving."
+      - source: reddit
+        content: "AA customer service is hanging up mid-sentence."
+      - source: reddit
+        content: "Flew American tonight and watched 4 crews time out on the tarmac."
+
+  - id: spirit-jetblue-blocked-2024
+    entity: Spirit Airlines
+    severity: moderate
+    category: corporate
+    target_window_iso: "2024-01-16T16:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Spirit Airlines merger blocked. Stock tanking."
+      - source: bluesky
+        content: "Spirit bankruptcy watch. The cheap-fares era is over."
+      - source: reddit
+        content: "Spirit cut my route. Nowhere to go cheap out of MSP now."
+
+  # ── Tech / software ────────────────────────────────────────────────────────
+  - id: aws-us-east-1-dec-2021
+    entity: Amazon Web Services
+    severity: major
+    category: outage
+    target_window_iso: "2021-12-07T15:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "AWS us-east-1 is down AGAIN. Alarms going off everywhere."
+      - source: reddit
+        content: "AWS console won't load. Prod traffic dropping."
+      - source: bluesky
+        content: "AWS outage is the third this year. Can we talk about concentration risk?"
+      - source: reddit
+        content: "Every service we use is broken because AWS is broken."
+
+  - id: facebook-oct-2021-outage
+    entity: Meta
+    severity: watershed
+    category: outage
+    target_window_iso: "2021-10-04T15:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Facebook, Instagram, WhatsApp all down at the same time. BGP catastrophe."
+      - source: reddit
+        content: "Meta couldn't even log into their own building when their auth went down."
+      - source: bluesky
+        content: "Facebook outage hitting 6h. Entire businesses running through WhatsApp are dead in the water."
+      - source: reddit
+        content: "Instagram down 4 hours. So is my paycheck."
+
+  - id: google-gcp-apr-2025
+    entity: Google
+    severity: major
+    category: outage
+    target_window_iso: "2025-04-17T20:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Google Cloud dashboards green but nothing works. Classic."
+      - source: reddit
+        content: "Google outage: gmail, drive, calendar, all throwing 500s."
+      - source: bluesky
+        content: "GCP console down. We're flying blind."
+      - source: reddit
+        content: "Google support: 'we are aware'. That's not a status update."
+
+  - id: microsoft-teams-jul-2024
+    entity: Microsoft
+    severity: moderate
+    category: outage
+    target_window_iso: "2024-07-25T10:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Microsoft Teams is broken again. 3rd time this month."
+      - source: bluesky
+        content: "Microsoft 365 issues just spoiled an all-hands."
+      - source: reddit
+        content: "Azure AD having a bad day. Half our tenant can't log in."
+
+  - id: chatgpt-outage-jun-2024
+    entity: OpenAI
+    severity: moderate
+    category: outage
+    target_window_iso: "2024-06-04T19:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "ChatGPT is down, I don't know how to write this email."
+      - source: bluesky
+        content: "OpenAI outage. The knowledge-worker world has stopped."
+      - source: reddit
+        content: "ChatGPT outage: status says degraded, it means fully dead."
+
+  - id: crowdstrike-jul-2024
+    entity: CrowdStrike
+    severity: watershed
+    category: security_incident
+    target_window_iso: "2024-07-19T08:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "CrowdStrike just bricked every Windows machine at our hospital. BSOD city."
+      - source: reddit
+        content: "CrowdStrike sensor update killed production. 8 hour outage."
+      - source: bluesky
+        content: "CrowdStrike global BSOD — 8.5 million machines affected."
+      - source: reddit
+        content: "CrowdStrike apology isn't going to fix my weekend."
+
+  # ── Finance ────────────────────────────────────────────────────────────────
+  - id: svb-collapse-mar-2023
+    entity: Silicon Valley Bank
+    severity: watershed
+    category: corporate
+    target_window_iso: "2023-03-10T16:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "SVB is in freefall. Wire transfers failing. Founders panicking."
+      - source: reddit
+        content: "Silicon Valley Bank: I can't log in to move money. Run, don't walk."
+      - source: bluesky
+        content: "SVB run in real time. This is unprecedented."
+      - source: reddit
+        content: "SVB stock halted. Depositors queuing outside the Sand Hill branch."
+
+  - id: robinhood-gme-2021
+    entity: Robinhood
+    severity: major
+    category: pr_incident
+    target_window_iso: "2021-01-28T15:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Robinhood disabled GME buy button. Regulatory suicide."
+      - source: reddit
+        content: "Robinhood: 'in the interest of our users' — whose users?"
+      - source: bluesky
+        content: "Robinhood app crashing. Only selling works. Hmm."
+      - source: reddit
+        content: "Deleted Robinhood. Moving to Fidelity. Done."
+
+  # ── Consumer products ──────────────────────────────────────────────────────
+  - id: budlight-mulvaney-2023
+    entity: Bud Light
+    severity: major
+    category: brand_crisis
+    target_window_iso: "2023-04-02T16:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Bud Light boycott getting real. Sales down 30% in some markets."
+      - source: bluesky
+        content: "Anheuser-Busch share price confirms the Bud Light problem is serious."
+      - source: reddit
+        content: "Bud Light distributors furious. 'We have no demand signal anymore.'"
+
+  - id: apple-icloud-feb-2024
+    entity: Apple
+    severity: moderate
+    category: outage
+    target_window_iso: "2024-02-14T13:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "iCloud is down for me. Photos showing Unable to Load."
+      - source: bluesky
+        content: "Apple outage hitting iMessage too. Full services page lit up red."
+      - source: reddit
+        content: "Apple status page claims green while nothing works. Classic."
+
+  - id: tesla-recall-dec-2023
+    entity: Tesla
+    severity: moderate
+    category: recall
+    target_window_iso: "2023-12-13T17:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Tesla Autopilot recall covers 2M cars. They're going to push an OTA, not recall."
+      - source: bluesky
+        content: "Tesla issued the largest recall in the company's history, dressed up as a software update."
+      - source: reddit
+        content: "Tesla Autopilot recall news explains the pattern — NHTSA is finally moving."
+
+  - id: samsung-galaxy-note7-2016
+    entity: Samsung
+    severity: watershed
+    category: recall
+    target_window_iso: "2016-09-02T19:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Samsung Note7 is literally catching fire. Getting my money back."
+      - source: reddit
+        content: "Samsung pulled the Note7. Second batch also exploding."
+      - source: bluesky
+        content: "Samsung recall becomes global. FAA banning them from flights."
+
+  - id: peloton-recall-2021
+    entity: Peloton
+    severity: major
+    category: recall
+    target_window_iso: "2021-05-05T15:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Peloton Tread+ recall. Child injured, CPSC moved even after Peloton fought it."
+      - source: bluesky
+        content: "Peloton recall is a PR disaster. Stock collapsing."
+      - source: reddit
+        content: "Peloton's lawyers tried to stop the recall. That should tell you something."
+
+  # ── Telecom ────────────────────────────────────────────────────────────────
+  - id: tmobile-sep-2020
+    entity: T-Mobile
+    severity: major
+    category: outage
+    target_window_iso: "2020-09-14T16:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "T-Mobile is down nationwide. Can't make or receive calls."
+      - source: bluesky
+        content: "T-Mobile 911 service degraded. This is serious."
+      - source: reddit
+        content: "T-Mobile outage going on 6 hours. Our community fire department runs on T-Mobile. Scary."
+
+  - id: att-feb-2024-outage
+    entity: AT&T
+    severity: major
+    category: outage
+    target_window_iso: "2024-02-22T15:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "AT&T is down across the entire country. Even 911 affected."
+      - source: bluesky
+        content: "AT&T outage exposing how brittle the emergency system is."
+      - source: reddit
+        content: "AT&T pushed an update and broke their own network. Incredible."
+
+  - id: comcast-outage-nov-2023
+    entity: Comcast
+    severity: minor
+    category: outage
+    target_window_iso: "2023-11-09T14:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Comcast Xfinity down again. 'Unscheduled maintenance' at 2pm."
+      - source: bluesky
+        content: "Comcast outage. My WFH is in the toilet."
+      - source: reddit
+        content: "Comcast support: restart the router. Thanks buddy, done it 8 times."
+
+  # ── Streaming / media ──────────────────────────────────────────────────────
+  - id: netflix-password-crackdown-2023
+    entity: Netflix
+    severity: moderate
+    category: pricing
+    target_window_iso: "2023-05-23T13:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Netflix killed password sharing. Cancelling."
+      - source: bluesky
+        content: "Netflix's 'extra member' fee is $7. Might as well just leave."
+      - source: reddit
+        content: "Netflix user churn spiking already. Churn dashboards lighting up."
+
+  - id: spotify-wrapped-2023
+    entity: Spotify
+    severity: minor
+    category: pr_incident
+    target_window_iso: "2023-11-29T14:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Spotify Wrapped is a mess this year. No friends activity, no Sound Town."
+      - source: bluesky
+        content: "Spotify Wrapped 2023 feels phoned-in. Major regression."
+      - source: reddit
+        content: "Spotify Wrapped UI broken for half my friends."
+
+  - id: disney-plus-pricing-2023
+    entity: Disney+
+    severity: moderate
+    category: pricing
+    target_window_iso: "2023-08-09T14:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Disney+ raised prices again. Churning, done."
+      - source: bluesky
+        content: "Disney+ ad tier push is anti-consumer. They need to stop."
+      - source: reddit
+        content: "Disney bundle pricing makes no sense now."
+
+  # ── Retail / delivery ──────────────────────────────────────────────────────
+  - id: amazon-prime-day-failure-2018
+    entity: Amazon
+    severity: moderate
+    category: outage
+    target_window_iso: "2018-07-16T17:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Amazon Prime Day site is dead on arrival. Dogs on dogs on dogs."
+      - source: reddit
+        content: "Amazon cart won't load. How did they not load-test this."
+      - source: bluesky
+        content: "Amazon Prime Day outage lasting hours. Billions in lost GMV."
+
+  - id: chipotle-ecoli-2015
+    entity: Chipotle
+    severity: major
+    category: safety
+    target_window_iso: "2015-11-03T15:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Chipotle E. coli is now in 6 states. Avoiding."
+      - source: reddit
+        content: "Chipotle stock in freefall. Food safety rep is destroyed."
+      - source: bluesky
+        content: "Chipotle locations closing across the Pacific Northwest."
+
+  - id: boeing-737-max-mar-2019
+    entity: Boeing
+    severity: watershed
+    category: safety
+    target_window_iso: "2019-03-10T14:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Second 737 Max crash. Boeing is grounding worldwide."
+      - source: bluesky
+        content: "Boeing 737 Max MCAS system shouldn't have passed certification."
+      - source: reddit
+        content: "Boeing response to the 737 Max tragedies is tone-deaf."
+
+  - id: boeing-door-plug-jan-2024
+    entity: Boeing
+    severity: major
+    category: safety
+    target_window_iso: "2024-01-06T14:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "Boeing door plug blew out mid-flight on Alaska 1282. Horrifying."
+      - source: bluesky
+        content: "Boeing QA is broken. Door plug with missing bolts off a 737 Max 9."
+      - source: reddit
+        content: "Boeing stock tanking. Max 9s grounded again."
+
+  # ── Gov / infra ────────────────────────────────────────────────────────────
+  - id: faa-notam-jan-2023
+    entity: FAA
+    severity: major
+    category: outage
+    target_window_iso: "2023-01-11T11:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "FAA NOTAM system is down, every flight grounded nationwide."
+      - source: bluesky
+        content: "FAA pilot alert system outage is a single-point-of-failure nightmare."
+      - source: reddit
+        content: "FAA IT failure. Years of warnings ignored."
+
+  - id: irs-deadline-apr-2018
+    entity: IRS
+    severity: moderate
+    category: outage
+    target_window_iso: "2018-04-17T17:00:00+00:00"
+    corpus_posts:
+      - source: reddit
+        content: "IRS e-file system crashed on Tax Day. Extending the deadline apparently."
+      - source: bluesky
+        content: "IRS website has been 500-ing for 6 hours. Incompetence."
+      - source: reddit
+        content: "IRS telling people to mail in. In 2018."

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>narve.ai — Entity drill-in</title>
+<link rel="stylesheet" href="/static/annoyance.css">
+<link rel="stylesheet" href="/static/entity.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <a href="/" class="logo">narve.ai</a>
+    <span class="divider">/</span>
+    <span class="dashname">Entity</span>
+  </div>
+  <nav class="tab-strip" aria-label="Index view">
+    <a href="/" class="tab tab-active">Annoyance</a>
+    <span class="tab tab-disabled" title="Coming soon">Happiness</span>
+  </nav>
+  <div class="status">
+    <a href="/" class="source-pill" style="text-decoration:underline">← back</a>
+  </div>
+</header>
+
+<main class="entity-main">
+
+  <!-- ── Header: entity name + type pill + stat row ────────────── -->
+  <section class="entity-hero">
+    <div class="entity-hero-head">
+      <h1 id="entity-name" class="entity-title">—</h1>
+      <span id="entity-type" class="entity-type-pill" hidden></span>
+    </div>
+    <div id="entity-summary" class="entity-summary">Loading…</div>
+  </section>
+
+  <!-- ── History chart (168h) ─────────────────────────────────── -->
+  <section class="panel entity-history">
+    <div class="panel-head">
+      <div class="label">7-day history</div>
+      <div class="sub">hourly volume × avg annoyance</div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="entity-chart"></canvas>
+      <div id="entity-chart-empty" class="empty-placeholder hidden">No history data yet.</div>
+    </div>
+  </section>
+
+  <!-- ── Three panels in a grid ───────────────────────────────── -->
+  <section class="grid">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="label">Recent spikes</div>
+        <div class="sub">clickable — confidence + summary</div>
+      </div>
+      <div id="entity-spikes" class="spikes-list">
+        <div class="empty-small">loading…</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div class="label">Related markets</div>
+        <div class="sub">bet ahead of repricing</div>
+      </div>
+      <div id="entity-markets" class="market-expand" style="margin-top:0">
+        <div class="empty-small">loading…</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="label">Recent posts</div>
+      <div class="sub">latest classifications mentioning this entity</div>
+    </div>
+    <div id="entity-posts" class="posts-list">
+      <div class="empty-small">loading…</div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span>Data: Reddit + Bluesky. Classifier: Claude Sonnet 4.5.</span>
+  <a href="/" class="muted" style="text-decoration:underline">← back to index</a>
+</footer>
+
+<script src="/static/entity.js"></script>
+</body>
+</html>
