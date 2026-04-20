@@ -281,7 +281,110 @@ async def send_morning_briefings() -> dict[str, Any]:
     return {"sent": sent, "total_users": len(users)}
 
 
+# ── Weekly intelligence report (Pro users, PDF via Claude + WeasyPrint) ──────
+
+
+@register_job("send_weekly_report_email")
+async def send_weekly_report_email(
+    user_id: int,
+    report_id: int,
+    email: str,
+    display_name: str,
+    week_start: int,
+    week_end: int,
+    pdf_path: str,
+) -> dict:
+    """Send the weekly intelligence report PDF via email.
+
+    Called by reports.weekly_report.generate_and_deliver after PDF is saved.
+    The PDF is attached inline using the email service's attachment support.
+    """
+    import datetime as _dt
+    ws = _dt.datetime.fromtimestamp(week_start, tz=_dt.timezone.utc)
+    we = _dt.datetime.fromtimestamp(week_end, tz=_dt.timezone.utc) - _dt.timedelta(days=1)
+
+    await enqueue_email(
+        to=email,
+        template="intelligence_report",
+        context={
+            "display_name": display_name,
+            "week_start": ws.strftime("%B %d"),
+            "week_end": we.strftime("%B %d, %Y"),
+            "report_id": report_id,
+            "app_url": os.environ.get("APP_URL", "https://narve.ai"),
+        },
+        tags=["intelligence_report"],
+    )
+    return {"status": "sent", "user_id": user_id, "report_id": report_id}
+
+
+@register_job("generate_weekly_reports_batch")
+async def generate_weekly_reports_batch() -> dict:
+    """Generate and deliver weekly intelligence reports for all Pro users.
+
+    Runs every Monday at 07:00 UTC (1 hour before the simpler digest at 08:00).
+    Only delivers to Pro-tier users who have email_digest=1 and haven't
+    unsubscribed.
+
+    Process:
+      1. Find all eligible Pro users
+      2. For each, generate report (data → Claude → PDF → email → DB record)
+      3. Process sequentially to bound Claude API concurrency and cost
+    """
+    from reports.weekly_report import generate_and_deliver, get_week_bounds
+
+    week_start, week_end = get_week_bounds()
+    log.info("weekly reports batch: generating for week %d – %d", week_start, week_end)
+
+    # Find Pro users with digest enabled. "Pro" = subscriptions to all
+    # dashboards, or plan='pro_*' sentinel, or intelligence_addon_active=1.
+    now = int(time.time())
+    with db.conn() as c:
+        users = c.execute(
+            """
+            SELECT DISTINCT u.id, u.email, u.username
+            FROM users u
+            LEFT JOIN subscriptions s ON s.user_id = u.id AND s.status = 'active'
+                AND (s.expires_at IS NULL OR s.expires_at > ?)
+            WHERE u.suspended = 0
+              AND u.email_digest = 1
+              AND (u.email_unsubscribed_at IS NULL)
+              AND (
+                  u.is_admin >= 1
+                  OR u.intelligence_addon_active = 1
+                  OR s.plan LIKE 'pro_%'
+              )
+            ORDER BY u.id
+            """,
+            (now,),
+        ).fetchall()
+
+    sent = 0
+    skipped = 0
+    failed = 0
+
+    for user in users:
+        try:
+            result = await generate_and_deliver(user["id"], week_start, week_end)
+            if result.get("status") == "generated":
+                sent += 1
+            else:
+                skipped += 1
+        except Exception as exc:
+            log.error("weekly report failed for user %d: %s", user["id"], exc)
+            failed += 1
+
+    log.info(
+        "weekly reports batch: done — sent=%d skipped=%d failed=%d total_users=%d",
+        sent, skipped, failed, len(users),
+    )
+    return {"sent": sent, "skipped": skipped, "failed": failed, "total_users": len(users)}
+
+
+# ── Cron schedule ────────────────────────────────────────────────────────────
 # Cron: every Monday at 08:00 UTC.
 register_cron("send_weekly_digest_batch", weekday=0, hour=8, minute=0)
 # Morning briefing: daily at 08:03 UTC.
 register_cron("send_morning_briefings", hour=8, minute=3)
+# Weekly intelligence reports (Pro, PDF): Monday 07:00 UTC — 1 hour before digest.
+register_cron("generate_weekly_reports_batch", weekday=0, hour=7, minute=0)

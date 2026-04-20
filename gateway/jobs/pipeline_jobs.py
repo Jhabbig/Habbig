@@ -211,6 +211,19 @@ async def poll_whale_positions_job() -> dict[str, Any]:
     return await poll_whale_positions()
 
 
+@register_job("compute_source_network")
+async def compute_source_network_job() -> dict[str, Any]:
+    """Compute all pairwise source relationships and detect echo chambers.
+
+    Runs weekly. For every pair of sources with >= 5 shared markets,
+    computes agreement rate, joint accuracy, independence score, and
+    classifies the relationship. Then runs union-find on echo-chamber
+    edges to detect clusters.
+    """
+    from intelligence.network import compute_all_relationships
+    return compute_all_relationships()
+
+
 # Cron schedules
 register_cron("process_scheduled_deletions", hour=2, minute=0)   # daily 02:00 UTC
 register_cron("generate_sitemap", hour=6, minute=0)              # daily 06:00 UTC
@@ -221,3 +234,5 @@ register_cron("recompute_credibilities", hour=0, minute=15)      # 00:15 UTC
 register_cron("recompute_credibilities", hour=6, minute=15)      # 06:15 UTC
 register_cron("recompute_credibilities", hour=12, minute=15)     # 12:15 UTC
 register_cron("recompute_credibilities", hour=18, minute=15)     # 18:15 UTC
+# Source network analysis: weekly Sunday 03:30 UTC
+register_cron("compute_source_network", weekday=6, hour=3, minute=30)

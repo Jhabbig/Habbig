@@ -1052,11 +1052,11 @@ def get_market_snapshot_at(market_slug: str, at_time: int) -> Optional[sqlite3.R
     """Return the snapshot closest to at_time (<=) for market_slug, or None.
 
     Used to annotate prediction markers with "market odds at the time this
-    prediction was made".
+    prediction was made", and by the movement detector for volume comparison.
     """
     with conn() as c:
         return c.execute(
-            "SELECT yes_price, snapshotted_at FROM market_snapshots "
+            "SELECT yes_price, volume, snapshotted_at FROM market_snapshots "
             "WHERE market_slug = ? AND snapshotted_at <= ? "
             "ORDER BY snapshotted_at DESC LIMIT 1",
             (market_slug.strip(), int(at_time)),
@@ -1085,6 +1085,178 @@ def get_prediction_markers_for_market(market_slug: str) -> list[sqlite3.Row]:
             ORDER BY p.extracted_at ASC
             """,
             (market_slug.strip(), market_slug.strip()),
+        ).fetchall()
+
+
+# ── Market movement events ────────────────────────────────────────────────────
+
+
+def insert_movement_event(
+    event_type: str,
+    market_slug: str,
+    detected_at: int,
+    *,
+    market_question: Optional[str] = None,
+    category: Optional[str] = None,
+    source_platform: str = "polymarket",
+    old_price: Optional[float] = None,
+    new_price: Optional[float] = None,
+    price_change: Optional[float] = None,
+    old_volume: Optional[float] = None,
+    new_volume: Optional[float] = None,
+    volume_change: Optional[float] = None,
+    close_time: Optional[int] = None,
+    hours_to_close: Optional[float] = None,
+    severity: str = "medium",
+    metadata_json: str = "{}",
+) -> int:
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO market_movement_events "
+            "(event_type, market_slug, market_question, category, source_platform, "
+            "old_price, new_price, price_change, old_volume, new_volume, "
+            "volume_change, close_time, hours_to_close, severity, "
+            "metadata_json, detected_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (event_type, market_slug, market_question, category, source_platform,
+             old_price, new_price, price_change, old_volume, new_volume,
+             volume_change, close_time, hours_to_close, severity,
+             metadata_json, detected_at),
+        )
+        return cur.lastrowid
+
+
+def list_movement_events(
+    *,
+    event_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    since: Optional[int] = None,
+    limit: int = 50,
+) -> list[sqlite3.Row]:
+    clauses = []
+    params: list = []
+    if event_type:
+        clauses.append("event_type = ?")
+        params.append(event_type)
+    if severity:
+        clauses.append("severity = ?")
+        params.append(severity)
+    if since:
+        clauses.append("detected_at >= ?")
+        params.append(since)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    with conn() as c:
+        return c.execute(
+            f"SELECT * FROM market_movement_events {where} "
+            f"ORDER BY detected_at DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+
+
+def get_movement_event(event_id: int) -> Optional[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM market_movement_events WHERE id = ?", (event_id,)
+        ).fetchone()
+
+
+def mark_events_notified(event_ids: list[int]) -> int:
+    if not event_ids:
+        return 0
+    placeholders = ",".join("?" * len(event_ids))
+    with conn() as c:
+        cur = c.execute(
+            f"UPDATE market_movement_events SET notified = 1 WHERE id IN ({placeholders})",
+            event_ids,
+        )
+        return cur.rowcount
+
+
+# ── User market alert rules ──────────────────────────────────────────────────
+
+
+def create_alert_rule(
+    user_id: int,
+    event_type: str,
+    *,
+    min_severity: str = "medium",
+    min_price_change: Optional[float] = None,
+    categories_json: str = "[]",
+    only_saved: bool = False,
+    only_followed: bool = False,
+    delivery: str = "in_app",
+) -> int:
+    now = int(time.time())
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO user_market_alerts "
+            "(user_id, event_type, min_severity, min_price_change, "
+            "categories_json, only_saved, only_followed, delivery, "
+            "enabled, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            (user_id, event_type, min_severity, min_price_change,
+             categories_json, int(only_saved), int(only_followed),
+             delivery, now, now),
+        )
+        return cur.lastrowid
+
+
+def list_alert_rules(user_id: int) -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM user_market_alerts WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def get_alert_rule(rule_id: int, user_id: int) -> Optional[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM user_market_alerts WHERE id = ? AND user_id = ?",
+            (rule_id, user_id),
+        ).fetchone()
+
+
+def update_alert_rule(rule_id: int, user_id: int, **fields) -> bool:
+    allowed = {
+        "event_type", "min_severity", "min_price_change",
+        "categories_json", "only_saved", "only_followed",
+        "delivery", "enabled",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return False
+    updates["updated_at"] = int(time.time())
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    vals = list(updates.values()) + [rule_id, user_id]
+    with conn() as c:
+        cur = c.execute(
+            f"UPDATE user_market_alerts SET {set_clause} WHERE id = ? AND user_id = ?",
+            vals,
+        )
+        return cur.rowcount > 0
+
+
+def delete_alert_rule(rule_id: int, user_id: int) -> bool:
+    with conn() as c:
+        cur = c.execute(
+            "DELETE FROM user_market_alerts WHERE id = ? AND user_id = ?",
+            (rule_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def get_alert_rules_for_event(event_type: str) -> list[sqlite3.Row]:
+    """All enabled rules matching this event type, across all users."""
+    severity_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    with conn() as c:
+        return c.execute(
+            "SELECT uma.*, u.email, u.username "
+            "FROM user_market_alerts uma "
+            "JOIN users u ON u.id = uma.user_id "
+            "WHERE uma.event_type = ? AND uma.enabled = 1 "
+            "AND COALESCE(u.is_deleted, 0) = 0",
+            (event_type,),
         ).fetchall()
 
 
@@ -1946,20 +2118,21 @@ def list_all_source_credibilities() -> list[sqlite3.Row]:
 
 
 def compute_calibration(source_handle: str) -> Optional[dict]:
-    """Compute calibration score for a source (F9).
+    """Compute calibration score using Brier score.
 
-    Buckets all resolved predictions with a stated probability into 10 bins
-    (0-10%, 10-20%, ..., 90-100%). For each bucket, compares the average
-    predicted probability to the actual resolution rate.
+    Brier score: (1/N) * sum((predicted_probability - outcome)^2)
+      outcome = 1.0 if correct, 0.0 if incorrect
+      Perfect: 0.0 | Random: 0.25 | Worse: > 0.25
 
-    Calibration score = 1 - mean(|actual_rate - predicted_avg|) per bucket.
-    A perfectly calibrated source scores 1.0.
+    Normalised to [0.0, 1.0]: calibration_score = max(0, 1 - brier/0.25)
 
-    Returns None if < 5 calibratable predictions.
+    Also produces reliability diagram data with over/underconfidence detection.
+    Minimum 10 predictions with stated probability required.
     """
     import json as _json
 
     BUCKETS = [(i / 10, (i + 1) / 10) for i in range(10)]
+    MIN_FOR_CALIBRATION = 10
 
     with conn() as c:
         preds = c.execute(
@@ -1969,19 +2142,38 @@ def compute_calibration(source_handle: str) -> Optional[dict]:
             (source_handle,),
         ).fetchall()
 
-    if len(preds) < 5:
+    if len(preds) < MIN_FOR_CALIBRATION:
         return None
 
+    # Brier score
+    brier_sum = sum(
+        (p["predicted_probability"] - (1.0 if p["resolved_correct"] else 0.0)) ** 2
+        for p in preds
+    )
+    brier = brier_sum / len(preds)
+    calibration_score = max(0.0, min(1.0, 1.0 - brier / 0.25))
+
+    # Reliability diagram buckets
     bucket_data = []
-    deviations = []
+    overconfident_n = 0
+    underconfident_n = 0
+    calibrated_n = 0
+    filled = 0
+
     for low, high in BUCKETS:
         in_bucket = [p for p in preds if low <= (p["predicted_probability"] or 0) < high]
         if not in_bucket:
             continue
+        filled += 1
         predicted_avg = sum(p["predicted_probability"] for p in in_bucket) / len(in_bucket)
         actual_rate = sum(1 for p in in_bucket if p["resolved_correct"]) / len(in_bucket)
-        deviation = abs(actual_rate - predicted_avg)
-        deviations.append(deviation)
+        deviation = actual_rate - predicted_avg
+        if deviation < -0.10:
+            overconfident_n += 1
+        elif deviation > 0.10:
+            underconfident_n += 1
+        else:
+            calibrated_n += 1
         bucket_data.append({
             "range": f"{int(low * 100)}-{int(high * 100)}%",
             "predicted": round(predicted_avg, 3),
@@ -1989,27 +2181,64 @@ def compute_calibration(source_handle: str) -> Optional[dict]:
             "count": len(in_bucket),
         })
 
-    if not deviations:
-        return None
+    is_overconfident = filled > 0 and overconfident_n > filled / 2
+    is_underconfident = filled > 0 and underconfident_n > filled / 2
+    is_calibrated = filled > 0 and calibrated_n >= filled * 0.6
 
-    score = round(1 - sum(deviations) / len(deviations), 4)
     now = int(time.time())
+    cal_json = _json.dumps({
+        "buckets": bucket_data,
+        "is_overconfident": is_overconfident,
+        "is_underconfident": is_underconfident,
+        "is_calibrated": is_calibrated,
+    })
 
     with conn() as c:
-        c.execute(
-            """INSERT INTO source_calibration
-                (source_handle, calibration_score, calibration_data, total_calibrated, last_computed_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(source_handle) DO UPDATE SET
-                calibration_score = excluded.calibration_score,
-                calibration_data = excluded.calibration_data,
-                total_calibrated = excluded.total_calibrated,
-                last_computed_at = excluded.last_computed_at
-            """,
-            (source_handle, score, _json.dumps({"buckets": bucket_data}), len(preds), now),
-        )
+        # Try with new columns; fall back to legacy if migration 020 hasn't run
+        try:
+            c.execute(
+                """INSERT INTO source_calibration
+                    (source_handle, calibration_score, calibration_data, total_calibrated,
+                     last_computed_at, brier_score, is_overconfident, is_underconfident, is_calibrated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_handle) DO UPDATE SET
+                    calibration_score = excluded.calibration_score,
+                    calibration_data = excluded.calibration_data,
+                    total_calibrated = excluded.total_calibrated,
+                    last_computed_at = excluded.last_computed_at,
+                    brier_score = excluded.brier_score,
+                    is_overconfident = excluded.is_overconfident,
+                    is_underconfident = excluded.is_underconfident,
+                    is_calibrated = excluded.is_calibrated
+                """,
+                (source_handle, round(calibration_score, 4), cal_json, len(preds), now,
+                 round(brier, 6), 1 if is_overconfident else 0,
+                 1 if is_underconfident else 0, 1 if is_calibrated else 0),
+            )
+        except Exception:
+            # Fallback for pre-migration-020 schema
+            c.execute(
+                """INSERT INTO source_calibration
+                    (source_handle, calibration_score, calibration_data, total_calibrated, last_computed_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source_handle) DO UPDATE SET
+                    calibration_score = excluded.calibration_score,
+                    calibration_data = excluded.calibration_data,
+                    total_calibrated = excluded.total_calibrated,
+                    last_computed_at = excluded.last_computed_at
+                """,
+                (source_handle, round(calibration_score, 4), cal_json, len(preds), now),
+            )
 
-    return {"calibration_score": score, "buckets": bucket_data, "total_calibrated": len(preds)}
+    return {
+        "calibration_score": round(calibration_score, 4),
+        "brier_score": round(brier, 6),
+        "buckets": bucket_data,
+        "total_calibrated": len(preds),
+        "is_overconfident": is_overconfident,
+        "is_underconfident": is_underconfident,
+        "is_calibrated": is_calibrated,
+    }
 
 
 def get_source_calibration(source_handle: str) -> Optional[dict]:
@@ -2022,12 +2251,123 @@ def get_source_calibration(source_handle: str) -> Optional[dict]:
         ).fetchone()
     if not row:
         return None
-    return {
+    cal_data = _json.loads(row["calibration_data"] or "{}")
+    result = {
         "calibration_score": row["calibration_score"],
-        "buckets": _json.loads(row["calibration_data"] or "{}").get("buckets", []),
+        "buckets": cal_data.get("buckets", []),
         "total_calibrated": row["total_calibrated"],
         "last_computed_at": row["last_computed_at"],
+        "is_overconfident": cal_data.get("is_overconfident"),
+        "is_underconfident": cal_data.get("is_underconfident"),
+        "is_calibrated": cal_data.get("is_calibrated"),
     }
+    # Include Brier score if migration 020 has run
+    try:
+        if "brier_score" in row.keys():
+            result["brier_score"] = row["brier_score"]
+    except Exception:
+        pass
+    return result
+
+
+# ── Market timing score ──────────────────────────────────────────────────────
+
+
+def compute_timing_score(
+    extracted_at: int,
+    market_price_at_prediction: Optional[float],
+    direction: Optional[str],
+    resolved_correct: Optional[int],
+    resolved_at: Optional[int],
+) -> Optional[float]:
+    """Compute timing score for a single prediction.
+
+    Rewards predictions made early and contrarian.
+    Returns float in [0.0, 1.0] or None if insufficient data.
+    """
+    if resolved_correct is None or direction is None:
+        return None
+    if resolved_at is None or extracted_at is None:
+        return None
+
+    days_before = max(0, (resolved_at - extracted_at) / 86400)
+    time_component = min(days_before / 30.0, 1.0)
+
+    contrarian_bonus = 0.0
+    if market_price_at_prediction is not None:
+        if direction == "YES" and market_price_at_prediction < 0.40:
+            contrarian_bonus = (0.40 - market_price_at_prediction) * 2
+        elif direction == "NO" and market_price_at_prediction > 0.60:
+            contrarian_bonus = (market_price_at_prediction - 0.60) * 2
+
+    outcome_mult = 1.5 if resolved_correct else 0.0
+    score = (time_component + contrarian_bonus) * outcome_mult / 2.0
+    return max(0.0, min(1.0, score))
+
+
+def compute_source_timing(source_handle: str) -> Optional[dict]:
+    """Compute aggregate timing metrics for a source and store on source_credibility."""
+    with conn() as c:
+        preds = c.execute(
+            "SELECT id, extracted_at, direction, resolved_correct, resolved_at, "
+            "market_id, market_price_at_prediction "
+            "FROM predictions "
+            "WHERE source_handle = ? AND resolved = 1 AND resolved_correct IS NOT NULL",
+            (source_handle,),
+        ).fetchall()
+
+    if not preds:
+        return None
+
+    scores = []
+    for p in preds:
+        mkt_price = None
+        try:
+            mkt_price = p["market_price_at_prediction"]
+        except (KeyError, IndexError):
+            pass
+
+        if mkt_price is None and p["market_id"]:
+            slug = p["market_id"].split(":", 1)[1] if ":" in p["market_id"] else p["market_id"]
+            snap = get_market_snapshot_at(slug, p["extracted_at"])
+            if snap:
+                mkt_price = snap["yes_price"]
+                try:
+                    with conn() as c:
+                        c.execute(
+                            "UPDATE predictions SET market_price_at_prediction = ? WHERE id = ?",
+                            (mkt_price, p["id"]),
+                        )
+                except Exception:
+                    pass
+
+        ts = compute_timing_score(
+            extracted_at=p["extracted_at"],
+            market_price_at_prediction=mkt_price,
+            direction=p["direction"],
+            resolved_correct=p["resolved_correct"],
+            resolved_at=p["resolved_at"],
+        )
+        if ts is not None:
+            scores.append(ts)
+
+    if not scores:
+        return None
+
+    avg = sum(scores) / len(scores)
+    rank = "early" if avg > 0.7 else "average" if avg > 0.4 else "late"
+
+    try:
+        with conn() as c:
+            c.execute(
+                "UPDATE source_credibility SET avg_timing_score = ?, early_predictor_rank = ? "
+                "WHERE source_handle = ?",
+                (round(avg, 4), rank, source_handle),
+            )
+    except Exception:
+        pass
+
+    return {"avg_timing_score": round(avg, 4), "early_predictor_rank": rank, "scored_predictions": len(scores)}
 
 
 def recompute_all_credibilities() -> int:
@@ -2133,6 +2473,12 @@ def recompute_all_credibilities() -> int:
             compute_calibration(handle)
         except Exception:
             pass  # calibration is best-effort; don't fail the whole recompute
+
+        # Compute market timing score.
+        try:
+            compute_source_timing(handle)
+        except Exception:
+            pass  # timing is best-effort
 
         count += 1
 
@@ -3704,3 +4050,517 @@ def set_user_env_preferences(user_id: int, *, show: bool, unit: str) -> bool:
             (1 if show else 0, unit, user_id),
         )
     return cur.rowcount > 0
+
+
+# ── Insider Trading Signals ──────────────────────────────────────────────────
+
+
+def get_insider_signals(
+    *,
+    signal_type: Optional[str] = None,
+    strength: Optional[str] = None,
+    days: int = 30,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    """Query insider signals with optional filters."""
+    cutoff = int(time.time()) - days * 86400
+    where = ["disclosed_at >= ?"]
+    params: list = [cutoff]
+
+    if signal_type:
+        where.append("signal_type = ?")
+        params.append(signal_type)
+    if strength:
+        where.append("signal_strength = ?")
+        params.append(strength)
+
+    where_sql = " WHERE " + " AND ".join(where)
+    with conn() as c:
+        return c.execute(
+            f"SELECT * FROM insider_signals{where_sql} "
+            "ORDER BY disclosed_at DESC LIMIT ? OFFSET ?",
+            tuple(params) + (limit, offset),
+        ).fetchall()
+
+
+def get_insider_signal_by_id(signal_id: int) -> Optional[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM insider_signals WHERE id = ?", (signal_id,)
+        ).fetchone()
+
+
+def get_insider_correlations_for_signal(signal_id: int) -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM insider_market_correlations WHERE signal_id = ? "
+            "ORDER BY insider_score DESC",
+            (signal_id,),
+        ).fetchall()
+
+
+def get_insider_signals_for_market(market_id: str, days: int = 30) -> list[dict]:
+    """Get all insider signals correlated with a specific market."""
+    cutoff = int(time.time()) - days * 86400
+    with conn() as c:
+        rows = c.execute(
+            "SELECT s.*, c.correlation_type, c.correlation_explanation, "
+            "c.implied_direction, c.implied_confidence, c.insider_score, "
+            "c.market_price_at_detection "
+            "FROM insider_market_correlations c "
+            "JOIN insider_signals s ON s.id = c.signal_id "
+            "WHERE c.market_id = ? AND c.detected_at >= ? "
+            "ORDER BY c.insider_score DESC",
+            (market_id, cutoff),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_insider_leaderboard(min_trades: int = 3, limit: int = 50) -> list[dict]:
+    """Rank insiders by prediction accuracy on correlated markets."""
+    with conn() as c:
+        rows = c.execute(
+            "SELECT s.source_name, s.source_type, "
+            "COUNT(DISTINCT c.id) AS total_correlations, "
+            "SUM(CASE WHEN c.resolved_correct = 1 THEN 1 ELSE 0 END) AS correct, "
+            "ROUND(AVG(CASE WHEN c.resolved = 1 THEN c.resolved_correct ELSE NULL END) * 100, 1) AS accuracy_pct "
+            "FROM insider_signals s "
+            "JOIN insider_market_correlations c ON c.signal_id = s.id "
+            "WHERE c.resolved = 1 "
+            "GROUP BY s.source_name "
+            "HAVING COUNT(DISTINCT c.id) >= ? "
+            "ORDER BY accuracy_pct DESC, total_correlations DESC "
+            "LIMIT ?",
+            (min_trades, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_insider_source_profile(source_name: str) -> Optional[dict]:
+    """Full trade history and accuracy for one insider."""
+    with conn() as c:
+        signals = c.execute(
+            "SELECT * FROM insider_signals WHERE source_name = ? ORDER BY disclosed_at DESC",
+            (source_name,),
+        ).fetchall()
+    if not signals:
+        return None
+
+    correlations = []
+    for s in signals:
+        with conn() as c:
+            corrs = c.execute(
+                "SELECT * FROM insider_market_correlations WHERE signal_id = ? "
+                "ORDER BY insider_score DESC",
+                (s["id"],),
+            ).fetchall()
+            correlations.extend(corrs)
+
+    resolved = [c for c in correlations if c["resolved"]]
+    correct = sum(1 for c in resolved if c["resolved_correct"])
+
+    return {
+        "source_name": source_name,
+        "source_type": signals[0]["source_type"] if signals else "",
+        "party": signals[0]["party"] if signals else "",
+        "state": signals[0]["state"] if signals else "",
+        "chamber": signals[0]["chamber"] if signals else "",
+        "committee": signals[0]["committee"] if signals else "",
+        "total_signals": len(signals),
+        "total_correlations": len(correlations),
+        "resolved_correlations": len(resolved),
+        "correct_predictions": correct,
+        "accuracy_pct": round(correct / len(resolved) * 100, 1) if resolved else None,
+        "signals": [dict(s) for s in signals[:20]],
+        "correlations": [dict(c) for c in correlations[:20]],
+    }
+
+
+def get_uncorrelated_signal_ids(limit: int = 50) -> list[int]:
+    """Return IDs of insider signals that haven't been correlated yet."""
+    with conn() as c:
+        rows = c.execute(
+            "SELECT s.id FROM insider_signals s "
+            "LEFT JOIN insider_market_correlations c ON c.signal_id = s.id "
+            "WHERE c.id IS NULL "
+            "ORDER BY s.disclosed_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [r["id"] for r in rows]
+
+
+def get_insider_stats() -> dict:
+    """Summary stats for the insider signals dashboard."""
+    now = int(time.time())
+    today_cutoff = now - 86400
+    month_cutoff = now - 30 * 86400
+
+    with conn() as c:
+        today = c.execute(
+            "SELECT COUNT(*) AS n FROM insider_signals WHERE disclosed_at >= ?",
+            (today_cutoff,),
+        ).fetchone()["n"]
+
+        strong = c.execute(
+            "SELECT COUNT(*) AS n FROM insider_signals "
+            "WHERE signal_strength = 'strong' AND disclosed_at >= ?",
+            (month_cutoff,),
+        ).fetchone()["n"]
+
+        correlated = c.execute(
+            "SELECT COUNT(DISTINCT market_id) AS n FROM insider_market_correlations "
+            "WHERE detected_at >= ?",
+            (month_cutoff,),
+        ).fetchone()["n"]
+
+        top_score_row = c.execute(
+            "SELECT MAX(insider_score) AS m FROM insider_market_correlations "
+            "WHERE detected_at >= ?",
+            (month_cutoff,),
+        ).fetchone()
+        top_score = top_score_row["m"] if top_score_row else None
+
+        # Accuracy over last 30 days
+        resolved = c.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN resolved_correct = 1 THEN 1 ELSE 0 END) AS correct "
+            "FROM insider_market_correlations "
+            "WHERE resolved = 1 AND detected_at >= ?",
+            (month_cutoff,),
+        ).fetchone()
+        accuracy = None
+        if resolved["total"] > 0:
+            accuracy = round(resolved["correct"] / resolved["total"] * 100, 1)
+
+    return {
+        "signals_today": today,
+        "strong_signals_30d": strong,
+        "correlated_markets_30d": correlated,
+        "top_insider_score": top_score,
+        "accuracy_30d": accuracy,
+    }
+
+
+def set_insider_alert_preferences(
+    user_id: int, enabled: bool, threshold: str = "strong_only"
+) -> None:
+    """Update user's insider alert preferences."""
+    if threshold not in ("strong_only", "moderate_and_above", "all"):
+        threshold = "strong_only"
+    with conn() as c:
+        c.execute(
+            "UPDATE users SET insider_alerts_enabled = ?, insider_alert_threshold = ? WHERE id = ?",
+            (1 if enabled else 0, threshold, user_id),
+        )
+
+
+# ── Source network analysis (F20: echo chamber detection) ─────────────────
+
+
+def upsert_source_relationship(
+    source_a: str,
+    source_b: str,
+    markets_both_predicted: int,
+    agreement_rate: float,
+    both_correct_rate: float,
+    independent_signal_score: float,
+    relationship_type: str,
+) -> None:
+    """Insert or update a pairwise source relationship.
+
+    source_a < source_b alphabetically (caller must enforce) to prevent
+    duplicate rows for the same pair.
+    """
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            """INSERT INTO source_relationships
+                (source_a, source_b, markets_both_predicted, agreement_rate,
+                 both_correct_rate, independent_signal_score, relationship_type,
+                 last_computed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_a, source_b) DO UPDATE SET
+                markets_both_predicted = excluded.markets_both_predicted,
+                agreement_rate = excluded.agreement_rate,
+                both_correct_rate = excluded.both_correct_rate,
+                independent_signal_score = excluded.independent_signal_score,
+                relationship_type = excluded.relationship_type,
+                last_computed_at = excluded.last_computed_at
+            """,
+            (source_a, source_b, markets_both_predicted,
+             round(agreement_rate, 4), round(both_correct_rate, 4),
+             round(independent_signal_score, 4), relationship_type, now),
+        )
+
+
+def get_source_relationships(handle: str, type_filter: Optional[str] = None) -> list[sqlite3.Row]:
+    """All relationships involving `handle`, optionally filtered by type."""
+    with conn() as c:
+        if type_filter:
+            return c.execute(
+                "SELECT * FROM source_relationships "
+                "WHERE (source_a = ? OR source_b = ?) AND relationship_type = ? "
+                "ORDER BY independent_signal_score ASC",
+                (handle, handle, type_filter),
+            ).fetchall()
+        return c.execute(
+            "SELECT * FROM source_relationships "
+            "WHERE source_a = ? OR source_b = ? "
+            "ORDER BY agreement_rate DESC",
+            (handle, handle),
+        ).fetchall()
+
+
+def get_relationship_between(handle_a: str, handle_b: str) -> Optional[sqlite3.Row]:
+    """Look up the relationship between two specific sources."""
+    a, b = sorted([handle_a, handle_b])
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM source_relationships WHERE source_a = ? AND source_b = ?",
+            (a, b),
+        ).fetchone()
+
+
+def list_all_source_relationships(limit: int = 500) -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM source_relationships ORDER BY agreement_rate DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+def save_source_network(
+    total_sources: int,
+    total_relationships: int,
+    echo_chamber_clusters: list,
+    most_independent_sources: list,
+) -> int:
+    """Store a snapshot of the full network graph."""
+    import json as _json
+    now = int(time.time())
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO source_networks "
+            "(computed_at, total_sources, total_relationships, "
+            "echo_chamber_clusters, most_independent_sources) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (now, total_sources, total_relationships,
+             _json.dumps(echo_chamber_clusters),
+             _json.dumps(most_independent_sources)),
+        )
+        return cur.lastrowid
+
+
+def get_latest_source_network() -> Optional[dict]:
+    """Most recent network snapshot, parsed from JSON."""
+    import json as _json
+    with conn() as c:
+        row = c.execute(
+            "SELECT * FROM source_networks ORDER BY computed_at DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "computed_at": row["computed_at"],
+        "total_sources": row["total_sources"],
+        "total_relationships": row["total_relationships"],
+        "echo_chamber_clusters": _json.loads(row["echo_chamber_clusters"]),
+        "most_independent_sources": _json.loads(row["most_independent_sources"]),
+    }
+
+
+def get_relationships_for_market(market_id: str) -> dict:
+    """For all sources predicting on `market_id`, return their pairwise relationships.
+
+    Returns {(handle_a, handle_b): row, ...}. Used by the network-adjusted
+    consensus calculation.
+    """
+    with conn() as c:
+        # Get all source handles predicting on this market
+        handles = [
+            r["source_handle"] for r in c.execute(
+                "SELECT DISTINCT source_handle FROM predictions WHERE market_id = ?",
+                (market_id,),
+            ).fetchall()
+        ]
+    if len(handles) < 2:
+        return {}
+    result = {}
+    for i, a in enumerate(handles):
+        for b in handles[i + 1:]:
+            rel = get_relationship_between(a, b)
+            if rel:
+                result[(rel["source_a"], rel["source_b"])] = rel
+    return result
+
+
+# ── Weekly intelligence report operations ────────────────────────────────────
+
+
+def upsert_weekly_report(
+    user_id: int,
+    week_start: int,
+    week_end: int,
+    *,
+    pdf_path: Optional[str] = None,
+    best_bets_correct: int = 0,
+    best_bets_total: int = 0,
+    simulated_roi_pct: float = 0.0,
+    top_signal_market: Optional[str] = None,
+    top_source_handle: Optional[str] = None,
+    total_predictions: int = 0,
+    total_markets: int = 0,
+    high_cred_accuracy: Optional[float] = None,
+) -> int:
+    """Insert or update a weekly report record. Returns the row ID."""
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            """
+            INSERT INTO weekly_reports
+                (user_id, week_start, week_end, generated_at, pdf_path,
+                 best_bets_correct, best_bets_total, simulated_roi_pct,
+                 top_signal_market, top_source_handle,
+                 total_predictions, total_markets, high_cred_accuracy)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, week_start) DO UPDATE SET
+                generated_at = excluded.generated_at,
+                pdf_path = excluded.pdf_path,
+                best_bets_correct = excluded.best_bets_correct,
+                best_bets_total = excluded.best_bets_total,
+                simulated_roi_pct = excluded.simulated_roi_pct,
+                top_signal_market = excluded.top_signal_market,
+                top_source_handle = excluded.top_source_handle,
+                total_predictions = excluded.total_predictions,
+                total_markets = excluded.total_markets,
+                high_cred_accuracy = excluded.high_cred_accuracy
+            """,
+            (user_id, week_start, week_end, now, pdf_path,
+             best_bets_correct, best_bets_total, simulated_roi_pct,
+             top_signal_market, top_source_handle,
+             total_predictions, total_markets, high_cred_accuracy),
+        )
+        row = c.execute(
+            "SELECT id FROM weekly_reports WHERE user_id = ? AND week_start = ?",
+            (user_id, week_start),
+        ).fetchone()
+        return row["id"] if row else 0
+
+
+def mark_report_delivered(report_id: int) -> None:
+    """Set delivered_at on a weekly report."""
+    with conn() as c:
+        c.execute(
+            "UPDATE weekly_reports SET delivered_at = ? WHERE id = ?",
+            (int(time.time()), report_id),
+        )
+
+
+def list_weekly_reports(user_id: int, limit: int = 20) -> list:
+    """Return a user's weekly reports, newest first."""
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM weekly_reports WHERE user_id = ? ORDER BY week_start DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+
+
+def get_weekly_report(report_id: int) -> Optional[sqlite3.Row]:
+    """Get a single weekly report by ID."""
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM weekly_reports WHERE id = ?", (report_id,)
+        ).fetchone()
+
+
+def get_report_data_for_week(week_start: int, week_end: int) -> dict:
+    """Collect the raw data needed to generate a weekly report.
+
+    This is a data-only function — it reads from predictions, sources, and
+    credibility tables but does NOT call Claude. The report generator
+    calls this, then passes the result to Claude for narrative generation.
+
+    Returns a dict with keys:
+        resolved_predictions: list[dict] - predictions that resolved this week
+        top_sources: list[dict] - sources ranked by this week's accuracy
+        high_cred_predictions: list[dict] - high-credibility predictions made this week
+        total_predictions: int
+        total_markets: int
+        high_cred_correct: int
+        high_cred_total: int
+    """
+    with conn() as c:
+        # Predictions that resolved during the week
+        resolved = c.execute(
+            """
+            SELECT p.*, sc.global_credibility, sc.accuracy_unlocked
+            FROM predictions p
+            LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle
+            WHERE p.resolved = 1
+              AND p.resolved_at >= ? AND p.resolved_at < ?
+            ORDER BY p.resolved_at DESC
+            """,
+            (week_start, week_end),
+        ).fetchall()
+
+        # All predictions made during the week (not just resolved)
+        week_predictions = c.execute(
+            """
+            SELECT p.*, sc.global_credibility, sc.accuracy_unlocked
+            FROM predictions p
+            LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle
+            WHERE p.extracted_at >= ? AND p.extracted_at < ?
+            ORDER BY sc.global_credibility DESC NULLS LAST
+            """,
+            (week_start, week_end),
+        ).fetchall()
+
+        # Unique markets seen this week
+        markets_count = c.execute(
+            """
+            SELECT COUNT(DISTINCT market_id) FROM predictions
+            WHERE extracted_at >= ? AND extracted_at < ?
+              AND market_id IS NOT NULL AND market_id != ''
+            """,
+            (week_start, week_end),
+        ).fetchone()[0]
+
+        # Source performance this week (only sources with resolved predictions)
+        source_perf = c.execute(
+            """
+            SELECT
+                p.source_handle,
+                sc.global_credibility,
+                COUNT(*) AS total,
+                SUM(CASE WHEN p.resolved_correct = 1 THEN 1 ELSE 0 END) AS correct
+            FROM predictions p
+            LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle
+            WHERE p.resolved = 1
+              AND p.resolved_at >= ? AND p.resolved_at < ?
+            GROUP BY p.source_handle
+            HAVING total >= 2
+            ORDER BY correct * 1.0 / total DESC, sc.global_credibility DESC
+            LIMIT 10
+            """,
+            (week_start, week_end),
+        ).fetchall()
+
+        # High-credibility predictions this week (cred >= 0.7)
+        high_cred = [
+            p for p in resolved
+            if p["global_credibility"] and p["global_credibility"] >= 0.7
+        ]
+        high_cred_correct = sum(1 for p in high_cred if p["resolved_correct"])
+
+    return {
+        "resolved_predictions": [dict(r) for r in resolved],
+        "top_sources": [dict(s) for s in source_perf],
+        "high_cred_predictions": [dict(p) for p in high_cred],
+        "week_predictions": [dict(p) for p in week_predictions[:50]],
+        "total_predictions": len(week_predictions),
+        "total_markets": markets_count,
+        "high_cred_correct": high_cred_correct,
+        "high_cred_total": len(high_cred),
+    }

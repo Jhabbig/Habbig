@@ -30,3 +30,4 @@ from jobs import email_jobs  # noqa: F401
 from jobs import notification_jobs  # noqa: F401
 from jobs import pipeline_jobs  # noqa: F401
 from jobs import resolution_jobs  # noqa: F401
+from jobs import insider_jobs  # noqa: F401

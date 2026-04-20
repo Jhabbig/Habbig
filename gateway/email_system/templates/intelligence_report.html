@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<title>Your Weekly Intelligence Report — narve.ai</title>
+
+<div style="text-align:center;margin-bottom:24px">
+  <div style="font-size:22px;font-weight:bold;letter-spacing:-0.02em;color:#0d0d0d">
+    NARVE.AI INTELLIGENCE REPORT
+  </div>
+  <div style="font-size:13px;color:#666;margin-top:4px">
+    Week of {{ week_start }} &ndash; {{ week_end }}
+  </div>
+</div>
+
+<p>Hi {{ display_name }},</p>
+
+<p>Your weekly intelligence report is ready. It covers this week's prediction outcomes, source performance, and what to watch next week.</p>
+
+<div style="text-align:center;margin:28px 0">
+  <a href="{{ app_url }}/reports/weekly/{{ report_id }}"
+     style="display:inline-block;padding:14px 32px;background:#0d0d0d;color:#fff;
+            text-decoration:none;border-radius:6px;font-size:14px;font-weight:600">
+    View Your Report
+  </a>
+</div>
+
+<p style="font-size:13px;color:#666">
+  You can also download the PDF directly from your
+  <a href="{{ app_url }}/settings" style="color:#0d0d0d">account settings</a>
+  under the Reports section.
+</p>
+
+<hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+
+<p style="font-size:11px;color:#aaa;text-align:center">
+  You're receiving this because you have a Pro subscription with weekly reports enabled.<br>
+  <a href="{{ unsubscribe_url }}" style="color:#aaa">Unsubscribe from weekly reports</a>
+</p>
+{% endblock %}

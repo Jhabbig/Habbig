@@ -88,7 +88,7 @@ def upgrade_to_head() -> dict:
             with db.conn() as c:
                 mod.upgrade(c)
                 c.execute(
-                    "INSERT INTO schema_version (revision, applied_at) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO schema_version (revision, applied_at) VALUES (?, ?)",
                     (mod.revision, int(time.time())),
                 )
             count += 1

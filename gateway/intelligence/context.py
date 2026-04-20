@@ -24,6 +24,12 @@ _ENV_HINTS = re.compile(
     r"paris|ipcc|emit|sustainab|renewable|fossil|coal|solar|wind|ev|electric vehicle)\b",
     re.I,
 )
+_INSIDER_HINTS = re.compile(
+    r"\b(insider|congress|senator|representative|sec filing|form[- ]?4|"
+    r"executive trad|stock act|capitol trade|campaign financ|fec|"
+    r"lobbying|political trad|insider signal|insider alert)\b",
+    re.I,
+)
 _CATEGORY_HINTS = {
     "politics": re.compile(r"\b(politic|election|primary|senate|congress|president|trump|biden)\b", re.I),
     "sports": re.compile(r"\b(sport|nba|nfl|mlb|football|basketball|soccer|world cup|playoffs?)\b", re.I),
@@ -170,6 +176,34 @@ async def build_intelligence_context(user: dict, message: str, history: list) ->
             parts.append("## Environmental impact context\n" + "\n".join(lines))
             metadata["sections"].append("environmental")
             metadata["env_impacts_count"] = len(env_impacts)
+
+    # Insider trading signal context — congressional trades, SEC filings, etc.
+    if _INSIDER_HINTS.search(message):
+        try:
+            insider_signals = db.get_insider_signals(days=30, limit=8)
+        except Exception:
+            insider_signals = []
+        if insider_signals:
+            lines = []
+            for sig in insider_signals:
+                amount_str = f"${sig['amount_usd']:,.0f}" if sig.get("amount_usd") else "undisclosed"
+                lines.append(
+                    f"- [{sig['signal_strength'].upper()}] {sig['signal_type'].replace('_', ' ').title()}: "
+                    f"{sig['source_name']} {sig['action']} {sig['asset_or_entity']} ({amount_str})"
+                )
+                # Include correlations if available
+                try:
+                    corrs = db.get_insider_correlations_for_signal(sig["id"])
+                    for corr in corrs[:2]:
+                        lines.append(
+                            f"  → Correlated: {_truncate(corr['market_question'] or '', 80)} "
+                            f"(implied {corr['implied_direction']}, score: {corr['insider_score']:.2f})"
+                        )
+                except Exception:
+                    pass
+            parts.append("## Insider trading signals (last 30 days)\n" + "\n".join(lines))
+            metadata["sections"].append("insider_signals")
+            metadata["insider_signals_count"] = len(insider_signals)
 
     text = "\n\n".join(parts)
     metadata["context_length"] = len(text)

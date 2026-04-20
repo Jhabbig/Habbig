@@ -1,0 +1,829 @@
+/* narve Pulse — scoped styles for /pulse dashboard
+ * All selectors are .pulse-* to avoid bleeding into other gateway pages.
+ * Theme variables (--bg-base, --text-primary, etc.) are inherited from gateway.css. */
+
+/* ── HERO ─────────────────────────────────────────────────────── */
+.pulse-hero {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
+}
+
+.pulse-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 2fr;
+  gap: var(--space-6);
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .pulse-hero-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pulse-hero-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pulse-hero-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+}
+
+.pulse-hero-value {
+  font-size: 88px;
+  line-height: 0.9;
+  font-weight: 300;
+  font-family: 'Inter', -apple-system, sans-serif;
+  color: var(--text-primary);
+  letter-spacing: -0.04em;
+  margin: var(--space-2) 0;
+  font-feature-settings: 'tnum';
+}
+
+.pulse-hero-meta {
+  font-size: 14px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pulse-hero-meta-sep {
+  color: var(--text-quaternary);
+}
+
+.pulse-hero-desc {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin-top: var(--space-3);
+  max-width: 360px;
+}
+
+.pulse-hero-right {
+  width: 100%;
+  min-height: 220px;
+}
+
+/* ── Charts (SVG) ─────────────────────────────────────────────── */
+.pulse-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+
+.pulse-chart-hero {
+  height: 280px;
+}
+
+.pulse-chart .axis-line {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+  fill: none;
+}
+
+.pulse-chart .grid-line {
+  stroke: var(--border-ghost);
+  stroke-width: 1;
+  fill: none;
+  stroke-dasharray: none;
+}
+
+.pulse-chart .axis-label {
+  fill: var(--text-tertiary);
+  font-size: 10px;
+  font-family: 'Inter', sans-serif;
+}
+
+.pulse-chart .history-line {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.pulse-chart .forecast-line {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+.pulse-chart .forecast-band {
+  fill: var(--text-primary);
+  opacity: 0.08;
+  stroke: none;
+}
+
+.pulse-chart .event-marker {
+  stroke: var(--text-quaternary);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  fill: none;
+  opacity: 0.6;
+}
+
+.pulse-chart .event-label {
+  fill: var(--text-quaternary);
+  font-size: 9px;
+  font-family: 'Inter', sans-serif;
+  text-anchor: start;
+}
+
+.pulse-chart .playhead {
+  stroke: var(--text-primary);
+  stroke-width: 1.5;
+  fill: none;
+  opacity: 0.9;
+}
+
+.pulse-chart .playhead-dot {
+  fill: var(--text-primary);
+  stroke: var(--bg-base);
+  stroke-width: 2;
+}
+
+.pulse-chart .playhead-label {
+  fill: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  text-anchor: middle;
+}
+
+/* ── Time Machine ─────────────────────────────────────────────── */
+.pulse-time-machine {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.pulse-time-machine-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.pulse-time-machine-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+}
+
+.pulse-time-machine-current {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.pulse-time-machine-current strong {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-feature-settings: 'tnum';
+  margin: 0 var(--space-1);
+}
+
+.pulse-tm-mode {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--interactive-ghost);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-left: var(--space-2);
+}
+
+.pulse-tm-mode.forecast {
+  background: var(--text-primary);
+  color: var(--text-inverse);
+}
+
+.pulse-time-machine-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.pulse-tm-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pulse-tm-btn:hover {
+  background: var(--text-primary);
+  color: var(--text-inverse);
+  border-color: var(--text-primary);
+}
+
+.pulse-tm-slider {
+  flex: 1;
+  min-width: 200px;
+  margin-left: var(--space-3);
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border-default);
+  border-radius: 2px;
+  outline: none;
+}
+
+.pulse-tm-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  cursor: pointer;
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+.pulse-tm-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  cursor: pointer;
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+.pulse-time-machine-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* ── Sections ─────────────────────────────────────────────────── */
+.pulse-section {
+  margin-bottom: var(--space-7);
+}
+
+.pulse-section-head {
+  margin-bottom: var(--space-4);
+}
+
+.pulse-section-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+.pulse-section-title {
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-2);
+  letter-spacing: -0.01em;
+}
+
+.pulse-section-sub {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 720px;
+  line-height: 1.5;
+}
+
+/* ── What's Moving Now grid ───────────────────────────────────── */
+.pulse-moving-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-3);
+}
+
+.pulse-moving-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  transition: all 0.15s;
+}
+
+.pulse-moving-card:hover {
+  border-color: var(--border-default);
+  background: var(--bg-raised);
+}
+
+.pulse-moving-card-driver {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.pulse-moving-card-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.pulse-moving-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: 12px;
+}
+
+.pulse-moving-card-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--interactive-ghost);
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.pulse-moving-card-arrow.up::before { content: "↑"; }
+.pulse-moving-card-arrow.down::before { content: "↓"; }
+
+.pulse-moving-card-mag {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.pulse-moving-card-lag {
+  color: var(--text-quaternary);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+/* ── Charts grid ──────────────────────────────────────────────── */
+.pulse-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: var(--space-4);
+}
+
+@media (max-width: 720px) {
+  .pulse-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pulse-chart-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  transition: border-color 0.15s;
+}
+
+.pulse-chart-card:hover {
+  border-color: var(--border-default);
+}
+
+.pulse-chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.pulse-chart-card-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.pulse-chart-card-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: -0.005em;
+}
+
+.pulse-chart-card-sub {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 2px 0 0;
+}
+
+.pulse-chart-card-value {
+  text-align: right;
+  font-feature-settings: 'tnum';
+}
+
+.pulse-chart-card-current {
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.pulse-chart-card-unit {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.pulse-chart-card-svg-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 140px;
+}
+
+.pulse-chart-card-svg {
+  width: 100%;
+  height: 160px;
+  display: block;
+}
+
+.pulse-chart-card-delta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-ghost);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-feature-settings: 'tnum';
+}
+
+.pulse-chart-card-delta-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* ── Consequence cards (What this moves) ─────────────────────── */
+.pulse-chart-card-moves {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-ghost);
+}
+
+.pulse-chart-card-moves-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--text-quaternary);
+  margin-bottom: var(--space-1);
+}
+
+.pulse-move {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 3px 0;
+}
+
+.pulse-move-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.pulse-move-arrow.up::before { content: "↑"; }
+.pulse-move-arrow.down::before { content: "↓"; }
+
+.pulse-move-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.pulse-move-mag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-quaternary);
+  font-weight: 600;
+}
+
+.pulse-narve-read {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-inset);
+  border-left: 2px solid var(--text-primary);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.pulse-narve-read strong {
+  font-style: normal;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ── Chart card source footer ─────────────────────────────────── */
+.pulse-chart-card-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-ghost);
+  font-size: 10px;
+  color: var(--text-quaternary);
+}
+
+.pulse-chart-card-source a {
+  color: var(--text-tertiary);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border-default);
+}
+
+.pulse-chart-card-source a:hover {
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
+}
+
+.pulse-chart-card-source-method {
+  font-style: italic;
+}
+
+/* ── Methodology footer ───────────────────────────────────────── */
+.pulse-methodology {
+  margin-top: var(--space-7);
+  padding: var(--space-6);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.pulse-methodology-body {
+  margin-top: var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 760px;
+}
+
+.pulse-methodology-body p {
+  margin: 0 0 var(--space-3);
+}
+
+.pulse-methodology-body code {
+  background: var(--bg-inset);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-primary);
+}
+
+.pulse-disclaimer {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-ghost);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* ── Historical Misery Playbook ───────────────────────────────── */
+.pulse-playbook-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: var(--space-4);
+}
+
+@media (max-width: 720px) {
+  .pulse-playbook-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pulse-playbook-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  transition: border-color 0.15s;
+}
+
+.pulse-playbook-card:hover {
+  border-color: var(--border-default);
+}
+
+.pulse-playbook-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-ghost);
+}
+
+.pulse-playbook-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.pulse-playbook-years {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+}
+
+.pulse-playbook-name {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 2px 0 0;
+  letter-spacing: -0.01em;
+}
+
+.pulse-playbook-delta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 6px 12px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+  min-width: 84px;
+}
+
+.pulse-playbook-delta-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-quaternary);
+}
+
+.pulse-playbook-delta-value {
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--text-primary);
+  font-feature-settings: 'tnum';
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.pulse-playbook-headline {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.pulse-playbook-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pulse-playbook-col-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--text-quaternary);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px dashed var(--border-ghost);
+}
+
+.pulse-playbook-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-ghost);
+}
+
+.pulse-playbook-item:last-child {
+  border-bottom: none;
+}
+
+.pulse-playbook-item-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.pulse-playbook-item-arrow.up::before { content: "↑"; }
+.pulse-playbook-item-arrow.down::before { content: "↓"; }
+
+.pulse-playbook-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pulse-playbook-item-label {
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.pulse-playbook-item-detail {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 1px;
+  line-height: 1.3;
+}
+
+.pulse-playbook-item-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-feature-settings: 'tnum';
+  white-space: nowrap;
+  margin-left: var(--space-2);
+  flex-shrink: 0;
+}
+
+.pulse-playbook-surprises {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--text-primary);
+}
+
+.pulse-playbook-surprise {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding-left: var(--space-3);
+  position: relative;
+}
+
+.pulse-playbook-surprise::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--text-primary);
+  font-weight: 700;
+}

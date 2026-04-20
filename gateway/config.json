@@ -64,6 +64,16 @@
       "monthly_cents": 1299,
       "annual_cents": 12900,
       "supports_websocket": false
+    },
+    "annoyance": {
+      "subdomain": "annoyance",
+      "target": 8053,
+      "display_name": "Annoyance Index",
+      "description": "Leading-indicator frustration signal — spikes before the news",
+      "accent": "#ff4d4f",
+      "monthly_cents": 1499,
+      "annual_cents": 14900,
+      "supports_websocket": false
     }
   }
 }

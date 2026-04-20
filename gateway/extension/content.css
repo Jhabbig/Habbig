@@ -1,0 +1,190 @@
+/* narve.ai extension overlay — monochrome, light theme to match Polymarket */
+
+#narve-overlay {
+  margin: 12px 0;
+  font-family: -apple-system, 'Jost', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.narve-panel {
+  background: #ffffff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 16px;
+  max-width: 620px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+/* Header */
+.narve-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.narve-logo {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: #0d0d0d;
+}
+
+.narve-confidence {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  border: 1px solid #e5e5e5;
+  color: #666;
+  font-weight: 500;
+}
+
+.narve-conf-high       { border-color: #0d0d0d; color: #0d0d0d; }
+.narve-conf-medium     { border-color: #999; color: #666; }
+.narve-conf-low        { border-color: #ccc; color: #aaa; }
+
+.narve-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #bbb;
+  font-size: 18px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.narve-close:hover { color: #666; }
+
+/* Probability consensus */
+.narve-consensus { margin-bottom: 8px; }
+
+.narve-prob-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.narve-prob-label {
+  font-size: 9px;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+}
+
+.narve-prob-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  color: #0d0d0d;
+  letter-spacing: -0.02em;
+}
+
+.narve-arrow {
+  font-size: 14px;
+  color: #ccc;
+}
+
+.narve-edge {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+.narve-edge-positive { background: #f5f5f5; color: #0d0d0d; }
+.narve-edge-negative { background: #fafafa; color: #aaa; }
+.narve-edge-neutral  { background: #fafafa; color: #999; }
+
+.narve-risk-flag {
+  font-size: 11px;
+  color: #888;
+  margin-top: 6px;
+  padding: 4px 0;
+  border-top: 1px solid #f5f5f5;
+}
+
+/* Sources */
+.narve-sources {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.narve-sources-header {
+  font-size: 9px;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.narve-source {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: #666;
+  padding: 3px 0;
+  align-items: baseline;
+}
+
+.narve-source-handle { font-weight: 500; color: #0d0d0d; min-width: 90px; }
+.narve-source-cred   { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #999; min-width: 32px; }
+.narve-source-pred   { color: #666; }
+
+/* Insider signals */
+.narve-insider {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.narve-insider-header {
+  font-size: 11px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: #0d0d0d;
+}
+
+.narve-insider-item {
+  font-size: 11px;
+  color: #666;
+  padding: 2px 0;
+}
+
+/* Footer */
+.narve-footer {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
+  margin-top: 10px;
+  text-align: right;
+}
+
+.narve-footer a {
+  font-size: 11px;
+  color: #0d0d0d;
+  text-decoration: none;
+  font-weight: 500;
+}
+.narve-footer a:hover { text-decoration: underline; }
+
+/* Unauthenticated / empty states */
+.narve-msg {
+  font-size: 12px;
+  color: #888;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.narve-btn {
+  display: inline-block;
+  padding: 6px 14px;
+  background: #0d0d0d;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.narve-btn:hover { background: #333; }

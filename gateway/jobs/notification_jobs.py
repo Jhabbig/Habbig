@@ -321,3 +321,156 @@ register_cron(
 )
 # Market mover alerts: hourly at :32 (offset from other cron jobs).
 register_cron("check_market_movers", minute=32)
+
+
+# ── Real-time market movement detection ──────────────────────────────────────
+
+
+@register_job("detect_market_movements")
+async def detect_market_movements(
+    price_threshold: float = 0.08,
+    lookback_seconds: int = 7200,
+    cooldown_seconds: int = 1800,
+) -> dict[str, Any]:
+    """5-minute cycle: detect movements, deduplicate, persist, deliver alerts."""
+    import db
+    import json as _json
+    import os
+    import time as _time
+
+    from backend.markets.movement_detector import (
+        MarketMovementDetector,
+        deduplicate,
+        persist_events,
+    )
+
+    now = int(_time.time())
+
+    # Fetch and enrich markets
+    try:
+        from backend.markets import unified_markets
+        from backend.markets.polymarket_client import PolymarketClient
+        from backend.markets.kalshi_client import KalshiClient
+
+        poly = PolymarketClient()
+        kalshi = KalshiClient(
+            base_url=os.environ.get(
+                "KALSHI_API_BASE",
+                "https://trading-api.kalshi.com/trade-api/v2",
+            ),
+        )
+        markets = await unified_markets.fetch_unified_markets(poly, kalshi, cache_ttl=120)
+        active = [m for m in markets if m.status == "active"]
+        enriched = unified_markets.enrich_markets_with_intelligence(active)
+        await poly.close()
+        await kalshi.close()
+    except Exception as e:
+        log.exception("Movement detection: fetch failed: %s", e)
+        return {"events": 0, "error": str(e)}
+
+    # Detect
+    detector = MarketMovementDetector(
+        price_threshold=price_threshold,
+        lookback_seconds=lookback_seconds,
+    )
+    raw_events = detector.detect(enriched, now=now)
+
+    # Deduplicate against recently persisted events
+    events = deduplicate(raw_events, cooldown_seconds=cooldown_seconds)
+    if not events:
+        return {"events": 0, "alerts_sent": 0}
+
+    # Persist
+    event_ids = persist_events(events)
+    log.info("Movement detection: %d events persisted", len(event_ids))
+
+    # Deliver alerts
+    alerts_sent = 0
+    severity_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+    for ev, ev_id in zip(events, event_ids):
+        rules = db.get_alert_rules_for_event(ev.event_type)
+        for rule in rules:
+            # Severity filter
+            rule_min = severity_rank.get(rule["min_severity"], 1)
+            event_sev = severity_rank.get(ev.severity, 1)
+            if event_sev < rule_min:
+                continue
+
+            # Price change filter
+            if rule["min_price_change"] and ev.price_change is not None:
+                if abs(ev.price_change) < rule["min_price_change"]:
+                    continue
+
+            # Category filter
+            try:
+                cats = _json.loads(rule["categories_json"] or "[]")
+            except Exception:
+                cats = []
+            if cats and ev.category and ev.category not in cats:
+                continue
+
+            # only_saved: check if user has saved predictions for this market
+            if rule["only_saved"]:
+                user_saved = db.saved_prediction_ids_for_user(rule["user_id"])
+                market_preds = db.get_predictions_for_market(ev.market_slug)
+                pred_ids = {p["id"] for p in market_preds}
+                if not (user_saved & pred_ids):
+                    continue
+
+            # only_followed: check if user follows sources that predicted on this market
+            if rule["only_followed"]:
+                followed = db.get_followed_sources(rule["user_id"])
+                market_preds = db.get_predictions_for_market(ev.market_slug)
+                pred_handles = {p["source_handle"] for p in market_preds}
+                if not (followed & pred_handles):
+                    continue
+
+            # Deliver based on delivery preference
+            delivery = rule["delivery"] or "in_app"
+
+            if delivery in ("email", "both"):
+                try:
+                    from jobs.email_jobs import enqueue_email
+                    app_url = os.environ.get("APP_URL", "https://narve.ai")
+                    await enqueue_email(
+                        to=rule["email"],
+                        template="market_mover_alert",
+                        context={
+                            "app_url": app_url,
+                            "market_title": (ev.market_question or ev.market_slug)[:100],
+                            "event_type": ev.event_type,
+                            "severity": ev.severity,
+                            "price_change": ev.price_change,
+                            "price_change_display": (
+                                f"{'+' if (ev.price_change or 0) > 0 else ''}"
+                                f"{int((ev.price_change or 0) * 100)}pp"
+                            ),
+                            "current_price": int((ev.new_price or 0) * 100),
+                            "previous_price": int((ev.old_price or 0) * 100),
+                            "unsubscribe_url": f"{app_url}/unsubscribe?type=digest",
+                        },
+                        tags=["market_movement_alert"],
+                    )
+                    alerts_sent += 1
+                except Exception as e:
+                    log.warning(
+                        "Movement alert email failed user=%d: %s",
+                        rule["user_id"], e,
+                    )
+
+            if delivery in ("in_app", "both"):
+                # In-app: events are already persisted and queryable via API
+                alerts_sent += 1
+
+    # Mark events as notified
+    db.mark_events_notified(event_ids)
+
+    return {"events": len(events), "alerts_sent": alerts_sent}
+
+
+# Every 5 minutes at :02, :07, :12, ... — the registry only supports single
+# minute values, so we pick minute=2 for a single run per hour. For true
+# 5-minute cadence the scheduler would need interval support; for now hourly
+# at :02 is a good starting point that avoids the :00 herd.
+register_cron("detect_market_movements", minute=2)

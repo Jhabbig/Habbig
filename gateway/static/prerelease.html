@@ -3,342 +3,179 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>narve.ai</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fraunces:ital,opsz,wght@1,9..144,400&display=swap" rel="stylesheet">
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { min-height: 100vh; background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); display: flex; flex-direction: column; justify-content: center; align-items: center; overflow-x: hidden; }
-
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(16px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    /* Logo */
-    .pr-logo {
-      position: fixed;
-      top: 28px;
-      left: 28px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      text-decoration: none;
-      z-index: 10;
-    }
-    /* Black logo by default (light theme). Dark theme inverts it to white. */
-    .pr-logo-icon { width: 48px; height: 48px; border-radius: 6px; }
-    :root[data-theme="dark"] .pr-logo-icon { filter: invert(1); }
-    .pr-logo-text {
-      font-family: var(--font-ui);
-      font-weight: 600;
-      font-size: 1.5rem;
-      letter-spacing: -0.04em;
-      color: var(--text-primary);
-    }
-
-    /* Admin login */
-    .pr-admin {
-      position: fixed;
-      top: 32px;
-      right: 28px;
-      font-family: var(--font-ui);
-      font-size: 0.85rem;
-      font-weight: 400;
-      color: var(--text-tertiary);
-      text-decoration: none;
-      transition: color 0.2s ease;
-      z-index: 10;
-    }
-    .pr-admin:hover { color: var(--text-primary); }
-
-    /* Hero */
-    .pr-hero { text-align: center; padding: 32px; max-width: 720px; }
-    .pr-line1 {
-      font-family: var(--font-ui);
-      font-weight: 300;
-      font-size: clamp(3rem, 7vw, 5.5rem);
-      letter-spacing: -0.03em;
-      line-height: 1.1;
-      color: var(--text-primary);
-      animation: fadeUp 0.8s ease-out 0.3s both;
-    }
-    .pr-line2 {
-      font-size: clamp(3rem, 7vw, 5.5rem);
-      letter-spacing: -0.03em;
-      line-height: 1.1;
-      color: var(--text-primary);
-      margin-top: 0.05em;
-      animation: fadeUp 0.8s ease-out 0.8s both;
-    }
-    .pr-line2-start {
-      font-family: var(--font-ui);
-      font-weight: 300;
-    }
-    .pr-line2-end {
-      font-family: 'Fraunces', 'Lora', Georgia, serif;
-      font-style: italic;
-      font-weight: 400;
-    }
-    .pr-soon {
-      font-family: var(--font-display);
-      font-style: italic;
-      font-weight: 400;
-      font-size: 1.05rem;
-      letter-spacing: 0.1em;
-      color: var(--text-tertiary);
-      margin-top: 3rem;
-      animation: fadeUp 0.8s ease-out 1.3s both;
-    }
-
-    /* Email signup */
-    .pr-signup {
-      margin-top: 2.5rem;
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      justify-content: center;
-      animation: fadeUp 0.8s ease-out 1.6s both;
-    }
-    .pr-input {
-      height: 52px;
-      padding: 0 20px;
-      border: 1px solid var(--border-default);
-      border-radius: 10px;
-      background: var(--interactive-ghost);
-      font-family: var(--font-ui);
-      font-size: 1rem;
-      color: var(--text-primary);
-      width: 320px;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    .pr-input:focus { border-color: var(--border-strong); box-shadow: 0 0 0 3px var(--interactive-ghost); }
-    .pr-input::placeholder { color: var(--text-tertiary); font-family: var(--font-display); font-style: italic; }
-    .pr-btn {
-      height: 52px;
-      padding: 0 28px;
-      background: var(--interactive-bg);
-      color: var(--interactive-text);
-      border: none;
-      border-radius: 10px;
-      font-family: var(--font-display);
-      font-style: italic;
-      font-size: 1rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.15s;
-      white-space: nowrap;
-    }
-    .pr-btn:hover { background: var(--text-primary); }
-    .pr-error { font-size: 0.8rem; color: var(--text-secondary); margin-top: 10px; display: none; text-align: center; }
-    .pr-error.visible { display: block; }
-    .pr-success {
-      font-family: var(--font-ui);
-      font-weight: 400;
-      font-size: 0.85rem;
-      letter-spacing: 0.01em;
-      color: var(--text-secondary);
-      display: none;
-      margin-top: 2.5rem;
-      text-align: center;
-      max-width: 420px;
-    }
-    .pr-success.visible { display: block; }
-    .pr-success-title { font-family: var(--font-ui); font-weight: 500; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 24px; }
-    .pr-position-block { padding: 24px 0; }
-    .pr-position-number { font-family: 'Fraunces', 'Lora', serif; font-style: italic; font-size: 5rem; line-height: 1; color: var(--text-primary); letter-spacing: -0.04em; }
-    .pr-position-label { font-size: 0.7rem; color: var(--text-tertiary); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 8px; }
-    .pr-ref-row { display: flex; align-items: center; gap: 8px; margin-top: 24px; padding: 10px 14px; background: var(--interactive-ghost); border: 1px solid var(--border-default); border-radius: 8px; }
-    .pr-ref-url { flex: 1; font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-    .pr-ref-copy { background: transparent; border: none; color: var(--text-tertiary); font-size: 0.75rem; cursor: pointer; padding: 4px 8px; font-family: inherit; }
-    .pr-ref-copy:hover { color: var(--text-primary); }
-    .pr-ref-hint { font-size: 0.72rem; color: var(--text-tertiary); line-height: 1.6; margin-top: 16px; }
-    .pr-share-row { display: flex; gap: 8px; margin-top: 18px; justify-content: center; }
-    .pr-share-btn { padding: 8px 16px; background: transparent; border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-secondary); font-size: 0.75rem; text-decoration: none; font-family: inherit; cursor: pointer; }
-    .pr-share-btn:hover { border-color: var(--text-primary); color: var(--text-primary); }
-
-    @media (max-width: 520px) {
-      .pr-signup { flex-direction: column; width: 100%; }
-      .pr-input { width: 100%; }
-      .pr-btn { width: 100%; }
-    }
-  </style>
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <title>narve.ai — Prediction Market Intelligence</title>
+  <meta name="description" content="Invite-only prediction market intelligence. Tracks every prediction made on X and Truth Social, scores each source by historical accuracy, and surfaces high-EV opportunities before the market catches up.">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      letter-spacing: -0.005em;
+      overflow-x: hidden;
+    }
+  </style>
 </head>
 <body>
-  <a href="/" class="pr-logo">
-    <img class="pr-logo-icon" src="/_gateway_static/img/logo.png" alt="narve.ai">
-    <span class="pr-logo-text">narve.ai</span>
-  </a>
-  <a href="/token" class="pr-admin">Admin Login</a>
 
-  <canvas id="particles" style="position:fixed;inset:0;z-index:-1;pointer-events:none"></canvas>
+<section class="v2-hero">
 
-  <div class="pr-hero">
-    <div class="pr-line1">Stop guessing who's right.</div>
-    <div class="pr-line2">
-      <span class="pr-line2-start">Start </span><span class="pr-line2-end">knowing.</span>
+  <!-- ── Atmospheric layers ───────────────────────────────────────────── -->
+  <div class="v2-atmosphere v2-atmosphere-grid" aria-hidden="true"></div>
+  <div class="v2-atmosphere v2-atmosphere-grain" aria-hidden="true"></div>
+  <div class="v2-atmosphere-rule" aria-hidden="true"></div>
+  <div class="v2-atmosphere-hrule" aria-hidden="true"></div>
+
+  <!-- ── Top bar ──────────────────────────────────────────────────────── -->
+  <div class="v2-hero-topbar">
+    <div class="v2-hero-topbar-left">
+      <a href="/" class="v2-hero-wordmark">narve.ai</a>
+      <span class="v2-hero-ticker">
+        <span class="v2-hero-ticker-dot"></span>
+        <strong data-num>847</strong> signals tracked · session live
+      </span>
     </div>
-    <div class="pr-soon">coming soon.</div>
+    <div class="v2-hero-topbar-right">
+      <a href="/enquire" class="v2-btn v2-btn-ghost">Apply for access →</a>
+    </div>
+  </div>
 
-    <div id="signup-wrap">
-      <form class="pr-signup newsletter-form" id="signup-form" onsubmit="return submitEmail(event)">
-        <input class="pr-input" type="email" id="pr-email" placeholder="Enter your email" required>
-        <button class="pr-btn" type="submit" id="pr-btn">Notify me</button>
-      </form>
-      <div class="pr-error" id="pr-error"></div>
-      <p style="font-size:11px;color:var(--text-tertiary);margin-top:14px;line-height:1.5">
-        No spam. Unsubscribe anytime. Essential cookies only. See our
-        <a href="/terms" style="color:var(--text-secondary);text-decoration:underline">Terms</a>
-        and <a href="/privacy" style="color:var(--text-secondary);text-decoration:underline">Privacy Policy</a>.
+  <!-- ── Floating data numbers (fullbleed across the hero) ────────────── -->
+  <div class="v2-floaters" id="floaters" aria-hidden="true"></div>
+
+  <!-- ── Main hero ────────────────────────────────────────────────────── -->
+  <div class="v2-hero-main">
+
+    <!-- Left: headline + form -->
+    <div class="v2-hero-left">
+      <div class="v2-hero-eyebrow">Invite-only · Prediction market intelligence</div>
+
+      <!-- Word-by-word reveal. Grid-breaks into right column. -->
+      <h1 class="v2-hero-headline">
+        <span class="v2-word">Stop</span>
+        <span class="v2-word">guessing</span>
+        <span class="v2-word">who&rsquo;s right.</span><br>
+        <span class="v2-word">Start</span>
+        <span class="v2-word">knowing.</span>
+      </h1>
+
+      <p class="v2-hero-sub">
+        narve.ai tracks every prediction made on X and Truth Social, scores each
+        source by historical accuracy, and surfaces high-EV opportunities before
+        the market catches up.
       </p>
-    </div>
-    <div class="pr-success" id="pr-success">
-      <div class="pr-success-title">You're on the list.</div>
-      <div class="pr-position-block">
-        <div class="pr-position-number">#<span id="pr-position">—</span></div>
-        <div class="pr-position-label">on the waitlist</div>
-      </div>
-      <div style="font-size:0.78rem;color:var(--text-tertiary);margin-top:4px">Share your spot:</div>
-      <div class="pr-ref-row">
-        <div class="pr-ref-url" id="pr-ref-url">—</div>
-        <button class="pr-ref-copy" type="button" onclick="copyRef()">📋 Copy</button>
-      </div>
-      <div class="pr-ref-hint">
-        Move up the list by referring friends. Each person who signs up with your link
-        moves you <strong style="color:var(--text-secondary)">5 places forward</strong>.
-      </div>
-      <div class="pr-share-row">
-        <a class="pr-share-btn" id="pr-share-x" href="#" target="_blank" rel="noopener">Share on X →</a>
-        <a class="pr-share-btn" id="pr-share-wa" href="#" target="_blank" rel="noopener">Share on WhatsApp →</a>
+
+      <form class="v2-hero-form" id="waitlist-form" method="post" action="/api/newsletter" novalidate>
+        {{ raw_csrf_field }}
+        <input type="email" name="email" required placeholder="you@domain.com"
+               class="v2-input v2-input-lg" autocomplete="email" spellcheck="false">
+        <button type="submit" class="v2-btn v2-btn-primary">Join waitlist →</button>
+      </form>
+      <div class="v2-hero-note" id="waitlist-note">
+        Cleared to bet with an edge. Request access and we&rsquo;ll be in touch.
       </div>
     </div>
+
+    <!-- Editorial byline beside the headline -->
+    <aside class="v2-hero-byline">
+      <strong>ISSUE No. 001</strong>
+      An invite-only intelligence dispatch for serious traders of Polymarket
+      &amp; Kalshi &mdash; 2026 cohort.
+    </aside>
+
   </div>
-  <div style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--text-tertiary);z-index:5">
-    <a href="/terms" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">Terms</a> ·
-    <a href="/privacy" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">Privacy</a>
+
+  <!-- ── Bottom stats strip ───────────────────────────────────────────── -->
+  <div class="v2-hero-stats">
+    <span class="v2-hero-stat"><strong data-num>847</strong> predictions tracked today</span>
+    <span class="v2-hero-stat"><strong data-num>234</strong> active markets</span>
+    <span class="v2-hero-stat"><strong data-num>71.4%</strong> signal accuracy &middot; backtest</span>
+    <span class="v2-hero-stat"><strong data-num>0.794</strong> avg top-quartile credibility</span>
   </div>
+
+</section>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-  var canvas = document.getElementById('particles');
-  var ctx = canvas.getContext('2d');
-  var particles = [];
-  var count = 60;
+// ── Floating data numbers — drift across the entire hero ───────────────
+(function () {
+  var container = document.getElementById('floaters');
+  if (!container) return;
 
-  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-  resize();
-  window.addEventListener('resize', resize);
+  var samples = [
+    '0.847', '73%', '+0.142', '0.721', '61% YES', '0.631', '88%', '+0.089',
+    '0.794', '44% NO', '0.502', '55%', '−0.031', '0.909', '92% YES', '0.412',
+    '27%', '+0.067', '0.688', '36% NO', '0.777', '68%', '+0.124', '0.551',
+    '0.812', '9/11 correct', '0.743', '3 agree', '0.665', '+0.201', '0.439',
+    '@fedwatcher', '@polymath', 'EV +0.11', '0.927', 'HIGH', 'YES 74%',
+    '0.683', '51%', '−0.012', '0.901', '66%', '+0.155', '0.557', '18%',
+    'SEC hold', 'BTC 100K', 'rates cut', '8/11', '6/9'
+  ];
+  var sizes = [
+    { size: 13, weight: 400, peak: 0.22 },
+    { size: 16, weight: 500, peak: 0.30 },
+    { size: 20, weight: 500, peak: 0.26 },
+    { size: 26, weight: 600, peak: 0.18 },
+    { size: 34, weight: 500, peak: 0.12 },
+    { size: 11, weight: 400, peak: 0.18 }
+  ];
 
-  for (var i = 0; i < count; i++) {
-    particles.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      r: 1.5 + Math.random() * 1.5,
-      vx: (Math.random() - 0.5) * 0.3 + (Math.random() > 0.5 ? 0.08 : -0.08),
-      vy: (Math.random() - 0.5) * 0.3 + (Math.random() > 0.5 ? 0.08 : -0.08)
-    });
+  function spawn(initial) {
+    var f = document.createElement('div');
+    f.className = 'v2-floater';
+    f.textContent = samples[Math.floor(Math.random() * samples.length)];
+    var size = sizes[Math.floor(Math.random() * sizes.length)];
+    f.style.fontSize = size.size + 'px';
+    f.style.fontWeight = size.weight;
+    f.style.left = (Math.random() * 92 + 3) + '%';
+    f.style.top  = (Math.random() * 75 + 15) + '%';
+    var dur = (9 + Math.random() * 6).toFixed(1);
+    var delay = initial ? (Math.random() * 2).toFixed(1) : '0';
+    f.style.setProperty('--float-dur', dur + 's');
+    f.style.setProperty('--float-delay', delay + 's');
+    f.style.setProperty('--float-peak', size.peak.toString());
+    container.appendChild(f);
+    setTimeout(function () { f.remove(); }, (parseFloat(dur) + parseFloat(delay) + 0.5) * 1000);
   }
 
-  function particleColor() {
-    // Match the current theme: dark dots on a light bg, light dots on dark.
-    var theme = document.documentElement.getAttribute('data-theme') || 'light';
-    return theme === 'dark' ? 'rgba(240, 240, 240, 0.08)' : 'rgba(10, 10, 10, 0.10)';
-  }
+  // Seed population — ~14 numbers on first paint, staggered in
+  for (var i = 0; i < 14; i++) setTimeout(function () { spawn(true); }, i * 220);
+  // Ambient cadence after
+  setInterval(spawn, 750);
+})();
 
-  document.addEventListener('themechange', function () { /* next frame re-reads */ });
-
-  function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = particleColor();
-    for (var i = 0; i < particles.length; i++) {
-      var p = particles[i];
-      p.x += p.vx; p.y += p.vy;
-      if (p.x < 0) p.x = canvas.width;
-      if (p.x > canvas.width) p.x = 0;
-      if (p.y < 0) p.y = canvas.height;
-      if (p.y > canvas.height) p.y = 0;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
+// ── Waitlist form — minimal confirmation, premium tone ─────────────────
+(function () {
+  var form = document.getElementById('waitlist-form');
+  var note = document.getElementById('waitlist-note');
+  if (!form || !note) return;
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var fd = new FormData(form);
+    var email = (fd.get('email') || '').toString().trim();
+    if (!email || email.indexOf('@') < 0) {
+      note.textContent = 'Enter a valid email address.';
+      return;
     }
-    requestAnimationFrame(draw);
-  }
-  draw();
-});
-
-function getCsrf() {
-  var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
-  return m ? decodeURIComponent(m[1]) : '';
-}
-
-function getRefFromUrl() {
-  // Referral codes are case-sensitive (URL-safe base64 from secrets.token_urlsafe).
-  // Do NOT uppercase — that would corrupt codes containing lowercase chars.
-  var params = new URLSearchParams(window.location.search);
-  return (params.get('ref') || '').trim();
-}
-
-function copyRef() {
-  var url = document.getElementById('pr-ref-url').textContent;
-  if (!url || url === '—') return;
-  navigator.clipboard.writeText(url).then(function() {
-    var btn = document.querySelector('.pr-ref-copy');
-    var old = btn.textContent;
-    btn.textContent = '✓ Copied';
-    setTimeout(function() { btn.textContent = old; }, 1600);
+    fetch('/api/newsletter', { method: 'POST', body: fd, credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.ok) {
+          form.style.display = 'none';
+          note.textContent = 'You\u2019re on the list. We\u2019ll be in touch.';
+        } else {
+          note.textContent = 'Something went wrong. Try again in a moment.';
+        }
+      })
+      .catch(function () {
+        note.textContent = 'Network error. Try again in a moment.';
+      });
   });
-}
-
-function submitEmail(e) {
-  e.preventDefault();
-  var email = document.getElementById('pr-email').value.trim();
-  var errEl = document.getElementById('pr-error');
-  var btn = document.getElementById('pr-btn');
-  errEl.classList.remove('visible');
-  btn.disabled = true; btn.textContent = '...';
-
-  var formBody = new URLSearchParams();
-  formBody.append('email', email);
-  var ref = getRefFromUrl();
-  if (ref) formBody.append('ref', ref);
-  formBody.append('_csrf', getCsrf());
-
-  fetch('/api/newsletter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': getCsrf() },
-    body: formBody.toString()
-  })
-  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
-  .then(function(res) {
-    if (res.ok && res.data.success) {
-      document.getElementById('signup-wrap').style.display = 'none';
-      document.getElementById('pr-position').textContent = res.data.position;
-      var shareUrl = res.data.share_url || '';
-      document.getElementById('pr-ref-url').textContent = shareUrl;
-      var shareText = "I'm #" + res.data.position + " on the narve.ai waitlist — AI-powered prediction market intelligence. Join here and we both move up:";
-      document.getElementById('pr-share-x').href =
-        'https://twitter.com/intent/tweet?text=' + encodeURIComponent(shareText + ' ' + shareUrl);
-      document.getElementById('pr-share-wa').href =
-        'https://wa.me/?text=' + encodeURIComponent(shareText + ' ' + shareUrl);
-      document.getElementById('pr-success').classList.add('visible');
-    } else {
-      errEl.textContent = res.data.error || 'Something went wrong. Try again.';
-      errEl.classList.add('visible');
-      btn.disabled = false; btn.textContent = 'Notify me';
-    }
-  })
-  .catch(function() {
-    errEl.textContent = 'Something went wrong. Try again.';
-    errEl.classList.add('visible');
-    btn.disabled = false; btn.textContent = 'Notify me';
-  });
-  return false;
-}
+})();
 </script>
-<script src="/_gateway_static/theme.js?v=2" defer></script>
+
 </body>
 </html>

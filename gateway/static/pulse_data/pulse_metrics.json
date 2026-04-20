@@ -1,0 +1,1007 @@
+{
+  "version": "1.1.0",
+  "last_updated": "2026-04-14",
+  "data_quality": "preliminary_curated_v1_1",
+  "data_quality_note": "v1.1 curated historical values from public sources (CDC, US Census, GSS, Gallup, ANES, Pew, NIMH, NAR, Fed SHED, Stanford How Couples Meet, Microsoft Work Trend Index, World Happiness Report, CDC YRBS, YouMail). Forecasts are linear / log-linear extrapolations on the last 15-25 years. To be replaced with live-API pulls (FRED, Census, CDC) in v1.2.",
+  "moments": [
+    { "year": 1918, "label": "1918 flu pandemic" },
+    { "year": 1929, "label": "Great Depression begins" },
+    { "year": 1939, "label": "WWII begins" },
+    { "year": 1945, "label": "WWII ends" },
+    { "year": 1960, "label": "The pill approved" },
+    { "year": 1969, "label": "No-fault divorce" },
+    { "year": 1973, "label": "Oil shock / stagflation" },
+    { "year": 1981, "label": "AIDS recognized" },
+    { "year": 1989, "label": "Berlin Wall falls" },
+    { "year": 1995, "label": "Internet goes mainstream" },
+    { "year": 2001, "label": "9/11" },
+    { "year": 2007, "label": "iPhone launched" },
+    { "year": 2008, "label": "Global Financial Crisis" },
+    { "year": 2012, "label": "Tinder launches" },
+    { "year": 2020, "label": "COVID-19 pandemic" }
+  ],
+  "historical_misery_playbook": [
+    {
+      "id": "great_depression",
+      "name": "Great Depression",
+      "years": "1929-1933",
+      "pulse_index_delta_est": -14,
+      "headline": "Marriage halved, suicide peaked, divorce fell because nobody could afford to leave.",
+      "dropped": [
+        { "label": "Marriage rate", "value": "-22%", "detail": "10.1 → 7.9 per 1k" },
+        { "label": "Fertility rate", "value": "-26%", "detail": "2.90 → 2.15 children per woman" },
+        { "label": "GDP per capita", "value": "-29%", "detail": "largest peacetime collapse in US history" },
+        { "label": "Stock market", "value": "-89%", "detail": "Dow peak 1929 → trough 1932" }
+      ],
+      "rose": [
+        { "label": "Suicide rate", "value": "+25%", "detail": "13.9 → 17.4 per 100k — still the series peak" },
+        { "label": "Unemployment", "value": "3% → 25%", "detail": "national work-seeking workforce" },
+        { "label": "Religious attendance", "value": "+3%", "detail": "slight bump as people sought meaning" },
+        { "label": "Radio as primary entertainment", "value": "3x", "detail": "the first cheap mass escapism" }
+      ],
+      "surprised": [
+        "Divorce rate FELL — couples trapped financially, no-fault still 40 years away.",
+        "Crime rate dropped — people too poor to offend profitably.",
+        "Birth rate eventually recovered, but the 1930s cohort was the smallest of the 20th century."
+      ]
+    },
+    {
+      "id": "stagflation",
+      "name": "Stagflation / Malaise",
+      "years": "1973-1982",
+      "pulse_index_delta_est": -7,
+      "headline": "Trust collapsed, divorce broke out of the 50s mold, inflation ate wages for a decade.",
+      "dropped": [
+        { "label": "Trust in government", "value": "53% → 25%", "detail": "largest sustained decline in the series" },
+        { "label": "Real wages (non-supervisory)", "value": "-3%", "detail": "decade of stagnation" },
+        { "label": "Stock market (real)", "value": "-40%", "detail": "1972 peak → 1982 trough in real terms" },
+        { "label": "% 'very happy' (GSS)", "value": "34% → 31%", "detail": "early GSS era" }
+      ],
+      "rose": [
+        { "label": "Divorce rate", "value": "4.4 → 5.3", "detail": "historical peak per 1k — the breakout decade" },
+        { "label": "Inflation", "value": "3% → 13%", "detail": "1972 → 1980" },
+        { "label": "Women's labor force participation", "value": "+15pp", "detail": "accelerated under economic pressure" },
+        { "label": "Cocaine / recreational drug use", "value": "3x", "detail": "the soundtrack of the era" }
+      ],
+      "surprised": [
+        "Divorce rate broke out of its post-war equilibrium permanently — no-fault laws + economic stress compounded.",
+        "Disco and country music boomed simultaneously — cultural bifurcation under strain.",
+        "Female empowerment accelerated during the hardship, not after it."
+      ]
+    },
+    {
+      "id": "gfc",
+      "name": "Global Financial Crisis",
+      "years": "2008-2010",
+      "pulse_index_delta_est": -4,
+      "headline": "Happiness recovered fast. Fertility never did. The era of deaths of despair began.",
+      "dropped": [
+        { "label": "Marriage rate", "value": "7.1 → 6.8", "detail": "continued long decline" },
+        { "label": "Fertility rate", "value": "2.12 → 1.93", "detail": "never fully recovered" },
+        { "label": "Home ownership", "value": "68% → 66%", "detail": "start of 10yr slide" },
+        { "label": "Household wealth", "value": "-17%", "detail": "biggest real wealth shock since WWII" }
+      ],
+      "rose": [
+        { "label": "Suicide rate", "value": "11.6 → 12.4", "detail": "the quiet start of deaths of despair" },
+        { "label": "Antidepressant use", "value": "+8%", "detail": "accelerating trajectory" },
+        { "label": "Opioid prescriptions", "value": "+20%", "detail": "peak over-prescription era" },
+        { "label": "Populist sentiment", "value": "Tea Party birth", "detail": "anti-establishment politics emerges" },
+        { "label": "Streaming adoption (Netflix subs)", "value": "3x", "detail": "escapism goes digital" }
+      ],
+      "surprised": [
+        "Happiness self-reports recovered within 2 years — fertility still hasn't (2023 data).",
+        "Smartphone adoption accelerated through the recession, inverting the usual 'tech slumps in downturns' pattern.",
+        "Dating apps were born in this era (Tinder 2012) — the crisis rewired how couples meet."
+      ]
+    },
+    {
+      "id": "covid",
+      "name": "COVID Era",
+      "years": "2020-2022",
+      "pulse_index_delta_est": -9,
+      "headline": "The 50-year happiness low. Divorce fell. Home prices jumped 41%. Trust shattered.",
+      "dropped": [
+        { "label": "% 'very happy' (GSS)", "value": "31% → 19%", "detail": "largest single-reading drop in series history" },
+        { "label": "Marriage rate", "value": "6.1 → 5.1", "detail": "literal 50yr low in 2020" },
+        { "label": "In-person socializing (ATUS)", "value": "-31%", "detail": "largest single-year social decline recorded" },
+        { "label": "Religious attendance", "value": "33% → 30%", "detail": "some later recovery" },
+        { "label": "Trust in institutions", "value": "-15pp avg", "detail": "media, CDC, government" }
+      ],
+      "rose": [
+        { "label": "Antidepressant use", "value": "+11%", "detail": "fastest acceleration in the series" },
+        { "label": "Therapy app downloads", "value": "3x", "detail": "Calm, Headspace, BetterHelp" },
+        { "label": "Overdose deaths", "value": "71k → 107k", "detail": "the darkest marker of the era" },
+        { "label": "Home prices", "value": "+41%", "detail": "largest 2yr jump on record" },
+        { "label": "Screen time", "value": "4.0 → 4.7 h/day", "detail": "still elevated in 2024" },
+        { "label": "Pet adoption", "value": "+15%", "detail": "pandemic companion boom" }
+      ],
+      "surprised": [
+        "Divorce rate FELL during the worst of COVID — people couldn't physically separate households.",
+        "A brief 'COVID baby bump' appeared in late 2021 before fertility resumed its decline.",
+        "Happiness (GSS very-happy %) started recovering in 2022 before any of the material indicators did — emotional adaptation outpaced material healing."
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "id": "happiness_gss",
+      "title": "Self-reported happiness",
+      "subtitle": "% of US adults reporting they are 'very happy'",
+      "category": "happiness",
+      "unit": "%",
+      "polarity": "positive",
+      "pulse_weight": 0.18,
+      "source": {
+        "name": "General Social Survey (GSS)",
+        "url": "https://gss.norc.org/",
+        "latest_year": 2022,
+        "methodology": "Biennial face-to-face survey, ~3000 respondents. Item: 'Taken all together, how would you say things are these days — would you say that you are very happy, pretty happy, or not too happy?'"
+      },
+      "forecast_method": "Linear extrapolation, fit on 2000-2022",
+      "history": [
+        { "year": 1972, "value": 30 },
+        { "year": 1976, "value": 34 },
+        { "year": 1980, "value": 34 },
+        { "year": 1984, "value": 33 },
+        { "year": 1988, "value": 33 },
+        { "year": 1990, "value": 33 },
+        { "year": 1994, "value": 30 },
+        { "year": 2000, "value": 33 },
+        { "year": 2004, "value": 32 },
+        { "year": 2008, "value": 31 },
+        { "year": 2010, "value": 30 },
+        { "year": 2014, "value": 33 },
+        { "year": 2016, "value": 31 },
+        { "year": 2018, "value": 31 },
+        { "year": 2021, "value": 19 },
+        { "year": 2022, "value": 21 }
+      ],
+      "forecast": [
+        { "year": 2024, "value": 22, "ci_low": 18, "ci_high": 26 },
+        { "year": 2026, "value": 22, "ci_low": 17, "ci_high": 27 },
+        { "year": 2028, "value": 21, "ci_low": 16, "ci_high": 27 },
+        { "year": 2030, "value": 20, "ci_low": 14, "ci_high": 27 }
+      ],
+      "moves": [
+        { "label": "Antidepressant prescriptions", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Therapy app downloads", "direction": "up", "magnitude": "high", "lag_months": 3 },
+        { "label": "Discount retail revenue", "direction": "up", "magnitude": "medium", "lag_months": 6 },
+        { "label": "Luxury goods spend", "direction": "down", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Populist vote share", "direction": "up", "magnitude": "high", "lag_months": 24 }
+      ]
+    },
+    {
+      "id": "happiness_whr_us",
+      "title": "Cantril ladder score (US)",
+      "subtitle": "Gallup World Poll life-evaluation, 0-10 scale",
+      "category": "happiness",
+      "unit": "score",
+      "polarity": "positive",
+      "pulse_weight": 0.12,
+      "source": {
+        "name": "World Happiness Report / Gallup World Poll",
+        "url": "https://worldhappiness.report/",
+        "latest_year": 2024,
+        "methodology": "Cantril ladder: respondents rate their current life from 0 (worst) to 10 (best)."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2014-2024",
+      "history": [
+        { "year": 2007, "value": 7.28 },
+        { "year": 2008, "value": 7.28 },
+        { "year": 2009, "value": 7.16 },
+        { "year": 2010, "value": 7.16 },
+        { "year": 2011, "value": 7.16 },
+        { "year": 2012, "value": 7.08 },
+        { "year": 2013, "value": 7.16 },
+        { "year": 2014, "value": 7.04 },
+        { "year": 2015, "value": 6.99 },
+        { "year": 2016, "value": 6.99 },
+        { "year": 2017, "value": 6.99 },
+        { "year": 2018, "value": 6.89 },
+        { "year": 2019, "value": 6.89 },
+        { "year": 2020, "value": 6.94 },
+        { "year": 2021, "value": 6.95 },
+        { "year": 2022, "value": 6.89 },
+        { "year": 2023, "value": 6.73 },
+        { "year": 2024, "value": 6.72 }
+      ],
+      "forecast": [
+        { "year": 2026, "value": 6.61, "ci_low": 6.4, "ci_high": 6.82 },
+        { "year": 2028, "value": 6.51, "ci_low": 6.25, "ci_high": 6.77 },
+        { "year": 2030, "value": 6.41, "ci_low": 6.1, "ci_high": 6.72 }
+      ],
+      "moves": [
+        { "label": "Migration outflow", "direction": "up", "magnitude": "low", "lag_months": 24 },
+        { "label": "National brand sentiment", "direction": "down", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Self-help book sales", "direction": "up", "magnitude": "medium", "lag_months": 6 }
+      ]
+    },
+    {
+      "id": "marriage_rate_us",
+      "title": "Marriage rate",
+      "subtitle": "Marriages per 1,000 US population",
+      "category": "connection",
+      "unit": "per 1k",
+      "polarity": "positive",
+      "pulse_weight": 0.05,
+      "source": {
+        "name": "CDC NCHS / NVSS",
+        "url": "https://www.cdc.gov/nchs/nvss/marriage-divorce.htm",
+        "latest_year": 2022,
+        "methodology": "National vital statistics — universal registration via state vital records."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2005-2022",
+      "history": [
+        { "year": 1900, "value": 9.3 },
+        { "year": 1910, "value": 10.3 },
+        { "year": 1920, "value": 12.0 },
+        { "year": 1930, "value": 9.2 },
+        { "year": 1940, "value": 12.1 },
+        { "year": 1946, "value": 16.4 },
+        { "year": 1950, "value": 11.1 },
+        { "year": 1960, "value": 8.5 },
+        { "year": 1970, "value": 10.6 },
+        { "year": 1980, "value": 10.6 },
+        { "year": 1990, "value": 9.8 },
+        { "year": 2000, "value": 8.2 },
+        { "year": 2005, "value": 7.6 },
+        { "year": 2010, "value": 6.8 },
+        { "year": 2015, "value": 6.9 },
+        { "year": 2018, "value": 6.5 },
+        { "year": 2019, "value": 6.1 },
+        { "year": 2020, "value": 5.1 },
+        { "year": 2021, "value": 6.0 },
+        { "year": 2022, "value": 6.2 }
+      ],
+      "forecast": [
+        { "year": 2024, "value": 5.95, "ci_low": 5.65, "ci_high": 6.25 },
+        { "year": 2026, "value": 5.75, "ci_low": 5.4, "ci_high": 6.1 },
+        { "year": 2028, "value": 5.55, "ci_low": 5.15, "ci_high": 5.95 },
+        { "year": 2030, "value": 5.4, "ci_low": 4.95, "ci_high": 5.85 }
+      ],
+      "moves": [
+        { "label": "Wedding industry revenue", "direction": "down", "magnitude": "high", "lag_months": 6 },
+        { "label": "Birth rate (lagged)", "direction": "down", "magnitude": "high", "lag_months": 18 },
+        { "label": "Single-person household formation", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Pet adoption rate", "direction": "up", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Estate planning revenue", "direction": "down", "magnitude": "medium", "lag_months": 18 }
+      ]
+    },
+    {
+      "id": "divorce_rate_us",
+      "title": "Divorce rate",
+      "subtitle": "Divorces per 1,000 US population",
+      "category": "connection",
+      "unit": "per 1k",
+      "polarity": "negative",
+      "pulse_weight": 0.04,
+      "source": {
+        "name": "CDC NCHS / NVSS",
+        "url": "https://www.cdc.gov/nchs/nvss/marriage-divorce.htm",
+        "latest_year": 2022,
+        "methodology": "National vital statistics — universal registration via state vital records."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2000-2022",
+      "history": [
+        { "year": 1900, "value": 0.7 },
+        { "year": 1910, "value": 0.9 },
+        { "year": 1920, "value": 1.6 },
+        { "year": 1930, "value": 1.6 },
+        { "year": 1940, "value": 2.0 },
+        { "year": 1946, "value": 4.3 },
+        { "year": 1950, "value": 2.6 },
+        { "year": 1960, "value": 2.2 },
+        { "year": 1970, "value": 3.5 },
+        { "year": 1980, "value": 5.2 },
+        { "year": 1990, "value": 4.7 },
+        { "year": 2000, "value": 4.0 },
+        { "year": 2005, "value": 3.6 },
+        { "year": 2010, "value": 3.6 },
+        { "year": 2015, "value": 3.1 },
+        { "year": 2019, "value": 2.7 },
+        { "year": 2020, "value": 2.3 },
+        { "year": 2021, "value": 2.5 },
+        { "year": 2022, "value": 2.4 }
+      ],
+      "forecast": [
+        { "year": 2024, "value": 2.3, "ci_low": 2.1, "ci_high": 2.5 },
+        { "year": 2026, "value": 2.2, "ci_low": 1.95, "ci_high": 2.45 },
+        { "year": 2028, "value": 2.1, "ci_low": 1.8, "ci_high": 2.4 },
+        { "year": 2030, "value": 2.0, "ci_low": 1.65, "ci_high": 2.35 }
+      ],
+      "moves": [
+        { "label": "Divorce industry revenue (legal)", "direction": "down", "magnitude": "medium", "lag_months": 6 },
+        { "label": "Single-parent household share", "direction": "down", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Marriage rate (forward indicator)", "direction": "down", "magnitude": "low", "lag_months": -120 }
+      ]
+    },
+    {
+      "id": "fertility_rate_us",
+      "title": "Total fertility rate",
+      "subtitle": "Lifetime births per US woman",
+      "category": "connection",
+      "unit": "births",
+      "polarity": "positive",
+      "pulse_weight": 0.05,
+      "source": {
+        "name": "CDC NCHS + UN WPP 2024",
+        "url": "https://www.cdc.gov/nchs/nvss/births.htm",
+        "latest_year": 2023,
+        "methodology": "Total fertility rate — sum of age-specific fertility rates. Universal birth registration."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2010-2023; UN WPP medium variant cross-check",
+      "history": [
+        { "year": 1900, "value": 3.85 },
+        { "year": 1910, "value": 3.5 },
+        { "year": 1920, "value": 3.17 },
+        { "year": 1930, "value": 2.45 },
+        { "year": 1940, "value": 2.30 },
+        { "year": 1957, "value": 3.77 },
+        { "year": 1960, "value": 3.65 },
+        { "year": 1970, "value": 2.48 },
+        { "year": 1976, "value": 1.74 },
+        { "year": 1980, "value": 1.84 },
+        { "year": 1990, "value": 2.08 },
+        { "year": 2000, "value": 2.06 },
+        { "year": 2007, "value": 2.12 },
+        { "year": 2010, "value": 1.93 },
+        { "year": 2015, "value": 1.84 },
+        { "year": 2019, "value": 1.71 },
+        { "year": 2020, "value": 1.64 },
+        { "year": 2021, "value": 1.66 },
+        { "year": 2022, "value": 1.665 },
+        { "year": 2023, "value": 1.62 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 1.59, "ci_low": 1.53, "ci_high": 1.65 },
+        { "year": 2027, "value": 1.56, "ci_low": 1.49, "ci_high": 1.63 },
+        { "year": 2030, "value": 1.52, "ci_low": 1.43, "ci_high": 1.61 }
+      ],
+      "moves": [
+        { "label": "Daycare market size", "direction": "down", "magnitude": "high", "lag_months": 36 },
+        { "label": "Baby products spend", "direction": "down", "magnitude": "high", "lag_months": 12 },
+        { "label": "K-12 enrollment (lagged)", "direction": "down", "magnitude": "high", "lag_months": 60 },
+        { "label": "Pet industry spend", "direction": "up", "magnitude": "medium", "lag_months": 24 },
+        { "label": "Single-family housing demand", "direction": "down", "magnitude": "medium", "lag_months": 24 }
+      ]
+    },
+    {
+      "id": "age_first_marriage_men_us",
+      "title": "Median age at first marriage (men)",
+      "subtitle": "US men, years",
+      "category": "connection",
+      "unit": "years",
+      "polarity": "neutral",
+      "pulse_weight": 0.02,
+      "source": {
+        "name": "US Census Bureau",
+        "url": "https://www.census.gov/data/tables/time-series/demo/families/marital.html",
+        "latest_year": 2023,
+        "methodology": "Census Bureau historical marital status tables (table MS-2)."
+      },
+      "forecast_method": "Linear extrapolation, fit on 1990-2023",
+      "history": [
+        { "year": 1890, "value": 26.1 },
+        { "year": 1900, "value": 25.9 },
+        { "year": 1910, "value": 25.1 },
+        { "year": 1920, "value": 24.6 },
+        { "year": 1930, "value": 24.3 },
+        { "year": 1940, "value": 24.3 },
+        { "year": 1950, "value": 22.8 },
+        { "year": 1960, "value": 22.8 },
+        { "year": 1970, "value": 23.2 },
+        { "year": 1980, "value": 24.7 },
+        { "year": 1990, "value": 26.1 },
+        { "year": 2000, "value": 26.8 },
+        { "year": 2010, "value": 28.2 },
+        { "year": 2015, "value": 29.2 },
+        { "year": 2020, "value": 30.5 },
+        { "year": 2023, "value": 30.2 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 30.7, "ci_low": 30.3, "ci_high": 31.1 },
+        { "year": 2028, "value": 31.3, "ci_low": 30.7, "ci_high": 31.9 },
+        { "year": 2030, "value": 31.7, "ci_low": 31.0, "ci_high": 32.4 }
+      ],
+      "moves": [
+        { "label": "Time spent dating before marriage", "direction": "up", "magnitude": "medium", "lag_months": 0 },
+        { "label": "Wedding industry revenue (per wedding)", "direction": "up", "magnitude": "low", "lag_months": 0 },
+        { "label": "First-time parent age", "direction": "up", "magnitude": "high", "lag_months": 24 }
+      ]
+    },
+    {
+      "id": "no_close_friends_us",
+      "title": "Adults with no close friends",
+      "subtitle": "% of US adults reporting zero close friends",
+      "category": "connection",
+      "unit": "%",
+      "polarity": "negative",
+      "pulse_weight": 0.06,
+      "source": {
+        "name": "Survey Center on American Life / GSS",
+        "url": "https://www.americansurveycenter.org/research/the-state-of-american-friendship-change-challenges-and-loss/",
+        "latest_year": 2023,
+        "methodology": "Probability sample of US adults asked to enumerate close friendships outside of household."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2000-2023",
+      "history": [
+        { "year": 1990, "value": 3 },
+        { "year": 2000, "value": 4 },
+        { "year": 2005, "value": 6 },
+        { "year": 2010, "value": 9 },
+        { "year": 2015, "value": 10 },
+        { "year": 2018, "value": 11 },
+        { "year": 2021, "value": 12 },
+        { "year": 2023, "value": 13 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 14, "ci_low": 12, "ci_high": 16 },
+        { "year": 2027, "value": 15, "ci_low": 12, "ci_high": 18 },
+        { "year": 2030, "value": 17, "ci_low": 13, "ci_high": 21 }
+      ],
+      "moves": [
+        { "label": "Dating app revenue", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Pet industry spend", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "OnlyFans / paid intimacy spend", "direction": "up", "magnitude": "high", "lag_months": 3 },
+        { "label": "Therapy spend", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Solo travel bookings", "direction": "up", "magnitude": "medium", "lag_months": 12 }
+      ]
+    },
+    {
+      "id": "single_person_household_us",
+      "title": "Single-person households",
+      "subtitle": "% of US households occupied by one person",
+      "category": "connection",
+      "unit": "%",
+      "polarity": "negative",
+      "pulse_weight": 0.02,
+      "source": {
+        "name": "US Census Bureau (HH tables)",
+        "url": "https://www.census.gov/data/tables/time-series/demo/families/households.html",
+        "latest_year": 2023,
+        "methodology": "Decennial census + annual ACS supplements."
+      },
+      "forecast_method": "Linear extrapolation, fit on 1990-2023",
+      "history": [
+        { "year": 1940, "value": 7.8 },
+        { "year": 1950, "value": 9.3 },
+        { "year": 1960, "value": 13.1 },
+        { "year": 1970, "value": 17.6 },
+        { "year": 1980, "value": 22.7 },
+        { "year": 1990, "value": 24.6 },
+        { "year": 2000, "value": 25.8 },
+        { "year": 2010, "value": 27.4 },
+        { "year": 2015, "value": 28.3 },
+        { "year": 2020, "value": 28.4 },
+        { "year": 2023, "value": 29.0 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 29.4, "ci_low": 28.9, "ci_high": 29.9 },
+        { "year": 2028, "value": 30.1, "ci_low": 29.3, "ci_high": 30.9 },
+        { "year": 2030, "value": 30.5, "ci_low": 29.6, "ci_high": 31.4 }
+      ],
+      "moves": [
+        { "label": "Studio / 1BR rental demand", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Meal-for-one packaging", "direction": "up", "magnitude": "high", "lag_months": 12 },
+        { "label": "Solo travel bookings", "direction": "up", "magnitude": "high", "lag_months": 12 },
+        { "label": "Pet industry spend", "direction": "up", "magnitude": "medium", "lag_months": 6 },
+        { "label": "Large-format grocery spend", "direction": "down", "magnitude": "medium", "lag_months": 12 }
+      ]
+    },
+    {
+      "id": "met_online_us",
+      "title": "Couples who met online",
+      "subtitle": "% of US heterosexual couples who first met through the internet",
+      "category": "connection",
+      "unit": "%",
+      "polarity": "neutral",
+      "pulse_weight": 0.01,
+      "source": {
+        "name": "Stanford 'How Couples Meet and Stay Together' (Rosenfeld et al.)",
+        "url": "https://data.stanford.edu/hcmst",
+        "latest_year": 2022,
+        "methodology": "Nationally representative US survey repeated across waves."
+      },
+      "forecast_method": "Log-linear with saturation at ~70%, fit on 2005-2022",
+      "history": [
+        { "year": 1995, "value": 2 },
+        { "year": 2000, "value": 10 },
+        { "year": 2005, "value": 18 },
+        { "year": 2010, "value": 22 },
+        { "year": 2015, "value": 28 },
+        { "year": 2017, "value": 39 },
+        { "year": 2020, "value": 45 },
+        { "year": 2022, "value": 50 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 55, "ci_low": 51, "ci_high": 59 },
+        { "year": 2028, "value": 60, "ci_low": 55, "ci_high": 65 },
+        { "year": 2030, "value": 62, "ci_low": 56, "ci_high": 68 }
+      ],
+      "moves": [
+        { "label": "Dating app revenue", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "Match Group / Bumble stock proxies", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "'Friends of friends' introductions", "direction": "down", "magnitude": "high", "lag_months": 0 },
+        { "label": "Wedding industry (online-met couples spend less per wedding)", "direction": "down", "magnitude": "low", "lag_months": 24 }
+      ]
+    },
+    {
+      "id": "suicide_rate_us",
+      "title": "Suicide rate",
+      "subtitle": "Deaths per 100,000 US population",
+      "category": "mental_health",
+      "unit": "per 100k",
+      "polarity": "negative",
+      "pulse_weight": 0.07,
+      "source": {
+        "name": "CDC WONDER / NCHS",
+        "url": "https://wonder.cdc.gov/",
+        "latest_year": 2022,
+        "methodology": "ICD-coded cause of death from death certificates. Universal registration."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2000-2022",
+      "history": [
+        { "year": 1900, "value": 10.2 },
+        { "year": 1910, "value": 14.6 },
+        { "year": 1920, "value": 10.1 },
+        { "year": 1930, "value": 15.6 },
+        { "year": 1940, "value": 14.4 },
+        { "year": 1950, "value": 11.4 },
+        { "year": 1960, "value": 10.6 },
+        { "year": 1970, "value": 11.6 },
+        { "year": 1980, "value": 11.9 },
+        { "year": 1990, "value": 12.4 },
+        { "year": 2000, "value": 10.4 },
+        { "year": 2005, "value": 11.0 },
+        { "year": 2010, "value": 12.4 },
+        { "year": 2015, "value": 13.3 },
+        { "year": 2018, "value": 14.2 },
+        { "year": 2019, "value": 13.9 },
+        { "year": 2020, "value": 13.5 },
+        { "year": 2021, "value": 14.1 },
+        { "year": 2022, "value": 14.2 }
+      ],
+      "forecast": [
+        { "year": 2024, "value": 14.5, "ci_low": 13.8, "ci_high": 15.2 },
+        { "year": 2026, "value": 14.7, "ci_low": 13.8, "ci_high": 15.6 },
+        { "year": 2028, "value": 14.9, "ci_low": 13.8, "ci_high": 16.0 },
+        { "year": 2030, "value": 15.1, "ci_low": 13.8, "ci_high": 16.4 }
+      ],
+      "moves": [
+        { "label": "Antidepressant prescriptions", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "Mental health ER visits", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "Workplace disability claims", "direction": "up", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Life insurance underwriting tightening", "direction": "up", "magnitude": "low", "lag_months": 24 }
+      ]
+    },
+    {
+      "id": "antidepressant_use_us",
+      "title": "Antidepressant use",
+      "subtitle": "% of US adults using prescription antidepressants",
+      "category": "mental_health",
+      "unit": "%",
+      "polarity": "negative",
+      "pulse_weight": 0.05,
+      "source": {
+        "name": "CDC NHANES / NCHS Data Briefs",
+        "url": "https://www.cdc.gov/nchs/products/databriefs.htm",
+        "latest_year": 2020,
+        "methodology": "National Health and Nutrition Examination Survey — interview + medication container verification."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2005-2020",
+      "history": [
+        { "year": 1988, "value": 1.7 },
+        { "year": 1995, "value": 4.0 },
+        { "year": 2000, "value": 7.7 },
+        { "year": 2005, "value": 11.0 },
+        { "year": 2010, "value": 11.5 },
+        { "year": 2015, "value": 12.7 },
+        { "year": 2018, "value": 13.2 },
+        { "year": 2020, "value": 14.0 }
+      ],
+      "forecast": [
+        { "year": 2023, "value": 14.8, "ci_low": 14.0, "ci_high": 15.6 },
+        { "year": 2025, "value": 15.4, "ci_low": 14.4, "ci_high": 16.4 },
+        { "year": 2027, "value": 16.0, "ci_low": 14.7, "ci_high": 17.3 },
+        { "year": 2030, "value": 16.9, "ci_low": 15.2, "ci_high": 18.6 }
+      ],
+      "moves": [
+        { "label": "Pharma sector revenue (mental health)", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "Therapy app market size", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Workplace productivity", "direction": "down", "magnitude": "low", "lag_months": 12 }
+      ]
+    },
+    {
+      "id": "teen_mental_health_us",
+      "title": "Teen persistent sadness",
+      "subtitle": "% of US high-schoolers reporting persistent sadness/hopelessness in past year",
+      "category": "mental_health",
+      "unit": "%",
+      "polarity": "negative",
+      "pulse_weight": 0.04,
+      "source": {
+        "name": "CDC YRBS (Youth Risk Behavior Surveillance System)",
+        "url": "https://www.cdc.gov/healthyyouth/data/yrbs/",
+        "latest_year": 2023,
+        "methodology": "Biennial school-based survey of US high school students."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2011-2023",
+      "history": [
+        { "year": 2001, "value": 28 },
+        { "year": 2005, "value": 29 },
+        { "year": 2009, "value": 26 },
+        { "year": 2011, "value": 28 },
+        { "year": 2013, "value": 30 },
+        { "year": 2015, "value": 30 },
+        { "year": 2017, "value": 32 },
+        { "year": 2019, "value": 37 },
+        { "year": 2021, "value": 42 },
+        { "year": 2023, "value": 40 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 41, "ci_low": 38, "ci_high": 44 },
+        { "year": 2027, "value": 42, "ci_low": 38, "ci_high": 46 },
+        { "year": 2030, "value": 44, "ci_low": 39, "ci_high": 49 }
+      ],
+      "moves": [
+        { "label": "Teen therapy demand", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "Phone / social media regulation pressure", "direction": "up", "magnitude": "high", "lag_months": 12 },
+        { "label": "School counselor hires", "direction": "up", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Teen antidepressant prescriptions", "direction": "up", "magnitude": "high", "lag_months": 6 }
+      ]
+    },
+    {
+      "id": "religious_attendance_us",
+      "title": "Weekly religious attendance",
+      "subtitle": "% of US adults attending religious services weekly",
+      "category": "meaning",
+      "unit": "%",
+      "polarity": "positive",
+      "pulse_weight": 0.04,
+      "source": {
+        "name": "Gallup / Pew Religious Landscape Study",
+        "url": "https://news.gallup.com/poll/1690/religion.aspx",
+        "latest_year": 2023,
+        "methodology": "Annual Gallup survey + Pew Religious Landscape decennial deep-dive."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2000-2023",
+      "history": [
+        { "year": 1939, "value": 41 },
+        { "year": 1950, "value": 39 },
+        { "year": 1960, "value": 47 },
+        { "year": 1970, "value": 42 },
+        { "year": 1980, "value": 41 },
+        { "year": 1990, "value": 40 },
+        { "year": 2000, "value": 44 },
+        { "year": 2005, "value": 41 },
+        { "year": 2010, "value": 41 },
+        { "year": 2015, "value": 36 },
+        { "year": 2019, "value": 33 },
+        { "year": 2020, "value": 30 },
+        { "year": 2022, "value": 31 },
+        { "year": 2023, "value": 30 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 28, "ci_low": 26, "ci_high": 30 },
+        { "year": 2027, "value": 27, "ci_low": 24, "ci_high": 30 },
+        { "year": 2030, "value": 25, "ci_low": 21, "ci_high": 29 }
+      ],
+      "moves": [
+        { "label": "Self-help / coaching industry revenue", "direction": "up", "magnitude": "medium", "lag_months": 24 },
+        { "label": "Lottery / gambling spend", "direction": "up", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Charitable giving", "direction": "down", "magnitude": "medium", "lag_months": 24 },
+        { "label": "Civic volunteer hours", "direction": "down", "magnitude": "medium", "lag_months": 12 }
+      ]
+    },
+    {
+      "id": "trust_in_others_us",
+      "title": "Generalized social trust",
+      "subtitle": "% of US adults agreeing 'most people can be trusted'",
+      "category": "meaning",
+      "unit": "%",
+      "polarity": "positive",
+      "pulse_weight": 0.04,
+      "source": {
+        "name": "General Social Survey (GSS)",
+        "url": "https://gss.norc.org/",
+        "latest_year": 2022,
+        "methodology": "GSS biennial — 'Generally speaking, would you say that most people can be trusted, or that you can't be too careful in dealing with people?'"
+      },
+      "forecast_method": "Linear extrapolation, fit on 1990-2022",
+      "history": [
+        { "year": 1972, "value": 46 },
+        { "year": 1980, "value": 44 },
+        { "year": 1990, "value": 38 },
+        { "year": 2000, "value": 35 },
+        { "year": 2010, "value": 33 },
+        { "year": 2018, "value": 31 },
+        { "year": 2022, "value": 30 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 28, "ci_low": 26, "ci_high": 30 },
+        { "year": 2028, "value": 27, "ci_low": 24, "ci_high": 30 },
+        { "year": 2030, "value": 26, "ci_low": 22, "ci_high": 30 }
+      ],
+      "moves": [
+        { "label": "Populist vote share", "direction": "up", "magnitude": "high", "lag_months": 24 },
+        { "label": "Gold price (real)", "direction": "up", "magnitude": "low", "lag_months": 12 },
+        { "label": "Conspiracy media consumption", "direction": "up", "magnitude": "medium", "lag_months": 6 },
+        { "label": "Charitable giving", "direction": "down", "magnitude": "medium", "lag_months": 12 }
+      ]
+    },
+    {
+      "id": "trust_in_government_us",
+      "title": "Trust in federal government",
+      "subtitle": "% of US adults trusting Washington 'always or most of the time'",
+      "category": "meaning",
+      "unit": "%",
+      "polarity": "positive",
+      "pulse_weight": 0.03,
+      "source": {
+        "name": "Pew Research / ANES",
+        "url": "https://www.pewresearch.org/politics/2024/06/24/public-trust-in-government-1958-2024/",
+        "latest_year": 2024,
+        "methodology": "Stitched time series combining Pew and ANES asking the same trust-in-government item since 1958."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2005-2024",
+      "history": [
+        { "year": 1958, "value": 73 },
+        { "year": 1964, "value": 77 },
+        { "year": 1972, "value": 53 },
+        { "year": 1980, "value": 25 },
+        { "year": 1986, "value": 45 },
+        { "year": 1994, "value": 21 },
+        { "year": 2000, "value": 44 },
+        { "year": 2002, "value": 54 },
+        { "year": 2008, "value": 25 },
+        { "year": 2013, "value": 19 },
+        { "year": 2019, "value": 17 },
+        { "year": 2021, "value": 24 },
+        { "year": 2022, "value": 21 },
+        { "year": 2024, "value": 22 }
+      ],
+      "forecast": [
+        { "year": 2026, "value": 20, "ci_low": 16, "ci_high": 24 },
+        { "year": 2028, "value": 19, "ci_low": 14, "ci_high": 24 },
+        { "year": 2030, "value": 18, "ci_low": 12, "ci_high": 24 }
+      ],
+      "moves": [
+        { "label": "Populist / anti-establishment vote share", "direction": "up", "magnitude": "high", "lag_months": 12 },
+        { "label": "Tax compliance rate", "direction": "down", "magnitude": "medium", "lag_months": 24 },
+        { "label": "Gold / Bitcoin safe-haven demand", "direction": "up", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Civic volunteer hours", "direction": "down", "magnitude": "medium", "lag_months": 24 }
+      ]
+    },
+    {
+      "id": "sleep_hours_us",
+      "title": "Average sleep duration",
+      "subtitle": "Hours per night, US adults",
+      "category": "time_attention",
+      "unit": "hours",
+      "polarity": "positive",
+      "pulse_weight": 0.04,
+      "source": {
+        "name": "Gallup Sleep Survey / CDC NHIS",
+        "url": "https://news.gallup.com/poll/642704/america-sleep-problem-getting-worse.aspx",
+        "latest_year": 2023,
+        "methodology": "Self-reported nightly sleep duration. Time series from Gallup polls + NHIS validation."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2000-2023",
+      "history": [
+        { "year": 1942, "value": 7.9 },
+        { "year": 1990, "value": 6.9 },
+        { "year": 2001, "value": 6.8 },
+        { "year": 2010, "value": 6.8 },
+        { "year": 2013, "value": 6.8 },
+        { "year": 2017, "value": 6.8 },
+        { "year": 2022, "value": 6.5 },
+        { "year": 2023, "value": 6.5 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 6.4, "ci_low": 6.25, "ci_high": 6.55 },
+        { "year": 2028, "value": 6.3, "ci_low": 6.1, "ci_high": 6.5 },
+        { "year": 2030, "value": 6.2, "ci_low": 6.0, "ci_high": 6.45 }
+      ],
+      "moves": [
+        { "label": "Melatonin / sleep aid sales", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Sleep tracker market", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Workplace productivity", "direction": "down", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Caffeine / energy drink sales", "direction": "up", "magnitude": "medium", "lag_months": 6 }
+      ]
+    },
+    {
+      "id": "screen_time_us",
+      "title": "Daily screen time",
+      "subtitle": "Hours per day on personal devices, US adults",
+      "category": "time_attention",
+      "unit": "hours",
+      "polarity": "negative",
+      "pulse_weight": 0.03,
+      "source": {
+        "name": "Pew Research / Common Sense Media / DataReportal",
+        "url": "https://datareportal.com/reports/digital-2024-global-overview-report",
+        "latest_year": 2024,
+        "methodology": "Aggregated from survey + device telemetry estimates."
+      },
+      "forecast_method": "Log-linear with saturation at ~6h, fit on 2008-2024",
+      "history": [
+        { "year": 2008, "value": 2.7 },
+        { "year": 2012, "value": 3.2 },
+        { "year": 2015, "value": 3.6 },
+        { "year": 2018, "value": 4.0 },
+        { "year": 2020, "value": 4.7 },
+        { "year": 2022, "value": 4.2 },
+        { "year": 2024, "value": 4.4 }
+      ],
+      "forecast": [
+        { "year": 2026, "value": 4.6, "ci_low": 4.3, "ci_high": 4.9 },
+        { "year": 2028, "value": 4.8, "ci_low": 4.4, "ci_high": 5.2 },
+        { "year": 2030, "value": 5.0, "ci_low": 4.5, "ci_high": 5.5 }
+      ],
+      "moves": [
+        { "label": "Streaming subscription revenue", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "Digital ad spend", "direction": "up", "magnitude": "high", "lag_months": 0 },
+        { "label": "Outdoor recreation industry", "direction": "down", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Sleep quality", "direction": "down", "magnitude": "medium", "lag_months": 6 }
+      ]
+    },
+    {
+      "id": "meeting_hours_us",
+      "title": "Weekly meeting load",
+      "subtitle": "Hours per week in meetings, US knowledge workers",
+      "category": "time_attention",
+      "unit": "hours",
+      "polarity": "negative",
+      "pulse_weight": 0.03,
+      "source": {
+        "name": "Microsoft Work Trend Index + Reclaim.ai",
+        "url": "https://www.microsoft.com/en-us/worklab/work-trend-index",
+        "latest_year": 2024,
+        "methodology": "Microsoft 365 telemetry + Reclaim.ai time-use analytics across knowledge-worker cohorts. Pre-2019 values estimated from older time-use research."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2020-2024 (post-remote-work regime)",
+      "history": [
+        { "year": 2000, "value": 5 },
+        { "year": 2010, "value": 7 },
+        { "year": 2015, "value": 9 },
+        { "year": 2019, "value": 10 },
+        { "year": 2020, "value": 14 },
+        { "year": 2021, "value": 20 },
+        { "year": 2022, "value": 18 },
+        { "year": 2023, "value": 17.5 },
+        { "year": 2024, "value": 16 }
+      ],
+      "forecast": [
+        { "year": 2026, "value": 16.5, "ci_low": 14, "ci_high": 19 },
+        { "year": 2028, "value": 17, "ci_low": 14, "ci_high": 20 },
+        { "year": 2030, "value": 17.5, "ci_low": 13, "ci_high": 22 }
+      ],
+      "moves": [
+        { "label": "Async-work tool revenue (Loom, Notion)", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Calendar blocker app installs", "direction": "up", "magnitude": "high", "lag_months": 3 },
+        { "label": "Deep-work / focus time available", "direction": "down", "magnitude": "high", "lag_months": 0 },
+        { "label": "Employee satisfaction", "direction": "down", "magnitude": "medium", "lag_months": 6 }
+      ]
+    },
+    {
+      "id": "household_cant_cover_400",
+      "title": "Cannot cover a $400 emergency",
+      "subtitle": "% of US adults unable to cover unexpected $400 expense with cash",
+      "category": "material_security",
+      "unit": "%",
+      "polarity": "negative",
+      "pulse_weight": 0.03,
+      "source": {
+        "name": "Federal Reserve SHED (Survey of Household Economics and Decisionmaking)",
+        "url": "https://www.federalreserve.gov/consumerscommunities/shed.htm",
+        "latest_year": 2023,
+        "methodology": "Annual Federal Reserve household survey."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2014-2023",
+      "history": [
+        { "year": 2013, "value": 50 },
+        { "year": 2015, "value": 46 },
+        { "year": 2017, "value": 41 },
+        { "year": 2018, "value": 39 },
+        { "year": 2019, "value": 37 },
+        { "year": 2020, "value": 36 },
+        { "year": 2021, "value": 32 },
+        { "year": 2022, "value": 37 },
+        { "year": 2023, "value": 37 }
+      ],
+      "forecast": [
+        { "year": 2025, "value": 38, "ci_low": 35, "ci_high": 41 },
+        { "year": 2027, "value": 39, "ci_low": 35, "ci_high": 43 },
+        { "year": 2030, "value": 40, "ci_low": 35, "ci_high": 45 }
+      ],
+      "moves": [
+        { "label": "Discount retail revenue", "direction": "up", "magnitude": "high", "lag_months": 3 },
+        { "label": "Used goods market size", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Lottery sales", "direction": "up", "magnitude": "medium", "lag_months": 6 },
+        { "label": "New car sales", "direction": "down", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Restaurant industry revenue", "direction": "down", "magnitude": "medium", "lag_months": 6 }
+      ]
+    },
+    {
+      "id": "housing_affordability_us",
+      "title": "Housing affordability index",
+      "subtitle": "NAR index (100 = median family can afford median home with 20% down)",
+      "category": "material_security",
+      "unit": "score",
+      "polarity": "positive",
+      "pulse_weight": 0.03,
+      "source": {
+        "name": "National Association of Realtors (NAR) Housing Affordability Index",
+        "url": "https://www.nar.realtor/research-and-statistics/housing-statistics/housing-affordability-index",
+        "latest_year": 2024,
+        "methodology": "Ratio of median family income to income required to qualify for median-priced home at 20% down."
+      },
+      "forecast_method": "Linear extrapolation, fit on 2015-2024",
+      "history": [
+        { "year": 1981, "value": 68 },
+        { "year": 1985, "value": 94 },
+        { "year": 1990, "value": 108 },
+        { "year": 1995, "value": 135 },
+        { "year": 2000, "value": 132 },
+        { "year": 2005, "value": 109 },
+        { "year": 2010, "value": 171 },
+        { "year": 2013, "value": 170 },
+        { "year": 2015, "value": 169 },
+        { "year": 2018, "value": 144 },
+        { "year": 2019, "value": 160 },
+        { "year": 2020, "value": 171 },
+        { "year": 2021, "value": 153 },
+        { "year": 2022, "value": 102 },
+        { "year": 2023, "value": 94 },
+        { "year": 2024, "value": 95 }
+      ],
+      "forecast": [
+        { "year": 2026, "value": 98, "ci_low": 88, "ci_high": 108 },
+        { "year": 2028, "value": 101, "ci_low": 86, "ci_high": 116 },
+        { "year": 2030, "value": 104, "ci_low": 84, "ci_high": 124 }
+      ],
+      "moves": [
+        { "label": "Multi-generational household formation", "direction": "up", "magnitude": "high", "lag_months": 12 },
+        { "label": "Age leaving parents' home", "direction": "up", "magnitude": "high", "lag_months": 24 },
+        { "label": "Birth rate", "direction": "down", "magnitude": "high", "lag_months": 24 },
+        { "label": "Rental market demand", "direction": "up", "magnitude": "high", "lag_months": 6 },
+        { "label": "Home improvement sector", "direction": "down", "magnitude": "medium", "lag_months": 12 }
+      ]
+    },
+    {
+      "id": "robocalls_us",
+      "title": "Robocalls received",
+      "subtitle": "Monthly robocalls per US person",
+      "category": "daily_friction",
+      "unit": "calls/mo",
+      "polarity": "negative",
+      "pulse_weight": 0.02,
+      "source": {
+        "name": "YouMail Robocall Index / FCC",
+        "url": "https://robocallindex.com/",
+        "latest_year": 2024,
+        "methodology": "YouMail call screening data extrapolated nationally + FCC complaint volume."
+      },
+      "forecast_method": "Recent-stable baseline with mild decline, fit on 2021-2024 (post-STIR/SHAKEN)",
+      "history": [
+        { "year": 2018, "value": 14 },
+        { "year": 2019, "value": 18 },
+        { "year": 2020, "value": 13 },
+        { "year": 2021, "value": 16 },
+        { "year": 2022, "value": 15 },
+        { "year": 2023, "value": 13 },
+        { "year": 2024, "value": 13 }
+      ],
+      "forecast": [
+        { "year": 2026, "value": 12, "ci_low": 10, "ci_high": 14 },
+        { "year": 2028, "value": 12, "ci_low": 9, "ci_high": 15 },
+        { "year": 2030, "value": 11, "ci_low": 8, "ci_high": 14 }
+      ],
+      "moves": [
+        { "label": "Call screening app installs", "direction": "up", "magnitude": "high", "lag_months": 3 },
+        { "label": "Voicemail-only setups", "direction": "up", "magnitude": "medium", "lag_months": 12 },
+        { "label": "Landline abandonment", "direction": "up", "magnitude": "medium", "lag_months": 24 }
+      ]
+    }
+  ]
+}

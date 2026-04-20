@@ -2446,6 +2446,25 @@ async def my_dashboards(request: Request):
         </div>
         """)
 
+    # ── narve Pulse — gateway-internal dashboard, not a microservice. ────
+    # Always unlocked for logged-in users (included in every plan, including
+    # admin and any active subscription). No separate sub key in the DB.
+    pulse_active = True
+    pulse_badge = '<span class="badge badge-active">Active</span>'
+    pulse_cta = '<a class="card-cta cta-open" href="/pulse" target="_blank">Open →</a>'
+    cards_html.append(f"""
+    <div class="dash-card" style="--accent: #14b8a6">
+      <div class="dash-card-head">
+        <div class="dash-accent-dot"></div>
+        {pulse_badge}
+      </div>
+      <div class="dash-card-title">narve Pulse</div>
+      <div class="dash-card-desc">The forecast for human happiness. 100yr trends, what they move, where they're going.</div>
+      <div class="dash-card-price">Included with every plan</div>
+      <div class="dash-card-foot">{pulse_cta}</div>
+    </div>
+    """)
+
     # Credits badge
     credits_badge = ""
     if is_admin_user:
@@ -2473,6 +2492,40 @@ async def my_dashboards(request: Request):
         dashboard_cards="".join(cards_html),
         raw_credits_badge=credits_badge,
         raw_signal_search_link=signal_link,
+        raw_admin_link=admin_link,
+        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+    )
+
+
+# ── narve Pulse ──────────────────────────────────────────────────────────────
+# A gateway-internal dashboard that forecasts human happiness, mental health,
+# connection, and the consequences each shift drives downstream. Unlike the
+# six microservice dashboards, narve Pulse is rendered directly by the gateway
+# from a static curated dataset under static/pulse_data/. Auth-gated to logged
+# in users; included with every plan (no per-dashboard subscription gate).
+@app.get("/pulse", response_class=HTMLResponse)
+async def narve_pulse(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        # On apex subdomains we proxy to the dashboard backend; pulse lives at
+        # the apex itself, so any subdomain hit should redirect back.
+        return RedirectResponse(f"https://{DOMAIN}/pulse", status_code=302)
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    # Signal Search link for Pro users (mirrors /dashboards behaviour)
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    pinfo = _user_plan_info(user, subs, int(time.time()))
+    signal_link = ""
+    if pinfo["plan"] == "pro" or user.get("is_admin"):
+        signal_link = '<a href="/signal-search">Signal Search</a>'
+    intelligence_link = ""
+    return render_page(
+        "pulse", request=request,
+        email=user["email"], username=user.get("username", user["email"]),
+        raw_signal_search_link=signal_link,
+        raw_intelligence_link=intelligence_link,
         raw_admin_link=admin_link,
         raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
     )
@@ -5713,6 +5766,179 @@ def _require_pro_user(request: Request) -> dict:
     return user
 
 
+# ── Weekly intelligence reports API (Pro tier) ───────────────────────────────
+
+
+@app.get("/api/reports/weekly")
+async def api_list_weekly_reports(request: Request):
+    """List the authenticated user's weekly reports, newest first."""
+    user = _require_pro_user(request)
+    rows = db.list_weekly_reports(user["user_id"])
+    reports = []
+    for r in rows:
+        reports.append({
+            "id": r["id"],
+            "week_start": r["week_start"],
+            "week_end": r["week_end"],
+            "generated_at": r["generated_at"],
+            "delivered_at": r["delivered_at"],
+            "best_bets_correct": r["best_bets_correct"],
+            "best_bets_total": r["best_bets_total"],
+            "simulated_roi_pct": r["simulated_roi_pct"],
+            "total_predictions": r["total_predictions"],
+            "total_markets": r["total_markets"],
+            "has_pdf": bool(r["pdf_path"]),
+        })
+    return JSONResponse({"reports": reports})
+
+
+@app.get("/api/reports/weekly/{report_id}")
+async def api_get_weekly_report(request: Request, report_id: int):
+    """Get a single weekly report's metadata."""
+    user = _require_pro_user(request)
+    report = db.get_weekly_report(report_id)
+    if not report or report["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return JSONResponse({
+        "id": report["id"],
+        "week_start": report["week_start"],
+        "week_end": report["week_end"],
+        "generated_at": report["generated_at"],
+        "delivered_at": report["delivered_at"],
+        "best_bets_correct": report["best_bets_correct"],
+        "best_bets_total": report["best_bets_total"],
+        "simulated_roi_pct": report["simulated_roi_pct"],
+        "top_signal_market": report["top_signal_market"],
+        "top_source_handle": report["top_source_handle"],
+        "total_predictions": report["total_predictions"],
+        "total_markets": report["total_markets"],
+        "has_pdf": bool(report["pdf_path"]),
+    })
+
+
+@app.get("/api/reports/weekly/{report_id}/pdf")
+async def api_download_weekly_report_pdf(request: Request, report_id: int):
+    """Download the PDF for a specific weekly report.
+
+    Streams the file directly from disk. The IDOR check ensures user A
+    cannot download user B's report.
+    """
+    user = _require_pro_user(request)
+    report = db.get_weekly_report(report_id)
+    if not report or report["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not report["pdf_path"]:
+        raise HTTPException(status_code=404, detail="PDF not yet generated")
+
+    from pathlib import Path as _Path
+    pdf_path = _Path(report["pdf_path"])
+    # Resolve relative paths from the gateway root
+    if not pdf_path.is_absolute():
+        pdf_path = BASE_DIR / pdf_path
+    if not pdf_path.is_file():
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+
+    import datetime as _dt
+    ws = _dt.datetime.fromtimestamp(report["week_start"], tz=_dt.timezone.utc)
+    filename = f"narve_report_{ws.strftime('%Y-%m-%d')}.pdf"
+
+    return Response(
+        content=pdf_path.read_bytes(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, max-age=86400",
+        },
+    )
+
+
+@app.post("/api/reports/weekly/generate")
+async def api_generate_weekly_report(request: Request):
+    """Trigger immediate report generation for the current/last week.
+
+    Pro users only. Rate limited to 1 per week to bound Claude API cost.
+    """
+    user = _require_pro_user(request)
+    ip = _get_client_ip(request)
+
+    # Rate limit: 1 generation per user per week (604800 seconds)
+    if _is_rate_limited(f"report_gen:{user['user_id']}", 1, 604800):
+        return JSONResponse(
+            {"error": "Report already generated this week. Check your reports list."},
+            status_code=429,
+        )
+
+    from reports.weekly_report import generate_and_deliver, get_week_bounds
+    week_start, week_end = get_week_bounds()
+
+    # Check if report already exists for this week
+    existing = db.list_weekly_reports(user["user_id"], limit=1)
+    if existing and existing[0]["week_start"] == week_start:
+        return JSONResponse({
+            "status": "already_generated",
+            "report_id": existing[0]["id"],
+        })
+
+    result = await generate_and_deliver(user["user_id"], week_start, week_end)
+    return JSONResponse(result)
+
+
+# In-app report viewer (HTML page, not API)
+@app.get("/reports/weekly/{report_id}", response_class=HTMLResponse)
+async def view_weekly_report(request: Request, report_id: int):
+    """Render a weekly report in the browser using the native PDF viewer."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+
+    report = db.get_weekly_report(report_id)
+    if not report or report["user_id"] != user["user_id"]:
+        return HTMLResponse(
+            "<h1>Report not found</h1><p><a href='/settings'>Back to settings</a></p>",
+            status_code=404,
+        )
+
+    import datetime as _dt
+    ws = _dt.datetime.fromtimestamp(report["week_start"], tz=_dt.timezone.utc)
+    we = _dt.datetime.fromtimestamp(report["week_end"], tz=_dt.timezone.utc) - _dt.timedelta(days=1)
+
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intelligence Report — {ws.strftime('%b %d')}–{we.strftime('%b %d, %Y')} — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <style>
+    .report-frame {{ width: 100%; height: calc(100vh - 140px); border: none; border-radius: 8px; background: #fff; }}
+    .report-actions {{ display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }}
+  </style>
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:24px;height:24px;filter:invert(1);border-radius:4px">
+      <span>narve.ai</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards">Dashboards</a>
+      <a href="/settings">Settings</a>
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+  <main class="gw-main">
+    <h1 class="gw-page-title">Intelligence Report</h1>
+    <p class="gw-page-sub">Week of {ws.strftime('%B %d')} – {we.strftime('%B %d, %Y')}</p>
+    <div class="report-actions">
+      <a href="/api/reports/weekly/{report_id}/pdf" class="btn btn-primary" style="text-decoration:none;padding:10px 20px;font-size:13px">Download PDF</a>
+      <a href="/settings" class="btn btn-primary-outline" style="text-decoration:none;padding:10px 20px;font-size:13px">All Reports</a>
+    </div>
+    <iframe class="report-frame" src="/api/reports/weekly/{report_id}/pdf"></iframe>
+  </main>
+</body>
+</html>""")
+
+
 @app.get("/api/credibility/{source_handle}")
 async def api_get_credibility(request: Request, source_handle: str):
     _require_authenticated(request)
@@ -5721,6 +5947,38 @@ async def api_get_credibility(request: Request, source_handle: str):
         return JSONResponse({"source_handle": source_handle, "global_credibility": None, "status": "unknown"})
     cats = db.get_all_category_credibilities(source_handle)
     snaps = db.get_credibility_snapshots(source_handle, 5)
+    cal = db.get_source_calibration(source_handle)
+
+    # Timing fields (may not exist if migration 020 hasn't run)
+    timing_score = None
+    timing_rank = None
+    try:
+        timing_score = cred["avg_timing_score"] if "avg_timing_score" in cred.keys() else None
+        timing_rank = cred["early_predictor_rank"] if "early_predictor_rank" in cred.keys() else None
+    except Exception:
+        pass
+
+    # Calibration badge label
+    cal_label = "Calibration unrated"
+    if cal and cal.get("calibration_score") is not None:
+        cs = cal["calibration_score"]
+        if cs > 0.8:
+            cal_label = "Well calibrated"
+        elif cs > 0.6:
+            cal_label = "Moderately calibrated"
+        else:
+            cal_label = "Poorly calibrated"
+
+    # Timing badge label
+    timing_label = None
+    if timing_score is not None:
+        if timing_score > 0.7:
+            timing_label = "Early predictor"
+        elif timing_score > 0.4:
+            timing_label = "Average timing"
+        else:
+            timing_label = "Late caller"
+
     return JSONResponse({
         "source_handle": source_handle,
         "global_credibility": cred["global_credibility"],
@@ -5728,6 +5986,13 @@ async def api_get_credibility(request: Request, source_handle: str):
         "decay_weighted_accuracy": cred["decay_weighted_accuracy"],
         "total_predictions": cred["total_predictions"],
         "correct_predictions": cred["correct_predictions"],
+        "calibration": cal,
+        "calibration_label": cal_label,
+        "timing": {
+            "avg_timing_score": timing_score,
+            "early_predictor_rank": timing_rank,
+            "label": timing_label,
+        },
         "categories": [
             {"category": c["category"], "credibility": c["category_credibility"],
              "prediction_count": c["prediction_count"]}
@@ -5832,6 +6097,115 @@ async def api_get_backtest(request: Request, backtest_id: int):
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
     })
+
+
+# ── Insider Trading Signal API ────────────────────────────────────────────────
+
+
+@app.get("/api/insider/signals")
+async def api_insider_signals(
+    request: Request,
+    signal_type: str = "",
+    strength: str = "",
+    days: int = 30,
+    limit: int = 50,
+    page: int = 1,
+):
+    """Insider signals with optional filters. Pro tier required."""
+    _require_pro_user(request)
+    limit = max(1, min(100, limit))
+    offset = max(0, (page - 1) * limit)
+    days = max(1, min(365, days))
+
+    signals = db.get_insider_signals(
+        signal_type=signal_type or None,
+        strength=strength or None,
+        days=days,
+        limit=limit,
+        offset=offset,
+    )
+
+    result = []
+    for s in signals:
+        sig_dict = dict(s)
+        sig_dict["correlations"] = [
+            dict(c) for c in db.get_insider_correlations_for_signal(s["id"])
+        ]
+        result.append(sig_dict)
+
+    return JSONResponse({"signals": result, "count": len(result)})
+
+
+@app.get("/api/insider/signals/{signal_id}")
+async def api_insider_signal_detail(request: Request, signal_id: int):
+    """Full signal with all correlations and source history."""
+    _require_pro_user(request)
+    signal = db.get_insider_signal_by_id(signal_id)
+    if not signal:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    sig_dict = dict(signal)
+    sig_dict["correlations"] = [
+        dict(c) for c in db.get_insider_correlations_for_signal(signal_id)
+    ]
+    # Include source profile
+    profile = db.get_insider_source_profile(signal["source_name"])
+    sig_dict["source_profile"] = profile
+
+    return JSONResponse({"signal": sig_dict})
+
+
+@app.get("/api/insider/leaderboard")
+async def api_insider_leaderboard(
+    request: Request, min_trades: int = 3, limit: int = 50,
+):
+    """Insiders ranked by prediction accuracy on correlated markets."""
+    _require_pro_user(request)
+    leaderboard = db.get_insider_leaderboard(
+        min_trades=max(1, min_trades),
+        limit=max(1, min(100, limit)),
+    )
+    return JSONResponse({"leaderboard": leaderboard})
+
+
+@app.get("/api/insider/markets/{market_id:path}")
+async def api_insider_for_market(request: Request, market_id: str, days: int = 30):
+    """All insider signals correlated with a specific market."""
+    _require_pro_user(request)
+    signals = db.get_insider_signals_for_market(market_id, days=max(1, min(365, days)))
+    return JSONResponse({"market_id": market_id, "signals": signals, "count": len(signals)})
+
+
+@app.get("/api/insider/sources/{source_name:path}")
+async def api_insider_source(request: Request, source_name: str):
+    """Full trade history and accuracy for one insider."""
+    _require_pro_user(request)
+    profile = db.get_insider_source_profile(source_name)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return JSONResponse({"source": profile})
+
+
+@app.patch("/api/insider/preferences")
+async def api_insider_preferences(request: Request):
+    """Update user's insider alert preferences."""
+    user = _require_pro_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    enabled = bool(body.get("alerts_enabled", False))
+    threshold = body.get("threshold", "strong_only")
+    db.set_insider_alert_preferences(user["user_id"], enabled, threshold)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/insider/stats")
+async def api_insider_stats(request: Request):
+    """Summary stats for the insider signals dashboard."""
+    _require_pro_user(request)
+    return JSONResponse(db.get_insider_stats())
 
 
 # ── Retrospective API (F6) ───────────────────────────────────────────────────

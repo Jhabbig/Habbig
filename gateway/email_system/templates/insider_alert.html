@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insider Signal — narve.ai</title>
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d0d0d;color:#e5e5e5">
+<div style="max-width:600px;margin:0 auto;padding:32px 24px">
+
+<div style="margin-bottom:24px">
+  <img src="{{ app_url }}/_gateway_static/img/logo.png" alt="narve.ai" width="120" style="filter:invert(1)">
+</div>
+
+<div style="padding:16px 20px;border:1px solid #662211;border-radius:10px;background:#1a0f0a;margin-bottom:24px">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#ff9966">
+      Insider Signal Detected
+    </div>
+    <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:{% if strength == 'STRONG' %}rgba(239,68,68,0.2);color:#ef4444{% elif strength == 'MODERATE' %}rgba(245,158,11,0.2);color:#f59e0b{% else %}rgba(136,136,136,0.2);color:#888{% endif %}">
+      {{ strength }}
+    </span>
+  </div>
+
+  <h1 style="font-size:18px;font-weight:600;margin:0 0 4px;color:#fff">
+    {{ signal_type }}
+  </h1>
+  <div style="font-size:14px;color:#ccc;margin-bottom:12px">
+    <strong>{{ source_name }}</strong> {{ action }} {{ asset }} — {{ amount }}
+  </div>
+
+  <div style="font-size:12px;color:#888;margin-bottom:12px">
+    Insider Score: <span style="color:#ff9966;font-weight:600">{{ insider_score }}</span>
+  </div>
+</div>
+
+{% if market_question %}
+<div style="padding:14px 18px;border:1px solid #1e3a1e;border-radius:8px;background:#0d1f0d;margin-bottom:24px">
+  <div style="font-size:12px;color:#22c55e;font-weight:600;margin-bottom:6px">
+    Correlated Market
+  </div>
+  <div style="font-size:14px;color:#e5e5e5;margin-bottom:8px">
+    {{ market_question }}
+  </div>
+  <div style="font-size:13px;color:#ccc">
+    Implied direction: <strong style="color:#fff">{{ implied_direction }}</strong>
+  </div>
+  {% if explanation %}
+  <div style="font-size:12px;color:#888;margin-top:8px;padding-top:8px;border-top:1px solid #1e3a1e">
+    {{ explanation }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div style="text-align:center;padding:16px 0">
+  <a href="{{ app_url }}/dashboards" style="display:inline-block;padding:10px 24px;background:#fff;color:#000;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600">
+    View Signal Details
+  </a>
+</div>
+
+<div style="text-align:center;padding:12px 0;font-size:10px;color:#555;border-top:1px solid #222;margin-top:16px">
+  All data derived from mandatory public government disclosures (STOCK Act, SEC Form 4, FEC filings).
+  narve.ai does not possess or use non-public information.
+</div>
+
+<div style="text-align:center;padding:8px 0;font-size:11px;color:#555">
+  <a href="{{ unsubscribe_url }}" style="color:#555;text-decoration:underline">Unsubscribe from insider alerts</a>
+  &middot;
+  <a href="{{ app_url }}" style="color:#555;text-decoration:underline">narve.ai</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -361,7 +361,7 @@ async def api_newsletter_v2(request: Request, email: str = Form(""), ref: str = 
     # newsletter_subscribers.id is internal — the public identifier we
     # report back to the user is the assigned waiting-list position.
 
-    # If they came through a ref link, move the referrer up by 5 positions.
+    # If they came through a ref link, move the referrer up by 1 position.
     if ref:
         try:
             await _apply_referral_bump(ref)
@@ -377,7 +377,7 @@ async def api_newsletter_v2(request: Request, email: str = Form(""), ref: str = 
 
 
 async def _apply_referral_bump(ref: str) -> None:
-    """Move the referrer up by 5 display positions (never below 1) and send
+    """Move the referrer up by 1 display position (never below 1) and send
     an email confirming the jump."""
     with db.conn() as c:
         row = c.execute(
@@ -385,7 +385,7 @@ async def _apply_referral_bump(ref: str) -> None:
         ).fetchone()
         if not row:
             return
-        new_disp = max(1, (row["display_position"] or row["position"]) - 5)
+        new_disp = max(1, (row["display_position"] or row["position"]) - 1)
         c.execute(
             "UPDATE newsletter_subscribers SET display_position = ? WHERE id = ?",
             (new_disp, row["id"]),
@@ -1535,3 +1535,497 @@ async def api_auth_sessions_revoke_all(request: Request):
         user["user_id"], user.get("session_token_hash", "")
     )
     return JSONResponse({"revoked": count})
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SOURCE NETWORK ANALYSIS (F20: echo chamber detection)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/sources/network")
+async def api_source_network(request: Request):
+    """Full network snapshot: clusters + most independent sources. Pro tier."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    network = db.get_latest_source_network()
+    if not network:
+        return JSONResponse({"error": "Network not yet computed. Check back after the weekly analysis runs."}, status_code=404)
+    return JSONResponse(network)
+
+
+@app.get("/api/sources/{handle}/relationships")
+async def api_source_relationships(request: Request, handle: str, type: str = ""):
+    """All relationships for a source, optionally filtered by type."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    handle = handle.strip().lstrip("@")
+    type_filter = type.strip() if type in ("echo_chamber", "independent", "complementary", "opposing") else None
+    rows = db.get_source_relationships(handle, type_filter=type_filter)
+    import datetime as _dt
+    out = []
+    for r in rows:
+        out.append({
+            "source_a": r["source_a"],
+            "source_b": r["source_b"],
+            "other": r["source_b"] if r["source_a"] == handle else r["source_a"],
+            "markets_both_predicted": r["markets_both_predicted"],
+            "agreement_rate": r["agreement_rate"],
+            "both_correct_rate": r["both_correct_rate"],
+            "independent_signal_score": r["independent_signal_score"],
+            "relationship_type": r["relationship_type"],
+            "last_computed_at": r["last_computed_at"],
+        })
+    return JSONResponse({"handle": handle, "relationships": out, "count": len(out)})
+
+
+@app.get("/api/markets/{market_slug}/network-consensus")
+async def api_market_network_consensus(request: Request, market_slug: str):
+    """Network-adjusted consensus for a specific market.
+
+    Shows which sources are in echo chambers and the effective signal count
+    after de-duplication.
+    """
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    preds = db.get_predictions_for_market(market_slug)
+    if not preds:
+        return JSONResponse({
+            "market_slug": market_slug,
+            "error": "No predictions found for this market.",
+        }, status_code=404)
+    # Convert sqlite3.Row to dicts for the network engine
+    pred_dicts = [dict(p) for p in preds]
+    relationships = db.get_relationships_for_market(market_slug)
+    from intelligence.network import compute_network_adjusted_consensus
+    result = compute_network_adjusted_consensus(pred_dicts, relationships or None)
+    result["market_slug"] = market_slug
+    return JSONResponse(result)
+
+
+@app.post("/admin/network/recompute")
+async def admin_recompute_network(request: Request):
+    """Trigger a network recomputation on demand (admin only)."""
+    from server import _require_admin_user
+    _require_admin_user(request)
+    job_id = await enqueue_job("compute_source_network")
+    return JSONResponse({"enqueued": True, "job_id": job_id})
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# MARKET MOVEMENTS — real-time movement feed + user alert rules
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/movements")
+async def api_list_movements(
+    request: Request,
+    event_type: str = "",
+    severity: str = "",
+    hours: int = 24,
+    limit: int = 50,
+):
+    """Recent market movement events. Authenticated."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    import time as _time
+    since = int(_time.time()) - hours * 3600
+    rows = db.list_movement_events(
+        event_type=event_type.strip() or None,
+        severity=severity.strip() or None,
+        since=since,
+        limit=min(limit, 200),
+    )
+    import json as _j
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["metadata"] = _j.loads(d.pop("metadata_json", "{}"))
+        except Exception:
+            d["metadata"] = {}
+        out.append(d)
+    return JSONResponse({"movements": out, "count": len(out)})
+
+
+@app.get("/api/movements/{event_id}")
+async def api_get_movement(request: Request, event_id: int):
+    """Single movement event detail."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    row = db.get_movement_event(event_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Event not found")
+    import json as _j
+    d = dict(row)
+    try:
+        d["metadata"] = _j.loads(d.pop("metadata_json", "{}"))
+    except Exception:
+        d["metadata"] = {}
+    return JSONResponse(d)
+
+
+@app.get("/api/alerts/rules")
+async def api_list_alert_rules(request: Request):
+    """List the current user's alert rules."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.list_alert_rules(user["user_id"])
+    import json as _j
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["categories"] = _j.loads(d.pop("categories_json", "[]"))
+        except Exception:
+            d["categories"] = []
+        d["only_saved"] = bool(d["only_saved"])
+        d["only_followed"] = bool(d["only_followed"])
+        d["enabled"] = bool(d["enabled"])
+        out.append(d)
+    return JSONResponse({"rules": out})
+
+
+@app.post("/api/alerts/rules")
+async def api_create_alert_rule(request: Request):
+    """Create a new alert rule for the current user."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = await request.json()
+    event_type = body.get("event_type", "").strip()
+    valid_types = {"odds_movement", "volume_spike", "new_market", "approaching_resolution", "reversal"}
+    if event_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"event_type must be one of: {', '.join(sorted(valid_types))}")
+    import json as _j
+    rule_id = db.create_alert_rule(
+        user_id=user["user_id"],
+        event_type=event_type,
+        min_severity=body.get("min_severity", "medium"),
+        min_price_change=body.get("min_price_change"),
+        categories_json=_j.dumps(body.get("categories", [])),
+        only_saved=bool(body.get("only_saved", False)),
+        only_followed=bool(body.get("only_followed", False)),
+        delivery=body.get("delivery", "in_app"),
+    )
+    return JSONResponse({"id": rule_id}, status_code=201)
+
+
+@app.put("/api/alerts/rules/{rule_id}")
+async def api_update_alert_rule(request: Request, rule_id: int):
+    """Update an existing alert rule."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = await request.json()
+    import json as _j
+    fields = {}
+    if "event_type" in body:
+        fields["event_type"] = body["event_type"]
+    if "min_severity" in body:
+        fields["min_severity"] = body["min_severity"]
+    if "min_price_change" in body:
+        fields["min_price_change"] = body["min_price_change"]
+    if "categories" in body:
+        fields["categories_json"] = _j.dumps(body["categories"])
+    if "only_saved" in body:
+        fields["only_saved"] = int(bool(body["only_saved"]))
+    if "only_followed" in body:
+        fields["only_followed"] = int(bool(body["only_followed"]))
+    if "delivery" in body:
+        fields["delivery"] = body["delivery"]
+    if "enabled" in body:
+        fields["enabled"] = int(bool(body["enabled"]))
+    ok = db.update_alert_rule(rule_id, user["user_id"], **fields)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return JSONResponse({"updated": True})
+
+
+@app.delete("/api/alerts/rules/{rule_id}")
+async def api_delete_alert_rule(request: Request, rule_id: int):
+    """Delete an alert rule."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = db.delete_alert_rule(rule_id, user["user_id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return JSONResponse({"deleted": True})
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# BROWSER EXTENSION — JWT auth + optimised market overlay API
+# ═════════════════════════════════════════════════════════════════════════
+
+
+import base64
+import json as _json
+
+_EXT_JWT_SECRET = (os.environ.get("GATEWAY_COOKIE_SECRET") or "narve-ext-jwt").encode()
+_EXT_JWT_TTL = 7 * 24 * 60 * 60  # 7 days
+_EXT_CACHE: dict[str, tuple[float, dict]] = {}  # slug → (expires_at, data)
+_EXT_CACHE_TTL = 120  # 2 minutes
+
+
+def _ext_jwt_sign(payload: dict) -> str:
+    """Create a compact HS256 JWT. No external dependency.
+
+    Structure: base64(header).base64(payload).base64(signature)
+    Claims: sub, email, display_name, tier, type, iat, exp
+    """
+    header = {"alg": "HS256", "typ": "JWT"}
+    def _b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+    h = _b64(_json.dumps(header, separators=(",", ":")).encode())
+    p = _b64(_json.dumps(payload, separators=(",", ":")).encode())
+    sig = _hmac.new(_EXT_JWT_SECRET, f"{h}.{p}".encode(), hashlib.sha256).digest()
+    return f"{h}.{p}.{_b64(sig)}"
+
+
+def _ext_jwt_decode(token: str) -> Optional[dict]:
+    """Verify and decode a JWT issued by _ext_jwt_sign. Returns claims dict or None."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        h, p, s = parts
+        def _pad(b64: str) -> bytes:
+            return base64.urlsafe_b64decode(b64 + "=" * (4 - len(b64) % 4))
+        expected_sig = _hmac.new(_EXT_JWT_SECRET, f"{h}.{p}".encode(), hashlib.sha256).digest()
+        if not _hmac.compare_digest(expected_sig, _pad(s)):
+            return None
+        payload = _json.loads(_pad(p))
+        if payload.get("exp", 0) < time.time():
+            return None
+        if payload.get("type") != "extension":
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _ext_require_jwt(request: Request) -> dict:
+    """Extract and validate the extension JWT from the Authorization header.
+
+    Returns the decoded claims dict. Raises 401 if invalid/expired.
+    """
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing extension token")
+    payload = _ext_jwt_decode(auth[7:])
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired extension token")
+    return payload
+
+
+def _ext_require_trader(request: Request) -> dict:
+    """Like _ext_require_jwt but also asserts Trader tier or above."""
+    claims = _ext_require_jwt(request)
+    if claims.get("tier") not in ("trader", "pro", "admin"):
+        raise HTTPException(status_code=403, detail="Trader tier or above required")
+    return claims
+
+
+# ── Extension auth page ─────────────────────────────────────────────────
+
+
+@app.get("/extension/auth", response_class=HTMLResponse)
+async def extension_auth_page(request: Request):
+    """Generate an extension JWT and hand it to the extension via postMessage.
+
+    The user must already be logged in to narve.ai (session cookie present).
+    The page shows a confirmation, sends the JWT via window.postMessage
+    to the extension's content script, and auto-closes after 2 seconds.
+    """
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    pinfo = server._user_plan_info(user, subs, int(time.time()))
+    tier = pinfo.get("plan") or "free"
+    if user.get("is_admin"):
+        tier = "admin"
+
+    now = int(time.time())
+    jwt_token = _ext_jwt_sign({
+        "sub": user["user_id"],
+        "email": user.get("email", ""),
+        "display_name": user.get("username", ""),
+        "tier": tier,
+        "type": "extension",
+        "iat": now,
+        "exp": now + _EXT_JWT_TTL,
+    })
+
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>narve.ai Extension — Connected</title>
+<style>
+body {{ font-family: -apple-system, sans-serif; display: flex; align-items: center;
+       justify-content: center; min-height: 100vh; background: #0d0d0d; color: #f0f0f0; margin: 0; }}
+.card {{ text-align: center; max-width: 360px; padding: 40px; }}
+.check {{ font-size: 48px; margin-bottom: 16px; }}
+h1 {{ font-size: 20px; font-weight: 500; margin: 0 0 8px; }}
+p {{ font-size: 13px; color: #888; margin: 0; }}
+</style>
+</head><body>
+<div class="card">
+  <div class="check">&#10003;</div>
+  <h1>Extension connected</h1>
+  <p>Signed in as {_html.escape(user.get('username', user.get('email', '')))} ({tier})</p>
+  <p style="margin-top:16px;font-size:11px;color:#555">This tab will close automatically…</p>
+</div>
+<script>
+  window.postMessage({{
+    type: "NARVE_EXT_AUTH",
+    jwt: {_json.dumps(jwt_token)},
+    display_name: {_json.dumps(user.get('username', ''))},
+    tier: {_json.dumps(tier)},
+  }}, "*");
+  setTimeout(function() {{ window.close(); }}, 2000);
+</script>
+</body></html>""")
+
+
+# ── Extension market overlay API ─────────────────────────────────────────
+
+
+@app.get("/api/extension/market/{market_slug_or_url:path}")
+async def api_extension_market(request: Request, market_slug_or_url: str):
+    """Optimised single-call endpoint for the browser extension overlay.
+
+    Accepts a raw Polymarket slug ("will-fed-raise-rates-march-2026")
+    or a full URL ("https://polymarket.com/event/will-fed-raise-rates")
+    and returns everything the overlay needs in one round-trip.
+
+    Rate limit: 60 requests per minute per JWT subject.
+    Cached: 2 minutes per slug.
+    Requires: Trader tier or above.
+    """
+    claims = _ext_require_trader(request)
+    user_id = claims["sub"]
+
+    # Rate limit: 60/min per user
+    if server._is_rate_limited(f"ext:{user_id}:market", limit=60, window=60):
+        return JSONResponse({"error": "Rate limited. Try again in a moment."}, status_code=429)
+
+    # Extract slug from URL if a full URL was passed
+    slug = market_slug_or_url.strip()
+    if slug.startswith("http"):
+        # https://polymarket.com/event/will-fed-raise-rates → will-fed-raise-rates
+        parts = slug.split("/")
+        try:
+            slug = parts[parts.index("event") + 1]
+        except (ValueError, IndexError):
+            # If no /event/ in URL, use the last path segment
+            slug = parts[-1] if parts else slug
+    slug = slug.split("?")[0].strip("/")
+    if not slug:
+        raise HTTPException(status_code=400, detail="No market slug provided")
+
+    # Check 2-minute cache
+    now = time.time()
+    cached = _EXT_CACHE.get(slug)
+    if cached and cached[0] > now:
+        return JSONResponse(cached[1])
+
+    # Gather data from existing helpers
+    predictions = db.get_predictions_for_market(slug)
+    pred_dicts = [
+        {
+            "source_handle": p["source_handle"],
+            "direction": p["direction"],
+            "predicted_probability": p["predicted_probability"],
+            "global_credibility": p["global_credibility"],
+            "category_credibility": p["category_credibility"] if "category_credibility" in p.keys() else None,
+            "accuracy_unlocked": bool(p["accuracy_unlocked"]) if p["accuracy_unlocked"] is not None else False,
+        }
+        for p in predictions
+    ]
+    result = db.calculate_betyc_probability(pred_dicts)
+
+    # Fetch live market price
+    try:
+        from backend.markets.unified_markets import fetch_single_market
+        market = await fetch_single_market(
+            server.POLY_CLIENT, server.KALSHI_CLIENT, slug, cache_ttl=120
+        )
+        market_yes = market.yes_price if market else None
+        market_question = market.question if market else None
+    except Exception:
+        market_yes = None
+        market_question = None
+
+    # Fallback: try market_snapshots if live fetch failed
+    if market_yes is None:
+        snap = db.get_latest_market_snapshot(slug)
+        if snap:
+            market_yes = snap["yes_price"]
+            market_question = market_question or snap["market_question"]
+
+    # Compute edge
+    betyc_yes = result.get("betyc_yes_probability")
+    edge = round(betyc_yes - market_yes, 4) if (betyc_yes is not None and market_yes is not None) else None
+
+    # Top sources — sorted by credibility descending
+    top_sources = sorted(
+        [
+            {
+                "handle": p["source_handle"],
+                "credibility": p.get("global_credibility") or 0,
+                "predicted_outcome": p.get("direction") or "?",
+                "predicted_probability": p.get("predicted_probability"),
+                "platform": "polymarket",
+            }
+            for p in pred_dicts
+        ],
+        key=lambda s: s["credibility"],
+        reverse=True,
+    )
+
+    # Insider signals (Pro only, best-effort)
+    insider_signals = []
+    if claims.get("tier") in ("pro", "admin"):
+        try:
+            raw = db.get_insider_signals_for_market(slug, days=30)
+            insider_signals = raw[:5] if isinstance(raw, list) else []
+        except Exception:
+            insider_signals = []
+
+    # Risk flag: if edge is large or source agreement is low
+    risk_flag = False
+    if edge is not None and abs(edge) > 0.15:
+        risk_flag = True
+
+    payload = {
+        "market_slug": slug,
+        "market_question": market_question,
+        "betyc_yes_probability": betyc_yes,
+        "market_yes_price": market_yes,
+        "betyc_edge": edge,
+        "betyc_confidence": result.get("betyc_confidence", "Insufficient data"),
+        "source_count": result.get("betyc_source_count", 0),
+        "risk_flag": risk_flag,
+        "top_sources": top_sources[:5],
+        "insider_signals": insider_signals,
+    }
+
+    # Cache for 2 minutes
+    _EXT_CACHE[slug] = (now + _EXT_CACHE_TTL, payload)
+
+    # GC stale cache entries if it gets large
+    if len(_EXT_CACHE) > 500:
+        stale = [k for k, (exp, _) in _EXT_CACHE.items() if exp < now]
+        for k in stale:
+            del _EXT_CACHE[k]
+
+    return JSONResponse(payload)

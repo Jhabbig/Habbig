@@ -14,6 +14,13 @@ auth.db
 *.sqlite3
 *.sqlite-journal
 *.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+
+# save_session.sh drops patch backups here; belt-and-braces, not source-tracked
+**/saves/
 
 # Private keys / credentials
 *.key
