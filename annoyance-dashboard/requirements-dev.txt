@@ -3,3 +3,4 @@ pytest-asyncio
 respx
 freezegun
 PyYAML
+pip-audit

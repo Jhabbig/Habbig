@@ -37,6 +37,25 @@ jobs:
         run: |
           pytest -ra --tb=short tests/unit tests/integration
 
+      - name: Dependency vulnerability audit (pip-audit, informational)
+        # Scans the installed env so transitive deps are covered. Runs on
+        # one matrix row only to avoid duplicate PyPI traffic.
+        #
+        # Policy (2026-04): informational-only — surfaces advisories in the
+        # job log but does NOT block the build. The 2026-04 baseline has
+        # pre-existing findings in pip/setuptools/starlette that need triage
+        # before we can safely flip this to blocking.
+        #
+        # To tighten this into a blocking gate once transitive debt is
+        # cleared, remove the trailing `|| true` and optionally add
+        # --strict. Per-advisory ignores with justification go via
+        # `--ignore-vuln <ID>`.
+        if: matrix.python == '3.12'
+        run: |
+          echo "::group::pip-audit findings"
+          pip-audit || true
+          echo "::endgroup::"
+
       - name: Run backtest (informational)
         run: |
           pytest -ra --tb=short -m backtest tests/backtest

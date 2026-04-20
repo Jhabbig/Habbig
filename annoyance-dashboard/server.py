@@ -42,6 +42,7 @@ import db
 import aggregator
 import rate_limiter
 import spike_detector
+import url_guard
 from classifier import classify_pending_posts
 from sources.reddit import RedditSource
 from sources.bluesky import BlueskySource
@@ -208,6 +209,21 @@ async def lifespan(app: FastAPI):
     log.info("annoyance dashboard: starting on %s:%d", config.HOST, config.PORT)
     db.init_db()
     log.info("db initialized at %s", config.DB_PATH)
+
+    # Single-line feature-flag readout on boot (P0.1). Operators can eyeball
+    # this to spot a misconfig — e.g. EMAIL_NOTIFICATIONS_ENABLED=True in
+    # staging, or a loop accidentally disabled in prod. Booleans + allowlist
+    # size only; we never log secret values or individual allowed emails.
+    log.info(
+        "feature flags: CLASSIFIER_ENABLED=%s REDDIT_LOOP_ENABLED=%s "
+        "BLUESKY_LOOP_ENABLED=%s EMAIL_NOTIFICATIONS_ENABLED=%s "
+        "EMAIL_NOTIFICATIONS_ALLOWLIST_size=%d",
+        config.CLASSIFIER_ENABLED,
+        config.REDDIT_LOOP_ENABLED,
+        config.BLUESKY_LOOP_ENABLED,
+        config.EMAIL_NOTIFICATIONS_ENABLED,
+        len(config.EMAIL_NOTIFICATIONS_ALLOWLIST),
+    )
 
     # Kill-switches (config.{REDDIT,BLUESKY,CLASSIFIER}_LOOP_ENABLED) let
     # staging keep Claude spend at $0 until launch-day while still building
@@ -590,19 +606,49 @@ _ENTITY_MARKETS_CACHE: Optional[dict] = None
 def _load_entity_markets() -> dict:
     """Read entity_markets.json once per process. The file is scaffolded by
     ``scripts/build_entity_markets.py``; curators overwrite individual
-    entries post-merge. Restart the server to pick up a new edit."""
+    entries post-merge. Restart the server to pick up a new edit.
+
+    P8.2: filter out any market entry whose URL isn't on the url_guard
+    allowlist. A typo'd or maliciously-curated entry would otherwise become
+    an open-redirect every time a spike card links out. Entries without a
+    URL are kept (callers can render a name-only placeholder)."""
     global _ENTITY_MARKETS_CACHE
     if _ENTITY_MARKETS_CACHE is not None:
         return _ENTITY_MARKETS_CACHE
     try:
         import json as _json
         if _ENTITY_MARKETS_PATH.exists():
-            _ENTITY_MARKETS_CACHE = _json.loads(_ENTITY_MARKETS_PATH.read_text())
+            raw = _json.loads(_ENTITY_MARKETS_PATH.read_text())
         else:
-            _ENTITY_MARKETS_CACHE = {}
+            raw = {}
     except Exception:
         log.exception("entity_markets.json parse failed")
         _ENTITY_MARKETS_CACHE = {}
+        return _ENTITY_MARKETS_CACHE
+
+    filtered: dict = {}
+    dropped = 0
+    for entity, entries in (raw or {}).items():
+        if not isinstance(entries, list):
+            continue
+        kept = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            u = entry.get("url")
+            if u and not url_guard.is_allowed_url(u):
+                dropped += 1
+                log.warning(
+                    "entity_markets: dropping off-allowlist URL for %s: %s",
+                    entity, u,
+                )
+                continue
+            kept.append(entry)
+        if kept:
+            filtered[entity] = kept
+    if dropped:
+        log.warning("entity_markets: dropped %d off-allowlist entries", dropped)
+    _ENTITY_MARKETS_CACHE = filtered
     return _ENTITY_MARKETS_CACHE
 
 
@@ -634,6 +680,15 @@ async def api_market_suggestions(request: Request) -> JSONResponse:
     note = (body.get("note") or "").strip()[:500]
     if not entity:
         raise HTTPException(status_code=400, detail="entity required")
+    # P8.2: refuse URLs pointing outside the market allowlist up front. We're
+    # never going to render a link to evil.example.com just because a user
+    # suggested it, so rejecting at intake keeps the suggestions log clean
+    # and means curators reviewing the log don't have to do URL screening.
+    if url and not url_guard.is_allowed_url(url):
+        raise HTTPException(
+            status_code=400,
+            detail="url must be on narve.ai, polymarket.com, or kalshi.com",
+        )
     line = (
         f"{datetime.now(timezone.utc).isoformat()}\t"
         f"user={user.get('id')}\t"

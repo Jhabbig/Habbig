@@ -96,6 +96,35 @@ def test_429_body_is_json(test_client, paywall_env):
     assert "rate_limit_exceeded" in str(body)
 
 
+def test_spoofed_forwarded_headers_do_not_bypass_limiter():
+    """P1.1 regression.
+
+    get_client_ip must ignore X-Forwarded-For and CF-Connecting-IP —
+    trusting them on loopback lets a local attacker rotate the header
+    per request and get a fresh bucket each time. With the fix, both
+    requests key off the same socket peer and share one bucket.
+    """
+    class _Req:
+        def __init__(self, peer: str, **headers: str) -> None:
+            self.headers = {k.lower(): v for k, v in headers.items()}
+            class _C:
+                host = peer
+            self.client = _C()
+
+    clean = _Req("127.0.0.1")
+    spoofed_xff = _Req("127.0.0.1", **{"X-Forwarded-For": "8.8.8.8"})
+    spoofed_cf = _Req("127.0.0.1", **{"CF-Connecting-IP": "9.9.9.9"})
+
+    assert rate_limiter.get_client_ip(clean) == "127.0.0.1"
+    assert rate_limiter.get_client_ip(spoofed_xff) == "127.0.0.1"
+    assert rate_limiter.get_client_ip(spoofed_cf) == "127.0.0.1"
+
+    # rate_key folds the same peer IP into the same bucket regardless of
+    # any forwarded-IP header the caller tries to stuff in.
+    assert rate_limiter.rate_key(clean, None) == rate_limiter.rate_key(spoofed_xff, None)
+    assert rate_limiter.rate_key(clean, None) == rate_limiter.rate_key(spoofed_cf, None)
+
+
 def test_reset_for_tests_clears_state():
     """The autouse fixture relies on this — double-check it actually empties."""
     class _Req:

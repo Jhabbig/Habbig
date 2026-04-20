@@ -76,12 +76,16 @@ _limiter = SlidingWindowRateLimiter()
 
 
 def get_client_ip(request: Request) -> str:
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """Return the peer IP as reported by the socket — nothing more.
+
+    We deliberately ignore ``X-Forwarded-For`` and ``CF-Connecting-IP``
+    here. The dashboard binds to 127.0.0.1 only (enforced by
+    ``auth.assert_bound_to_localhost``) so the only peer is the gateway
+    process on the same host. A compromised neighbour process could
+    forge forwarded-IP headers on loopback and trivially bypass any
+    per-IP limit by rotating the header value per request. Real-IP
+    attribution is the gateway's job at the public edge.
+    """
     return request.client.host if request.client else "unknown"
 
 

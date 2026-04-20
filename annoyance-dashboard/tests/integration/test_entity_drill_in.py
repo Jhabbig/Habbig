@@ -138,8 +138,10 @@ class TestEntityDrillIn:
         """Markets endpoint reads entity_markets.json. Override the cache
         path so the test doesn't depend on whatever is checked in."""
         import server
+        # URL must be on the allowlist (narve.ai, polymarket.com, kalshi.com)
+        # or the loader drops it — see url_guard.
         fake_markets = {_ENTITY: [
-            {"title": "Test market", "url": "https://example.test/m/1", "source": "placeholder"},
+            {"title": "Test market", "url": "https://narve.ai/markets/test-1", "source": "placeholder"},
         ]}
         markets_path = tmp_path / "entity_markets.json"
         markets_path.write_text(json.dumps(fake_markets))

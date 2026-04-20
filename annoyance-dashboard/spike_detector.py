@@ -47,7 +47,19 @@ def _compute_confidence(
                 framework populates real per-entity rates.
 
     Warmup spikes bypass the components entirely and return a flat 30 —
-    low-medium, signaling "we don't have enough history to judge".
+    low-medium, signaling "we don't have enough history to judge". This is
+    INTENTIONAL and should not be "tuned" without understanding why:
+      * z and multiple are meaningless during warmup (no baseline to compare
+        against), so their components would be lying if computed.
+      * A warmup fire gated purely by absolute thresholds
+        (count>=WARMUP_MIN_COUNT AND avg_annoyance>=WARMUP_MIN_AVG_ANNOYANCE)
+        tells the user "loud entity, but we have no history" — 30/100 is the
+        honest translation. Raising it would over-claim confidence we don't
+        have; lowering it would hide legitimate early signal.
+      * The floor also guards spike-card UI: confidence<40 renders red,
+        warning the reader "take this with salt". That's the correct
+        treatment for cold-start fires.
+    See P4.2 in SECURITY_AUDIT_2026-04-20.md for audit context.
     """
     if warmup:
         return 30.0
@@ -104,13 +116,24 @@ def _apply_multi_source_gate(entity: str, current_hour: str, info: dict) -> bool
     Bluesky post about the same entity in the same hour is rare enough signal
     to count. If false-positive rate stays high after launch, bump it to >=3.
     """
-    per_source = db.get_entity_hourly_counts_by_source(entity, current_hour)
-    contributing = [s for s, c in per_source.items() if c >= 2]
+    # Enriched shape: {source: {"posts": n, "unique_authors": n}}. The
+    # unique_authors count is the single biggest tell for coordinated gaming
+    # (P4.1): a source where posts >> unique_authors is likely one account
+    # spraying, not organic multi-person outrage. We still gate on posts, but
+    # surface the ratio downstream so the FP admin queue can flag it.
+    per_source_stats = db.get_entity_hourly_source_stats(entity, current_hour)
+    per_source_counts = {s: v["posts"] for s, v in per_source_stats.items()}
+    contributing = [s for s, v in per_source_stats.items() if v["posts"] >= 2]
     # Always record the breakdown so the UI / logs can show which sources
     # saw this entity even when the gate blocks the fire.
-    info["sources_observed"] = per_source
+    info["sources_observed"] = per_source_counts
     info["sources_breakdown"] = [
-        {"source": s, "count": c} for s, c in per_source.items()
+        {
+            "source": s,
+            "count": v["posts"],
+            "unique_authors": v["unique_authors"],
+        }
+        for s, v in per_source_stats.items()
     ]
     if len(contributing) < 2:
         info["reason"] = "multi_source_gate_failed"
@@ -164,10 +187,17 @@ def _evaluate_entity(entity: str, current_hour: str) -> tuple[bool, dict]:
                 "multiple_of_baseline": 0.0,
             }
             # Populate sources_breakdown even on warmup fires so the spike row
-            # has the same shape as statistical-mode fires downstream.
-            per_source = db.get_entity_hourly_counts_by_source(entity, current_hour)
+            # has the same shape as statistical-mode fires downstream. Use the
+            # enriched helper so admin FP queue sees posts/authors ratio for
+            # warmup fires too — those are the riskiest to blindly trust.
+            per_source_stats = db.get_entity_hourly_source_stats(entity, current_hour)
             info["sources_breakdown"] = [
-                {"source": s, "count": c} for s, c in per_source.items()
+                {
+                    "source": s,
+                    "count": v["posts"],
+                    "unique_authors": v["unique_authors"],
+                }
+                for s, v in per_source_stats.items()
             ]
             return True, info
         return False, {

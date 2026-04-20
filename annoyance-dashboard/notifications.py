@@ -40,9 +40,14 @@ from typing import Optional
 
 import config
 import db
+import url_guard
 
 
 log = logging.getLogger("annoyance.notifications")
+
+# Safe fallback for any entity_url we were handed that doesn't pass the
+# market allowlist. Always on the narve.ai apex so url_guard won't drop it.
+_SAFE_FALLBACK_URL = "https://narve.ai/"
 
 TEMPLATE_PATH = Path(__file__).parent / "email_templates" / "spike_alert.html"
 
@@ -291,11 +296,24 @@ async def send_spike_email(
         log.info("notifications: spike_id=%d no Pro recipients", spike_id)
         return result
 
+    # P8.2: entity_url flows straight into an <a href="..."> in the email
+    # body. If a curator / upstream caller hands us an off-allowlist URL
+    # (bad entity_markets.json entry, mis-built entity path, malicious
+    # suggestion that slipped past submission guard), we replace it with a
+    # known-safe apex instead of sending users an external link in our
+    # brand's name.
+    safe_entity_url = entity_url if url_guard.is_allowed_url(entity_url) else _SAFE_FALLBACK_URL
+    if safe_entity_url is not entity_url:
+        log.warning(
+            "notifications: entity_url off allowlist, falling back (spike_id=%d entity=%s)",
+            spike_id, entity,
+        )
+
     html = _render_template(
         entity=entity,
         summary=summary,
         confidence=confidence,
-        entity_url=entity_url,
+        entity_url=safe_entity_url,
         unsubscribe_url=UNSUBSCRIBE_URL,
     )
     subject = f"Annoyance spike: {entity}"

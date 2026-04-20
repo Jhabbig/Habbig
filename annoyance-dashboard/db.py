@@ -584,19 +584,29 @@ def get_entity_recent_classified_posts(entity: str, limit: int = 30) -> list[dic
     catches every prediction that includes an entity whose ``name`` contains
     'Apple'. False-positive substring matches are acceptable here because
     the spike detector uses canonicalized names that don't share prefixes.
+
+    Security (P8.1): sanitize LIKE wildcards in `entity` before interpolating.
+    Without this, an entity name containing '%' or '_' (crafted via the FP
+    flag reason or a malicious post-classification entity) could turn the
+    drill-in query into a wildcard scan or a side-channel. Escape backslash
+    first (it's the escape char), then '%' and '_', and declare ESCAPE '\'
+    on the LIKE clause so SQLite honours the escaping.
     """
+    safe_entity = (
+        entity.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
     with cursor() as cur:
         rows = cur.execute(
-            """SELECT p.id AS post_id,
-                      p.source, p.source_channel, p.content, p.posted_at, p.url,
-                      c.annoyance_score, c.sentiment, c.primary_topic,
-                      c.is_sensitive, c.sensitive_reason, c.classified_at
-               FROM classifications c
-               JOIN posts p ON p.id = c.post_id
-               WHERE c.entities_json LIKE ?
-               ORDER BY c.classified_at DESC
-               LIMIT ?""",
-            (f"%{entity}%", limit),
+            r"""SELECT p.id AS post_id,
+                       p.source, p.source_channel, p.content, p.posted_at, p.url,
+                       c.annoyance_score, c.sentiment, c.primary_topic,
+                       c.is_sensitive, c.sensitive_reason, c.classified_at
+                FROM classifications c
+                JOIN posts p ON p.id = c.post_id
+                WHERE c.entities_json LIKE ? ESCAPE '\'
+                ORDER BY c.classified_at DESC
+                LIMIT ?""",
+            (f"%{safe_entity}%", limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -724,7 +734,8 @@ def list_fp_queue(*, resolved: bool = False, limit: int = 50) -> list[dict]:
         rows = cur.execute(
             """SELECT f.id, f.spike_id, f.user_id, f.user_email, f.reason,
                       f.flagged_at, f.resolved, f.resolution_note, f.resolved_at,
-                      s.entity, s.detected_at, s.summary, s.z_score, s.count
+                      s.entity, s.detected_at, s.summary, s.z_score, s.count,
+                      s.confidence_score, s.sources_json
                FROM fp_flags f
                JOIN spikes s ON s.id = f.spike_id
                WHERE f.resolved = ?
@@ -732,7 +743,16 @@ def list_fp_queue(*, resolved: bool = False, limit: int = 50) -> list[dict]:
                LIMIT ?""",
             (1 if resolved else 0, limit),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["sources_breakdown"] = json.loads(d.pop("sources_json") or "[]")
+        except Exception:
+            d["sources_breakdown"] = []
+            d.pop("sources_json", None)
+        out.append(d)
+    return out
 
 
 def resolve_fp_flag(flag_id: int, note: Optional[str] = None) -> bool:
@@ -777,20 +797,63 @@ def spike_already_emailed(spike_id: int, user_email: str) -> bool:
 
 def get_entity_hourly_counts_by_source(entity: str, hour_iso: str) -> dict[str, int]:
     """Count classified posts mentioning `entity` in the given hour, grouped by source.
-    Used by the multi-source corroboration gate in spike_detector."""
+    Used by the multi-source corroboration gate in spike_detector.
+
+    Security (P8.1): same LIKE-wildcard escaping as
+    get_entity_recent_classified_posts — a '%' or '_' in an entity name
+    must not turn into a query-manipulation primitive.
+    """
     # Hour bucket semantics match db.get_classifications_in_hour.
     next_hour = _hour_bump(hour_iso, 1)
+    safe_entity = (
+        entity.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
     with cursor() as cur:
         rows = cur.execute(
-            """SELECT p.source, COUNT(*) AS cnt
-               FROM classifications c
-               JOIN posts p ON p.id = c.post_id
-               WHERE p.posted_at >= ? AND p.posted_at < ?
-                 AND c.entities_json LIKE ?
-               GROUP BY p.source""",
-            (hour_iso, next_hour, f"%{entity}%"),
+            r"""SELECT p.source, COUNT(*) AS cnt
+                FROM classifications c
+                JOIN posts p ON p.id = c.post_id
+                WHERE p.posted_at >= ? AND p.posted_at < ?
+                  AND c.entities_json LIKE ? ESCAPE '\'
+                GROUP BY p.source""",
+            (hour_iso, next_hour, f"%{safe_entity}%"),
         ).fetchall()
     return {r["source"]: int(r["cnt"]) for r in rows}
+
+
+def get_entity_hourly_source_stats(entity: str, hour_iso: str) -> dict[str, dict[str, int]]:
+    """Like `get_entity_hourly_counts_by_source` but also counts distinct authors
+    per source. Used by the multi-source corroboration gate to surface the
+    posts/authors ratio — a single account spraying N posts should not count
+    as N corroborators.
+
+    Returns `{source: {"posts": int, "unique_authors": int}}`. A source with
+    unique_authors < posts signals one account driving most of the volume,
+    which the admin FP queue surfaces for manual review (P4.1).
+
+    Security: LIKE-wildcard escaping identical to the sibling helper — '%'/'_'
+    in an entity name must not become a query-manipulation primitive.
+    """
+    next_hour = _hour_bump(hour_iso, 1)
+    safe_entity = (
+        entity.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    with cursor() as cur:
+        rows = cur.execute(
+            r"""SELECT p.source,
+                       COUNT(*) AS cnt,
+                       COUNT(DISTINCT COALESCE(NULLIF(p.author, ''), 'anon:' || p.id)) AS authors
+                  FROM classifications c
+                  JOIN posts p ON p.id = c.post_id
+                 WHERE p.posted_at >= ? AND p.posted_at < ?
+                   AND c.entities_json LIKE ? ESCAPE '\'
+                 GROUP BY p.source""",
+            (hour_iso, next_hour, f"%{safe_entity}%"),
+        ).fetchall()
+    return {
+        r["source"]: {"posts": int(r["cnt"]), "unique_authors": int(r["authors"])}
+        for r in rows
+    }
 
 
 # ── Raw-content TTL job ──────────────────────────────────────────────────────

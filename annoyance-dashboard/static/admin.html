@@ -53,6 +53,34 @@
   }
   .fp-resolve:hover { opacity: 0.85; }
   .fp-resolve:disabled { opacity: 0.4; cursor: default; }
+
+  /* Corroboration pill strip — surfaces posts/authors ratio so reviewers
+     can spot coordinated gaming (many posts, few authors) at a glance. */
+  .fp-sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .fp-src-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+  .fp-src-name { font-weight: 600; text-transform: uppercase; font-size: 10px; color: var(--text-dim); }
+  .fp-src-ratio { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .fp-src-pill.suspicious {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
+  }
+  .fp-src-pill.suspicious .fp-src-ratio { color: #f59e0b; font-weight: 600; }
+  .fp-src-pill[title] { cursor: help; }
 </style>
 </head>
 <body>

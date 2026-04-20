@@ -281,6 +281,61 @@ def test_entity_hourly_counts_by_source_groups_by_source(fresh_db):
     assert counts == {"reddit": 2, "bluesky": 1}
 
 
+def test_entity_hourly_source_stats_counts_distinct_authors(fresh_db):
+    """The enriched helper returns posts AND unique authors per source.
+    A source where 3 posts come from 1 author must report unique_authors=1
+    so the admin FP queue can flag it as suspicious (P4.1)."""
+    hour = _hour_iso(0)
+    # reddit: 3 posts from ONE author (looks like gaming)
+    for i, author in enumerate(["spammer", "spammer", "spammer"]):
+        db.insert_post(
+            id=f"reddit:{i}", source="reddit", content="ugh Apple",
+            posted_at=hour, source_channel="reddit:test", author=author,
+        )
+    # bluesky: 2 posts from TWO distinct authors (looks organic)
+    for i, author in enumerate(["alice", "bob"]):
+        db.insert_post(
+            id=f"bluesky:{i}", source="bluesky", content="ugh Apple",
+            posted_at=hour, source_channel="bluesky:test", author=author,
+        )
+    for pid in ("reddit:0", "reddit:1", "reddit:2", "bluesky:0", "bluesky:1"):
+        db.insert_classification(
+            post_id=pid, annoyance_score=70.0, sentiment="angry",
+            primary_topic=None,
+            entities=[{"name": "Apple", "type": "company", "salience": 0.9, "sentiment": "angry"}],
+            model="v1",
+        )
+    stats = db.get_entity_hourly_source_stats("Apple", hour)
+    assert stats == {
+        "reddit":  {"posts": 3, "unique_authors": 1},
+        "bluesky": {"posts": 2, "unique_authors": 2},
+    }
+
+
+def test_entity_hourly_source_stats_anonymous_posts_count_separately(fresh_db):
+    """Empty / NULL author means the post is attributed to nobody in
+    particular — each should count as its own distinct "author" so the
+    ratio can't be gamed by spamming with a null author field."""
+    hour = _hour_iso(0)
+    for i in range(3):
+        db.insert_post(
+            id=f"reddit:anon-{i}", source="reddit", content="ugh Apple",
+            posted_at=hour, source_channel="reddit:test", author=None,
+        )
+    for pid in ("reddit:anon-0", "reddit:anon-1", "reddit:anon-2"):
+        db.insert_classification(
+            post_id=pid, annoyance_score=70.0, sentiment="angry",
+            primary_topic=None,
+            entities=[{"name": "Apple", "type": "company", "salience": 0.9}],
+            model="v1",
+        )
+    stats = db.get_entity_hourly_source_stats("Apple", hour)
+    assert stats["reddit"]["posts"] == 3
+    # Each NULL-author post counts as its own pseudo-author keyed on id —
+    # otherwise a bad actor could collapse their spam into "one author".
+    assert stats["reddit"]["unique_authors"] == 3
+
+
 # ── Claude usage / cost ──────────────────────────────────────────────────────
 
 def test_cost_cents_since_sums_only_recent(fresh_db):
