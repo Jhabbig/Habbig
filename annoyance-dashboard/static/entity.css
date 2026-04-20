@@ -1,0 +1,111 @@
+/* Entity drill-in page — additions on top of annoyance.css. */
+
+.entity-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px;
+  display: grid;
+  gap: 20px;
+}
+
+.entity-hero {
+  padding: 0;
+}
+
+.entity-hero-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.entity-title {
+  margin: 0;
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.entity-type-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-elev);
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.entity-summary {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.entity-history .chart-wrap {
+  position: relative;
+  height: 260px;
+}
+
+#entity-chart {
+  max-height: 260px;
+}
+
+.posts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.post-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--surface-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.post-source {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.post-body {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  min-width: 0;
+}
+
+.post-annoyance {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.post-annoyance.hot {
+  color: var(--danger);
+}
+
+.post-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 11px;
+}
+
+.post-link:hover {
+  color: var(--text-dim);
+}

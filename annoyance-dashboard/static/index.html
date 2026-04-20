@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>narve.ai — Annoyance Index</title>
+<link rel="stylesheet" href="/static/annoyance.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- Paywall banner: shown only when /api/me says we're not authenticated.
+     Decision #4 is hard paywall; the UI still loads (the API 402s will
+     redirect to billing) but this extra banner gives the user something
+     to click on instead of a blank page. -->
+<div id="paywall-banner" class="paywall-banner" hidden>
+  <span class="paywall-lock">🔒</span>
+  <span>Pro required to view live data.</span>
+  <a href="https://narve.ai/billing" class="paywall-cta">Upgrade →</a>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">narve.ai</span>
+    <span class="divider">/</span>
+    <span class="dashname">Index</span>
+  </div>
+
+  <!-- Decision #7: one product, two views. Annoyance is live; happiness
+       is the stub that lights up once the second half ships. -->
+  <nav class="tab-strip" aria-label="Index view">
+    <a href="/" class="tab tab-active">Annoyance</a>
+    <span class="tab tab-disabled"
+          title="Coming soon — happiness index under construction"
+          aria-disabled="true">Happiness</span>
+  </nav>
+
+  <div class="status">
+    <span id="source-health" class="source-pill" title="data sources">sources: —</span>
+    <span id="last-update" class="update-pill" title="last data refresh">updated —</span>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="index-card">
+      <div class="label">Current annoyance index</div>
+      <div id="index-value" class="big-number">—</div>
+      <div id="index-meta" class="meta">waiting for first aggregation</div>
+    </div>
+    <div class="chart-card">
+      <div class="label">Last 24 hours</div>
+      <canvas id="index-chart"></canvas>
+      <div id="chart-empty" class="empty-placeholder">Collecting data… first index appears within ~10 minutes after Reddit + classifier cycles.</div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="label">Recent spikes</div>
+        <div class="sub">auto-attributed anomalies</div>
+      </div>
+      <div id="spikes-list" class="spikes-list">
+        <div class="empty-small">no spikes detected yet</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div class="label">Top entities this hour</div>
+        <div class="sub">ranked by volume × anger</div>
+      </div>
+      <div id="entities-list" class="entities-list">
+        <div class="empty-small">no entity data yet</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span>Data: Reddit (more sources coming). Classifier: Claude Sonnet 4.5.</span>
+  <span class="muted">Local dev — not deployed.</span>
+</footer>
+
+<script src="/static/annoyance.js"></script>
+</body>
+</html>
