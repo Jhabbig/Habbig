@@ -20,6 +20,7 @@ Environment variables:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import html
 import json
