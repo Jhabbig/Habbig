@@ -979,6 +979,8 @@ _PUBLIC_PATHS = frozenset({
     # Public status page (incidents, uptime, component health, RSS, subscribe)
     "/status", "/status/feed.xml", "/status/unsubscribe",
     "/api/status", "/api/status/subscribe", "/api/status/unsubscribe",
+    # PWA: fetched by browsers/OS installers before any session exists
+    "/manifest.json", "/sw.js",
 })
 _PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/")
 
