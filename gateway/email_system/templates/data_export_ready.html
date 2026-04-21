@@ -1,0 +1,24 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your data export is ready</h1>
+<p style="margin:0 0 8px;color:#555;">Hi {{ display_name }},</p>
+<p style="margin:0 0 20px;color:#555;">
+  We've packaged everything narve.ai has associated with your account into a single ZIP file
+  ({{ file_size_kb }} KB). Click the button below to download it.
+</p>
+<div style="margin:24px 0;">
+  <a href="{{ download_url }}" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Download export →</a>
+</div>
+<p style="margin:24px 0 0;color:#555;font-size:13px;">
+  This link expires on <strong>{{ expires_at_iso }}</strong>. After that the file is permanently deleted from our servers
+  and you'll need to request a new export.
+</p>
+<p style="margin:12px 0 0;color:#555;font-size:13px;">
+  Inside the ZIP you'll find a <code>README.txt</code> explaining the layout, plus your saved predictions,
+  followed sources, Signal Search topics, AI assistant conversations, notification history, and account
+  settings — in both CSV (Excel-friendly) and JSON (machine-readable) formats.
+</p>
+<p style="margin:12px 0 0;color:#aaaaaa;font-size:11px;word-break:break-all;">
+  Or copy and paste this link into your browser:<br>
+  {{ download_url }}
+</p>
+{% endblock %}
