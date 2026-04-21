@@ -48,7 +48,7 @@
   --border-default: #cccccc;
   --border-strong:  #b0b0b0;
 
-  /* ── Text — 4 levels ────────────────────────────────────── */
+  /* ── Text — 4 levels + inverse ──────────────────────────── */
   --text-primary:    #0d0d0d;
   --text-secondary:  #4a4a4a;
   --text-tertiary:   #858585;  /* 4.54:1 on #fff — AA body text */
@@ -56,6 +56,10 @@
      inactive ticks. Fails AA body-text contrast; never use for
      meaningful copy. */
   --text-quaternary: #bbbbbb;
+  /* Inverse = text that sits on --interactive-bg. Flipping it in
+     dark theme is what lets a single CSS rule render correctly on
+     both themes. */
+  --text-inverse:    #ffffff;
 
   /* ── Interactive surfaces ───────────────────────────────── */
   --interactive-bg:          #0d0d0d;
@@ -64,22 +68,44 @@
   --interactive-ghost:       rgba(0, 0, 0, 0.04);
   --interactive-ghost-hover: rgba(0, 0, 0, 0.08);
 
-  /* ── Semantic (monochrome) — greyscale steps that map to the
-     conventional high/mid/low/none buckets. A "high-credibility"
-     badge is near-black; a "low" one is near-white. Hue is never
-     part of the signal. ───────────────────────────────────── */
-  --semantic-high:        #0d0d0d;
-  --semantic-high-bg:     rgba(0, 0, 0, 0.06);
-  --semantic-high-border: rgba(0, 0, 0, 0.20);
-  --semantic-mid:         #555555;
-  --semantic-mid-bg:      rgba(0, 0, 0, 0.03);
-  --semantic-mid-border:  rgba(0, 0, 0, 0.12);
-  --semantic-low:         #aaaaaa;
-  --semantic-low-bg:      rgba(0, 0, 0, 0.02);
-  --semantic-low-border:  rgba(0, 0, 0, 0.08);
-  --semantic-none:        #cccccc;
-  --semantic-none-bg:     rgba(0, 0, 0, 0.015);
-  --semantic-none-border: rgba(0, 0, 0, 0.06);
+  /* ── Rank (monochrome) — greyscale steps for tier / prominence.
+     Named "rank" not "high/low" because those words imply
+     green-is-good / red-is-bad hues and the palette explicitly
+     rejects hue as a signal carrier.
+       --rank-1  darkest  — "strongest emphasis" (eg. active badge)
+       --rank-2           — "medium emphasis"    (eg. pending)
+       --rank-3           — "weak emphasis"      (eg. inactive)
+       --rank-4  lightest — "minimal emphasis"   (eg. not measured)
+     Back-compat --semantic-{high,mid,low,none}-* aliases live at
+     the bottom of this block. New code must use --rank-N. */
+  --rank-1:        #0d0d0d;
+  --rank-1-bg:     rgba(0, 0, 0, 0.06);
+  --rank-1-border: rgba(0, 0, 0, 0.20);
+  --rank-2:        #555555;
+  --rank-2-bg:     rgba(0, 0, 0, 0.03);
+  --rank-2-border: rgba(0, 0, 0, 0.12);
+  --rank-3:        #aaaaaa;
+  --rank-3-bg:     rgba(0, 0, 0, 0.02);
+  --rank-3-border: rgba(0, 0, 0, 0.08);
+  --rank-4:        #cccccc;
+  --rank-4-bg:     rgba(0, 0, 0, 0.015);
+  --rank-4-border: rgba(0, 0, 0, 0.06);
+
+  /* Legacy aliases — code still uses --semantic-high/mid/low/none.
+     Forward them to --rank-N so the migration is zero-risk. Remove
+     this block after grep shows zero callers. */
+  --semantic-high:        var(--rank-1);
+  --semantic-high-bg:     var(--rank-1-bg);
+  --semantic-high-border: var(--rank-1-border);
+  --semantic-mid:         var(--rank-2);
+  --semantic-mid-bg:      var(--rank-2-bg);
+  --semantic-mid-border:  var(--rank-2-border);
+  --semantic-low:         var(--rank-3);
+  --semantic-low-bg:      var(--rank-3-bg);
+  --semantic-low-border:  var(--rank-3-border);
+  --semantic-none:        var(--rank-4);
+  --semantic-none-bg:     var(--rank-4-bg);
+  --semantic-none-border: var(--rank-4-border);
 
   /* ── Error — monochrome, differentiated by weight + border */
   --error-text:   #1a1a1a;
@@ -158,6 +184,20 @@
   --z-watermark: 9998;
   --z-overlay:   9999;
 
+  /* ── Layout dimensions ──────────────────────────────────── */
+  /* Surface the four repeated layout magic-numbers so adjusting
+     one header height doesn't require grepping a dozen files. */
+  --max-content-width: 1200px;
+  --header-height:     64px;
+  --sidebar-width:     240px;
+
+  /* ── Focus ring ─────────────────────────────────────────── */
+  /* Shared across every interactive element. A 2-px outline with
+     a 2-px offset keeps the ring visible on both themes without
+     clipping rounded borders. Use as:
+         :focus-visible { outline: var(--focus-ring); outline-offset: 2px; } */
+  --focus-ring:        2px solid var(--border-strong);
+
   /* ── Back-compat aliases (legacy names still in use) ────── */
   --bg:             var(--bg-base);
   --surface:        var(--bg-surface);
@@ -210,8 +250,12 @@
   /* ── Text ───────────────────────────────────────────────── */
   --text-primary:    #f0f0f0;
   --text-secondary:  #b0b0b0;
-  --text-tertiary:   #8a8a8a;
+  /* Was #8a8a8a — measured 4.23:1 on --bg-float (#1f1f1f), below AA
+     body. Bumped to #909090 = 4.97:1 on --bg-base, 5.65:1 on
+     --bg-surface, 4.84:1 on --bg-float. All AA body-pass. */
+  --text-tertiary:   #909090;
   --text-quaternary: #6e6e6e;
+  --text-inverse:    #0d0d0d;
 
   /* ── Interactive ────────────────────────────────────────── */
   --interactive-bg:          #f0f0f0;
@@ -220,19 +264,23 @@
   --interactive-ghost:       rgba(240, 240, 240, 0.06);
   --interactive-ghost-hover: rgba(240, 240, 240, 0.10);
 
-  /* ── Semantic (still monochrome — just lightness-flipped) ─ */
-  --semantic-high:        #e0e0e0;
-  --semantic-high-bg:     rgba(255, 255, 255, 0.08);
-  --semantic-high-border: rgba(255, 255, 255, 0.20);
-  --semantic-mid:         #888888;
-  --semantic-mid-bg:      rgba(255, 255, 255, 0.04);
-  --semantic-mid-border:  rgba(255, 255, 255, 0.10);
-  --semantic-low:         #444444;
-  --semantic-low-bg:      rgba(255, 255, 255, 0.02);
-  --semantic-low-border:  rgba(255, 255, 255, 0.06);
-  --semantic-none:        #2a2a2a;
-  --semantic-none-bg:     rgba(255, 255, 255, 0.015);
-  --semantic-none-border: rgba(255, 255, 255, 0.04);
+  /* ── Rank (dark: just lightness-flipped — darkest is now brightest) */
+  --rank-1:        #e0e0e0;
+  --rank-1-bg:     rgba(255, 255, 255, 0.08);
+  --rank-1-border: rgba(255, 255, 255, 0.20);
+  --rank-2:        #888888;
+  --rank-2-bg:     rgba(255, 255, 255, 0.04);
+  --rank-2-border: rgba(255, 255, 255, 0.10);
+  --rank-3:        #444444;
+  --rank-3-bg:     rgba(255, 255, 255, 0.02);
+  --rank-3-border: rgba(255, 255, 255, 0.06);
+  --rank-4:        #2a2a2a;
+  --rank-4-bg:     rgba(255, 255, 255, 0.015);
+  --rank-4-border: rgba(255, 255, 255, 0.04);
+
+  /* --semantic-* aliases defined in :root automatically re-resolve
+     per-theme because they forward to the base --rank-N names that
+     this block redefines. No need to restate the aliases here. */
 
   /* ── Error ──────────────────────────────────────────────── */
   --error-text:   #e0e0e0;

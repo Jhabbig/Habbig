@@ -5,18 +5,10 @@
  * --bg-surface, etc.) so light/dark themes just work.
  */
 
-/* ── WCAG AA contrast overrides ────────────────────────────────────── */
-/* gateway.css sets --text-tertiary to #888, which hits 3.54:1 on the
-   light-theme #ffffff base — fails AA for body text (needs 4.5:1).
-   Darken to #6e6e6e (5.10:1) in light theme only; dark theme was fine.
-   --text-quaternary is used for the faintest hints — bump it from
-   #bbbbbb (1.85:1, fails hard) to #949494 (3.19:1, passes the 3:1 UI
-   threshold for non-text elements). */
-:root,
-:root[data-theme="light"] {
-  --text-tertiary: #595959;
-  --text-quaternary: #949494;
-}
+/* Contrast overrides that used to live here have moved into
+   tokens.css. --text-tertiary = #858585 (4.54:1 on #fff) and
+   --text-quaternary = #bbbbbb (decorative-only; see DESIGN_SYSTEM.md
+   "Tokens to use more" — never body text). */
 
 /* ── Focus ring (WCAG AA) ──────────────────────────────────────────── */
 *:focus-visible {
@@ -31,7 +23,7 @@
   position: absolute;
   top: -40px;
   left: 8px;
-  z-index: 10000;
+  z-index: var(--z-overlay);
   padding: 8px 14px;
   background: var(--interactive-bg);
   color: var(--interactive-text);
@@ -67,7 +59,7 @@
   left: 50%;
   transform: translateX(-50%);
   bottom: 16px;
-  z-index: 9999;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -274,7 +266,7 @@
     inset: 0 !important;
     width: 100vw !important;
     height: 100dvh !important;
-    z-index: 9000;
+    z-index: var(--z-watermark);
     border-left: 0 !important;
   }
   .modal-content, .dialog, [role="dialog"] > .panel {
@@ -347,27 +339,31 @@
 :root[data-theme="light"] #profile-username,
 :root[data-theme="light"] #profile-email,
 :root[data-theme="light"] .pr-admin {
-  color: #4a4a4a;
+  color: var(--text-secondary);
 }
 
 /* #sitemap-btn and .btn-danger use inline ``style`` attributes, so
-   element-level color wins unless we annotate with !important. */
+   element-level color wins unless we annotate with !important. The
+   monochrome design system has no "red" danger colour — the button
+   is the same near-black primary as every other, with the semantic
+   signalled by icon / label. */
 :root[data-theme="light"] #sitemap-btn {
-  color: #1f2937 !important;
-  background: #e5e7eb !important;
+  color: var(--text-primary) !important;
+  background: var(--bg-raised) !important;
 }
 :root[data-theme="light"] .btn-danger {
-  color: #b91c1c !important;
+  color: var(--text-primary) !important;
 }
 :root[data-theme="light"] .btn-danger:hover {
-  color: #991b1b !important;
+  color: var(--text-primary) !important;
 }
 
-/* Dashboard card accent buttons use white text on saturated brand colours.
-   Darken the background so the 4.5:1 ratio is hit on every card. */
+/* Dashboard card accent buttons — high contrast for the 4.5:1 ratio,
+   routed through interactive tokens so the dark-theme flip stays
+   automatic. */
 :root[data-theme="light"] .dash-card a[href*="localhost:"] {
-  color: #ffffff;
-  background-color: #0d0d0d !important;
+  color: var(--interactive-text);
+  background-color: var(--interactive-bg) !important;
 }
 
 /* Inline links inside running text must be distinguishable by more than
@@ -398,7 +394,7 @@ p a:hover, li a:hover, .page-subtitle a:hover {
     position: fixed !important;
     left: 0; right: 0; bottom: 0;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) !important;
-    z-index: 200;
+    z-index: var(--z-sticky);
     box-shadow: 0 -4px 12px rgba(0,0,0,0.06);
   }
   .intel-input-shell { gap: 8px !important; }
