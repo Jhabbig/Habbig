@@ -411,6 +411,7 @@ def compute_kelly_sizing(
     market_yes_price: float,
     bankroll: float,
     fraction: float = 0.5,
+    max_cap: float = 0.25,
 ) -> dict:
     """Kelly criterion position sizing.
 
@@ -422,6 +423,9 @@ def compute_kelly_sizing(
         market_yes_price: current market YES price (0-1)
         bankroll: user's stated bankroll in USD
         fraction: Kelly fraction (0.5 = half-Kelly, 1.0 = full Kelly)
+        max_cap: upper bound on *full* Kelly (default 25%). Protects against
+            huge-edge recommendations that would still be ruinous if our
+            probability estimate is off. `fraction` is applied after the cap.
 
     Returns dict with kelly fractions and recommended bet amount.
     """
@@ -449,7 +453,7 @@ def compute_kelly_sizing(
     b = (1 / odds_price) - 1 if odds_price > 0 else 0
 
     kelly_full = (p * b - q) / b if b > 0 else 0
-    kelly_full = max(0, kelly_full)  # never negative
+    kelly_full = max(0.0, min(kelly_full, max_cap))  # cap before applying fraction
     kelly_adjusted = kelly_full * fraction
     recommended = round(bankroll * kelly_adjusted, 2)
 

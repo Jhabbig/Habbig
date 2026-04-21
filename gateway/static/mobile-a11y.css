@@ -14,7 +14,7 @@
    threshold for non-text elements). */
 :root,
 :root[data-theme="light"] {
-  --text-tertiary: #6e6e6e;
+  --text-tertiary: #595959;
   --text-quaternary: #949494;
 }
 
@@ -330,4 +330,107 @@
     border: 1px solid CanvasText;
   }
   *:focus-visible { outline-color: CanvasText; }
+}
+
+/* __a11y-force-fix-marker */
+
+
+/* ── WCAG AA: force-fix specific low-contrast elements ─────────────── */
+/* These selectors target elements that hardcode #888/#aaa or inherit
+   through a now-overridden chain, specifically on gray backgrounds
+   where the bumped --text-tertiary still fails at 4.5:1. */
+:root[data-theme="light"] .dash-card-price,
+:root[data-theme="light"] .profile-meta-item,
+:root[data-theme="light"] .profile-locked-hint,
+:root[data-theme="light"] .profile-input-locked,
+:root[data-theme="light"] .content-area > p,
+:root[data-theme="light"] #profile-username,
+:root[data-theme="light"] #profile-email,
+:root[data-theme="light"] .pr-admin {
+  color: #4a4a4a;
+}
+
+/* #sitemap-btn and .btn-danger use inline ``style`` attributes, so
+   element-level color wins unless we annotate with !important. */
+:root[data-theme="light"] #sitemap-btn {
+  color: #1f2937 !important;
+  background: #e5e7eb !important;
+}
+:root[data-theme="light"] .btn-danger {
+  color: #b91c1c !important;
+}
+:root[data-theme="light"] .btn-danger:hover {
+  color: #991b1b !important;
+}
+
+/* Dashboard card accent buttons use white text on saturated brand colours.
+   Darken the background so the 4.5:1 ratio is hit on every card. */
+:root[data-theme="light"] .dash-card a[href*="localhost:"] {
+  color: #ffffff;
+  background-color: #0d0d0d !important;
+}
+
+/* Inline links inside running text must be distinguishable by more than
+   colour — add an underline so axe's link-in-text-block rule passes. */
+p a, li a, .page-subtitle a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+p a:hover, li a:hover, .page-subtitle a:hover {
+  text-decoration-thickness: 2px;
+}
+
+
+/* ── /intelligence (chat) mobile layout ───────────────────────────── */
+/* __intel-mobile-v1 */
+@media (max-width: 720px) {
+  /* Hide the conversation-list sidebar on phones. Users reach history
+     via a future slide-in; for now keep the main chat usable at 375px. */
+  .intel-shell { grid-template-columns: 1fr !important; }
+  .intel-sidebar { display: none !important; }
+  .intel-header { padding: 16px 16px 0 !important; }
+  .intel-title { font-size: 22px !important; }
+  .intel-messages {
+    padding: 16px !important;
+    padding-bottom: 120px !important;   /* space for fixed composer */
+  }
+  .intel-input-bar {
+    position: fixed !important;
+    left: 0; right: 0; bottom: 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) !important;
+    z-index: 200;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.06);
+  }
+  .intel-input-shell { gap: 8px !important; }
+  .intel-input-shell textarea {
+    /* min-height comfortable on mobile; font-size ≥16 to defeat iOS zoom */
+    min-height: 44px !important;
+    font-size: 16px !important;
+  }
+  .suggested { grid-template-columns: 1fr !important; }
+
+  /* Horizontally scrollable chip row for suggested prompts on mobile. */
+  .suggested-row {
+    display: flex !important;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .suggested-row > .suggested-btn {
+    flex: 0 0 80%;
+    scroll-snap-align: start;
+  }
+}
+
+
+/* __landing-pricing-grid-mobile */
+/* Landing's pricing grid uses inline grid-template-columns: repeat(3,1fr),
+   which overflows a 375px viewport. Collapse to a single column. */
+@media (max-width: 720px) {
+  .landing-pricing-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  .landing-pricing-card { width: 100% !important; }
 }

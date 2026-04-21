@@ -216,6 +216,34 @@
       .hb-m-port-card-value { font-size: 24px; font-weight: 700; }
       .hb-m-pnl-pos { color: #fff; }
       .hb-m-pnl-neg { color: #666; }
+      .hb-m-sig-agree { color: #fff; }
+      .hb-m-sig-disagree { color: #666; }
+      .hb-m-sig-neutral { color: #a3a3a3; }
+      .hb-m-sig-none { color: #444; }
+      .hb-m-port-row:hover td { background: rgba(255,255,255,0.02); }
+      .hb-m-kelly-card {
+        margin-top: 20px; padding: 16px; border: 1px solid #2a2a2a; border-radius: 8px;
+        background: rgba(255,255,255,0.02);
+      }
+      .hb-m-kelly-title {
+        font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
+        text-transform: uppercase; color: #d4d4d4; margin-bottom: 12px;
+      }
+      .hb-m-kelly-head {
+        font-size: 12px; color: #a3a3a3; margin-bottom: 12px; line-height: 1.5;
+      }
+      .hb-m-kelly-tier {
+        padding: 10px 0; border-top: 1px solid #1f1f1f;
+        display: flex; align-items: baseline; justify-content: space-between;
+      }
+      .hb-m-kelly-tier:first-of-type { border-top: 0; }
+      .hb-m-kelly-tier-label { font-size: 12px; color: #a3a3a3; letter-spacing: 0.03em; text-transform: uppercase; }
+      .hb-m-kelly-tier-bet { font-size: 16px; font-weight: 700; }
+      .hb-m-kelly-tier-meta { font-size: 11px; color: #666; margin-top: 2px; }
+      .hb-m-kelly-need {
+        padding: 12px; font-size: 13px; color: #a3a3a3;
+        border: 1px dashed #2a2a2a; border-radius: 6px;
+      }
       /* Locked state */
       .hb-m-locked {
         text-align: center; padding: 80px 32px;
@@ -727,6 +755,8 @@
         </div>
       </div>
 
+      <div id="hb-m-kelly-slot"></div>
+
       ${renderEnvImpactSection(m)}
 
       ${canBet ? `
@@ -775,35 +805,151 @@
         $('#hb-detail-summary').textContent = `Buying ${side.toUpperCase()} at ${pct(price)} — potential payout ~$${payout} if correct`;
       });
     }
+
+    // Kelly sizing — async so the panel opens fast; fills in when ready.
+    loadKellyInto(m.id, overlay.querySelector('#hb-m-kelly-slot'));
+  }
+
+  async function loadKellyInto(marketId, slot) {
+    if (!slot) return;
+    slot.innerHTML = '<div class="hb-m-kelly-card"><div class="hb-m-kelly-title">Bet Sizing Calculator</div><div class="hb-m-loading" style="padding:8px 0">Computing Kelly…</div></div>';
+
+    const res = await api('/api/kelly/calculate', { method: 'POST', body: { market_id: marketId } });
+    if (res._error) {
+      if (res._status === 400 && /bankroll/i.test(res._error || '')) {
+        slot.innerHTML = `
+          <div class="hb-m-kelly-card">
+            <div class="hb-m-kelly-title">Bet Sizing Calculator</div>
+            <div class="hb-m-kelly-need">
+              Set your bankroll in <a href="/settings" style="color:#fff;text-decoration:underline">Settings → Bet sizing</a> to see Kelly recommendations.
+            </div>
+          </div>`;
+        return;
+      }
+      slot.innerHTML = `<div class="hb-m-kelly-card"><div class="hb-m-kelly-title">Bet Sizing Calculator</div><div class="hb-m-error">${esc(res._error)}</div></div>`;
+      return;
+    }
+
+    if (!res.has_signal) {
+      slot.innerHTML = `
+        <div class="hb-m-kelly-card">
+          <div class="hb-m-kelly-title">Bet Sizing Calculator</div>
+          <div class="hb-m-kelly-need">${esc(res.message || 'No narve.ai signal yet.')}</div>
+        </div>`;
+      return;
+    }
+
+    const narvePct = (res.narve_yes_probability * 100).toFixed(0) + '% YES';
+    const mktPct = (res.market_yes_price * 100).toFixed(0) + '% YES';
+    const edgePct = (res.edge >= 0 ? '+' : '') + (res.edge * 100).toFixed(1) + 'pp';
+
+    const tierBlocks = res.recommendations.map(r => {
+      if (!r.bet_amount_usd || r.bet_amount_usd <= 0) {
+        return `
+          <div class="hb-m-kelly-tier">
+            <div>
+              <div class="hb-m-kelly-tier-label">${esc(r.label.toUpperCase())} KELLY</div>
+              <div class="hb-m-kelly-tier-meta">No edge — don't bet</div>
+            </div>
+            <div class="hb-m-kelly-tier-bet" style="color:#666">—</div>
+          </div>`;
+      }
+      const sideStr = r.side === 'YES' ? 'YES' : 'NO';
+      return `
+        <div class="hb-m-kelly-tier">
+          <div>
+            <div class="hb-m-kelly-tier-label">${esc(r.label.toUpperCase())} KELLY · ${sideStr}</div>
+            <div class="hb-m-kelly-tier-meta">
+              ${r.pct_of_bankroll.toFixed(2)}% of bankroll · Max profit ${usd(r.max_profit_usd)} · Max loss ${usd(r.max_loss_usd)}
+            </div>
+          </div>
+          <div class="hb-m-kelly-tier-bet">${usd(r.bet_amount_usd)}</div>
+        </div>`;
+    }).join('');
+
+    slot.innerHTML = `
+      <div class="hb-m-kelly-card">
+        <div class="hb-m-kelly-title">Bet Sizing Calculator</div>
+        <div class="hb-m-kelly-head">
+          Market: <strong>${esc(mktPct)}</strong> · narve.ai: <strong>${esc(narvePct)}</strong> · Edge: <strong>${esc(edgePct)}</strong><br>
+          Bankroll: ${usd(res.bankroll)} — change in <a href="/settings" style="color:#a3a3a3;text-decoration:underline">Settings</a>
+        </div>
+        ${tierBlocks}
+      </div>`;
   }
 
   // ── Portfolio ──────────────────────────────────────────────────────────────
+  function signalGlyph(sig) {
+    if (!sig) return { ch: '—', cls: 'hb-m-sig-none', title: 'No narve.ai signal' };
+    if (sig.agreement === 'agree') {
+      const edge = sig.edge_pp !== null && sig.edge_pp !== undefined
+        ? ` (+${(sig.edge_pp * 100).toFixed(0)}pp edge)` : '';
+      return { ch: '✓', cls: 'hb-m-sig-agree', title: 'narve.ai agrees' + edge };
+    }
+    if (sig.agreement === 'disagree') {
+      const edge = sig.edge_pp !== null && sig.edge_pp !== undefined
+        ? ` (${(sig.edge_pp * 100).toFixed(0)}pp)` : '';
+      return { ch: '✗', cls: 'hb-m-sig-disagree', title: 'narve.ai disagrees' + edge };
+    }
+    if (sig.agreement === 'neutral') {
+      return { ch: '↔', cls: 'hb-m-sig-neutral', title: 'narve.ai has no strong side' };
+    }
+    return { ch: '—', cls: 'hb-m-sig-none', title: 'No narve.ai signal yet' };
+  }
+
   async function loadPortfolio() {
     const body = $('#hb-m-body');
-    body.innerHTML = '<div class="hb-m-loading">Loading portfolio...</div>';
+    body.innerHTML = '<div class="hb-m-loading">Loading portfolio…</div>';
 
-    const data = await api('/api/markets/portfolio');
+    const [data, stats] = await Promise.all([
+      api('/api/markets/portfolio'),
+      api('/api/markets/stats'),
+    ]);
     if (data._error) {
       body.innerHTML = `<div class="hb-m-error">${esc(data._error)}</div>`;
       return;
     }
 
+    const pnl = (stats && !stats._error) ? stats.unrealised_pnl_usd : null;
+    const active = (stats && !stats._error) ? stats.active_positions : null;
+    const winRate = (stats && !stats._error) ? stats.win_rate : null;
+    const pnlCls = pnl === null ? '' : (pnl >= 0 ? 'hb-m-pnl-pos' : 'hb-m-pnl-neg');
+    const pnlPct = (pnl !== null && data.combined_total_usd)
+      ? ((pnl / Math.max(1, data.combined_total_usd - pnl)) * 100).toFixed(1) + '%'
+      : null;
+
     let html = `
       <div class="hb-m-port-summary">
         <div class="hb-m-port-card">
-          <div class="hb-m-port-card-label">Combined Total</div>
+          <div class="hb-m-port-card-label">Total value</div>
           <div class="hb-m-port-card-value">${usd(data.combined_total_usd || 0)}</div>
         </div>
         <div class="hb-m-port-card">
-          <div class="hb-m-port-card-label">Polymarket</div>
-          <div class="hb-m-port-card-value">${data.polymarket.connected ? usd(data.polymarket.total_value || 0) : '<span style="color:#666">Not connected</span>'}</div>
+          <div class="hb-m-port-card-label">Unrealised P&L</div>
+          <div class="hb-m-port-card-value ${pnlCls}">${pnl === null ? '—' : (pnl >= 0 ? '+' : '') + usd(pnl)}${pnlPct ? ` <span style="color:#a3a3a3;font-size:12px">(${pnlPct})</span>` : ''}</div>
         </div>
         <div class="hb-m-port-card">
-          <div class="hb-m-port-card-label">Kalshi</div>
-          <div class="hb-m-port-card-value">${data.kalshi.connected ? usd(data.kalshi.total_value || 0) : '<span style="color:#666">Not connected</span>'}</div>
+          <div class="hb-m-port-card-label">Active positions</div>
+          <div class="hb-m-port-card-value">${active === null ? '—' : active}${winRate !== null ? ` <span style="color:#a3a3a3;font-size:12px">(${(winRate * 100).toFixed(0)}% win rate)</span>` : ''}</div>
         </div>
       </div>
     `;
+
+    function statusBadge(src, info) {
+      const status = info && info.status;
+      const cls = info.connected ? 'hb-m-badge-poly' : (status === 'expired' ? 'hb-m-badge-kalshi' : '');
+      const label = info.connected
+        ? `${src === 'polymarket' ? 'Polymarket' : 'Kalshi'} ✓ connected`
+        : status === 'expired'
+          ? `${src === 'polymarket' ? 'Polymarket' : 'Kalshi'} ⚠ reconnect`
+          : `${src === 'polymarket' ? 'Polymarket' : 'Kalshi'} not connected`;
+      return `<span class="hb-m-badge ${cls}" style="margin-right:8px;font-size:11px">${label}</span>`;
+    }
+    html += `<div style="padding:0 16px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      ${statusBadge('polymarket', data.polymarket || {})}
+      ${statusBadge('kalshi', data.kalshi || {})}
+      <button class="hb-m-btn hb-m-btn-outline hb-m-btn-sm" id="hb-port-sync" style="margin-left:auto">Refresh all</button>
+    </div>`;
 
     const allPositions = [
       ...(data.kalshi.positions || []),
@@ -812,20 +958,22 @@
 
     if (allPositions.length) {
       html += `<table class="hb-m-table"><thead><tr>
-        <th>Market</th><th>Platform</th><th>Side</th><th>Shares</th>
-        <th>Avg Price</th><th>Current</th><th>P&L</th><th>Value</th>
+        <th>Platform</th><th>Market</th><th>Side</th><th>Shares</th>
+        <th>Entry</th><th>Current</th><th>P&L</th><th>Value</th><th>narve.ai</th>
       </tr></thead><tbody>`;
       for (const p of allPositions) {
         const pnlClass = (p.pnl || 0) >= 0 ? 'hb-m-pnl-pos' : 'hb-m-pnl-neg';
-        html += `<tr>
-          <td>${esc(p.market_title || p.market_id)}</td>
+        const g = signalGlyph(p.narve_signal);
+        html += `<tr class="hb-m-port-row" data-market="${esc(p.market_id || '')}" data-side="${esc((p.side || '').toLowerCase())}" style="cursor:pointer">
           <td><span class="hb-m-badge hb-m-badge-${p.platform === 'polymarket' ? 'poly' : 'kalshi'}">${p.platform === 'polymarket' ? 'POLY' : 'KALSHI'}</span></td>
+          <td>${esc(p.market_title || p.market_id)}</td>
           <td style="font-weight:600">${(p.side || '').toUpperCase()}</td>
           <td>${p.shares}</td>
           <td>${p.avg_price ? pct(p.avg_price) : '—'}</td>
           <td>${p.current_price ? pct(p.current_price) : '—'}</td>
           <td class="${pnlClass}">${p.pnl ? usd(p.pnl) : '—'}</td>
           <td>${p.value ? usd(p.value) : '—'}</td>
+          <td class="${g.cls}" title="${esc(g.title)}" style="font-weight:700;text-align:center">${g.ch}</td>
         </tr>`;
       }
       html += '</tbody></table>';
@@ -833,8 +981,31 @@
       html += '<div class="hb-m-empty">No positions yet. Browse markets and place your first bet.</div>';
     }
 
-    html += '<div style="text-align:center;padding:16px"><button class="hb-m-btn hb-m-btn-outline hb-m-btn-sm" onclick="window.__hbTrade.loadPortfolio()">Refresh</button></div>';
     body.innerHTML = html;
+
+    body.querySelectorAll('.hb-m-port-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const mid = row.dataset.market;
+        if (mid) openDetail(mid);
+      });
+    });
+    const syncBtn = $('#hb-port-sync');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', async () => {
+        syncBtn.disabled = true;
+        syncBtn.textContent = 'Refreshing…';
+        const r = await api('/api/markets/sync', { method: 'POST', body: {} });
+        if (r._error) {
+          syncBtn.textContent = r._status === 429 ? 'Try again in a minute' : 'Error — retry';
+          setTimeout(() => {
+            syncBtn.disabled = false;
+            syncBtn.textContent = 'Refresh all';
+          }, 2000);
+          return;
+        }
+        loadPortfolio();
+      });
+    }
   }
 
   // ── Orders ─────────────────────────────────────────────────────────────────

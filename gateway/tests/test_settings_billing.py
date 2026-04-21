@@ -35,6 +35,11 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Explicit opt-in for conftest._maybe_force_shared_testdb. Without this the
+# conftest might leave ``db.conn`` pointed at some *other* test file's
+# monkey-patched fake (test_auth_flow, etc.), and our seeded users vanish.
+USES_TESTDB = True
+
 # Must import _testdb BEFORE server so the shared in-memory DB is active.
 from tests import _testdb  # noqa: E402,F401
 
@@ -44,6 +49,25 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 
 client = TestClient(server.app)
+
+# The shared in-memory connection managed by tests/_testdb.py. We re-pin
+# ``db.conn`` to this at setUpClass + setUp time on every class below so
+# sibling test files (test_auth_flow, test_logout, etc.) that swap db.conn
+# into their own fakes can't steal our seeded rows.
+_SHARED_DB_CONN = _testdb._fake_conn
+
+
+def _pin_shared_db() -> None:
+    db.conn = _SHARED_DB_CONN
+
+
+def _clear_client_cookies() -> None:
+    """Empty the shared ``TestClient`` cookie jar so sibling tests can't leak
+    session or CSRF cookies into us. Httpx persists cookies by default."""
+    try:
+        client.cookies.clear()
+    except Exception:
+        pass
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -113,11 +137,30 @@ def _post_form(path: str, *, token: str, data: dict | None = None):
 # ── Page render tests ────────────────────────────────────────────────────────
 
 
-class TestSettingsBillingPage(unittest.TestCase):
+class _DbIsolation(unittest.TestCase):
+    """Base class that re-pins ``db.conn`` to the shared _testdb connection
+    before every test, and clears the shared TestClient cookie jar. Without
+    these safety nets, sibling test files that monkey-patch ``db.conn`` into
+    their own in-memory DBs silently steal our seeded sessions / plans.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        _pin_shared_db()
+        super().setUpClass()
+
+    def setUp(self):
+        _pin_shared_db()
+        _clear_client_cookies()
+        super().setUp()
+
+
+class TestSettingsBillingPage(_DbIsolation):
     """GET /settings/billing returns the expected HTML for each plan state."""
 
     @classmethod
     def setUpClass(cls):
+        super().setUpClass()
         cls.pro_uid, cls.pro_token = _make_user_with_plan(
             "sb-pro@test.com", "sb_pro", plan="pro", interval="annual", days_left=300,
         )
@@ -231,11 +274,12 @@ class TestSettingsBillingPage(unittest.TestCase):
 # ── Invoice list ─────────────────────────────────────────────────────────────
 
 
-class TestInvoicesEndpoint(unittest.TestCase):
+class TestInvoicesEndpoint(_DbIsolation):
     """/api/v1/billing/invoices returns Stripe-shaped JSON derived from subs."""
 
     @classmethod
     def setUpClass(cls):
+        _pin_shared_db()
         cls.pro_uid, cls.pro_token = _make_user_with_plan(
             "inv-pro@test.com", "inv_pro", plan="pro", interval="annual", days_left=300,
             with_addon=True,
@@ -303,9 +347,10 @@ class TestInvoicesEndpoint(unittest.TestCase):
         self.assertEqual(r.status_code, 401)
 
 
-class TestInvoicePdfStub(unittest.TestCase):
+class TestInvoicePdfStub(_DbIsolation):
     @classmethod
     def setUpClass(cls):
+        _pin_shared_db()
         cls.uid, cls.token = _make_fresh_user("pdf-test@test.com", "pdf_test")
 
     def test_pdf_returns_501(self):
@@ -320,9 +365,10 @@ class TestInvoicePdfStub(unittest.TestCase):
         self.assertEqual(r.status_code, 401)
 
 
-class TestPortalStub(unittest.TestCase):
+class TestPortalStub(_DbIsolation):
     @classmethod
     def setUpClass(cls):
+        _pin_shared_db()
         cls.uid, cls.token = _make_fresh_user("portal-test@test.com", "portal_test")
 
     def test_portal_redirects_to_enquire(self):
@@ -339,9 +385,10 @@ class TestPortalStub(unittest.TestCase):
 # ── Cancel / resubscribe ─────────────────────────────────────────────────────
 
 
-class TestCancelFlow(unittest.TestCase):
+class TestCancelFlow(_DbIsolation):
     @classmethod
     def setUpClass(cls):
+        _pin_shared_db()
         cls.uid, cls.token = _make_user_with_plan(
             "cancel-test@test.com", "cancel_test", plan="pro", interval="annual", days_left=360,
         )
@@ -375,9 +422,10 @@ class TestCancelFlow(unittest.TestCase):
         self.assertIn("subscription is cancelled", r.text.lower())
 
 
-class TestResubscribeFlow(unittest.TestCase):
+class TestResubscribeFlow(_DbIsolation):
     @classmethod
     def setUpClass(cls):
+        _pin_shared_db()
         cls.uid, cls.token = _make_user_with_plan(
             "resub-test@test.com", "resub_test", plan="pro", interval="monthly",
             days_left=14, status="cancelled",
@@ -422,9 +470,10 @@ class TestResubscribeFlow(unittest.TestCase):
 # ── Add-ons ──────────────────────────────────────────────────────────────────
 
 
-class TestAddonFlow(unittest.TestCase):
+class TestAddonFlow(_DbIsolation):
     @classmethod
     def setUpClass(cls):
+        _pin_shared_db()
         cls.uid, cls.token = _make_user_with_plan(
             "addon-test@test.com", "addon_test", plan="trader", interval="monthly", days_left=29,
         )
@@ -580,6 +629,7 @@ class TestProrationCalculatorInJsFile(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        _pin_shared_db()
         path = os.path.join(os.path.dirname(__file__), "..", "static", "settings_billing.js")
         with open(path) as f:
             cls.js = f.read()
@@ -607,7 +657,7 @@ class TestProrationCalculatorInJsFile(unittest.TestCase):
 # ── Auth / paywall ───────────────────────────────────────────────────────────
 
 
-class TestPaywallAndAuth(unittest.TestCase):
+class TestPaywallAndAuth(_DbIsolation):
     def test_settings_billing_requires_login(self):
         r = client.get("/settings/billing", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))

@@ -4106,3 +4106,373 @@ def deactivate_all_user_embed_widgets(user_id: int) -> int:
             (user_id,),
         )
     return cur.rowcount
+
+
+# ── Claude usage log ───────────────────────────────────────────────────────
+
+CLAUDE_FEATURES = frozenset({
+    "extraction",
+    "categorisation",
+    "summarisation",
+    "intelligence_chat",
+    "environmental",
+    "retrospective",
+})
+
+
+def log_claude_usage(
+    *,
+    feature: str,
+    model: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_usd: float = 0.0,
+    cached_hit: bool = False,
+) -> int:
+    """Append one row to claude_usage_log. Never raises."""
+    try:
+        with conn() as c:
+            cur = c.execute(
+                "INSERT INTO claude_usage_log "
+                "(timestamp, feature, model, input_tokens, output_tokens, cost_usd, cached_hit) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    int(time.time()), feature, model,
+                    int(input_tokens or 0), int(output_tokens or 0),
+                    float(cost_usd or 0.0),
+                    1 if cached_hit else 0,
+                ),
+            )
+            return cur.lastrowid
+    except Exception:
+        return 0
+
+
+def claude_usage_between(start_ts: int, end_ts: int) -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM claude_usage_log "
+            "WHERE timestamp >= ? AND timestamp < ? "
+            "ORDER BY timestamp DESC",
+            (int(start_ts), int(end_ts)),
+        ).fetchall()
+
+
+def claude_usage_daily_rollup(days: int = 7) -> list[dict]:
+    days = max(1, min(90, int(days)))
+    now = int(time.time())
+    start = now - days * 86400
+    with conn() as c:
+        rows = c.execute(
+            """
+            SELECT
+                strftime('%Y-%m-%d', timestamp, 'unixepoch') AS day,
+                feature,
+                COUNT(*) AS calls,
+                SUM(cached_hit) AS cache_hits,
+                SUM(input_tokens) AS input_tokens,
+                SUM(output_tokens) AS output_tokens,
+                SUM(cost_usd) AS cost_usd
+            FROM claude_usage_log
+            WHERE timestamp >= ?
+            GROUP BY day, feature
+            ORDER BY day DESC, feature ASC
+            """,
+            (start,),
+        ).fetchall()
+    return [
+        {
+            "day": r["day"],
+            "feature": r["feature"],
+            "calls": int(r["calls"] or 0),
+            "cache_hits": int(r["cache_hits"] or 0),
+            "input_tokens": int(r["input_tokens"] or 0),
+            "output_tokens": int(r["output_tokens"] or 0),
+            "cost_usd": float(r["cost_usd"] or 0.0),
+        }
+        for r in rows
+    ]
+
+
+def claude_usage_day_total(day_utc: str) -> dict:
+    with conn() as c:
+        rows = c.execute(
+            """
+            SELECT feature, COUNT(*) AS calls,
+                   SUM(cached_hit) AS cache_hits,
+                   SUM(cost_usd) AS cost_usd
+            FROM claude_usage_log
+            WHERE strftime('%Y-%m-%d', timestamp, 'unixepoch') = ?
+            GROUP BY feature
+            """,
+            (day_utc,),
+        ).fetchall()
+    by_feature = {
+        r["feature"]: {
+            "calls": int(r["calls"] or 0),
+            "cache_hits": int(r["cache_hits"] or 0),
+            "cost_usd": float(r["cost_usd"] or 0.0),
+        }
+        for r in rows
+    }
+    return {
+        "day": day_utc,
+        "calls": sum(f["calls"] for f in by_feature.values()),
+        "cost_usd": round(sum(f["cost_usd"] for f in by_feature.values()), 4),
+        "by_feature": by_feature,
+    }
+
+
+# ── Prediction extraction cache ────────────────────────────────────────────
+
+
+def get_prediction_extraction(post_hash: str) -> Optional[sqlite3.Row]:
+    if not post_hash:
+        return None
+    now = int(time.time())
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM prediction_extractions "
+            "WHERE post_hash = ? AND cache_valid_until > ?",
+            (post_hash, now),
+        ).fetchone()
+
+
+def upsert_prediction_extraction(post_hash: str, payload: dict) -> int:
+    import json as _json
+    with conn() as c:
+        c.execute("DELETE FROM prediction_extractions WHERE post_hash = ?", (post_hash,))
+        cur = c.execute(
+            """
+            INSERT INTO prediction_extractions (
+                post_hash, schema_version, source_post_id, source_handle,
+                generated_at, generated_by, cache_valid_until,
+                is_prediction, claim, direction, explicit_probability,
+                implicit_confidence, time_frame, category,
+                contains_sarcasm, is_conditional, raw_payload
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                post_hash,
+                int(payload.get("schema_version", 1)),
+                payload.get("source_post_id"),
+                payload.get("source_handle"),
+                int(payload.get("generated_at") or time.time()),
+                payload.get("generated_by") or "unknown",
+                int(payload.get("cache_valid_until") or (time.time() + 30 * 86400)),
+                1 if payload.get("is_prediction") else 0,
+                payload.get("claim"),
+                payload.get("direction"),
+                payload.get("explicit_probability"),
+                payload.get("implicit_confidence"),
+                payload.get("time_frame"),
+                payload.get("category"),
+                1 if payload.get("contains_sarcasm") else 0,
+                1 if payload.get("is_conditional") else 0,
+                _json.dumps(payload.get("raw_payload") or {}),
+            ),
+        )
+        return cur.lastrowid
+
+
+def insert_reextracted_prediction(payload: dict) -> int:
+    with conn() as c:
+        cur = c.execute(
+            """
+            INSERT INTO predictions_reextracted (
+                original_prediction_id, source_handle, market_id, category,
+                direction, predicted_probability, content, source_url,
+                extracted_at, claim, explicit_probability, implicit_confidence,
+                time_frame, contains_sarcasm, is_conditional,
+                matches_original, diff_summary
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                payload.get("original_prediction_id"),
+                payload.get("source_handle"),
+                payload.get("market_id"),
+                payload.get("category"),
+                payload.get("direction"),
+                payload.get("predicted_probability"),
+                payload.get("content") or "",
+                payload.get("source_url"),
+                int(payload.get("extracted_at") or time.time()),
+                payload.get("claim"),
+                payload.get("explicit_probability"),
+                payload.get("implicit_confidence"),
+                payload.get("time_frame"),
+                1 if payload.get("contains_sarcasm") else 0,
+                1 if payload.get("is_conditional") else 0,
+                1 if payload.get("matches_original") else 0,
+                payload.get("diff_summary"),
+            ),
+        )
+        return cur.lastrowid
+
+
+def reextraction_diff_summary() -> dict:
+    with conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN matches_original = 1 THEN 1 ELSE 0 END) AS matches "
+            "FROM predictions_reextracted"
+        ).fetchone()
+    total = int(row["total"] or 0) if row else 0
+    matches = int(row["matches"] or 0) if row else 0
+    return {
+        "total": total,
+        "matches": matches,
+        "diffs": total - matches,
+        "match_rate": round(matches / total, 4) if total else 0.0,
+    }
+
+
+def apply_reextraction_switchover() -> dict:
+    updated = 0
+    with conn() as c:
+        rows = c.execute(
+            "SELECT * FROM predictions_reextracted WHERE original_prediction_id IS NOT NULL"
+        ).fetchall()
+        for r in rows:
+            c.execute(
+                "UPDATE predictions SET category = ?, direction = ?, "
+                "predicted_probability = ? WHERE id = ?",
+                (r["category"], r["direction"],
+                 r["predicted_probability"], r["original_prediction_id"]),
+            )
+            updated += 1
+        c.execute("DELETE FROM predictions_reextracted")
+    return {"updated": updated}
+
+
+# ── Market categorisation cache ────────────────────────────────────────────
+
+
+def get_market_categorisation(market_id: str) -> Optional[sqlite3.Row]:
+    if not market_id:
+        return None
+    now = int(time.time())
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM market_categorisations "
+            "WHERE market_id = ? AND cache_valid_until > ?",
+            (market_id, now),
+        ).fetchone()
+
+
+def upsert_market_categorisation(market_id: str, payload: dict) -> int:
+    import json as _json
+    tags_json = _json.dumps(payload.get("tags") or [])
+    with conn() as c:
+        c.execute("DELETE FROM market_categorisations WHERE market_id = ?", (market_id,))
+        cur = c.execute(
+            """
+            INSERT INTO market_categorisations (
+                market_id, market_title, generated_at, generated_by,
+                cache_valid_until, primary_category, sub_category, tags,
+                political_leaning, sensitivity,
+                insider_trading_relevant, environmental_relevant,
+                requires_expert_knowledge
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                market_id,
+                payload.get("market_title") or "",
+                int(payload.get("generated_at") or time.time()),
+                payload.get("generated_by") or "unknown",
+                int(payload.get("cache_valid_until") or (time.time() + 365 * 86400)),
+                payload.get("primary_category") or "other",
+                payload.get("sub_category"),
+                tags_json,
+                payload.get("political_leaning"),
+                payload.get("sensitivity") or "normal",
+                1 if payload.get("insider_trading_relevant") else 0,
+                1 if payload.get("environmental_relevant") else 0,
+                1 if payload.get("requires_expert_knowledge") else 0,
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_uncategorised_market_ids(market_ids: list[str]) -> list[str]:
+    if not market_ids:
+        return []
+    now = int(time.time())
+    placeholders = ",".join("?" * len(market_ids))
+    with conn() as c:
+        rows = c.execute(
+            f"SELECT market_id FROM market_categorisations "
+            f"WHERE market_id IN ({placeholders}) AND cache_valid_until > ?",
+            (*market_ids, now),
+        ).fetchall()
+    cached = {r["market_id"] for r in rows}
+    return [mid for mid in market_ids if mid not in cached]
+
+
+# ── Source summaries ───────────────────────────────────────────────────────
+
+
+def get_source_summary(source_handle: str) -> Optional[sqlite3.Row]:
+    if not source_handle:
+        return None
+    now = int(time.time())
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM source_summaries "
+            "WHERE source_handle = ? AND cache_valid_until > ?",
+            (source_handle, now),
+        ).fetchone()
+
+
+def upsert_source_summary(source_handle: str, payload: dict) -> int:
+    with conn() as c:
+        c.execute("DELETE FROM source_summaries WHERE source_handle = ?", (source_handle,))
+        cur = c.execute(
+            """
+            INSERT INTO source_summaries (
+                source_handle, summary, generated_at, generated_by,
+                cache_valid_until, predictions_considered
+            ) VALUES (?,?,?,?,?,?)
+            """,
+            (
+                source_handle,
+                payload.get("summary") or "",
+                int(payload.get("generated_at") or time.time()),
+                payload.get("generated_by") or "unknown",
+                int(payload.get("cache_valid_until") or (time.time() + 30 * 86400)),
+                int(payload.get("predictions_considered") or 0),
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_stale_source_summaries(limit: int = 50) -> list[sqlite3.Row]:
+    now = int(time.time())
+    with conn() as c:
+        return c.execute(
+            """
+            SELECT sc.source_handle
+            FROM source_credibility sc
+            LEFT JOIN source_summaries ss ON ss.source_handle = sc.source_handle
+            WHERE sc.accuracy_unlocked = 1
+              AND (ss.cache_valid_until IS NULL OR ss.cache_valid_until <= ?)
+            ORDER BY sc.global_credibility DESC
+            LIMIT ?
+            """,
+            (now, int(limit)),
+        ).fetchall()
+
+
+def get_source_prediction_context(source_handle: str, limit: int = 50) -> list[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            """
+            SELECT content, category, direction, predicted_probability,
+                   resolved, resolved_correct, extracted_at
+            FROM predictions
+            WHERE source_handle = ?
+            ORDER BY extracted_at DESC
+            LIMIT ?
+            """,
+            (source_handle, int(limit)),
+        ).fetchall()

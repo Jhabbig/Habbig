@@ -6540,6 +6540,20 @@ except Exception as _exc:  # pragma: no cover
     log.warning("embed_routes import failed: %s — continuing without it", _exc)
 
 
+# Billing UI — /settings/billing + /api/v1/billing/*. Same reload-safe pattern
+# as status_routes/embed_routes above; billing_routes registers its endpoints
+# on server.app via @app.get/@app.post decorators as a side effect of import.
+# MUST land before the catch-all so /settings/billing isn't eaten as a 404.
+try:
+    import billing_routes  # noqa: F401,E402
+    import sys as _br_sys
+    if "billing_routes" in _br_sys.modules:
+        import importlib as _br_importlib
+        _br_importlib.reload(_br_sys.modules["billing_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("billing_routes import failed: %s — continuing without it", _exc)
+
+
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def catch_all(request: Request, full_path: str):

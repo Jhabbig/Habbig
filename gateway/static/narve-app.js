@@ -109,7 +109,7 @@
       if (!main.id) main.id = 'main';
       return main;
     }
-    const fallback = document.querySelector('.main-content, .pr-wrap, .landing-main');
+    const fallback = document.querySelector('.main-content, .pr-wrap, .landing-main, section.landing-hero, .pr-hero, .auth-shell, .intel-main, main');
     if (fallback) {
       fallback.id = 'main';
       if (!fallback.hasAttribute('tabindex')) fallback.setAttribute('tabindex', '-1');

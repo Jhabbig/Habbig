@@ -151,12 +151,29 @@ class TestCacheService(unittest.TestCase):
         time.sleep(1.1)
         self.assertIsNone(_run(self.svc.get("k")))
 
-    def test_unserialisable_value_does_not_raise(self):
+    def test_arbitrary_object_falls_back_to_str(self):
+        # json.dumps(..., default=str) stringifies any type `str()` can
+        # handle — including datetimes and custom classes. The resulting
+        # cache entry is a string, not the original object, which is by
+        # design: the alternative is forcing every caller to pre-
+        # serialise which is worse ergonomically. Only genuinely non-
+        # stringifiable inputs (circular refs, unhashable) hit the
+        # `except (TypeError, ValueError)` branch.
         class _X:
-            pass
+            def __repr__(self):
+                return "_X()"
 
-        # Should log and skip, not raise.
         _run(self.svc.set("k", _X(), ttl_seconds=60))
+        got = _run(self.svc.get("k"))
+        self.assertIsInstance(got, str)
+        self.assertIn("_X()", got)
+
+    def test_circular_ref_does_not_raise(self):
+        # Circular reference: json.dumps raises ValueError, which our
+        # except clause swallows. The set is a no-op; get returns None.
+        a: dict = {}
+        a["self"] = a
+        _run(self.svc.set("k", a, ttl_seconds=60))
         self.assertIsNone(_run(self.svc.get("k")))
         self.assertGreater(self.svc.stats()["errors"], 0)
 
