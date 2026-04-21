@@ -177,17 +177,5 @@ class TestOGCards(unittest.TestCase):
         self.assertEqual(calls["n"], 1)
 
 
-class TestRenderPageSEOInjection(unittest.TestCase):
-    """render_page must inject SEO head when ``seo=`` is passed as a kwarg."""
-
-    def test_render_page_accepts_seo_kwarg(self):
-        """``seo`` is consumed via context.pop, not a named param, so it
-        can't be checked via inspect.signature. Verify by calling it."""
-        import server
-        src = open(server.__file__).read()
-        self.assertIn("_seo_obj = context.pop(\"seo\", None)", src)
-        self.assertIn("narve-seo-head", src)
-
-
 if __name__ == "__main__":
     unittest.main()

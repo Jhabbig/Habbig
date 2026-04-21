@@ -81,7 +81,19 @@ class TestAdminIncidentCrud(unittest.TestCase):
         with db.conn() as c:
             c.execute("DELETE FROM incident_updates")
             c.execute("DELETE FROM incidents")
+        # Server.py enforces a 2FA redirect inside _require_admin_user for
+        # admin users whose session hasn't been freshly verified. Our test
+        # admin has no 2FA method configured, so we null out the check.
+        # The 2FA gate is exercised by dedicated tests in test_2fa_http.py;
+        # we only care about incident CRUD here.
+        self._orig_2fa = getattr(server, "_two_fa_redirect", None)
+        if self._orig_2fa is not None:
+            server._two_fa_redirect = lambda request, user: None
         self.client, self.csrf = _admin_client_with_csrf()
+
+    def tearDown(self):
+        if self._orig_2fa is not None:
+            server._two_fa_redirect = self._orig_2fa
 
     def test_admin_create_incident_via_form(self):
         r = self.client.post(
