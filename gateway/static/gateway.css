@@ -1,4 +1,16 @@
-/* Gateway — Monochrome dual-theme (light default, dark on toggle) */
+/* Gateway — Monochrome dual-theme (light default, dark on toggle)
+ *
+ * The canonical token set (all :root + [data-theme="dark"] variables)
+ * lives in tokens.css. Every call site that loaded gateway.css
+ * directly continues to work because of the @import below — loading
+ * gateway.css still pulls in the tokens. New call sites that only need
+ * the token definitions (e.g. a standalone widget) can link tokens.css
+ * alone.
+ *
+ * ORDER MATTERS: @import must be the first rule (CSS spec) apart from
+ * @charset. @font-face therefore comes *after* @import even though it's
+ * logically an asset declaration. */
+@import url("/_gateway_static/tokens.css");
 
 /* Self-hosted Inter variable — subset to basic Latin + symbols/arrows/box.
    Full file (352 KB) lives at /_gateway_static/fonts/full/ for fallback.
@@ -14,176 +26,7 @@
 
 html { color-scheme: light dark; }
 
-/* ============================================
-   LIGHT THEME — DEFAULT — STRICT MONOCHROME
-   ============================================ */
-:root,
-:root[data-theme="light"] {
 
-  /* Backgrounds — 7 levels */
-  --bg-void:    #f0f0f0;
-  --bg-base:    #ffffff;
-  --bg-surface: #fafafa;
-  --bg-raised:  #f5f5f5;
-  --bg-overlay: #efefef;
-  --bg-float:   #ffffff;
-  --bg-inset:   #f2f2f2;
-
-  /* Borders — 4 levels */
-  --border-ghost:   #ebebeb;
-  --border-subtle:  #e0e0e0;
-  --border-default: #cccccc;
-  --border-strong:  #b0b0b0;
-
-  /* Text — 5 levels */
-  --text-primary:    #0d0d0d;
-  --text-secondary:  #4a4a4a;
-  --text-tertiary:   #888888;
-  --text-quaternary: #bbbbbb;
-  --text-inverse:    #ffffff;
-
-  /* Interactive */
-  --interactive-bg:          #0d0d0d;
-  --interactive-text:        #ffffff;
-  --interactive-hover:       #1f1f1f;
-  --interactive-ghost:       rgba(0, 0, 0, 0.04);
-  --interactive-ghost-hover: rgba(0, 0, 0, 0.08);
-
-  /* Semantic — strictly monochrome */
-  --semantic-high:        #0d0d0d;
-  --semantic-high-bg:     rgba(0, 0, 0, 0.06);
-  --semantic-high-border: rgba(0, 0, 0, 0.20);
-  --semantic-mid:         #555555;
-  --semantic-mid-bg:      rgba(0, 0, 0, 0.03);
-  --semantic-mid-border:  rgba(0, 0, 0, 0.12);
-  --semantic-low:         #aaaaaa;
-  --semantic-low-bg:      rgba(0, 0, 0, 0.02);
-  --semantic-low-border:  rgba(0, 0, 0, 0.08);
-  --semantic-none:        #cccccc;
-  --semantic-none-bg:     rgba(0, 0, 0, 0.015);
-  --semantic-none-border: rgba(0, 0, 0, 0.06);
-
-  /* Error — monochrome only */
-  --error-text:   #1a1a1a;
-  --error-bg:     rgba(0, 0, 0, 0.05);
-  --error-border: rgba(0, 0, 0, 0.18);
-
-  /* Shadows — black on light */
-  --shadow-sm:    0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
-  --shadow-md:    0 4px 12px rgba(0,0,0,0.09), 0 2px 4px rgba(0,0,0,0.05);
-  --shadow-lg:    0 12px 32px rgba(0,0,0,0.11), 0 4px 8px rgba(0,0,0,0.07);
-  --shadow-float: 0 20px 60px rgba(0,0,0,0.14);
-
-  /* Toggle */
-  --toggle-bg:     #f0f0f0;
-  --toggle-border: #cccccc;
-  --toggle-text:   #555555;
-
-  /* Radius */
-  --radius: 16px;
-  --radius-sm: 6px;
-  --radius-xs: 6px;
-
-  /* Spacing */
-  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
-  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
-  --space-9: 96px; --space-10: 128px;
-
-  /* ── Back-compat aliases — old names resolve to new ones ── */
-  --bg:            var(--bg-base);
-  --surface:       var(--bg-surface);
-  --surface-hover: var(--bg-raised);
-  --surface-raised: var(--bg-raised);
-  --radius-md:     var(--radius);
-  --border:        var(--border-default);
-  --border-light:  var(--border-subtle);
-  --text-muted:    var(--text-tertiary);
-  --accent:        var(--interactive-bg);
-  --accent-light:  var(--interactive-ghost);
-  --accent-2:      var(--interactive-hover);
-  --cta-bg:        var(--interactive-bg);
-  --cta-text:      var(--interactive-text);
-  --cta-hover-bg:  var(--interactive-hover);
-  --green:         var(--semantic-high);
-  --green-bg:      var(--semantic-high-bg);
-  --red:           var(--semantic-low);
-  --red-bg:        var(--semantic-low-bg);
-  --amber:         var(--semantic-mid);
-}
-
-/* ============================================
-   DARK THEME — USER CHOICE — STRICT MONOCHROME
-   ============================================ */
-:root[data-theme="dark"] {
-
-  /* Backgrounds — 7 levels */
-  --bg-void:    #080808;
-  --bg-base:    #0d0d0d;
-  --bg-surface: #111111;
-  --bg-raised:  #161616;
-  --bg-overlay: #1a1a1a;
-  --bg-float:   #1f1f1f;
-  --bg-inset:   #242424;
-
-  /* Borders — 4 levels */
-  --border-ghost:   #141414;
-  --border-subtle:  #1f1f1f;
-  --border-default: #2a2a2a;
-  --border-strong:  #383838;
-
-  /* Text — 5 levels.
-   * Tertiary / quaternary were too dim in dark mode (#555 / #333 on #0d0d0d
-   * measured 2.61:1 / 1.37:1, below WCAG AA 4.5:1). Now sized for AA normal
-   * text against --bg-base (#0d0d0d): #8a8a8a → 5.2:1, #6e6e6e → 3.8:1.
-   * Quaternary is still AA-fail for normal text — restrict its use to
-   * decorative / disabled elements where contrast isn't required. */
-  --text-primary:    #f0f0f0;
-  --text-secondary:  #909090;
-  --text-tertiary:   #8a8a8a;
-  --text-quaternary: #6e6e6e;
-  --text-inverse:    #0d0d0d;
-
-  /* Interactive */
-  --interactive-bg:          #f0f0f0;
-  --interactive-text:        #0d0d0d;
-  --interactive-hover:       #d4d4d4;
-  --interactive-ghost:       rgba(240, 240, 240, 0.06);
-  --interactive-ghost-hover: rgba(240, 240, 240, 0.10);
-
-  /* Semantic — strictly monochrome */
-  --semantic-high:        #e0e0e0;
-  --semantic-high-bg:     rgba(255, 255, 255, 0.08);
-  --semantic-high-border: rgba(255, 255, 255, 0.20);
-  --semantic-mid:         #888888;
-  --semantic-mid-bg:      rgba(255, 255, 255, 0.04);
-  --semantic-mid-border:  rgba(255, 255, 255, 0.10);
-  --semantic-low:         #444444;
-  --semantic-low-bg:      rgba(255, 255, 255, 0.02);
-  --semantic-low-border:  rgba(255, 255, 255, 0.06);
-  --semantic-none:        #2a2a2a;
-  --semantic-none-bg:     rgba(255, 255, 255, 0.015);
-  --semantic-none-border: rgba(255, 255, 255, 0.04);
-
-  /* Error — monochrome only */
-  --error-text:   #e0e0e0;
-  --error-bg:     rgba(255, 255, 255, 0.06);
-  --error-border: rgba(255, 255, 255, 0.15);
-
-  /* Shadows — black on dark (deeper) */
-  --shadow-sm:    0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.6);
-  --shadow-md:    0 4px 12px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.4);
-  --shadow-lg:    0 12px 32px rgba(0,0,0,0.6), 0 4px 8px rgba(0,0,0,0.5);
-  --shadow-float: 0 20px 60px rgba(0,0,0,0.7);
-
-  /* Toggle */
-  --toggle-bg:     #1a1a1a;
-  --toggle-border: #2a2a2a;
-  --toggle-text:   #909090;
-
-  /* Aliases are inherited from :root and automatically resolve per-theme
-     because they point to the base names (--bg-base, --interactive-bg, etc.)
-     which are redefined above. No need to restate them here. */
-}
 
 * {
   box-sizing: border-box;
@@ -2002,4 +1845,341 @@ label[for] + textarea {
 /* ── Role="alert" + aria-live styling hooks (no visual — behaviour) ── */
 [role="alert"], [aria-live="polite"], [aria-live="assertive"] {
   /* No forced visual styling. AT hooks only. */
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   DASHBOARD CONSISTENCY LAYER
+   ═══════════════════════════════════════════════════════════════════
+   Baseline rules that every dashboard tab (feed, best-bets, markets,
+   sources, intelligence, predictions, watchlist, portfolio) inherits
+   unless the page explicitly overrides. Per-tab styles live inline in
+   each template; this layer enforces the consistency checklist:
+   - type scale, hover timing, focus ring, click state
+   - tabular numerals for numeric values
+   - ellipsis + line-clamp utilities for long strings
+   - shared layout primitives (.app-shell, .sidebar, .main-content,
+     .nav-item, .page-title, .content-area, .status-bar, .breadcrumb)
+   =================================================================== */
+
+:root {
+  /* Shared tab geometry. Tabs reference these instead of hardcoding. */
+  --dash-sidebar-w:      240px;
+  --dash-detail-panel-w: 360px;
+  --dash-status-bar-h:    28px;
+  --dash-table-row-h:     44px;
+  --dash-transition:     0.15s ease;
+  --dash-transition-fast:0.12s ease;
+}
+
+/* ── App shell ──────────────────────────────────────────────────────── */
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--dash-sidebar-w) 1fr;
+  grid-template-rows: 1fr var(--dash-status-bar-h);
+  grid-template-areas: "sidebar main" "sidebar status";
+  min-height: 100vh;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+/* ── Sidebar ────────────────────────────────────────────────────────── */
+.sidebar {
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-3);
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  min-height: 100vh;
+  position: sticky;
+  top: 0;
+}
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-ghost);
+  margin-bottom: var(--space-2);
+}
+.sidebar-logo-text {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.nav-section-header {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  padding: var(--space-3) var(--space-2) var(--space-1);
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: background var(--dash-transition-fast), color var(--dash-transition-fast);
+}
+.nav-item:hover {
+  background: var(--interactive-ghost);
+  color: var(--text-primary);
+}
+.nav-item.active {
+  background: var(--interactive-ghost-hover);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.nav-item-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2);
+  border-top: 1px solid var(--border-ghost);
+  margin-top: auto;
+  color: var(--text-secondary);
+  transition: background var(--dash-transition-fast);
+  border-radius: var(--radius-sm);
+}
+.sidebar-user:hover { background: var(--interactive-ghost); color: var(--text-primary); }
+.sidebar-user-avatar {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600;
+  flex-shrink: 0;
+}
+.sidebar-user-name {
+  font-size: 13px;
+  font-weight: 500;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-user-tier {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ── Main content ───────────────────────────────────────────────────── */
+.main-content {
+  grid-area: main;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  max-width: 100%;
+  overflow-x: hidden;
+}
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-3);
+}
+.breadcrumb-item { color: inherit; }
+.breadcrumb-item.current { color: var(--text-secondary); }
+.breadcrumb-separator { color: var(--text-quaternary); }
+.page-header {
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-ghost);
+}
+.page-title {
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-2);
+}
+.page-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 640px;
+  line-height: 1.6;
+}
+.content-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ── Status bar ─────────────────────────────────────────────────────── */
+.status-bar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--dash-status-bar-h);
+  padding: 0 var(--space-4);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.status-item { display: inline-flex; align-items: center; gap: 4px; }
+.status-separator { color: var(--text-quaternary); }
+.status-spacer { flex: 1; }
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  display: inline-block;
+}
+.status-dot.running { background: var(--text-primary); }
+
+/* ── Detail panel (when a tab has a right-hand detail column) ──────── */
+.detail-panel {
+  width: var(--dash-detail-panel-w);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-subtle);
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  overflow-y: auto;
+}
+
+/* ── Tables: consistent row height + right-aligned numeric columns ──── */
+.app-shell table,
+.dash-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.app-shell table th,
+.app-shell table td,
+.dash-table th,
+.dash-table td {
+  height: var(--dash-table-row-h);
+  padding: 0 var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--border-ghost);
+}
+.app-shell table th,
+.dash-table th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  position: sticky;
+  top: 0;
+}
+.app-shell table td.num, .app-shell table th.num,
+.dash-table td.num, .dash-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.app-shell table tr:hover td,
+.dash-table tr:hover td {
+  background: var(--interactive-ghost);
+}
+
+/* ── Utilities: numeric alignment, truncation, line clamping ──────── */
+.nums,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ── Focus ring: 2px outline, --text-primary, 2px offset ────────────── */
+.app-shell *:focus-visible,
+button:focus-visible,
+a.nav-item:focus-visible,
+a.btn:focus-visible,
+.dash-table tr:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+/* Remove browser default focus for elements we're replacing */
+.app-shell *:focus { outline: none; }
+
+/* ── Click state: subtle scale-down ─────────────────────────────────── */
+.app-shell button:active,
+.app-shell a.btn:active,
+.app-shell .nav-item:active {
+  transform: scale(0.98);
+}
+
+/* ── Link transitions baseline (tabs only — avoid stomping landing) ── */
+.app-shell a {
+  transition: color var(--dash-transition-fast);
+}
+
+/* ── Stat cards (used on /predictions, /dashboards, subproduct hubs) ─ */
+.stat-card {
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--dash-transition-fast);
+}
+.stat-card:hover { border-color: var(--border-subtle); }
+.stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-1);
+}
+.stat-value {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+/* ── Mobile: collapse the sidebar + status bar ──────────────────────── */
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr var(--dash-status-bar-h);
+    grid-template-areas: "main" "main" "status";
+  }
+  .sidebar {
+    display: none;
+  }
+  .main-content {
+    padding: var(--space-3) var(--space-4) var(--space-5);
+  }
+  .page-title { font-size: 22px; }
 }

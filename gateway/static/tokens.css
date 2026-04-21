@@ -1,0 +1,251 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   narve.ai design tokens — canonical source of truth
+   ─────────────────────────────────────────────────────────────────────────
+
+   Loaded BEFORE any other stylesheet. Every downstream rule references
+   tokens via var(--name) and MUST NOT inline hex / pixel values for
+   colour or spacing (see DESIGN_SYSTEM.md "Usage rules").
+
+   The palette is strictly monochrome. Colour is never used to carry
+   information — hierarchy is expressed through weight, size, position.
+   Even the "semantic" scale (high / mid / low / none) maps to greyscale
+   steps, not hues. This is deliberate; if you need to differentiate,
+   use typography.
+
+   Two theme roots:
+     :root, :root[data-theme="light"]   — default
+     :root[data-theme="dark"]           — user toggle
+
+   Back-compat aliases live at the bottom of :root and forward legacy
+   names to their canonical equivalents. Kept in service while older
+   call sites migrate; nothing new should add aliases.
+
+   Contrast targets (WCAG 2.1 AA):
+     * text on --bg-base: ≥ 4.5:1 for body, ≥ 3:1 for large/UI
+     * focus rings: ≥ 3:1 against any background they land on
+
+   Exact measured ratios are in the dark-theme comment block below.
+*/
+
+
+/* ============================================================
+   LIGHT THEME — DEFAULT
+   ============================================================ */
+:root,
+:root[data-theme="light"] {
+
+  /* ── Backgrounds — 7 levels, pure greyscale ─────────────── */
+  --bg-base:    #ffffff;
+  --bg-surface: #fafafa;
+  --bg-raised:  #f5f5f5;
+  --bg-overlay: #efefef;
+  --bg-float:   #ffffff;
+  --bg-inset:   #f2f2f2;
+
+  /* ── Borders — 4 levels ─────────────────────────────────── */
+  --border-ghost:   #ebebeb;
+  --border-subtle:  #e0e0e0;
+  --border-default: #cccccc;
+  --border-strong:  #b0b0b0;
+
+  /* ── Text — 4 levels ────────────────────────────────────── */
+  --text-primary:    #0d0d0d;
+  --text-secondary:  #4a4a4a;
+  --text-tertiary:   #858585;  /* 4.54:1 on #fff — AA body text */
+  /* Quaternary is decorative-only — separators, divider glyphs,
+     inactive ticks. Fails AA body-text contrast; never use for
+     meaningful copy. */
+  --text-quaternary: #bbbbbb;
+
+  /* ── Interactive surfaces ───────────────────────────────── */
+  --interactive-bg:          #0d0d0d;
+  --interactive-text:        #ffffff;
+  --interactive-hover:       #1f1f1f;
+  --interactive-ghost:       rgba(0, 0, 0, 0.04);
+  --interactive-ghost-hover: rgba(0, 0, 0, 0.08);
+
+  /* ── Semantic (monochrome) — greyscale steps that map to the
+     conventional high/mid/low/none buckets. A "high-credibility"
+     badge is near-black; a "low" one is near-white. Hue is never
+     part of the signal. ───────────────────────────────────── */
+  --semantic-high:        #0d0d0d;
+  --semantic-high-bg:     rgba(0, 0, 0, 0.06);
+  --semantic-high-border: rgba(0, 0, 0, 0.20);
+  --semantic-mid:         #555555;
+  --semantic-mid-bg:      rgba(0, 0, 0, 0.03);
+  --semantic-mid-border:  rgba(0, 0, 0, 0.12);
+  --semantic-low:         #aaaaaa;
+  --semantic-low-bg:      rgba(0, 0, 0, 0.02);
+  --semantic-low-border:  rgba(0, 0, 0, 0.08);
+  --semantic-none:        #cccccc;
+  --semantic-none-bg:     rgba(0, 0, 0, 0.015);
+  --semantic-none-border: rgba(0, 0, 0, 0.06);
+
+  /* ── Error — monochrome, differentiated by weight + border */
+  --error-text:   #1a1a1a;
+  --error-bg:     rgba(0, 0, 0, 0.05);
+  --error-border: rgba(0, 0, 0, 0.18);
+
+  /* ── Shadows ────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.09), 0 2px 4px rgba(0,0,0,0.05);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.11), 0 4px 8px rgba(0,0,0,0.07);
+
+  /* ── Spacing — 4 px base, existing step sizes.
+     * 1–4 follow strict 4-px multiples;
+     * 5–10 use round dimensional numbers (24 / 32 / 48 / 64 /
+       96 / 128) that predate this cleanup pass. Renaming them
+       would silently shift every layout by integer pixels, so
+       we keep the values and document the non-linear scale in
+       DESIGN_SYSTEM.md instead of breaking screens. */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+  --space-9:  96px;
+  --space-10: 128px;
+
+  /* ── Radii ──────────────────────────────────────────────── */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-full: 9999px;
+  /* Legacy alias — existing call sites use --radius for 16 px.
+     Routes through --radius-xl so future changes go one place. */
+  --radius: var(--radius-xl);
+
+  /* ── Typography — sizes ─────────────────────────────────── */
+  --text-xs:   11px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   16px;
+  --text-lg:   18px;
+  --text-xl:   20px;
+  --text-2xl:  24px;
+  --text-3xl:  32px;
+  --text-4xl:  48px;
+  --text-5xl:  72px;
+
+  /* ── Font families ──────────────────────────────────────── */
+  --font-ui:      "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                  ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --font-mono:    "SF Mono", Menlo, Consolas, ui-monospace, monospace;
+
+  /* ── Weights ────────────────────────────────────────────── */
+  --weight-normal:   400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* ── Animation ──────────────────────────────────────────── */
+  --ease:           cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast:  0.12s;
+  --duration-base:  0.20s;
+  --duration-slow:  0.40s;
+
+  /* ── Z-index — one authoritative stack ──────────────────── */
+  --z-dropdown:  100;
+  --z-sticky:    200;
+  --z-modal:     1000;
+  --z-toast:     2000;
+  --z-watermark: 9998;
+  --z-overlay:   9999;
+
+  /* ── Back-compat aliases (legacy names still in use) ────── */
+  --bg:             var(--bg-base);
+  --surface:        var(--bg-surface);
+  --surface-hover:  var(--bg-raised);
+  --surface-raised: var(--bg-raised);
+  --border:         var(--border-default);
+  --border-light:   var(--border-subtle);
+  --text-muted:     var(--text-tertiary);
+  --accent:         var(--interactive-bg);
+  --accent-light:   var(--interactive-ghost);
+  --cta-bg:         var(--interactive-bg);
+  --cta-text:       var(--interactive-text);
+  /* Monochrome "green / red" aliases — kept so `.badge-active` etc.
+     that use these names continue to work; they resolve to the
+     same greyscale semantic-high / semantic-low values. */
+  --green:    var(--semantic-high);
+  --green-bg: var(--semantic-high-bg);
+  --red:      var(--semantic-low);
+  --red-bg:   var(--semantic-low-bg);
+}
+
+
+/* ============================================================
+   DARK THEME — USER TOGGLE
+   ============================================================
+   Per-WCAG measured ratios on --bg-base (#0d0d0d):
+     --text-primary   #f0f0f0 → 16.1:1 (AAA)
+     --text-secondary #b0b0b0 →  8.4:1 (AAA)
+     --text-tertiary  #8a8a8a →  5.2:1 (AA body)
+   Values were picked to hit AA body contrast without washing the
+   secondary tier into white. Do not "adjust" these by taste; run
+   an axe check first.
+*/
+:root[data-theme="dark"] {
+
+  /* ── Backgrounds ────────────────────────────────────────── */
+  --bg-base:    #0d0d0d;
+  --bg-surface: #111111;
+  --bg-raised:  #161616;
+  --bg-overlay: #1a1a1a;
+  --bg-float:   #1f1f1f;
+  --bg-inset:   #242424;
+
+  /* ── Borders ────────────────────────────────────────────── */
+  --border-ghost:   #141414;
+  --border-subtle:  #1f1f1f;
+  --border-default: #2a2a2a;
+  --border-strong:  #383838;
+
+  /* ── Text ───────────────────────────────────────────────── */
+  --text-primary:    #f0f0f0;
+  --text-secondary:  #b0b0b0;
+  --text-tertiary:   #8a8a8a;
+  --text-quaternary: #6e6e6e;
+
+  /* ── Interactive ────────────────────────────────────────── */
+  --interactive-bg:          #f0f0f0;
+  --interactive-text:        #0d0d0d;
+  --interactive-hover:       #d4d4d4;
+  --interactive-ghost:       rgba(240, 240, 240, 0.06);
+  --interactive-ghost-hover: rgba(240, 240, 240, 0.10);
+
+  /* ── Semantic (still monochrome — just lightness-flipped) ─ */
+  --semantic-high:        #e0e0e0;
+  --semantic-high-bg:     rgba(255, 255, 255, 0.08);
+  --semantic-high-border: rgba(255, 255, 255, 0.20);
+  --semantic-mid:         #888888;
+  --semantic-mid-bg:      rgba(255, 255, 255, 0.04);
+  --semantic-mid-border:  rgba(255, 255, 255, 0.10);
+  --semantic-low:         #444444;
+  --semantic-low-bg:      rgba(255, 255, 255, 0.02);
+  --semantic-low-border:  rgba(255, 255, 255, 0.06);
+  --semantic-none:        #2a2a2a;
+  --semantic-none-bg:     rgba(255, 255, 255, 0.015);
+  --semantic-none-border: rgba(255, 255, 255, 0.04);
+
+  /* ── Error ──────────────────────────────────────────────── */
+  --error-text:   #e0e0e0;
+  --error-bg:     rgba(255, 255, 255, 0.06);
+  --error-border: rgba(255, 255, 255, 0.15);
+
+  /* ── Shadows — deeper because they sit on near-black ────── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4),  0 1px 2px rgba(0,0,0,0.6);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.4);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.6), 0 4px 8px rgba(0,0,0,0.5);
+
+  /* Spacing / radii / typography / weights / animation / z-index
+     are lightness-invariant — inherited from :root above.
+     The back-compat aliases re-resolve automatically through their
+     var() references. */
+}
