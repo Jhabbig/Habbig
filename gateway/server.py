@@ -1767,6 +1767,15 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
             )
         except Exception as _exc:
             log.warning("impersonation banner inject failed: %s", _exc)
+    _seo_obj = context.pop("seo", None)
+    if _seo_obj is not None and "narve-seo-head" not in page:
+        from seo import build_seo_head as _build_seo_head
+        _seo_block = _build_seo_head(_seo_obj)
+        _head_idx = page.lower().rfind("</head>")
+        if _head_idx != -1:
+            page = re.sub(r"<title>[^<]*</title>\s*", "", page, count=1)
+            _head_idx = page.lower().rfind("</head>")
+            page = page[:_head_idx] + _seo_block + page[_head_idx:]
     return HTMLResponse(page)
 
 
