@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Changelog — narve.ai</title>
+  <meta name="description" content="Product updates, new features, and recent migrations on narve.ai. Updated monthly.">
+  <link rel="canonical" href="https://narve.ai/changelog">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Changelog · narve.ai">
+  <meta property="og:description" content="Product updates and recent releases on narve.ai.">
+  <meta property="og:url" content="https://narve.ai/changelog">
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:image" content="https://narve.ai/og/default">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"CollectionPage","name":"narve.ai Changelog","url":"https://narve.ai/changelog","about":{"@type":"SoftwareApplication","name":"narve.ai","applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://narve.ai"}}
+  </script>
+
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 72px 24px 120px; }
+    .backlink { display: inline-block; opacity: 0.55; text-decoration: none; color: inherit; font-size: 13px; margin-bottom: 32px; }
+    h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    .tagline { font-size: 18px; opacity: 0.7; margin: 0 0 52px; }
+    .entry { border-top: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 28px 0; }
+    .entry:last-of-type { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); }
+    .entry-date { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.55; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+    .entry h3 { font-size: 19px; font-weight: 600; margin: 0 0 10px; letter-spacing: -0.01em; }
+    .entry p { margin: 0 0 10px; opacity: 0.88; }
+    .entry ul { padding-left: 22px; margin: 0 0 0; opacity: 0.85; }
+    .entry ul li { margin-bottom: 6px; }
+    code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; }
+    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main class="wrap" id="main">
+    <a class="backlink" href="/">← narve.ai</a>
+    <h1>Changelog</h1>
+    <p class="tagline">What's shipped on narve.ai.</p>
+
+    <div class="entry">
+      <div class="entry-date">21 April 2026</div>
+      <h3>SEO content pages + 90-day strategy</h3>
+      <p>Added dedicated pages for /about, /how-it-works, /methodology, /faq, /team, /press, and /changelog, each with its own schema.org JSON-LD, canonical URL, and Open Graph metadata. Full 90-day SEO plan committed at SEO_STRATEGY.md.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">21 April 2026</div>
+      <h3>Subproduct marketing pages + admin MRR</h3>
+      <p>Branded marketing pages for the six narve.ai subdomains — sports, weather, world, crypto, midterm, traders — plus an admin MRR view broken down per subproduct.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">21 April 2026</div>
+      <h3>Security remediation pass</h3>
+      <p>First pass on the non-bypassable access audit: tightened host validation, hardened impersonation privilege checks to fail-closed when admin_level is absent, and expanded the impersonation block list to include 2FA and API-key paths on all methods.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">20 April 2026</div>
+      <h3>SEO foundation</h3>
+      <p>robots.txt and sitemap.xml now served from the gateway with per-path changefreq and priority. Added a dedicated /narve brand-query landing page. Full Organization + WebSite + SoftwareApplication JSON-LD blocks on the homepage.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">19 April 2026</div>
+      <h3>Admin: impersonation, feature flags, email template editor</h3>
+      <p>Three admin tools shipped together:</p>
+      <ul>
+        <li>User impersonation with reason-required, full audit trail, and a destructive-action block list.</li>
+        <li>Feature flags with per-user, per-tier, and percentage-rollout controls.</li>
+        <li>Admin-editable email templates with live preview; broken overrides fall back to the file template so emails never drop.</li>
+      </ul>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">18 April 2026</div>
+      <h3>In-app notification bell</h3>
+      <p>Bell icon in the top nav with unread badge. Dropdown shows the last ten, with "Mark all read" and "View all." Server-Sent Events for real-time updates. Per-type preferences page at /settings/notifications.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">17 April 2026</div>
+      <h3>Embed widgets</h3>
+      <p>Three embeddable widget types — source credibility, market probability, and best bets — with per-widget domain scoping and Referer validation. Creation flow at /settings/embeds, paid users only, max ten widgets per account.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">16 April 2026</div>
+      <h3>Affiliate program</h3>
+      <p>Admin-provisioned affiliate accounts with per-affiliate commission rates. 90-day attribution cookie. Payouts manually approved via the admin panel; no Stripe Connect. First affiliates onboarded by end of month.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">15 April 2026</div>
+      <h3>Private referrals + leaderboard</h3>
+      <p>Each paid user gets a referral link. Rewards: 1 paid referral = +1 month free, 5 = +1 tier upgrade, 10 = 3 months Pro. Accuracy leaderboard at /leaderboard is opt-in for subscribers only. No public "refer a friend" CTAs.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-date">14 April 2026</div>
+      <h3>User predictions</h3>
+      <p>Users can now submit their own predictions on any active market (YES/NO + probability). 24h edit window, direction locked. /predictions page shows personal history + Brier + timing + per-category stats. Opt-in public profile at /predictions/public/{user_id}.</p>
+    </div>
+
+    <p style="margin-top: 48px; opacity: 0.55; font-size: 14px;">Older entries live in the repo migration history. For technical release notes, see <a class="inline" href="/methodology">methodology</a> or the public GitHub mirror.</p>
+  </main>
+</body>
+</html>

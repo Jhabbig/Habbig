@@ -988,6 +988,9 @@ _PUBLIC_PATHS = frozenset({
     "/api/status", "/api/status/subscribe", "/api/status/unsubscribe",
     # PWA: fetched by browsers/OS installers before any session exists
     "/manifest.json", "/sw.js",
+    # Public SEO content pages — see seo_routes.py
+    "/about", "/how-it-works", "/methodology", "/faq",
+    "/team", "/press", "/changelog", "/narve",
 })
 _PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/")
 
@@ -5245,6 +5248,19 @@ try:
     _admin_routes.register(app)
 except Exception as _exc:  # pragma: no cover
     log.exception("admin_routes.register failed: %s", _exc)
+
+
+# ── Public SEO content pages ────────────────────────────────────────────
+#
+# /about, /how-it-works, /methodology, /faq, /team, /press, /changelog.
+# Handlers live in seo_routes.py. The paths are added to _PUBLIC_PATHS
+# above so GateMiddleware lets anonymous crawlers through.
+
+try:
+    import seo_routes as _seo_routes  # noqa: E402
+    _seo_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("seo_routes.register failed: %s", _exc)
 
 
 # ── Admin: Audit log ─────────────────────────────────────────────────────────

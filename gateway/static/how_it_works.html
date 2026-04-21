@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How narve.ai Works — Source Credibility, Market Edge, Signal Ranking</title>
+  <meta name="description" content="How narve.ai finds edge on prediction markets: we ingest forecasts from social media, score each source's historical accuracy, cross-reference with live Polymarket and Kalshi odds, and rank the largest credibility-vs-market gaps as actionable signals.">
+  <meta name="keywords" content="how narve works, prediction market edge, polymarket edge, credibility scoring, signal ranking">
+  <link rel="canonical" href="https://narve.ai/how-it-works">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="How narve.ai Works">
+  <meta property="og:description" content="From social-media forecast to ranked signal — the full pipeline in four steps.">
+  <meta property="og:url" content="https://narve.ai/how-it-works">
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:image" content="https://narve.ai/og/default">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@narveai">
+
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"How narve.ai Works","author":{"@type":"Organization","name":"narve.ai","url":"https://narve.ai"},"datePublished":"2026-04-21","inLanguage":"en","url":"https://narve.ai/how-it-works","mainEntityOfPage":"https://narve.ai/how-it-works","description":"Four-stage pipeline that turns social media forecasts into ranked market signals: ingest, score, match, rank.","proficiencyLevel":"Beginner"}
+  </script>
+
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 780px; margin: 0 auto; padding: 72px 24px 120px; }
+    .backlink { display: inline-block; opacity: 0.55; text-decoration: none; color: inherit; font-size: 13px; margin-bottom: 32px; }
+    .backlink:hover { opacity: 1; }
+    h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    .tagline { font-size: 18px; opacity: 0.7; margin: 0 0 48px; }
+    h2 { font-size: 22px; font-weight: 600; margin: 52px 0 14px; letter-spacing: -0.01em; }
+    h2 .num { opacity: 0.35; margin-right: 10px; font-variant-numeric: tabular-nums; }
+    h3 { font-size: 15px; font-weight: 600; margin: 26px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+    p { margin: 0 0 16px; }
+    ul, ol { padding-left: 22px; margin: 0 0 18px; }
+    li { margin-bottom: 8px; }
+    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; opacity: 0.9; }
+    .step-card { border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 10px; padding: 24px; margin: 14px 0; background: var(--surface, #141414); }
+    .diagram { background: #141414; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 28px; margin: 22px 0; font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.9; white-space: pre; overflow-x: auto; }
+    .cta { display: inline-block; padding: 12px 22px; background: var(--accent, #fff); color: var(--bg, #0d0d0d); border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <main class="wrap" id="main">
+    <a class="backlink" href="/">← narve.ai</a>
+    <h1>How narve.ai works</h1>
+    <p class="tagline">From a tweet to a ranked market signal — the full pipeline.</p>
+
+    <p>narve.ai runs a four-stage pipeline. The goal is simple: at any moment, tell you which prediction markets have the biggest gap between what credible sources are saying and what the market is pricing. The devil's in the detail, but the outline is short.</p>
+
+    <div class="diagram">Social media feeds  ─┐
+                       ├─→  Prediction extraction  ─→  Scored events
+Resolution ground truth ┘                              (by source)
+                                                            │
+                                     Live Polymarket/Kalshi │
+                                            odds  ──────────┤
+                                                            ▼
+                                            Credibility × market
+                                            delta → ranked signals</div>
+
+    <h2><span class="num">1</span>Ingest</h2>
+    <p>Every day, narve ingests raw forecast text from a rotating set of high-signal accounts on X (Twitter), selected Substacks, specific Discord channels we have permission to read, and a handful of blogs. "Forecast text" means any post that makes a specific claim about a future, market-resolvable event.</p>
+
+    <h3>What counts as a prediction?</h3>
+    <p>narve uses an LLM classifier fine-tuned on tens of thousands of human-labeled social posts. The classifier answers three questions: (1) does this post contain a claim about a future event? (2) is the event specific enough to resolve? (3) is the claim directional or probabilistic? If all three are yes, it's tagged as a candidate prediction and entered into the extraction queue.</p>
+
+    <h3>Cleaning and attribution</h3>
+    <p>Each candidate gets attributed to a source handle, timestamped with wall-clock and the market's outcome deadline, and linked to a specific market when one exists. Markets are matched by category + keyword + resolution-date heuristics first, then confirmed by a smaller classifier. Unmatched predictions are kept for retrospective grading once the underlying event resolves.</p>
+
+    <h2><span class="num">2</span>Score</h2>
+    <p>Every source's historical predictions are graded as they resolve. narve uses two scoring layers:</p>
+
+    <div class="step-card">
+      <strong>Brier score (accuracy).</strong> For each resolved prediction, we compute (predicted_probability − actual_outcome)². Lower is better. A source's rolling Brier is the time-weighted average over their last N predictions in each category.
+    </div>
+
+    <div class="step-card">
+      <strong>Timing score.</strong> A correct prediction made four weeks before resolution is worth more than the same prediction made an hour before. Timing score is the log of (time_to_resolution / market_duration) weighted by the size of the source's disagreement with the market at prediction time.
+    </div>
+
+    <p>Credibility is a Bayesian combination of the two, penalised for category concentration (a source who only predicts one narrow slice gets a confidence haircut). The full formula is in the <a class="inline" href="/methodology">methodology page</a>.</p>
+
+    <h2><span class="num">3</span>Match</h2>
+    <p>Every live Polymarket and Kalshi market is pulled on a rolling schedule. Market prices are cached at 30-second granularity for the duration of the market's life, and archived permanently once it resolves. When narve receives a new prediction, it's linked to the most-probable matching market if one exists.</p>
+
+    <p>The "credibility-weighted probability" for any active market is the weighted average of every tracked source's current prediction for that market, weighted by the source's credibility in the market's category. If no source has predicted on this specific market, we fall back to a category-adjacent aggregate.</p>
+
+    <h2><span class="num">4</span>Rank</h2>
+    <p>The last stage is simple arithmetic: for each market, compute <code>|credibility_weighted_probability − market_price|</code>. That's the edge. Sort markets descending by edge, filter out anything where credibility confidence is too low (not enough scored predictions) or market liquidity is too thin. What's left is the Best Bets panel.</p>
+
+    <p>Every entry in the Best Bets panel links through to the market detail view, where you can see:</p>
+    <ul>
+      <li>Every source's prediction on this market, with their credibility score in this category</li>
+      <li>How the market has moved since the first credible prediction</li>
+      <li>Historical performance of the top-5 credible sources in this category (hit rate, Brier, median timing)</li>
+      <li>Similar past markets and how they resolved</li>
+    </ul>
+
+    <h2>What you see as a user</h2>
+    <p>On the dashboard you get four panels:</p>
+    <ol>
+      <li><strong>Feed</strong> — every new prediction from any followed credible source, in reverse-chronological order.</li>
+      <li><strong>Best Bets</strong> — the ranked edge list described above.</li>
+      <li><strong>Market browser</strong> — all live markets, filterable by category, liquidity, and credibility confidence.</li>
+      <li><strong>Sources</strong> — browse by credibility score, filter by category, see each source's full history.</li>
+    </ol>
+
+    <h2>What you don't see</h2>
+    <p>We deliberately don't show you two things: (1) a recommended bet size — that's an individual risk decision and narve isn't financial advice; (2) the underlying follower count or "popularity" of any source. Credibility is earned by being right, full stop. If you want popularity, use Twitter.</p>
+
+    <h2>Under the hood</h2>
+    <p>narve is one FastAPI service (gateway/) talking to a single SQLite database in WAL mode. Scraping runs as a pipeline of ARQ jobs. LLM inference is routed through Anthropic's Claude API with heavy prompt caching. Nothing about the architecture is exotic — it's the credibility engine and the ground-truth database that are hard to replicate.</p>
+
+    <p><a class="cta" href="/methodology">Read the methodology →</a></p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>narve.ai Methodology — The Credibility Engine</title>
+  <meta name="description" content="Technical methodology behind the narve.ai credibility engine: Bayesian source scoring, exponential time decay, category-adjusted confidence intervals, Brier + timing composite, and the full mathematical specification of how we rank prediction market signals.">
+  <meta name="keywords" content="narve methodology, prediction market credibility, bayesian scoring, brier score, timing score, prediction market math">
+  <link rel="canonical" href="https://narve.ai/methodology">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="narve.ai Methodology — The Credibility Engine">
+  <meta property="og:description" content="Bayesian source scoring, time decay, and the math that powers narve.ai's ranked signals.">
+  <meta property="og:url" content="https://narve.ai/methodology">
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:image" content="https://narve.ai/og/default">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@narveai">
+
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"narve.ai Methodology — The Credibility Engine","author":{"@type":"Organization","name":"narve.ai"},"datePublished":"2026-04-21","proficiencyLevel":"Expert","inLanguage":"en","url":"https://narve.ai/methodology","mainEntityOfPage":"https://narve.ai/methodology","dependencies":"Bayesian statistics, Brier scoring, exponential decay","keywords":"prediction markets, credibility, brier score, bayesian inference, timing score"}
+  </script>
+
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 800px; margin: 0 auto; padding: 72px 24px 120px; }
+    .backlink { display: inline-block; opacity: 0.55; text-decoration: none; color: inherit; font-size: 13px; margin-bottom: 32px; }
+    .backlink:hover { opacity: 1; }
+    h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    .tagline { font-size: 18px; opacity: 0.7; margin: 0 0 40px; }
+    h2 { font-size: 22px; font-weight: 600; margin: 56px 0 14px; letter-spacing: -0.01em; }
+    h3 { font-size: 16px; font-weight: 600; margin: 28px 0 10px; }
+    p { margin: 0 0 16px; }
+    ul, ol { padding-left: 22px; margin: 0 0 18px; }
+    li { margin-bottom: 8px; }
+    code, pre { font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; }
+    pre { display: block; padding: 18px 22px; margin: 18px 0; border-radius: 8px; overflow-x: auto; border: 1px solid rgba(255,255,255,0.06); background: #141414; line-height: 1.6; font-size: 12.5px; white-space: pre; }
+    .formula { background: #141414; border-left: 2px solid var(--text-primary, #fff); padding: 16px 22px; margin: 18px 0; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+    .toc { background: #141414; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px 22px; margin-bottom: 40px; }
+    .toc h4 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6; }
+    .toc a { color: inherit; text-decoration: none; opacity: 0.85; }
+    .toc a:hover { opacity: 1; text-decoration: underline; }
+    .toc ol { padding-left: 22px; margin: 0; }
+    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main class="wrap" id="main">
+    <a class="backlink" href="/">← narve.ai</a>
+    <h1>narve.ai Methodology</h1>
+    <p class="tagline">The credibility engine, in full.</p>
+
+    <div class="toc">
+      <h4>Contents</h4>
+      <ol>
+        <li><a href="#ground-truth">Ground truth: resolution</a></li>
+        <li><a href="#brier">Brier score</a></li>
+        <li><a href="#timing">Timing score</a></li>
+        <li><a href="#bayesian">Bayesian credibility</a></li>
+        <li><a href="#decay">Exponential time decay</a></li>
+        <li><a href="#category">Category-adjusted confidence</a></li>
+        <li><a href="#weighting">Credibility-weighted market probability</a></li>
+        <li><a href="#edge">Edge ranking</a></li>
+        <li><a href="#pitfalls">Known pitfalls</a></li>
+      </ol>
+    </div>
+
+    <p>This page documents the full methodology narve uses to score sources and rank prediction market signals. It's intended as a reference for researchers, journalists, and technically-inclined traders. Nothing on this page is proprietary — the math is published so the signals can be audited.</p>
+
+    <h2 id="ground-truth">1. Ground truth: resolution</h2>
+    <p>Every prediction in narve is graded against a resolution event. Resolution comes from the underlying market — for Polymarket, that's the official resolution on-chain; for Kalshi, the exchange's final settlement. If a market never resolves (withdrawn, invalidated), predictions on it are dropped from scoring rather than marked incorrect.</p>
+    <p>A prediction is stored with three timestamps: <code>t_emit</code> (when the source posted it), <code>t_deadline</code> (the market's resolution time), and <code>t_resolve</code> (when resolution actually fires). Grading only happens after <code>t_resolve</code>.</p>
+
+    <h2 id="brier">2. Brier score</h2>
+    <p>The Brier score is the squared error between a probability forecast and the realised binary outcome. For prediction <em>p</em> and outcome <em>o ∈ {0, 1}</em>:</p>
+
+    <div class="formula">Brier(p, o) = (p − o)²</div>
+
+    <p>A source's Brier over <em>N</em> predictions is the time-weighted mean (see §5 for weights):</p>
+
+    <div class="formula">B_source = Σᵢ wᵢ · (pᵢ − oᵢ)²  /  Σᵢ wᵢ</div>
+
+    <p>Lower is better. A Brier of 0 is perfect; 0.25 is random guessing on 50/50 events. We report rolling Brier over the last 90 days per category, alongside a lifetime all-category Brier for context.</p>
+
+    <p>Brier has a well-known decomposition into <em>calibration</em> (how close the source's probabilities are to empirical frequencies) and <em>resolution</em> (how much the source's forecasts vary from the base rate). narve surfaces both for any source with ≥ 20 resolved predictions, because two sources can have the same Brier for very different reasons.</p>
+
+    <h2 id="timing">3. Timing score</h2>
+    <p>A correct prediction made weeks before resolution is more impressive — and more tradable — than the same prediction made an hour before. Timing score captures this.</p>
+
+    <p>Let <em>T_market</em> be the total duration from market listing to resolution, and <em>t_lead</em> be the lead time: <code>t_lead = t_resolve − t_emit</code>. The source's probability at prediction time is <em>p</em>, the market price at that moment is <em>m</em>. Then:</p>
+
+    <div class="formula">T(p, m, t_lead, T_market) = |p − m| · log(1 + t_lead / T_market)</div>
+
+    <p>Intuition: a big disagreement with the market (<code>|p − m|</code>) early in the market's life (<code>t_lead / T_market → 1</code>) scores highly if the prediction turns out correct. Agreeing with the market gets almost no timing credit even if correct.</p>
+
+    <p>Timing score is multiplicative with Brier, not additive. A source with a great Brier but no timing (only predicts an hour before resolution) ranks below a source with slightly worse Brier but consistent multi-day lead.</p>
+
+    <h2 id="bayesian">4. Bayesian credibility</h2>
+    <p>We can't treat a source with 4 predictions as equivalent to a source with 400. narve uses a Beta-Bernoulli conjugate prior to estimate a source's true accuracy:</p>
+
+    <div class="formula">α_posterior = α_prior + correct
+β_posterior = β_prior + incorrect
+E[accuracy] = α_posterior / (α_posterior + β_posterior)</div>
+
+    <p>The prior is set to Beta(1, 1) (uniform) for a source's first category-entry, and becomes narrower as evidence accumulates. "Correct" is defined per category by thresholding the Brier (correct if Brier < 0.25 on a binary market).</p>
+
+    <p>Credibility is the posterior mean <em>penalised by the posterior standard deviation</em> — so a source with only a few predictions has their score pulled toward 0.5 even if those few were correct. This prevents "one lucky call" sources from ranking at the top.</p>
+
+    <div class="formula">credibility = E[accuracy] − λ · σ[accuracy]</div>
+
+    <p>where <em>λ</em> is a confidence penalty (λ = 1 currently). This is equivalent to taking a lower-confidence bound on the posterior rather than the mean.</p>
+
+    <h2 id="decay">5. Exponential time decay</h2>
+    <p>Old predictions shouldn't count as much as recent ones. A source who was sharp in 2022 but has been wrong all year should rank below someone consistent this month. narve uses exponential decay on the age of each prediction when aggregating Brier and timing:</p>
+
+    <div class="formula">wᵢ = exp(−(t_now − t_resolve_i) / τ)</div>
+
+    <p>The half-life τ is 90 days by default: a prediction resolved 90 days ago counts half as much as one resolved yesterday. This is tunable per-category — fast-moving categories like crypto and sports use τ = 45 days; slow categories like geopolitics use τ = 180.</p>
+
+    <h2 id="category">6. Category-adjusted confidence</h2>
+    <p>Some sources are brilliant within one narrow slice (MLB game outcomes, for example) and mediocre everywhere else. A category-specific credibility score per source-category pair is computed the same way as the overall score but using only predictions within that category. If a source has fewer than 10 resolved predictions in a category, their category credibility reverts to their overall credibility scaled by 0.7 (a confidence haircut).</p>
+
+    <p>When narve scores a market, only category-specific credibilities are used. A source with a brilliant sports record but no weather record won't sway weather signals.</p>
+
+    <h2 id="weighting">7. Credibility-weighted market probability</h2>
+    <p>For any active market <em>m</em> with set of source predictions <em>S_m = {(pᵢ, cᵢ)}</em> where <em>pᵢ</em> is source <em>i</em>'s predicted probability and <em>cᵢ</em> is their category credibility:</p>
+
+    <div class="formula">P̂_m = Σᵢ cᵢ · pᵢ  /  Σᵢ cᵢ</div>
+
+    <p>This is a simple weighted average. We experimented with more sophisticated aggregators (log-odds pooling, IRT-style models) but the gains on out-of-sample resolution matching were marginal versus the interpretability cost.</p>
+
+    <p>If fewer than three credible sources have predicted on a market, we fall back to a category-level aggregate: the mean credibility-weighted probability for all markets in the same category that resolved in the last 30 days.</p>
+
+    <h2 id="edge">8. Edge ranking</h2>
+    <p>Edge is the absolute delta between credibility-weighted probability and the current market price:</p>
+
+    <div class="formula">edge_m = |P̂_m − price_m|</div>
+
+    <p>The Best Bets panel ranks active markets by edge, descending, with the following filters applied:</p>
+    <ul>
+      <li>Minimum three credible sources on the market</li>
+      <li>Minimum market liquidity threshold (USD, varies by category)</li>
+      <li>Market not resolving within the next 15 minutes (too late to trade on the edge)</li>
+      <li>Edge > 5 percentage points (anything smaller is noise)</li>
+    </ul>
+
+    <h2 id="pitfalls">9. Known pitfalls</h2>
+    <h3>Selection bias in extraction</h3>
+    <p>The LLM classifier is more likely to tag explicit predictions than vague ones. Sources who write in hedged language may be under-represented in our dataset. We correct for this by back-testing: if a source's extracted predictions underperform their self-described track record, we adjust the category credibility down.</p>
+
+    <h3>Market price lag</h3>
+    <p>Polymarket odds can lag by 30+ seconds during high-volume events. narve samples every 30 seconds. An edge computed against a stale snapshot may not be tradable by the time you click through. We display the edge's timestamp on every Best Bets row so stale entries are visible.</p>
+
+    <h3>Credibility transfer across categories</h3>
+    <p>A top weather forecaster isn't automatically a good geopolitics forecaster. The category haircut (§6) handles this, but the boundary between categories is fuzzy — is a "will Trump be indicted" market a politics market or a legal market? Disputes get resolved by the category classifier's confidence score.</p>
+
+    <h3>Gaming</h3>
+    <p>Any source tracking system can be gamed by predicting both sides of a market, then deleting the wrong prediction. narve's ingest layer captures timestamped snapshots and tracks deletions — deleting a prediction doesn't remove it from grading, and sources with high deletion rates get flagged.</p>
+
+    <h2>Source code</h2>
+    <p>The scoring layer is in <code>gateway/credibility_engine/</code> of the narve codebase. The exact weights, decay constants, and category boundaries are in <code>config.json</code> at the repo root. Reach out via <a class="inline" href="/enquire">/enquire</a> if you'd like to reproduce specific calculations — we publish individual source scorecards on request for journalistic or academic use.</p>
+  </main>
+</body>
+</html>

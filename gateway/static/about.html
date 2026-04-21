@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About narve.ai — Prediction Market Intelligence</title>
+  <meta name="description" content="narve.ai is an invite-only intelligence platform for serious prediction market traders. We score source credibility, cross-reference social forecasts with live Polymarket and Kalshi odds, and surface high-EV positions before the rest of the market catches on.">
+  <meta name="keywords" content="narve, narve.ai, about narve, prediction market intelligence, polymarket analytics, kalshi, credibility scoring">
+  <link rel="canonical" href="https://narve.ai/about">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="About narve.ai — Prediction Market Intelligence">
+  <meta property="og:description" content="narve.ai scores who predicts what on social media and cross-references it with live market odds. Invite-only.">
+  <meta property="og:url" content="https://narve.ai/about">
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:image" content="https://narve.ai/og/default">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@narveai">
+
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"AboutPage","name":"About narve.ai","url":"https://narve.ai/about","description":"The story behind narve.ai and the credibility engine that powers it.","mainEntity":{"@type":"Organization","name":"narve.ai","alternateName":["narve","narveai"],"url":"https://narve.ai","logo":"https://narve.ai/_gateway_static/img/logo.png","foundingDate":"2026","description":"Credibility-scored prediction market intelligence platform covering Polymarket and Kalshi.","slogan":"Stop guessing who's right. Start knowing."}}
+  </script>
+
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 72px 24px 120px; }
+    .backlink { display: inline-block; opacity: 0.55; text-decoration: none; color: inherit; font-size: 13px; margin-bottom: 32px; }
+    .backlink:hover { opacity: 1; }
+    h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    .tagline { font-size: 18px; opacity: 0.7; margin: 0 0 48px; }
+    h2 { font-size: 22px; font-weight: 600; margin: 52px 0 14px; letter-spacing: -0.01em; }
+    h3 { font-size: 16px; font-weight: 600; margin: 28px 0 10px; opacity: 0.9; }
+    p { margin: 0 0 16px; }
+    ul { padding-left: 22px; margin: 0 0 18px; }
+    li { margin-bottom: 8px; }
+    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; opacity: 0.9; }
+    .lede { font-size: 18px; opacity: 0.85; }
+    .cta { display: inline-block; padding: 12px 22px; background: var(--accent, #fff); color: var(--bg, #0d0d0d); border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 14px; }
+    .footer-nav { opacity: 0.55; font-size: 13px; margin-top: 80px; display: flex; gap: 18px; flex-wrap: wrap; }
+    .footer-nav a { color: inherit; text-decoration: none; }
+    .footer-nav a:hover { opacity: 0.8; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main class="wrap" id="main">
+    <a class="backlink" href="/">← narve.ai</a>
+    <h1>About narve.ai</h1>
+    <p class="tagline">A credibility engine for prediction markets.</p>
+
+    <p class="lede">narve.ai tracks who predicts what on social media, scores each source by their historical accuracy, and cross-references those forecasts with live Polymarket and Kalshi odds. When a high-credibility source disagrees with the market, we surface it.</p>
+
+    <h2>Why we built narve</h2>
+    <p>Prediction markets are the closest thing finance has to a truth machine. Polymarket's election odds in 2024 beat every major pollster. Kalshi's CPI markets consistently out-forecast analyst consensus. But markets can still drift — and when they drift, the question is always: "who got it right early?"</p>
+    <p>That answer used to live in scattered X threads, Substacks, and Discord calls. narve is the index layer. Every prediction we track is timestamped, attributed, and graded when the market resolves. Over thousands of calls per source, a credibility score emerges. Over thousands of sources, a signal emerges.</p>
+
+    <h2>What narve does for you</h2>
+    <p>There are three use cases worth explicitly calling out:</p>
+    <ul>
+      <li><strong>Traders</strong> use narve to find markets where the consensus disagrees with high-credibility sources. The delta between a credibility-weighted probability and the market price is the expected-value spread. Our Best Bets panel ranks active markets by that spread, filtered to credible sources only.</li>
+      <li><strong>Analysts</strong> use narve to build context on any prediction market before writing about it. Pull up a market, see who's called similar events correctly in the past, read their reasoning in context.</li>
+      <li><strong>Researchers</strong> use narve.ai as a public dataset of scored forecasts with clean resolution history — the kind of longitudinal data that used to require scraping a dozen Twitter accounts by hand.</li>
+    </ul>
+
+    <h2>What makes narve different</h2>
+    <h3>Credibility is earned, not claimed</h3>
+    <p>Most "expert" prediction scoreboards on social media grade themselves. narve doesn't. Every source we track gets graded by the same Bayesian engine against the same resolution ground truth. A pundit with 400k followers who's been wrong three times in a row will score below an anonymous account with 200 followers and a spotless record. Followers don't enter the math.</p>
+
+    <h3>Signals, not advice</h3>
+    <p>We don't tell you what to bet on. We tell you what high-credibility sources are saying, how that differs from the market price, and what the historical track record of that disagreement looks like. The decision is yours.</p>
+
+    <h3>Invite-only, for now</h3>
+    <p>narve is intentionally invite-only. Part of this is load management — the credibility engine does a lot of work per-user — but mostly it's about keeping the signal clean. Every invited user has agreed not to redistribute raw data. This keeps narve a tool for serious traders rather than a scraped free feed.</p>
+
+    <h2>Coverage</h2>
+    <p>narve currently covers six narve.ai subdomains, each a focused sub-product:</p>
+    <ul>
+      <li><strong>sports.narve.ai</strong> — sports prediction markets (MLB, NBA, NFL, EPL, F1, tennis)</li>
+      <li><strong>weather.narve.ai</strong> — weather and climate resolutions</li>
+      <li><strong>world.narve.ai</strong> — geopolitics, elections, conflict resolution</li>
+      <li><strong>crypto.narve.ai</strong> — crypto-native markets and on-chain predictions</li>
+      <li><strong>midterm.narve.ai</strong> — medium-horizon economic and policy markets</li>
+      <li><strong>traders.narve.ai</strong> — full pro tier across every category</li>
+    </ul>
+    <p>The main <a class="inline" href="/">narve.ai</a> dashboard aggregates across all six.</p>
+
+    <h2>The team</h2>
+    <p>narve is built by a small team with backgrounds in quantitative trading, prediction market research, and ML infra. See the <a class="inline" href="/team">team page</a> for who's behind it.</p>
+
+    <h2>How to join</h2>
+    <p>narve is currently invite-only. To request access, <a class="inline" href="/enquire">get in touch</a> or join the waitlist from the <a class="inline" href="/">homepage</a>. We onboard in small batches, prioritising researchers and active prediction market traders first.</p>
+
+    <p><a class="cta" href="/">Back to narve.ai →</a></p>
+
+    <div class="footer-nav">
+      <a href="/how-it-works">How it works</a>
+      <a href="/methodology">Methodology</a>
+      <a href="/faq">FAQ</a>
+      <a href="/team">Team</a>
+      <a href="/press">Press</a>
+      <a href="/changelog">Changelog</a>
+      <a href="/pricing">Pricing</a>
+    </div>
+  </main>
+</body>
+</html>

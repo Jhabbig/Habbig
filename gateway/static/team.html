@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The narve.ai Team</title>
+  <meta name="description" content="Meet the team behind narve.ai — the small group building the credibility engine for prediction markets.">
+  <meta name="keywords" content="narve team, narve.ai team, prediction market company">
+  <link rel="canonical" href="https://narve.ai/team">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="The narve.ai Team">
+  <meta property="og:description" content="The people building narve.ai.">
+  <meta property="og:url" content="https://narve.ai/team">
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:image" content="https://narve.ai/og/default">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Organization","name":"narve.ai","url":"https://narve.ai","employee":[
+    {"@type":"Person","name":"Julian Habbig","jobTitle":"Co-founder","url":"https://narve.ai/team","worksFor":{"@type":"Organization","name":"narve.ai"},"knowsAbout":["prediction markets","forecasting","quantitative trading"]},
+    {"@type":"Person","name":"Sho Cakarel","jobTitle":"Co-founder","url":"https://narve.ai/team","worksFor":{"@type":"Organization","name":"narve.ai"},"knowsAbout":["machine learning","data infrastructure","product engineering"]}
+  ]}
+  </script>
+
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 72px 24px 120px; }
+    .backlink { display: inline-block; opacity: 0.55; text-decoration: none; color: inherit; font-size: 13px; margin-bottom: 32px; }
+    .backlink:hover { opacity: 1; }
+    h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    .tagline { font-size: 18px; opacity: 0.7; margin: 0 0 52px; }
+    .member { border-top: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 28px 0; display: grid; grid-template-columns: 180px 1fr; gap: 24px; align-items: start; }
+    .member:last-of-type { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); }
+    @media (max-width: 600px) { .member { grid-template-columns: 1fr; gap: 8px; } }
+    .member h3 { font-size: 20px; font-weight: 600; margin: 0 0 2px; }
+    .role { font-size: 13px; opacity: 0.6; margin-bottom: 12px; }
+    .bio { font-size: 15px; opacity: 0.88; }
+    .bio p { margin: 0 0 10px; }
+    .avatar { width: 120px; height: 120px; border-radius: 60px; background: var(--surface, #141414); display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 600; letter-spacing: -0.02em; opacity: 0.7; }
+    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+    .hiring { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 10px; padding: 24px 28px; margin-top: 52px; }
+    .hiring h3 { margin: 0 0 8px; font-size: 18px; }
+    .hiring p { margin: 0 0 10px; opacity: 0.85; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main class="wrap" id="main">
+    <a class="backlink" href="/">← narve.ai</a>
+    <h1>The team</h1>
+    <p class="tagline">A small group building the credibility engine.</p>
+
+    <div class="member">
+      <div class="avatar">JH</div>
+      <div>
+        <h3 itemprop="name">Julian Habbig</h3>
+        <div class="role">Co-founder · Product &amp; markets</div>
+        <div class="bio">
+          <p>Julian leads product and market structure. Background in quantitative trading — before narve, worked on systematic strategies across equity and derivatives markets. The narve credibility framework originated from his thesis work on forecaster evaluation.</p>
+          <p>Interested in: superforecasting, manifold markets, Polymarket election structure, F1 strategy.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="member">
+      <div class="avatar">SC</div>
+      <div>
+        <h3 itemprop="name">Sho Cakarel</h3>
+        <div class="role">Co-founder · Engineering &amp; data</div>
+        <div class="bio">
+          <p>Sho leads engineering and ML infrastructure. Background in distributed systems and data pipelines — built ingest, scoring, and the dashboard infrastructure. Everything you interact with runs on code they wrote or reviewed.</p>
+          <p>Interested in: Bayesian inference, real-time ML systems, Python on modern hardware.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="hiring">
+      <h3>We're (selectively) hiring.</h3>
+      <p>If you're a prediction market power user, a quant with opinions on forecasting, or an engineer interested in real-time signal systems, we'd love to hear from you. Email <a class="inline" href="mailto:hello@narve.ai">hello@narve.ai</a> with what you'd want to work on.</p>
+    </div>
+  </main>
+</body>
+</html>
