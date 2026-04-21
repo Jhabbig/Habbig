@@ -32,3 +32,42 @@ from jobs import notification_jobs  # noqa: F401
 from jobs import pipeline_jobs  # noqa: F401
 from jobs import resolution_jobs  # noqa: F401
 from jobs import status_jobs  # noqa: F401
+
+# Portfolio sync (Polymarket every 10 min, Kalshi every 15 min),
+# subscription reconciliation (daily 03:17 UTC), and Telegram outbound
+# jobs. Defensively imported — one bad optional module must not prevent
+# the rest of the registry from loading.
+try:
+    from jobs import sync_portfolios  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("sync_portfolios import failed: %s", _e)
+
+try:
+    from jobs import reconcile_subscriptions  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("reconcile_subscriptions import failed: %s", _e)
+
+try:
+    from jobs import telegram_sends  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("telegram_sends import failed: %s", _e)
+
+# Intelligence-layer jobs. Each one is self-registering through the
+# module-level @register_job / register_cron calls, so just importing
+# them is enough. Defensive imports keep a partial schema tree bootable.
+for _mod in (
+    "claude_cost_check",
+    "compute_source_relationships",
+    "movement_jobs",
+    "generate_weekly_reports",
+    "insider_jobs",
+    "backtest_jobs",
+):
+    try:
+        __import__(f"jobs.{_mod}")
+    except Exception as _e:  # pragma: no cover
+        import logging as _l
+        _l.getLogger("jobs").warning("%s import failed: %s", _mod, _e)
