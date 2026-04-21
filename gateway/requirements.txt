@@ -1,6 +1,6 @@
 # Pinned for reproducibility + CVE safety. Review monthly; run pip-audit before bumping.
 # Last audited: 2026-04-21 (AUDIT #3 CVE sweep — bumped 8 packages).
-fastapi==0.115.0
+fastapi==0.118.0
 uvicorn[standard]==0.29.0
 httpx==0.27.0
 python-multipart==0.0.26
