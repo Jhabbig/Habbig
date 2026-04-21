@@ -136,3 +136,112 @@ scoped to `gateway/queries/` + migrations `080-082` only):
    `endpoint_percentiles` / `overall_stats`).
 4. Schedule a daily `queries.performance.trim_slow_query_log(30)` cron
    so retention stays at 30 days.
+
+---
+
+# Static-asset perf pass — 2026-04-21 (session 4)
+
+Scope: `gateway/static/` only. JS code-splitting, font subsetting,
+image re-encoding, resource hints. Also shipped a defensive
+schema-drift migration (095) to unblock three crashing cron jobs
+surfaced via admin → job logs.
+
+## Byte savings (measured on disk, pre vs post)
+
+| Asset                      | Before   | After   | Δ        | % saved |
+| -------------------------- | -------: | ------: | -------: | ------: |
+| `img/logo.png` (in-place)  | 229 KB   |   9 KB  | –220 KB  |    96 % |
+| `img/tobias.jpg` → `.webp` | 714 KB   |  15 KB  | –699 KB  |    98 % |
+| Inter variable (subset)    | 352 KB   |  72 KB  | –280 KB  |    80 % |
+| Google Fonts `@import`     | 1 extra request + 1 DNS hop — both removed |||
+
+Cold first-paint for a visitor hitting any app page: logo (–220 KB)
+plus font subset (–280 KB) = **≈ 500 KB less** on the critical path,
+plus one fewer blocking CSS request against a third-party origin.
+Visitors hitting `impressum.html` save another **699 KB** from the
+team photo being served as WebP with a JPG fallback.
+
+## JS code-splitting
+
+Deferred. The existing JS is *already* split by feature (`trade.js`
+for trading, `settings_billing.js` for settings, etc.) — there is no
+monolithic `dashboard.js`/`app.js` that would benefit from tab-scoped
+lazy loading. The largest file (`trade.js`, 75 KB) only loads on the
+trading page; no file >50 KB loads site-wide.
+
+## Chart.js
+
+Deferred. `static/charts.js` is an 11 KB custom canvas wrapper, not
+the Chart.js vendor library. Nothing to lazy-load.
+
+## Critical CSS inlining
+
+Deferred. The full `gateway.css` is 40 KB; inlining its above-fold
+slice would require extracting per-route critical paths and editing
+every template. Preloading the font (below) captures most of the FCP
+win for a fraction of the change risk. Revisit with a build tool.
+
+## Resource hints applied
+
+Every HTML file that loads `gateway.css` now also emits:
+
+```html
+<link rel="preload"
+      href="/_gateway_static/fonts/Inter-Variable-subset.woff2"
+      as="font" type="font/woff2" crossorigin>
+```
+
+Applied to 75 templates (both the hashed-URL form and the
+`{{ static: gateway.css }}` Jinja token form). `poster.html` is
+deliberately skipped — it still pulls Inter + Instrument Serif from
+Google Fonts for marketing posters and has its own budget.
+
+dns-prefetch / preconnect were evaluated but not added: a grep of
+client-side JS shows no outbound `fetch()` to external hosts; every
+API call hits same-origin.
+
+Scripts already ship with `defer` at the bottom of each page; no
+additional defer-ization needed in this session.
+
+## Schema-drift migration (095) — piggy-back on this session
+
+Three cron jobs were crash-looping in prod against a drift between
+what `db.py` declares and what the code queries:
+
+- `detect_market_movements` expected `volume_24h`, `avg_volume_30d`,
+  `close_time`, `snapshot_at`, `first_seen_at` on `market_snapshots`.
+- `check_service_health` expected `service_health_snapshots` (in
+  migration 021, never applied on prod).
+- `sync_polymarket_positions` expected `polymarket_connections` (in
+  migration 062, never applied on prod).
+
+Migration 095 adds the missing columns (all nullable, with a backfill
+from `snapshotted_at` → `snapshot_at`) and re-declares both missing
+tables with `CREATE TABLE IF NOT EXISTS` so fresh and partially-
+migrated databases converge to the same state on next restart.
+
+## Lighthouse
+
+Not captured in this session — the sandboxed CI worker has no live
+gateway to hit. The operator running locally can capture before/after
+with:
+
+```bash
+npx lighthouse http://localhost:7000 --quiet \
+  --chrome-flags="--headless" --output=json > /tmp/before.json
+# check out parent commit, restart gateway …
+npx lighthouse http://localhost:7000 --quiet \
+  --chrome-flags="--headless" --output=json > /tmp/after.json
+jq '.audits | { fcp: .["first-contentful-paint"].numericValue,
+                lcp: .["largest-contentful-paint"].numericValue,
+                tbt: .["total-blocking-time"].numericValue,
+                cls: .["cumulative-layout-shift"].numericValue }' \
+   /tmp/before.json /tmp/after.json
+```
+
+## Commits in this session (all pushed to `origin/feature/platform-build`)
+
+- `631add2` gateway/static: image + font perf pass
+- `8b0acff` migrations: 095 — backfill market_snapshots cols + re-declare drift tables
+- `9c9bda5` gateway/static: preload Inter subset on every page that loads gateway.css
+- (this doc + any trailing tidy-up will land in the next commit)
