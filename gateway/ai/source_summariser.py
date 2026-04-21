@@ -159,11 +159,16 @@ def _write_cached(
     has_cvu = "cache_valid_until" in cols
     has_pc = "predictions_considered" in cols
 
+    has_generated_by = "generated_by" in cols
     conn.execute(f"DELETE FROM source_summaries WHERE {pk_col} = ?", (handle,))
     fields = [pk_col, "summary", "generated_at"]
     vals: list[Any] = [handle, summary, now]
     if has_model:
         fields.append("model"); vals.append(model)
+    if has_generated_by:
+        # Older migration shipped generated_by NOT NULL; satisfy it by
+        # mirroring the model string. Post-052 branches can rely on model.
+        fields.append("generated_by"); vals.append(model)
     if has_cvu:
         fields.append("cache_valid_until"); vals.append(now + SUMMARY_TTL_SECONDS)
     if has_pc:

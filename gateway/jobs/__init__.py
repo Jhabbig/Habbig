@@ -65,6 +65,7 @@ for _mod in (
     "generate_weekly_reports",
     "insider_jobs",
     "backtest_jobs",
+    "ai_maintenance",
 ):
     try:
         __import__(f"jobs.{_mod}")
