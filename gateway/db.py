@@ -1315,6 +1315,19 @@ def upsert_subscription(
             """,
             (user_id, dashboard_key, plan, now, expires_at, stripe_sub_id, source),
         )
+    # Referral-conversion hook. A paid subscription means the referred user
+    # "became paying" for reward purposes. We flag the referral row here so
+    # the nightly process_referral_rewards job can grant the gift.
+    # Import lazily to avoid a circular import at module load time and to
+    # survive a missing db_referrals module (belt-and-braces).
+    try:
+        import db_referrals as _dbr
+        _dbr.mark_referral_converted(user_id)
+    except Exception:
+        import logging as _logging
+        _logging.getLogger("db").exception(
+            "referral conversion marker failed for user %s", user_id,
+        )
 
 
 def cancel_subscription(user_id: int, dashboard_key: str) -> None:
