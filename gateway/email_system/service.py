@@ -89,6 +89,18 @@ class EmailService:
         """
         ctx = dict(context)
         ctx.setdefault("app_url", self.app_url)
+
+        override_subject, override_html = _resolve_admin_override(template, ctx)
+        if override_html is not None:
+            return await self.send(
+                to=to,
+                subject=override_subject or _SUBJECTS.get(template, "narve.ai"),
+                html=override_html,
+                text=render_text_fallback(override_html),
+                reply_to=reply_to,
+                tags=tags,
+            )
+
         try:
             html = render(template, ctx)
         except Exception as e:
@@ -186,3 +198,72 @@ _SUBJECTS = {
     "incident_update": "Incident update — narve.ai status",
     "incident_resolved": "Incident resolved — narve.ai status",
 }
+
+
+
+def _substitute(text, ctx):
+    """Minimal `{{ key }}` / `{{ raw_key }}` substitution for admin-edited templates.
+
+    Mirrors render_page: raw_-prefixed keys verbatim, all others HTML-escaped.
+    Keeps admin templates predictable without pulling Jinja/Mustache in.
+    """
+    import html as _html
+    import re as _re
+
+    def repl(m):
+        key = m.group(1).strip()
+        raw = key.startswith("raw_")
+        if key not in ctx:
+            return ""
+        value = ctx.get(key)
+        if value is None:
+            return ""
+        value = str(value)
+        return value if raw else _html.escape(value)
+
+    return _re.sub(r"\{\{\s*([\w\.]+)\s*\}\}", repl, text)
+
+
+def _resolve_admin_override(template, ctx):
+    """Try to load+render an admin override. Returns (subject, html) or (None, None).
+
+    A broken override (render error, empty body) falls through so the caller
+    uses the file template — we never drop an email because of bad admin HTML.
+    """
+    try:
+        import db
+        row = db.get_email_template(template)
+    except Exception as exc:
+        log.warning("email template lookup failed %s: %s", template, exc)
+        return None, None
+
+    if not row or not row["is_active"]:
+        return None, None
+
+    try:
+        subject = _substitute(row["subject"] or "", ctx)
+        body = _substitute(row["body_html"] or "", ctx)
+        if not body.strip():
+            return None, None
+        return subject, body
+    except Exception as exc:
+        log.warning("admin email template render failed %s: %s", template, exc)
+        return None, None
+
+
+def render_preview(subject, body_html, variables, sample_overrides=None):
+    """Render a template preview with sample data for missing vars.
+
+    Never raises — the admin editor fetches this endpoint on every keystroke
+    so an exception would make the preview panel go blank in weird ways.
+    """
+    defaults = {v: f"Sample {v}" for v in (variables or [])}
+    defaults.update(sample_overrides or {})
+    defaults.setdefault("app_url", "https://narve.ai")
+    try:
+        return {
+            "subject": _substitute(subject or "", defaults),
+            "html": _substitute(body_html or "", defaults),
+        }
+    except Exception as exc:
+        return {"subject": f"[preview error: {exc}]", "html": ""}
