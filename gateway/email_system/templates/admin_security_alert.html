@@ -1,0 +1,23 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Capture-attempt flood detected</h1>
+<p style="margin:0 0 20px;color:#555;">A narve.ai user crossed the 5-events-in-10-minutes threshold on the <code>/api/security/capture-attempt</code> endpoint. The event types behind the flood vary (screen-capture shortcuts, large clipboard copies, <code>getDisplayMedia</code> calls, devtools-opened). This does not block the account — it&rsquo;s a signal for manual review.</p>
+
+<table cellpadding="0" cellspacing="0" style="width:100%;margin:16px 0;border-collapse:collapse">
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px 4px 0 0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em;width:110px">User ID</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-left:0;border-radius:0 4px 0 0;font-size:14px;color:#0d0d0d;">{{ user_id }}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em">Email</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;font-size:14px;color:#0d0d0d;">{{ user_email }}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;border-radius:0 0 0 4px;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em">Events / 10&nbsp;min</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;border-radius:0 0 4px 0;font-size:14px;color:#0d0d0d;">{{ count }}</td>
+  </tr>
+</table>
+
+<p style="margin:20px 0 0;color:#555;font-size:13px;">
+  Investigate on the <a href="https://narve.ai/admin/security/bulk-fetches" style="color:#0d0d0d;">bulk-fetch dashboard</a> to check whether the same user is also pulling large data volumes. If a leak is suspected, run the <a href="https://narve.ai/admin/security/forensics" style="color:#0d0d0d;">forensics tool</a> against any screenshot or data dump you&rsquo;ve been handed.
+</p>
+{% endblock %}

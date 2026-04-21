@@ -1042,7 +1042,7 @@ async def api_update_follow(request: Request, handle: str):
 async def api_list_following(request: Request):
     user = _require_auth(request)
     rows = db.list_followed_sources(user["user_id"])
-    return JSONResponse({
+    payload = {
         "items": [
             {
                 "source_handle": r["source_handle"],
@@ -1057,7 +1057,8 @@ async def api_list_following(request: Request):
             for r in rows
         ],
         "count": len(rows),
-    })
+    }
+    return JSONResponse(server._forensic_sign(user, payload, "api_sources_following"))
 
 
 # ── FEATURE 14: Historical odds chart ────────────────────────────────────

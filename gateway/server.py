@@ -1743,6 +1743,29 @@ def require_gate(request: Request) -> Optional[Response]:
     return RedirectResponse("/gate", status_code=302)
 
 
+def _forensic_sign(user, data, endpoint: str):
+    """Thin wrapper around forensics.signer.sign_response that never raises.
+
+    Accepts either a user dict (with ``user_id``) or a raw int user_id.
+    Used at list-endpoint return sites so the call is a single expression:
+    ``return JSONResponse(_forensic_sign(user, payload, "endpoint_name"))``.
+    """
+    if not data:
+        return data
+    try:
+        if isinstance(user, dict):
+            uid = user.get("user_id") or user.get("id")
+        else:
+            uid = int(user) if user is not None else None
+        if not uid:
+            return data
+        from forensics import signer as _sign
+        return _sign.sign_response(int(uid), data, endpoint)
+    except Exception as _exc:
+        log.warning("forensic sign failed endpoint=%s: %s", endpoint, _exc)
+        return data
+
+
 def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
     """Check if a subscription is truly active (status + not expired)."""
     if is_admin:
@@ -1996,6 +2019,8 @@ def _sitemap_html() -> str:
             ("/admin", "Admin panel", "Admin"),
             ("/admin/tokens/generate", "Generate token", "Admin"),
             ("/admin/users/bulk", "Bulk user actions", "Admin"),
+            ("/admin/security/bulk-fetches", "Bulk-fetch leaderboard", "Admin"),
+            ("/admin/security/forensics", "Leak forensics tool", "Admin"),
         ]),
         ("API", [
             ("/api/newsletter", "Newsletter signup", "Public"),
@@ -6109,8 +6134,7 @@ async def api_markets_unified(
     limit: int = 20,
     env_relevant: int = 0,
 ):
-    _user_for_sign = current_user(request)
-    _require_markets_user(request)  # auth + add-on check
+    user = _require_markets_user(request)  # auth + add-on check
     # Clamp pagination params to prevent division by zero and negative indexing
     if limit < 1 or limit > 100:
         limit = 20
@@ -6151,17 +6175,7 @@ async def api_markets_unified(
         "page": page,
         "pages": max(1, (total + limit - 1) // limit),
     }
-    # Forensic signing — per-user fingerprint on the returned markets list.
-    # Fails open; never blocks a response.
-    try:
-        from forensics import signer as _sign
-        if _user_for_sign and _user_for_sign.get("user_id"):
-            payload = _sign.sign_response(
-                _user_for_sign["user_id"], payload, "api_markets_unified",
-            )
-    except Exception as _sign_exc:
-        log.warning("forensic sign failed api_markets_unified: %s", _sign_exc)
-    return JSONResponse(payload)
+    return JSONResponse(_forensic_sign(user, payload, "api_markets_unified"))
 
 
 # ── Edge scoring & false consensus (F4, F5) ─────────────────────────────────
@@ -6199,14 +6213,7 @@ async def api_markets_top_edge(
         "markets": [m.to_dict() for m in with_edge[:limit]],
         "total": len(with_edge),
     }
-    try:
-        from forensics import signer as _sign
-        uid = user.get("user_id") if isinstance(user, dict) else None
-        if uid:
-            payload = _sign.sign_response(uid, payload, "api_markets_top_edge")
-    except Exception as _sign_exc:
-        log.warning("forensic sign failed top_edge: %s", _sign_exc)
-    return JSONResponse(payload)
+    return JSONResponse(_forensic_sign(user, payload, "api_markets_top_edge"))
 
 
 @app.get("/api/markets/false-consensus")
@@ -6215,7 +6222,7 @@ async def api_markets_false_consensus(request: Request, limit: int = 20):
     with credibility-weighted intelligence (divergence > 15 points).
     These are the highest-conviction contrarian bets.
     """
-    _require_authenticated(request)
+    user = _require_authenticated(request)
     limit = max(1, min(50, limit))
     markets = await unified_markets.fetch_unified_markets(
         POLY_CLIENT, KALSHI_CLIENT, cache_ttl=MARKETS_CACHE_TTL,
@@ -6224,10 +6231,11 @@ async def api_markets_false_consensus(request: Request, limit: int = 20):
     enriched = unified_markets.enrich_markets_with_intelligence(active)
     fc_markets = [m for m in enriched if m.false_consensus]
     fc_markets.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
-    return JSONResponse({
+    payload = {
         "markets": [m.to_dict() for m in fc_markets[:limit]],
         "total": len(fc_markets),
-    })
+    }
+    return JSONResponse(_forensic_sign(user, payload, "api_markets_false_consensus"))
 
 
 @app.get("/api/markets/unified/{market_id:path}")
@@ -6265,14 +6273,16 @@ async def api_market_detail(request: Request, market_id: str):
 
 @app.get("/api/markets/search")
 async def api_markets_search(request: Request, q: str = ""):
-    _require_markets_user(request)  # auth + add-on check; user dict not used below
+    user = _require_markets_user(request)  # auth + add-on check
     if not q or len(q) < 2:
         return JSONResponse({"markets": []})
     markets = await unified_markets.fetch_unified_markets(
         POLY_CLIENT, KALSHI_CLIENT, cache_ttl=MARKETS_CACHE_TTL,
     )
     filtered = unified_markets.filter_markets(markets, search=q)
-    return JSONResponse({"markets": [m.to_dict() for m in filtered[:20]]})
+    return JSONResponse(_forensic_sign(
+        user, {"markets": [m.to_dict() for m in filtered[:20]]}, "api_markets_search",
+    ))
 
 
 # Account connections
@@ -6345,7 +6355,9 @@ async def api_disconnect_market(request: Request, source: str):
 @app.get("/api/markets/connections")
 async def api_market_connections(request: Request):
     user = _require_markets_user(request)
-    return JSONResponse(_get_market_connections(user["user_id"]))
+    return JSONResponse(_forensic_sign(
+        user, _get_market_connections(user["user_id"]), "api_market_connections",
+    ))
 
 
 # Trading
@@ -6589,7 +6601,7 @@ async def _build_enriched_portfolio(user_id: int) -> dict:
 async def api_markets_portfolio(request: Request):
     user = _require_markets_user(request)
     portfolio = await _build_enriched_portfolio(user["user_id"])
-    return JSONResponse(portfolio)
+    return JSONResponse(_forensic_sign(user, portfolio, "api_markets_portfolio"))
 
 
 @app.get("/api/markets/orders")
@@ -6612,7 +6624,7 @@ async def api_markets_orders(request: Request):
         polymarket_address=poly_address,
         kalshi_token=kalshi_token,
     )
-    return JSONResponse({"orders": orders})
+    return JSONResponse(_forensic_sign(user, {"orders": orders}, "api_markets_orders"))
 
 
 @app.post("/api/markets/sync")
@@ -7356,7 +7368,7 @@ async def api_topic_predictions(request: Request, topic_id: int):
     if not topic or topic["user_id"] != user["user_id"]:
         raise HTTPException(status_code=404, detail="Topic not found")
     preds = db.get_topic_predictions(topic_id)
-    return JSONResponse({
+    payload = {
         "predictions": [
             {"id": p["id"], "source_handle": p["source_handle"], "content": p["content"],
              "category": p["category"], "direction": p["direction"],
@@ -7366,7 +7378,8 @@ async def api_topic_predictions(request: Request, topic_id: int):
              "accuracy_unlocked": bool(p["accuracy_unlocked"]) if p["accuracy_unlocked"] is not None else False}
             for p in preds
         ]
-    })
+    }
+    return JSONResponse(_forensic_sign(user, payload, "api_topic_predictions"))
 
 
 @app.get("/api/topics/{topic_id}/analysis")

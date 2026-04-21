@@ -208,30 +208,37 @@ async def capture_attempt(request: Request) -> JSONResponse:
     try:
         count = recent_events_for_user(user_id, window_seconds=600)
         if count == 6:  # fire once, on the threshold crossing
-            _notify_admin_of_flood(user_id, user.get("email") or "", count)
+            import asyncio as _asyncio
+            _asyncio.create_task(
+                _notify_admin_of_flood(user_id, user.get("email") or "", count)
+            )
     except Exception:
         pass
 
     return JSONResponse({"ok": True})
 
 
-def _notify_admin_of_flood(user_id: int, email: str, count: int) -> None:
-    """Fire-and-forget: log at ERROR level + enqueue an admin email."""
+async def _notify_admin_of_flood(user_id: int, email: str, count: int) -> None:
+    """Fire-and-forget: log at ERROR level + enqueue an admin email.
+
+    ``enqueue_email`` is async in jobs/email_jobs.py, so this must be
+    awaited from an async context. Callers wrap the await in a task so a
+    stalled email backend never blocks the security-event write.
+    """
     log.error(
         "capture_attempt FLOOD user_id=%s email=%s events_in_10min=%s",
         user_id, email, count,
     )
     try:
-        # Hook into the existing email pipeline if available. Treat failure
-        # as non-fatal — the log line above is the durable signal.
         from jobs.email_jobs import enqueue_email
-        enqueue_email(
+        await enqueue_email(
+            to="security@narve.ai",
             template="admin_security_alert",
-            to_email="security@narve.ai",
             context={"user_id": user_id, "user_email": email, "count": count},
+            tags=["security", "flood"],
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("admin flood notify failed user_id=%s: %s", user_id, exc)
 
 
 async def settings_privacy_toggles_post(
