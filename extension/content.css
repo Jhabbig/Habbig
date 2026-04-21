@@ -1,0 +1,82 @@
+/* Overlay card for the narve.ai Polymarket extension.
+   Monochrome — matches narve.ai's design system. Fixed top-right, non-
+   interactive except for the CTA; never blocks pointer events on the
+   rest of the market page. */
+
+#narve-extension-overlay {
+  position: fixed;
+  top: 90px;
+  right: 16px;
+  width: 280px;
+  z-index: 2147483646;
+  background: #0d0d0d;
+  color: #ffffff;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Geist", "Segoe UI", sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+#narve-extension-overlay .narve-head {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+  margin-bottom: 10px;
+}
+
+#narve-extension-overlay .narve-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid #1d1d1d;
+}
+#narve-extension-overlay .narve-row:last-of-type { border-bottom: none; }
+#narve-extension-overlay .narve-row span { color: #9aa0a6; }
+#narve-extension-overlay .narve-row b { font-weight: 600; color: #ffffff; }
+
+#narve-extension-overlay .narve-srcs {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+#narve-extension-overlay .narve-src {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  color: #c7c9cc;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+#narve-extension-overlay .narve-flag {
+  margin-top: 8px;
+  background: #2a1a1a;
+  color: #ff9494;
+  border: 1px solid #3a2020;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+#narve-extension-overlay .narve-empty {
+  color: #9aa0a6;
+  padding: 6px 0 10px;
+}
+
+#narve-extension-overlay .narve-cta {
+  display: block;
+  margin-top: 10px;
+  text-align: center;
+  background: #ffffff;
+  color: #0d0d0d;
+  padding: 8px 10px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+}

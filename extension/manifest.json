@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "narve.ai — Polymarket Intelligence",
+  "version": "0.1.0",
+  "description": "Overlay credibility-weighted probability, edge, and top-source context on every Polymarket market.",
+  "author": "narve.ai",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "narve.ai"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://narve.ai/*",
+    "https://polymarket.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://polymarket.com/event/*",
+        "https://*.polymarket.com/event/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "externally_connectable": {
+    "matches": ["https://narve.ai/*"]
+  }
+}

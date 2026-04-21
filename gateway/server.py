@@ -1032,6 +1032,16 @@ class GateMiddleware(BaseHTTPMiddleware):
 app.add_middleware(GateMiddleware)
 
 
+# Subproduct host routing — runs BEFORE session auth so an invalid Host
+# or a direct-origin hit (missing CF-Connecting-IP in prod) is rejected
+# with 400/403 without touching the DB. See middleware/subproduct.py.
+try:
+    from middleware.subproduct import SubproductMiddleware as _SubMW  # noqa: E402
+    app.add_middleware(_SubMW)
+except Exception as _sub_exc:  # pragma: no cover
+    log.warning("SubproductMiddleware import failed: %s — continuing without it", _sub_exc)
+
+
 # Session middleware — reads the hardened narve_session cookie, attaches
 # request.state.user on every request. Registered AFTER GateMiddleware so
 # the gate bounces public visitors without a DB hit. Guarded so the gateway
@@ -1360,6 +1370,18 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(GlobalRateLimitMiddleware)
+
+
+# ── Bulk-data exfiltration budget ─────────────────────────────────────────
+# Counts rows in JSON list responses per-user-per-hour. Enforces a 5k/h
+# cap (429) and flags >20k/24h for review. Registered AFTER the global
+# rate limit so cheap floods get dropped early, but before request
+# handlers so it can see their responses.
+try:
+    from middleware.bulk_data_ratelimit import BulkDataRateLimitMiddleware as _BulkDataMW
+    app.add_middleware(_BulkDataMW)
+except Exception as _exc:  # pragma: no cover
+    log.warning("BulkDataRateLimitMiddleware import failed: %s — continuing without it", _exc)
 
 
 # ── Logging context middleware ───────────────────────────────────────────────
@@ -1735,6 +1757,102 @@ def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
     return True
 
 
+def _inject_watermark_layer(page: str, request) -> str:
+    """Append forensic watermark overlay + anti-capture script to rendered page.
+
+    Only fires when:
+      - the caller has a ``<body>`` tag (skips fragment responses), and
+      - the request resolves to an authenticated user (skips /, /gate, /token).
+
+    Each layer carries per-request context: email + user_id + session
+    suffix + masked IP go into the visible SVG; a deterministic 32-bit
+    seed (also persisted to ``watermark_seeds``) drives the invisible
+    canvas. See gateway/watermark.py for the generation helpers.
+    """
+    if not request or "<body" not in page:
+        return page
+    try:
+        user = current_user(request)
+    except Exception:
+        user = None
+    if not user:
+        return page
+
+    import watermark as _wm
+    try:
+        from security_routes import (
+            upsert_watermark_seed as _upsert_seed,
+            get_user_privacy_prefs as _get_prefs,
+        )
+    except Exception:
+        _upsert_seed = None
+        _get_prefs = None
+
+    user_id = int(user.get("user_id") or 0)
+    email = str(user.get("email") or "")
+    # Prefer the raw session cookie so the suffix is stable per browser.
+    raw_session = request.cookies.get(COOKIE_NAME, "") or request.cookies.get("narve_session", "")
+    session_suffix_value = _wm.session_suffix(raw_session)
+    seed = _wm._derive_seed(user_id, session_suffix_value)
+    if _upsert_seed:
+        try:
+            _upsert_seed(user_id, session_suffix_value, seed)
+        except Exception:
+            pass
+    ip_masked = _wm.mask_ip(_wm.resolve_ip_from_request(request))
+    overlay_html = _wm.overlay_html(
+        email=email,
+        user_id=user_id,
+        session_suffix_value=session_suffix_value,
+        ip_masked=ip_masked,
+        seed=seed,
+    )
+
+    prefs = {"inactive_blur": True, "devtools_blur": True}
+    if _get_prefs:
+        try:
+            prefs = _get_prefs(user_id)
+        except Exception:
+            pass
+
+    prefs_script = (
+        '<script>window.__NARVE_WATERMARK_PREFS__ = '
+        + json.dumps({
+            "inactive_blur": bool(prefs.get("inactive_blur", True)),
+            "devtools_blur": bool(prefs.get("devtools_blur", True)),
+        })
+        + ';</script>'
+    )
+    wm_assets = (
+        '<link rel="stylesheet" href="/_gateway_static/watermark.css">\n'
+        + prefs_script
+        + '<script src="/_gateway_static/watermark.js" defer></script>'
+    )
+    if "watermark.js" not in page:
+        head_idx = page.lower().rfind("</head>")
+        if head_idx != -1:
+            page = page[:head_idx] + wm_assets + "\n" + page[head_idx:]
+    if "nv-watermark-visible" not in page:
+        # Right after <body> so the overlay sits above every subsequent
+        # element. pointer-events:none guarantees click-through.
+        page = re.sub(
+            r"(<body[^>]*>)",
+            lambda m: m.group(1) + "\n" + overlay_html,
+            page, count=1,
+        )
+    # Psychological "view source" deterrent — cheap, correct, and zero cost.
+    marker = (
+        f"\n<!-- narve.ai — session-watermarked. "
+        f"Session fragment sid:{session_suffix_value}. "
+        f"Leaks are traceable. -->\n"
+    )
+    if "narve.ai — session-watermarked" not in page:
+        body_close = page.lower().rfind("</body>")
+        if body_close != -1:
+            page = page[:body_close] + marker + page[body_close:]
+    return page
+
+
 def render_page(name: str, request=None, **context) -> HTMLResponse:
     """Tiny templating: load static/<name>.html and do {{ key }} substitution.
 
@@ -1800,6 +1918,12 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         head_idx = lower.rfind("</head>")
         if head_idx != -1:
             page = page[:head_idx] + skel_injection + "\n" + page[head_idx:]
+    # Forensic watermark overlay + anti-capture JS — only on authenticated
+    # pages (user is resolvable from the request). See gateway/watermark.py.
+    try:
+        page = _inject_watermark_layer(page, request)
+    except Exception as _wm_exc:
+        log.warning("watermark inject failed: %s", _wm_exc)
     # Impersonation banner — inject after <body> so the admin always sees
     # they're viewing-as. Banner HTML handles its own padding.
     imp_state = getattr(getattr(request, "state", None), "impersonation", None) if request else None
@@ -7375,6 +7499,27 @@ try:
     app.include_router(_referrals_router)
 except Exception as _exc:  # pragma: no cover
     log.warning("routes_referrals import failed: %s — continuing without it", _exc)
+
+
+# Subproduct + portfolio + extension + bot routes. All registered via a
+# ``register(app)`` function so server.py stays free of business logic.
+# Same defensive try/except pattern as the rest of this section — one
+# missing module should never take the whole gateway down.
+for _mod_name in (
+    "subproduct_signup_routes",
+    "subproduct_dashboard_routes",
+    "portfolio.routes",
+    "extension_routes",
+    "bot_routes",
+    "security_routes",
+):
+    try:
+        _mod = __import__(_mod_name, fromlist=["register"])
+        _mod.register(app)
+    except Exception as _exc:  # pragma: no cover
+        log.warning(
+            "%s register failed: %s — continuing without it", _mod_name, _exc,
+        )
 
 
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.

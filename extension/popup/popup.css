@@ -1,0 +1,32 @@
+body {
+  margin: 0;
+  width: 320px;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Geist", "Segoe UI", sans-serif;
+  background: #0d0d0d;
+  color: #ffffff;
+  font-size: 13px;
+}
+.card { padding: 18px 20px; }
+.wordmark { font-family: "Instrument Serif", Georgia, serif; font-size: 22px; font-style: italic; }
+.tagline { color: #9aa0a6; margin: 8px 0 14px; font-size: 12px; }
+.status { padding: 8px 10px; border-radius: 6px; font-size: 12px; margin: 8px 0; }
+.status.ok { background: #0f1d12; color: #7fe29a; border: 1px solid #1a3a23; }
+.status.warn { background: #2a1e0a; color: #f0c27b; border: 1px solid #3a2910; }
+.status.err { background: #2a1515; color: #ff9494; border: 1px solid #3a1f1f; }
+.btn {
+  display: block;
+  text-align: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0d0d0d;
+  text-decoration: none;
+  font-weight: 600;
+  margin: 6px 0;
+}
+.btn-ghost {
+  background: transparent;
+  color: #ffffff;
+  border: 1px solid #2a2a2a;
+}
+.fineprint { color: #6c707a; font-size: 11px; margin-top: 14px; line-height: 1.45; }
