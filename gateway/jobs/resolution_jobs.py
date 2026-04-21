@@ -9,6 +9,7 @@ Runs as a cron job every hour at :17.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -75,11 +76,21 @@ async def poll_market_resolutions() -> dict[str, Any]:
                 elif outcome_str in ("NO", "0"):
                     outcome_yes = False
                 elif resolved_prices:
-                    # Parse from outcome prices: ["1.0", "0.0"] means YES resolved
+                    # Polymarket Gamma returns `outcomePrices` as a JSON-encoded
+                    # string like "[\"0.65\",\"0.35\"]". Historically we fell
+                    # back to eval() for the string case — that was an RCE
+                    # primitive if Polymarket ever served (or was MITM'd into
+                    # serving) a crafted payload, since eval runs arbitrary
+                    # Python. json.loads is the correct parser: it rejects any
+                    # non-JSON input with ValueError, which the except clause
+                    # below already handles.
                     try:
-                        prices = resolved_prices if isinstance(resolved_prices, list) else eval(resolved_prices)
+                        if isinstance(resolved_prices, list):
+                            prices = resolved_prices
+                        else:
+                            prices = json.loads(resolved_prices)
                         outcome_yes = float(prices[0]) > 0.5
-                    except Exception:
+                    except (ValueError, TypeError, IndexError):
                         log.warning("Could not parse outcome prices for %s: %s", market_id, resolved_prices)
                         continue
                 else:
@@ -90,6 +101,13 @@ async def poll_market_resolutions() -> dict[str, Any]:
                     resolved_total += count
                     log.info("Resolved %d predictions for %s (outcome=%s)",
                              count, market_id, "YES" if outcome_yes else "NO")
+                    # Flush cached reads that reflect an unresolved market.
+                    try:
+                        from cache import ttl_invalidate
+                        ttl_invalidate.on_market_resolved(slug)
+                        ttl_invalidate.on_market_resolved(market_id)
+                    except Exception as ce:
+                        log.warning("ttl_invalidate on_market_resolved failed for %s: %s", market_id, ce)
                     # Enqueue notification
                     try:
                         await enqueue_job(
@@ -125,6 +143,12 @@ async def poll_market_resolutions() -> dict[str, Any]:
                     resolved_total += count
                     log.info("Resolved %d predictions for %s (outcome=%s)",
                              count, market_id, "YES" if outcome_yes else "NO")
+                    try:
+                        from cache import ttl_invalidate
+                        ttl_invalidate.on_market_resolved(ticker)
+                        ttl_invalidate.on_market_resolved(market_id)
+                    except Exception as ce:
+                        log.warning("ttl_invalidate on_market_resolved failed for %s: %s", market_id, ce)
                     try:
                         await enqueue_job(
                             "send_market_resolution_notifications",

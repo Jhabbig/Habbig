@@ -70,6 +70,7 @@ def _insert_predictions(
     predictions: Iterable[dict],
 ) -> int:
     written = 0
+    touched_slugs: set[str] = set()
     conn = _connect()
     try:
         now = int(time.time())
@@ -82,6 +83,7 @@ def _insert_predictions(
             category = pred.get("category") or "other"
             direction = (pred.get("direction") or "").upper() or None
             prob = pred.get("explicit_probability") or pred.get("predicted_probability")
+            market_slug = pred.get("market_slug")
             conn.execute(
                 "INSERT INTO predictions "
                 "(source_handle, market_id, category, direction, "
@@ -89,7 +91,7 @@ def _insert_predictions(
                 "VALUES (?,?,?,?,?,?,?,?)",
                 (
                     source_handle,
-                    pred.get("market_slug"),
+                    market_slug,
                     category,
                     direction,
                     prob,
@@ -99,11 +101,25 @@ def _insert_predictions(
                 ),
             )
             written += 1
+            if market_slug:
+                touched_slugs.add(str(market_slug))
         conn.commit()
     except sqlite3.Error as exc:
         log.warning("insert predictions failed: %s", exc)
     finally:
         conn.close()
+
+    # Invalidate hot caches after a successful commit. Wrapped in try/except
+    # because pipeline must never fail on cache problems — a missed
+    # invalidation just means stale reads until the next TTL tick.
+    if written:
+        try:
+            from cache import ttl_invalidate
+            for slug in touched_slugs or {""}:
+                ttl_invalidate.on_new_prediction(source_handle, slug)
+        except Exception as exc:
+            log.warning("ttl_invalidate after extract failed: %s", exc)
+
     return written
 
 

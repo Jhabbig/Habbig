@@ -113,6 +113,9 @@ bot_activity.log
 data_cache/
 cache/
 .cache/
+# Exception: gateway/cache/ is a source-code package, not a data cache
+!gateway/cache/
+!gateway/cache/*
 Polymarket_backup_*/
 .backup_*/
 **/.backup_*/

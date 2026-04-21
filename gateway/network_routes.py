@@ -20,6 +20,8 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from cache import ttl_cache, DEFAULT_TTLS
+
 
 log = logging.getLogger("network_routes")
 
@@ -91,19 +93,25 @@ border:1px solid var(--border-default);border-radius:8px;margin:8px 0}}
 
 
 async def network_json(request: Request):
-    conn = _connect()
-    try:
-        snap = conn.execute(
-            "SELECT * FROM source_networks ORDER BY computed_at DESC LIMIT 1"
-        ).fetchone()
-    finally:
-        conn.close()
-    if not snap:
-        return JSONResponse({"snapshot": None})
-    row = dict(snap)
-    row["echo_chamber_clusters"] = json.loads(row.get("echo_chamber_clusters") or "[]")
-    row["most_independent_sources"] = json.loads(row.get("most_independent_sources") or "[]")
-    return JSONResponse({"snapshot": row})
+    def _compute() -> dict | None:
+        conn = _connect()
+        try:
+            snap = conn.execute(
+                "SELECT * FROM source_networks ORDER BY computed_at DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        if not snap:
+            return None
+        row = dict(snap)
+        row["echo_chamber_clusters"] = json.loads(row.get("echo_chamber_clusters") or "[]")
+        row["most_independent_sources"] = json.loads(row.get("most_independent_sources") or "[]")
+        return row
+
+    snap = ttl_cache.get_or_compute(
+        "source_network", _compute, DEFAULT_TTLS["source_network"],
+    )
+    return JSONResponse({"snapshot": snap})
 
 
 async def handle_pairs(request: Request, handle: str):

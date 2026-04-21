@@ -443,6 +443,15 @@ async def flag_save(request: Request, key: str):
     kwargs["updated_by_admin_id"] = admin["user_id"]
     db.update_feature_flag(key, **kwargs)
 
+    # Feature flags gate what the feed materialises for which tier/user.
+    # Flush the feed namespace after any flag change so users don't see
+    # stale rows until the 60s TTL expires.
+    try:
+        from cache import ttl_invalidate
+        ttl_invalidate.on_feature_flag_change()
+    except Exception:
+        log.warning("ttl_invalidate on_feature_flag_change failed", exc_info=True)
+
     from security import audit as _a
     _audit(
         _a.AuditAction.FEATURE_FLAG_UPDATE,
@@ -685,6 +694,394 @@ async def email_reset(request: Request, key: str):
     return RedirectResponse("/admin/emails", status_code=302)
 
 
+# ── Cache admin ──────────────────────────────────────────────────────────
+#
+# Surfaces the sync TTL cache (cache/ttl.py) to admins: total items, live
+# vs expired, hit rate per key prefix, eviction count. The "Clear cache"
+# button hits a POST-only endpoint so it can't be triggered via <img> or
+# GET-prefetch. Admin-gated via the standard `_require_admin_user` guard.
+
+
+async def cache_page(request: Request):
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+    from cache import ttl_cache
+    stats = ttl_cache.stats()
+
+    # Render the per-prefix hit table. Keep styling inline so it inherits
+    # the dashboard shell without needing a new /static asset.
+    rows = []
+    for r in stats["per_prefix"]:
+        rate = f"{r['hit_rate'] * 100:.1f}%"
+        rows.append(
+            f"<tr>"
+            f"<td><code>{html.escape(r['prefix'])}</code></td>"
+            f"<td class='num'>{r['hits']:,}</td>"
+            f"<td class='num'>{r['misses']:,}</td>"
+            f"<td class='num'>{r['sets']:,}</td>"
+            f"<td class='num'>{rate}</td>"
+            f"</tr>"
+        )
+    per_prefix_html = "".join(rows) or (
+        "<tr><td colspan='5' class='muted'>No cache activity yet.</td></tr>"
+    )
+    hit_rate_pct = f"{stats['hit_rate'] * 100:.2f}%"
+
+    body = f"""<!DOCTYPE html><html lang='en'><head>
+<meta charset='utf-8'><title>Cache — narve admin</title>
+<link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
+<style>
+body{{background:var(--bg-base);color:var(--text-primary);
+font-family:var(--font-ui);padding:40px;max-width:1100px;margin:0 auto}}
+h1{{font-family:var(--font-display);font-style:italic;font-size:40px;
+margin:0 0 8px;letter-spacing:-0.02em}}
+.meta{{color:var(--text-tertiary);font-size:12px;font-family:var(--font-mono);
+text-transform:uppercase;letter-spacing:0.1em;margin-bottom:32px}}
+.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px}}
+.card{{background:var(--bg-raised);border:1px solid var(--border-default);
+border-radius:12px;padding:16px}}
+.card-label{{font-size:11px;color:var(--text-tertiary);text-transform:uppercase;
+letter-spacing:0.08em;margin:0 0 8px;font-family:var(--font-mono)}}
+.card-value{{font-size:28px;font-weight:500;margin:0;font-variant-numeric:tabular-nums}}
+table{{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}}
+th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border-subtle)}}
+th{{color:var(--text-tertiary);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;
+font-family:var(--font-mono);font-weight:500}}
+.num{{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--font-mono)}}
+.muted{{color:var(--text-tertiary);text-align:center;padding:24px;font-style:italic}}
+form.clear{{margin-top:32px;padding:20px;background:var(--bg-raised);
+border:1px solid var(--border-default);border-radius:12px}}
+button.danger{{background:transparent;color:var(--text-primary);
+border:1px solid var(--border-default);border-radius:6px;padding:8px 16px;
+font-family:var(--font-mono);font-size:11px;text-transform:uppercase;
+letter-spacing:0.08em;cursor:pointer}}
+button.danger:hover{{border-color:var(--text-primary)}}
+</style></head><body>
+<h1>Cache</h1>
+<p class='meta'>Process-local TTL cache · read hits that skip SQLite</p>
+
+<div class='grid'>
+  <div class='card'><p class='card-label'>Live entries</p>
+    <p class='card-value'>{stats['live']:,}</p></div>
+  <div class='card'><p class='card-label'>Total (live + expired)</p>
+    <p class='card-value'>{stats['total']:,} / {stats['max_items']:,}</p></div>
+  <div class='card'><p class='card-label'>Hit rate</p>
+    <p class='card-value'>{hit_rate_pct}</p></div>
+  <div class='card'><p class='card-label'>Evictions</p>
+    <p class='card-value'>{stats['evictions']:,}</p></div>
+</div>
+
+<h2 style='font-family:var(--font-display);font-style:italic;font-size:24px;margin:32px 0 8px'>
+  Per-prefix activity</h2>
+<table>
+  <thead><tr>
+    <th>Prefix</th><th class='num'>Hits</th><th class='num'>Misses</th>
+    <th class='num'>Sets</th><th class='num'>Hit rate</th>
+  </tr></thead>
+  <tbody>{per_prefix_html}</tbody>
+</table>
+
+<form class='clear' method='post' action='/admin/cache/clear'
+      onsubmit='return confirm(\"Clear ALL cache entries? Reads will hit SQLite until caches rebuild.\")'>
+  <p style='margin:0 0 12px;color:var(--text-secondary);font-size:13px'>
+    <strong>Danger zone.</strong> Clearing drops every cached entry in this
+    process. Reads immediately revert to hitting SQLite; next-read will
+    repopulate. Invalidation is normally automatic — only clear when you
+    need a hard flush.</p>
+  <button class='danger' type='submit'>Clear cache</button>
+</form>
+</body></html>"""
+    return HTMLResponse(body)
+
+
+async def cache_stats_json(request: Request):
+    """JSON snapshot of cache stats. Useful for dashboards / curl checks."""
+    _require_admin_user(request)
+    from cache import ttl_cache
+    return JSONResponse(ttl_cache.stats())
+
+
+async def cache_clear(request: Request):
+    admin = _require_admin_user(request)
+    from cache import ttl_invalidate
+    removed = ttl_invalidate.everything()
+
+    # Audit trail — a cache clear can mask bugs, we want the record.
+    try:
+        from security import audit as _a
+        _audit(
+            _a.AuditAction.SYSTEM_CONFIG_CHANGE,
+            admin=admin, request=request,
+            target_type="cache", target_id="all",
+            after={"removed": removed},
+        )
+    except Exception:
+        log.warning("audit of cache_clear failed", exc_info=True)
+
+    return RedirectResponse("/admin/cache", status_code=302)
+
+
+# ── /admin/churn ─────────────────────────────────────────────────────────
+#
+# Reads from the ``churn_signals`` table (populated nightly by
+# jobs/compute_churn_signals.py) and the ``cancellation_attempts`` funnel
+# log (written by the 3-step cancel flow in billing_routes.py).
+#
+# Rendered server-side — the numbers are small (one row per subscriber,
+# handful of cancel attempts/day) so there's no need for a JSON API +
+# client-side chart. Keep everything inline so it stays parseable.
+
+
+def _churn_risk_distribution() -> list[tuple[str, int]]:
+    """Return [(tier, count)] across 'healthy', 'at_risk', 'critical'.
+
+    Missing tiers render as zero so the pie chart is always three slices.
+    """
+    counts = {"healthy": 0, "at_risk": 0, "critical": 0}
+    try:
+        with db.conn() as c:
+            for row in c.execute(
+                "SELECT risk_tier, COUNT(*) AS n FROM churn_signals "
+                "WHERE risk_tier IS NOT NULL GROUP BY risk_tier"
+            ):
+                tier = row["risk_tier"]
+                if tier in counts:
+                    counts[tier] = int(row["n"])
+    except Exception as exc:
+        log.warning("admin/churn: risk distribution failed: %s", exc)
+    return [(t, counts[t]) for t in ("healthy", "at_risk", "critical")]
+
+
+def _top_at_risk_users(limit: int = 20) -> list[dict]:
+    try:
+        with db.conn() as c:
+            rows = c.execute(
+                """
+                SELECT cs.user_id, cs.risk_score, cs.risk_tier, cs.engagement_trend,
+                       cs.days_since_last_active, cs.computed_at,
+                       u.email, u.username
+                FROM churn_signals cs
+                LEFT JOIN users u ON u.id = cs.user_id
+                WHERE cs.risk_tier IN ('at_risk', 'critical')
+                ORDER BY cs.risk_score DESC, cs.user_id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except Exception as exc:
+        log.warning("admin/churn: top at-risk query failed: %s", exc)
+        return []
+    return [dict(r) for r in rows]
+
+
+def _cancellation_funnel() -> dict:
+    """Return counts per outcome across all cancellation_attempts rows."""
+    out = {"total": 0, "retained": 0, "paused": 0, "cancelled": 0, "in_flight": 0}
+    try:
+        with db.conn() as c:
+            rows = c.execute(
+                "SELECT COALESCE(outcome, 'in_flight') AS o, COUNT(*) AS n "
+                "FROM cancellation_attempts GROUP BY o"
+            ).fetchall()
+        for r in rows:
+            key = r["o"] if r["o"] in out else "in_flight"
+            out[key] += int(r["n"])
+            out["total"] += int(r["n"])
+    except Exception as exc:
+        log.warning("admin/churn: cancel funnel failed: %s", exc)
+    return out
+
+
+def _recent_cancellations(limit: int = 20) -> list[dict]:
+    try:
+        with db.conn() as c:
+            rows = c.execute(
+                """
+                SELECT ca.id, ca.user_id, ca.reason, ca.reached_step, ca.outcome,
+                       ca.pause_days, ca.started_at, ca.completed_at,
+                       u.email, u.username
+                FROM cancellation_attempts ca
+                LEFT JOIN users u ON u.id = ca.user_id
+                ORDER BY ca.started_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except Exception as exc:
+        log.warning("admin/churn: recent cancels query failed: %s", exc)
+        return []
+    return [dict(r) for r in rows]
+
+
+def _render_risk_pie(dist: list[tuple[str, int]]) -> str:
+    """SVG donut — each slice coloured by tier. Pure string template so
+    we don't pull in a charting library for 3 numbers."""
+    total = sum(n for _, n in dist) or 1
+    colors = {"healthy": "#10b981", "at_risk": "#f59e0b", "critical": "#ef4444"}
+    segs = []
+    offset = 0.0
+    circ = 2 * 3.14159 * 40  # circumference of r=40 circle
+    for tier, n in dist:
+        frac = n / total
+        dash = frac * circ
+        segs.append(
+            f'<circle r="40" cx="50" cy="50" fill="transparent" '
+            f'stroke="{colors.get(tier, "#888")}" stroke-width="16" '
+            f'stroke-dasharray="{dash:.2f} {circ - dash:.2f}" '
+            f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 50 50)" />'
+        )
+        offset += dash
+    legend = "".join(
+        f'<div style="display:flex;align-items:center;gap:6px;font-size:12px">'
+        f'<span style="display:inline-block;width:10px;height:10px;background:{colors.get(t, "#888")};border-radius:2px"></span>'
+        f'<span style="color:var(--text-primary)">{t.replace("_", " ").title()}</span>'
+        f'<span style="color:var(--text-muted);margin-left:auto;font-variant-numeric:tabular-nums">{n}</span>'
+        f'</div>'
+        for t, n in dist
+    )
+    return (
+        '<div style="display:flex;gap:24px;align-items:center">'
+        f'<svg viewBox="0 0 100 100" width="140" height="140" style="flex:none">{"".join(segs)}</svg>'
+        f'<div style="flex:1;display:flex;flex-direction:column;gap:6px;min-width:160px">{legend}</div>'
+        '</div>'
+    )
+
+
+def _fmt_pct(numerator: int, denom: int) -> str:
+    if not denom:
+        return "—"
+    return f"{round(100 * numerator / denom)}%"
+
+
+async def churn_dashboard(request: Request):
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    dist = _churn_risk_distribution()
+    top = _top_at_risk_users(limit=20)
+    funnel = _cancellation_funnel()
+    recent = _recent_cancellations(limit=20)
+
+    # Risk distribution pie
+    risk_pie_html = _render_risk_pie(dist)
+
+    # Top at-risk table
+    if top:
+        rows = []
+        for u in top:
+            label = html.escape(u.get("email") or f"user#{u['user_id']}")
+            score = float(u.get("risk_score") or 0.0)
+            tier_class = (
+                "background:rgba(239,68,68,0.12);color:#ef4444"
+                if u.get("risk_tier") == "critical"
+                else "background:rgba(245,158,11,0.12);color:#f59e0b"
+            )
+            days = u.get("days_since_last_active")
+            days_str = f"{days}d" if days is not None else "—"
+            trend = html.escape(u.get("engagement_trend") or "unknown")
+            rows.append(
+                f'<tr>'
+                f'<td style="padding:8px 12px">{label}</td>'
+                f'<td style="padding:8px 12px;font-variant-numeric:tabular-nums">{score:.2f}</td>'
+                f'<td style="padding:8px 12px"><span class="badge" style="{tier_class};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">{html.escape(u.get("risk_tier") or "")}</span></td>'
+                f'<td style="padding:8px 12px;color:var(--text-muted)">{trend}</td>'
+                f'<td style="padding:8px 12px;color:var(--text-muted)">{days_str}</td>'
+                f'</tr>'
+            )
+        top_html = (
+            '<table style="width:100%;border-collapse:collapse">'
+            '<thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">'
+            '<th style="padding:6px 12px">User</th>'
+            '<th style="padding:6px 12px">Score</th>'
+            '<th style="padding:6px 12px">Tier</th>'
+            '<th style="padding:6px 12px">Trend</th>'
+            '<th style="padding:6px 12px">Idle</th>'
+            '</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody>'
+            '</table>'
+        )
+    else:
+        top_html = (
+            '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">'
+            'No at-risk or critical users yet.</div>'
+        )
+
+    # Funnel
+    total = funnel["total"] or 1
+    funnel_html = (
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">'
+        f'<div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">Total</div>'
+        f'<div style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums">{funnel["total"]}</div></div>'
+        f'<div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">Retained</div>'
+        f'<div style="font-size:24px;font-weight:700;color:#10b981;font-variant-numeric:tabular-nums">{_fmt_pct(funnel["retained"], total)}</div>'
+        f'<div style="font-size:11px;color:var(--text-muted)">{funnel["retained"]} of {funnel["total"]}</div></div>'
+        f'<div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">Paused</div>'
+        f'<div style="font-size:24px;font-weight:700;color:#f59e0b;font-variant-numeric:tabular-nums">{_fmt_pct(funnel["paused"], total)}</div>'
+        f'<div style="font-size:11px;color:var(--text-muted)">{funnel["paused"]} of {funnel["total"]}</div></div>'
+        f'<div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">Cancelled</div>'
+        f'<div style="font-size:24px;font-weight:700;color:#ef4444;font-variant-numeric:tabular-nums">{_fmt_pct(funnel["cancelled"], total)}</div>'
+        f'<div style="font-size:11px;color:var(--text-muted)">{funnel["cancelled"]} of {funnel["total"]}</div></div>'
+        '</div>'
+    )
+
+    # Recent cancellations
+    if recent:
+        rrows = []
+        for ca in recent:
+            email = html.escape(ca.get("email") or f"user#{ca['user_id']}")
+            outcome = ca.get("outcome") or "in_flight"
+            outcome_color = {
+                "retained": "#10b981",
+                "paused": "#f59e0b",
+                "cancelled": "#ef4444",
+                "in_flight": "var(--text-muted)",
+            }.get(outcome, "var(--text-muted)")
+            reason = html.escape((ca.get("reason") or "").replace("_", " "))
+            started = html.escape(str(ca.get("started_at") or ""))
+            pause_info = f" · {ca.get('pause_days')}d pause" if ca.get("pause_days") else ""
+            rrows.append(
+                f'<tr>'
+                f'<td style="padding:8px 12px">{email}</td>'
+                f'<td style="padding:8px 12px;color:var(--text-muted);font-size:12px">{started}</td>'
+                f'<td style="padding:8px 12px;color:var(--text-muted)">{reason}</td>'
+                f'<td style="padding:8px 12px;color:var(--text-muted)">Step {ca.get("reached_step", "?")}</td>'
+                f'<td style="padding:8px 12px;color:{outcome_color};font-weight:600;text-transform:capitalize">{outcome.replace("_", " ")}{pause_info}</td>'
+                f'</tr>'
+            )
+        recent_html = (
+            '<table style="width:100%;border-collapse:collapse">'
+            '<thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">'
+            '<th style="padding:6px 12px">User</th>'
+            '<th style="padding:6px 12px">Started</th>'
+            '<th style="padding:6px 12px">Reason</th>'
+            '<th style="padding:6px 12px">Step</th>'
+            '<th style="padding:6px 12px">Outcome</th>'
+            '</tr></thead>'
+            f'<tbody>{"".join(rrows)}</tbody>'
+            '</table>'
+        )
+    else:
+        recent_html = (
+            '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">'
+            'No cancellation attempts recorded yet.</div>'
+        )
+
+    return _render_page(
+        "admin-churn",
+        request=request,
+        email=admin["email"],
+        username=admin.get("username", admin["email"]),
+        raw_nav_role=_role_badge(admin),
+        _is_admin=admin.get("is_admin"),
+        raw_risk_pie=risk_pie_html,
+        raw_top_users=top_html,
+        raw_funnel=funnel_html,
+        raw_recent=recent_html,
+    )
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 
@@ -694,6 +1091,11 @@ def register(app) -> None:
     Called once during server.py import. Idempotent — FastAPI dedupes by
     (path, method) so re-registering just no-ops (with a logged warning).
     """
+    app.add_api_route(
+        "/admin/churn", churn_dashboard,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
+    )
+
     app.add_api_route(
         "/admin/users/{user_id}/impersonate", impersonate_start,
         methods=["POST"], include_in_schema=False,
@@ -754,5 +1156,19 @@ def register(app) -> None:
     )
     app.add_api_route(
         "/admin/emails/{key}/reset", email_reset,
+        methods=["POST"], include_in_schema=False,
+    )
+
+    # Cache observability + nuclear clear button.
+    app.add_api_route(
+        "/admin/cache", cache_page,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/cache/stats", cache_stats_json,
+        methods=["GET"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/cache/clear", cache_clear,
         methods=["POST"], include_in_schema=False,
     )

@@ -21,6 +21,8 @@ from typing import Any, Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from cache import ttl_cache, DEFAULT_TTLS
+
 
 log = logging.getLogger("insider_routes")
 
@@ -87,26 +89,47 @@ async def signals_list(request: Request):
     except ValueError:
         days_i = 30
 
-    import time as _t
-    since = int(_t.time()) - days_i * 86400
-    clauses = ["disclosed_at >= ?"]
-    args: list[Any] = [since]
-    if source:
-        clauses.append("source = ?"); args.append(source)
-    if strength:
-        clauses.append("signal_strength = ?"); args.append(strength)
-
-    conn = _connect()
+    page = request.query_params.get("page") or "1"
     try:
-        rows = conn.execute(
-            "SELECT * FROM insider_signals WHERE " + " AND ".join(clauses)
-            + " ORDER BY disclosed_at DESC LIMIT ?",
-            (*args, limit),
-        ).fetchall()
-    finally:
-        conn.close()
+        page_i = max(1, int(page))
+    except ValueError:
+        page_i = 1
+
+    # Cache shape: per (strength, days, page) with source+limit folded in so
+    # an analyst switching filters doesn't pollute someone else's page.
+    # Short TTL (120s) — signals ingest runs every few minutes.
+    type_key = strength or "all"
+    cache_key = (
+        f"insider_signals:type_{type_key}:days_{days_i}:page_{page_i}"
+        f":src_{source or 'all'}:lim_{limit}"
+    )
+
+    def _compute() -> list[dict]:
+        import time as _t
+        since = int(_t.time()) - days_i * 86400
+        clauses = ["disclosed_at >= ?"]
+        args: list[Any] = [since]
+        if source:
+            clauses.append("source = ?"); args.append(source)
+        if strength:
+            clauses.append("signal_strength = ?"); args.append(strength)
+        offset = (page_i - 1) * limit
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM insider_signals WHERE " + " AND ".join(clauses)
+                + " ORDER BY disclosed_at DESC LIMIT ? OFFSET ?",
+                (*args, limit, offset),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+
+    signals = ttl_cache.get_or_compute(
+        cache_key, _compute, DEFAULT_TTLS["insider_signals"],
+    )
     return JSONResponse({
-        "signals": [dict(r) for r in rows],
+        "signals": signals,
         "disclaimer": LEGAL_DISCLAIMER,
     })
 
@@ -135,19 +158,26 @@ async def market_correlations(request: Request, market_slug: str):
 
 async def leaderboard(request: Request):
     _require_pro_user(request)
-    conn = _connect()
-    try:
-        rows = conn.execute(
-            "SELECT actor_name, source, COUNT(*) AS signal_count, "
-            "       SUM(COALESCE(amount_usd, 0)) AS total_amount "
-            "FROM insider_signals "
-            "GROUP BY actor_name, source "
-            "ORDER BY signal_count DESC LIMIT 50"
-        ).fetchall()
-    finally:
-        conn.close()
+
+    def _compute() -> list[dict]:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT actor_name, source, COUNT(*) AS signal_count, "
+                "       SUM(COALESCE(amount_usd, 0)) AS total_amount "
+                "FROM insider_signals "
+                "GROUP BY actor_name, source "
+                "ORDER BY signal_count DESC LIMIT 50"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+
+    board = ttl_cache.get_or_compute(
+        "insider_leaderboard", _compute, DEFAULT_TTLS["insider_leaderboard"],
+    )
     return JSONResponse({
-        "leaderboard": [dict(r) for r in rows],
+        "leaderboard": board,
         "disclaimer": LEGAL_DISCLAIMER,
     })
 

@@ -147,6 +147,15 @@ async def recompute_calibration_scores() -> dict[str, Any]:
                     tuple(args),
                 )
         conn.commit()
+        # Invalidate every cached source read + network snapshot. Calibration
+        # drives credibility which drives edge/best-bets ranking — stale
+        # reads would serve pre-recompute scores.
+        try:
+            from cache import ttl_invalidate
+            removed = ttl_invalidate.on_credibility_recompute()
+            log.info("ttl_invalidate on_credibility_recompute: removed=%d", removed)
+        except Exception as ce:
+            log.warning("ttl_invalidate after calibration recompute failed: %s", ce)
         return {
             "sources_examined": len(handles),
             "calibrated": updated,

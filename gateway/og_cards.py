@@ -227,34 +227,26 @@ def market_card(
     )
 
 
-# ── In-memory cache ──────────────────────────────────────────────────────────
+# ── Cache shim ───────────────────────────────────────────────────────────────
 #
-# Cards are ~30–80 KB each and regenerating them per request is wasteful
-# (each call allocates, wraps text, and re-encodes PNG). Cache by a string
-# key with a TTL per card type; invalidation is time-based.
-
-_CACHE: dict[str, tuple[float, bytes]] = {}
-_MAX_CACHE_ENTRIES = 512
+# Delegates to the process-wide TTL cache (cache/ttl.py). Keys are namespaced
+# under `og_card:*` so /admin/cache can attribute hits per-prefix. Cards are
+# ~30–80 KB PNGs — keep them out of SQLite and off the render path.
 
 
 def cached(key: str, ttl_seconds: int, factory) -> bytes:
     """Return cached bytes for ``key`` or compute via ``factory()``.
 
-    TTL is bounded to keep memory use predictable; once ``_MAX_CACHE_ENTRIES``
-    is exceeded the oldest entry is evicted.
+    Callers pass unprefixed keys like ``"default"``, ``"source:sho"``,
+    ``"market:foo"``. We prefix with ``og_card:`` so the cache namespace
+    matches the invalidation helpers and admin stats.
     """
-    now = time.time()
-    hit = _CACHE.get(key)
-    if hit and (now - hit[0]) < ttl_seconds:
-        return hit[1]
-    data = factory()
-    if len(_CACHE) >= _MAX_CACHE_ENTRIES:
-        oldest_key = min(_CACHE, key=lambda k: _CACHE[k][0])
-        _CACHE.pop(oldest_key, None)
-    _CACHE[key] = (now, data)
-    return data
+    from cache import ttl_cache  # local import to sidestep circular refs
+    full_key = f"og_card:{key}"
+    return ttl_cache.get_or_compute(full_key, factory, ttl_seconds)
 
 
 def clear_cache() -> None:
-    """Test hook."""
-    _CACHE.clear()
+    """Test hook — drops every og_card:* entry."""
+    from cache import ttl_cache
+    ttl_cache.delete_prefix("og_card:")

@@ -26,6 +26,7 @@ import db
 from backend.markets import unified_markets
 from backend.markets.encryption import encrypt_token, decrypt_token
 from backend.markets.portfolio_aggregator import get_combined_orders
+from cache import ttl_cache, DEFAULT_TTLS
 
 
 log = logging.getLogger("gateway.market_routes")
@@ -98,9 +99,27 @@ async def api_markets_unified(
     markets = await unified_markets.fetch_unified_markets(
         srv.POLY_CLIENT, srv.KALSHI_CLIENT, cache_ttl=srv.MARKETS_CACHE_TTL,
     )
-    filtered = unified_markets.filter_markets(
-        markets, category=category, source=source, search=search, sort=sort,
+    # Only the filtered-sorted slice is cached (30s TTL). `search` is user-
+    # typed free text that would blow up the keyspace, so skip cache when
+    # set. env_relevant also changes the dataset per-user (Pro feature) —
+    # skip then too.
+    cacheable = not search and not env_relevant
+    filter_cache_key = (
+        f"markets:cat_{category or 'all'}:sort_{sort}"
+        f":src_{source or 'all'}:page_{page}:lim_{limit}"
     )
+    if cacheable:
+        filtered = ttl_cache.get_or_compute(
+            filter_cache_key,
+            lambda: unified_markets.filter_markets(
+                markets, category=category, source=source, search=search, sort=sort,
+            ),
+            DEFAULT_TTLS["markets"],
+        )
+    else:
+        filtered = unified_markets.filter_markets(
+            markets, category=category, source=source, search=search, sort=sort,
+        )
     # env_relevant filter — only return markets that have a cached env analysis
     # marked is_relevant=True. Reads from the cache only; never triggers Claude
     # generation during list pagination.
@@ -149,20 +168,33 @@ async def api_markets_top_edge(
     markets = await unified_markets.fetch_unified_markets(
         srv.POLY_CLIENT, srv.KALSHI_CLIENT, cache_ttl=srv.MARKETS_CACHE_TTL,
     )
-    active = [m for m in markets if m.status == "active"]
-    enriched = unified_markets.enrich_markets_with_intelligence(active)
-    with_edge = [
-        m for m in enriched
-        if m.betyc_ev_score is not None and m.betyc_prediction_count >= min_sources
-    ]
-    if category:
-        with_edge = [m for m in with_edge if m.category == category]
-    with_edge.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
-    payload = {
-        "markets": [m.to_dict() for m in with_edge[:limit]],
-        "total": len(with_edge),
-    }
-    return JSONResponse(srv._forensic_sign(user, payload, "api_markets_top_edge"))
+
+    # Best-bets / top-edge ranking is tier-gated (higher tiers see more
+    # rows; admin sees everything). Key on the effective tier so a Pro and
+    # a Free user don't share the same list.
+    tier = "admin" if user.get("is_admin") else (user.get("plan") or "free")
+    cache_key = (
+        f"best_bets:tier_{tier}:page_1"
+        f":lim_{limit}:min_{min_sources}:cat_{category or 'all'}"
+    )
+
+    def _compute() -> dict:
+        active = [m for m in markets if m.status == "active"]
+        enriched = unified_markets.enrich_markets_with_intelligence(active)
+        with_edge = [
+            m for m in enriched
+            if m.betyc_ev_score is not None and m.betyc_prediction_count >= min_sources
+        ]
+        if category:
+            with_edge = [m for m in with_edge if m.category == category]
+        with_edge.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
+        return {
+            "markets": [m.to_dict() for m in with_edge[:limit]],
+            "total": len(with_edge),
+        }
+
+    payload = ttl_cache.get_or_compute(cache_key, _compute, DEFAULT_TTLS["best_bets"])
+    return JSONResponse(srv._forensic_sign(user, dict(payload), "api_markets_top_edge"))
 
 
 async def api_markets_false_consensus(request: Request, limit: int = 20):
@@ -195,7 +227,20 @@ async def api_market_detail(request: Request, market_id: str):
     )
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
-    payload = market.to_dict()
+    try:
+        from engagement import log_event
+        log_event(user["user_id"], "market_detail_view", metadata={"market_id": market_id})
+    except Exception:
+        pass
+    # Cache the base dict shape (no env overlay) so repeated views hit the
+    # fast path. Pro env overlay + forensic sign still run per-request.
+    payload = ttl_cache.get_or_compute(
+        f"market:{market_id}",
+        lambda: market.to_dict(),
+        DEFAULT_TTLS["market"],
+    )
+    # Returned dict is cached — clone before mutating for per-user overlay.
+    payload = dict(payload)
     # If the caller is Pro+ AND has env preferences enabled AND a cached
     # env analysis exists, merge it into the response under environmental_impact.
     # This is non-breaking: clients that don't know about the field ignore it,
