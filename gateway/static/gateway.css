@@ -1,6 +1,16 @@
 /* Gateway — Monochrome dual-theme (light default, dark on toggle) */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* Self-hosted Inter variable — subset to basic Latin + symbols/arrows/box.
+   Full file (352 KB) lives at /_gateway_static/fonts/full/ for fallback.
+   Swap display avoids invisible text during the tiny load window. */
+@font-face {
+  font-family: "Inter";
+  src: url("/_gateway_static/fonts/Inter-Variable-subset.woff2") format("woff2-variations"),
+       url("/_gateway_static/fonts/Inter-Variable-subset.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 html { color-scheme: light dark; }
 
@@ -83,6 +93,8 @@ html { color-scheme: light dark; }
   --bg:            var(--bg-base);
   --surface:       var(--bg-surface);
   --surface-hover: var(--bg-raised);
+  --surface-raised: var(--bg-raised);
+  --radius-md:     var(--radius);
   --border:        var(--border-default);
   --border-light:  var(--border-subtle);
   --text-muted:    var(--text-tertiary);
@@ -119,11 +131,16 @@ html { color-scheme: light dark; }
   --border-default: #2a2a2a;
   --border-strong:  #383838;
 
-  /* Text — 5 levels */
+  /* Text — 5 levels.
+   * Tertiary / quaternary were too dim in dark mode (#555 / #333 on #0d0d0d
+   * measured 2.61:1 / 1.37:1, below WCAG AA 4.5:1). Now sized for AA normal
+   * text against --bg-base (#0d0d0d): #8a8a8a → 5.2:1, #6e6e6e → 3.8:1.
+   * Quaternary is still AA-fail for normal text — restrict its use to
+   * decorative / disabled elements where contrast isn't required. */
   --text-primary:    #f0f0f0;
   --text-secondary:  #909090;
-  --text-tertiary:   #555555;
-  --text-quaternary: #333333;
+  --text-tertiary:   #8a8a8a;
+  --text-quaternary: #6e6e6e;
   --text-inverse:    #0d0d0d;
 
   /* Interactive */
@@ -1139,6 +1156,299 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
   background: var(--green-bg);
   border-color: var(--green);
   color: var(--green);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SECONDARY SURFACES — shared components for /settings and /admin.
+   Adopted by settings-side forms and admin-side tables so the
+   secondary screens share the dashboard-grade polish.
+   ════════════════════════════════════════════════════════════════ */
+
+/* Label-left / input-right field row. Stacks on mobile. Each field
+   should wrap its <label>/<input> pair in .field-row. */
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 200px) 1fr;
+  gap: 24px;
+  align-items: start;
+  padding: 18px 0;
+  border-top: 1px solid var(--border-ghost);
+}
+.field-row:first-child { border-top: 0; padding-top: 0; }
+.field-row .field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  padding-top: 10px;
+}
+.field-row .field-helper {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  line-height: 1.45;
+}
+.field-row .field-control { min-width: 0; }
+.field-row .field-control input[type="text"],
+.field-row .field-control input[type="email"],
+.field-row .field-control input[type="password"],
+.field-row .field-control input[type="number"],
+.field-row .field-control input[type="url"],
+.field-row .field-control select,
+.field-row .field-control textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 14px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field-row .field-control input:focus,
+.field-row .field-control select:focus,
+.field-row .field-control textarea:focus {
+  outline: none;
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--interactive-ghost);
+}
+.field-row .field-control textarea { min-height: 80px; resize: vertical; }
+
+@media (max-width: 720px) {
+  .field-row { grid-template-columns: 1fr; gap: 6px; }
+  .field-row .field-label { padding-top: 0; }
+}
+
+/* Destructive action group — visually separated from normal settings
+   so users have to reach for it. Still monochrome, but with a stronger
+   divider and a red-accent button. */
+.settings-danger {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 2px solid var(--border-default);
+}
+.settings-danger .settings-section-title { color: var(--text-primary); }
+.settings-danger .btn-danger,
+.btn-danger {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.btn-danger:hover {
+  border-color: var(--text-primary);
+  background: var(--interactive-ghost);
+}
+.btn-danger:active { background: var(--interactive-ghost-hover); }
+
+/* Sticky save bar — appears at the bottom of long settings forms. */
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-default);
+  padding: 14px 0;
+  margin-top: 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  z-index: 2;
+}
+.save-bar .save-bar-status {
+  margin-right: auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ── Admin-side utilities ──────────────────────────────────────── */
+
+/* Admin table — dense, mono-numeric, with consistent row actions.
+   Usage:
+     <div class="admin-card">
+       <table class="admin-table"><thead>…</thead><tbody>…</tbody></table>
+     </div> */
+.admin-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.admin-table th,
+.admin-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-ghost);
+  vertical-align: middle;
+}
+.admin-table thead th {
+  background: var(--bg-raised);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.admin-table tbody tr:hover { background: var(--bg-raised); }
+.admin-table tbody tr:last-child td { border-bottom: 0; }
+.admin-table td.num,
+.admin-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+.admin-table td.actions,
+.admin-table th.actions { text-align: right; white-space: nowrap; width: 1%; }
+.admin-table .empty-cell {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+/* Filter bar — same height + layout across every admin page. */
+.admin-filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.admin-filter-bar input[type="search"],
+.admin-filter-bar input[type="text"],
+.admin-filter-bar select {
+  padding: 7px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+.admin-filter-bar input[type="search"] { flex: 1 1 240px; min-width: 180px; }
+.admin-filter-bar .filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.admin-filter-bar .filter-chip:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+.admin-filter-bar .filter-chip.active {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+  background: var(--interactive-ghost);
+}
+.admin-filter-bar .filter-spacer { flex: 1; }
+
+/* Copyable identifier — click to copy to clipboard. Pairs with a
+   tiny snippet of JS below (admin.html and others wire it up). */
+.copyable-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 2px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+  user-select: none;
+}
+.copyable-id:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+.copyable-id.copied {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+  background: var(--interactive-ghost);
+}
+
+/* Admin section header + subheader — shared with status + users pages. */
+.admin-section {
+  margin-bottom: 32px;
+}
+.admin-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.admin-section-head h2 {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.admin-section-head .admin-section-count {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Stat tile — used on admin home + metrics pages. Monochrome KPI. */
+.stat-tile {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 16px 18px;
+}
+.stat-tile .stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+.stat-tile .stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.stat-tile .stat-trend {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
