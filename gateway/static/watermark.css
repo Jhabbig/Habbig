@@ -1,0 +1,127 @@
+/*
+ * narve.ai forensic watermark + privacy-blur styles.
+ *
+ * Loaded alongside gateway.css on every authenticated page (injected by
+ * render_page). Keep this file lean — the SVG background-image ships inline
+ * via a data URI from watermark.py, so we only declare layout + blur here.
+ */
+
+/* Visible overlay + invisible canvas are positioned by inline style so the
+ * background-image: url(data:...) can carry per-request forensic text.
+ * These rules are belt-and-braces for legacy pages that might strip inline
+ * styles via a CSP sanitiser. */
+
+#nv-watermark-visible {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  mix-blend-mode: difference;
+  opacity: 0.06;
+}
+
+/* Light-theme users see a slightly lower contrast so the text is about
+ * the same visual weight as the dark theme's 0.06. The theme flag is set
+ * by static/theme.js on <html data-theme="light">. */
+html[data-theme="light"] #nv-watermark-visible {
+  opacity: 0.045;
+  mix-blend-mode: multiply;
+}
+
+#nv-watermark-canvas {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  /* Canvas intrinsic size is set by JS at draw time; keep CSS flexible. */
+  width: 100vw;
+  height: 100vh;
+  /* Fully transparent to the user — content is in alpha=2 pixels. */
+  opacity: 1;
+}
+
+/* Blur-on-inactive + devtools-detect classes. Applied to <body>. */
+body.nv-privacy-blur {
+  filter: blur(14px);
+  transition: filter 0.15s ease;
+}
+
+/* The capture-attempt toast. */
+#nv-capture-warning {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 20, 0.96);
+  color: #ffffff;
+  padding: 10px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  z-index: 10002;
+  max-width: 520px;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* Small utility pills reused by /admin/security pages. */
+.nv-pill {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  line-height: 1.6;
+}
+.nv-pill-ok    { background: rgba(16, 185, 129, 0.14); color: #10b981; }
+.nv-pill-warn  { background: rgba(245, 158, 11, 0.14); color: #f59e0b; }
+.nv-pill-faint { background: rgba(148, 163, 184, 0.14); color: #94a3b8; }
+
+/* Data surfaces that opt into no-select. Authentic typed content (form
+ * inputs, textareas) intentionally excluded. */
+.data-table, .source-card, .market-panel, .signal-card, .nv-prediction-card {
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+.data-table input, .data-table textarea,
+.source-card input, .source-card textarea,
+.market-panel input, .market-panel textarea,
+.signal-card input, .signal-card textarea,
+.nv-prediction-card input, .nv-prediction-card textarea {
+  -webkit-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Forensics result card. */
+.nv-forensics-result {
+  margin-top: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  background: var(--surface, #141414);
+}
+.nv-forensics-result.nv-forensics-nohit {
+  border-color: rgba(148, 163, 184, 0.3);
+  color: #94a3b8;
+}
+.nv-forensics-headline {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.nv-forensics-source {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-bottom: 10px;
+}
+.nv-forensics-evidence {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+}

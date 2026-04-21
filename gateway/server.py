@@ -6109,7 +6109,8 @@ async def api_markets_unified(
     limit: int = 20,
     env_relevant: int = 0,
 ):
-    _require_markets_user(request)  # auth + add-on check; user dict not used below
+    _user_for_sign = current_user(request)
+    _require_markets_user(request)  # auth + add-on check
     # Clamp pagination params to prevent division by zero and negative indexing
     if limit < 1 or limit > 100:
         limit = 20
@@ -6144,12 +6145,23 @@ async def api_markets_unified(
     if env_relevant_ids:
         for md in market_dicts:
             md["is_env_relevant"] = md.get("id") in env_relevant_ids
-    return JSONResponse({
+    payload = {
         "markets": market_dicts,
         "total": total,
         "page": page,
         "pages": max(1, (total + limit - 1) // limit),
-    })
+    }
+    # Forensic signing — per-user fingerprint on the returned markets list.
+    # Fails open; never blocks a response.
+    try:
+        from forensics import signer as _sign
+        if _user_for_sign and _user_for_sign.get("user_id"):
+            payload = _sign.sign_response(
+                _user_for_sign["user_id"], payload, "api_markets_unified",
+            )
+    except Exception as _sign_exc:
+        log.warning("forensic sign failed api_markets_unified: %s", _sign_exc)
+    return JSONResponse(payload)
 
 
 # ── Edge scoring & false consensus (F4, F5) ─────────────────────────────────
@@ -6169,7 +6181,7 @@ async def api_markets_top_edge(
     intelligence and the current market price. The core value proposition
     of narve.ai — "where is the crowd most wrong?"
     """
-    _require_authenticated(request)
+    user = _require_authenticated(request)
     limit = max(1, min(50, limit))
     markets = await unified_markets.fetch_unified_markets(
         POLY_CLIENT, KALSHI_CLIENT, cache_ttl=MARKETS_CACHE_TTL,
@@ -6183,10 +6195,18 @@ async def api_markets_top_edge(
     if category:
         with_edge = [m for m in with_edge if m.category == category]
     with_edge.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
-    return JSONResponse({
+    payload = {
         "markets": [m.to_dict() for m in with_edge[:limit]],
         "total": len(with_edge),
-    })
+    }
+    try:
+        from forensics import signer as _sign
+        uid = user.get("user_id") if isinstance(user, dict) else None
+        if uid:
+            payload = _sign.sign_response(uid, payload, "api_markets_top_edge")
+    except Exception as _sign_exc:
+        log.warning("forensic sign failed top_edge: %s", _sign_exc)
+    return JSONResponse(payload)
 
 
 @app.get("/api/markets/false-consensus")

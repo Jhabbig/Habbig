@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bulk fetches · narve.ai admin</title>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="/_gateway_static/watermark.css">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
+    .adm-wrap { max-width: 1000px; margin: 0 auto; padding: 44px 24px 80px; }
+    .adm-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 28px; flex-wrap: wrap; gap: 16px; }
+    .adm-head h1 { margin: 0; font-size: 24px; font-weight: 600; }
+    .adm-nav-back { opacity: 0.6; color: inherit; text-decoration: none; font-size: 13px; }
+    .adm-nav-back:hover { opacity: 1; }
+    .adm-note { font-size: 13px; opacity: 0.55; margin: 0 0 22px; line-height: 1.6; max-width: 720px; }
+    .adm-table-wrap { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 18px; font-size: 13px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6; background: rgba(255,255,255,0.015); }
+    tr:last-child td { border-bottom: 0; }
+    .small-links { font-size: 12px; margin-top: 20px; opacity: 0.65; }
+    .small-links a { color: inherit; margin-right: 12px; }
+  </style>
+</head>
+<body>
+  <div class="adm-wrap">
+    <div class="adm-head">
+      <div>
+        <a class="adm-nav-back" href="/admin">← Admin</a>
+        <h1>Bulk fetches (last 24 h)</h1>
+      </div>
+    </div>
+    <p class="adm-note">
+      Top 20 users by total rows returned from list endpoints in the
+      past 24 hours. The <strong>FLAGGED</strong> badge appears for any
+      user over 20,000 rows/day — consider manual review + a temporary
+      hold. Under 5,000 rows/hour is normal dashboard use; anything in
+      the tens-of-thousands range is scraping.
+    </p>
+    <div class="adm-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Email</th>
+            <th style="text-align:right">Rows (24 h)</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ raw_rows }}
+        </tbody>
+      </table>
+    </div>
+    <div class="small-links">
+      <a href="/admin/security/forensics">Forensics tool →</a>
+      <a href="/admin">← Admin home</a>
+    </div>
+  </div>
+</body>
+</html>

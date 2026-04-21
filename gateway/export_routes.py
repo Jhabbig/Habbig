@@ -388,6 +388,14 @@ async def privacy_settings_page(request: Request):
         'No exports yet. Request one below — we\'ll email you when it\'s ready.'
         '</div></div></div>'
     )
+    # Pull watermark/blur toggle state so the same page can render both the
+    # data-export flow (this module) and the on-by-default UI privacy
+    # toggles (security_routes.py). Failure is non-fatal — defaults to ON.
+    try:
+        from security_routes import get_user_privacy_prefs as _get_prefs
+        prefs = _get_prefs(user["user_id"])
+    except Exception:
+        prefs = {"inactive_blur": True, "devtools_blur": True}
     return _render(
         "settings_privacy",
         request=request,
@@ -395,6 +403,8 @@ async def privacy_settings_page(request: Request):
         username=user.get("username", user["email"]),
         raw_nav_role=_role_badge(user),
         raw_export_rows=rows_html,
+        raw_inactive_checked="checked" if prefs.get("inactive_blur") else "",
+        raw_devtools_checked="checked" if prefs.get("devtools_blur") else "",
     )
 
 

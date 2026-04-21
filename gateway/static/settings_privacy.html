@@ -53,6 +53,34 @@
     <h2>Past exports</h2>
     <div class="adm-list">{{ raw_export_rows }}</div>
 
+    <h2>Session protection</h2>
+    <p class="note">narve.ai watermarks every session for leak attribution. The two toggles below control optional browser-side protections. Watermarking and bulk-fetch limits cannot be disabled — they&rsquo;re the teeth behind the product&rsquo;s privacy promise.</p>
+    <form method="post" action="/settings/privacy/toggles" style="background:var(--surface, #141414);border:1px solid var(--border, rgba(255,255,255,0.06));border-radius:8px;padding:20px 22px;margin-bottom:16px;">
+      {{ raw_csrf_field }}
+      <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+        <label for="inactive_blur" style="flex:1;font-size:13.5px;">
+          Auto-blur when window loses focus
+          <span style="display:block;font-size:12px;opacity:0.55;margin-top:3px;">Dashboard blurs 3 seconds after you switch tabs. Helpful when screen-sharing on a call.</span>
+        </label>
+        <input type="checkbox" id="inactive_blur" name="inactive_blur" {{ raw_inactive_checked }} style="width:18px;height:18px;accent-color:#fff;">
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;padding:10px 0;">
+        <label for="devtools_blur" style="flex:1;font-size:13.5px;">
+          Blur when developer tools are open
+          <span style="display:block;font-size:12px;opacity:0.55;margin-top:3px;">Casual anti-snooping. Determined users can disable breakpoints — not a real barrier.</span>
+        </label>
+        <input type="checkbox" id="devtools_blur" name="devtools_blur" {{ raw_devtools_checked }} style="width:18px;height:18px;accent-color:#fff;">
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+        <button class="btn btn-primary" type="submit">Save</button>
+      </div>
+    </form>
+
+    <div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.12);border-radius:8px;padding:14px 16px;font-size:12.5px;opacity:0.68;line-height:1.7;margin-bottom:28px;">
+      <strong style="opacity:0.9;">Always on:</strong>
+      session-level SVG watermark (your email, user ID, session fragment, masked IP woven into every rendered page); per-user data-level signing on list API responses; bulk-fetch cap of 5,000 rows/hour and 20,000/day across the API. Any screenshot, copy-paste, or data dump is traceable back to the account that produced it.
+    </div>
+
     <p class="note">Questions? Email <a href="mailto:privacy@narve.ai" style="color:inherit">privacy@narve.ai</a>. Our full privacy policy is at <a href="/privacy" style="color:inherit">/privacy</a>.</p>
 
     <script>
