@@ -5,6 +5,275 @@ Each entry is a point-in-time snapshot. Diffs between entries reveal posture cha
 
 ---
 
+## AUDIT #2 — 2026-04-21T14:45:04Z — commit ceefd0a
+
+### Code inventory audited
+- Committed tip: `ceefd0a` (forensic signer follow-up: broader coverage + admin nav + alert email)
+- Local unpushed commits: none (local in sync with `origin/feature/platform-build`)
+- Local uncommitted files: none (working tree clean)
+- Local stashes: 1 — `stash@{0}: On feature/referral-program: parallel-agent-work-mess-1776748996`, ~9h old, 3,024-line diff across 30+ files (api_v1.py, db.py, server.py, server_features.py, many static/ JS/HTML tweaks). Flagged `mess` by the stasher.
+- Server uncommitted files: none (server working tree clean per `git status --short`)
+- Server tip vs origin: **server AHEAD by 1 commit** — `102eb95 deploy: sync server to feature/platform-build @ ceefd0a (2026-04-21T14:32:53Z)`. This is a deploy-marker commit, not feature drift, but it does mean the server's HEAD SHA is not reachable from origin and will re-appear on every audit until reconciled.
+- Running uvicorn loaded from: three live processes on server — `:7000` (main gateway, started 15:34 today), `:7001` (Apr 14), `:7050` (Polymarket polling, `/home/julianhabbig/Polymarket/venv`, Apr 14). Server.py on disk mtime 2026-04-21 15:29:15; `:7000` pid 931011 started at 15:34 so is loading current disk code. `:7001` and `:7050` have been up 7 days — likely stale relative to tree, but they serve unrelated ports.
+- Branches with recent work (last 14d): `feature/referral-program` (9h), `feature/annoyance-polish` (21h), `feature/invite-token-system` (10d).
+- DRIFT FLAG: **server ahead of origin** (deploy-sync commit only, low risk); **stashes unreviewed >9h** (content includes server.py + db.py + api_v1.py edits — not trivial).
+
+### Summary
+Posture: **concerning**
+Critical issues: 3
+High-priority: 8
+Medium-priority: 9
+Low-priority: 2
+Resolved since last audit: 13 (see Deltas)
+New since last audit: 4
+Regressions: 0
+
+### Authentication & Sessions
+- Token gate at /token: **PRESENT**
+- pm_gateway_session + narve_session both accepted: **yes** (dual-cookie migration in progress)
+- narve_session stored as SHA-256 hash in DB: **yes** (`db._hash_session_token` at line 3677; `sha256(token.encode()).hexdigest()` applied before insert/lookup)
+- Session cookie HttpOnly: **yes** (server.py:1665, 1728)
+- Session cookie Secure: **yes in production** (driven by `IS_PRODUCTION`, server.py:1667, 1730). In dev it's `False`, which is correct — but any staging run with PRODUCTION=0 over HTTPS would leak.
+- Session cookie SameSite: **lax** for pm_gateway_session, **strict** for gate cookie (server.py:1666/1729). OK.
+- Session revocation on logout: **works** (remediation pass #1, item C1)
+- Session rotation on privilege change: **implemented** (remediation pass #1, item C2)
+- Max sessions per user enforced: **unverified** — no `max_sessions` constant found; DB schema has no cap. MEDIUM.
+- Password reset invalidates sessions: **yes** (REMEDIATION #1 C1).
+- Password hashing: PBKDF2-HMAC-SHA256 with **600,000 iterations** (db.py:1118) — OWASP 2023-minimum, OK.
+- 2FA status: removed in migration 019 (intentional product decision; skill instructions acknowledge). Not flagged as a gap.
+- Impersonation banner visible on every page while active: **yes** (render_page injects via `impersonation.banner_html` when `request.state.impersonation` is set, server.py:1753–1769).
+- Impersonation blocked paths enforced: **yes** (`impersonation.py:BLOCKED_PATHS` regex list covers `/auth/logout`, `/admin/impersonations/start`, `/profile/password`, `/account/delete`; `_ALWAYS_ALLOWED` whitelist minimal).
+
+### Authorisation
+- Admin routes require role ≥ 1: **mostly yes** — `_require_admin_user` / `require_admin` used consistently. Scanner flagged dozens of `/admin` routes at line:91 with no check, but hand-verification shows those are all file-header comment lines, not decorators — **scanner false positive**, not a real finding.
+- Super admin routes require role = 2: **yes** for affiliate admin (REMEDIATION #1 H8). `/admin/impersonations` flow enforces target level < caller level.
+- Subproduct access checked at middleware + route + response: **partial** — middleware (`middleware/subproduct.py`) resolves subdomain → slug; `require_subproduct_access` dependency enforces per-route in `subproduct_dashboard_routes.py`; but data-layer filtering (ensuring cross-subproduct API queries respect subscription) is not uniformly audited.
+- `has_subproduct_access` called on every subproduct route: **yes** in dashboard routes; **not verified** on every API endpoint that returns subproduct-scoped data — MEDIUM.
+- Feature flag evaluation in use: **yes** (migration 022 delivered; `admin_routes.py` manages flags, C5 fixed 401 for anonymous).
+- Gift subscription enforcement: **untested this audit**; last audit marked OK, not re-verified.
+
+### CSRF
+- Double submit cookie: **yes** (`security/csrf.py`)
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: **yes** with a small exempt list in `_CSRF_EXEMPT_POSTS` (server.py:715): `/api/newsletter`, `/auth/validate-token`, `/api/status/subscribe`, `/api/status/unsubscribe`, `/api/invite/...`. All exemptions are endpoints with no pre-existing session to anchor CSRF against — acceptable.
+- HTMX X-CSRF-Token hook active: **yes** (per previous audit; not re-verified).
+- Exempt routes list minimal and documented: **yes**.
+
+### Rate limiting
+- Auth endpoints: per-email + per-IP on `/auth/login` (REMEDIATION #1 H1). **OK**.
+- API endpoints: **partial** — scanner flagged `/auth/logout` in `server_features.py:1537` as unthrottled (HIGH). Logout should rate-limit per-IP to stop log-spam/DoS.
+- Per-user and per-IP as appropriate: **yes** on auth and 2FA verify (REMEDIATION #1 H2).
+- 429 response includes Retry-After: **yes** for 2FA verify; unverified elsewhere.
+- Cloudflare-level rate limit rules: **pending** (REMEDIATION #1 H3 still MANUAL).
+
+### Input validation
+- SQL injection vectors found: **0 true positives** after triage. Scanner flagged ~30 f-strings passing WHERE/ORDER-BY clauses to `execute()`, but every reviewed hit interpolated a whitelisted column name built from a constant set (e.g. `db.py:4771 UPDATE feature_flags SET {', '.join(fields)}` — `fields` is derived from a hardcoded dict of known column names, values still pass as parametrised tuples). Two dynamic `ORDER BY {col}` sites (HIGH) — `db.py:872` and `db_referrals.py:437` — need audit to confirm `col` is validated against an allowlist. MEDIUM until verified.
+- XSS via innerHTML with user content: **0** JS direct hits; **~28 `raw_*` template keys** scanner flagged MEDIUM. Spot-checked `raw_token_rows`, `raw_user_rows`, `raw_stat_cards`, `raw_role_badge`, `raw_component_rows`, `raw_uptime_bars` — all are built from admin-controlled data or pre-escaped inside helpers. `affiliate_routes.py:272 raw_link_rows` and `raw_conversion_rows` — builder not re-audited this pass, MEDIUM.
+- Command injection / subprocess with user input: **0**.
+- Path traversal in file operations: **0** in live routes (4 hits are in test files and a tools/ script).
+- SSRF in URL-fetching code: **0** (httpx/requests all take constants or allowlisted URLs).
+- **eval() on external data**: 1 — `gateway/jobs/resolution_jobs.py:80` uses `eval(resolved_prices)` on Polymarket API response when `outcomePrices` is a string. If Polymarket ever returns a non-list string (they historically do, as JSON-encoded `"[0.65, 0.35]"`), or if the upstream is MITM'd / compromised, this is unsandboxed RCE on the resolution worker. **CRITICAL — fix below.**
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: **yes** (Tunnel config live; MANUAL to confirm origin is not reachable directly).
+- No hardcoded secrets in current tree: **clean**. Scanner flagged test-file passwords (`CorrectPass1!`, `test-csrf-token-affiliate-suite`) — **false positives**, these are test fixtures.
+- No secrets in git history: **clean**.
+- Kalshi tokens encrypted with `CREDENTIALS_ENCRYPTION_KEY`: **no** (db.py schema shows `kalshi_token TEXT` with no crypt wrapper at store site). Regression from REMEDIATION #1 C8 plan (still "partial — deferred"). **HIGH.**
+- Sessions hashed before DB storage: **yes**.
+- Password hashes use PBKDF2-HMAC-SHA256: **yes**.
+- .env permissions on server: **not verified this audit** (script couldn't `ssh` into `.env` without a terminal); should be 600. MANUAL.
+
+### Data privacy
+- Account deletion works end-to-end: **yes** (REMEDIATION #1 C13 delivered `POST /account/delete` + `db.cascade_delete_user`). Not re-tested this pass.
+- Data export includes all user-linked tables: **partial** — previous audit flagged gaps; no re-verification this pass. MEDIUM.
+- Sensitive fields redacted in logs: **yes** (request/response loggers scrub cookies, auth headers).
+- Sentry scrubbing active: **N/A** — SENTRY_DSN unset in example env, Sentry optional.
+- Impersonation actions logged: **yes** (audit_log entries on start/end; banner mandatory).
+
+### External integrations
+- Stripe webhook signature validated: **N/A** — `backend/payments/stripe_stub.py` raises `NotImplementedError`; live webhook handler is `stripe_webhook_hardening.py` which calls `construct_event()` per docstring but the scan flagged it as missing sig verification. Hand-read of the file shows signature is verified **upstream** at the caller (billing_routes.py), then `stripe_webhook_hardening.process_event()` takes the already-verified dict. Scanner **false positive** — OK.
+- Stripe webhook idempotent: **yes** (migration 061 + `stripe_webhook_hardening.py`: `processed_stripe_events` guard).
+- Stripe webhook mode-verified: **yes** (`stripe_webhook_hardening.py:67–71`).
+- Telegram bot token in env only: **yes** (migration 063).
+- Discord bot token in env only: **yes** (migration 064).
+- Scraper API key validated on every request: **not re-verified**, last audit OK.
+- Polymarket wallet address validated: **yes** (REMEDIATION #1 C9).
+- SEC EDGAR User-Agent set: **yes** (insider/sec_form*.py sets UA per SEC policy).
+
+### Infrastructure
+- SQLite WAL mode active: **yes** (db.py sets `PRAGMA journal_mode=WAL` on conn open).
+- Cloudflare Tunnel active, origin not directly reachable: **unverified** — skill calls for manual curl from outside Tailscale, not done this pass. MANUAL.
+- Cloudflare Rules for subdomain enumeration / UA blocking: **pending** (REMEDIATION #1 H3, still MANUAL).
+- Post-deploy commit step documented: **yes** (memory file + CLOUDFLARE_CHANGES.md).
+- CLOUDFLARE_CHANGES.md current: **yes** (modified 2026-04-21 14:43).
+- **auth.db local permissions are 644** (scanner; should be 600 for the on-server copy). Local dev copy doesn't matter, but the server's `auth.db` perms were not verified from this host — MANUAL.
+
+### Monitoring
+- Sentry backend configured: **optional** (env-gated).
+- Sentry frontend configured: **optional**.
+- Structured logging configured: **yes** (JSON logger present in gateway).
+- Security events logged separately: **yes** (migration 072 added `security_events` table; `security/logger.py` writes to it).
+- Audit log append-only: **yes** (DB trigger + code discipline; this file is append-only).
+- Uptime monitoring active: **yes** (status-page + incidents tables).
+
+### Dependency audit
+- Last dependency audit: 2026-04-21 (this audit)
+- Known CVEs: **14 across 7 packages** (pip-audit):
+  - `cryptography==42.0.8` — 4 CVEs (GHSA-79v4, h4gh, m959, r6ph). Fix: upgrade to 46.0.6.
+  - `starlette==0.37.2` — 2 CVEs (GHSA-2c2j, f96h). Fix: 0.47.2.
+  - `python-multipart==0.0.18` — 2 CVEs (GHSA-mj87, wp53). Fix: 0.0.26.
+  - `pillow==11.3.0` — 2 CVEs (GHSA-cfh3, whj4). Fix: 12.2.0. (Just added in this sprint for OG cards — went in at a vulnerable version.)
+  - `sentry-sdk==1.45.0`, `requests==2.32.5`, `filelock==3.19.1` — 4 more CVEs combined.
+- Unpinned deps: **0** (all `==` since REMEDIATION #1 C11).
+- Lockfile present: **no** — `pip-audit` has no `requirements.lock` to hash against. MEDIUM.
+
+### Compliance
+- Privacy Policy live: **yes** (`/privacy`)
+- Terms of Service live: **yes** (`/terms`)
+- DPA live: **yes** (`/dpa`)
+- Cookie notice: **yes**
+- GDPR data export: **yes** (endpoint exists; table coverage gap flagged above)
+- GDPR account deletion: **yes** (REMEDIATION #1 C13)
+
+### Issues found in this audit
+
+#### CRITICAL
+
+1. **`eval()` on Polymarket API response in resolution worker**
+   Location: `gateway/jobs/resolution_jobs.py:80` (`prices = resolved_prices if isinstance(resolved_prices, list) else eval(resolved_prices)`)
+   Impact: Polymarket Gamma returns `outcomePrices` as a JSON-encoded string like `"[0.65, 0.35]"`. Code falls back to `eval()` on any non-list value. If Polymarket returns a crafted string (accidental server misbehaviour, or a MITM between the worker and Polymarket if TLS is ever downgraded) the worker executes arbitrary Python as the `julianhabbig` user on the production box — full DB access, access to Kalshi tokens, access to Stripe webhook secret. The `try/except Exception` swallows the failure silently, so exploitation leaves no trace in `/tmp/gateway.log` beyond a warning line.
+   Fix: Replace with `json.loads(resolved_prices)`. One-liner. Keep the `try/except` — `json.loads` raises `ValueError`, which the existing handler catches.
+
+2. **Dependency vulnerabilities shipped to production (cryptography chain)**
+   Location: `gateway/requirements.txt` (`cryptography==42.0.8`, `starlette==0.37.2`, `python-multipart==0.0.18`, `pillow==11.3.0`)
+   Impact: `cryptography` is the Fernet backend for Kalshi credential encryption and for `CREDENTIALS_ENCRYPTION_KEY`; 4 open CVEs including memory-corruption CVE chain. `starlette` CVEs can cause DoS on large multipart uploads (GHSA-2c2j-9gv5-cj73). `python-multipart` CVEs are DoS via repeated boundary parsing. `pillow` CVEs affect our new `og_cards.py` — attacker-supplied input is limited (we only render our own data), so impact is lower there. Aggregate impact: cryptography is the worst — any CVE in the crypto layer undermines Kalshi credential confidentiality.
+   Fix: Bump to `cryptography>=46.0.6`, `starlette>=0.47.2`, `python-multipart>=0.0.26`, `pillow>=12.2.0`, `sentry-sdk>=1.45.1`, `requests>=2.33.0`, `filelock>=3.20.3`. Re-run `pip-audit` to confirm clean. Schedule deploy in a dedicated PR (no feature work) so the upgrade is easy to revert.
+
+3. **Kalshi API tokens stored plaintext in auth.db**
+   Location: `gateway/db.py:110` (column `kalshi_token TEXT`), `gateway/db.py:1795+ (set_market_credentials writes raw token without `encrypt_token()` wrap)
+   Impact: Anyone with a copy of `auth.db` (backup tape, debug dump, social-engineered support ticket that attached the DB) has live trade-execution credentials for every connected Kalshi account. `CREDENTIALS_ENCRYPTION_KEY` plumbing exists in `backend/markets/encryption.py`; the encryption wrap at write time is simply not being called. Previous audit marked C8 as "partial — deferred" — hasn't moved.
+   Fix: Write migration `074_encrypt_kalshi_tokens.py` that: (a) loads existing plaintext, (b) re-writes each row through `encrypt_token()`, (c) updates every read site to `decrypt_token()`. Gate the migration behind a `CREDENTIALS_ENCRYPTION_KEY` presence check so dev without the key doesn't corrupt local data.
+
+#### HIGH
+
+1. **`/auth/logout` has no rate limit**
+   Location: `gateway/server_features.py:1537` (`@app.post("/auth/logout")`)
+   Impact: Logout endpoint can be spammed to burn CSRF tokens / fill security-event log. Low-impact DoS vector.
+   Fix: Add `@rate_limit(max_calls=20, window_seconds=60)` per-IP.
+
+2. **Dynamic `ORDER BY {col}` without visible allowlist**
+   Location: `gateway/db.py:872`, `gateway/db_referrals.py:437`
+   Impact: If `col` ever originates from a query param without whitelist, attacker can break ORDER BY with column enumeration. Current callers appear to pass constants but the contract isn't enforced — a future caller could regress.
+   Fix: Wrap with `assert col in _ALLOWED_SORT_COLS` before interpolation in both sites.
+
+3. **Admin / management endpoints without explicit rate-limit decorator**
+   Location: `gateway/server.py:2786 (/api/auth/2fa/email/enable)`, `:2875 (/api/auth/2fa/email/resend)`, `:4835 (/admin/tokens/generate)`, `:5166 (/admin/users/{user_id}/email)`, `gateway/server_features.py:128 (/api/notifications/email-preferences)`
+   Impact: Token-generation + email-sending endpoints let an authenticated admin (or a hijacked admin session) burn through provider quotas (SMTP / SendGrid). Not external-attacker-facing but internal cost risk.
+   Fix: Apply `@rate_limit(max_calls=30, window_seconds=60, per="user")` on each.
+
+4. **Billing / subscription-mutation endpoints have no per-user rate limit**
+   Location: `gateway/server.py:3518, 3558`, `gateway/billing_routes.py:569, 589, 607, 621, 664`, `gateway/subproduct_signup_routes.py:142`
+   Impact: A compromised user session could churn subscribe/cancel/addon toggles to cause Stripe webhook storms + double-charge edge cases.
+   Fix: `@rate_limit(max_calls=10, window_seconds=60, per="user")` on each billing POST.
+
+5. **12 `RedirectResponse` with variable destination, none visibly allowlisted**
+   Location: `gateway/server.py:1028, 4379, 6884, 6891`, `gateway/subproduct_signup_routes.py:215`, `gateway/admin_routes.py:187, 406`, `gateway/status_routes.py:525, 554, 597, 609, 620`
+   Impact: Open-redirect primitive useful for phishing (attacker lands on `narve.ai/...` then gets bounced to a phishing clone). Most live sites bound the destination to a trusted subdomain (e.g. `f"https://{apex}/gate"` where `apex` comes from `_request_apex()` which validates against `ALLOWED_DOMAINS`) — those are safe. Dynamic `target_path` in `admin_routes.py:187` and `url` in `subproduct_signup_routes.py:215` need hand-verification.
+   Fix: Hand-audit each hit; add a helper `_safe_redirect(path)` that rejects anything starting with `//`, `http:`, or `https:` unless the host matches an allowlist.
+
+6. **Stash from 9h ago contains 3,024 lines of edits to security-relevant files**
+   Location: `stash@{0}` — server.py 809 lines, db.py 294 lines, api_v1.py 308 lines, server_features.py 21 lines, +30 static files
+   Impact: Parallel-agent work-in-progress that touches every core server file. Flagged `mess` by the stasher. If this is later `git stash pop`-ed into a different branch or merged without review it will bypass the code-review gate. Any security regression in it would skip audit.
+   Fix: Review stash (`git stash show -p stash@{0}`), cherry-pick the good bits onto their own branch, `git stash drop` the rest.
+
+7. **Local `gateway/auth.db` permissions 644 (should be 600)**
+   Location: filesystem on dev host
+   Impact: Local only — dev laptop. Server copy not verified this pass. If server copy has the same permissions, any user on that box with shell access can exfil the DB.
+   Fix: `chmod 600 gateway/auth.db` locally AND verify `stat -c %a ~/Habbig/gateway/auth.db` on server is 600.
+
+8. **No lockfile for pip dependencies**
+   Location: `gateway/requirements.txt`
+   Impact: Dependency resolution is non-reproducible across deploys — a new deploy could pull a trojanized sub-dependency and we'd have no way to pin back to a known-good resolution.
+   Fix: `pip-compile requirements.txt -o requirements.lock.txt` (or `pip freeze > requirements.lock.txt`), commit, switch deploy to install from the lockfile.
+
+#### MEDIUM
+
+1. `raw_link_rows` / `raw_conversion_rows` in `affiliate_routes.py:272–273` — builder not audited this pass. If any field (e.g. affiliate display name) is user-controlled, this is XSS in the admin affiliate list.
+2. `has_subproduct_access` confirmed at route level but not uniformly at API-data-return level for subproduct-scoped JSON endpoints.
+3. Max sessions per user not enforced — a compromised password could spawn unlimited concurrent sessions.
+4. GDPR data export table-coverage gaps from previous audit not re-verified.
+5. Server tip is 1 commit ahead of origin (deploy-marker) — need policy on whether deploy commits also get pushed back to origin, or whether they stay server-local.
+6. Three uvicorn processes on server (`:7000`, `:7001`, `:7050`) — two are stale (7-day uptime). Verify each is intended and none is loading an older, more-vulnerable build of gateway code.
+7. Content-Security-Policy is set (server.py:607–608, embed_routes.py:183, 660) but not verified as strict (no `unsafe-inline`/`unsafe-eval`). Audit the policy string.
+8. `backend/payments/stripe_stub.py` — "HIGH: no idempotency check". This is the stub that raises `NotImplementedError`, so the finding is spurious *for the stub* — real handler `stripe_webhook_hardening.py` has idempotency. But the stub's docstring should say "RAISES IN PRODUCTION" more loudly so nobody wires it up accidentally.
+9. Webhook secret and `CREDENTIALS_ENCRYPTION_KEY` presence checks are at startup only — no runtime re-check before each Fernet encrypt. If env var is blanked mid-process by a bad operator, next write silently stores plaintext with the warn-log. Low probability, keeps as MEDIUM.
+
+#### LOW
+
+1. Scanner false-positive noise on `@app.post` admin-route gatekeeping (line 91 file-header hits). Consider improving `scripts/scan_auth.sh` so it reports real decorator sites only.
+2. `NARVE_SECURITY_AUDIT.md` lives in `gateway/` but skill says "repo root". Decision: keep in `gateway/` where previous entries are; alternatively move + symlink. Not urgent.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+None (working tree clean).
+
+#### Unpushed local commits
+None (local matches origin).
+
+#### Server-side uncommitted state
+- Server carries 1 commit not on origin: `102eb95 deploy: sync server to feature/platform-build @ ceefd0a`. Not a feature diff — annotates the deploy. No security-relevant code changes. No regression vs origin.
+- No secrets on server that aren't in `.env.example` (hash comparison passed).
+- Reconciliation recommendation: **leave as-is**. Deploy-marker commits are a narve.ai convention; pushing them to origin would bloat history with per-deploy commits.
+
+#### Stashes
+- `stash@{0}` from ~9h ago, branch `feature/referral-program`, description `parallel-agent-work-mess-1776748996`. 3,024 diff lines covering server.py, db.py, api_v1.py, server_features.py, + 30 static files. Security-relevant: **yes** (touches core server modules). Review required before any future pop.
+
+### Changes since previous audit
+
+#### Resolved
+- C1 (session revocation on logout): verified — `db.revoke_all_user_sessions` call-sites present in `/forgot-password` and `/reset-password`.
+- C2 (session rotation on privilege change): verified — same revocation wired into `admin_change_email` and `db.set_user_role`.
+- C3 (signed gate cookie): verified — `_gate_cookie_is_valid` uses HMAC-SHA256 with `GATEWAY_COOKIE_SECRET` (server.py:1704, 1719).
+- C5 (anonymous flag-evaluate 401): code-inspected OK.
+- C7 (CSRF rotation on login): code-inspected OK.
+- C10 (Redis requirepass): docker-compose.yml enforces `--requirepass` + `--protected-mode yes`.
+- C11 (pinned deps): every requirement `==`.
+- C13 (account deletion end-to-end): `/account/delete` + `cascade_delete_user` present.
+- H1 (per-email login rate limit): verified.
+- H2 (2FA verify rate limit): verified.
+- H4 (validate-token per-token cap): verified.
+- H5 (GATEWAY_COOKIE_SECRET required in prod): RuntimeError at startup confirmed.
+- H6 (PBKDF2 600k): confirmed at db.py:1118.
+
+#### New issues
+- CRITICAL #1 (resolution_jobs.py `eval` on Polymarket response) — introduced alongside resolution worker; missed in AUDIT #1.
+- CRITICAL #2 (14 CVEs in pinned deps) — drift since pinning; `pillow` was added this sprint at a vulnerable version.
+- HIGH #6 (9h-old stash with 3k lines of edits) — new since AUDIT #1.
+- HIGH #8 (no pip lockfile) — AUDIT #1 didn't flag.
+
+#### Regressions
+- None. Previously-fixed items still fixed where verifiable.
+
+### Drift warnings
+- Server AHEAD of origin by 1 commit (deploy marker `102eb95`). Low risk but audit surface drifts every deploy until policy decided.
+- Stash from 9h ago touches server.py/db.py/api_v1.py. Review before any pop; this is the highest-leverage unreviewed change on the box.
+- Dependencies pinned but unlocked — cannot prove reproducible deploy.
+- Stale uvicorn processes on `:7001` and `:7050` (7-day uptime) — may be loading older code.
+
+### Recommended actions for next audit
+1. Verify CRITICAL #1 (`eval` → `json.loads`) has landed and `jobs/resolution_jobs.py` re-reads correctly on live markets.
+2. Verify CVE bumps (cryptography, starlette, python-multipart, pillow, sentry-sdk, requests, filelock) — re-run `pip-audit` for a clean report.
+3. Verify Kalshi token migration shipped (migration 074 or later); grep for `kalshi_token` columns being written without `encrypt_token(...)` wrapper.
+4. Run CLI curl from outside Tailscale to confirm origin (`https://100.69.44.108:7000`) returns connection-refused. Document result.
+5. Hand-review `stash@{0}` on `feature/referral-program` and either land or drop it.
+6. Confirm server `auth.db` permissions are 600, not 644.
+7. Add an allowlist to the two dynamic `ORDER BY` sites and confirm.
+8. Hand-audit `affiliate_routes.py:272` `raw_link_rows` builder for XSS.
+9. Add rate limits to `/auth/logout` and billing-mutation endpoints.
+10. Move to `requirements.lock.txt` and deploy from lockfile.
+
+---
+
 ## REMEDIATION PASS #1 — 2026-04-21
 
 Bulk fix pass against AUDIT #1 findings. Not a re-audit — next audit cycle
