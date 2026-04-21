@@ -1,0 +1,31 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">
+  Your referral reward has been applied
+</h1>
+<p style="margin:0 0 20px;color:#555;">Hi {{ display_name }},</p>
+<p style="margin:0 0 20px;color:#555;">
+  {{ referred_email }} became a paying narve.ai subscriber — thank you for
+  the introduction.
+</p>
+<p style="margin:0 0 20px;color:#555;">
+  We've applied <strong style="color:#0d0d0d;">{{ reward_label }}</strong> to
+  your account. It's active now and will show up as an extension on your
+  current plan.
+</p>
+{% if next_milestone %}
+<div style="margin:24px 0;padding:16px 20px;background:#f7f7f7;border-radius:6px;">
+  <p style="margin:0 0 6px;color:#0d0d0d;font-size:13px;font-weight:600;letter-spacing:0.02em;text-transform:uppercase;">
+    Progress to next reward
+  </p>
+  <p style="margin:0;color:#555;font-size:14px;">
+    {{ total_converted }} of {{ next_milestone }} successful referrals —
+    unlock {{ next_reward_label }}.
+  </p>
+</div>
+{% endif %}
+<p style="margin:20px 0 0;color:#555;">
+  Your private invite link is always available at
+  <a href="{{ referrals_url }}" style="color:#0d0d0d;">{{ referrals_url }}</a>.
+</p>
+<p style="margin:20px 0 0;color:#555;font-size:13px;">Questions? Reply to this email.</p>
+{% endblock %}

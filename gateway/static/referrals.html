@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your Referrals — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <style>
+    body {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      margin: 0;
+      min-height: 100vh;
+    }
+    .ref-main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+    .ref-crumb {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-bottom: 18px;
+      letter-spacing: 0.02em;
+    }
+    .ref-crumb a { color: var(--text-tertiary); text-decoration: none; }
+    .ref-crumb a:hover { color: var(--text-primary); }
+    .ref-h1 {
+      font-family: var(--font-display);
+      font-size: 28px;
+      letter-spacing: -0.02em;
+      margin: 0 0 32px;
+      font-weight: 500;
+    }
+    .ref-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      margin-bottom: 24px;
+    }
+    .ref-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .ref-link-row {
+      display: flex; gap: 8px; align-items: stretch;
+    }
+    .ref-link-input {
+      flex: 1;
+      padding: 12px 14px;
+      background: var(--bg-raised);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .ref-copy-btn {
+      padding: 0 18px;
+      background: var(--text-primary);
+      color: var(--interactive-text);
+      border: 1px solid var(--text-primary);
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .ref-copy-btn:hover:not(:disabled) { background: var(--interactive-hover); }
+    .ref-copy-btn.copied { background: var(--text-primary); opacity: 0.85; }
+    .ref-rewards-list { margin: 0; padding: 0; list-style: none; }
+    .ref-rewards-list li {
+      padding: 8px 0;
+      font-size: 14px;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-default);
+    }
+    .ref-rewards-list li:last-child { border-bottom: none; }
+    .ref-progress-wrap {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .ref-progress-bar {
+      flex: 1; height: 8px; border-radius: 4px;
+      background: var(--bg-raised);
+      overflow: hidden;
+    }
+    .ref-progress-fill {
+      height: 100%; background: var(--text-primary);
+      transition: width 0.4s ease;
+    }
+    .ref-progress-text {
+      font-size: 13px; color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .ref-invitee-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 0;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .ref-invitee-row:last-child { border-bottom: none; }
+    .ref-invitee-email { color: var(--text-primary); word-break: break-all; }
+    .ref-invitee-date { color: var(--text-tertiary); font-size: 12px; }
+    .ref-invitee-status { font-size: 12px; color: var(--text-secondary); }
+    .ref-invitee-status.paying { color: #58c58a; font-weight: 500; }
+    .ref-invitee-status.rewarded { color: var(--text-primary); font-weight: 500; }
+    .ref-empty { color: var(--text-tertiary); font-size: 13px; padding: 12px 0; }
+    .ref-sub {
+      font-size: 13px; color: var(--text-secondary);
+      line-height: 1.5; margin: 0 0 16px;
+    }
+  </style>
+</head>
+<body>
+  <main class="ref-main">
+    <div class="ref-crumb">
+      <a href="/settings">Settings</a> · Referrals
+    </div>
+    <h1 class="ref-h1">Your referrals</h1>
+    <p class="ref-sub">
+      Invite other serious traders to narve.ai. Every converted referral earns
+      you free months — invisible to the outside, rewarding when it lands.
+    </p>
+
+    <div class="ref-card">
+      <div class="ref-label">Your invite link</div>
+      <div class="ref-link-row">
+        <input id="ref-link" class="ref-link-input" readonly value="Loading…">
+        <button id="ref-copy" class="ref-copy-btn" type="button">Copy link</button>
+      </div>
+    </div>
+
+    <div class="ref-card">
+      <div class="ref-label">Rewards</div>
+      <ul id="ref-rewards" class="ref-rewards-list">
+        <li class="ref-empty">Loading…</li>
+      </ul>
+    </div>
+
+    <div class="ref-card">
+      <div class="ref-label">Progress to next reward</div>
+      <div class="ref-progress-wrap">
+        <div class="ref-progress-bar"><div id="ref-progress-fill" class="ref-progress-fill" style="width:0%"></div></div>
+        <div id="ref-progress-text" class="ref-progress-text">—</div>
+      </div>
+    </div>
+
+    <div class="ref-card">
+      <div class="ref-label">People you've invited</div>
+      <div id="ref-invitees">
+        <div class="ref-empty">Loading…</div>
+      </div>
+    </div>
+  </main>
+  <script src="/_gateway_static/referrals.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ handle }} — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div style="max-width:920px;margin:40px auto;padding:0 20px">
+    <a href="/" style="text-decoration:none;color:inherit;font-weight:600">narve.ai</a>
+
+    <div class="page-header" style="margin-top:24px">
+      <div class="page-subtitle">Predictor</div>
+      <h1 class="page-title"><span id="handle-label">{{ handle }}</span></h1>
+    </div>
+
+    <section id="stats-box" class="card" style="padding:20px;margin-bottom:20px">
+      <div class="empty-state"><div class="empty-state-title">Loading stats…</div></div>
+    </section>
+
+    <h2 style="margin-top:32px">Public predictions</h2>
+    <div id="preds-body">
+      <div class="empty-state"><div class="empty-state-title">Loading…</div></div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  var uid = {{ raw_uid_json }};
+  function esc(s){ return String(s || '').replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; }); }
+  function fmtDate(ts){ if (!ts) return '—'; return new Date(ts * 1000).toLocaleDateString(); }
+  function fmtPct(x, d){ if (x === null || x === undefined) return '—'; return (x*100).toFixed(d||0)+'%'; }
+
+  fetch('/api/predictions/public/' + uid).then(function(r){
+    if (!r.ok) throw new Error('not found');
+    return r.json();
+  }).then(function(d){
+    if (d.handle) document.getElementById('handle-label').textContent = d.handle;
+
+    var s = d.stats;
+    var sbox = document.getElementById('stats-box');
+    if (!s) {
+      sbox.innerHTML = '<div class="empty-state"><div class="empty-state-title">No stats yet.</div></div>';
+    } else {
+      sbox.innerHTML =
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px">'
+        + '<div><div class="stat-label">Total</div><div class="stat-value">' + (s.total_predictions || 0) + '</div></div>'
+        + '<div><div class="stat-label">Resolved</div><div class="stat-value">' + (s.resolved_predictions || 0) + '</div></div>'
+        + '<div><div class="stat-label">Accuracy</div><div class="stat-value">' + fmtPct(s.accuracy, 1) + '</div></div>'
+        + '<div><div class="stat-label">Brier</div><div class="stat-value">' + (s.avg_brier_score === null ? '—' : s.avg_brier_score.toFixed(3)) + '</div></div>'
+        + '<div><div class="stat-label">Streak</div><div class="stat-value">' + (s.current_streak || 0) + ' / best ' + (s.best_streak || 0) + '</div></div>'
+        + '</div>';
+    }
+
+    var body = document.getElementById('preds-body');
+    if (!d.items || !d.items.length) {
+      body.innerHTML = '<div class="empty-state"><div class="empty-state-title">No public predictions yet.</div></div>';
+      return;
+    }
+    var html = '<table class="db-table"><thead><tr>'
+      + '<th>State</th><th>Market</th><th>Call</th><th>When</th><th></th>'
+      + '</tr></thead><tbody>';
+    d.items.forEach(function(p){
+      var pct = Math.round((p.predicted_probability || 0) * 100);
+      var state = p.resolved
+        ? (p.resolved_correct ? '<span class="cred-score high">✓</span>' : '<span class="cred-score low">✗</span>')
+        : '<span class="cred-score unrated">Active</span>';
+      html += '<tr>'
+        + '<td>' + state + '</td>'
+        + '<td class="db-cell-primary">' + esc(p.market_question || p.market_slug) + '</td>'
+        + '<td>' + esc(p.predicted_outcome) + ' (' + pct + '%)</td>'
+        + '<td class="db-cell-data">' + esc(fmtDate(p.created_at)) + '</td>'
+        + '<td><a class="btn-ghost" href="/predictions/' + p.id + '">View</a></td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  }).catch(function(){
+    document.getElementById('stats-box').innerHTML = '<div class="empty-state"><div class="empty-state-title">Profile not available.</div></div>';
+    document.getElementById('preds-body').innerHTML = '';
+  });
+})();
+</script>
+</body>
+</html>

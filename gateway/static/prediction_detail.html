@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prediction by {{ handle }} — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div style="max-width:720px;margin:40px auto;padding:0 20px">
+    <a href="/" style="text-decoration:none;color:inherit;font-weight:600">narve.ai</a>
+
+    <div class="page-header" style="margin-top:24px">
+      <div class="page-subtitle">Public prediction by <strong id="handle-label">{{ handle }}</strong></div>
+      <h1 class="page-title" id="market-question">{{ market_question }}</h1>
+    </div>
+
+    <section class="card" id="pred-card" style="padding:20px;margin-top:16px">
+      <div class="empty-state"><div class="empty-state-title">Loading…</div></div>
+    </section>
+
+    <p style="margin-top:24px"><a href="/predictions/public/" id="profile-link">View all of this user's public predictions →</a></p>
+  </div>
+
+<script>
+(function(){
+  var pid = {{ raw_pid_json }};
+  var initialHandle = {{ raw_handle_json }};
+
+  function esc(s){ return String(s || '').replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; }); }
+  function fmtDate(ts){ if (!ts) return '—'; return new Date(ts * 1000).toLocaleDateString(); }
+
+  fetch('/api/predictions/' + pid).then(function(r){
+    if (!r.ok) throw new Error('not found');
+    return r.json();
+  }).then(function(d){
+    var p = d.prediction;
+    var handle = p.handle || initialHandle || 'Anonymous';
+    document.getElementById('handle-label').textContent = handle;
+    document.getElementById('market-question').textContent = p.market_question || p.market_slug;
+    var pct = Math.round((p.predicted_probability || 0) * 100);
+    var mkt = p.market_price_at_prediction;
+    var edge = p.edge_at_prediction;
+    var html = '<p style="font-size:18px;margin-top:0">'
+      + '<strong>' + esc(p.predicted_outcome) + '</strong>'
+      + ' — confidence ' + pct + '%</p>'
+      + '<p class="page-subtitle">Made on ' + fmtDate(p.created_at) + '</p>';
+    if (mkt !== null && mkt !== undefined) {
+      html += '<p>Market was ' + (mkt*100).toFixed(0) + '% YES at that time'
+        + (edge !== null && edge !== undefined ? ' (edge: ' + (edge>=0?'+':'') + (edge*100).toFixed(0) + 'pp)' : '')
+        + '</p>';
+    }
+    if (p.reasoning) {
+      html += '<blockquote style="border-left:3px solid currentColor;padding-left:12px;margin-top:16px">'
+        + esc(p.reasoning) + '</blockquote>';
+    }
+    if (p.resolved) {
+      html += '<p style="margin-top:16px"><strong>'
+        + (p.resolved_correct ? 'Resolved correct ✓' : 'Resolved incorrect ✗')
+        + '</strong>';
+      if (p.brier_score !== null && p.brier_score !== undefined) html += ' — Brier ' + p.brier_score.toFixed(3);
+      html += '</p>';
+    } else {
+      html += '<p style="margin-top:16px">This prediction is still active.</p>';
+    }
+    document.getElementById('pred-card').innerHTML = html;
+  }).catch(function(){
+    document.getElementById('pred-card').innerHTML = '<div class="empty-state"><div class="empty-state-title">Not found.</div><div class="empty-state-body">This prediction is private or has been deleted.</div></div>';
+  });
+})();
+</script>
+</body>
+</html>

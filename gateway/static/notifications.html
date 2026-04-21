@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notifications — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    <!-- ── Sidebar ──────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+
+        <a href="/dashboards" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+          </svg>
+          Dashboards
+        </a>
+
+        <a href="/notifications" class="nav-item active">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7a4 4 0 0 1 8 0v3l1 2H3l1-2V7z"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/>
+          </svg>
+          Notifications
+        </a>
+
+        <a href="/billing" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="14" height="10" rx="2"/><line x1="1" y1="7" x2="15" y2="7"/>
+          </svg>
+          Billing
+        </a>
+
+        <a href="/settings" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85"/>
+          </svg>
+          Settings
+        </a>
+
+        {{ raw_admin_link }}
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar">{{ avatar_letter }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <!-- ── Main content ─────────────────────────────────────────── -->
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item">Notifications</span>
+      </div>
+
+      <div class="notif-page">
+        <div class="notif-page-header">
+          <h1>Notifications</h1>
+          <button type="button" class="narve-notif-mark-all" id="notif-mark-all">Mark all read</button>
+        </div>
+
+        <div class="notif-filterbar" id="notif-filterbar">
+          <button type="button" data-filter="all" class="is-active">All</button>
+          <button type="button" data-filter="unread">Unread</button>
+          <button type="button" data-filter="market_resolved">Markets</button>
+          <button type="button" data-filter="market_mover">Movers</button>
+          <button type="button" data-filter="high_ev_alert">Alerts</button>
+          <button type="button" data-filter="source_prediction">Sources</button>
+          <button type="button" data-filter="payment">Payments</button>
+        </div>
+
+        <div id="notif-page-list" class="notif-day-group">
+          <div class="narve-notif-empty" style="padding:48px 16px">Loading…</div>
+        </div>
+
+        <div class="notif-page-prefs" id="notif-prefs">
+          <h2>Notification preferences</h2>
+          <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px">
+            Delivery channels — turn any off to stop that route for every type at once.
+          </div>
+          <label><input type="checkbox" data-pref="inapp_enabled"> In-app notifications</label>
+          <label><input type="checkbox" data-pref="push_enabled"> Push notifications (browser)</label>
+          <label><input type="checkbox" data-pref="email_enabled"> Email notifications</label>
+
+          <h2 style="margin-top:16px">Notification types</h2>
+          <label><input type="checkbox" data-type="market_resolved"> Market resolutions</label>
+          <label><input type="checkbox" data-type="high_ev_alert"> High-EV signal alerts</label>
+          <label><input type="checkbox" data-type="source_prediction"> Sources you follow post predictions</label>
+          <label><input type="checkbox" data-type="insider_signal"> Insider trading signals</label>
+          <label><input type="checkbox" data-type="market_mover"> Significant market movements</label>
+          <label><input type="checkbox" data-type="payment"> Payment and billing</label>
+          <label><input type="checkbox" data-type="system"> System announcements</label>
+          <div id="notif-prefs-status" style="font-size:11px;color:var(--text-tertiary);margin-top:4px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bell + dropdown (fixed top-right, same component as every other page) -->
+  <script src="/_gateway_static/notifications.js" defer></script>
+
+  <!-- Full-page list rendering + prefs -->
+  <script>
+    (function () {
+      'use strict';
+      const API = '/api/notifications';
+      const listEl     = document.getElementById('notif-page-list');
+      const filterbar  = document.getElementById('notif-filterbar');
+      const markAllBtn = document.getElementById('notif-mark-all');
+      const prefsEl    = document.getElementById('notif-prefs');
+      const prefsStatus= document.getElementById('notif-prefs-status');
+      const TYPE_ICON = {
+        market:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13l3-5 3 3 4-7 2 4"/></svg>',
+        source:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3 2.5-5 6-5s6 2 6 5"/></svg>',
+        alert:    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L1 14h14L8 1.5z"/><line x1="8" y1="6" x2="8" y2="10"/><circle cx="8" cy="12" r=".5" fill="currentColor"/></svg>',
+        insider:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L2.5 4v4c0 3.5 2.3 5.7 5.5 6.5 3.2-.8 5.5-3 5.5-6.5V4L8 1.5z"/></svg>',
+        payment:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="4" width="13" height="8" rx="1"/><line x1="1.5" y1="7" x2="14.5" y2="7"/></svg>',
+        system:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><line x1="8" y1="5" x2="8" y2="9"/><circle cx="8" cy="11" r=".5" fill="currentColor"/></svg>',
+      };
+      const TYPE_TO_ICON = {
+        market_resolved: 'market', market_mover: 'market',
+        high_ev_alert: 'alert', source_prediction: 'source',
+        insider_signal: 'insider', payment: 'payment', system: 'system',
+      };
+
+      function csrfToken(){
+        const m=document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
+        return m?decodeURIComponent(m[1]):'';
+      }
+      async function api(path, opts={}){
+        const init={
+          method: opts.method||'GET',
+          credentials:'same-origin',
+          headers:{'accept':'application/json', ...(opts.headers||{})},
+        };
+        if (opts.body){
+          init.body=typeof opts.body==='string'?opts.body:JSON.stringify(opts.body);
+          init.headers['content-type']='application/json';
+        }
+        if (init.method!=='GET'){
+          const t=csrfToken(); if(t) init.headers['x-csrf-token']=t;
+        }
+        const res=await fetch(path,init);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        return res.json();
+      }
+      function escapeHtml(s){
+        if(s==null) return '';
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      }
+      function relativeTime(ts){
+        const now=Math.floor(Date.now()/1000);
+        const d=Math.max(0,now-Number(ts||0));
+        if(d<60) return 'just now';
+        if(d<3600) return Math.floor(d/60)+' min ago';
+        if(d<86400) return Math.floor(d/3600)+' hr ago';
+        return new Date(ts*1000).toLocaleDateString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+      }
+      function dayLabel(ts){
+        const dt=new Date(ts*1000);
+        const today=new Date(); today.setHours(0,0,0,0);
+        const y=new Date(today); y.setDate(y.getDate()-1);
+        const isSameDay=(a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();
+        if (isSameDay(dt,today)) return 'Today';
+        if (isSameDay(dt,y)) return 'Yesterday';
+        return dt.toLocaleDateString(undefined,{month:'short',day:'numeric',year:dt.getFullYear()===today.getFullYear()?undefined:'numeric'});
+      }
+      function iconFor(n){
+        const k=n.icon||TYPE_TO_ICON[n.type]||'system';
+        return TYPE_ICON[k]||TYPE_ICON.system;
+      }
+
+      const state={ filter:'all', items:[] };
+
+      function renderList(){
+        const rows=filterItems(state.items);
+        if (!rows.length){
+          listEl.innerHTML='<div class="narve-notif-empty" style="padding:48px 16px">No notifications yet.</div>';
+          return;
+        }
+        const byDay={};
+        rows.forEach((n)=>{
+          const k=dayLabel(n.created_at);
+          (byDay[k] ||= []).push(n);
+        });
+        const groupsHtml=Object.entries(byDay).map(([day,ns])=>{
+          const itemsHtml=ns.map(n=>(
+            '<button type="button" class="narve-notif-item'+(n.read_at?'':' is-unread')+'" data-id="'+n.id+'" data-link="'+escapeHtml(n.link_url||'')+'">'
+             +'<span class="narve-notif-dot"></span>'
+             +'<span class="narve-notif-icon">'+iconFor(n)+'</span>'
+             +'<span class="narve-notif-body">'
+             +  '<span class="narve-notif-title">'+escapeHtml(n.title)+'</span>'
+             +  (n.body?'<span class="narve-notif-sub">'+escapeHtml(n.body)+'</span>':'')
+             +  '<span class="narve-notif-time">'+relativeTime(n.created_at)+'</span>'
+             +'</span>'
+            +'</button>'
+          )).join('');
+          return (
+            '<div class="notif-day-group">'
+             +'<div class="notif-day-label">'+escapeHtml(day)+'</div>'
+             +'<div class="notif-page-list">'+itemsHtml+'</div>'
+            +'</div>'
+          );
+        }).join('');
+        listEl.innerHTML=groupsHtml;
+        listEl.querySelectorAll('.narve-notif-item').forEach(el=>{
+          el.addEventListener('click',async()=>{
+            const id=Number(el.dataset.id);
+            const link=el.dataset.link;
+            try{ await api(API+'/'+id+'/read',{method:'POST'}); }catch(e){}
+            if (link) window.location.href=link;
+          });
+        });
+      }
+
+      function filterItems(items){
+        if (state.filter==='all') return items;
+        if (state.filter==='unread') return items.filter(n=>!n.read_at);
+        return items.filter(n=>n.type===state.filter);
+      }
+
+      async function load(){
+        try{
+          const r=await api(API+'?limit=100');
+          state.items=r.notifications||[];
+        }catch(e){
+          listEl.innerHTML='<div class="narve-notif-empty" style="padding:48px 16px">Failed to load.</div>';
+          return;
+        }
+        renderList();
+      }
+
+      // Filter bar
+      filterbar.addEventListener('click',(e)=>{
+        const btn=e.target.closest('button[data-filter]'); if(!btn) return;
+        filterbar.querySelectorAll('button').forEach(b=>b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        state.filter=btn.dataset.filter;
+        renderList();
+      });
+
+      markAllBtn.addEventListener('click',async()=>{
+        try{ await api(API+'/read-all',{method:'POST'}); }catch(e){}
+        const now=Math.floor(Date.now()/1000);
+        state.items.forEach(n=>{ if(!n.read_at) n.read_at=now; });
+        renderList();
+      });
+
+      // ── Prefs ────────────────────────────────────────────────────
+      async function loadPrefs(){
+        try{
+          const p=await api(API+'/preferences');
+          prefsEl.querySelector('[data-pref="inapp_enabled"]').checked=!!p.inapp_enabled;
+          prefsEl.querySelector('[data-pref="push_enabled"]').checked=!!p.push_enabled;
+          prefsEl.querySelector('[data-pref="email_enabled"]').checked=!!p.email_enabled;
+          const types=p.types||{};
+          prefsEl.querySelectorAll('[data-type]').forEach(cb=>{
+            cb.checked=types[cb.dataset.type]!==false;
+          });
+        }catch(e){ prefsStatus.textContent='Failed to load preferences'; }
+      }
+      let prefsSaveHandle=null;
+      function queuePrefsSave(){
+        clearTimeout(prefsSaveHandle);
+        prefsSaveHandle=setTimeout(savePrefs,300);
+      }
+      async function savePrefs(){
+        const body={
+          inapp_enabled: prefsEl.querySelector('[data-pref="inapp_enabled"]').checked,
+          push_enabled:  prefsEl.querySelector('[data-pref="push_enabled"]').checked,
+          email_enabled: prefsEl.querySelector('[data-pref="email_enabled"]').checked,
+          types:{},
+        };
+        prefsEl.querySelectorAll('[data-type]').forEach(cb=>{
+          body.types[cb.dataset.type]=cb.checked;
+        });
+        prefsStatus.textContent='Saving…';
+        try{
+          await api(API+'/preferences',{method:'PATCH',body});
+          prefsStatus.textContent='Saved';
+          setTimeout(()=>{prefsStatus.textContent='';}, 1500);
+        }catch(e){ prefsStatus.textContent='Save failed'; }
+      }
+      prefsEl.addEventListener('change',(e)=>{
+        if (e.target.matches('input[type="checkbox"]')) queuePrefsSave();
+      });
+
+      load();
+      loadPrefs();
+    })();
+  </script>
+</body>
+</html>

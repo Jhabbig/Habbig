@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your predictions — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/saved" class="nav-item">Saved</a>
+        <a href="/predictions" class="nav-item active">Your predictions</a>
+        <a href="/billing" class="nav-item">Billing</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        {{ raw_admin_link }}
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Your predictions</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Your predictions</h1>
+        <p class="page-subtitle">Track your calls. Accuracy and calibration are scored when markets resolve.</p>
+
+        <div id="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px">
+          <div class="stat-card" data-k="total">
+            <div class="stat-label">Total</div><div class="stat-value" id="s-total">—</div>
+          </div>
+          <div class="stat-card" data-k="resolved">
+            <div class="stat-label">Resolved</div><div class="stat-value" id="s-resolved">—</div>
+          </div>
+          <div class="stat-card" data-k="accuracy">
+            <div class="stat-label">Accuracy</div><div class="stat-value" id="s-accuracy">—</div>
+          </div>
+          <div class="stat-card" data-k="brier">
+            <div class="stat-label">Brier</div><div class="stat-value" id="s-brier">—</div>
+          </div>
+          <div class="stat-card" data-k="streak">
+            <div class="stat-label">Current streak</div><div class="stat-value" id="s-streak">—</div>
+          </div>
+          <div class="stat-card" data-k="best-cat">
+            <div class="stat-label">Best category</div><div class="stat-value" id="s-bestcat">—</div>
+          </div>
+        </div>
+
+        <div class="filter-bar" style="margin-top:16px">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="active">Active</button>
+          <button class="filter-btn" data-filter="correct">Resolved correct</button>
+          <button class="filter-btn" data-filter="incorrect">Resolved incorrect</button>
+        </div>
+      </div>
+
+      <div class="content-area">
+        <div id="predictions-body">
+          <div class="empty-state"><div class="empty-state-title">Loading…</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Your predictions</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
+  </div>
+
+<script>
+(function(){
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av) { var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+
+  var body = document.getElementById('predictions-body');
+  var currentFilter = 'all';
+
+  function esc(s){ if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; }); }
+  function fmtDate(ts){ if (!ts) return '—'; var d = new Date(ts * 1000); return d.toLocaleDateString(); }
+  function fmtPct(x, digits){ if (x === null || x === undefined) return '—'; return (x*100).toFixed(digits||0)+'%'; }
+  function fmtPp(x){ if (x === null || x === undefined) return '—'; var v = x*100; return (v>=0?'+':'')+v.toFixed(0)+'pp'; }
+
+  function stateLabel(p){
+    if (!p.resolved) return '<span class="cred-score unrated">Active</span>';
+    if (p.resolved_correct) return '<span class="cred-score high">✓</span>';
+    return '<span class="cred-score low">✗</span>';
+  }
+
+  function bestCategory(cats){
+    var best = null;
+    Object.keys(cats || {}).forEach(function(cat){
+      var c = cats[cat];
+      if (c.total < 3) return;
+      if (!best || (c.accuracy || 0) > (best.accuracy || 0)) best = Object.assign({name: cat}, c);
+    });
+    return best;
+  }
+
+  function loadStats(){
+    fetch('/api/predictions/stats').then(function(r){return r.json();}).then(function(d){
+      document.getElementById('s-total').textContent = d.total_predictions || 0;
+      document.getElementById('s-resolved').textContent = d.resolved_predictions || 0;
+      document.getElementById('s-accuracy').textContent = d.accuracy === null ? '—' : fmtPct(d.accuracy, 1);
+      document.getElementById('s-brier').textContent = d.avg_brier_score === null ? '—' : d.avg_brier_score.toFixed(3);
+      document.getElementById('s-streak').textContent = (d.current_streak || 0) + ' / best ' + (d.best_streak || 0);
+      var b = bestCategory(d.category_stats);
+      document.getElementById('s-bestcat').textContent = b ? (b.name + ' (' + fmtPct(b.accuracy, 0) + ')') : '—';
+    }).catch(function(){});
+  }
+
+  function renderRows(items){
+    if (!items.length){
+      body.innerHTML = '<div class="empty-state">'
+        + '<div class="empty-state-title">No predictions yet.</div>'
+        + '<div class="empty-state-body">Open a market page and record your call. You will see your accuracy, Brier score, and streak here once markets start resolving.</div>'
+        + '</div>';
+      return;
+    }
+    var html = '<table class="db-table"><thead><tr>'
+      + '<th>State</th><th>Market</th><th>Your pred</th><th>Market @ call</th><th>Edge</th><th>When</th><th></th>'
+      + '</tr></thead><tbody>';
+    items.forEach(function(p){
+      var pct = Math.round((p.predicted_probability || 0) * 100);
+      var mkt = p.market_price_at_prediction;
+      var edge = p.edge_at_prediction;
+      html += '<tr data-pid="' + p.id + '">'
+        + '<td>' + stateLabel(p) + '</td>'
+        + '<td class="db-cell-primary"><a href="/market/' + encodeURIComponent(p.market_slug) + '" style="color:inherit;text-decoration:none">' + esc(p.market_question || p.market_slug) + '</a></td>'
+        + '<td>' + esc(p.predicted_outcome) + ' (' + pct + '%)</td>'
+        + '<td>' + (mkt === null || mkt === undefined ? '—' : fmtPct(mkt, 0)) + '</td>'
+        + '<td>' + fmtPp(edge) + '</td>'
+        + '<td class="db-cell-data">' + esc(fmtDate(p.created_at)) + '</td>'
+        + '<td>' + (p.resolved ? '' : '<button class="btn-ghost delete-btn" data-pid="' + p.id + '">Delete</button>') + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+
+    body.querySelectorAll('.delete-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        if (!confirm('Delete this prediction?')) return;
+        var pid = btn.getAttribute('data-pid');
+        fetch('/api/predictions/' + pid, {method:'DELETE'}).then(function(){ load(); loadStats(); });
+      });
+    });
+  }
+
+  function load(){
+    body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Loading…</div></div>';
+    fetch('/api/predictions/me?status=' + encodeURIComponent(currentFilter))
+      .then(function(r){return r.json();})
+      .then(function(d){ renderRows(d.items || []); })
+      .catch(function(){ body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Failed to load.</div></div>'; });
+  }
+
+  document.querySelectorAll('.filter-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.filter-btn').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentFilter = btn.getAttribute('data-filter');
+      load();
+    });
+  });
+
+  load();
+  loadStats();
+})();
+</script>
+{{ raw_sitemap }}
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

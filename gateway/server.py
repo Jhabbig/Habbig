@@ -715,6 +715,12 @@ _CSRF_EXEMPT_POSTS = frozenset({
     # /token before any session exists to anchor a CSRF token against.
     # Still protected by per-IP rate limiting (10 attempts / minute).
     "/auth/validate-token",
+    # Public status page subscribe/unsubscribe. Called from the unauthenticated
+    # /status page (no session to anchor CSRF to). Email format is validated
+    # and the endpoint is read-only for unknown addresses, so bot noise is
+    # bounded — no privileged state change is possible from a forgery.
+    "/api/status/subscribe",
+    "/api/status/unsubscribe",
 })
 
 
@@ -876,6 +882,9 @@ _PUBLIC_PATHS = frozenset({
     "/sitemap.xml", "/robots.txt",
     "/favicon.ico",
     "/.well-known/security.txt",
+    # Public status page (incidents, uptime, component health, RSS, subscribe)
+    "/status", "/status/feed.xml", "/status/unsubscribe",
+    "/api/status", "/api/status/subscribe", "/api/status/unsubscribe",
 })
 _PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/")
 
@@ -3716,6 +3725,17 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
             )
 
+            # Impersonate (admin+) — prompts for reason, then POSTs.
+            detail_extra += (
+                f'<form method="post" action="/admin/users/{u["id"]}/impersonate" onclick="event.stopPropagation()" '
+                f'onsubmit="var r=prompt(\'Reason for impersonating {uname} (min 4 chars):\'); '
+                f'if(!r||r.trim().length<4){{return false;}} '
+                f'this.reason.value=r.trim(); return true;" '
+                f'style="margin-top:8px">'
+                f'<input type="hidden" name="reason" value="">'
+                f'<button class="btn btn-primary-outline" style="font-size:11px;color:#f59e0b;border-color:#f59e0b">View as user</button></form>'
+            )
+
             # Trading add-on toggle (admin+)
             trading_status = db.get_trading_addon_status(u["id"])
             if trading_status["active"]:
@@ -6168,6 +6188,18 @@ try:
         _importlib.reload(_sys.modules["server_features"])
 except Exception as _exc:  # pragma: no cover
     log.warning("server_features import failed: %s — continuing without it", _exc)
+
+# Public status page (/status) + admin incident management (/admin/status).
+# Same reload-safe pattern as server_features above so pytest's module-cache
+# reuse doesn't re-register routes on the OLD `app`.
+try:
+    import status_routes  # noqa: F401,E402
+    import sys as _sr_sys
+    if "status_routes" in _sr_sys.modules:
+        import importlib as _sr_importlib
+        _sr_importlib.reload(_sr_sys.modules["status_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("status_routes import failed: %s — continuing without it", _exc)
 
 
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.

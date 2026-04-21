@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ market_question }} — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/saved" class="nav-item">Saved</a>
+        <a href="/predictions" class="nav-item">Your predictions</a>
+        <a href="/billing" class="nav-item">Billing</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        {{ raw_admin_link }}
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/predictions" class="breadcrumb-item" style="text-decoration:none;color:inherit">Markets</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current" id="crumb-slug">{{ market_slug }}</span>
+      </div>
+
+      <div class="page-header">
+        <div class="page-subtitle" id="market-category" style="text-transform:uppercase;letter-spacing:0.08em;font-size:12px">{{ category }}</div>
+        <h1 class="page-title" id="market-question">{{ market_question }}</h1>
+        <div class="page-subtitle">
+          Market:
+          <span id="market-yes-pct">—</span> YES
+        </div>
+      </div>
+
+      <div class="content-area">
+        <section class="card" style="padding:20px;margin-bottom:20px">
+          <h2 style="margin-top:0">Your prediction</h2>
+
+          <div id="pred-state-existing" style="display:none"></div>
+
+          <div id="pred-state-form">
+            <p class="page-subtitle" style="margin-top:0">Do you think this market resolves YES or NO?</p>
+
+            <div class="filter-bar" style="margin-bottom:16px">
+              <button class="filter-btn" id="dir-yes" data-dir="YES">YES</button>
+              <button class="filter-btn" id="dir-no" data-dir="NO">NO</button>
+            </div>
+
+            <label style="display:block;margin-bottom:4px">Your confidence: <strong id="conf-label">50%</strong></label>
+            <input id="conf-slider" type="range" min="50" max="100" value="50" style="width:100%">
+            <p class="page-subtitle" style="font-size:12px;margin:4px 0 16px">
+              50% = coin-flip. 100% = certainty. Pick how confident you are <em>in the direction you chose</em>.
+            </p>
+
+            <label style="display:block;margin-bottom:4px">Your reasoning (optional)</label>
+            <textarea id="reasoning" rows="4" maxlength="2000" style="width:100%" placeholder="Why do you think so?"></textarea>
+
+            <div style="display:flex;gap:16px;margin-top:12px;align-items:center">
+              <label style="display:flex;gap:6px;align-items:center">
+                <input id="is-public" type="checkbox"> Make public
+              </label>
+              <label style="display:flex;gap:6px;align-items:center">
+                <input id="is-anonymous" type="checkbox"> Post anonymously
+              </label>
+            </div>
+
+            <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
+              <button id="submit-btn" class="btn-primary" disabled>Record prediction</button>
+              <span id="submit-msg" class="page-subtitle"></span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item" id="slug-foot">{{ market_slug }}</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
+  </div>
+
+<script>
+(function(){
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av) { var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+
+  var slug = {{ raw_slug_json }};
+  var marketYesPrice = {{ raw_market_yes_json }};
+  var marketQuestion = {{ raw_market_question_json }};
+
+  if (marketYesPrice !== null && marketYesPrice !== undefined) {
+    document.getElementById('market-yes-pct').textContent = (marketYesPrice*100).toFixed(0) + '%';
+  }
+
+  var direction = null;
+  var submitBtn = document.getElementById('submit-btn');
+  var confLabel = document.getElementById('conf-label');
+  var confSlider = document.getElementById('conf-slider');
+  var submitMsg = document.getElementById('submit-msg');
+  var formWrap = document.getElementById('pred-state-form');
+  var existingWrap = document.getElementById('pred-state-existing');
+
+  function esc(s){ return String(s || '').replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; }); }
+
+  function updateBtnState(){
+    submitBtn.disabled = !direction;
+    submitBtn.textContent = direction
+      ? ('Record ' + direction + ' (' + confSlider.value + '%)')
+      : 'Record prediction';
+  }
+
+  document.getElementById('dir-yes').addEventListener('click', function(){
+    direction = 'YES';
+    document.getElementById('dir-yes').classList.add('active');
+    document.getElementById('dir-no').classList.remove('active');
+    updateBtnState();
+  });
+  document.getElementById('dir-no').addEventListener('click', function(){
+    direction = 'NO';
+    document.getElementById('dir-no').classList.add('active');
+    document.getElementById('dir-yes').classList.remove('active');
+    updateBtnState();
+  });
+
+  confSlider.addEventListener('input', function(){
+    confLabel.textContent = confSlider.value + '%';
+    updateBtnState();
+  });
+
+  submitBtn.addEventListener('click', function(){
+    if (!direction) return;
+    submitBtn.disabled = true;
+    submitMsg.textContent = 'Saving…';
+    fetch('/api/predictions', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        market_slug: slug,
+        market_question: marketQuestion,
+        predicted_outcome: direction,
+        predicted_probability: Number(confSlider.value) / 100,
+        reasoning: document.getElementById('reasoning').value,
+        is_public: document.getElementById('is-public').checked,
+        is_anonymous: document.getElementById('is-anonymous').checked,
+      })
+    }).then(function(r){
+      if (r.status === 402) { submitMsg.textContent = 'Subscription required.'; submitBtn.disabled = false; return null; }
+      if (r.status === 409) { submitMsg.textContent = 'You already have an active prediction on this market.'; submitBtn.disabled = false; return null; }
+      return r.json();
+    }).then(function(d){
+      if (!d || !d.prediction) return;
+      showExisting(d.prediction);
+    }).catch(function(){
+      submitMsg.textContent = 'Could not save. Try again.';
+      submitBtn.disabled = false;
+    });
+  });
+
+  function showExisting(p){
+    formWrap.style.display = 'none';
+    existingWrap.style.display = 'block';
+    var pct = Math.round((p.predicted_probability || 0) * 100);
+    var created = new Date(p.created_at * 1000).toLocaleDateString();
+    var mkt = p.market_price_at_prediction;
+    var edge = p.edge_at_prediction;
+    var html = '<p>You predicted <strong>' + esc(p.predicted_outcome) + '</strong> (' + pct + '% confidence) on ' + esc(created) + '.</p>';
+    if (mkt !== null && mkt !== undefined) {
+      html += '<p class="page-subtitle">Market was ' + (mkt*100).toFixed(0) + '% YES at that time.</p>';
+    }
+    if (edge !== null && edge !== undefined) {
+      var v = edge * 100;
+      html += '<p class="page-subtitle">Your edge: ' + (v>=0?'+':'') + v.toFixed(0) + 'pp</p>';
+    }
+    if (p.resolved) {
+      html += '<p>Market resolved ' + (p.resolved_correct ? 'in your favor ✓' : 'against you ✗') + '</p>';
+      if (p.brier_score !== null) html += '<p class="page-subtitle">Brier score: ' + p.brier_score.toFixed(3) + '</p>';
+      if (p.timing_score !== null) html += '<p class="page-subtitle">Timing score: ' + p.timing_score.toFixed(2) + '</p>';
+    }
+    html += '<p style="margin-top:16px"><a href="/predictions" class="btn-ghost">View all your predictions →</a></p>';
+    existingWrap.innerHTML = html;
+  }
+
+  // Check if the user already has a prediction on this market.
+  fetch('/api/predictions/me?status=all&limit=500').then(function(r){return r.json();}).then(function(d){
+    var mine = (d.items || []).find(function(x){ return x.market_slug === slug && !x.resolved; });
+    if (mine) showExisting(mine);
+  }).catch(function(){});
+})();
+</script>
+{{ raw_sitemap }}
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

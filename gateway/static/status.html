@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Status · narve.ai</title>
+  <meta name="description" content="Live service status, 90-day uptime history, and recent incidents for narve.ai.">
+  <link rel="alternate" type="application/rss+xml" title="narve.ai status feed" href="/status/feed.xml">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <style>
+    /* Status page — monochrome by design. No red/green/yellow.
+       Text labels and opacity carry the signal. */
+    .status-wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    .status-header {
+      border-bottom: 1px solid var(--border-subtle, #e5e7eb);
+      padding-bottom: 20px;
+      margin-bottom: 32px;
+    }
+    .status-eyebrow {
+      font-size: 13px;
+      color: var(--text-tertiary, #9ca3af);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      margin: 0 0 4px;
+    }
+    .status-title {
+      font-size: 22px;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+    .status-banner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 20px 0;
+      margin: 8px 0 0;
+    }
+    .status-banner-message {
+      font-size: 20px;
+      font-weight: 500;
+      margin: 0;
+      color: var(--text-primary, #111827);
+    }
+    .status-banner-sub {
+      font-size: 13px;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 2px 0 0;
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-primary, #111827);
+      flex-shrink: 0;
+    }
+    .status-dot-ok { background: var(--text-primary, #111827); opacity: 1; }
+    .status-dot-deg { background: var(--text-secondary, #6b7280); opacity: 0.85; }
+    .status-dot-out {
+      background: transparent;
+      border: 1.5px solid var(--text-tertiary, #9ca3af);
+    }
+
+    .status-banner .status-dot {
+      width: 14px; height: 14px;
+    }
+
+    .status-section {
+      padding: 24px 0;
+      border-top: 1px solid var(--border-subtle, #e5e7eb);
+    }
+    .status-section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 0 0 16px;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-ghost, #f3f4f6);
+    }
+    .status-row:last-child { border-bottom: 0; }
+    .status-row-label { font-size: 15px; }
+    .status-row-state {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-secondary, #6b7280);
+    }
+
+    /* 90-day uptime bar chart */
+    .uptime-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 40px;
+      margin: 8px 0 16px;
+    }
+    .uptime-day {
+      flex: 1 1 auto;
+      min-width: 2px;
+      max-width: 6px;
+      background: var(--text-primary, #111827);
+      opacity: 0.85;
+      height: calc(100% * var(--fill, 1));
+      align-self: flex-end;
+      border-radius: 1px;
+      transition: opacity 0.15s;
+    }
+    .uptime-day[data-status="degraded"] { opacity: 0.55; }
+    .uptime-day[data-status="outage"] {
+      background: transparent;
+      border-bottom: 1.5px solid var(--text-tertiary, #9ca3af);
+      min-height: 4px;
+    }
+    .uptime-day[data-status="unknown"] {
+      background: var(--text-tertiary, #9ca3af);
+      opacity: 0.25;
+      height: 100%;
+    }
+    .uptime-day:hover { opacity: 1; }
+    .uptime-summary {
+      font-size: 13px;
+      color: var(--text-secondary, #6b7280);
+      margin: 0;
+    }
+
+    /* Incidents */
+    .incident-item {
+      padding: 18px 0;
+      border-bottom: 1px solid var(--border-ghost, #f3f4f6);
+    }
+    .incident-item:last-child { border-bottom: 0; }
+    .incident-head {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+    .incident-date {
+      color: var(--text-tertiary, #9ca3af);
+      font-variant-numeric: tabular-nums;
+    }
+    .incident-sep { color: var(--text-tertiary, #9ca3af); }
+    .incident-title {
+      font-weight: 500;
+      color: var(--text-primary, #111827);
+    }
+    .incident-meta {
+      font-size: 12px;
+      color: var(--text-tertiary, #9ca3af);
+      margin-bottom: 6px;
+    }
+    .incident-meta-sep { opacity: 0.6; }
+    .incident-desc {
+      font-size: 14px;
+      color: var(--text-secondary, #6b7280);
+      margin: 0;
+      line-height: 1.55;
+    }
+
+    .status-empty {
+      font-size: 14px;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 0;
+      padding: 8px 0;
+    }
+
+    /* Subscribe form */
+    .subscribe-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .subscribe-row input[type=email] {
+      flex: 1;
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid var(--border-default, #d1d5db);
+      border-radius: 4px;
+      background: var(--bg-surface, #ffffff);
+      color: var(--text-primary, #111827);
+    }
+    .subscribe-row button {
+      padding: 8px 16px;
+      font-size: 14px;
+      background: var(--text-primary, #111827);
+      color: var(--bg-surface, #ffffff);
+      border: 0;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .subscribe-row button:hover { opacity: 0.85; }
+    .subscribe-feedback {
+      font-size: 13px;
+      color: var(--text-secondary, #6b7280);
+      margin: 8px 0 0;
+      min-height: 1em;
+    }
+    .feed-link {
+      font-size: 13px;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 12px 0 0;
+    }
+    .feed-link a { color: inherit; }
+  </style>
+</head>
+<body>
+  <main class="status-wrap" aria-labelledby="status-title">
+    <header class="status-header">
+      <p class="status-eyebrow">narve.ai</p>
+      <h1 class="status-title" id="status-title">Status</h1>
+      <div class="status-banner" data-level="{{ status_level }}">
+        <span class="status-dot status-dot-ok" aria-hidden="true"></span>
+        <div>
+          <p class="status-banner-message">{{ status_message }}</p>
+          <p class="status-banner-sub">Last checked {{ last_checked_rel }} · <time datetime="{{ last_checked_abs }}">{{ last_checked_abs }}</time></p>
+        </div>
+      </div>
+    </header>
+
+    <section class="status-section" aria-labelledby="components-head">
+      <h2 class="status-section-title" id="components-head">Components</h2>
+      {{ raw_component_rows }}
+    </section>
+
+    <section class="status-section" aria-labelledby="uptime-head">
+      <h2 class="status-section-title" id="uptime-head">Uptime — Last 90 Days</h2>
+      <div class="uptime-chart" role="img" aria-label="Uptime history for the last 90 days">
+        {{ raw_uptime_bars }}
+      </div>
+      <p class="uptime-summary">{{ overall_uptime_pct }}% uptime · {{ incident_count_window }} incidents</p>
+    </section>
+
+    <section class="status-section" aria-labelledby="incidents-head">
+      <h2 class="status-section-title" id="incidents-head">Recent Incidents</h2>
+      {{ raw_incident_list }}
+    </section>
+
+    <section class="status-section" aria-labelledby="subscribe-head">
+      <h2 class="status-section-title" id="subscribe-head">Subscribe to updates</h2>
+      <form id="subscribe-form" class="subscribe-row" onsubmit="return submitSubscribe(event)">
+        <input type="email" name="email" placeholder="you@example.com" required aria-label="Email address">
+        <button type="submit">Subscribe</button>
+      </form>
+      <p id="subscribe-feedback" class="subscribe-feedback" aria-live="polite"></p>
+      <p class="feed-link">Or via RSS: <a href="{{ feed_url }}">/status/feed.xml</a></p>
+    </section>
+  </main>
+
+  <script>
+    async function submitSubscribe(evt) {
+      evt.preventDefault();
+      const form = evt.target;
+      const email = form.email.value.trim();
+      const fb = document.getElementById('subscribe-feedback');
+      fb.textContent = 'Subscribing…';
+      try {
+        const r = await fetch('/api/v1/status/subscribe', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({email: email, components: 'all'})
+        });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          fb.textContent = (j.status === 'existing')
+            ? 'Already subscribed — your preferences are up to date.'
+            : 'Subscribed. Incident updates will arrive at ' + email + '.';
+          form.reset();
+        } else {
+          fb.textContent = 'Sorry, ' + (j.detail || 'something went wrong.') + ' Try again?';
+        }
+      } catch (e) {
+        fb.textContent = 'Network error — please try again.';
+      }
+      return false;
+    }
+  </script>
+</body>
+</html>

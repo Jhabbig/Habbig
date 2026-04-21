@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Embed widgets — narve.ai</title>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+  <style>
+    /* Local, scoped additions. Everything else uses gateway.css v2 tokens. */
+    .emb-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:12px;flex-wrap:wrap}
+    .emb-toolbar h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-0.01em}
+    .emb-toolbar-meta{font-size:12px;color:var(--text-muted);letter-spacing:0.02em}
+    .emb-list{display:flex;flex-direction:column;gap:12px}
+    .emb-row{border:1px solid var(--border);background:var(--bg-surface,var(--bg-base));border-radius:10px;padding:16px 18px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start}
+    .emb-row[data-inactive="true"]{opacity:0.55}
+    .emb-row-title{font-weight:600;font-size:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .emb-row-sub{font-size:12px;color:var(--text-muted);margin-top:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+    .emb-row-meta{font-size:11px;color:var(--text-muted);margin-top:8px;letter-spacing:0.02em}
+    .emb-row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .emb-row-actions button{font-size:12px;padding:6px 10px;cursor:pointer;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-primary);font-family:inherit}
+    .emb-row-actions button:hover{background:var(--bg-surface);border-color:var(--border-strong,var(--border))}
+    .emb-row-actions button.danger{color:var(--red,#b42318)}
+    .emb-empty{padding:32px 20px;border:1px dashed var(--border);border-radius:10px;text-align:center;color:var(--text-muted);font-size:13px}
+    .emb-badge{font-size:10px;letter-spacing:0.06em;text-transform:uppercase;padding:2px 8px;border-radius:10px;font-weight:500}
+    .emb-badge-active{background:rgba(16,185,129,0.12);color:#059669}
+    .emb-badge-inactive{background:var(--bg-surface);color:var(--text-muted);border:1px solid var(--border)}
+    .emb-type{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--text-muted)}
+    .emb-code{display:none;margin-top:10px;padding:10px;background:var(--bg-inset,var(--bg-surface));border:1px solid var(--border);border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;color:var(--text-primary)}
+    .emb-code.open{display:block}
+    .emb-copy-ok{font-size:11px;color:#059669;margin-left:8px}
+
+    /* Modal overlay */
+    .emb-modal{position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
+    .emb-modal.open{display:flex}
+    .emb-modal-card{background:var(--bg-base);border:1px solid var(--border);border-radius:12px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;padding:24px 26px;box-shadow:0 10px 40px rgba(0,0,0,0.25)}
+    .emb-modal-title{font-size:18px;font-weight:600;margin:0 0 6px}
+    .emb-modal-sub{font-size:12px;color:var(--text-muted);margin-bottom:18px}
+    .emb-field{margin-bottom:14px}
+    .emb-field label{display:block;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px}
+    .emb-field input,.emb-field select{width:100%;padding:9px 12px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--bg-base);color:var(--text-primary);font-family:inherit}
+    .emb-field input:focus,.emb-field select:focus{outline:none;border-color:var(--accent,#000)}
+    .emb-field-hint{font-size:11px;color:var(--text-muted);margin-top:4px}
+    .emb-target-row{display:none}
+    .emb-target-row.active{display:block}
+    .emb-modal-actions{display:flex;justify-content:space-between;align-items:center;margin-top:22px;gap:12px}
+    .emb-error{color:var(--red,#b42318);font-size:12px;margin-top:10px;min-height:1em}
+    .emb-created{margin-top:18px;padding:14px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;display:none}
+    .emb-created.open{display:block}
+    .emb-created-title{font-size:13px;font-weight:600;margin-bottom:6px}
+    .emb-created-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;background:var(--bg-inset,var(--bg-base));padding:10px;border:1px solid var(--border);border-radius:6px;white-space:pre-wrap;word-break:break-all;margin-top:6px}
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+          </svg>
+          Dashboards
+        </a>
+        <a href="/billing" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="14" height="10" rx="2"/><line x1="1" y1="7" x2="15" y2="7"/>
+          </svg>
+          Billing
+        </a>
+        <a href="/settings" class="nav-item active">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85"/>
+          </svg>
+          Settings
+        </a>
+        {{ raw_admin_link }}
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/settings" class="breadcrumb-item" style="text-decoration:none;color:inherit">Settings</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Embed widgets</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Embed widgets</h1>
+        <p class="page-subtitle">Create shareable widgets for your website or newsletter. Subscribers only. Each widget is locked to a single domain.</p>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:840px">
+
+          <div class="emb-toolbar">
+            <div class="emb-toolbar-meta" id="emb-count">Loading…</div>
+            <button type="button" class="btn btn-primary" id="emb-new-btn">+ Create new widget</button>
+          </div>
+
+          <div id="emb-status" class="emb-error" style="margin-bottom:10px"></div>
+
+          <div id="emb-list" class="emb-list"></div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Embed widgets</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
+  </div>
+
+  <!-- ── Create widget modal ──────────────────────────────────────── -->
+  <div class="emb-modal" id="emb-modal" role="dialog" aria-modal="true" aria-labelledby="emb-modal-title">
+    <div class="emb-modal-card">
+      <h2 class="emb-modal-title" id="emb-modal-title">Create embed widget</h2>
+      <div class="emb-modal-sub">Each widget is locked to the domain you enter. Rotate the token any time to invalidate existing embeds.</div>
+
+      <div class="emb-field">
+        <label for="emb-type">Widget type</label>
+        <select id="emb-type">
+          <option value="source_credibility">Source credibility</option>
+          <option value="market_probability">Market probability</option>
+          <option value="best_bets">Best bets (top 3)</option>
+        </select>
+      </div>
+
+      <div class="emb-field emb-target-row" id="emb-target-source">
+        <label for="emb-target-handle">Source handle</label>
+        <input type="text" id="emb-target-handle" placeholder="fedwatcher" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="emb-field-hint">Without the @. The widget shows this source's credibility score and last prediction.</div>
+      </div>
+
+      <div class="emb-field emb-target-row" id="emb-target-market">
+        <label for="emb-target-slug">Market slug</label>
+        <input type="text" id="emb-target-slug" placeholder="will-fed-hold-rates-march" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="emb-field-hint">The URL slug from Polymarket. The widget shows the market price vs. narve.ai's probability.</div>
+      </div>
+
+      <div class="emb-field">
+        <label for="emb-domain">Domain where it will be embedded</label>
+        <input type="text" id="emb-domain" placeholder="predictionnewsletter.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="emb-field-hint">Bare hostname, no scheme. Only this domain can render the widget.</div>
+      </div>
+
+      <div class="emb-field">
+        <label for="emb-theme">Theme</label>
+        <select id="emb-theme">
+          <option value="auto" selected>Auto (match partner site)</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+
+      <div class="emb-error" id="emb-modal-error"></div>
+
+      <div class="emb-created" id="emb-created">
+        <div class="emb-created-title">Your widget is ready.</div>
+        <div class="emb-field-hint" style="margin-bottom:6px">Paste this into your site:</div>
+        <div class="emb-created-code" id="emb-created-code"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+          <button type="button" class="btn btn-primary" id="emb-created-copy">Copy embed code</button>
+          <a href="#" target="_blank" rel="noopener" id="emb-created-preview" class="btn">Preview →</a>
+          <span class="emb-copy-ok" id="emb-created-ok" style="display:none">Copied</span>
+        </div>
+      </div>
+
+      <div class="emb-modal-actions">
+        <button type="button" class="btn" id="emb-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="emb-submit">Create widget</button>
+      </div>
+    </div>
+  </div>
+
+  {{ raw_sitemap }}
+  <script src="/_gateway_static/theme.js?v=2" defer></script>
+  <script>
+    (function(){
+      "use strict";
+
+      const $ = (sel) => document.querySelector(sel);
+      const listEl   = $("#emb-list");
+      const countEl  = $("#emb-count");
+      const statusEl = $("#emb-status");
+      const modal    = $("#emb-modal");
+      const typeEl   = $("#emb-type");
+      const targetSourceBox = $("#emb-target-source");
+      const targetMarketBox = $("#emb-target-market");
+      const targetHandle    = $("#emb-target-handle");
+      const targetSlug      = $("#emb-target-slug");
+      const domainEl = $("#emb-domain");
+      const themeEl  = $("#emb-theme");
+      const modalErr = $("#emb-modal-error");
+      const createdBox = $("#emb-created");
+      const createdCode = $("#emb-created-code");
+      const createdCopy = $("#emb-created-copy");
+      const createdPreview = $("#emb-created-preview");
+      const createdOk = $("#emb-created-ok");
+
+      function escapeHtml(s){
+        return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+          "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+        })[c]);
+      }
+
+      function relTime(ts){
+        if(!ts) return "Never";
+        const d = Date.now()/1000 - Number(ts);
+        if(d < 60) return "just now";
+        if(d < 3600) return Math.floor(d/60) + " min ago";
+        if(d < 86400) return Math.floor(d/3600) + "h ago";
+        return Math.floor(d/86400) + " days ago";
+      }
+
+      function widgetLabel(type){
+        return ({
+          source_credibility: "Source credibility",
+          market_probability: "Market probability",
+          best_bets: "Best bets"
+        })[type] || type;
+      }
+
+      function targetLabel(w){
+        if(w.widget_type === "source_credibility") return "@" + w.target;
+        if(w.widget_type === "market_probability") return w.target;
+        if(w.widget_type === "best_bets") return "Top 3 by EV";
+        return w.target || "";
+      }
+
+      function updateTargetRow(){
+        const t = typeEl.value;
+        targetSourceBox.classList.toggle("active", t === "source_credibility");
+        targetMarketBox.classList.toggle("active", t === "market_probability");
+      }
+
+      function renderList(data){
+        const widgets = data.widgets || [];
+        const active = data.active_count || 0;
+        const limit = data.limit || 10;
+        countEl.textContent = active + " of " + limit + " active widgets";
+        if(!widgets.length){
+          listEl.innerHTML = '<div class="emb-empty">You haven\'t created any widgets yet. Click <strong>Create new widget</strong> to get started.</div>';
+          return;
+        }
+        const rows = widgets.map((w) => {
+          const inactiveAttr = w.is_active ? "" : ' data-inactive="true"';
+          const badge = w.is_active
+            ? '<span class="emb-badge emb-badge-active">Active</span>'
+            : '<span class="emb-badge emb-badge-inactive">Deactivated</span>';
+          const typeLbl = widgetLabel(w.widget_type);
+          const tgt = escapeHtml(targetLabel(w));
+          const imps = Number(w.impressions || 0).toLocaleString();
+          const lastUsed = relTime(w.last_used_at);
+          const domain = escapeHtml(w.domain || "");
+          const code = w.embed_code || "";
+          const iframeSrc = w.iframe_src || "";
+          const actions = w.is_active
+            ? (
+                '<button type="button" data-action="toggle-code" data-id="' + escapeHtml(w.widget_id) + '">Copy embed code</button>' +
+                '<button type="button" data-action="rotate" data-id="' + escapeHtml(w.widget_id) + '">Rotate token</button>' +
+                '<button type="button" class="danger" data-action="deactivate" data-id="' + escapeHtml(w.widget_id) + '">Deactivate</button>'
+              )
+            : '';
+          return (
+            '<div class="emb-row"' + inactiveAttr + ' data-widget="' + escapeHtml(w.widget_id) + '">' +
+              '<div>' +
+                '<div class="emb-row-title">' + escapeHtml(typeLbl) + ' — ' + tgt + ' ' + badge + '</div>' +
+                '<div class="emb-row-sub">Domain: ' + domain + '</div>' +
+                '<div class="emb-row-meta">' + imps + ' impressions · last used ' + escapeHtml(lastUsed) + '</div>' +
+                '<div class="emb-code" data-code-for="' + escapeHtml(w.widget_id) + '">' + escapeHtml(code) + '</div>' +
+                '<div class="emb-code" data-preview-for="' + escapeHtml(w.widget_id) + '" style="display:none" data-preview-src="' + escapeHtml(iframeSrc) + '"></div>' +
+              '</div>' +
+              '<div class="emb-row-actions">' + actions + '</div>' +
+            '</div>'
+          );
+        });
+        listEl.innerHTML = rows.join("");
+      }
+
+      async function loadList(){
+        statusEl.textContent = "";
+        try {
+          const r = await fetch("/api/embeds", {credentials: "same-origin"});
+          if(r.status === 401 || r.status === 403){
+            countEl.textContent = "Sign in to manage widgets";
+            statusEl.textContent = "You must be signed in with an active subscription to manage embed widgets.";
+            return;
+          }
+          const data = await r.json();
+          renderList(data);
+        } catch(e){
+          statusEl.textContent = "Failed to load widgets: " + (e && e.message ? e.message : "network error");
+        }
+      }
+
+      async function copyToClipboard(text){
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch(_){
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          let ok = false;
+          try { ok = document.execCommand("copy"); } catch(_){}
+          document.body.removeChild(ta);
+          return ok;
+        }
+      }
+
+      listEl.addEventListener("click", async (ev) => {
+        const btn = ev.target.closest("button[data-action]");
+        if(!btn) return;
+        const id = btn.dataset.id;
+        if(btn.dataset.action === "toggle-code"){
+          const codeBox = document.querySelector('[data-code-for="' + CSS.escape(id) + '"]');
+          const wasOpen = codeBox.classList.contains("open");
+          // Close other open code blocks
+          listEl.querySelectorAll(".emb-code.open").forEach((el) => el.classList.remove("open"));
+          if(!wasOpen){
+            codeBox.classList.add("open");
+            const ok = await copyToClipboard(codeBox.textContent);
+            btn.textContent = ok ? "Copied ✓" : "Copy failed";
+            setTimeout(() => { btn.textContent = "Copy embed code"; }, 2000);
+          } else {
+            btn.textContent = "Copy embed code";
+          }
+        } else if(btn.dataset.action === "rotate"){
+          if(!window.confirm("Rotate token for this widget? Any existing embed on your site will stop working until you paste the new code.")) return;
+          btn.disabled = true;
+          try {
+            const r = await fetch("/api/embeds/" + encodeURIComponent(id) + "/rotate-token", {method:"POST", credentials:"same-origin"});
+            if(!r.ok){
+              const err = await r.json().catch(() => ({detail:"unknown error"}));
+              statusEl.textContent = "Rotate failed: " + (err.detail || r.status);
+            } else {
+              statusEl.textContent = "";
+              await loadList();
+            }
+          } finally {
+            btn.disabled = false;
+          }
+        } else if(btn.dataset.action === "deactivate"){
+          if(!window.confirm("Deactivate this widget? Existing embeds will stop rendering. This cannot be undone.")) return;
+          btn.disabled = true;
+          try {
+            const r = await fetch("/api/embeds/" + encodeURIComponent(id), {method:"DELETE", credentials:"same-origin"});
+            if(!r.ok){
+              const err = await r.json().catch(() => ({detail:"unknown error"}));
+              statusEl.textContent = "Deactivate failed: " + (err.detail || r.status);
+            } else {
+              statusEl.textContent = "";
+              await loadList();
+            }
+          } finally {
+            btn.disabled = false;
+          }
+        }
+      });
+
+      // ── Modal ──
+      function openModal(){
+        modalErr.textContent = "";
+        createdBox.classList.remove("open");
+        targetHandle.value = "";
+        targetSlug.value = "";
+        domainEl.value = "";
+        typeEl.value = "source_credibility";
+        themeEl.value = "auto";
+        updateTargetRow();
+        modal.classList.add("open");
+        setTimeout(() => { targetHandle.focus(); }, 80);
+      }
+      function closeModal(){ modal.classList.remove("open"); }
+
+      $("#emb-new-btn").addEventListener("click", openModal);
+      $("#emb-cancel").addEventListener("click", closeModal);
+      modal.addEventListener("click", (ev) => { if(ev.target === modal) closeModal(); });
+      document.addEventListener("keydown", (ev) => { if(ev.key === "Escape" && modal.classList.contains("open")) closeModal(); });
+      typeEl.addEventListener("change", updateTargetRow);
+
+      $("#emb-submit").addEventListener("click", async () => {
+        modalErr.textContent = "";
+        const widget_type = typeEl.value;
+        let target = "";
+        if(widget_type === "source_credibility") target = (targetHandle.value || "").trim();
+        else if(widget_type === "market_probability") target = (targetSlug.value || "").trim();
+        const domain = (domainEl.value || "").trim().toLowerCase();
+        const theme = themeEl.value;
+        const payload = {widget_type: widget_type, target: target, domain: domain, theme: theme};
+        try {
+          const r = await fetch("/api/embeds", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            credentials: "same-origin",
+            body: JSON.stringify(payload),
+          });
+          const data = await r.json().catch(() => ({}));
+          if(!r.ok){
+            modalErr.textContent = data.detail || ("Create failed (" + r.status + ")");
+            return;
+          }
+          const w = data.widget || {};
+          createdCode.textContent = w.embed_code || "";
+          createdPreview.href = w.iframe_src || "#";
+          createdBox.classList.add("open");
+          createdCopy.onclick = async () => {
+            const ok = await copyToClipboard(w.embed_code || "");
+            if(ok){
+              createdOk.style.display = "inline";
+              setTimeout(() => { createdOk.style.display = "none"; }, 2000);
+            }
+          };
+          await loadList();
+        } catch(e){
+          modalErr.textContent = "Network error: " + (e && e.message ? e.message : e);
+        }
+      });
+
+      loadList();
+    })();
+  </script>
+</body>
+</html>

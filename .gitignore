@@ -14,6 +14,13 @@ auth.db
 *.sqlite3
 *.sqlite-journal
 *.db-journal
+# SQLite WAL / shared-memory temp files
+*.db-shm
+*.db-wal
+
+# Local /loop session save patches (scripts/save_session.sh output)
+saves/
+**/saves/
 
 # Private keys / credentials
 *.key

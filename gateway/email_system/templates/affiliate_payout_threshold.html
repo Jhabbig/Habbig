@@ -1,0 +1,10 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">You've hit the payout threshold.</h1>
+<p style="margin:0 0 16px;color:#555;">Hi {{ display_name }},</p>
+<p style="margin:0 0 20px;color:#555;">Your narve.ai affiliate account has <strong style="color:#0d0d0d;">£{{ pending_gbp }}</strong> in pending commission, which is over the £{{ threshold_gbp }} payout minimum.</p>
+<p style="margin:0 0 20px;color:#555;">Request a payout from your affiliate dashboard whenever you're ready. We'll reach out within 3 business days to confirm details.</p>
+<div style="margin:24px 0;">
+  <a href="{{ dashboard_url }}" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Open affiliate dashboard →</a>
+</div>
+<p style="margin:24px 0 0;color:#888;font-size:13px;">Commission accrues on each referred user's first paid subscription. Any conversions after this email will still bank toward your next payout.</p>
+{% endblock %}

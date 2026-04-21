@@ -1,0 +1,333 @@
+/* mobile-a11y.css — accessibility + mobile responsive layer.
+ *
+ * Loaded on every page via render_page() after gateway.css so it can
+ * override/tighten defaults. Uses gateway.css variables (--text-primary,
+ * --bg-surface, etc.) so light/dark themes just work.
+ */
+
+/* ── WCAG AA contrast overrides ────────────────────────────────────── */
+/* gateway.css sets --text-tertiary to #888, which hits 3.54:1 on the
+   light-theme #ffffff base — fails AA for body text (needs 4.5:1).
+   Darken to #6e6e6e (5.10:1) in light theme only; dark theme was fine.
+   --text-quaternary is used for the faintest hints — bump it from
+   #bbbbbb (1.85:1, fails hard) to #949494 (3.19:1, passes the 3:1 UI
+   threshold for non-text elements). */
+:root,
+:root[data-theme="light"] {
+  --text-tertiary: #6e6e6e;
+  --text-quaternary: #949494;
+}
+
+/* ── Focus ring (WCAG AA) ──────────────────────────────────────────── */
+*:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 6px);
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── Skip link ─────────────────────────────────────────────────────── */
+.narve-skip-link {
+  position: absolute;
+  top: -40px;
+  left: 8px;
+  z-index: 10000;
+  padding: 8px 14px;
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 6px;
+  transition: top 0.15s ease;
+}
+.narve-skip-link:focus,
+.narve-skip-link:focus-visible {
+  top: 8px;
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* ── Screen-reader-only utility ────────────────────────────────────── */
+.narve-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* ── PWA install banner ────────────────────────────────────────────── */
+.narve-install-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 16px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  background: var(--bg-float, #fff);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg, 0 10px 30px rgba(0,0,0,0.15));
+  font-size: 14px;
+  max-width: calc(100vw - 32px);
+}
+.narve-install-banner__text { flex: 1; min-width: 0; }
+.narve-install-banner__btn {
+  appearance: none;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 36px;
+}
+.narve-install-banner__btn:hover { background: var(--interactive-ghost); }
+.narve-install-banner__btn--primary {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  border-color: var(--interactive-bg);
+}
+.narve-install-banner__btn--primary:hover { background: var(--interactive-hover); }
+@media (max-width: 480px) {
+  .narve-install-banner {
+    left: 12px; right: 12px; transform: none; flex-wrap: wrap; bottom: 12px;
+  }
+  .narve-install-banner__btn { flex: 1; min-height: 44px; }
+}
+
+/* ── Keyboard shortcut help overlay ────────────────────────────────── */
+.narve-sc-overlay {
+  position: fixed; inset: 0; z-index: 9998;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.narve-sc-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+.narve-sc-panel {
+  position: relative;
+  background: var(--bg-float, #fff);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: min(640px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.narve-sc-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-ghost);
+}
+.narve-sc-title { font-size: 16px; font-weight: 600; margin: 0; }
+.narve-sc-close {
+  appearance: none; background: transparent; border: 0;
+  color: var(--text-secondary);
+  font-size: 24px; line-height: 1;
+  padding: 4px 10px; cursor: pointer; border-radius: 6px;
+  min-width: 44px; min-height: 44px;
+}
+.narve-sc-close:hover { background: var(--interactive-ghost); color: var(--text-primary); }
+.narve-sc-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
+.narve-sc-section + .narve-sc-section { margin-top: 20px; }
+.narve-sc-heading {
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-tertiary); margin: 0 0 10px;
+}
+.narve-sc-list {
+  margin: 0;
+  display: grid; grid-template-columns: 1fr; gap: 6px;
+}
+.narve-sc-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 8px 10px; border-radius: 8px;
+}
+.narve-sc-row:hover { background: var(--bg-inset); }
+.narve-sc-keys {
+  margin: 0; display: flex; align-items: center; gap: 4px;
+  flex-wrap: wrap; justify-content: flex-end;
+}
+.narve-sc-desc {
+  margin: 0; color: var(--text-secondary); font-size: 14px;
+  flex: 1; min-width: 0;
+}
+.narve-sc-row kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; padding: 2px 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px; font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+.narve-sc-then, .narve-sc-or {
+  font-size: 11px; color: var(--text-tertiary); margin: 0 2px;
+}
+.narve-sc-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-ghost);
+  font-size: 12px; color: var(--text-tertiary);
+}
+
+/* ── List selection (j/k) ──────────────────────────────────────────── */
+[data-shortcut-item][data-shortcut-selected] {
+  outline: 2px solid var(--text-primary);
+  outline-offset: -2px;
+  background: var(--bg-inset);
+}
+
+/* ── Tap targets (mobile, coarse pointer) ──────────────────────────── */
+@media (max-width: 860px) and (pointer: coarse) {
+  button,
+  [role="button"],
+  a.nav-item,
+  .btn,
+  input[type="submit"],
+  input[type="button"],
+  .narve-install-banner__btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ── Forms: prevent iOS zoom (≥16px) + full-width on mobile ────────── */
+@media (max-width: 720px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select, textarea {
+    font-size: max(16px, 1rem);
+  }
+  form label { display: block; margin-bottom: 4px; }
+  form input:not([type="checkbox"]):not([type="radio"]),
+  form select, form textarea, form button[type="submit"] {
+    width: 100%;
+    box-sizing: border-box;
+  }
+}
+
+/* ── 375px: deep mobile fixes ─────────────────────────────────────── */
+@media (max-width: 520px) {
+  html, body { overflow-x: hidden; }
+  .app-shell, .gw-main, .pr-wrap, .landing-main { max-width: 100vw; }
+
+  /* Tables → cards (opt-in: .responsive-table or data-responsive="cards") */
+  table.responsive-table, table[data-responsive="cards"],
+  table.responsive-table thead, table[data-responsive="cards"] thead,
+  table.responsive-table tbody, table[data-responsive="cards"] tbody,
+  table.responsive-table tr,    table[data-responsive="cards"] tr,
+  table.responsive-table td,    table[data-responsive="cards"] td {
+    display: block;
+    width: 100%;
+  }
+  table.responsive-table thead,
+  table[data-responsive="cards"] thead {
+    position: absolute;
+    left: -9999px;
+  }
+  table.responsive-table tr,
+  table[data-responsive="cards"] tr {
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: var(--bg-surface);
+  }
+  table.responsive-table td,
+  table[data-responsive="cards"] td {
+    border: 0;
+    padding: 4px 0;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  table.responsive-table td::before,
+  table[data-responsive="cards"] td::before {
+    content: attr(data-label);
+    color: var(--text-tertiary);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  table:not(.responsive-table):not([data-responsive]) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .detail-panel {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    z-index: 9000;
+    border-left: 0 !important;
+  }
+  .modal-content, .dialog, [role="dialog"] > .panel {
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .sidebar { padding: 8px 10px; gap: 4px; }
+  .sidebar .nav-item { padding: 8px 10px; }
+
+  .pr-hero { flex-direction: column !important; text-align: center; gap: 20px; }
+  .pr-floating-numbers { display: none !important; }
+  .landing-hero, .hero-grid, .feature-grid { grid-template-columns: 1fr !important; }
+  .auth-card, .card, .form-card {
+    max-width: 100% !important;
+    border-radius: 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .intel-chat-input, .chat-input-row {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-base);
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+}
+
+/* ── Reduced motion polish ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .narve-skip-link,
+  .narve-install-banner,
+  .narve-sc-overlay { transition: none !important; animation: none !important; }
+  .narve-sc-backdrop { backdrop-filter: none !important; }
+}
+
+/* ── Safe-area insets in standalone PWA mode ───────────────────────── */
+@media (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* ── High-contrast mode (Windows) ─────────────────────────────────── */
+@media (forced-colors: active) {
+  .narve-install-banner,
+  .narve-sc-panel,
+  [data-shortcut-item][data-shortcut-selected] {
+    border: 1px solid CanvasText;
+  }
+  *:focus-visible { outline-color: CanvasText; }
+}

@@ -183,14 +183,14 @@
             <div class="profile-section-desc">Your username is permanent and cannot be changed.</div>
 
             <div class="profile-field">
-              <label class="profile-label">Username</label>
-              <input class="profile-input profile-input-locked" type="text" value="{{ username }}" readonly>
+              <label class="profile-label" for="profile-username">Username</label>
+              <input id="profile-username" class="profile-input profile-input-locked" type="text" value="{{ username }}" readonly autocomplete="username">
               <div class="profile-locked-hint">Locked — usernames cannot be changed</div>
             </div>
 
             <div class="profile-field">
-              <label class="profile-label">Email</label>
-              <input class="profile-input profile-input-locked" type="email" value="{{ email }}" readonly>
+              <label class="profile-label" for="profile-email">Email</label>
+              <input id="profile-email" class="profile-input profile-input-locked" type="email" value="{{ email }}" readonly autocomplete="email">
               <div class="profile-locked-hint">Contact admin to change your email</div>
             </div>
           </div>

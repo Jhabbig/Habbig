@@ -548,12 +548,18 @@ async def public_source_profile(request: Request, handle: str):
 <link rel='canonical' href='{_APP_URL}/sources/{_html.escape(handle)}'>
 <meta name='robots' content='index, follow'>
 <meta property='og:type' content='profile'>
+<meta property='og:site_name' content='narve.ai'>
 <meta property='og:title' content='@{_html.escape(handle)} on narve.ai'>
 <meta property='og:description' content='{_html.escape(meta_desc)}'>
 <meta property='og:url' content='{_APP_URL}/sources/{_html.escape(handle)}'>
-<meta name='twitter:card' content='summary'>
+<meta property='og:image' content='{_APP_URL}/og/source/{_html.escape(handle)}'>
+<meta property='og:image:width' content='1200'>
+<meta property='og:image:height' content='630'>
+<meta name='twitter:card' content='summary_large_image'>
+<meta name='twitter:site' content='@narveai'>
 <meta name='twitter:title' content='@{_html.escape(handle)} — narve.ai'>
 <meta name='twitter:description' content='{_html.escape(meta_desc)}'>
+<meta name='twitter:image' content='{_APP_URL}/og/source/{_html.escape(handle)}'>
 <script type='application/ld+json'>
 {{
   "@context": "https://schema.org",

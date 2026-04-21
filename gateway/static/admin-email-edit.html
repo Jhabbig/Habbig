@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edit email {{ template_key }} · narve.ai admin</title>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
+    .adm-wrap { max-width: 1200px; margin: 0 auto; padding: 40px 24px 80px; }
+    .adm-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 22px; flex-wrap: wrap; gap: 16px; }
+    .adm-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
+    .adm-head code { font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+    .adm-nav-back { opacity: 0.6; color: inherit; text-decoration: none; font-size: 13px; }
+    .adm-nav-back:hover { opacity: 1; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+    .card { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 8px; padding: 18px; }
+    .card h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 12px; opacity: 0.7; margin-bottom: 6px; }
+    input[type=text], textarea { background: rgba(0,0,0,0.3); border: 1px solid var(--border, rgba(255,255,255,0.12)); border-radius: 5px; padding: 9px 11px; color: inherit; font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; }
+    textarea.body-editor { min-height: 360px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; resize: vertical; }
+    textarea.text-editor { min-height: 140px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; resize: vertical; }
+    .chip-row { margin-bottom: 14px; line-height: 1.9; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 14px; }
+    .toggle-row input[type=checkbox] { width: 18px; height: 18px; accent-color: #22c55e; }
+    .form-actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 22px; align-items: center; flex-wrap: wrap; }
+    .form-actions .left, .form-actions .right { display: flex; gap: 10px; }
+    .btn { display: inline-block; padding: 9px 18px; border-radius: 6px; border: 1px solid var(--border, rgba(255,255,255,0.15)); background: transparent; color: inherit; cursor: pointer; font-family: inherit; font-size: 13px; }
+    .btn:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
+    .btn-primary { background: var(--accent, #fff); color: var(--bg, #0d0d0d); border: 0; font-weight: 600; }
+    .btn-danger { border-color: rgba(239,68,68,0.4); color: #ef4444; }
+    .btn-danger:hover { background: rgba(239,68,68,0.08); }
+    .preview-frame { background: #fff; color: #111; border-radius: 6px; padding: 20px; min-height: 360px; overflow: auto; }
+    .preview-subject { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 6px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
+    .preview-subject .lbl { font-size: 10px; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    code { font-family: ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="adm-wrap">
+    <div class="adm-head">
+      <div>
+        <a class="adm-nav-back" href="/admin/emails">← Email templates</a>
+        <h1>Edit <code>{{ template_key }}</code> {{ raw_nav_role }}</h1>
+      </div>
+    </div>
+
+    <form id="email-form" method="post" action="/admin/emails/{{ template_key }}">
+      <div class="split">
+        <div class="card">
+          <h2>Editor</h2>
+
+          <div class="chip-row">
+            <span style="font-size:11px;opacity:0.6;margin-right:6px">Variables:</span>
+            {{ raw_variable_chips }}
+          </div>
+
+          <div class="toggle-row">
+            <input id="is-active" name="is_active" type="checkbox" {{ is_active_checked }}>
+            <label for="is-active">Active — use this template when sending. Uncheck to save as a draft without affecting live sends.</label>
+          </div>
+
+          <div class="field">
+            <label for="subject">Subject</label>
+            <input id="subject" name="subject" type="text" value="{{ subject }}">
+          </div>
+
+          <div class="field">
+            <label for="body_html">Body (HTML)</label>
+            <textarea id="body_html" name="body_html" class="body-editor">{{ body_html_text }}</textarea>
+          </div>
+
+          <div class="field">
+            <label for="body_text">Plain-text fallback</label>
+            <textarea id="body_text" name="body_text" class="text-editor">{{ body_text }}</textarea>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Live preview</h2>
+
+          <div class="preview-subject">
+            <div class="lbl">Subject</div>
+            <div id="preview-subject">—</div>
+          </div>
+
+          <div id="preview-html" class="preview-frame">
+            Rendering…
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <div class="left"></div>
+        <div class="right">
+          <button class="btn btn-primary" type="submit">Save template</button>
+        </div>
+      </div>
+    </form>
+
+    <!-- Reset form sits OUTSIDE the main form so Save and Reset can never submit together. -->
+    <form method="post" action="/admin/emails/{{ template_key }}/reset" style="margin-top:12px" onsubmit="return confirm('Drop this custom template? Future sends will use the default from email_system/templates/.')">
+      <button class="btn btn-danger" type="submit">Reset to default</button>
+    </form>
+
+    <script>
+      (function() {
+        var form = document.getElementById('email-form');
+        var subjectEl = document.getElementById('subject');
+        var bodyEl = document.getElementById('body_html');
+        var previewSubject = document.getElementById('preview-subject');
+        var previewHtml = document.getElementById('preview-html');
+        var endpoint = '/admin/emails/{{ template_key }}/preview';
+        var debounceTimer = null;
+
+        function csrfField() {
+          var input = form.querySelector('input[name="_csrf"]');
+          return input ? input.value : '';
+        }
+
+        function refresh() {
+          var body = new FormData();
+          body.append('subject', subjectEl.value);
+          body.append('body_html', bodyEl.value);
+          body.append('_csrf', csrfField());
+          fetch(endpoint, { method: 'POST', body: body, credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(j) {
+              previewSubject.textContent = j.subject || '—';
+              previewHtml.innerHTML = j.html || '<em style="opacity:.5">(empty body)</em>';
+            })
+            .catch(function() {
+              previewHtml.innerHTML = '<em style="color:#b91c1c">Preview failed — subject/body may contain invalid HTML.</em>';
+            });
+        }
+        function schedule() {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(refresh, 250);
+        }
+        subjectEl.addEventListener('input', schedule);
+        bodyEl.addEventListener('input', schedule);
+        refresh();
+      })();
+    </script>
+  </div>
+</body>
+</html>

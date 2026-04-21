@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leaderboard — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <style>
+    body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-ui); margin: 0; }
+    .lb-main { max-width: 880px; margin: 0 auto; padding: 48px 24px; }
+    .lb-h1 {
+      font-family: var(--font-display);
+      font-size: 28px; letter-spacing: -0.02em;
+      margin: 0 0 8px; font-weight: 500;
+    }
+    .lb-sub {
+      font-size: 13px; color: var(--text-secondary);
+      margin: 0 0 24px;
+    }
+    .lb-tabs {
+      display: flex; gap: 4px; margin-bottom: 20px;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .lb-tab {
+      padding: 10px 16px; background: none; border: none;
+      color: var(--text-tertiary); font-size: 13px; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      font-family: inherit;
+    }
+    .lb-tab:hover { color: var(--text-primary); }
+    .lb-tab.active {
+      color: var(--text-primary); border-bottom-color: var(--text-primary);
+      font-weight: 500;
+    }
+    .lb-table {
+      width: 100%; border-collapse: collapse; margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .lb-table th {
+      text-align: left; padding: 10px 12px;
+      font-size: 11px; font-weight: 600;
+      color: var(--text-tertiary);
+      letter-spacing: 0.08em; text-transform: uppercase;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .lb-table td {
+      padding: 12px; border-bottom: 1px solid var(--border-default);
+      color: var(--text-primary);
+    }
+    .lb-table tr.is-you td {
+      background: var(--bg-raised);
+      font-weight: 500;
+    }
+    .lb-rank { width: 48px; font-variant-numeric: tabular-nums; color: var(--text-tertiary); }
+    .lb-handle { color: var(--text-primary); font-weight: 500; }
+    .lb-numeric { font-variant-numeric: tabular-nums; text-align: right; }
+    .lb-accuracy { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+    .lb-empty { color: var(--text-tertiary); padding: 24px 0; font-size: 13px; text-align: center; }
+    .lb-foot {
+      font-size: 12px; color: var(--text-tertiary);
+      margin-top: 16px; line-height: 1.5;
+    }
+    .lb-foot a { color: var(--text-secondary); }
+    .lb-myrank {
+      padding: 10px 14px; border: 1px solid var(--border-default);
+      border-radius: var(--radius-md); margin-bottom: 14px;
+      font-size: 13px; color: var(--text-secondary);
+      background: var(--bg-surface);
+    }
+    .lb-myrank strong { color: var(--text-primary); }
+  </style>
+</head>
+<body>
+  <main class="lb-main">
+    <h1 class="lb-h1">Leaderboard</h1>
+    <p class="lb-sub">Current subscribers, ranked by prediction accuracy.</p>
+
+    <div class="lb-tabs" id="lb-tabs">
+      <button class="lb-tab active" data-period="all">All time</button>
+      <button class="lb-tab" data-period="90d">90 days</button>
+      <button class="lb-tab" data-period="30d">30 days</button>
+      <button class="lb-tab" data-period="7d">This week</button>
+    </div>
+
+    <div id="lb-myrank" class="lb-myrank" hidden></div>
+
+    <table class="lb-table">
+      <thead>
+        <tr>
+          <th class="lb-rank">Rank</th>
+          <th>User</th>
+          <th class="lb-numeric">Predictions</th>
+          <th class="lb-numeric">Correct</th>
+          <th class="lb-numeric">Accuracy</th>
+        </tr>
+      </thead>
+      <tbody id="lb-body">
+        <tr><td colspan="5" class="lb-empty">Loading…</td></tr>
+      </tbody>
+    </table>
+
+    <div id="lb-foot" class="lb-foot"></div>
+  </main>
+  <script src="/_gateway_static/leaderboard.js?v=1"></script>
+</body>
+</html>

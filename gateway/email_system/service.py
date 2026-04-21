@@ -182,4 +182,7 @@ _SUBJECTS = {
     "enquiry_notification": "New enquiry — narve.ai",
     "2fa_email_otp": "Your narve.ai sign-in code",
     "2fa_locked": "Suspicious activity on your narve.ai account",
+    "incident_created": "New incident — narve.ai status",
+    "incident_update": "Incident update — narve.ai status",
+    "incident_resolved": "Incident resolved — narve.ai status",
 }

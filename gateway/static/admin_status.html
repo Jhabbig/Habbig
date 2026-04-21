@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Status Admin · narve.ai</title>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <style>
+    .admin-wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    .admin-head { margin-bottom: 32px; }
+    .admin-head h1 {
+      font-size: 22px;
+      font-weight: 600;
+      margin: 0 0 4px;
+    }
+    .admin-head p {
+      color: var(--text-secondary, #6b7280);
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .admin-section {
+      margin: 32px 0;
+      padding: 20px 24px;
+      background: var(--bg-surface, #ffffff);
+      border: 1px solid var(--border-subtle, #e5e7eb);
+      border-radius: 6px;
+    }
+    .admin-section h2 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 0 0 16px;
+    }
+
+    .admin-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr 1fr;
+    }
+    .admin-grid > label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--text-secondary, #6b7280);
+    }
+    .admin-grid input, .admin-grid select, .admin-grid textarea {
+      padding: 8px 10px;
+      font-size: 14px;
+      border: 1px solid var(--border-default, #d1d5db);
+      border-radius: 4px;
+      background: var(--bg-surface, #ffffff);
+      color: var(--text-primary, #111827);
+      font-family: inherit;
+    }
+    .admin-grid textarea {
+      min-height: 80px;
+      resize: vertical;
+      grid-column: 1 / -1;
+    }
+    .admin-grid .full { grid-column: 1 / -1; }
+
+    .admin-checks {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .admin-check {
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-primary, #111827);
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .admin-incident {
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border-ghost, #f3f4f6);
+    }
+    .admin-incident:last-child { border-bottom: 0; }
+    .admin-incident h3 {
+      font-size: 15px;
+      margin: 0 0 4px;
+      font-weight: 500;
+    }
+    .admin-incident h3 small {
+      color: var(--text-tertiary, #9ca3af);
+      font-weight: 400;
+      margin-left: 4px;
+    }
+    .admin-incident-meta {
+      font-size: 12px;
+      color: var(--text-tertiary, #9ca3af);
+      margin-bottom: 6px;
+    }
+    .admin-incident p {
+      font-size: 14px;
+      color: var(--text-secondary, #6b7280);
+      margin: 0 0 10px;
+    }
+    .admin-inline {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin: 6px 0;
+      flex-wrap: wrap;
+    }
+    .admin-inline input[type=text] {
+      flex: 1;
+      min-width: 180px;
+      padding: 6px 10px;
+      font-size: 13px;
+      border: 1px solid var(--border-default, #d1d5db);
+      border-radius: 4px;
+      background: var(--bg-surface, #ffffff);
+      color: var(--text-primary, #111827);
+    }
+    .admin-inline select {
+      padding: 6px 10px;
+      font-size: 13px;
+      border: 1px solid var(--border-default, #d1d5db);
+      border-radius: 4px;
+      background: var(--bg-surface, #ffffff);
+    }
+    .admin-inline button {
+      padding: 6px 12px;
+      font-size: 13px;
+      border: 1px solid var(--border-default, #d1d5db);
+      border-radius: 4px;
+      background: var(--bg-surface, #ffffff);
+      cursor: pointer;
+    }
+
+    .btn {
+      padding: 6px 12px;
+      font-size: 13px;
+      border: 1px solid var(--border-default, #d1d5db);
+      border-radius: 4px;
+      background: var(--bg-surface, #ffffff);
+      cursor: pointer;
+      color: inherit;
+    }
+    .btn-primary-outline {
+      border-color: var(--text-primary, #111827);
+      color: var(--text-primary, #111827);
+      background: transparent;
+    }
+    .btn-primary {
+      background: var(--text-primary, #111827);
+      color: var(--bg-surface, #ffffff);
+      border-color: var(--text-primary, #111827);
+      padding: 8px 16px;
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 6px;
+      margin-right: 4px;
+      background: var(--bg-inset, #f3f4f6);
+      color: var(--text-secondary, #6b7280);
+      border-radius: 3px;
+    }
+
+    .admin-subs {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .admin-subs th, .admin-subs td {
+      padding: 8px 10px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-ghost, #f3f4f6);
+    }
+    .admin-subs th {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--text-tertiary, #9ca3af);
+      letter-spacing: 0.05em;
+    }
+
+    .status-empty {
+      font-size: 14px;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <main class="admin-wrap">
+    <header class="admin-head">
+      <h1>Status admin</h1>
+      <p>Open incidents: <strong>{{ open_count }}</strong> · Subscribers: <strong>{{ total_subs }}</strong> · <a href="/admin">← Back to admin</a> · <a href="/status">View public page</a></p>
+    </header>
+
+    <section class="admin-section">
+      <h2>Create incident</h2>
+      <form method="post" action="/admin/incidents">
+        <div class="admin-grid">
+          <label class="full">
+            Title
+            <input type="text" name="title" required placeholder="e.g. Scraper service temporarily unavailable">
+          </label>
+          <label>
+            Severity
+            <select name="severity">{{ raw_severity_options }}</select>
+          </label>
+          <label>
+            Status
+            <select name="status">{{ raw_status_options }}</select>
+          </label>
+          <label class="full">
+            Affected components
+            <div class="admin-checks">{{ raw_component_checkboxes }}</div>
+          </label>
+          <label class="full">
+            Description
+            <textarea name="description" placeholder="Initial investigation notes. Markdown OK."></textarea>
+          </label>
+        </div>
+        <div style="margin-top:16px;display:flex;justify-content:flex-end">
+          <button type="submit" class="btn btn-primary">Create incident</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="admin-section">
+      <h2>Open incidents</h2>
+      {{ raw_open_incidents }}
+    </section>
+
+    <section class="admin-section">
+      <h2>Recent incidents</h2>
+      {{ raw_all_incidents }}
+    </section>
+
+    <section class="admin-section">
+      <h2>Email subscribers</h2>
+      {{ raw_subscriber_list }}
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You've been invited — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <style>
+    body {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      margin: 0;
+    }
+    .invite-brand {
+      display: flex; align-items: center; gap: 10px;
+      text-decoration: none; color: var(--text-primary);
+      margin-bottom: 32px;
+    }
+    .invite-brand img { width: 26px; height: 26px; filter: invert(1); border-radius: 5px; }
+    .invite-brand span { font-weight: 600; font-size: 18px; letter-spacing: -0.03em; }
+    .invite-card {
+      width: 100%;
+      max-width: 480px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 40px 36px;
+      box-shadow: var(--shadow-md);
+    }
+    .invite-title {
+      font-family: var(--font-display);
+      font-size: 22px; font-weight: 500; letter-spacing: -0.02em;
+      margin: 0 0 12px;
+    }
+    .invite-sub { font-size: 14px; color: var(--text-secondary); line-height: 1.5; margin: 0 0 24px; }
+    .invite-form { display: flex; flex-direction: column; gap: 14px; }
+    .invite-form label {
+      display: block; font-size: 11px; font-weight: 600;
+      color: var(--text-tertiary); text-transform: uppercase;
+      letter-spacing: 0.08em; margin-bottom: 6px;
+    }
+    .invite-input {
+      width: 100%; padding: 12px 14px;
+      background: var(--bg-raised); color: var(--text-primary);
+      border: 1px solid var(--border-default); border-radius: var(--radius-md);
+      font-size: 14px; font-family: inherit; box-sizing: border-box;
+    }
+    .invite-input:focus {
+      outline: none; border-color: var(--text-primary);
+      box-shadow: 0 0 0 3px var(--interactive-ghost);
+    }
+    .invite-btn {
+      width: 100%; padding: 14px 16px;
+      background: var(--text-primary); color: var(--interactive-text);
+      border: 1px solid var(--text-primary); border-radius: var(--radius-md);
+      font-size: 14px; font-weight: 500; cursor: pointer; margin-top: 8px;
+    }
+    .invite-btn:hover:not(:disabled) { background: var(--interactive-hover); }
+    .invite-btn:disabled { opacity: 0.65; cursor: wait; }
+    .invite-foot {
+      font-size: 12px; color: var(--text-tertiary);
+      margin-top: 20px; line-height: 1.5;
+    }
+    .invite-notice {
+      padding: 12px 14px; border-radius: var(--radius-sm);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border-default);
+      font-size: 13px; margin-bottom: 16px;
+    }
+    .invite-notice.error { border-color: #c3323266; color: #e86b6b; }
+    .invite-notice.success { border-color: #2d8e4366; color: #58c58a; }
+    .invite-invalid {
+      text-align: center; padding: 20px 0;
+      color: var(--text-secondary); font-size: 14px;
+    }
+    .invite-invalid strong { color: var(--text-primary); display: block; margin-bottom: 6px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <a href="/" class="invite-brand">
+    <img src="/_gateway_static/img/logo.png" alt="narve.ai">
+    <span>narve.ai</span>
+  </a>
+  <div class="invite-card" id="invite-card" data-valid="{{ raw_valid }}" data-code="{{ code }}">
+    <!-- Content rendered by invite_public.js based on data-valid -->
+    <div id="invite-pending">Loading…</div>
+  </div>
+  <script src="/_gateway_static/invite_public.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Market Resolution Calendar · narve.ai</title>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <style>
+    body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); min-height: 100vh; }
+    .cal-shell { max-width: 880px; margin: 0 auto; padding: 56px 24px 96px; }
+    .cal-back { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); text-decoration: none; margin-bottom: 28px; }
+    .cal-back:hover { color: var(--text-primary); }
+    .cal-header { margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid var(--border-default); }
+    .cal-eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 12px; }
+    .cal-title { font-family: var(--font-display); font-size: 42px; font-weight: 500; letter-spacing: -0.02em; margin: 0 0 16px; color: var(--text-primary); }
+    .cal-lede { font-size: 15px; color: var(--text-secondary); line-height: 1.7; max-width: 640px; }
+    .cal-count { font-size: 12px; color: var(--text-tertiary); margin-top: 16px; font-variant-numeric: tabular-nums; }
+
+    .cal-day { margin-bottom: 40px; }
+    .cal-day h2 { font-family: var(--font-display); font-size: 18px; font-weight: 500; margin: 0 0 16px; color: var(--text-primary); letter-spacing: -0.005em; padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
+    .cal-row { padding: 18px 0; border-bottom: 1px solid var(--border-subtle); }
+    .cal-row:last-child { border-bottom: none; }
+    .cal-question { font-size: 16px; font-weight: 500; margin: 0 0 8px; color: var(--text-primary); line-height: 1.4; }
+    .cal-meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--text-secondary); align-items: center; }
+    .cal-meta strong { color: var(--text-primary); font-weight: 500; }
+    .cal-edge { display: inline-block; padding: 3px 8px; border-radius: 10px; background: var(--accent-light, rgba(0,0,0,0.06)); color: var(--text-primary); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+    .cal-locked { font-style: italic; color: var(--text-tertiary); }
+    .cal-platform, .cal-category { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); }
+    .cal-link { display: inline-block; margin-top: 8px; font-size: 12px; color: var(--text-secondary); text-decoration: none; }
+    .cal-link:hover { color: var(--text-primary); text-decoration: underline; }
+    .cal-empty { color: var(--text-tertiary); font-size: 14px; padding: 32px 0; text-align: center; }
+
+    .cal-cta { margin: 48px 0; padding: 24px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--surface, rgba(255,255,255,0.02)); }
+    .cal-cta h3 { font-family: var(--font-display); font-size: 18px; font-weight: 500; margin: 0 0 8px; color: var(--text-primary); }
+    .cal-cta p { font-size: 14px; color: var(--text-secondary); margin: 0 0 16px; line-height: 1.6; }
+    .cal-cta a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 13px; font-weight: 500; color: var(--text-primary); text-decoration: none; transition: all .2s ease; }
+    .cal-cta a:hover { border-color: var(--text-primary); }
+
+    .cal-footer { margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border-default); font-size: 12px; color: var(--text-tertiary); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+    .cal-footer a { color: var(--text-secondary); text-decoration: none; margin-right: 16px; }
+    .cal-footer a:hover { color: var(--text-primary); }
+  </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="{{ static: img/logo.png }}">
+  <link rel="apple-touch-icon" href="{{ static: img/logo.png }}">
+</head>
+<body>
+  <div class="cal-shell">
+    <a href="/" class="cal-back">← narve.ai</a>
+
+    <header class="cal-header">
+      <div class="cal-eyebrow">Market Resolution Calendar</div>
+      <h1 class="cal-title">Upcoming market resolutions</h1>
+      <p class="cal-lede">Active prediction markets from Polymarket and Kalshi, sorted by close date. Subscribers see narve.ai's credibility-weighted signal and the edge vs. market price.</p>
+      <div class="cal-count">{{ market_count }} markets resolving in the next 90 days</div>
+    </header>
+
+    <main id="main">
+      {{ raw_calendar_body }}
+
+      <div class="cal-cta">
+        <h3>See the edge on every market</h3>
+        <p>Subscribers get narve.ai's credibility-weighted signal on every upcoming market, ranked by edge vs. the current market price. Most markets on this page have a signal — only the numbers are hidden.</p>
+        <a href="/pricing">See pricing →</a>
+      </div>
+    </main>
+
+    <footer class="cal-footer">
+      <div>
+        <a href="/">Home</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/calendar">Calendar</a>
+        <a href="/terms">Terms</a>
+        <a href="/privacy">Privacy</a>
+      </div>
+      <div>narve.ai · Updated live from Polymarket and Kalshi</div>
+    </footer>
+  </div>
+</body>
+</html>

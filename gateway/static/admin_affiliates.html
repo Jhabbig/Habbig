@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Affiliate admin · narve.ai</title>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
+    .adm-wrap { max-width: 1200px; margin: 0 auto; padding: 40px 24px 80px; }
+    .adm-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 28px; flex-wrap: wrap; gap: 16px; }
+    .adm-head h1 { margin: 0; font-size: 26px; font-weight: 600; }
+    .adm-nav-back { opacity: 0.6; color: inherit; text-decoration: none; font-size: 13px; }
+    .adm-nav-back:hover { opacity: 1; }
+
+    .adm-section { margin-bottom: 40px; }
+    .adm-section h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 0.6px; opacity: 0.75; display: flex; justify-content: space-between; align-items: center; }
+    .adm-count { opacity: 0.5; font-size: 12px; font-weight: 400; }
+
+    .adm-card { background: var(--surface, #141414); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; overflow: hidden; }
+    table.adm-table { width: 100%; border-collapse: collapse; }
+    table.adm-table th, table.adm-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13px; }
+    table.adm-table th { opacity: 0.55; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    table.adm-table tbody tr:last-child td { border-bottom: 0; }
+    table.adm-table code { font-size: 12px; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; }
+
+    .adm-cta { background: var(--accent, #fff); color: var(--bg, #0d0d0d); border: 0; padding: 9px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; }
+    .adm-btn-secondary { background: rgba(255,255,255,0.08); color: inherit; border: 0; padding: 6px 12px; border-radius: 3px; font-size: 12px; cursor: pointer; }
+    .adm-btn-secondary:hover { background: rgba(255,255,255,0.16); }
+    .mark-paid-btn { background: rgba(80, 255, 120, 0.15); color: #a7f3b9; border: 1px solid rgba(80, 255, 120, 0.3); padding: 6px 12px; border-radius: 3px; font-size: 12px; cursor: pointer; }
+    .mark-paid-btn:hover { background: rgba(80, 255, 120, 0.25); }
+
+    /* Modal */
+    .adm-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 100; }
+    .adm-modal-backdrop.open { display: flex; }
+    .adm-modal { background: var(--surface, #1a1a1a); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 28px; max-width: 480px; width: 90%; }
+    .adm-modal h3 { margin: 0 0 16px; font-size: 18px; }
+    .adm-modal label { display: block; margin-bottom: 12px; font-size: 13px; }
+    .adm-modal label span { display: block; opacity: 0.7; margin-bottom: 4px; font-size: 12px; }
+    .adm-modal input, .adm-modal select, .adm-modal textarea { width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 9px 11px; color: inherit; font: inherit; font-size: 13px; }
+    .adm-modal textarea { min-height: 70px; resize: vertical; }
+    .adm-modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+
+    .adm-msg-error { background: rgba(255, 80, 80, 0.1); border: 1px solid rgba(255, 80, 80, 0.3); padding: 10px 14px; border-radius: 4px; font-size: 13px; margin-top: 10px; }
+    .adm-msg-success { background: rgba(80, 255, 120, 0.08); border: 1px solid rgba(80, 255, 120, 0.3); padding: 10px 14px; border-radius: 4px; font-size: 13px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="adm-wrap">
+    <div class="adm-head">
+      <div>
+        <a class="adm-nav-back" href="/admin">← Admin</a>
+        <h1>Affiliate management</h1>
+      </div>
+      <button class="adm-cta" type="button" onclick="narveAdm.openCreate()">+ Create new affiliate</button>
+    </div>
+
+    <div id="global-message"></div>
+
+    <!-- Pending payouts table -->
+    <div class="adm-section">
+      <h2>
+        <span>Pending payouts</span>
+        <span class="adm-count">{{ pending_payout_count }} affiliates above threshold</span>
+      </h2>
+      <div class="adm-card">
+        <table class="adm-table">
+          <thead>
+            <tr>
+              <th>Affiliate</th>
+              <th>Pending</th>
+              <th>Unpaid count</th>
+              <th>Payout email</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ raw_payout_rows }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- All affiliates table -->
+    <div class="adm-section">
+      <h2>
+        <span>Active affiliates</span>
+        <span class="adm-count">{{ total_affiliates }} total</span>
+      </h2>
+      <div class="adm-card">
+        <table class="adm-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Tier</th>
+              <th>Rate</th>
+              <th>Conversions</th>
+              <th>Total earnings</th>
+              <th>Status</th>
+              <th>Code</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ raw_affiliate_rows }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create affiliate modal -->
+  <div class="adm-modal-backdrop" id="create-modal" onclick="narveAdm.backdropClose(event)">
+    <div class="adm-modal" onclick="event.stopPropagation()">
+      <h3>Create affiliate account</h3>
+      <label>
+        <span>User email (must already be a narve.ai user)</span>
+        <input type="email" id="c-email" placeholder="partner@example.com">
+      </label>
+      <label>
+        <span>Commission rate (0.05 to 0.50)</span>
+        <input type="number" id="c-rate" value="0.20" step="0.01" min="0.05" max="0.50">
+      </label>
+      <label>
+        <span>Tier</span>
+        <select id="c-tier">
+          <option value="partner">Partner</option>
+          <option value="premium_partner">Premium partner</option>
+          <option value="top_tier">Top tier</option>
+        </select>
+      </label>
+      <label>
+        <span>Payout method</span>
+        <select id="c-payout-method">
+          <option value="">—</option>
+          <option value="paypal">PayPal</option>
+          <option value="stripe_connect">Stripe Connect</option>
+          <option value="wire">Wire</option>
+          <option value="manual">Manual (email)</option>
+        </select>
+      </label>
+      <label>
+        <span>Payout email</span>
+        <input type="email" id="c-payout-email" placeholder="payouts@example.com">
+      </label>
+      <label>
+        <span>Internal notes (optional)</span>
+        <textarea id="c-notes" placeholder="e.g. co-runs PredictionMarkets newsletter"></textarea>
+      </label>
+      <div id="create-message"></div>
+      <div class="adm-modal-actions">
+        <button type="button" class="adm-btn-secondary" onclick="narveAdm.closeCreate()">Cancel</button>
+        <button type="button" class="adm-cta" onclick="narveAdm.submitCreate()">Create account</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+window.narveAdm = (function() {
+  function $(id) { return document.getElementById(id); }
+  function setMsg(id, text, kind) {
+    var el = $(id);
+    if (!el) return;
+    el.innerHTML = text
+      ? '<div class="adm-msg-' + (kind || 'success') + '">' + text + '</div>'
+      : '';
+  }
+  return {
+    openCreate: function() { $('create-modal').classList.add('open'); },
+    closeCreate: function() {
+      $('create-modal').classList.remove('open');
+      setMsg('create-message', '');
+    },
+    backdropClose: function(e) {
+      if (e.target === e.currentTarget) this.closeCreate();
+    },
+    submitCreate: function() {
+      var email = ($('c-email').value || '').trim().toLowerCase();
+      if (!email || email.indexOf('@') === -1) {
+        setMsg('create-message', 'Enter a valid user email.', 'error');
+        return;
+      }
+      var rate = parseFloat($('c-rate').value);
+      var payload = {
+        user_email: email,
+        commission_rate: rate,
+        tier: $('c-tier').value,
+        payout_method: $('c-payout-method').value || null,
+        payout_email: ($('c-payout-email').value || '').trim() || null,
+        notes: ($('c-notes').value || '').trim() || null,
+      };
+      fetch('/admin/affiliates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then(function(r) { return r.json().then(function(j){ return [r.ok, j]; }); })
+        .then(function(pair) {
+          if (!pair[0]) {
+            setMsg('create-message', pair[1].detail || 'Failed to create.', 'error');
+            return;
+          }
+          setMsg('create-message', 'Created. Refreshing…');
+          setTimeout(function(){ window.location.reload(); }, 600);
+        })
+        .catch(function(){
+          setMsg('create-message', 'Network error.', 'error');
+        });
+    },
+    markPaid: function(affiliateId, rowEl) {
+      if (!confirm('Confirm payment sent? This will flip all pending commissions to paid and cannot be undone.')) return;
+      fetch('/admin/affiliates/' + affiliateId + '/payout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+        .then(function(r) { return r.json().then(function(j){ return [r.ok, j]; }); })
+        .then(function(pair) {
+          if (!pair[0]) {
+            setMsg('global-message', pair[1].detail || 'Mark-paid failed.', 'error');
+            return;
+          }
+          setMsg('global-message',
+            'Marked £' + pair[1].total_paid_gbp + ' paid across ' + pair[1].rows + ' conversions.');
+          setTimeout(function(){ window.location.reload(); }, 800);
+        })
+        .catch(function(){
+          setMsg('global-message', 'Network error.', 'error');
+        });
+    },
+  };
+})();
+// Delegate mark-paid button clicks so we don't need inline onclicks in
+// the server-rendered <tr>. The Python side renders the button with
+// data-affiliate-id; we intercept here.
+document.addEventListener('click', function(ev) {
+  var btn = ev.target.closest && ev.target.closest('.mark-paid-btn');
+  if (!btn) return;
+  var id = btn.getAttribute('data-affiliate-id');
+  if (id) window.narveAdm.markPaid(id, btn.closest('tr'));
+});
+</script>
+</body>
+</html>

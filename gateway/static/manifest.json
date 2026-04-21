@@ -1,0 +1,61 @@
+{
+  "name": "narve.ai — Prediction Market Intelligence",
+  "short_name": "narve.ai",
+  "description": "Prediction market intelligence for serious traders.",
+  "start_url": "/dashboards",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
+  "orientation": "any",
+  "categories": ["finance", "business", "productivity"],
+  "lang": "en",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/_gateway_static/img/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/_gateway_static/img/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/_gateway_static/img/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/_gateway_static/img/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboards",
+      "short_name": "Dashboards",
+      "url": "/dashboards",
+      "description": "All prediction-market dashboards"
+    },
+    {
+      "name": "Intelligence",
+      "short_name": "Intel",
+      "url": "/intelligence",
+      "description": "Ask the research agent"
+    },
+    {
+      "name": "Signal Search",
+      "short_name": "Search",
+      "url": "/signal-search",
+      "description": "Search markets and signals"
+    }
+  ]
+}
