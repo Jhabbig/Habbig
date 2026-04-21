@@ -23,6 +23,19 @@ KALSHI_API_BASE = "https://trading-api.kalshi.com/trade-api/v2"
 SERVICE_TOKEN_TTL_SEC = 20 * 3600  # assume ~24h token lifetime, refresh at 20h
 SERVICE_TOKEN_REFRESH_MARGIN = 3600  # refresh if <1h remaining
 
+# Explicit per-call timeout (M14): even though the httpx.AsyncClient is
+# constructed with a client-level timeout, passing ``timeout=`` on every
+# request guarantees that an accidental client swap to one with
+# ``timeout=None`` cannot leave us hanging on an unresponsive Kalshi
+# endpoint.
+REQUEST_TIMEOUT_SEC = 15.0
+
+# Exponential backoff after login failures (L9). Prevents both
+# brute-force lockout by Kalshi and log-flood on sustained outages.
+_LOGIN_BACKOFF_START = 30.0     # seconds
+_LOGIN_BACKOFF_MAX = 600.0      # 10 minutes
+_LOGIN_BACKOFF_FACTOR = 2.0
+
 
 class KalshiClient:
     """Async wrapper around the Kalshi trading API v2."""
@@ -38,11 +51,30 @@ class KalshiClient:
         self.base_url = base_url.rstrip("/")
         self._client: Optional[httpx.AsyncClient] = None
         self._timeout = timeout
-        # Service account (optional) — used to fetch public market data
+        # Service account (optional) — used to fetch public market data.
+        #
+        # SECURITY (M15): we DO NOT retain the plaintext password on
+        # ``self``. A long-lived process that holds the password in
+        # memory is a juicy target for core-dump / heap-inspection
+        # attacks, and it is rarely needed after the first successful
+        # login (the refresh token / service token carries the session
+        # forward). Instead we hold the password in a closure-scoped
+        # ``_password_provider`` callable that is cleared as soon as
+        # login succeeds. Callers who supply ``service_password`` get
+        # exactly one login attempt; after that the refresh token is
+        # the only credential in memory.
         self._service_email = service_email
-        self._service_password = service_password
+        _pw = service_password  # local so the closure captures it
+        def _provider() -> Optional[str]:
+            return _pw
+        self._password_provider: Optional[callable] = _provider if service_password else None  # type: ignore[assignment]
+        # Deliberately NOT stored: self._service_password. See above.
         self._service_token: Optional[str] = None
         self._service_token_expires_at: float = 0.0
+        self._service_refresh_token: Optional[str] = None
+        # Exponential backoff state for failed logins (L9).
+        self._login_next_attempt_at: float = 0.0
+        self._login_backoff: float = _LOGIN_BACKOFF_START
         # Lock is created lazily on first use to avoid binding to a loop at import time
         self._service_login_lock: Optional[asyncio.Lock] = None
 
@@ -69,7 +101,7 @@ class KalshiClient:
         the service login, returns None — caller falls back to unauthenticated
         requests (which Kalshi currently rejects for public data).
         """
-        if not self._service_email or not self._service_password:
+        if not self._service_email or self._password_provider is None:
             return None
 
         now = time.time()
@@ -93,7 +125,26 @@ class KalshiClient:
             ):
                 return self._service_token
 
-            result = await self.login(self._service_email, self._service_password)
+            # L9: honour the exponential-backoff window. We silently
+            # return None while backing off so callers fall back to
+            # cached market data rather than hammering /login.
+            if now < self._login_next_attempt_at:
+                log.debug(
+                    "Kalshi login suppressed by backoff (%.1fs remaining)",
+                    self._login_next_attempt_at - now,
+                )
+                return None
+
+            # M15: pull the password from the closure, use it once,
+            # then move on. We never copy it onto ``self``.
+            password = self._password_provider() if self._password_provider else None
+            if not password:
+                return None
+
+            result = await self.login(self._service_email, password)
+            # Scrub the local reference promptly.
+            password = None  # noqa: F841
+
             if "error" in result or not result.get("token"):
                 log.error(
                     "Kalshi service-account login failed: %s",
@@ -101,10 +152,22 @@ class KalshiClient:
                 )
                 self._service_token = None
                 self._service_token_expires_at = 0.0
+                # Schedule the next login attempt with exponential backoff.
+                self._login_next_attempt_at = time.time() + self._login_backoff
+                self._login_backoff = min(
+                    self._login_backoff * _LOGIN_BACKOFF_FACTOR,
+                    _LOGIN_BACKOFF_MAX,
+                )
                 return None
 
+            # Success — store ONLY the session + refresh tokens. The
+            # plaintext password is already out of scope here.
             self._service_token = result["token"]
             self._service_token_expires_at = time.time() + SERVICE_TOKEN_TTL_SEC
+            self._service_refresh_token = result.get("refresh_token") or self._service_refresh_token
+            # Reset backoff on success.
+            self._login_next_attempt_at = 0.0
+            self._login_backoff = _LOGIN_BACKOFF_START
             log.info("Kalshi service-account login succeeded")
             return self._service_token
 
@@ -127,6 +190,7 @@ class KalshiClient:
             resp = await client.post(
                 f"{self.base_url}/login",
                 json={"email": email, "password": password},
+                timeout=REQUEST_TIMEOUT_SEC,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -164,7 +228,12 @@ class KalshiClient:
             params["cursor"] = cursor
 
         async def _call(headers: dict[str, str]) -> httpx.Response:
-            return await client.get(f"{self.base_url}/markets", params=params, headers=headers)
+            return await client.get(
+                f"{self.base_url}/markets",
+                params=params,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT_SEC,
+            )
 
         try:
             headers = await self._public_headers()
@@ -211,7 +280,11 @@ class KalshiClient:
         client = await self._ensure_client()
 
         async def _call(headers: dict[str, str]) -> httpx.Response:
-            return await client.get(f"{self.base_url}/markets/{ticker}", headers=headers)
+            return await client.get(
+                f"{self.base_url}/markets/{ticker}",
+                headers=headers,
+                timeout=REQUEST_TIMEOUT_SEC,
+            )
 
         try:
             headers = await self._public_headers()
@@ -237,6 +310,7 @@ class KalshiClient:
             resp = await client.get(
                 f"{self.base_url}/portfolio/balance",
                 headers=self._auth_headers(token),
+                timeout=REQUEST_TIMEOUT_SEC,
             )
             resp.raise_for_status()
             return resp.json()
@@ -255,6 +329,7 @@ class KalshiClient:
             resp = await client.get(
                 f"{self.base_url}/portfolio/positions",
                 headers=self._auth_headers(token),
+                timeout=REQUEST_TIMEOUT_SEC,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -275,6 +350,7 @@ class KalshiClient:
             resp = await client.get(
                 f"{self.base_url}/portfolio/orders",
                 headers=self._auth_headers(token),
+                timeout=REQUEST_TIMEOUT_SEC,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -334,6 +410,7 @@ class KalshiClient:
                 f"{self.base_url}/portfolio/orders",
                 json=body,
                 headers=self._auth_headers(token),
+                timeout=REQUEST_TIMEOUT_SEC,
             )
             resp.raise_for_status()
             data = resp.json()

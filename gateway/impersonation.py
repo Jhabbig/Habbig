@@ -37,54 +37,70 @@ IMPERSONATION_COOKIE_TTL = 4 * 60 * 60  # 4 hours — longer than a typical supp
 #
 # Destructive or irreversible actions the admin must NOT be able to trigger
 # while viewing as another user. Matched against request.url.path with
-# fullmatch — use (?P<…>) groups only for clarity, not for routing. Ordered
-# roughly by expected frequency so the common case is fast.
+# re.search (NOT fullmatch) — so a prefix like `/account/password` catches
+# `/account/password-reset`, `/account/password/change`, and any query-less
+# variant without having to enumerate suffixes. Ordered roughly by expected
+# frequency so the common case is fast.
 
 _BLOCKED_PATTERNS = [
-    # Account-level
-    r"/account/delete.*",
-    r"/auth/logout.*",            # Must use /admin/impersonations/end instead
-    r"/account/password.*",
-    r"/account/change-email.*",
-    r"/account/email.*",
-    r"/settings/password.*",
-    r"/settings/email.*",
-    r"/settings/2fa.*",           # Even though 2FA was removed, defend if re-added
-    r"/api/v\d+/account/delete.*",
-    r"/api/account/delete.*",
-    r"/api/v\d+/account/password.*",
-    r"/api/account/password.*",
+    # Account-level — deliberately bare prefixes so any sub-path matches.
+    r"/account/password",         # catches /account/password, /account/password-reset, /account/password/change
+    r"/account/email",            # change-email, email/verify, etc.
+    r"/account/delete",
+    r"/account/2fa",              # 2FA setup/disable — blocked even on GET
+    r"/account/api-keys",         # API key create/rotate/revoke
+    r"/account/payment",          # saved payment methods
+    r"/auth/logout",              # Must use /admin/impersonations/end instead
+    r"/settings/password",
+    r"/settings/email",
+    r"/settings/2fa",             # Even though 2FA was removed, defend if re-added
 
-    # Billing / subscriptions
-    r"/billing/cancel.*",
-    r"/billing/checkout.*",
-    r"/subscribe.*",              # Prevent starting a real Stripe checkout
-    r"/checkout.*",
-    r"/api/billing/cancel.*",
-    r"/api/billing/checkout.*",
-    r"/api/v\d+/billing/.*",      # Entire billing API off-limits
+    # Billing / subscriptions — entire surface is off-limits.
+    r"/billing",                  # /billing/cancel, /billing/checkout, /billing/portal, etc.
+    r"/subscribe",                # Prevent starting a real Stripe checkout
+    r"/checkout",
+    r"/api/billing",
+    r"/api/v\d+/billing",
+
+    # Admin — impersonated sessions should never hit admin routes at all.
+    # (The /admin/impersonations/end endpoint is whitelisted below.)
+    r"/admin",
 
     # Content the impersonated user "owns"
-    r"/predictions/.+/delete.*",
-    r"/api/predictions/.+/delete.*",
-    r"/api/v\d+/predictions/.+/delete.*",
-    r"/widgets/.*",               # Embed widgets
-    r"/api/widgets/.*",
-    r"/api/v\d+/widgets/.*",
+    r"/predictions/.+/delete",
+    r"/api/predictions/.+/delete",
+    r"/api/v\d+/predictions/.+/delete",
+    r"/widgets",                  # Embed widgets
+    r"/api/widgets",
+    r"/api/v\d+/widgets",
 
     # AI / Intelligence (would burn user's token quota)
-    r"/intelligence/.*",
-    r"/api/intelligence/.*",
-    r"/api/v\d+/intelligence/.*",
-    r"/api/ai/.*",
-    r"/api/v\d+/ai/.*",
+    r"/intelligence",
+    r"/api/intelligence",
+    r"/api/v\d+/intelligence",
+    r"/api/ai",
+    r"/api/v\d+/ai",
 ]
 
 _BLOCKED_RE = [re.compile(p) for p in _BLOCKED_PATTERNS]
 
+# Paths whose mere existence leaks sensitive UX (e.g. "delete my account"
+# confirmation pages, 2FA QR codes). These are blocked on ALL methods
+# including GET/HEAD, so the admin can't screenshot a 2FA secret or
+# stumble onto a destructive-looking confirmation page as someone else.
+_READ_ALSO_BLOCKED_PATTERNS = [
+    r"/account/delete",
+    r"/account/2fa",
+    r"/account/api-keys",
+    r"/account/payment",
+    r"/admin",
+]
+_READ_ALSO_BLOCKED_RE = [re.compile(p) for p in _READ_ALSO_BLOCKED_PATTERNS]
 
-# Methods considered state-changing. GET/HEAD/OPTIONS pass through untouched
-# so the admin can still *view* the account.
+
+# Methods considered state-changing. GET/HEAD/OPTIONS normally pass through
+# untouched so the admin can still *view* the account — but a few GET paths
+# leak info (see _READ_ALSO_BLOCKED_RE above) and are blocked separately.
 _STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # Paths that MUST remain reachable during impersonation even though they
@@ -95,15 +111,25 @@ _ALWAYS_ALLOWED = frozenset({"/admin/impersonations/end"})
 def is_action_blocked(method: str, path: str) -> bool:
     """Return True if this request should be blocked due to impersonation.
 
-    Only state-changing requests are evaluated — GETs always pass through so
-    the admin can see the user's account state.
+    State-changing methods (POST/PUT/PATCH/DELETE) are checked against the
+    full blocklist. A smaller set of paths is also blocked on GET/HEAD so
+    the admin can't view e.g. a 2FA setup QR code or an account-delete
+    confirmation page as the impersonated user.
     """
-    if method.upper() not in _STATE_CHANGING_METHODS:
-        return False
     if path in _ALWAYS_ALLOWED:
         return False
+
+    method_upper = method.upper()
+    # Always-on block: these paths are sensitive even for read methods.
+    for pattern in _READ_ALSO_BLOCKED_RE:
+        if pattern.search(path):
+            return True
+
+    if method_upper not in _STATE_CHANGING_METHODS:
+        return False
+
     for pattern in _BLOCKED_RE:
-        if pattern.fullmatch(path):
+        if pattern.search(path):
             return True
     return False
 

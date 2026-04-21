@@ -7,6 +7,7 @@ leaked public key cannot access backend error data.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any, Optional
@@ -99,10 +100,16 @@ def init_sentry(platform: str = "backend") -> bool:
 
 
 def set_user_context(user_id: int, email: Optional[str] = None, tier: Optional[str] = None) -> None:
-    """Attach user context to the current Sentry scope."""
+    """Attach user context to the current Sentry scope.
+
+    The user id is hashed before being sent to Sentry so raw internal ids
+    never leave the server. Email is intentionally dropped — correlating
+    across events is handled via the hashed id.
+    """
     try:
         import sentry_sdk
-        sentry_sdk.set_user({"id": str(user_id), "email": email})
+        hashed_id = hashlib.sha256(f"narve:{user_id}".encode()).hexdigest()[:16]
+        sentry_sdk.set_user({"id": hashed_id})
         if tier:
             with sentry_sdk.configure_scope() as scope:
                 scope.set_tag("tier", tier)

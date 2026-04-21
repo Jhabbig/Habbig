@@ -37,6 +37,16 @@ if [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
+# ── secrets hygiene: the env file is loaded by systemd via EnvironmentFile=
+# and must be locked down — root-owned, mode 0600 — or any local user can
+# read every secret (cookie key, API tokens, Fernet key, DB path, etc.).
+say "Enforcing secure perms on $ENV_FILE (root:root 0600)..."
+if sudo chown root:root "$ENV_FILE" && sudo chmod 600 "$ENV_FILE"; then
+    ok "$ENV_FILE is now root:root 0600"
+else
+    warn "Could not lock down $ENV_FILE — do this manually: sudo chown root:root $ENV_FILE && sudo chmod 600 $ENV_FILE"
+fi
+
 # ── obtain sudo up front (interactive — one password prompt) ────────────────
 say "Requesting sudo (you may be prompted for your password)..."
 if ! sudo -v; then
@@ -82,7 +92,12 @@ Type=simple
 User=${USER_NAME}
 Group=${USER_NAME}
 WorkingDirectory=${GATEWAY_DIR}
+# All secrets MUST come from the EnvironmentFile below — never add
+# Environment=KEY=secret lines here (they leak via `systemctl show`,
+# journalctl, and the unit file itself which is world-readable).
+# The env file must be root:root 0600.
 EnvironmentFile=${ENV_FILE}
+# Non-secret toggles only — safe to pin inline.
 Environment=PRODUCTION=1
 Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/bin/bash -c '/usr/bin/fuser -k 7000/tcp 2>/dev/null || true; sleep 1'

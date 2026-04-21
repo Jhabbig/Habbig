@@ -32,14 +32,24 @@ jobs:
         run: |
           STATUS=$(curl -sS -o /tmp/health.json -w '%{http_code}' https://staging.narve.ai/health)
           if [ "$STATUS" != "200" ]; then
-              echo "✗ staging not healthy (HTTP $STATUS) — fix staging first"
-              cat /tmp/health.json || true
+              echo "✗ staging not healthy (HTTP $STATUS)"
+              # Scrub secrets/stack-traces before logging. jq preferred;
+              # fall back to the status code alone if jq is unavailable.
+              if command -v jq >/dev/null; then
+                  jq 'del(.stack_trace, .env, .secrets, .config)' /tmp/health.json || true
+              else
+                  echo "(jq unavailable — logging HTTP status only: $STATUS)"
+              fi
               exit 1
           fi
           JSON_STATUS=$(python3 -c "import json; print(json.load(open('/tmp/health.json'))['status'])")
           if [ "$JSON_STATUS" = "error" ]; then
               echo "✗ staging health status is 'error'"
-              cat /tmp/health.json
+              if command -v jq >/dev/null; then
+                  jq 'del(.stack_trace, .env, .secrets, .config)' /tmp/health.json || true
+              else
+                  echo "(jq unavailable — logging HTTP status only: $STATUS)"
+              fi
               exit 1
           fi
           echo "✓ staging healthy (status=$JSON_STATUS)"
@@ -51,10 +61,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Deploy production via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.0.3  # TODO: pin to commit SHA
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
@@ -99,12 +109,21 @@ jobs:
           STATUS=$(curl -sS -o /tmp/health.json -w '%{http_code}' https://narve.ai/health)
           if [ "$STATUS" != "200" ]; then
               echo "✗ production returned HTTP $STATUS"
-              cat /tmp/health.json || true
+              # Scrub potentially-sensitive fields before dumping into CI logs.
+              if command -v jq >/dev/null; then
+                  jq 'del(.stack_trace, .env, .secrets, .config)' /tmp/health.json || true
+              else
+                  echo "(jq unavailable — logging HTTP status only: $STATUS)"
+              fi
               echo ""
               echo "🚨 IMMEDIATE ACTION: bash scripts/rollback.sh"
               exit 1
           fi
-          python3 -m json.tool /tmp/health.json
+          if command -v jq >/dev/null; then
+              jq 'del(.stack_trace, .env, .secrets, .config)' /tmp/health.json
+          else
+              echo "✓ HTTP $STATUS (body not logged — jq unavailable)"
+          fi
           echo "✓ production deployed and healthy"
 
       - name: Notify on failure

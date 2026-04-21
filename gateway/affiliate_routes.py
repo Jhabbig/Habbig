@@ -619,6 +619,12 @@ async def admin_affiliates_create(request: Request):
 @app.patch("/admin/affiliates/{affiliate_id}")
 async def admin_affiliates_update(request: Request, affiliate_id: int):
     admin = _require_admin_user(request)
+    # SECURITY (H8): editing commission_rate / tier / is_active can be
+    # abused by a level-1 admin to self-promote their own affiliate
+    # account or hand a collaborator a 100% rate. Restrict mutation to
+    # super-admin (level >= 2). Read endpoints remain at admin level 1.
+    if (admin.get("admin_level") or 0) < 2:
+        raise HTTPException(status_code=403, detail="super-admin required")
     try:
         body = await request.json()
     except Exception:

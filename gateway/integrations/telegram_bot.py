@@ -19,8 +19,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Optional
+
+# Telegram handle format: 1-30 alphanumeric / underscore characters.
+_HANDLE_RE = re.compile(r"^[a-zA-Z0-9_]{1,30}$")
 
 log = logging.getLogger("integrations.telegram")
 
@@ -79,19 +83,55 @@ async def start_bot() -> None:
         chat_id = str(update.effective_chat.id)
         username = update.effective_user.username or ""
 
-        # Look up user by link code (use invite token as link code for now)
-        user = None
-        with db.conn() as c:
-            # Try matching against invite token
-            token_row = c.execute(
-                "SELECT claimed_by_user_id FROM invite_tokens WHERE token = ? AND status = 'claimed'",
-                (link_code,),
-            ).fetchone()
-            if token_row:
-                user_id = token_row["claimed_by_user_id"]
-            else:
-                await update.message.reply_text("Invalid link code. Check your narve.ai Settings page.")
-                return
+        # SECURITY (H15): the previous implementation accepted ANY claimed
+        # invite_tokens.token as a Telegram link code. That let an attacker
+        # who learned another user's invite token link the victim's
+        # narve.ai account to the attacker's Telegram chat (account
+        # takeover for alerts + read access to the victim's alert feed).
+        #
+        # The correct flow is a short-lived, user-scoped one-shot code:
+        # the user initiates the link from the authenticated web UI, a
+        # 6-digit code is written to `pending_telegram_links(user_id,
+        # code, expires_at)`, the user types `/subscribe <code>` on
+        # Telegram and the code is consumed exactly once.
+        #
+        # TODO: table pending_telegram_links(user_id INTEGER NOT NULL,
+        #       code TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL,
+        #       created_at INTEGER NOT NULL) must be created, and a
+        #       corresponding web-UI endpoint must mint codes. Until the
+        #       table exists this handler refuses all link attempts
+        #       rather than falling back to the unsafe invite-token
+        #       lookup.
+        user_id = None
+        now_ts = int(time.time())
+        try:
+            with db.conn() as c:
+                pending = c.execute(
+                    "SELECT user_id, expires_at FROM pending_telegram_links "
+                    "WHERE code = ?",
+                    (link_code,),
+                ).fetchone()
+                if pending and int(pending["expires_at"]) > now_ts:
+                    user_id = pending["user_id"]
+                    # One-shot: consume the code immediately so it cannot
+                    # be replayed, even on DB errors below.
+                    c.execute(
+                        "DELETE FROM pending_telegram_links WHERE code = ?",
+                        (link_code,),
+                    )
+        except Exception as e:
+            # Most likely: table does not exist yet. Fail closed.
+            log.warning("Telegram subscribe: pending_telegram_links lookup failed: %s", e)
+            await update.message.reply_text(
+                "Telegram linking is temporarily unavailable. Please try again later."
+            )
+            return
+
+        if user_id is None:
+            await update.message.reply_text(
+                "Invalid or expired link code. Generate a fresh code from your narve.ai Settings page."
+            )
+            return
 
         now = int(time.time())
         try:
@@ -164,6 +204,14 @@ async def start_bot() -> None:
             return
 
         handle = args[0].lstrip("@")
+        # SECURITY (L10): reject malformed handles instead of passing
+        # arbitrary input down to the DB layer (possible cache-key or
+        # log-injection vector, and friendly to the user either way).
+        if not _HANDLE_RE.match(handle):
+            await update.message.reply_text(
+                "Invalid handle. Use letters, numbers, or underscore (1–30 chars). Example: /source @nate_silver"
+            )
+            return
         cred = db.get_source_credibility(handle)
         if not cred:
             await update.message.reply_text(f"Source @{handle} not found.")

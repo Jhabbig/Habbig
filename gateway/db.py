@@ -1110,19 +1110,42 @@ def get_prediction_markers_for_market(market_slug: str) -> list[sqlite3.Row]:
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────
-# Using PBKDF2-HMAC-SHA256 (stdlib, no external deps). 200k iterations.
+# Using PBKDF2-HMAC-SHA256 (stdlib, no external deps). 600k iterations (OWASP
+# 2023+). Legacy 200k hashes still verified so existing users can log in;
+# callers should check `password_needs_rehash()` after a successful verify and
+# re-hash at the modern iteration count to upgrade the row.
+
+PBKDF2_ITERATIONS = 600_000
+PBKDF2_LEGACY_ITERATIONS = 200_000
 
 
-def _hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+def _hash_password(
+    password: str,
+    salt: Optional[str] = None,
+    iterations: int = PBKDF2_ITERATIONS,
+) -> tuple[str, str]:
     if salt is None:
         salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations)
     return dk.hex(), salt
 
 
 def verify_password(password: str, stored_hash: str, salt: str) -> bool:
-    candidate, _ = _hash_password(password, salt)
-    return hmac.compare_digest(candidate, stored_hash)
+    candidate, _ = _hash_password(password, salt, PBKDF2_ITERATIONS)
+    if hmac.compare_digest(candidate, stored_hash):
+        return True
+    legacy, _ = _hash_password(password, salt, PBKDF2_LEGACY_ITERATIONS)
+    return hmac.compare_digest(legacy, stored_hash)
+
+
+def password_needs_rehash(password: str, stored_hash: str, salt: str) -> bool:
+    """True when the verified hash was computed at the legacy iteration count.
+
+    Callers should re-hash + UPDATE on the next successful login so users
+    opportunistically migrate to the modern PBKDF2 iteration count.
+    """
+    modern, _ = _hash_password(password, salt, PBKDF2_ITERATIONS)
+    return not hmac.compare_digest(modern, stored_hash)
 
 
 # ── User operations ───────────────────────────────────────────────────────────
@@ -1342,6 +1365,21 @@ def cancel_subscription(user_id: int, dashboard_key: str) -> None:
 # ── Invite token operations ──────────────────────────────────────────────────
 
 
+INVITE_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
+
+
+def _ensure_invite_expires_at_column() -> None:
+    """Idempotent ALTER TABLE to add expires_at column for existing DBs."""
+    try:
+        with conn() as c:
+            c.execute("ALTER TABLE invite_tokens ADD COLUMN expires_at INTEGER")
+    except sqlite3.OperationalError:
+        pass  # Column already exists.
+
+
+_ensure_invite_expires_at_column()
+
+
 def generate_invite_token() -> str:
     """Generate a 32-character URL-safe random invite token."""
     return secrets.token_urlsafe(24)
@@ -1350,32 +1388,42 @@ def generate_invite_token() -> str:
 def create_invite_token(note: str = "", target_email: str = "") -> str:
     """Create a new unclaimed invite token. Returns the token string."""
     token = generate_invite_token()
+    now = int(time.time())
     with conn() as c:
         c.execute(
-            "INSERT INTO invite_tokens (token, status, note, target_email, created_at) VALUES (?, 'unclaimed', ?, ?, ?)",
-            (token, note, target_email.strip() or None, int(time.time())),
+            "INSERT INTO invite_tokens (token, status, note, target_email, created_at, expires_at) "
+            "VALUES (?, 'unclaimed', ?, ?, ?, ?)",
+            (token, note, target_email.strip() or None, now, now + INVITE_TOKEN_TTL_SECONDS),
         )
     return token
 
 
 def get_invite_token(token: str) -> Optional[sqlite3.Row]:
     token = token.strip()
+    now = int(time.time())
     with conn() as c:
-        return c.execute("SELECT * FROM invite_tokens WHERE token = ?", (token,)).fetchone()
+        return c.execute(
+            "SELECT * FROM invite_tokens WHERE token = ? "
+            "AND status = 'unclaimed' "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (token, now),
+        ).fetchone()
 
 
 def claim_invite_token(token_str: str, user_id: int, email: str) -> bool:
-    """Atomically claim a token. Returns True if claimed, False if already claimed (race condition)."""
+    """Atomically claim a token. Returns True if claimed, False if already claimed or expired."""
     token_str = token_str.strip()
+    now = int(time.time())
     with conn() as c:
-        # Atomic: only update if still unclaimed (prevents race condition)
         cur = c.execute(
             "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, "
-            "claimed_by_email = ?, claimed_at = ? WHERE token = ? AND status = 'unclaimed'",
-            (user_id, email, int(time.time()), token_str),
+            "claimed_by_email = ?, claimed_at = ? "
+            "WHERE token = ? AND status = 'unclaimed' "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (user_id, email, now, token_str, now),
         )
         if cur.rowcount == 0:
-            return False  # Token was already claimed by another request
+            return False  # Already claimed, revoked, or expired
         c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
                    (token_str, user_id))
         return True
@@ -1400,9 +1448,17 @@ def list_all_users() -> list[sqlite3.Row]:
 
 
 def set_user_role(user_id: int, level: int) -> None:
-    """Set user role: 0=user, 1=admin, 2=super_admin."""
+    """Set user role: 0=user, 1=admin, 2=super_admin.
+
+    Revokes all hardened sessions for the user after a role change so the
+    new privilege level cannot be exercised on a pre-existing cookie.
+    """
     with conn() as c:
         c.execute("UPDATE users SET is_admin = ? WHERE id = ?", (level, user_id))
+    try:
+        revoke_all_user_sessions(user_id)
+    except Exception:
+        pass  # Revocation best-effort; DB row change already committed.
 
 
 def set_user_admin(user_id: int, is_admin: bool) -> None:
@@ -3615,7 +3671,7 @@ def export_audit_log_csv(
 # keep working — new logins write to BOTH tables in the same txn.
 
 SESSION_HARDENED_TTL = 7 * 24 * 60 * 60  # 7 days
-MAX_SESSIONS_PER_USER = 5
+MAX_SESSIONS_PER_USER = 3
 
 
 def _hash_session_token(raw: str) -> str:
@@ -3721,6 +3777,41 @@ def revoke_user_session(session_id: int, user_id: int) -> bool:
             (now, session_id, user_id),
         )
         return cur.rowcount > 0
+
+
+def cascade_delete_user(user_id: int) -> dict:
+    """Delete a user and every row in any table that has a `user_id` column.
+
+    Used by the user-initiated account-deletion flow (GDPR Art. 17) and the
+    admin delete flow. Returns a dict mapping table names to deleted-row
+    counts so callers can audit the scope. Fails open: a table that's missing
+    or schema-mismatched is skipped rather than aborting the whole delete.
+    """
+    deleted: dict = {}
+    with conn() as c:
+        # Enumerate every user-scoped table by inspecting the schema.
+        rows = c.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        for r in rows:
+            table = r["name"]
+            if table == "users":
+                continue  # Delete users last so FK-ish cascades don't orphan.
+            try:
+                cols = [c2["name"] for c2 in c.execute(f"PRAGMA table_info({table})").fetchall()]
+            except Exception:
+                continue
+            if "user_id" in cols:
+                try:
+                    cur = c.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+                    if cur.rowcount:
+                        deleted[table] = cur.rowcount
+                except Exception:
+                    continue
+        # Then the user row itself.
+        cur = c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        deleted["users"] = cur.rowcount
+    return deleted
 
 
 def revoke_user_session_by_token(raw_token: str) -> bool:

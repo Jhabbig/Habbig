@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import httpx
@@ -11,6 +12,24 @@ log = logging.getLogger("gateway.polymarket")
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API = "https://clob.polymarket.com"
+
+# SECURITY (C9 partial): strict Ethereum-address shape (0x + 40 hex).
+# User-supplied wallet addresses MUST pass this before being used in any
+# position / order / linking query. This is the bare minimum — it blocks
+# query-injection, SSRF via crafted strings, and URL-smuggling — but it
+# is NOT proof of wallet ownership. See the ``validate_eth_address``
+# helper and the TODO on the connect entry points.
+_ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+
+def validate_eth_address(address: str) -> str:
+    """Return the address unchanged if it is a well-formed 0x-40-hex
+    string; raise ``ValueError`` otherwise. Callers MUST use the return
+    value (not the raw input) so there is exactly one chokepoint.
+    """
+    if not isinstance(address, str) or not _ETH_ADDRESS_RE.match(address):
+        raise ValueError("Invalid Ethereum address")
+    return address
 
 
 class PolymarketClient:
@@ -108,7 +127,17 @@ class PolymarketClient:
     # ── Positions (public, by wallet address) ────────────────────────────────
 
     async def get_positions(self, wallet_address: str) -> list[dict]:
-        """Fetch positions for a wallet address from the data API."""
+        """Fetch positions for a wallet address from the data API.
+
+        TODO(security): require EIP-191 signature challenge before
+        linking wallet — see NARVE_SECURITY_AUDIT.md C9. For now we
+        only validate the shape of the address; a user can still query
+        positions for an address they do not own (Polymarket position
+        data is public, so disclosure risk is low — but we do NOT want
+        to accept this address as "verified-owned" anywhere
+        downstream).
+        """
+        wallet_address = validate_eth_address(wallet_address)
         client = await self._ensure_client()
         try:
             resp = await client.get(
@@ -145,7 +174,14 @@ class PolymarketClient:
             return {"error": str(e)}
 
     async def get_orders(self, wallet_address: str) -> list[dict]:
-        """Get open orders for a wallet from the CLOB API."""
+        """Get open orders for a wallet from the CLOB API.
+
+        TODO(security): require EIP-191 signature challenge before
+        linking wallet — see NARVE_SECURITY_AUDIT.md C9. Until then
+        treat this purely as a read of public on-chain state, never as
+        proof that the calling user owns the wallet.
+        """
+        wallet_address = validate_eth_address(wallet_address)
         client = await self._ensure_client()
         try:
             resp = await client.get(

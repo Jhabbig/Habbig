@@ -334,16 +334,27 @@ class ChangeQueueApp:
             change_type = change.get('type', 'manual')
 
             if change_type == 'patch' and change.get('filepath'):
-                # Apply as git patch
+                # Apply as git patch from a file on disk. Validate the
+                # filepath is repo-relative and free of traversal segments
+                # so a queue entry can't be used to read a patch from
+                # /etc/ or elsewhere outside the working tree.
+                raw_path = change['filepath']
+                fp = Path(raw_path)
+                if fp.is_absolute() or ".." in fp.parts:
+                    raise ValueError(
+                        f"Rejected unsafe patch filepath {raw_path!r}: "
+                        "must be a relative path with no '..' segments."
+                    )
                 result = subprocess.run(
-                    ["git", "apply", change['filepath']],
+                    ["git", "apply", str(fp)],
                     capture_output=True, text=True
                 )
                 success = result.returncode == 0
                 error_msg = result.stderr
 
             elif change_type == 'patch' and change.get('diff'):
-                # Apply diff content directly
+                # Apply diff content directly via stdin — safe because
+                # git apply parses it as a unified diff, not as shell.
                 result = subprocess.run(
                     ["git", "apply", "--whitespace=fix", "-"],
                     input=change['diff'],
@@ -353,13 +364,14 @@ class ChangeQueueApp:
                 error_msg = result.stderr
 
             elif change_type == 'script' and change.get('script'):
-                # Run a Python script
-                result = subprocess.run(
-                    ["python", "-c", change['script']],
-                    capture_output=True, text=True
+                # Arbitrary Python script execution was removed — it was
+                # effectively an RCE sink if a queue file was ever loaded
+                # from an untrusted source. Submit diffs via git apply
+                # (file or stdin) instead.
+                raise NotImplementedError(
+                    "Arbitrary script execution removed — submit diffs "
+                    "via git apply instead"
                 )
-                success = result.returncode == 0
-                error_msg = result.stderr or result.stdout
 
             else:
                 # Manual change — just mark as applied

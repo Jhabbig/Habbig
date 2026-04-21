@@ -37,7 +37,14 @@ def _hash_key(raw_key: str) -> str:
 def create_api_key(user_id: int, name: str = "", tier: str = "standard") -> tuple[str, int]:
     """Create a new API key. Returns (raw_key, key_id).
 
-    The raw key is shown ONCE. Only the hash is stored.
+    The raw key is shown ONCE. Only the hash is stored. We stamp
+    ``first_displayed_at`` synchronously with creation so the key can
+    never be retrieved a second time — any GET handler that returns
+    raw key material MUST refuse when this column is non-null (M16).
+
+    TODO: add first_displayed_at column to api_keys table (INTEGER
+    NULLABLE). Until the migration ships the INSERT below will fall
+    back to the legacy column set so existing deploys don't crash.
     """
     raw_key = f"narve_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(raw_key)
@@ -46,14 +53,53 @@ def create_api_key(user_id: int, name: str = "", tier: str = "standard") -> tupl
     now = int(time.time())
 
     with db.conn() as c:
-        cur = c.execute(
-            "INSERT INTO api_keys (key_hash, key_prefix, user_id, name, tier, rate_limit_hour, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (key_hash, prefix, user_id, name, tier, rate_limit, now),
-        )
+        try:
+            cur = c.execute(
+                "INSERT INTO api_keys (key_hash, key_prefix, user_id, name, tier, rate_limit_hour, created_at, first_displayed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (key_hash, prefix, user_id, name, tier, rate_limit, now, now),
+            )
+        except Exception:
+            # Column not yet migrated — fall back. Remove this branch
+            # once 0XX_api_keys_first_displayed_at.py is shipped.
+            log.warning("api_keys.first_displayed_at column missing; falling back to legacy insert")
+            cur = c.execute(
+                "INSERT INTO api_keys (key_hash, key_prefix, user_id, name, tier, rate_limit_hour, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (key_hash, prefix, user_id, name, tier, rate_limit, now),
+            )
         key_id = cur.lastrowid
 
     return raw_key, key_id
+
+
+def get_api_key_raw(key_id: int, user_id: int) -> Optional[str]:
+    """Return the raw key ONLY if it has never been displayed.
+
+    SECURITY (M16): this function is the only sanctioned read path for
+    raw key material. Any ``GET /api/keys/{id}`` endpoint MUST call
+    this helper and 410 Gone when it returns None — the key hash
+    stored in the DB is deliberately irreversible so this function
+    cannot reconstruct a key after first display. It exists as a
+    centralised guard: the create-and-hand-back flow in
+    ``create_api_key`` has already stamped ``first_displayed_at``, so
+    this always returns None in a correctly-migrated DB. The helper is
+    provided so GET handlers have a single chokepoint to refuse
+    re-display (and a single TODO to track when the column lands).
+    """
+    with db.conn() as c:
+        try:
+            row = c.execute(
+                "SELECT first_displayed_at FROM api_keys WHERE id = ? AND user_id = ?",
+                (key_id, user_id),
+            ).fetchone()
+        except Exception:
+            return None
+    if not row:
+        return None
+    # Already displayed → refuse. We never stored the plaintext, so
+    # there is nothing to hand back regardless.
+    return None
 
 
 def _validate_key(request: Request) -> dict:

@@ -29,6 +29,16 @@ PORT=7000
 ENV_FILE="/home/julianhabbig/.gateway_env"
 LOG_FILE="/tmp/gateway.log"
 
+# ── crash-loop backoff ──────────────────────────────────────────────────
+# Track how many restarts we've done inside a rolling window. If the
+# gateway has restarted more than MAX_RESTARTS within WINDOW_SEC, back
+# off for BACKOFF_SEC before attempting again, so we don't hammer a
+# broken config 60 times an hour.
+STATE_FILE="/tmp/narve-watchdog.state"
+MAX_RESTARTS=5
+WINDOW_SEC=60
+BACKOFF_SEC=300
+
 log() {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
 }
@@ -55,7 +65,47 @@ is_habbig_pid() {
     esac
 }
 
+should_backoff() {
+    # Returns 0 (true) if we should skip starting due to recent crash loop.
+    # Prune timestamps older than WINDOW_SEC; if >=MAX_RESTARTS remain and
+    # a backoff marker is fresh, skip.
+    local now
+    now=$(date +%s)
+    local pruned=""
+    if [ -f "$STATE_FILE" ]; then
+        while IFS= read -r ts; do
+            [ -z "$ts" ] && continue
+            if [ "$((now - ts))" -lt "$WINDOW_SEC" ]; then
+                pruned="${pruned}${ts}"$'\n'
+            fi
+        done < "$STATE_FILE"
+    fi
+    # Write back pruned state.
+    printf '%s' "$pruned" > "$STATE_FILE"
+
+    local count
+    count=$(printf '%s' "$pruned" | grep -c '.' || true)
+    if [ "$count" -ge "$MAX_RESTARTS" ]; then
+        # Have we already slept past the backoff for this storm?
+        local last
+        last=$(printf '%s' "$pruned" | tail -1)
+        if [ -n "$last" ] && [ "$((now - last))" -lt "$BACKOFF_SEC" ]; then
+            log "crash-loop detected: ${count} restarts in ${WINDOW_SEC}s — backing off until $((BACKOFF_SEC - (now - last)))s from now"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+record_restart() {
+    date +%s >> "$STATE_FILE"
+}
+
 start_habbig() {
+    if should_backoff; then
+        return 1
+    fi
+    record_restart
     log "starting Habbig gateway on port ${PORT}"
     cd "$HABBIG_DIR" || { log "FATAL: cannot cd to $HABBIG_DIR"; return 1; }
 

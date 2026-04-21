@@ -595,21 +595,39 @@ async def serve_embed(request: Request, widget_id: str, token: str = ""):
     if not widget["is_active"]:
         return _render_embed_error("This widget has been deactivated")
     if not embed_tokens.verify(widget["widget_id"], widget["token_salt"], token):
-        return _render_embed_error("Invalid token")
+        # Covers both bad-HMAC and expired tokens (H16).
+        return _render_embed_error("Invalid or expired token")
 
-    # Domain enforcement via Referer. Missing Referer is tolerated (some
-    # browsers and privacy extensions strip it); the CSP frame-ancestors
-    # header below is the browser-enforced defence-in-depth.
+    # Domain enforcement via Referer.
+    #
+    # SECURITY (L16): when the widget has a specific allowlist domain
+    # we now REQUIRE a matching Referer. Previously a missing Referer
+    # was tolerated outright, which let a token leaked to e.g. a
+    # phishing page load the widget as long as the browser stripped
+    # Referer — a trivial bypass via `<meta name="referrer"
+    # content="no-referrer">`. The CSP frame-ancestors header further
+    # down is still the browser-enforced defence-in-depth.
+    #
+    # Widgets with NO configured domain (open widgets) still tolerate
+    # missing Referer since there is nothing to match against.
+    widget_domain = (widget["domain"] or "").strip().lower()
     referer = request.headers.get("referer", "")
-    if referer:
+    if widget_domain:
+        if not referer:
+            return _render_embed_error(
+                f"This widget can only be embedded on {widget_domain}"
+            )
         try:
             host = urlparse(referer).netloc.lower().split(":")[0]
-            if host and host != widget["domain"]:
-                return _render_embed_error(
-                    f"This widget can only be embedded on {widget['domain']}"
-                )
         except Exception:
-            pass
+            host = ""
+        if not host or host != widget_domain:
+            return _render_embed_error(
+                f"This widget can only be embedded on {widget_domain}"
+            )
+    elif referer:
+        # No domain configured — still record nothing, but fall through.
+        pass
 
     # Subscription sanity: if the owner's sub has lapsed, bulk-deactivate
     # every widget they own. Prevents stale tokens from leaking data

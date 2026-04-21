@@ -38,6 +38,10 @@ from email_system.unsubscribe import UnsubscribeManager
 from jobs.email_jobs import enqueue_email
 from jobs import enqueue_job, get_worker_status, list_recent_jobs, retry_job
 
+# Dedicated security-channel logger (routes to logs/security.log).
+import logging as _logging
+security_log = _logging.getLogger("security.auth")
+
 
 _APP_URL = os.environ.get("APP_URL", "https://narve.ai")
 _EMAIL_SECRET = (os.environ.get("GATEWAY_COOKIE_SECRET") or "narve-email").encode()
@@ -1169,10 +1173,12 @@ async def auth_validate_token(request: Request):
     Response: {valid: bool, claimed: bool, email_hint?: str}
     """
     ip = _get_client_ip(request)
-    if server._is_rate_limited(f"{ip}:token-validate", limit=10, window=60):
+    # Per-IP cap tightened to 5/min (H4): shared IP floods + token guessing.
+    if server._is_rate_limited(f"{ip}:token-validate", limit=5, window=60):
         return JSONResponse(
             {"valid": False, "error": "Too many attempts. Wait 60 seconds."},
             status_code=429,
+            headers={"Retry-After": "60"},
         )
 
     try:
@@ -1182,6 +1188,14 @@ async def auth_validate_token(request: Request):
     raw_token = (body.get("token") or "").strip()
     if not raw_token or len(raw_token) > 128:
         return JSONResponse({"valid": False}, status_code=400)
+
+    # Per-token bucket so a single token cannot be hammered by a botnet.
+    if server._is_rate_limited(f"token-validate:{raw_token[:32]}", limit=10, window=600):
+        return JSONResponse(
+            {"valid": False, "error": "Too many attempts for this token."},
+            status_code=429,
+            headers={"Retry-After": "600"},
+        )
 
     invite = db.get_invite_token(raw_token)
     if not invite or invite["status"] == "revoked":
@@ -1277,6 +1291,12 @@ async def _issue_hardened_session(
     server.set_session_cookie(response, legacy_token, request)
     set_session_cookie_hardened(response, raw_hardened, request)
     clear_pending_token_cookie(response, request)
+    # Rotate the CSRF token on every successful session issuance so any token
+    # captured on a public page before login cannot be reused post-auth.
+    try:
+        server._set_csrf_cookie(response, server._generate_csrf_token(), request)
+    except Exception:
+        pass  # Cookie rotation is defense-in-depth; never block login on failure.
     return raw_hardened
 
 
@@ -1386,7 +1406,11 @@ async def auth_login(request: Request):
     """Password check against the user bound to the pending_token."""
     ip = _get_client_ip(request)
     if server._is_rate_limited(f"{ip}:login-auth", limit=10, window=300):
-        return JSONResponse({"error": "Too many attempts."}, status_code=429)
+        return JSONResponse(
+            {"error": "Too many attempts."},
+            status_code=429,
+            headers={"Retry-After": "300"},
+        )
 
     redirect = require_pending_token(request)
     if redirect:
@@ -1413,12 +1437,44 @@ async def auth_login(request: Request):
     if not user:
         return JSONResponse({"error": "Account not found."}, status_code=401)
 
+    # Per-email rate limit (H1): credential-stuffing across rotating IPs.
+    # 5 wrong attempts per 10min per email regardless of source IP.
+    try:
+        email_key = (user["email"] or "").strip().lower()
+    except (KeyError, IndexError):
+        email_key = ""
+    if email_key and server._is_rate_limited(f"email:{email_key}:login", limit=5, window=600):
+        return JSONResponse(
+            {"error": "Too many attempts for this account."},
+            status_code=429,
+            headers={"Retry-After": "600"},
+        )
+
     if user["suspended"]:
         return JSONResponse({"error": "This account has been suspended."}, status_code=403)
 
     if not db.verify_password(password, user["password_hash"], user["password_salt"]):
         log.info("auth.login: wrong password for user_id=%d", user_id)
+        security_log.warning(
+            "login.failure user_id=%d ip=%s ua_prefix=%s",
+            user_id, ip, (request.headers.get("user-agent", "")[:64]),
+        )
         return JSONResponse({"error": "Incorrect password."}, status_code=401)
+
+    # Opportunistic PBKDF2 iteration upgrade: if this user's hash was written
+    # before the iteration-count bump, re-hash at the current cost now that we
+    # have the plaintext in hand.
+    try:
+        if db.password_needs_rehash(password, user["password_hash"], user["password_salt"]):
+            new_hash, new_salt = db._hash_password(password)
+            with db.conn() as c:
+                c.execute(
+                    "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
+                    (new_hash, new_salt, user_id),
+                )
+            log.info("auth.login: upgraded PBKDF2 iterations for user_id=%d", user_id)
+    except Exception as exc:
+        log.warning("auth.login: rehash-on-login failed for user_id=%d: %s", user_id, exc)
 
     # Check 2FA status so the frontend knows whether to redirect to /auth/2fa
     try:
@@ -1442,6 +1498,9 @@ async def auth_login(request: Request):
             log.warning("email OTP dispatch failed: %s", e)
 
     log.info("auth.login: user_id=%d success (2fa=%s)", user_id, has_2fa)
+    security_log.info(
+        "login.success user_id=%d ip=%s 2fa=%s", user_id, ip, has_2fa,
+    )
     return response
 
 

@@ -9,6 +9,23 @@ Estimated time: **~45 minutes**, most of that is waiting on DNS.
 
 ---
 
+## Host variable
+
+The runbook commands below reference `$NARVE_HOST` instead of hardcoding the
+Tailscale IP. Export it once at the top of your shell session so copy-paste
+works verbatim. Find the value with `tailscale ip -4` on the host:
+
+```bash
+export NARVE_HOST="<your-tailscale-ipv4>"   # e.g. 100.x.y.z
+# or a Tailscale MagicDNS name
+export NARVE_HOST="narve.your-tailnet.ts.net"
+```
+
+Treat the Tailscale IP as sensitive-ish — do not commit it to public docs
+or tickets; it reveals your tailnet topology.
+
+---
+
 ## 0. What you'll need before starting
 
 - [ ] The `habbig.com` domain (purchased, see step 1)
@@ -65,6 +82,21 @@ Created tunnel habbig-gateway with id 3f2a8e1c-4b1d-4a3f-9e8a-abcdef012345
 ```
 
 **Save the tunnel ID** — you'll paste it into the next two steps.
+
+### Lock down the tunnel credential file
+
+The JSON credential file written under `~/.cloudflared/<uuid>.json` is a
+long-lived tunnel secret — anyone who reads it can impersonate your tunnel.
+Move it to a system-owned path and tighten perms:
+
+```bash
+sudo mkdir -p /etc/cloudflared
+sudo mv ~/.cloudflared/*.json /etc/cloudflared/
+sudo chown root:root /etc/cloudflared/*.json
+sudo chmod 600 /etc/cloudflared/*.json
+```
+
+Update `credentials-file:` in the next step to point at the new path.
 
 ---
 
@@ -197,9 +229,54 @@ cleanest path is a systemd unit that runs the script at `multi-user.target`.
 
 ---
 
-## 10. Aftercare checklist
+## 10. Backups
 
-- [ ] **Backup the auth DB.** Add `gateway/auth.db` to a nightly backup (users + subscriptions live here). A simple daily `cp auth.db /path/to/backups/auth-$(date +%F).db` in a cron is fine for now.
+The SQLite DB at `gateway/auth.db` holds users, subscriptions, API keys,
+encrypted exchange credentials, and push tokens. Losing it is a full data
+loss event. A naive `cp` while the server is writing is unsafe — use
+`sqlite3 .backup` which takes a consistent snapshot, then encrypt and
+ship off-site.
+
+Install a daily cron (`crontab -e` as the gateway user):
+
+```bash
+# /etc/cron.d/narve-backup — runs 03:17 UTC daily
+17 3 * * * narve /usr/local/bin/narve-backup.sh >> /var/log/narve-backup.log 2>&1
+```
+
+`/usr/local/bin/narve-backup.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+DEST=/var/backups/narve
+mkdir -p "$DEST"
+TODAY=$(date +%F)
+# 1. Consistent snapshot via the online-backup API (no lock contention).
+sqlite3 /home/julianhabbig/Habbig/gateway/auth.db \
+    ".backup $DEST/auth-$TODAY.db"
+# 2. Encrypt with GPG (passphrase in /etc/narve/backup.passphrase, 0600 root:root).
+gpg --batch --yes --symmetric --cipher-algo AES256 \
+    --passphrase-file /etc/narve/backup.passphrase \
+    "$DEST/auth-$TODAY.db"
+rm "$DEST/auth-$TODAY.db"
+# 3. Ship off-site (rclone or aws s3 — pick one).
+rclone copy "$DEST/auth-$TODAY.db.gpg" "r2:narve-backups/"
+# or: aws s3 cp "$DEST/auth-$TODAY.db.gpg" "s3://narve-backups/"
+# 4. Local retention: keep 14 days.
+find "$DEST" -name "auth-*.db.gpg" -mtime +14 -delete
+```
+
+Make it executable and root-only: `chmod 700 /usr/local/bin/narve-backup.sh`.
+
+Test your restore path at least once per quarter — an untested backup is not
+a backup.
+
+---
+
+## 11. Aftercare checklist
+
+- [ ] **Backups configured** (see section 10).
 - [ ] **Rotate `GATEWAY_COOKIE_SECRET`** if you ever suspect it's leaked. (Note: this will log everyone out.)
 - [ ] **Monitor `/tmp/dashboard_*.log`** — the start script writes each service's stdout/stderr there.
 - [ ] **Set up `cloudflared metrics`** on `localhost:2000` if you want Prometheus-style health data.

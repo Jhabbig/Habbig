@@ -71,6 +71,21 @@ def _ensure_keypair() -> tuple[str, str]:
             private_pem.encode(), password=None
         )
     else:
+        # In production we refuse to generate or read an on-disk keypair —
+        # the private key must come from the environment (secrets manager,
+        # systemd EnvironmentFile, etc.) so it's not sitting in $HOME on the
+        # server where any local process can read it. The dev fallback is
+        # only enabled when PRODUCTION is unset/falsy, matching the same
+        # convention used elsewhere in the gateway (server.py, auth/cookies.py).
+        _is_production = os.environ.get("PRODUCTION", "").lower() in (
+            "1", "true", "yes", "on",
+        )
+        if _is_production:
+            raise RuntimeError(
+                "PUSH_VAPID_PRIVATE_KEY_PEM must be set in production; "
+                "the filesystem fallback at ~/.narve/vapid.key is "
+                "disabled when PRODUCTION=1."
+            )
         if _VAPID_KEY_FILE.exists():
             private_pem = _VAPID_KEY_FILE.read_text()
             priv = serialization.load_pem_private_key(
@@ -84,11 +99,17 @@ def _ensure_keypair() -> tuple[str, str]:
                 encryption_algorithm=serialization.NoEncryption(),
             ).decode()
             try:
-                _VAPID_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                _VAPID_KEY_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                # Create the file first, then tighten perms before writing
+                # the secret — this closes the tiny window where a world-
+                # readable file could briefly contain the PEM on a umask
+                # 022 system.
+                _VAPID_KEY_FILE.touch(mode=0o600, exist_ok=True)
+                os.chmod(_VAPID_KEY_FILE, 0o600)
                 _VAPID_KEY_FILE.write_text(private_pem)
                 os.chmod(_VAPID_KEY_FILE, 0o600)
                 log.info(
-                    "push: generated VAPID keypair, persisted to %s",
+                    "push: generated VAPID keypair, persisted to %s (dev only)",
                     _VAPID_KEY_FILE,
                 )
             except OSError as exc:

@@ -46,19 +46,51 @@ log = logging.getLogger("exports.generator")
 
 # ── Storage + signed URL config ──────────────────────────────────────────────
 
-EXPORT_DIR = Path(os.environ.get("DATA_EXPORT_DIR", "/tmp/narve-exports"))
+EXPORT_DIR = Path(
+    os.environ.get("DATA_EXPORT_DIR", str(Path.home() / ".narve" / "exports"))
+)
+# Ensure the export directory exists with restrictive perms so other local
+# users can't read another user's GDPR ZIP. mode= only takes effect at
+# creation time, so we also chmod the dir in case it already existed with
+# looser perms (e.g. from an earlier /tmp default).
+try:
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(EXPORT_DIR, 0o700)
+except OSError as _exc:
+    log.warning("exports: could not secure EXPORT_DIR %s: %s", EXPORT_DIR, _exc)
+
 EXPORT_TTL_SECONDS = int(os.environ.get("DATA_EXPORT_TTL_SECONDS", str(7 * 24 * 3600)))
 APP_URL = os.environ.get("APP_URL", "https://narve.ai").rstrip("/")
 PRIVACY_EMAIL = os.environ.get("PRIVACY_EMAIL", "privacy@narve.ai")
 
+_SIGNING_SECRET_FALLBACK_WARNED = False
+
 
 def _signing_secret() -> bytes:
-    """Read the HMAC secret at call time so tests can override env vars."""
-    secret = os.environ.get("GATEWAY_COOKIE_SECRET", "").strip()
+    """Read the HMAC secret at call time so tests can override env vars.
+
+    Prefers a dedicated ``DATA_EXPORT_SIGNING_SECRET`` so that rotating the
+    session cookie secret doesn't silently invalidate in-flight download
+    links (and vice versa). Falls back to ``GATEWAY_COOKIE_SECRET`` for
+    backwards compatibility, emitting a one-shot warning so operators see
+    the migration nudge.
+    """
+    global _SIGNING_SECRET_FALLBACK_WARNED
+    secret = os.environ.get("DATA_EXPORT_SIGNING_SECRET", "").strip()
+    if not secret:
+        secret = os.environ.get("GATEWAY_COOKIE_SECRET", "").strip()
+        if secret and not _SIGNING_SECRET_FALLBACK_WARNED:
+            log.warning(
+                "exports: DATA_EXPORT_SIGNING_SECRET not set; falling back to "
+                "GATEWAY_COOKIE_SECRET. Set a dedicated secret to decouple "
+                "download-link signing from session cookies."
+            )
+            _SIGNING_SECRET_FALLBACK_WARNED = True
     if not secret:
         # Fail loudly — a default secret would let an attacker forge URLs.
         raise RuntimeError(
-            "GATEWAY_COOKIE_SECRET is required for signed download URLs"
+            "DATA_EXPORT_SIGNING_SECRET (or GATEWAY_COOKIE_SECRET fallback) "
+            "is required for signed download URLs"
         )
     return secret.encode()
 

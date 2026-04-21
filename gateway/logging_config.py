@@ -110,6 +110,12 @@ SENSITIVE_KEY_HINTS = (
     "private",
     "api_key",
     "apikey",
+    "reset",
+    "invite",
+    "stripe",
+    "webhook",
+    "kalshi",
+    "vapid",
 )
 
 # Safe fields that contain "token" / "key" in their name but are not secrets.

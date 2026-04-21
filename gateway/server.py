@@ -5343,6 +5343,114 @@ async def admin_audit_log_csv(request: Request):
     )
 
 
+# ── Subproducts admin (MRR per sub-brand) ─────────────────────────────────────
+#
+# Rolls up active subscriptions on the existing per-dashboard `subscriptions`
+# table, scoped to the six sub-brand dashboard_keys in subproduct.SUBPRODUCTS.
+# Main-apex narve.ai Pro subscriptions (dashboard_key = "__plan__") count
+# once in the "Bundle" row so the admin can see how many customers take the
+# all-in subscription vs how many stack individual sub-products.
+
+
+@app.get("/admin/subproducts", response_class=HTMLResponse)
+async def admin_subproducts_page(request: Request):
+    user = _require_admin_user(request, page=True)
+    if user is None:
+        return _denied_response(request)
+    from subproduct import SUBPRODUCTS as _SP, DASHBOARD_KEY_FOR_SLUG
+
+    now = int(time.time())
+    subs = db.list_all_subscriptions()
+
+    # Active = status=='active' AND (expires_at is null OR in the future).
+    def _active(s) -> bool:
+        if s["status"] != "active":
+            return False
+        if s["expires_at"] and s["expires_at"] <= now:
+            return False
+        return True
+
+    by_key: dict[str, list] = {}
+    for s in subs:
+        if not _active(s):
+            continue
+        by_key.setdefault(s["dashboard_key"], []).append(s)
+
+    # Subproduct rows
+    rows_html: list[str] = []
+    total_active = 0
+    total_mrr_cents = 0
+    for slug, cfg in _SP.items():
+        dk = DASHBOARD_KEY_FOR_SLUG[slug]
+        rows = by_key.get(dk, [])
+        active = len(rows)
+        # Per-product MRR: always the subproduct's monthly USD price — the
+        # main-apex DASHBOARDS pricing in config.json tracks the *bundle*
+        # tier and doesn't represent this sub-brand's standalone price.
+        mrr_cents = int(round(cfg["price_usd"] * 100)) * active
+        total_active += active
+        total_mrr_cents += mrr_cents
+        rows_html.append(
+            f'<tr>'
+            f'<td><span style="font-weight:500">{html.escape(cfg["name"])}</span>'
+            f' <span style="color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px">'
+            f'{html.escape(slug)}.narve.ai</span></td>'
+            f'<td style="text-align:right">{active}</td>'
+            f'<td style="text-align:right;font-family:var(--font-mono)">${mrr_cents/100:,.2f}/mo</td>'
+            f'</tr>'
+        )
+
+    bundle_rows = [s for s in subs if _active(s) and s["dashboard_key"] == "__plan__"]
+    rows_html.append(
+        f'<tr style="background:var(--bg-surface)">'
+        f'<td><span style="font-weight:500">narve.ai Pro (bundle)</span>'
+        f' <span style="color:var(--text-tertiary);font-size:11px">all six sub-products included</span></td>'
+        f'<td style="text-align:right">{len(bundle_rows)}</td>'
+        f'<td style="text-align:right;font-family:var(--font-mono)">—</td>'
+        f'</tr>'
+    )
+
+    summary_cards = (
+        f'<div class="stat-card"><div class="stat-label">Active subproduct subs</div>'
+        f'<div class="stat-value">{total_active}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Subproduct MRR</div>'
+        f'<div class="stat-value">${total_mrr_cents/100:,.2f}</div></div>'
+        f'<div class="stat-card"><div class="stat-label">Bundle subs</div>'
+        f'<div class="stat-value">{len(bundle_rows)}</div></div>'
+    )
+
+    body = (
+        '<div style="padding:24px">'
+        '<h2 style="font-family:var(--font-display);font-size:22px;margin:0 0 16px">Subproducts</h2>'
+        '<p style="color:var(--text-secondary);font-size:13px;margin:0 0 20px">'
+        'Active subscriptions and MRR for each narve.ai sub-brand. Bundle subscribers '
+        '(narve.ai Pro) have access to every sub-product automatically and are not counted '
+        'in the per-product totals.'
+        '</p>'
+        f'<div class="stat-grid" style="margin-bottom:28px">{summary_cards}</div>'
+        '<div style="overflow:auto;border:1px solid var(--border-default);border-radius:8px">'
+        '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+        '<thead><tr style="background:var(--bg-surface);color:var(--text-secondary);text-align:left">'
+        '<th style="padding:10px 12px">Product</th>'
+        '<th style="padding:10px 12px;text-align:right">Active subs</th>'
+        '<th style="padding:10px 12px;text-align:right">MRR</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(rows_html)}</tbody>'
+        '</table></div>'
+        '</div>'
+    )
+
+    return render_page(
+        "ai_usage",  # re-uses the existing admin shell template
+        request=request,
+        email=user["email"],
+        username=user.get("username", user["email"]),
+        raw_nav_role=_role_badge(user),
+        _is_admin=user.get("is_admin"),
+        raw_body=body,
+    )
+
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 
@@ -6476,6 +6584,20 @@ def _switcher_snippet(dashboard_key: str, user_id: int, apex: str = "") -> str:
     # Get market connections
     connections = _get_market_connections(user_id)
 
+    # If the current dashboard_key maps to a sub-brand subproduct, publish
+    # its slug + name so the switcher can render the "narve.ai / <slug>"
+    # wordmark. Pure passthrough — the switcher decides whether to render it.
+    from subproduct import SUBPRODUCTS as _SP
+    subproduct_meta = None
+    for _slug, _cfg in _SP.items():
+        if _cfg.get("dashboard_key") == dashboard_key:
+            subproduct_meta = {
+                "slug": _slug,
+                "name": _cfg["name"],
+                "tagline": _cfg["tagline"],
+            }
+            break
+
     cfg_json = json.dumps({
         "dashboards": items,
         "current": dashboard_key,
@@ -6486,6 +6608,7 @@ def _switcher_snippet(dashboard_key: str, user_id: int, apex: str = "") -> str:
             "plan": plan_tier,
             "connections": connections,
         },
+        "subproduct": subproduct_meta,
     })
     return (
         f'<script>window.__hbSwitcher={cfg_json};</script>'

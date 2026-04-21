@@ -121,6 +121,21 @@
           return input ? input.value : '';
         }
 
+        function renderPreviewHtml(htmlStr) {
+          // Render admin-authored email HTML inside a sandboxed iframe so any
+          // scripts/forms/network calls inside the template cannot execute or
+          // exfiltrate data from the admin session. sandbox="" = no allowances.
+          previewHtml.textContent = '';
+          var iframe = document.createElement('iframe');
+          iframe.setAttribute('sandbox', '');
+          iframe.style.width = '100%';
+          iframe.style.minHeight = '360px';
+          iframe.style.border = '0';
+          iframe.style.background = '#fff';
+          iframe.srcdoc = htmlStr || '<em style="opacity:.5">(empty body)</em>';
+          previewHtml.appendChild(iframe);
+        }
+
         function refresh() {
           var body = new FormData();
           body.append('subject', subjectEl.value);
@@ -130,10 +145,11 @@
             .then(function(r) { return r.json(); })
             .then(function(j) {
               previewSubject.textContent = j.subject || '—';
-              previewHtml.innerHTML = j.html || '<em style="opacity:.5">(empty body)</em>';
+              renderPreviewHtml(j.html);
             })
             .catch(function() {
-              previewHtml.innerHTML = '<em style="color:#b91c1c">Preview failed — subject/body may contain invalid HTML.</em>';
+              previewHtml.textContent = 'Preview failed — subject/body may contain invalid HTML.';
+              previewHtml.style.color = '#b91c1c';
             });
         }
         function schedule() {

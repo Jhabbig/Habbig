@@ -31,7 +31,8 @@ PENDING_TOKEN_COOKIE = "pending_token"
 SESSION_COOKIE = "narve_session"  # NB: new cookie, NOT pm_gateway_session
 
 PENDING_TOKEN_TTL = 1800  # 30 minutes
-SESSION_COOKIE_TTL = 7 * 24 * 60 * 60  # 7 days
+# Session cookie lifetime. Override with SESSION_COOKIE_TTL_DAYS env var.
+SESSION_COOKIE_TTL = int(os.environ.get("SESSION_COOKIE_TTL_DAYS", "7")) * 24 * 60 * 60
 
 
 def _is_production() -> bool:
@@ -59,7 +60,14 @@ def _cookie_domain_for(request: Request) -> Optional[str]:
 
 
 def _secret() -> bytes:
-    return (os.environ.get("GATEWAY_COOKIE_SECRET") or "narve-pending-token").encode()
+    val = os.environ.get("GATEWAY_COOKIE_SECRET", "")
+    if not val:
+        if _is_production():
+            # Startup guard in server.py should have prevented this; fail loudly
+            # if something slips the gate so we never sign with a known constant.
+            raise RuntimeError("GATEWAY_COOKIE_SECRET must be set in production")
+        val = "narve-pending-token-dev"
+    return val.encode()
 
 
 def sign_pending_token(raw_token: str) -> str:

@@ -73,6 +73,29 @@ async def api_notifications_list(
     so the client can render the dropdown and the badge in a single round-trip.
     """
     user = server._require_authenticated(request)
+
+    # SECURITY (H10): ``before_id`` is an attacker-controlled integer
+    # used for keyset pagination. If db.get_notifications trusts it to
+    # resolve a timestamp WITHOUT also constraining the row to the
+    # current user, an attacker can pass a victim's notification id as
+    # ``before_id`` to enumerate the victim's feed position. Defence:
+    # before we pass it to the DB layer, verify the referenced
+    # notification belongs to us. The 404 response is identical to
+    # "notification does not exist" so we also avoid a cross-user
+    # existence oracle.
+    if before_id is not None:
+        try:
+            with db.conn() as c:
+                row = c.execute(
+                    "SELECT user_id FROM notifications WHERE id = ?",
+                    (before_id,),
+                ).fetchone()
+        except Exception:
+            row = None
+        if not row or int(row["user_id"]) != int(user["user_id"]):
+            # Don't disclose the reason — just behave as "no such cursor".
+            raise HTTPException(status_code=404, detail="Invalid pagination cursor")
+
     try:
         rows = db.get_notifications(
             user_id=user["user_id"],
@@ -115,6 +138,25 @@ async def api_notifications_unread_count(request: Request) -> JSONResponse:
 @rate_limit(limit=120, window_seconds=60, key_func=_user_key)
 async def api_notification_mark_read(request: Request, notif_id: int) -> JSONResponse:
     user = server._require_authenticated(request)
+
+    # SECURITY (L18): defence-in-depth ownership check. The DB function
+    # is expected to filter with ``WHERE id = ? AND user_id = ?`` but
+    # we can't edit db.py here, so we also verify ownership at the
+    # route level. A mismatched owner returns 404 — identical to
+    # "does not exist" so the handler is not a cross-user existence
+    # oracle. If the notifications row is gone entirely we still call
+    # the DB (its WHERE-clause filter will no-op safely).
+    try:
+        with db.conn() as c:
+            owner_row = c.execute(
+                "SELECT user_id FROM notifications WHERE id = ?",
+                (notif_id,),
+            ).fetchone()
+    except Exception:
+        owner_row = None
+    if owner_row is not None and int(owner_row["user_id"]) != int(user["user_id"]):
+        raise HTTPException(status_code=404, detail="Notification not found")
+
     changed = db.mark_notification_read(notif_id, user["user_id"])
     return JSONResponse({"ok": True, "changed": bool(changed)})
 

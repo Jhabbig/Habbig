@@ -125,7 +125,14 @@ async def impersonate_start(request: Request, user_id: int, reason: str = Form("
         raise HTTPException(status_code=404, detail="User not found")
     if target["id"] == admin["user_id"]:
         raise HTTPException(status_code=400, detail="Cannot impersonate yourself")
-    if (target["is_admin"] or 0) >= (admin.get("admin_level") or 0):
+    # C6: admin_level MUST be explicitly present on the actor — missing = fail
+    # closed. Without this, a session dict lacking admin_level would silently
+    # fall back to 0 and allow weird comparisons.
+    admin_level = admin.get("admin_level")
+    if admin_level is None or admin_level < 1:
+        raise HTTPException(status_code=403, detail="Admin role not verified")
+    target_level = target["is_admin"] or 0
+    if target_level >= admin_level:
         # Block impersonating a peer-or-higher admin to prevent privilege
         # laundering (admin A → impersonate admin B → take admin B's actions).
         raise HTTPException(status_code=403, detail="Cannot impersonate an equal-or-higher admin")
@@ -460,7 +467,11 @@ async def flag_delete(request: Request, key: str):
 
 
 async def flag_evaluate_api(request: Request, key: str):
+    # C5: require authentication — flags leak rollout state and should never
+    # be enumerable by anonymous traffic.
     user = _current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
     enabled = features.is_feature_enabled(key, user)
     return JSONResponse({"key": key, "enabled": enabled})
 

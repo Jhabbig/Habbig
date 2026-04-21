@@ -25,7 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: narve-app:latest
+    image: narve-app:v1  # TODO: pin to semver or digest before prod
     env_file: .env
     environment:
       SERVICE_NAME: app
@@ -56,7 +56,7 @@ services:
     build:
       context: .
       dockerfile: scraper/Dockerfile
-    image: narve-scraper:latest
+    image: narve-scraper:v1  # TODO: pin to semver or digest before prod
     env_file: .env
     environment:
       SERVICE_NAME: scraper
@@ -79,7 +79,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: narve-app:latest  # reuses the app image
+    image: narve-app:v1  # reuses the app image — TODO: pin to semver or digest before prod
     command: ["arq", "jobs.worker.WorkerSettings"]
     env_file: .env
     environment:
@@ -107,8 +107,17 @@ services:
   # in-process asyncio backend if REDIS_HOST is unset, so this service is
   # only required when you want cross-process retry / cron durability.
   redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    image: redis:7.2-alpine
+    # Require auth, enable protected-mode, and persist with appendonly.
+    # REDIS_PASSWORD must be set in .env (see .env.example).
+    command:
+      - "redis-server"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+      - "--protected-mode"
+      - "yes"
+      - "--appendonly"
+      - "yes"
     volumes:
       - redis_data:/data
     logging:

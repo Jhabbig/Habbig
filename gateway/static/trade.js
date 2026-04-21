@@ -531,7 +531,11 @@
     marketsLoading = false;
 
     if (data._error) {
-      body.innerHTML = `<div class="hb-m-error">${esc(data._error)}</div>`;
+      body.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = data._error || '';
+      body.appendChild(d);
       return;
     }
 
@@ -715,7 +719,12 @@
 
     const data = await api(`/api/markets/unified/${encodeURIComponent(marketId)}`);
     if (data._error) {
-      overlay.querySelector('.hb-m-detail-panel').innerHTML = `<div class="hb-m-error">${esc(data._error)}</div>`;
+      const panel = overlay.querySelector('.hb-m-detail-panel');
+      panel.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = data._error || '';
+      panel.appendChild(d);
       return;
     }
 
@@ -826,7 +835,18 @@
           </div>`;
         return;
       }
-      slot.innerHTML = `<div class="hb-m-kelly-card"><div class="hb-m-kelly-title">Bet Sizing Calculator</div><div class="hb-m-error">${esc(res._error)}</div></div>`;
+      slot.textContent = '';
+      const card = document.createElement('div');
+      card.className = 'hb-m-kelly-card';
+      const t = document.createElement('div');
+      t.className = 'hb-m-kelly-title';
+      t.textContent = 'Bet Sizing Calculator';
+      const err = document.createElement('div');
+      err.className = 'hb-m-error';
+      err.textContent = res._error || '';
+      card.appendChild(t);
+      card.appendChild(err);
+      slot.appendChild(card);
       return;
     }
 
@@ -906,7 +926,11 @@
       api('/api/markets/stats'),
     ]);
     if (data._error) {
-      body.innerHTML = `<div class="hb-m-error">${esc(data._error)}</div>`;
+      body.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = data._error || '';
+      body.appendChild(d);
       return;
     }
 
@@ -1015,7 +1039,11 @@
 
     const data = await api('/api/markets/orders');
     if (data._error) {
-      body.innerHTML = `<div class="hb-m-error">${esc(data._error)}</div>`;
+      body.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = data._error || '';
+      body.appendChild(d);
       return;
     }
 
@@ -1057,18 +1085,38 @@
     $('#hb-kalshi-submit').addEventListener('click', async () => {
       const email = $('#hb-kalshi-email').value.trim();
       const password = $('#hb-kalshi-pass').value;
-      if (!email || !password) { $('#hb-kalshi-result').innerHTML = '<div class="hb-m-error">Email and password required</div>'; return; }
+      if (!email || !password) {
+        const r = $('#hb-kalshi-result');
+        r.textContent = '';
+        const d = document.createElement('div');
+        d.className = 'hb-m-error';
+        d.textContent = 'Email and password required';
+        r.appendChild(d);
+        return;
+      }
       $('#hb-kalshi-submit').textContent = 'Connecting...';
       $('#hb-kalshi-submit').disabled = true;
       const data = await api('/api/markets/connect/kalshi', { method: 'POST', body: { email, password } });
       if (data._error) {
-        $('#hb-kalshi-result').innerHTML = `<div class="hb-m-error">${esc(data._error)}</div>`;
+        const r = $('#hb-kalshi-result');
+        r.textContent = '';
+        const d = document.createElement('div');
+        d.className = 'hb-m-error';
+        d.textContent = data._error || '';
+        r.appendChild(d);
         $('#hb-kalshi-submit').textContent = 'Connect Kalshi Account';
         $('#hb-kalshi-submit').disabled = false;
         return;
       }
       connections.kalshi = { connected: true, member_id: data.member_id, balance: data.balance };
-      $('#hb-kalshi-result').innerHTML = `<div class="hb-m-success">Connected! Member: ${esc(data.member_id)}${data.balance !== null ? ' — Balance: $' + data.balance.toFixed(2) : ''}</div>`;
+      {
+        const r = $('#hb-kalshi-result');
+        r.textContent = '';
+        const d = document.createElement('div');
+        d.className = 'hb-m-success';
+        d.textContent = `Connected! Member: ${data.member_id}${data.balance !== null ? ' — Balance: $' + data.balance.toFixed(2) : ''}`;
+        r.appendChild(d);
+      }
       setTimeout(closeModal, 1500);
     });
   }
@@ -1098,20 +1146,46 @@
 
         const data = await api('/api/markets/connect/polymarket', { method: 'POST', body: { wallet_address: address } });
         if (data._error) {
-          $('#hb-poly-result').innerHTML = `<div class="hb-m-error">${esc(data._error)}</div>`;
+          const r = $('#hb-poly-result');
+          r.textContent = '';
+          const d = document.createElement('div');
+          d.className = 'hb-m-error';
+          d.textContent = data._error || '';
+          r.appendChild(d);
           $('#hb-poly-submit').textContent = 'Connect Wallet';
           return;
         }
         connections.polymarket = { connected: true, address: address };
-        $('#hb-poly-result').innerHTML = `<div class="hb-m-success">Connected: ${esc(address.slice(0, 6))}...${esc(address.slice(-4))}</div>`;
+        {
+          const r = $('#hb-poly-result');
+          r.textContent = '';
+          const d = document.createElement('div');
+          d.className = 'hb-m-success';
+          d.textContent = `Connected: ${address.slice(0, 6)}...${address.slice(-4)}`;
+          r.appendChild(d);
+        }
         setTimeout(closeModal, 1500);
       } catch (e) {
         if (e.code === 4001) {
           // User rejected
-          $('#hb-poly-result').innerHTML = '<div style="color:#a3a3a3;font-size:13px;margin-top:12px">Connection cancelled</div>';
+          {
+            const r = $('#hb-poly-result');
+            r.textContent = '';
+            const d = document.createElement('div');
+            d.setAttribute('style', 'color:#a3a3a3;font-size:13px;margin-top:12px');
+            d.textContent = 'Connection cancelled';
+            r.appendChild(d);
+          }
           $('#hb-poly-submit').textContent = 'Connect Wallet';
         } else {
-          $('#hb-poly-result').innerHTML = `<div class="hb-m-error">${esc(e.message || 'Failed to connect')}</div>`;
+          {
+            const r = $('#hb-poly-result');
+            r.textContent = '';
+            const d = document.createElement('div');
+            d.className = 'hb-m-error';
+            d.textContent = e.message || 'Failed to connect';
+            r.appendChild(d);
+          }
           $('#hb-poly-submit').textContent = 'Connect Wallet';
         }
       }
@@ -1163,7 +1237,15 @@
 
     $('#hb-bet-submit').addEventListener('click', async () => {
       const amount = parseFloat($('#hb-bet-amount').value);
-      if (!amount || amount <= 0) { $('#hb-bet-result').innerHTML = '<div class="hb-m-error">Enter a valid amount</div>'; return; }
+      if (!amount || amount <= 0) {
+        const r = $('#hb-bet-result');
+        r.textContent = '';
+        const d = document.createElement('div');
+        d.className = 'hb-m-error';
+        d.textContent = 'Enter a valid amount';
+        r.appendChild(d);
+        return;
+      }
       const orderType = $('#hb-bet-type').value;
       const limitPrice = orderType === 'limit' ? parseFloat($('#hb-bet-price').value) : null;
 
@@ -1189,13 +1271,25 @@
       }
 
       if (result._error) {
-        $('#hb-bet-result').innerHTML = `<div class="hb-m-error">${esc(result._error)}</div>`;
+        const r = $('#hb-bet-result');
+        r.textContent = '';
+        const d = document.createElement('div');
+        d.className = 'hb-m-error';
+        d.textContent = result._error || '';
+        r.appendChild(d);
         $('#hb-bet-submit').textContent = 'Confirm Bet';
         $('#hb-bet-submit').disabled = false;
         return;
       }
 
-      $('#hb-bet-result').innerHTML = `<div class="hb-m-success">Bet placed! Order: ${esc(result.order_id || 'confirmed')}</div>`;
+      {
+        const r = $('#hb-bet-result');
+        r.textContent = '';
+        const d = document.createElement('div');
+        d.className = 'hb-m-success';
+        d.textContent = `Bet placed! Order: ${result.order_id || 'confirmed'}`;
+        r.appendChild(d);
+      }
       setTimeout(closeModal, 2000);
     });
   }
@@ -1250,15 +1344,29 @@
 
   async function signAndSubmitPolymarketOrder(marketId, side, amountUsdc, resultEl) {
     if (typeof window.ethereum === 'undefined') {
-      resultEl.innerHTML = '<div class="hb-m-error">MetaMask required for Polymarket bets</div>';
+      resultEl.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = 'MetaMask required for Polymarket bets';
+      resultEl.appendChild(d);
       return null;
     }
 
     // 1. Get order parameters from backend (token IDs, exchange address, connected wallet)
-    resultEl.innerHTML = '<div style="color:#a3a3a3;font-size:13px;padding:8px">Fetching market data...</div>';
+    resultEl.textContent = '';
+    {
+      const d = document.createElement('div');
+      d.setAttribute('style', 'color:#a3a3a3;font-size:13px;padding:8px');
+      d.textContent = 'Fetching market data...';
+      resultEl.appendChild(d);
+    }
     const params = await api(`/api/markets/poly/order-params/${encodeURIComponent(marketId)}`);
     if (params._error) {
-      resultEl.innerHTML = `<div class="hb-m-error">${esc(params._error)}</div>`;
+      resultEl.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = params._error || '';
+      resultEl.appendChild(d);
       return null;
     }
 
@@ -1267,16 +1375,27 @@
     try {
       accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
     } catch (e) {
+      resultEl.textContent = '';
       if (e.code === 4001) {
-        resultEl.innerHTML = '<div style="color:#a3a3a3;font-size:13px;padding:8px">Wallet connection cancelled</div>';
+        const d = document.createElement('div');
+        d.setAttribute('style', 'color:#a3a3a3;font-size:13px;padding:8px');
+        d.textContent = 'Wallet connection cancelled';
+        resultEl.appendChild(d);
       } else {
-        resultEl.innerHTML = `<div class="hb-m-error">${esc(e.message || 'Wallet error')}</div>`;
+        const d = document.createElement('div');
+        d.className = 'hb-m-error';
+        d.textContent = e.message || 'Wallet error';
+        resultEl.appendChild(d);
       }
       return null;
     }
     const activeAddr = (accounts[0] || '').toLowerCase();
     if (activeAddr !== (params.maker_address || '').toLowerCase()) {
-      resultEl.innerHTML = `<div class="hb-m-error">Your connected wallet (${esc(activeAddr.slice(0, 6))}...) does not match the registered Polymarket wallet. Please switch accounts in MetaMask.</div>`;
+      resultEl.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = `Your connected wallet (${activeAddr.slice(0, 6)}...) does not match the registered Polymarket wallet. Please switch accounts in MetaMask.`;
+      resultEl.appendChild(d);
       return null;
     }
 
@@ -1284,11 +1403,19 @@
     const tokenId = side === 'yes' ? params.yes_token_id : params.no_token_id;
     const price = side === 'yes' ? params.yes_price : params.no_price;
     if (!tokenId) {
-      resultEl.innerHTML = '<div class="hb-m-error">Market has no CLOB token for this side</div>';
+      resultEl.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = 'Market has no CLOB token for this side';
+      resultEl.appendChild(d);
       return null;
     }
     if (!price || price <= 0 || price >= 1) {
-      resultEl.innerHTML = '<div class="hb-m-error">Invalid market price</div>';
+      resultEl.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = 'Invalid market price';
+      resultEl.appendChild(d);
       return null;
     }
 
@@ -1299,7 +1426,11 @@
       makerAmount = amounts.maker;
       takerAmount = amounts.taker;
     } catch (e) {
-      resultEl.innerHTML = `<div class="hb-m-error">${esc(e.message)}</div>`;
+      resultEl.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'hb-m-error';
+      d.textContent = e.message || '';
+      resultEl.appendChild(d);
       return null;
     }
 
@@ -1358,7 +1489,13 @@
     };
 
     // 6. Request signature from MetaMask
-    resultEl.innerHTML = '<div style="color:#a3a3a3;font-size:13px;padding:8px">Sign the order in your wallet...</div>';
+    resultEl.textContent = '';
+    {
+      const d = document.createElement('div');
+      d.setAttribute('style', 'color:#a3a3a3;font-size:13px;padding:8px');
+      d.textContent = 'Sign the order in your wallet...';
+      resultEl.appendChild(d);
+    }
     let signature;
     try {
       signature = await window.ethereum.request({
@@ -1366,10 +1503,17 @@
         params: [activeAddr, JSON.stringify(typedData)],
       });
     } catch (e) {
+      resultEl.textContent = '';
       if (e.code === 4001) {
-        resultEl.innerHTML = '<div style="color:#a3a3a3;font-size:13px;padding:8px">Transaction cancelled</div>';
+        const d = document.createElement('div');
+        d.setAttribute('style', 'color:#a3a3a3;font-size:13px;padding:8px');
+        d.textContent = 'Transaction cancelled';
+        resultEl.appendChild(d);
       } else {
-        resultEl.innerHTML = `<div class="hb-m-error">${esc(e.message || 'Signing failed')}</div>`;
+        const d = document.createElement('div');
+        d.className = 'hb-m-error';
+        d.textContent = e.message || 'Signing failed';
+        resultEl.appendChild(d);
       }
       return null;
     }
@@ -1381,7 +1525,13 @@
     };
 
     // 8. Submit to backend for CLOB forwarding
-    resultEl.innerHTML = '<div style="color:#a3a3a3;font-size:13px;padding:8px">Submitting to Polymarket...</div>';
+    resultEl.textContent = '';
+    {
+      const d = document.createElement('div');
+      d.setAttribute('style', 'color:#a3a3a3;font-size:13px;padding:8px');
+      d.textContent = 'Submitting to Polymarket...';
+      resultEl.appendChild(d);
+    }
     return await api('/api/markets/bet/polymarket', {
       method: 'POST',
       body: {
@@ -1479,7 +1629,12 @@
       const amount = parseFloat($('#hb-detail-amount')?.value) || 0;
       const m = window.__hbTrade._detailMarket;
       if (!amount || amount <= 0) {
-        $('#hb-detail-bet-result').innerHTML = '<div class="hb-m-error">Enter a valid amount</div>';
+        const r = $('#hb-detail-bet-result');
+        r.textContent = '';
+        const d = document.createElement('div');
+        d.className = 'hb-m-error';
+        d.textContent = 'Enter a valid amount';
+        r.appendChild(d);
         return;
       }
       openBetModal(marketId, m?.title || marketId, source, m?.yes_price || 0.5);
