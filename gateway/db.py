@@ -4840,3 +4840,268 @@ def delete_email_template(key: str) -> bool:
     with conn() as c:
         cur = c.execute("DELETE FROM email_templates WHERE key = ?", (key,))
         return cur.rowcount > 0
+
+
+
+# ── Data export requests (Migration 030/032) ────────────────────────────────
+
+
+def create_data_export_request(user_id: int) -> int:
+    """Insert a pending export row; returns its id.
+
+    Caller is responsible for rate-limiting (1/24h/user) before calling
+    this — the DB has no such constraint so we can backfill retries without
+    tripping a unique index.
+    """
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO data_export_requests "
+            "(user_id, requested_at, status) VALUES (?, ?, 'pending')",
+            (user_id, int(time.time())),
+        )
+        return cur.lastrowid
+
+
+def get_data_export_request(export_id: int):
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM data_export_requests WHERE id = ?",
+            (export_id,),
+        ).fetchone()
+
+
+def list_user_data_exports(user_id: int, limit: int = 20):
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM data_export_requests "
+            "WHERE user_id = ? "
+            "ORDER BY requested_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+
+
+def last_user_data_export_ts(user_id: int):
+    """Most recent requested_at for rate-limit checking. None if never."""
+    with conn() as c:
+        row = c.execute(
+            "SELECT requested_at FROM data_export_requests "
+            "WHERE user_id = ? ORDER BY requested_at DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return int(row["requested_at"]) if row else None
+
+
+def update_data_export_request(
+    export_id: int,
+    *,
+    status: Optional[str] = None,
+    completed_at: Optional[int] = None,
+    download_url: Optional[str] = None,
+    expires_at: Optional[int] = None,
+    file_size_bytes: Optional[int] = None,
+    file_path: Optional[str] = None,
+    error: Optional[str] = None,
+) -> bool:
+    fields = []
+    params = []
+    if status is not None:
+        fields.append("status = ?"); params.append(status)
+    if completed_at is not None:
+        fields.append("completed_at = ?"); params.append(completed_at)
+    if download_url is not None:
+        fields.append("download_url = ?"); params.append(download_url)
+    if expires_at is not None:
+        fields.append("expires_at = ?"); params.append(expires_at)
+    if file_size_bytes is not None:
+        fields.append("file_size_bytes = ?"); params.append(file_size_bytes)
+    if file_path is not None:
+        fields.append("file_path = ?"); params.append(file_path)
+    if error is not None:
+        fields.append("error = ?"); params.append(error)
+    if not fields:
+        return False
+    params.append(export_id)
+    with conn() as c:
+        cur = c.execute(
+            f"UPDATE data_export_requests SET {', '.join(fields)} WHERE id = ?",
+            tuple(params),
+        )
+        return cur.rowcount > 0
+
+
+# ── User predictions (Migration 026) ────────────────────────────────────────
+
+
+def create_user_prediction(
+    *,
+    user_id: int,
+    market_slug: str,
+    market_question: str,
+    category: str,
+    predicted_outcome: str,
+    predicted_probability: float,
+    reasoning: Optional[str] = None,
+    market_price_at_prediction: Optional[float] = None,
+    is_public: bool = False,
+    is_anonymous: bool = False,
+) -> int:
+    """Insert a user's prediction on an active market. Raises on UNIQUE
+    violation (user already has an unresolved prediction on this market).
+
+    Caller should compute edge_at_prediction once market_price is known.
+    """
+    edge = None
+    if market_price_at_prediction is not None:
+        edge = abs(predicted_probability - market_price_at_prediction)
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO user_predictions "
+            "(user_id, market_slug, market_question, category, "
+            " predicted_outcome, predicted_probability, reasoning, "
+            " market_price_at_prediction, edge_at_prediction, "
+            " is_public, is_anonymous, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id, market_slug, market_question, category,
+                predicted_outcome, float(predicted_probability), reasoning,
+                market_price_at_prediction, edge,
+                1 if is_public else 0,
+                1 if is_anonymous else 0,
+                int(time.time()),
+            ),
+        )
+        return cur.lastrowid
+
+
+def get_user_prediction(prediction_id: int):
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM user_predictions WHERE id = ?",
+            (prediction_id,),
+        ).fetchone()
+
+
+def get_active_user_prediction(user_id: int, market_slug: str):
+    """Return the user's unresolved prediction on a market, or None."""
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM user_predictions "
+            "WHERE user_id = ? AND market_slug = ? AND resolved = 0",
+            (user_id, market_slug),
+        ).fetchone()
+
+
+def update_user_prediction(
+    prediction_id: int,
+    *,
+    predicted_probability: Optional[float] = None,
+    reasoning: Optional[str] = None,
+    is_public: Optional[bool] = None,
+) -> bool:
+    """Edit a user's own unresolved prediction.
+
+    Direction (predicted_outcome) is deliberately NOT editable — once a
+    user has committed to YES vs NO, the choice is final. Only probability,
+    reasoning, and public-visibility can be updated. Caller must enforce
+    the 24h edit window.
+    """
+    fields = []
+    params = []
+    if predicted_probability is not None:
+        fields.append("predicted_probability = ?"); params.append(float(predicted_probability))
+    if reasoning is not None:
+        fields.append("reasoning = ?"); params.append(reasoning)
+    if is_public is not None:
+        fields.append("is_public = ?"); params.append(1 if is_public else 0)
+    if not fields:
+        return False
+    params.append(prediction_id)
+    with conn() as c:
+        cur = c.execute(
+            f"UPDATE user_predictions SET {', '.join(fields)} "
+            "WHERE id = ? AND resolved = 0",
+            tuple(params),
+        )
+        return cur.rowcount > 0
+
+
+def list_user_predictions(
+    user_id: int,
+    *,
+    resolved: Optional[bool] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List one user's predictions, newest first.
+
+    If resolved is None, returns both active and resolved predictions —
+    which is what the /predictions history page wants. Filtered variants
+    are for the 'active only' or 'resolved only' tabs.
+    """
+    where = ["user_id = ?"]
+    params: list = [user_id]
+    if resolved is not None:
+        where.append("resolved = ?")
+        params.append(1 if resolved else 0)
+    params.extend([limit, offset])
+    with conn() as c:
+        return c.execute(
+            f"SELECT * FROM user_predictions WHERE {' AND '.join(where)} "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            tuple(params),
+        ).fetchall()
+
+
+def list_public_user_predictions(user_id: int, limit: int = 100):
+    """Only is_public=1 rows, for the /predictions/public/{user_id} profile."""
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM user_predictions "
+            "WHERE user_id = ? AND is_public = 1 "
+            "ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+
+
+def get_user_prediction_stats(user_id: int):
+    """Return the user's cached stats row. None if never computed."""
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM user_prediction_stats WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+
+
+def upsert_user_prediction_stats(
+    user_id: int,
+    *,
+    total: int,
+    resolved: int,
+    correct: int,
+    accuracy: Optional[float],
+    avg_brier: Optional[float],
+    avg_timing: Optional[float],
+    current_streak: int = 0,
+    best_streak: int = 0,
+) -> None:
+    """Recompute-and-store the user's cached stats row. Called from the
+    resolution job after each batch of newly-resolved predictions."""
+    with conn() as c:
+        c.execute(
+            "INSERT INTO user_prediction_stats "
+            "(user_id, total_predictions, resolved_predictions, "
+            " correct_predictions, accuracy, avg_brier_score, "
+            " avg_timing_score, current_streak, best_streak) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "  total_predictions = excluded.total_predictions, "
+            "  resolved_predictions = excluded.resolved_predictions, "
+            "  correct_predictions = excluded.correct_predictions, "
+            "  accuracy = excluded.accuracy, "
+            "  avg_brier_score = excluded.avg_brier_score, "
+            "  avg_timing_score = excluded.avg_timing_score, "
+            "  current_streak = excluded.current_streak, "
+            "  best_streak = excluded.best_streak",
+            (user_id, total, resolved, correct, accuracy,
+             avg_brier, avg_timing, current_streak, best_streak),
+        )

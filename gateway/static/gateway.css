@@ -1428,3 +1428,268 @@ html.theme-loading * { transition: none !important; }
     align-items: stretch;
   }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Accessibility (WCAG 2.1 AA) + mobile responsive — session append
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * Appended as a single block so it's easy to diff. Sits at the end of the
+ * file so its rules win the cascade over anything defined earlier.
+ */
+
+/* Skip-to-content link injected by render_page. Visible on focus only so
+ * keyboard users can jump past the sidebar/nav, but doesn't clutter the
+ * visual layout. */
+.narve-skip-link {
+  position: absolute;
+  top: -44px;  /* hidden off-screen until focused */
+  left: 12px;
+  z-index: 100000;
+  padding: 10px 16px;
+  background: var(--accent, #fff);
+  color: var(--bg, #0d0d0d);
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 6px;
+  text-decoration: none;
+  transition: top 0.15s ease-out;
+}
+.narve-skip-link:focus,
+.narve-skip-link:focus-visible {
+  top: 12px;
+  outline: 3px solid var(--accent, #fff);
+  outline-offset: 2px;
+}
+
+/* Focus ring on any interactive element. Uses :focus-visible so the ring
+ * appears for keyboard users but not for mouse clicks. */
+*:focus-visible {
+  outline: 2px solid var(--text-primary, #fff);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: 3px;
+}
+
+/* Screen-reader-only text. Use on icon-only buttons that need a visible
+ * label for AT users but no visible text for sighted users. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Respect reduced-motion preference. Kills every animation/transition for
+ * users who asked for it in their OS settings. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Ensure tap targets hit WCAG's 44x44px minimum on touch devices.
+ * Desktop users keep their smaller click targets. */
+@media (hover: none) and (pointer: coarse) {
+  button,
+  .btn,
+  .btn-primary,
+  .btn-primary-outline,
+  .btn-danger,
+  a.admin-row,
+  .admin-tab,
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 22px;
+    min-width: 22px;
+  }
+}
+
+/* Form inputs hit 16px minimum — below that, iOS Safari zooms the page on
+ * focus. 16px on desktop is fine visually. */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+input[type="url"],
+input[type="tel"],
+textarea,
+select {
+  font-size: max(16px, 1rem);
+}
+
+/* ── Mobile breakpoints ──────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  /* Sidebar collapses — render_page-injected drawer toggle handles the
+   * open/close logic; here we just make room for it. */
+  .sidebar,
+  .narve-sidebar {
+    position: fixed;
+    top: 0; bottom: 0; left: 0;
+    width: 280px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease-out;
+    z-index: 1000;
+    background: var(--surface, #141414);
+  }
+  .sidebar.open,
+  .narve-sidebar.open {
+    transform: translateX(0);
+  }
+  .content-area,
+  .main-content {
+    margin-left: 0 !important;
+    padding: 14px;
+  }
+
+  /* Tables with lots of columns become card-like on narrow screens. */
+  table.mobile-cards,
+  .feed-table.mobile-cards {
+    display: block;
+  }
+  table.mobile-cards thead {
+    display: none;
+  }
+  table.mobile-cards tbody tr {
+    display: block;
+    background: var(--surface, #141414);
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  table.mobile-cards tbody td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 4px 0;
+    border: 0;
+  }
+  table.mobile-cards tbody td::before {
+    content: attr(data-label);
+    opacity: 0.55;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Detail panel becomes a full-screen overlay on mobile. */
+  .detail-panel,
+  .side-panel {
+    position: fixed !important;
+    inset: 0;
+    width: 100% !important;
+    z-index: 900;
+    border-radius: 0;
+  }
+
+  /* Tab nav scrolls horizontally instead of wrapping. */
+  .admin-tabs,
+  .narve-tabs {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 8px;
+    padding-bottom: 6px;
+  }
+  .admin-tabs::-webkit-scrollbar,
+  .narve-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .admin-tab,
+  .narve-tab {
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Hero + landing hero numbers stack, big decorative animations disabled. */
+  .landing-hero,
+  .prerelease-hero {
+    text-align: center;
+  }
+  .landing-hero h1,
+  .prerelease-hero h1 {
+    font-size: 34px !important;
+    line-height: 1.15;
+  }
+  /* Floating decorative number animations are heavy on low-end phones. */
+  .floating-number,
+  .hero-anim-layer {
+    display: none;
+  }
+}
+
+@media (max-width: 375px) {
+  /* iPhone SE + smallest Android widths. No horizontal scroll allowed. */
+  body { overflow-x: hidden; }
+  .wrap, .adm-wrap, .content-area {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+  }
+  .stat-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  h1 { font-size: 26px !important; }
+}
+
+/* ── Intelligence chat: input pinned bottom on mobile ─────────────── */
+
+@media (max-width: 768px) {
+  .intelligence-chat-wrap {
+    padding-bottom: 88px;
+  }
+  .intelligence-chat-input {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    padding: 10px 14px env(safe-area-inset-bottom, 10px);
+    background: var(--bg, #0d0d0d);
+    border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+    z-index: 50;
+  }
+  .intelligence-suggested-prompts {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    scrollbar-width: none;
+    padding-bottom: 6px;
+  }
+  .intelligence-suggested-prompts::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ── Form labels always visually associated with inputs ─────────────── */
+
+label[for] { cursor: pointer; }
+label[for] + input,
+label[for] + select,
+label[for] + textarea {
+  margin-top: 4px;
+}
+
+/* ── Role="alert" + aria-live styling hooks (no visual — behaviour) ── */
+[role="alert"], [aria-live="polite"], [aria-live="assertive"] {
+  /* No forced visual styling. AT hooks only. */
+}
