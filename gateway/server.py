@@ -6822,6 +6822,17 @@ except Exception as _exc:  # pragma: no cover
     log.warning("billing_routes import failed: %s — continuing without it", _exc)
 
 
+# Private referral + leaderboard router. Must sit before the catch-all
+# below, same ordering rule as billing_routes / status_routes above —
+# otherwise the catch-all swallows /invite/{code}, /settings/referrals,
+# /leaderboard, and /api/referrals/me as 404s.
+try:
+    from routes_referrals import router as _referrals_router  # noqa: E402
+    app.include_router(_referrals_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("routes_referrals import failed: %s — continuing without it", _exc)
+
+
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def catch_all(request: Request, full_path: str):
