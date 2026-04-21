@@ -1,0 +1,266 @@
+"""Sub-brand product catalogue — one record per narve.ai subdomain product.
+
+Each of the six subdomains (sports, weather, world, crypto, midterm, traders)
+is presented as a focused, single-purpose product with its own subscription,
+its own marketing page, and its own wordmark — but shares the same auth,
+database, and design system as the main narve.ai apex.
+
+This module is intentionally small and declarative:
+
+  SUBPRODUCTS:           the master table mapping subdomain → brand metadata
+  current_subproduct():  host-aware lookup for a request
+  has_subproduct_access: access check that stacks on top of the existing
+                         per-dashboard subscription model (no new table)
+  landing_context:       the dict fed into static/subproduct_landing.html
+                         — hero, tagline, pricing, floating numbers.
+
+Kept separate from server.py so the middleware hook and the admin-panel
+rollup can import without pulling in the full 5k-line FastAPI app.
+
+Important: the subproduct `slug` here matches the existing `dashboard_key`
+in config.json *wherever they agree*. For `traders` the dashboard key is
+`top_traders` but the subdomain is `traders`; the slug used for routing is
+always the subdomain. `DASHBOARD_KEY_FOR_SLUG` bridges the two so callers
+can still find the right subscription row.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+
+# ── Master catalogue ────────────────────────────────────────────────────────
+#
+# Prices are held here, not in config.json, because the sub-brand layer has
+# its own checkout flow (one-product-at-a-time, no bundle). The main apex
+# bundle (narve.ai Pro) continues to price from config.json monthly_cents.
+#
+# `stripe_price_id_monthly` is set via env var at runtime so staging can
+# point at test-mode prices without editing source. Falls back to None so
+# the checkout UI can fall back to a "contact" CTA rather than 500-ing.
+
+SUBPRODUCTS: dict[str, dict] = {
+    "sports": {
+        "slug": "sports",
+        "dashboard_key": "sports",
+        "name": "Sharpe Sports",
+        "tagline": "Polymarket vs bookmaker arbitrage",
+        "hero_headline": "Where the odds / disagree.",
+        "hero_sub": (
+            "Sharpe Sports hunts for edge between Polymarket prices and the "
+            "sharpest traditional-bookmaker lines. When they disagree by more "
+            "than the vig, you see it first."
+        ),
+        "price_usd": 19.99,
+        "price_gbp": 15.00,
+        "floating_numbers": ["1.87", "-110", "+240", "72%", "61%", "2.35", "-135", "+155"],
+        "stat_pills": ["{arbs} active arbs", "avg edge {edge}", "{sports_count} sports covered"],
+        "tabs": ["Arbs", "Sports Feed", "Bookmakers", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_SPORTS_MONTHLY",
+    },
+    "weather": {
+        "slug": "weather",
+        "dashboard_key": "weather",
+        "name": "Polymarket Weather",
+        "tagline": "Weather market mispricings",
+        "hero_headline": "Rain, shine, / and mispriced.",
+        "hero_sub": (
+            "Polymarket Weather compares live NOAA and ECMWF forecast "
+            "probabilities against market prices, surfacing weather markets "
+            "where the consensus forecast and the market disagree."
+        ),
+        "price_usd": 7.99,
+        "price_gbp": 6.50,
+        "floating_numbers": ["47°F", "23mm", "84%", "0.42", "62°F", "11mm", "91%", "1.08"],
+        "stat_pills": ["{markets} active markets", "{signals} high-edge signals", "{acc}% accuracy"],
+        "tabs": ["Mispricings", "Weather Feed", "Forecast Models", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_WEATHER_MONTHLY",
+    },
+    "world": {
+        "slug": "world",
+        "dashboard_key": "world",
+        "name": "World State",
+        "tagline": "Global conflicts and geopolitics",
+        "hero_headline": "The world moves. / Markets lag.",
+        "hero_sub": (
+            "World State stitches together live geopolitical news, armed "
+            "conflict data, and Polymarket/Kalshi markets so you see the "
+            "signal inside the headline before prices catch up."
+        ),
+        "price_usd": 5.99,
+        "price_gbp": 4.99,
+        "floating_numbers": ["UKR", "CHN", "GZA", "+14%", "-3%", "KOR", "IRN", "TWN"],
+        "stat_pills": ["{conflicts} conflicts tracked", "{sources} news sources", "updated {freshness}"],
+        "tabs": ["Conflicts", "Feed", "Markets", "Analysis", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_WORLD_MONTHLY",
+    },
+    "crypto": {
+        "slug": "crypto",
+        "dashboard_key": "crypto",
+        "name": "Crypto Edge",
+        "tagline": "BTC and crypto ensemble signals",
+        "hero_headline": "BTC doesn't / lie to everyone.",
+        "hero_sub": (
+            "Crypto Edge blends narve.ai credibility-weighted predictions "
+            "with technical indicators and funding-rate signals into a "
+            "single ensemble score per asset."
+        ),
+        "price_usd": 9.99,
+        "price_gbp": 7.99,
+        "floating_numbers": ["$67,340", "-2.4%", "1.087", "RSI 42", "+5.1%", "$3,210", "0.31", "-0.08"],
+        "stat_pills": ["BTC ${btc}", "ensemble: {signal}", "{acc}% 24h accuracy"],
+        "tabs": ["Signals", "Crypto Feed", "Ensemble", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_CRYPTO_MONTHLY",
+    },
+    "midterm": {
+        "slug": "midterm",
+        "dashboard_key": "midterm",
+        "name": "Midterm Predictor",
+        "tagline": "Election polling aggregation",
+        "hero_headline": "Polls drift. / Probabilities don't.",
+        "hero_sub": (
+            "Midterm Predictor aggregates every reputable US polling source, "
+            "compares the weighted result to Polymarket odds, and flags races "
+            "where the market and the polls disagree meaningfully."
+        ),
+        "price_usd": 14.99,
+        "price_gbp": 11.99,
+        "floating_numbers": ["+3.2", "R+7", "D+2", "49.1%", "-0.8", "R+1", "+4.7", "51.0%"],
+        "stat_pills": ["{races} races tracked", "avg polling edge {edge}pp", "updated daily"],
+        "tabs": ["Races", "Feed", "Polling", "Models", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_MIDTERM_MONTHLY",
+    },
+    "traders": {
+        "slug": "traders",
+        # The dashboard_key in config.json is `top_traders` but the subdomain
+        # is `traders`. Access checks need to hit the canonical key.
+        "dashboard_key": "top_traders",
+        "name": "Top Traders",
+        "tagline": "Polymarket top-trader activity",
+        "hero_headline": "Follow the / smart money.",
+        "hero_sub": (
+            "Top Traders ranks every Polymarket wallet by profit, surfaces "
+            "live position changes from the top 100, and alerts you when a "
+            "wallet you follow opens a new position."
+        ),
+        "price_usd": 12.99,
+        "price_gbp": 9.99,
+        "floating_numbers": ["0xaf…", "$127k", "+34%", "0xc1…", "+412%", "0x3e…", "-11%", "$8.2k"],
+        "stat_pills": ["{wallets} wallets tracked", "top trader {top_pnl}", "24h volume {volume}"],
+        "tabs": ["Leaderboard", "Wallet Activity", "Follow", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_TRADERS_MONTHLY",
+    },
+}
+
+# Bridge from SUBPRODUCT slug → subscriptions.dashboard_key. For five of the
+# six they agree; `traders` is the exception (subdomain != dashboard_key).
+DASHBOARD_KEY_FOR_SLUG: dict[str, str] = {
+    slug: cfg["dashboard_key"] for slug, cfg in SUBPRODUCTS.items()
+}
+
+
+def get_subproduct(slug: Optional[str]) -> Optional[dict]:
+    """Return the metadata dict for *slug*, or None if unknown."""
+    if not slug:
+        return None
+    return SUBPRODUCTS.get(slug)
+
+
+def subproduct_for_host(host: str) -> Optional[dict]:
+    """Given a Host header, return the subproduct dict or None.
+
+    Accepts bare subdomains (``crypto`` / ``crypto.localhost``) and FQDNs
+    (``crypto.narve.ai``). Port suffixes are stripped. Apex hosts return None
+    so the main landing page keeps rendering.
+    """
+    if not host:
+        return None
+    bare = host.split(":")[0].strip().lower()
+    if not bare:
+        return None
+    # First label of the host is the subdomain we care about.
+    first = bare.split(".")[0]
+    if first == "staging":
+        return None
+    return SUBPRODUCTS.get(first)
+
+
+def has_subproduct_access(
+    user: Optional[dict],
+    slug: str,
+    *,
+    has_active_subscription,
+    has_pro_plan,
+) -> bool:
+    """Does *user* have access to the subproduct identified by *slug*?
+
+    Dependency-injected so callers can pass `db.has_active_subscription`
+    and a Pro-plan checker without this module importing db / server. That
+    keeps the import graph acyclic — server.py imports subproduct, not the
+    other way round.
+
+    Access rules (in order):
+      1. No user → False.
+      2. Admin → True (bypasses all billing, matches proxy_request).
+      3. Pro or enterprise plan → True (main bundle grants all sub-products).
+      4. Active subscription on the mapped dashboard_key → True.
+      5. Anything else → False.
+    """
+    if not user:
+        return False
+    if user.get("is_admin"):
+        return True
+    try:
+        if has_pro_plan(user):
+            return True
+    except Exception:
+        pass
+    dashboard_key = DASHBOARD_KEY_FOR_SLUG.get(slug)
+    if not dashboard_key:
+        return False
+    try:
+        return bool(has_active_subscription(user["user_id"], dashboard_key))
+    except Exception:
+        return False
+
+
+def landing_context(slug: str, stats: Optional[dict] = None) -> dict:
+    """Build the template context for static/subproduct_landing.html.
+
+    *stats* is optional and carries any live numbers the caller has on
+    hand (e.g. active arbs for sports, tracked wallets for traders). Any
+    placeholder in `stat_pills` that isn't provided falls back to "—" so
+    the page still renders before the relevant pipeline exists.
+    """
+    cfg = SUBPRODUCTS[slug]
+    stats = stats or {}
+    pills = []
+    for template in cfg["stat_pills"]:
+        try:
+            pills.append(template.format(**{k: stats.get(k, "—") for k in _placeholders(template)}))
+        except (KeyError, IndexError):
+            pills.append(template)
+    return {
+        "slug": cfg["slug"],
+        "name": cfg["name"],
+        "tagline": cfg["tagline"],
+        "hero_headline": cfg["hero_headline"],
+        "hero_sub": cfg["hero_sub"],
+        "price_usd": cfg["price_usd"],
+        "price_gbp": cfg["price_gbp"],
+        "floating_numbers": cfg["floating_numbers"],
+        "stat_pills": pills,
+        "tabs": cfg["tabs"],
+    }
+
+
+def _placeholders(template: str) -> list[str]:
+    """Extract {name} placeholders from a format-string. Used by landing_context
+    to safely default missing stats to "—" instead of raising KeyError.
+    """
+    import string
+    return [
+        field_name
+        for _, field_name, _, _ in string.Formatter().parse(template)
+        if field_name
+    ]

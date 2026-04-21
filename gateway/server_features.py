@@ -625,6 +625,21 @@ th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.08e
 
 @app.get("/sitemap.xml")
 async def sitemap_xml(request: Request):
+    # Sub-brand subdomains get their own minimal sitemap canonical to
+    # themselves — each subdomain is a separate Google property and the
+    # branded landing is the only public URL there today.
+    sub = server.get_subdomain(request)
+    if sub:
+        from subproduct import SUBPRODUCTS as _SP
+        if sub in _SP:
+            base = f"https://{sub}.narve.ai"
+            parts = [
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+                f"<url><loc>{base}/</loc><priority>1.0</priority><changefreq>weekly</changefreq></url>",
+                "</urlset>",
+            ]
+            return Response(content="\n".join(parts), media_type="application/xml")
     # Prefer the generated file on disk (written by the generate_sitemap job).
     sitemap_path = server.STATIC_DIR / "sitemap.xml"
     if sitemap_path.exists():
@@ -651,6 +666,20 @@ async def sitemap_xml(request: Request):
 
 @app.get("/robots.txt")
 async def robots_txt(request: Request):
+    sub = server.get_subdomain(request)
+    if sub:
+        from subproduct import SUBPRODUCTS as _SP
+        if sub in _SP:
+            body = (
+                "User-agent: *\n"
+                "Allow: /\n"
+                "Disallow: /admin/\n"
+                "Disallow: /api/\n"
+                "Disallow: /dashboard/\n"
+                "Disallow: /gate\n"
+                f"Sitemap: https://{sub}.narve.ai/sitemap.xml\n"
+            )
+            return PlainTextResponse(body)
     body = (
         "User-agent: *\n"
         "Allow: /\n"

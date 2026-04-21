@@ -2168,7 +2168,28 @@ def _render_landing() -> HTMLResponse:
 
 @app.get("/robots.txt")
 async def seo_robots_txt(request: Request):
-    """Static robots.txt — allow indexing of public pages, block auth/admin/API."""
+    """Static robots.txt — allow indexing of public pages, block auth/admin/API.
+
+    On a sub-brand subdomain (sports.narve.ai, crypto.narve.ai, …) we emit
+    a minimal subdomain-scoped robots.txt that points at that subdomain's
+    own sitemap. Each sub-brand is its own Google property.
+    """
+    sub = get_subdomain(request)
+    if sub:
+        from subproduct import SUBPRODUCTS as _SP
+        if sub in _SP:
+            body = (
+                "User-agent: *\n"
+                "Allow: /\n"
+                "Disallow: /admin/\n"
+                "Disallow: /api/\n"
+                "Disallow: /auth/\n"
+                "Disallow: /dashboard/\n"
+                "Disallow: /gate\n"
+                f"Sitemap: https://{sub}.narve.ai/sitemap.xml\n"
+            )
+            return Response(body, media_type="text/plain; charset=utf-8")
+
     apex = _request_apex(request) or DOMAIN
     body = (
         "User-agent: *\n"
@@ -2220,8 +2241,32 @@ _SITEMAP_ENTRIES = [
 
 @app.get("/sitemap.xml")
 async def seo_sitemap_xml(request: Request):
-    """Auto-generated sitemap. Called on every crawl; cheap enough to render live."""
+    """Auto-generated sitemap. Called on every crawl; cheap enough to render live.
+
+    Sub-brand subdomains (sports.narve.ai, crypto.narve.ai, …) return a
+    minimal sitemap canonical to the subdomain itself. The sub-brand
+    landing page is the only public URL on these hosts, and treating each
+    subdomain as its own Google property requires they not link back to
+    the apex sitemap.
+    """
     import datetime as _dt
+    sub = get_subdomain(request)
+    if sub:
+        from subproduct import SUBPRODUCTS as _SP
+        if sub in _SP:
+            today = _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%d")
+            base = f"https://{sub}.narve.ai"
+            parts = [
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+                f"<url><loc>{base}/</loc>"
+                f"<lastmod>{today}</lastmod>"
+                f"<changefreq>weekly</changefreq>"
+                f"<priority>1.0</priority></url>",
+                "</urlset>",
+            ]
+            return Response("".join(parts), media_type="application/xml; charset=utf-8")
+
     apex = _request_apex(request) or DOMAIN
     today = _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%d")
     parts = ['<?xml version="1.0" encoding="UTF-8"?>']

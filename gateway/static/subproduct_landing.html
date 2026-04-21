@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ subproduct_name }} — narve.ai</title>
+  <meta name="description" content="{{ subproduct_tagline }} — part of narve.ai.">
+  <link rel="canonical" href="https://{{ subproduct_slug }}.narve.ai/">
+  <meta name="robots" content="index, follow">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ subproduct_name }} — narve.ai">
+  <meta property="og:description" content="{{ subproduct_tagline }}">
+  <meta property="og:url" content="https://{{ subproduct_slug }}.narve.ai/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ subproduct_name }} — narve.ai">
+  <meta name="twitter:description" content="{{ subproduct_tagline }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      -webkit-font-smoothing: antialiased;
+    }
+    .shell { max-width: 1240px; margin: 0 auto; padding: 28px 32px 96px; }
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 72px;
+    }
+    .wordmark {
+      font-family: var(--font-display);
+      font-size: 20px;
+      letter-spacing: -0.04em;
+      color: var(--text-primary);
+      font-style: italic;
+    }
+    .wordmark-divider { opacity: 0.4; margin: 0 6px; font-style: normal; }
+    .wordmark-slug {
+      font-family: var(--font-ui);
+      font-style: normal;
+      font-weight: 500;
+      font-size: 14px;
+      letter-spacing: 0;
+      color: var(--text-secondary);
+      vertical-align: 4px;
+    }
+    .top-note {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-tertiary);
+    }
+    .top-note a { color: var(--text-secondary); text-decoration: none; }
+    .top-note a:hover { color: var(--text-primary); }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 72px;
+      align-items: center;
+      min-height: 62vh;
+    }
+    @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; } }
+
+    .hero-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--text-tertiary);
+      margin: 0 0 20px;
+    }
+    h1 {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-weight: 400;
+      font-size: 76px;
+      line-height: 0.98;
+      letter-spacing: -0.035em;
+      margin: 0 0 28px;
+      color: var(--text-primary);
+    }
+    @media (max-width: 900px) { h1 { font-size: 54px; } }
+    h1 br { display: inline; }
+
+    .sub {
+      max-width: 480px;
+      font-size: 16px;
+      line-height: 1.55;
+      color: var(--text-secondary);
+      margin: 0 0 40px;
+    }
+
+    .price-card {
+      max-width: 420px;
+      padding: 28px 32px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: 14px;
+    }
+    .price-card h2 {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 500;
+      margin: 0 0 12px;
+      letter-spacing: -0.01em;
+    }
+    .price-row {
+      display: flex; gap: 18px; align-items: baseline; margin-bottom: 20px;
+    }
+    .price-usd {
+      font-family: var(--font-display);
+      font-size: 36px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+    .price-gbp {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+    .cta {
+      display: inline-block;
+      padding: 13px 22px;
+      background: var(--text-primary);
+      color: var(--interactive-text);
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 14px;
+      text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+    .bundle-note {
+      margin: 20px 0 0;
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.5;
+    }
+    .bundle-note a { color: var(--text-secondary); }
+
+    /* Floating numbers visualisation — monochrome, animated */
+    .numbers { position: relative; height: 420px; }
+    .numbers span {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 18px;
+      color: var(--text-secondary);
+      opacity: 0;
+      animation: float 8s infinite ease-in-out;
+    }
+    .numbers span:nth-child(1) { top: 6%;  left: 12%; animation-delay: 0s; font-size: 28px; }
+    .numbers span:nth-child(2) { top: 22%; left: 58%; animation-delay: 1.1s; }
+    .numbers span:nth-child(3) { top: 44%; left: 8%;  animation-delay: 2.0s; font-size: 24px; }
+    .numbers span:nth-child(4) { top: 58%; left: 66%; animation-delay: 2.8s; }
+    .numbers span:nth-child(5) { top: 78%; left: 20%; animation-delay: 3.6s; font-size: 22px; }
+    .numbers span:nth-child(6) { top: 18%; left: 82%; animation-delay: 4.4s; }
+    .numbers span:nth-child(7) { top: 70%; left: 82%; animation-delay: 5.2s; }
+    .numbers span:nth-child(8) { top: 36%; left: 38%; animation-delay: 6.0s; }
+    @keyframes float {
+      0%, 100% { opacity: 0; transform: translateY(0px); }
+      10%, 90% { opacity: 0.85; }
+      50% { opacity: 1; transform: translateY(-6px); }
+    }
+
+    .pills {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-top: 40px;
+    }
+    .pill {
+      padding: 8px 14px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="wordmark">
+        <span>narve.ai</span>
+        <span class="wordmark-divider">/</span>
+        <span class="wordmark-slug">{{ subproduct_slug }}</span>
+      </div>
+      <div class="top-note">
+        Part of <a href="https://narve.ai/">narve.ai</a>
+      </div>
+    </div>
+
+    <div class="hero-grid">
+      <div>
+        <p class="hero-label">{{ subproduct_slug_upper }} · A NARVE.AI PRODUCT</p>
+        <h1>{{ raw_hero_headline }}</h1>
+        <p class="sub">{{ subproduct_hero_sub }}</p>
+
+        <div class="price-card">
+          <h2>{{ subproduct_name }}</h2>
+          <div class="price-row">
+            <span class="price-usd">${{ subproduct_price_usd }}/month</span>
+            <span class="price-gbp">£{{ subproduct_price_gbp }}/month</span>
+          </div>
+          <a class="cta" href="/gate?next=/billing%3Fdashboard%3D{{ subproduct_dashboard_key }}">Get access →</a>
+          <p class="bundle-note">
+            Or get all narve.ai products with <a href="https://narve.ai/pricing">Pro for £180/month</a> —
+            includes this product plus five others and the full narve.ai platform.
+          </p>
+        </div>
+      </div>
+
+      <div class="numbers">
+        {{ raw_floating_numbers }}
+      </div>
+    </div>
+
+    <div class="pills">
+      {{ raw_stat_pills }}
+    </div>
+  </div>
+</body>
+</html>

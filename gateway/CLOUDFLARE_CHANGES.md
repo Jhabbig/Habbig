@@ -512,8 +512,77 @@ for i in {1..25}; do curl -o /dev/null -sS -w '%{http_code}\n' https://narve.ai/
 
 ---
 
-## 6. Change log
+## 6. Sub-brand subdomains
+
+Six narve.ai sub-brand products are served from dedicated subdomains, all
+proxied through Cloudflare to the same origin that already serves
+`narve.ai`. Universal SSL covers every subdomain automatically. Apply
+these records after the main `narve.ai` apex records are live.
+
+### Records to add
+
+| Type  | Name     | Content   | TTL | Proxy    |
+|-------|----------|-----------|-----|----------|
+| CNAME | sports   | narve.ai  | 300 | Proxied  |
+| CNAME | weather  | narve.ai  | 300 | Proxied  |
+| CNAME | world    | narve.ai  | 300 | Proxied  |
+| CNAME | crypto   | narve.ai  | 300 | Proxied  |
+| CNAME | midterm  | narve.ai  | 300 | Proxied  |
+| CNAME | traders  | narve.ai  | 300 | Proxied  |
+
+Each `<slug>.narve.ai` points to the same origin as `narve.ai`. The gateway
+detects the sub-brand from the Host header (`get_subdomain` in server.py)
+and serves the correct landing / proxied dashboard without any extra
+routing on the Cloudflare side.
+
+### Cloudflare Tunnel alternative
+
+If you tunnel instead of CNAME-to-apex, add each subdomain as a hostname
+on the existing `cloudflared` tunnel:
+
+```bash
+cloudflared tunnel route dns <TUNNEL_UUID> sports.narve.ai
+cloudflared tunnel route dns <TUNNEL_UUID> weather.narve.ai
+cloudflared tunnel route dns <TUNNEL_UUID> world.narve.ai
+cloudflared tunnel route dns <TUNNEL_UUID> crypto.narve.ai
+cloudflared tunnel route dns <TUNNEL_UUID> midterm.narve.ai
+cloudflared tunnel route dns <TUNNEL_UUID> traders.narve.ai
+```
+
+`TUNNEL_UUID` is the one currently serving `narve.ai`. Confirm with
+`cloudflared tunnel list` on the Ubuntu server (100.69.44.108). Restart
+the tunnel service after adding the routes.
+
+### Verification after applying
+
+```bash
+# Each subdomain resolves to Cloudflare (proxied → 104.x / 172.x).
+for s in sports weather world crypto midterm traders; do
+  dig +short "${s}.narve.ai" | head -n 1
+done
+
+# Landing page renders with the correct wordmark.
+for s in sports weather world crypto midterm traders; do
+  echo "=== ${s} ==="
+  curl -sS "https://${s}.narve.ai/" | grep -o 'narve.ai / [a-z]*' | head -n 1
+done
+
+# Each subdomain has its own sitemap / robots.
+curl -sS https://sports.narve.ai/sitemap.xml | grep '<loc>'
+curl -sS https://sports.narve.ai/robots.txt
+```
+
+### Rollback
+
+Delete the six CNAME records from the Cloudflare dashboard, or remove the
+tunnel hostnames with `cloudflared tunnel route dns --delete`. No origin
+changes are needed — the subdomains silently stop resolving.
+
+---
+
+## 7. Change log
 
 | Date | Who | Section | Change |
 |---|---|---|---|
 | 2026-04-08 | AI | File | Added infrastructure section |
+| 2026-04-21 | AI | §6 | Added six sub-brand subdomain CNAMEs (sports, weather, world, crypto, midterm, traders) |
