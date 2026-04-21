@@ -309,7 +309,7 @@ async def affiliate_dashboard(request: Request):
     return render_page("settings_affiliate", request=request, **ctx)
 
 
-@app.get("/api/affiliate")
+@app.get("/api/v1/affiliate")
 async def api_affiliate_info(request: Request):
     user, aff = _require_active_affiliate(request)
     links = da.list_affiliate_links(aff["id"])
@@ -343,7 +343,7 @@ async def api_affiliate_info(request: Request):
     })
 
 
-@app.post("/api/affiliate/links")
+@app.post("/api/v1/affiliate/links")
 async def api_affiliate_create_link(request: Request):
     user, aff = _require_active_affiliate(request)
     try:
@@ -382,7 +382,7 @@ async def api_affiliate_create_link(request: Request):
     })
 
 
-@app.get("/api/affiliate/conversions")
+@app.get("/api/v1/affiliate/conversions")
 async def api_affiliate_conversions(request: Request):
     user, aff = _require_active_affiliate(request)
     convs = da.list_affiliate_conversions(aff["id"], limit=200)
@@ -407,7 +407,7 @@ async def api_affiliate_conversions(request: Request):
     })
 
 
-@app.post("/api/affiliate/payout-request")
+@app.post("/api/v1/affiliate/payout-request")
 async def api_affiliate_payout_request(request: Request):
     """Fire off an admin email asking for a manual payout.
 

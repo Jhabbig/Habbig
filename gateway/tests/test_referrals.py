@@ -30,6 +30,7 @@ os.environ.setdefault("EMAIL_DRY_RUN", "true")
 
 from tests import _testdb  # noqa: F401 — shared DB + migrations
 import db  # noqa: E402
+import db_referrals as dbr  # noqa: E402
 import server  # noqa: E402
 from backend import referrals as referral_logic  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -85,7 +86,7 @@ def _give_active_sub(user_id: int, plan: str = "trader") -> None:
 class TestReferralCodes(unittest.TestCase):
     def test_generated_codes_are_10_char_alphanumeric(self):
         for _ in range(50):
-            c = db.generate_referral_code()
+            c = dbr.generate_referral_code()
             self.assertEqual(len(c), 10)
             self.assertTrue(c.isalnum())
             # No ambiguous chars — we excluded 0/1/I/O from the alphabet
@@ -94,31 +95,31 @@ class TestReferralCodes(unittest.TestCase):
 
     def test_ensure_user_referral_code_is_idempotent(self):
         uid = _mk_user("codestable@test.com")
-        first = db.ensure_user_referral_code(uid)
-        again = db.ensure_user_referral_code(uid)
+        first = dbr.ensure_user_referral_code(uid)
+        again = dbr.ensure_user_referral_code(uid)
         self.assertEqual(first, again)
 
     def test_get_user_by_referral_code_case_insensitive(self):
         uid = _mk_user("lookup@test.com")
-        code = db.ensure_user_referral_code(uid)
-        row_upper = db.get_user_by_referral_code(code.upper())
-        row_lower = db.get_user_by_referral_code(code.lower())
+        code = dbr.ensure_user_referral_code(uid)
+        row_upper = dbr.get_user_by_referral_code(code.upper())
+        row_lower = dbr.get_user_by_referral_code(code.lower())
         self.assertIsNotNone(row_upper)
         self.assertIsNotNone(row_lower)
         self.assertEqual(row_upper["id"], uid)
         self.assertEqual(row_lower["id"], uid)
 
     def test_invalid_code_returns_none(self):
-        self.assertIsNone(db.get_user_by_referral_code("NOTACODE__"))
-        self.assertIsNone(db.get_user_by_referral_code(""))
-        self.assertIsNone(db.get_user_by_referral_code(None))
+        self.assertIsNone(dbr.get_user_by_referral_code("NOTACODE__"))
+        self.assertIsNone(dbr.get_user_by_referral_code(""))
+        self.assertIsNone(dbr.get_user_by_referral_code(None))
 
     def test_suspended_user_code_not_resolvable(self):
         uid = _mk_user("suspended@test.com")
-        code = db.ensure_user_referral_code(uid)
+        code = dbr.ensure_user_referral_code(uid)
         with db.conn() as c:
             c.execute("UPDATE users SET suspended = 1 WHERE id = ?", (uid,))
-        self.assertIsNone(db.get_user_by_referral_code(code))
+        self.assertIsNone(dbr.get_user_by_referral_code(code))
 
 
 # ── Unit: reward tier logic ───────────────────────────────────────────────────
@@ -192,40 +193,40 @@ class TestReferralLifecycle(unittest.TestCase):
         self.invitee = _mk_user(f"lifer_{tag}_i@test.com", f"lifer_{tag}_i")
 
     def test_create_and_mark_converted(self):
-        rid = db.create_referral(
+        rid = dbr.create_referral(
             referrer_user_id=self.referrer,
             referred_email="lifer_inv@test.com",
         )
         self.assertGreater(rid, 0)
         # Attach the user, then mark converted.
-        db.attach_user_to_referral(rid, self.invitee)
-        flipped = db.mark_referral_converted(self.invitee)
+        dbr.attach_user_to_referral(rid, self.invitee)
+        flipped = dbr.mark_referral_converted(self.invitee)
         self.assertEqual(flipped, 1)
         # Running again is a no-op (idempotent).
-        self.assertEqual(db.mark_referral_converted(self.invitee), 0)
+        self.assertEqual(dbr.mark_referral_converted(self.invitee), 0)
 
     def test_count_converted_skips_unconverted(self):
-        db.create_referral(
+        dbr.create_referral(
             referrer_user_id=self.referrer,
             referred_email="pendingA@test.com",
         )
-        rid2 = db.create_referral(
+        rid2 = dbr.create_referral(
             referrer_user_id=self.referrer,
             referred_email="pendingB@test.com",
         )
-        db.attach_user_to_referral(rid2, self.invitee)
-        db.mark_referral_converted(self.invitee)
-        self.assertEqual(db.count_converted_referrals(self.referrer), 1)
+        dbr.attach_user_to_referral(rid2, self.invitee)
+        dbr.mark_referral_converted(self.invitee)
+        self.assertEqual(dbr.count_converted_referrals(self.referrer), 1)
 
     def test_get_user_referrals_most_recent_first(self):
-        a = db.create_referral(
+        a = dbr.create_referral(
             referrer_user_id=self.referrer, referred_email="A@t.com",
         )
         time.sleep(0.01)
-        b = db.create_referral(
+        b = dbr.create_referral(
             referrer_user_id=self.referrer, referred_email="B@t.com",
         )
-        rows = db.get_user_referrals(self.referrer)
+        rows = dbr.get_user_referrals(self.referrer)
         ids = [r["id"] for r in rows]
         # b was created second so should come first
         self.assertEqual(ids[0], b)
@@ -239,7 +240,7 @@ class TestConversionHook(unittest.TestCase):
     def test_first_paid_sub_flips_pending_referral(self):
         referrer = _mk_user("hook_r@test.com", "hook_r")
         invitee = _mk_user("hook_i@test.com", "hook_i")
-        rid = db.create_referral(
+        rid = dbr.create_referral(
             referrer_user_id=referrer,
             referred_email="hook_i@test.com",
             referred_user_id=invitee,
@@ -273,11 +274,11 @@ class TestRewardJob(unittest.TestCase):
 
     def test_grants_one_month_free_on_first_conversion(self):
         r, i = self._fresh_pair("rwd1")
-        rid = db.create_referral(
+        rid = dbr.create_referral(
             referrer_user_id=r, referred_email=f"rwd1_i@test.com",
             referred_user_id=i,
         )
-        db.mark_referral_converted(i)
+        dbr.mark_referral_converted(i)
 
         result = asyncio.run(self.run_job())
         self.assertGreaterEqual(result["granted"], 1)
@@ -307,11 +308,11 @@ class TestRewardJob(unittest.TestCase):
         r = _mk_user("rwd_np_r@test.com", "rwd_np_r")
         i = _mk_user("rwd_np_i@test.com", "rwd_np_i")
         # DO NOT give r an active sub.
-        db.create_referral(
+        dbr.create_referral(
             referrer_user_id=r, referred_email="rwd_np_i@test.com",
             referred_user_id=i,
         )
-        db.mark_referral_converted(i)
+        dbr.mark_referral_converted(i)
 
         result = asyncio.run(self.run_job())
         self.assertEqual(result["granted"], 0)
@@ -319,11 +320,11 @@ class TestRewardJob(unittest.TestCase):
 
     def test_job_is_idempotent(self):
         r, i = self._fresh_pair("rwd_idem")
-        rid = db.create_referral(
+        rid = dbr.create_referral(
             referrer_user_id=r, referred_email=f"rwd_idem_i@test.com",
             referred_user_id=i,
         )
-        db.mark_referral_converted(i)
+        dbr.mark_referral_converted(i)
 
         asyncio.run(self.run_job())
         # After first run: our specific referral must be stamped.
@@ -354,12 +355,12 @@ class TestRewardJob(unittest.TestCase):
         rids = []
         for n in range(5):
             i = _mk_user(f"stack_i{n}@test.com", f"stack_i{n}")
-            rid = db.create_referral(
+            rid = dbr.create_referral(
                 referrer_user_id=r, referred_email=f"stack_i{n}@test.com",
                 referred_user_id=i,
             )
             rids.append(rid)
-            db.mark_referral_converted(i)
+            dbr.mark_referral_converted(i)
 
         result = asyncio.run(self.run_job())
         # 5 processed, 1 rewarded (count=1), 1 rewarded (count=5),
@@ -387,34 +388,34 @@ class TestRewardJob(unittest.TestCase):
 class TestLeaderboardDb(unittest.TestCase):
     def test_opt_in_requires_valid_handle(self):
         uid = _mk_user("lb_bad@test.com", "lb_bad")
-        result = db.set_leaderboard_participation(
+        result = dbr.set_leaderboard_participation(
             uid, participate=True, display_name="x",  # too short
         )
         self.assertFalse(result["ok"])
-        result = db.set_leaderboard_participation(
+        result = dbr.set_leaderboard_participation(
             uid, participate=True, display_name="has space",
         )
         self.assertFalse(result["ok"])
 
     def test_opt_in_and_out_round_trip(self):
         uid = _mk_user("lb_round@test.com", "lb_round")
-        result = db.set_leaderboard_participation(
+        result = dbr.set_leaderboard_participation(
             uid, participate=True, display_name="forecaster42",
         )
         self.assertTrue(result["ok"])
-        state = db.get_leaderboard_opt_in(uid)
+        state = dbr.get_leaderboard_opt_in(uid)
         self.assertTrue(state["participating"])
         self.assertEqual(state["handle"], "forecaster42")
-        db.set_leaderboard_participation(uid, participate=False)
-        self.assertFalse(db.get_leaderboard_opt_in(uid)["participating"])
+        dbr.set_leaderboard_participation(uid, participate=False)
+        self.assertFalse(dbr.get_leaderboard_opt_in(uid)["participating"])
 
     def test_duplicate_handle_rejected(self):
         a = _mk_user("lb_dupA@test.com", "lb_dupA")
         b = _mk_user("lb_dupB@test.com", "lb_dupB")
-        db.set_leaderboard_participation(
+        dbr.set_leaderboard_participation(
             a, participate=True, display_name="sharedname",
         )
-        result = db.set_leaderboard_participation(
+        result = dbr.set_leaderboard_participation(
             b, participate=True, display_name="sharedname",
         )
         self.assertFalse(result["ok"])
@@ -423,24 +424,24 @@ class TestLeaderboardDb(unittest.TestCase):
     def test_leaderboard_only_returns_opted_in_with_scores(self):
         a = _mk_user("lb_scA@test.com", "lb_scA")
         b = _mk_user("lb_scB@test.com", "lb_scB")  # no accuracy data
-        db.set_leaderboard_participation(
+        dbr.set_leaderboard_participation(
             a, participate=True, display_name="lbA"
         )
-        db.set_leaderboard_participation(
+        dbr.set_leaderboard_participation(
             b, participate=True, display_name="lbB"
         )
         # A has accuracy, B does not.
-        db.upsert_user_accuracy(
+        dbr.upsert_user_accuracy(
             a, total=10, correct=7,
             accuracy_all=0.7, accuracy_90d=0.7,
             accuracy_30d=0.7, accuracy_7d=None,
         )
-        db.upsert_user_accuracy(
+        dbr.upsert_user_accuracy(
             b, total=0, correct=0,
             accuracy_all=None, accuracy_90d=None,
             accuracy_30d=None, accuracy_7d=None,
         )
-        rows = db.get_leaderboard(period="all", limit=10)
+        rows = dbr.get_leaderboard(period="all", limit=10)
         handles = [r["handle"] for r in rows]
         self.assertIn("lbA", handles)
         self.assertNotIn("lbB", handles)
@@ -453,7 +454,7 @@ class TestInviteHttp(unittest.TestCase):
     def setUp(self):
         tag = self._testMethodName[:20]
         self.referrer = _mk_user(f"http_{tag}_r@test.com", f"http_{tag}_r")
-        self.code = db.ensure_user_referral_code(self.referrer)
+        self.code = dbr.ensure_user_referral_code(self.referrer)
 
     def test_get_invite_page_valid_code_returns_200(self):
         r = client.get(f"/invite/{self.code}")

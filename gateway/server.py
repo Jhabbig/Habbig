@@ -557,6 +557,21 @@ CSP = "; ".join([
 
 MAX_REQUEST_BODY = 1_048_576  # 1MB
 
+# CSP for /embed/* responses. The embed route handler adds a
+# `frame-ancestors https://{widget.domain}` clause so only the registered
+# partner can iframe the widget. If the handler omits frame-ancestors
+# (e.g. on a bare error page), we fall back to `frame-ancestors \'none\'` —
+# fail closed.
+EMBED_CSP_DEFAULT = "; ".join([
+    "default-src \'self\'",
+    "style-src \'self\' \'unsafe-inline\'",
+    "script-src \'self\'",
+    "img-src \'self\' data: https:",
+    "font-src \'self\' data:",
+    "base-uri \'self\'",
+    "frame-ancestors \'none\'",
+])
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -564,13 +579,28 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > MAX_REQUEST_BODY:
             return JSONResponse({"error": "Request too large"}, status_code=413)
+        # Embed widgets must render inside partner iframes, so /embed/*
+        # opts out of the blanket X-Frame-Options: DENY and uses a
+        # per-widget frame-ancestors CSP set by the route handler.
+        is_embed = request.url.path.startswith("/embed/")
         response = await call_next(request)
         for header, value in SECURITY_HEADERS.items():
+            if is_embed and header == "X-Frame-Options":
+                continue
             response.headers[header] = value
-        response.headers["Content-Security-Policy"] = CSP
-        # Prevent Cloudflare from caching HTML responses
+        # Honour a CSP already set by the route handler (embed routes set
+        # their own with partner-specific frame-ancestors). Otherwise
+        # install the strict site default — or the embed-safe default
+        # for /embed/* error pages.
+        if "Content-Security-Policy" not in response.headers:
+            response.headers["Content-Security-Policy"] = (
+                EMBED_CSP_DEFAULT if is_embed else CSP
+            )
+        # Prevent Cloudflare from caching HTML responses on the main site.
+        # Embed responses get their own Cache-Control set by the handler
+        # (short max-age so a sub lapse propagates quickly).
         ct = response.headers.get("content-type", "")
-        if "text/html" in ct:
+        if "text/html" in ct and not is_embed:
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
 
@@ -723,6 +753,17 @@ _CSRF_EXEMPT_POSTS = frozenset({
     "/api/status/unsubscribe",
 })
 
+# Prefix-matched POST exemptions for endpoints with dynamic path segments.
+# Each prefix must be independently rate-limited so a forged cross-origin
+# POST can't escalate.
+_CSRF_EXEMPT_POST_PREFIXES = (
+    # Referral-link acceptance: /api/invite/{code}/accept — per-IP
+    # (20/hour) + per-email (3/day) rate limited, only emits a single-use
+    # token to the provided email. A forgery can't leak user data or take
+    # over an account.
+    "/api/invite/",
+)
+
 
 @app.get("/favicon.ico")
 async def favicon():
@@ -797,6 +838,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         # Exempt public POST endpoints that don't have a session to anchor to
         if request.method == "POST" and path in _CSRF_EXEMPT_POSTS:
+            return await call_next(request)
+        # Prefix-matched variants for dynamic path segments (e.g. invite/{code}).
+        if request.method == "POST" and any(
+            path.startswith(p) for p in _CSRF_EXEMPT_POST_PREFIXES
+        ):
             return await call_next(request)
 
         if request.method == "POST":
@@ -4743,45 +4789,131 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         '<div class="settings-section-title">Connected Accounts</div>'
         '<div class="settings-section-desc">Connect your Polymarket wallet and Kalshi account to trade directly from any dashboard.</div>'
     )
-    # Kalshi
-    if market_conns["kalshi"]["connected"]:
-        mc_html += (
-            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
-            '<div><div style="font-weight:600;font-size:14px">Kalshi</div>'
-            f'<div style="font-size:12px;color:var(--text-muted)">Member: {html.escape(market_conns["kalshi"]["member_id"] or "")}</div></div>'
-            '<form method="post" action="/settings/disconnect/kalshi">'
-            '<button type="submit" class="btn btn-danger" style="font-size:12px" onclick="return confirm(\'Disconnect Kalshi account?\')">Disconnect</button>'
-            '</form></div>'
+
+    def _conn_row(label: str, sub: str, actions: str, with_border: bool = True) -> str:
+        bd = ";border-bottom:1px solid var(--border)" if with_border else ""
+        return (
+            f'<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0{bd}">'
+            f'<div><div style="font-weight:600;font-size:14px">{label}</div>'
+            f'<div style="font-size:12px;color:var(--text-muted)">{sub}</div></div>'
+            f'<div>{actions}</div></div>'
+        )
+
+    def _disconnect_form(src: str, label: str = "Disconnect") -> str:
+        confirm = f"{label} {src.capitalize()} account?"
+        return (
+            f'<form method="post" action="/settings/disconnect/{src}" style="display:inline">'
+            f'<button type="submit" class="btn btn-danger" style="font-size:12px" '
+            f'onclick="return confirm(\'{confirm}\')">{label}</button>'
+            f'</form>'
+        )
+
+    kalshi = market_conns["kalshi"]
+    k_status = kalshi.get("status") or "disconnected"
+    if k_status == "active":
+        sub = f'Member: {html.escape(kalshi.get("member_id") or "")}'
+        mc_html += _conn_row("Kalshi", sub, _disconnect_form("kalshi"))
+    elif k_status == "expired":
+        sub = (
+            'Session expired — reconnect to resume sync. '
+            f'Member: {html.escape(kalshi.get("member_id") or "")}'
+        )
+        actions = (
+            '<span style="font-size:12px;color:var(--text-muted);margin-right:8px">'
+            'Reconnect from Markets tab</span>'
+            + _disconnect_form("kalshi", "Forget")
+        )
+        mc_html += _conn_row("Kalshi", sub, actions)
+    else:
+        mc_html += _conn_row(
+            "Kalshi", "Not connected",
+            '<span style="font-size:12px;color:var(--text-muted)">'
+            "Connect from any dashboard's Markets tab</span>",
+        )
+
+    poly = market_conns["polymarket"]
+    p_status = poly.get("status") or "disconnected"
+    addr = poly.get("address") or ""
+    addr_display = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else addr
+    if p_status == "active":
+        mc_html += _conn_row(
+            "Polymarket", f"Wallet: {html.escape(addr_display)}",
+            _disconnect_form("polymarket"), with_border=False,
+        )
+    elif p_status == "expired":
+        actions = (
+            '<span style="font-size:12px;color:var(--text-muted);margin-right:8px">'
+            'Reconnect from Markets tab</span>'
+            + _disconnect_form("polymarket", "Forget")
+        )
+        mc_html += _conn_row(
+            "Polymarket", f"Wallet: {html.escape(addr_display)} (disconnected)",
+            actions, with_border=False,
         )
     else:
-        mc_html += (
-            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'
-            '<div><div style="font-weight:600;font-size:14px">Kalshi</div>'
-            '<div style="font-size:12px;color:var(--text-muted)">Not connected</div></div>'
-            '<span style="font-size:12px;color:var(--text-muted)">Connect from any dashboard\'s Markets tab</span>'
-            '</div>'
-        )
-    # Polymarket
-    if market_conns["polymarket"]["connected"]:
-        addr = market_conns["polymarket"]["address"] or ""
-        addr_display = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else addr
-        mc_html += (
-            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0">'
-            '<div><div style="font-weight:600;font-size:14px">Polymarket</div>'
-            f'<div style="font-size:12px;color:var(--text-muted)">Wallet: {html.escape(addr_display)}</div></div>'
-            '<form method="post" action="/settings/disconnect/polymarket">'
-            '<button type="submit" class="btn btn-danger" style="font-size:12px" onclick="return confirm(\'Disconnect Polymarket wallet?\')">Disconnect</button>'
-            '</form></div>'
-        )
-    else:
-        mc_html += (
-            '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0">'
-            '<div><div style="font-weight:600;font-size:14px">Polymarket</div>'
-            '<div style="font-size:12px;color:var(--text-muted)">Not connected</div></div>'
-            '<span style="font-size:12px;color:var(--text-muted)">Connect from any dashboard\'s Markets tab</span>'
-            '</div>'
+        mc_html += _conn_row(
+            "Polymarket", "Not connected",
+            '<span style="font-size:12px;color:var(--text-muted)">'
+            "Connect from any dashboard's Markets tab</span>",
+            with_border=False,
         )
     mc_html += '</div></div>'
+
+    # Bankroll & Kelly fraction preferences
+    br_info = db.get_user_bankroll(user["user_id"])
+    bankroll_val = "" if br_info["bankroll"] is None else f'{br_info["bankroll"]:.2f}'
+    kelly_opts: list[str] = []
+    for _val, _label in (
+        ("1.0", "Full Kelly"),
+        ("0.5", "Half Kelly (recommended)"),
+        ("0.25", "Quarter Kelly (conservative)"),
+    ):
+        sel = " selected" if abs(br_info["kelly_fraction"] - float(_val)) < 1e-6 else ""
+        kelly_opts.append(f'<option value="{_val}"{sel}>{_label}</option>')
+    mc_html += (
+        '<div class="settings-card" style="margin-top:24px">'
+        '<div class="settings-section">'
+        '<div class="settings-section-title">Bet sizing</div>'
+        '<div class="settings-section-desc">Your bankroll powers the Kelly calculator shown on every market. We never move funds — these numbers are reference only.</div>'
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px">'
+        '<label class="settings-label" style="flex:1;min-width:200px">'
+        '<span style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px">Bankroll (USD)</span>'
+        f'<input id="bankroll-input" type="number" min="0" step="1" class="settings-select" '
+        f'placeholder="e.g. 10000" value="{html.escape(bankroll_val)}" style="width:100%">'
+        '</label>'
+        '<label class="settings-label" style="flex:1;min-width:200px">'
+        '<span style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px">Default Kelly fraction</span>'
+        f'<select id="kelly-fraction-input" class="settings-select" style="width:100%">{"".join(kelly_opts)}</select>'
+        '</label>'
+        '</div>'
+        '<div style="margin-top:14px">'
+        '<button id="bankroll-save" type="button" class="btn btn-primary">Save</button>'
+        '<span id="bankroll-save-msg" style="margin-left:12px;font-size:13px;color:var(--text-secondary)"></span>'
+        '</div>'
+        '</div></div>'
+        '<script>'
+        '(function(){'
+        'var btn=document.getElementById("bankroll-save");'
+        'var brInput=document.getElementById("bankroll-input");'
+        'var kfInput=document.getElementById("kelly-fraction-input");'
+        'var msg=document.getElementById("bankroll-save-msg");'
+        'if(!btn||!brInput||!kfInput)return;'
+        'btn.addEventListener("click", async function(){'
+        'msg.textContent="Saving…";'
+        'var body={bankroll:brInput.value===""?null:parseFloat(brInput.value),'
+        'kelly_fraction:parseFloat(kfInput.value)};'
+        'try{'
+        'var r=await fetch("/api/v1/user/bankroll",{method:"PATCH",'
+        'headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});'
+        'var d=await r.json();'
+        'if(!r.ok){msg.textContent=d.error||("HTTP "+r.status);return;}'
+        'msg.textContent="Saved.";'
+        'setTimeout(function(){msg.textContent="";},2000);'
+        '}catch(e){msg.textContent="Network error.";}'
+        '});'
+        '})();'
+        '</script>'
+    )
 
     # Billing / subscription section
     subs_dict = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
@@ -4940,7 +5072,8 @@ async def settings_disconnect_market(request: Request, source: str):
     if not user:
         return RedirectResponse("/token", status_code=302)
     if source in ("polymarket", "kalshi"):
-        db.delete_market_credential(user["user_id"], source)
+        db.disconnect_market_credential(user["user_id"], source)
+        db.delete_user_positions(user["user_id"], platform=source)
         log.info("User %s disconnected %s from settings", user.get("username"), source)
     return RedirectResponse("/settings", status_code=302)
 
@@ -4994,6 +5127,7 @@ from backend.markets.polymarket_client import PolymarketClient
 from backend.markets.kalshi_client import KalshiClient
 from backend.markets import unified_markets
 from backend.markets.portfolio_aggregator import get_combined_portfolio, get_combined_orders
+from backend.markets.portfolio_signals import enrich_positions, signal_for_position
 from backend.markets.encryption import encrypt_token, decrypt_token
 
 POLY_CLIENT = PolymarketClient(
@@ -5023,19 +5157,35 @@ def _require_markets_user(request: Request) -> dict:
 
 
 def _get_market_connections(user_id: int) -> dict:
-    """Get user's market platform connection status."""
+    """Get user's market platform connection status.
+
+    An inactive row (is_active=0 — typically a Kalshi token that 401'd)
+    surfaces as connected=False with status='expired' so the UI can show
+    a reconnect prompt instead of silently dropping the row."""
     creds = db.get_all_market_credentials(user_id)
     result = {
-        "polymarket": {"connected": False, "address": None},
-        "kalshi": {"connected": False, "member_id": None, "balance": None},
+        "polymarket": {"connected": False, "status": "disconnected", "address": None, "last_synced_at": None},
+        "kalshi": {"connected": False, "status": "disconnected", "member_id": None, "balance": None, "last_synced_at": None},
     }
     for c in creds:
+        is_active = bool(c["is_active"]) if "is_active" in c.keys() else True
+        last_synced_at = c["last_used_at"]
         if c["source"] == "polymarket" and c["polymarket_wallet_address"]:
-            result["polymarket"]["connected"] = True
             result["polymarket"]["address"] = c["polymarket_wallet_address"]
+            result["polymarket"]["last_synced_at"] = last_synced_at
+            if is_active:
+                result["polymarket"]["connected"] = True
+                result["polymarket"]["status"] = "active"
+            else:
+                result["polymarket"]["status"] = "expired"
         elif c["source"] == "kalshi" and c["kalshi_token"]:
-            result["kalshi"]["connected"] = True
             result["kalshi"]["member_id"] = c["kalshi_member_id"]
+            result["kalshi"]["last_synced_at"] = last_synced_at
+            if is_active:
+                result["kalshi"]["connected"] = True
+                result["kalshi"]["status"] = "active"
+            else:
+                result["kalshi"]["status"] = "expired"
     return result
 
 
@@ -5258,7 +5408,8 @@ async def api_disconnect_market(request: Request, source: str):
     user = _require_markets_user(request)
     if source not in ("polymarket", "kalshi"):
         raise HTTPException(status_code=400, detail="Invalid source")
-    db.delete_market_credential(user["user_id"], source)
+    db.disconnect_market_credential(user["user_id"], source)
+    db.delete_user_positions(user["user_id"], platform=source)
     log.info("User %s disconnected %s", user.get("username"), source)
     return JSONResponse({"disconnected": True})
 
@@ -5304,6 +5455,7 @@ async def api_bet_kalshi(request: Request):
     balance_data = await KALSHI_CLIENT.get_balance(token)
     if "error" in balance_data:
         if balance_data.get("error") == "token_expired":
+            db.set_market_credential_active(user["user_id"], "kalshi", False)
             return JSONResponse({"error": "Kalshi session expired — please reconnect"}, status_code=401)
         return JSONResponse({"error": balance_data["error"]}, status_code=400)
 
@@ -5335,6 +5487,7 @@ async def api_bet_kalshi(request: Request):
 
     if "error" in result:
         if result.get("error") == "token_expired":
+            db.set_market_credential_active(user["user_id"], "kalshi", False)
             return JSONResponse({"error": "Kalshi session expired — please reconnect"}, status_code=401)
         return JSONResponse({"error": result["error"]}, status_code=400)
 
@@ -5490,24 +5643,24 @@ async def api_poly_order_params(request: Request, market_id: str):
     })
 
 
+async def _build_enriched_portfolio(user_id: int) -> dict:
+    """Thin wrapper — routes and background jobs both go through
+    portfolio_sync so there's one implementation of signal enrichment,
+    persistence, and Kalshi-401 deactivation."""
+    from backend.markets.portfolio_sync import sync_user_portfolio
+    return await sync_user_portfolio(
+        user_id,
+        poly_client=POLY_CLIENT,
+        kalshi_client=KALSHI_CLIENT,
+        unified_markets_module=unified_markets,
+        markets_cache_ttl=MARKETS_CACHE_TTL,
+    )
+
+
 @app.get("/api/markets/portfolio")
 async def api_markets_portfolio(request: Request):
     user = _require_markets_user(request)
-    creds = db.get_all_market_credentials(user["user_id"])
-
-    poly_address = None
-    kalshi_token = None
-    for c in creds:
-        if c["source"] == "polymarket":
-            poly_address = c["polymarket_wallet_address"]
-        elif c["source"] == "kalshi" and c["kalshi_token"]:
-            kalshi_token = decrypt_token(c["kalshi_token"])
-
-    portfolio = await get_combined_portfolio(
-        POLY_CLIENT, KALSHI_CLIENT,
-        polymarket_address=poly_address,
-        kalshi_token=kalshi_token,
-    )
+    portfolio = await _build_enriched_portfolio(user["user_id"])
     return JSONResponse(portfolio)
 
 
@@ -5519,6 +5672,8 @@ async def api_markets_orders(request: Request):
     poly_address = None
     kalshi_token = None
     for c in creds:
+        if not c["is_active"]:
+            continue
         if c["source"] == "polymarket":
             poly_address = c["polymarket_wallet_address"]
         elif c["source"] == "kalshi" and c["kalshi_token"]:
@@ -5530,6 +5685,164 @@ async def api_markets_orders(request: Request):
         kalshi_token=kalshi_token,
     )
     return JSONResponse({"orders": orders})
+
+
+@app.post("/api/markets/sync")
+async def api_markets_sync(request: Request):
+    """Force-refresh positions from both exchanges. Rate-limited to 1/min
+    per user so the refresh button can't hammer upstream APIs."""
+    user = _require_markets_user(request)
+    if _is_rate_limited(f"portfolio_sync:{user['user_id']}", 1, 60):
+        raise HTTPException(status_code=429, detail="Sync rate limit — try again in a moment")
+    portfolio = await _build_enriched_portfolio(user["user_id"])
+    return JSONResponse({
+        "synced": True,
+        "synced_at": int(time.time()),
+        "combined_total_usd": portfolio.get("combined_total_usd", 0),
+    })
+
+
+@app.get("/api/markets/stats")
+async def api_markets_stats(request: Request):
+    """Aggregate portfolio stats for the dashboard header cards."""
+    user = _require_markets_user(request)
+    stats = db.get_portfolio_stats(user["user_id"])
+    return JSONResponse(stats)
+
+
+# ── Kelly criterion ───────────────────────────────────────────────────────
+
+
+@app.post("/api/kelly/calculate")
+async def api_kelly_calculate(request: Request):
+    """Kelly sizing for a specific market.
+
+    Body: { market_id: str, bankroll?: float }
+    `market_id` is the unified id (poly:{slug} or kalshi:{ticker}).
+    `bankroll` falls back to the user's stored bankroll; returns 400 if
+    neither is available. Returns full / half / quarter Kelly so the UI
+    can show all three tiers without three round-trips.
+    """
+    user = _require_markets_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    market_id = (body.get("market_id") or body.get("market_slug") or "").strip()
+    if not market_id:
+        return JSONResponse({"error": "market_id required"}, status_code=400)
+
+    stored = db.get_user_bankroll(user["user_id"])
+    req_bankroll = body.get("bankroll")
+    bankroll = float(req_bankroll) if req_bankroll is not None else stored["bankroll"]
+    if bankroll is None or bankroll <= 0:
+        return JSONResponse(
+            {"error": "Set your bankroll first — PATCH /api/user/bankroll"},
+            status_code=400,
+        )
+
+    market = await unified_markets.fetch_single_market(
+        POLY_CLIENT, KALSHI_CLIENT, market_id, cache_ttl=120,
+    )
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+
+    enriched = unified_markets.enrich_markets_with_intelligence([market])
+    m = enriched[0] if enriched else market
+    if m.betyc_ev_score is None:
+        return JSONResponse({
+            "market_id": market_id,
+            "bankroll": bankroll,
+            "has_signal": False,
+            "market_yes_price": m.yes_price,
+            "narve_yes_probability": None,
+            "edge": 0,
+            "recommendations": [],
+            "message": "No narve.ai signal yet — need predictions before Kelly can size.",
+        })
+
+    narve_yes = max(0.0, min(1.0, m.yes_price + m.betyc_ev_score))
+    recommendations = []
+    for label, frac in (("full", 1.0), ("half", 0.5), ("quarter", 0.25)):
+        sizing = unified_markets.compute_kelly_sizing(
+            betyc_probability=narve_yes,
+            market_yes_price=m.yes_price,
+            bankroll=bankroll,
+            fraction=frac,
+        )
+        bet = float(sizing.get("recommended_amount") or 0)
+        price = m.yes_price if sizing.get("side") == "YES" else (1 - m.yes_price)
+        max_profit = round(bet * ((1 / price) - 1), 2) if price > 0 else 0.0
+        max_loss = round(bet, 2)
+        recommendations.append({
+            "label": label,
+            "fraction_of_kelly": frac,
+            "side": sizing.get("side"),
+            "kelly_full_fraction": sizing.get("kelly_full_fraction"),
+            "kelly_adjusted_fraction": sizing.get("kelly_adjusted_fraction"),
+            "bet_amount_usd": bet,
+            "pct_of_bankroll": round((bet / bankroll) * 100, 4) if bankroll > 0 else 0,
+            "max_profit_usd": max_profit,
+            "max_loss_usd": max_loss,
+        })
+
+    return JSONResponse({
+        "market_id": market_id,
+        "market_title": m.title,
+        "market_yes_price": m.yes_price,
+        "narve_yes_probability": round(narve_yes, 4),
+        "edge": round(narve_yes - m.yes_price, 4),
+        "bankroll": bankroll,
+        "has_signal": True,
+        "recommendations": recommendations,
+    })
+
+
+# ── User bankroll & Kelly fraction preferences ─────────────────────────────
+
+
+@app.get("/api/user/bankroll")
+async def api_user_bankroll_get(request: Request):
+    user = _require_markets_user(request)
+    return JSONResponse(db.get_user_bankroll(user["user_id"]))
+
+
+@app.patch("/api/user/bankroll")
+async def api_user_bankroll_set(request: Request):
+    user = _require_markets_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    bankroll = body.get("bankroll")
+    kelly_fraction = body.get("kelly_fraction")
+
+    if bankroll is not None:
+        try:
+            bankroll = float(bankroll)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Invalid bankroll"}, status_code=400)
+        if bankroll < 0 or bankroll > 1_000_000_000:
+            return JSONResponse(
+                {"error": "Bankroll must be between 0 and 1,000,000,000"},
+                status_code=400,
+            )
+
+    if kelly_fraction is not None:
+        try:
+            kelly_fraction = float(kelly_fraction)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Invalid kelly_fraction"}, status_code=400)
+        if not (0 < kelly_fraction <= 1):
+            return JSONResponse(
+                {"error": "kelly_fraction must be between 0 and 1"},
+                status_code=400,
+            )
+
+    db.set_user_bankroll(user["user_id"], bankroll=bankroll, kelly_fraction=kelly_fraction)
+    return JSONResponse(db.get_user_bankroll(user["user_id"]))
 
 
 # ── Switcher injection ────────────────────────────────────────────────────────
@@ -6189,6 +6502,18 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("server_features import failed: %s — continuing without it", _exc)
 
+# Private affiliate program — routes, dashboards, admin panel.
+# Same reload-safe pattern as server_features above so pytest's module-
+# cache reuse doesn't re-register routes on the OLD `app`.
+try:
+    import affiliate_routes  # noqa: F401,E402
+    import sys as _ar_sys
+    if "affiliate_routes" in _ar_sys.modules:
+        import importlib as _ar_importlib
+        _ar_importlib.reload(_ar_sys.modules["affiliate_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("affiliate_routes import failed: %s — continuing without it", _exc)
+
 # Public status page (/status) + admin incident management (/admin/status).
 # Same reload-safe pattern as server_features above so pytest's module-cache
 # reuse doesn't re-register routes on the OLD `app`.
@@ -6200,6 +6525,19 @@ try:
         _sr_importlib.reload(_sr_sys.modules["status_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("status_routes import failed: %s — continuing without it", _exc)
+
+
+# Embed widgets (token-gated, domain-locked iframes for partner sites).
+# Must register BEFORE the catch-all below so /embed/{widget_id} and
+# /api/embeds/* hit embed_routes handlers rather than the subdomain proxy.
+try:
+    import embed_routes  # noqa: F401,E402
+    import sys as _em_sys
+    if "embed_routes" in _em_sys.modules:
+        import importlib as _em_importlib
+        _em_importlib.reload(_em_sys.modules["embed_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("embed_routes import failed: %s — continuing without it", _exc)
 
 
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.

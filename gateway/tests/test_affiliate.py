@@ -45,14 +45,50 @@ def _uniq(prefix: str) -> str:
 
 def _make_user(prefix: str = "u", is_admin: bool = False) -> int:
     uname = _uniq(prefix)
-    return db.create_user(
+    uid = db.create_user(
         f"{uname}@test.local", "TestPw!!1234", username=uname, is_admin=is_admin,
     )
+    # Admin routes may enforce 2FA. The 2FA columns (``two_fa_method``,
+    # ``totp_enabled``, ``totp_secret``) exist in some branches and not
+    # others — migration 019 removed them from `users`, but server.py's
+    # _two_fa_redirect still checks. We try to set them; on schema
+    # mismatch we swallow the error and rely on the ``_dev_bypass`` flag
+    # that current_user() sets from localhost request context.
+    if is_admin:
+        try:
+            with db.conn() as c:
+                c.execute(
+                    "UPDATE users SET two_fa_method = 'totp', totp_enabled = 1, "
+                    "totp_secret = ? WHERE id = ?",
+                    ("JBSWY3DPEHPK3PXP", uid),
+                )
+        except Exception:
+            pass
+    return uid
+
+
+_CSRF_TOKEN = "test-csrf-token-affiliate-suite"
 
 
 def _session_cookies(uid: int) -> dict:
+    """Session + CSRF cookie. The CSRF middleware expects the double-submit
+    pattern (cookie + header); tests that POST/PATCH must also pass
+    ``headers=_csrf_headers()`` to pair with this cookie.
+
+    Admin routes may also enforce 2FA, so we try to flip the session's
+    ``two_fa_verified`` flag. Schema drift across branches is swallowed.
+    """
     token = db.create_session(uid)
-    return {server.COOKIE_NAME: token}
+    try:
+        db.mark_session_two_fa_verified(token)
+    except Exception:
+        pass
+    return {server.COOKIE_NAME: token, server.CSRF_COOKIE_NAME: _CSRF_TOKEN}
+
+
+def _csrf_headers() -> dict:
+    """Header to pair with the _csrf cookie set in ``_session_cookies``."""
+    return {server.CSRF_HEADER_NAME: _CSRF_TOKEN}
 
 
 def _make_affiliate(rate: float = 0.20, tier: str = "partner"):
@@ -309,8 +345,9 @@ class TestPayoutRequest(unittest.TestCase):
         asyncio.run(calculate_affiliate_commissions())
 
         r = client.post(
-            "/api/affiliate/payout-request",
+            "/api/v1/affiliate/payout-request",
             cookies=_session_cookies(user_id),
+            headers=_csrf_headers(),
             json={},
         )
         self.assertEqual(r.status_code, 400)
@@ -327,8 +364,9 @@ class TestPayoutRequest(unittest.TestCase):
         asyncio.run(calculate_affiliate_commissions())
 
         r = client.post(
-            "/api/affiliate/payout-request",
+            "/api/v1/affiliate/payout-request",
             cookies=_session_cookies(user_id),
+            headers=_csrf_headers(),
             json={},
         )
         self.assertEqual(r.status_code, 200)
@@ -346,6 +384,7 @@ class TestAdminGate(unittest.TestCase):
         r = client.post(
             "/admin/affiliates",
             cookies=_session_cookies(plain_user_id),
+            headers=_csrf_headers(),
             json={"user_email": "x@y.com", "commission_rate": 0.20, "tier": "partner"},
         )
         self.assertEqual(r.status_code, 403)
@@ -357,6 +396,7 @@ class TestAdminGate(unittest.TestCase):
         r = client.post(
             "/admin/affiliates",
             cookies=_session_cookies(admin_id),
+            headers=_csrf_headers(),
             json={
                 "user_email": new_email,
                 "commission_rate": 0.20,
@@ -377,9 +417,10 @@ class TestAdminGate(unittest.TestCase):
         r = client.patch(
             f"/admin/affiliates/{aff_id}",
             cookies=_session_cookies(admin_id),
+            headers=_csrf_headers(),
             json={"commission_rate": 0.35},
         )
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 200, r.text)
         self.assertAlmostEqual(r.json()["commission_rate"], 0.35)
 
     def test_admin_mark_paid_flips_conversions(self):
@@ -399,6 +440,7 @@ class TestAdminGate(unittest.TestCase):
         r = client.post(
             f"/admin/affiliates/{aff_id}/payout",
             cookies=_session_cookies(admin_id),
+            headers=_csrf_headers(),
             json={},
         )
         self.assertEqual(r.status_code, 200)
@@ -436,7 +478,7 @@ class TestAffiliateDashboard(unittest.TestCase):
     def test_api_affiliate_returns_summary(self):
         aff_id, user_id, _ = _make_affiliate(rate=0.30)
         r = client.get(
-            "/api/affiliate",
+            "/api/v1/affiliate",
             cookies=_session_cookies(user_id),
         )
         self.assertEqual(r.status_code, 200)
@@ -449,11 +491,12 @@ class TestAffiliateDashboard(unittest.TestCase):
     def test_create_custom_tracking_link(self):
         aff_id, user_id, _ = _make_affiliate()
         r = client.post(
-            "/api/affiliate/links",
+            "/api/v1/affiliate/links",
             cookies=_session_cookies(user_id),
+            headers=_csrf_headers(),
             json={"utm_campaign": "Podcast Ep 47", "utm_content": "Main episode mention"},
         )
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         # utm_campaign normalized to lowercase alphanumeric
         self.assertEqual(body["utm_campaign"], "podcastep47")
@@ -461,7 +504,7 @@ class TestAffiliateDashboard(unittest.TestCase):
     def test_api_affiliate_denies_non_affiliate(self):
         user_id = _make_user("rando")
         r = client.get(
-            "/api/affiliate",
+            "/api/v1/affiliate",
             cookies=_session_cookies(user_id),
         )
         self.assertEqual(r.status_code, 403)

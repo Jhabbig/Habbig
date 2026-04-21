@@ -59,9 +59,10 @@ async def process_referral_rewards() -> dict[str, Any]:
     reward_granted=0) so a re-run won't double-apply anything already done.
     """
     import db
+    import db_referrals as dbr
     from backend import referrals as referral_logic
 
-    pending = db.list_pending_reward_referrals(limit=500)
+    pending = dbr.list_pending_reward_referrals(limit=500)
     if not pending:
         return {"processed": 0, "granted": 0, "skipped_no_payer": 0}
 
@@ -105,7 +106,7 @@ async def process_referral_rewards() -> dict[str, Any]:
         if reward is None:
             # Conversion 2, 3, 4, 6, 7, 8, 9 → no milestone reward.
             # Stamp as granted-but-null so we don't rescan it daily.
-            ok = db.mark_referral_reward_granted(
+            ok = dbr.mark_referral_reward_granted(
                 row["id"],
                 reward_type="none",
                 reward_months=0,
@@ -146,7 +147,7 @@ async def process_referral_rewards() -> dict[str, Any]:
             continue  # leave the row pending; next run retries
 
         # Stamp the referral row + bump display counter.
-        ok = db.mark_referral_reward_granted(
+        ok = dbr.mark_referral_reward_granted(
             row["id"],
             reward_type=reward["type"],
             reward_months=reward["months"],
@@ -174,7 +175,7 @@ async def process_referral_rewards() -> dict[str, Any]:
                 log.exception("orphan gift revoke failed")
             continue
 
-        db.add_referral_credit_months(referrer_id, reward["months"])
+        dbr.add_referral_credit_months(referrer_id, reward["months"])
         granted += 1
 
         # Fire congratulations email via the job queue.
@@ -184,7 +185,7 @@ async def process_referral_rewards() -> dict[str, Any]:
                 format_reward_label,
                 progress_toward_next_reward,
             )
-            total_converted = db.count_converted_referrals(referrer_id)
+            total_converted = dbr.count_converted_referrals(referrer_id)
             progress = progress_toward_next_reward(total_converted)
             user_row = db.get_user_by_id(referrer_id)
             if user_row and user_row["email"]:
@@ -252,6 +253,7 @@ async def compute_user_leaderboard_scores() -> dict[str, Any]:
     the next cron tick with no migration needed.
     """
     import db
+    import db_referrals as dbr
 
     now = int(time.time())
     cutoff_90d = now - 90 * 86400
@@ -280,7 +282,7 @@ async def compute_user_leaderboard_scores() -> dict[str, Any]:
 
         total = len(all_rows)
         if total == 0:
-            db.upsert_user_accuracy(
+            dbr.upsert_user_accuracy(
                 u["id"],
                 total=0, correct=0,
                 accuracy_all=None,
@@ -303,7 +305,7 @@ async def compute_user_leaderboard_scores() -> dict[str, Any]:
         rows_30d = [r for r in all_rows if (r["resolved_at"] or 0) >= cutoff_30d]
         rows_7d  = [r for r in all_rows if (r["resolved_at"] or 0) >= cutoff_7d]
 
-        db.upsert_user_accuracy(
+        dbr.upsert_user_accuracy(
             u["id"],
             total=total,
             correct=all_correct,

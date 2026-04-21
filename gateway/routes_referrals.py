@@ -31,6 +31,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
+import db_referrals as dbr
 
 
 log = logging.getLogger("routes.referrals")
@@ -71,7 +72,7 @@ async def public_invite_page(request: Request, code: str):
     The acceptance POST revalidates the code from scratch — this GET is
     rendering only.
     """
-    referrer = db.get_user_by_referral_code(code)
+    referrer = dbr.get_user_by_referral_code(code)
     return _render_page(
         "invite_public",
         request,
@@ -86,7 +87,7 @@ async def api_invite_validate(code: str):
     """Public. Validates the referral code and returns the referrer's
     display name — invite page JS calls this on load to confirm the link
     is live before the invitee commits their email."""
-    referrer = db.get_user_by_referral_code(code)
+    referrer = dbr.get_user_by_referral_code(code)
     if not referrer:
         return JSONResponse(
             {"valid": False, "error": "This invite link is not valid."},
@@ -127,7 +128,7 @@ async def api_invite_accept(code: str, request: Request):
             status_code=429,
         )
 
-    referrer = db.get_user_by_referral_code(code)
+    referrer = dbr.get_user_by_referral_code(code)
     if not referrer:
         return JSONResponse(
             {"error": "This invite link is not valid."},
@@ -155,7 +156,7 @@ async def api_invite_accept(code: str, request: Request):
     token_row = db.get_invite_token(token_str)
     token_id = token_row["id"] if token_row else None
 
-    referral_id = db.create_referral(
+    referral_id = dbr.create_referral(
         referrer_user_id=referrer["id"],
         referred_email=email,
         invite_token_id=token_id,
@@ -191,7 +192,7 @@ async def settings_referrals_page(request: Request):
     if not user:
         return RedirectResponse("/token", status_code=302)
     # Lazy-assign the user's referral_code the first time they visit.
-    db.ensure_user_referral_code(user["user_id"])
+    dbr.ensure_user_referral_code(user["user_id"])
     return _render_page("referrals", request)
 
 
@@ -204,8 +205,8 @@ async def api_referrals_me(request: Request):
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
 
     user_id = user["user_id"]
-    code = db.ensure_user_referral_code(user_id)
-    stats = db.get_referral_stats(user_id)
+    code = dbr.ensure_user_referral_code(user_id)
+    stats = dbr.get_referral_stats(user_id)
 
     from backend.referrals import (
         progress_toward_next_reward,
@@ -213,7 +214,7 @@ async def api_referrals_me(request: Request):
     )
 
     referrals = []
-    for r in db.get_user_referrals(user_id):
+    for r in dbr.get_user_referrals(user_id):
         if r["reward_granted"]:
             status = "Reward granted"
         elif r["converted_to_paid"]:
@@ -275,9 +276,9 @@ async def api_leaderboard(
     if limit < 1 or limit > 500:
         limit = 100
 
-    rows = db.get_leaderboard(period=period, limit=limit)
-    participants = db.count_leaderboard_participants()
-    my_rank = db.get_user_leaderboard_rank(user["user_id"], period=period)
+    rows = dbr.get_leaderboard(period=period, limit=limit)
+    participants = dbr.count_leaderboard_participants()
+    my_rank = dbr.get_user_leaderboard_rank(user["user_id"], period=period)
 
     with db.conn() as c:
         total_users_row = c.execute(
@@ -318,7 +319,7 @@ async def api_leaderboard_participate(request: Request):
     except Exception:
         body = {}
     display_name = (body.get("display_name") or "").strip()
-    result = db.set_leaderboard_participation(
+    result = dbr.set_leaderboard_participation(
         user["user_id"],
         participate=True,
         display_name=display_name,
@@ -337,7 +338,7 @@ async def api_leaderboard_opt_out(request: Request):
     user = _current_user(request)
     if not user:
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
-    db.set_leaderboard_participation(user["user_id"], participate=False)
+    dbr.set_leaderboard_participation(user["user_id"], participate=False)
     return JSONResponse({"ok": True})
 
 
@@ -347,5 +348,5 @@ async def api_leaderboard_me(request: Request):
     user = _current_user(request)
     if not user:
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
-    state = db.get_leaderboard_opt_in(user["user_id"])
+    state = dbr.get_leaderboard_opt_in(user["user_id"])
     return JSONResponse(state)
