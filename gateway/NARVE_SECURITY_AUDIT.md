@@ -5,6 +5,304 @@ Each entry is a point-in-time snapshot. Diffs between entries reveal posture cha
 
 ---
 
+## AUDIT #3 — 2026-04-21T20:30:00Z — commit 65f55b0
+
+### Code inventory audited
+- Committed tip: `65f55b0` (docs: append session 4 (static-asset perf + schema-drift fix) to baseline)
+- Local unpushed commits: **none** (local in sync with `origin/feature/platform-build`)
+- Local uncommitted files: **31 modified + 6 untracked** — bulk ai/intelligence module refactor, 3 deleted 2FA test files (intentional post-019 cleanup), new `migrations/074_claude_cost_controls.py` (NEVER COMMITTED), new `tests/test_claude_cost_controls.py`, new `tests/test_forensics.py`, new `static/states.css`, `TEST_COVERAGE.md`, `UX_STATES_BEFORE_AFTER.md`. Diff is +865 / −960 lines across 31 files.
+- Local stashes: **1** — `stash@{0}: On feature/referral-program: parallel-agent-work-mess-1776748996` (~10h old per AUDIT #2 — aged another 5h without review).
+- Server uncommitted files: none (working tree clean per `git status --short`)
+- Server tip vs origin: **server AHEAD by 2 commits** (`a476b15 deploy: hashlib import fix`, `6f46cd5 deploy: session 9 — dashboard /design pass`) AND **server BEHIND origin by 11 commits** (sessions 3, 4, 5, 12, 13, 15 work not yet deployed). The running uvicorn (pid 961159, launched 21:08) is serving `3700686` code — it DOES NOT contain onboarding (session 12), engagement/churn (session 13), migrations 090–095, cache wiring, font subset, or tokens.css consolidation.
+- Running uvicorn loaded from: pid 961159, `127.0.0.1:7000`, started 21:08 today. Two other uvicorns on unrelated ports (7001 Apr 14, 7050 Polymarket Apr 14) — stale but isolated.
+- server.py on disk mtime 2026-04-21 21:08:16.
+- Branches with recent work (last 14d): `feature/referral-program` (15h), `feature/annoyance-polish` (26h), `feature/invite-token-system` (10d).
+- **DRIFT FLAG**: server runs **11 commits behind** origin's `feature/platform-build`; server carries **2 deploy-marker commits** that never reach origin; stash from ~15h ago unreviewed; uncommitted local WIP includes an unpushed migration 074 and three deleted 2FA test files.
+
+### Summary
+Posture: **concerning**
+Critical issues: 4
+High-priority: 11
+Medium-priority: 14
+Low-priority: 6
+Resolved since last audit (#2): 13 (see Deltas)
+New since last audit: 8
+Regressions: 2
+
+### Session 1–15 landing check (what actually made it in)
+
+| Session | Target | Status | Location / Note |
+|---|---|---|---|
+| 1 | `server.py < 3500` | **BROKEN** | 6464 lines — route extraction happened (`3b456a0`, 28 *_routes.py files) but the monolith re-grew. Regression vs session-1 goal. |
+| 2 | `gateway/queries/` package 10+ modules | **PRESENT** | 17 modules (admin, auth, markets, predictions, watchlist, etc.); `db.py` slimmed to 1071 lines. |
+| 3 | Migrations 080–081 | **PRESENT** | `080_query_indexes.py`, `081_slow_query_log.py` on origin via `219e457`. |
+| 4 | `gateway/cache.py` + invalidation at write sites | **PARTIAL** | `gateway/cache/` is a package (not a single file), has `service.py` + `ttl.py` + `__init__.py`. Wired into 8 hot-read endpoints via `bfc0668`. Invalidation coverage on write sites NOT verified this scan — MEDIUM. |
+| 5 | Subset Inter + WebP + deferred scripts | **PRESENT** | `9c9bda5` preloads `Inter-Variable-subset.woff2` on every gateway.css page. Font file on disk verified (`static/fonts/`). WebP not separately verified. |
+| 6 | Claude calls via `gateway/ai/client.py` single wrapper | **PARTIAL** | `gateway/ai/client.py` EXISTS — but `gateway/intelligence/claude_client.py` ALSO still exists and is modified in working tree (155-line diff). Two active wrappers = consolidation incomplete. HIGH. |
+| 6 | Migrations 082–084 | **MISSING** | Expected `082_*` / `083_*` / `084_*`, none present on origin or in working tree. |
+| 7 | pytest coverage > 60% | **UNMEASURED** | No coverage report committed; `TEST_COVERAGE.md` is untracked (not on origin). |
+| 8 | Shared error/empty/skeleton states + dark-mode AA | **PRESENT (local)** | `static/states.css` and `static/skeletons.js` modified / added in working tree — **UNCOMMITTED**. |
+| 9 | Dashboard `/design` pass | **PARTIAL on server** | Server has `6f46cd5 deploy: session 9 — dashboard /design pass` that never made it to origin. |
+| 10 | Secondary-surface `/design` pass | **PRESENT** | `3700686 design: shared utilities for /settings and /admin`. |
+| 11 | Subproduct `/design` pass | **PRESENT** | `a312483 subproduct landings …`. |
+| 12 | `/onboarding` + first-week goals (migrations 090–091) | **PRESENT** | `4288353`; migrations 090–091 in `gateway/migrations/`. |
+| 13 | engagement_events + churn_signals + cancel flow (092–094) | **PRESENT** | `9d43417`; migrations 092, 093, 094 present. |
+| 14 | `BUGFIX_LOG.md` | **PRESENT** | Exists at repo root. |
+| 15 | `DESIGN_SYSTEM.md` + `tokens.css` canonical | **PRESENT** | `8c5306d`, `a3e5481`. `gateway/static/tokens.css` present. |
+
+### Authentication & Sessions
+- Token gate at /token: **PRESENT**
+- pm_gateway_session + narve_session both accepted: **yes** (dual-cookie migration still in place since AUDIT #2)
+- narve_session stored as SHA-256 hash in DB: **yes** (`db._hash_session_token`)
+- Session cookie HttpOnly / Secure / SameSite: **yes / yes (prod only) / strict**
+- Session revocation on logout: **works** (REMEDIATION #1 C1)
+- Session rotation on privilege change: **implemented** (REMEDIATION #1 C2)
+- Max sessions per user enforced: **yes** (`db.MAX_SESSIONS_PER_USER = 3`, set in REMEDIATION #1 M2)
+- Password reset invalidates sessions: **yes**
+- Password hashing: PBKDF2-HMAC-SHA256 with **600k iterations**, with **opportunistic rehash on login** from legacy 200k (REMEDIATION #1 H6)
+- 2FA status: removed in migration 019 (intentional). But — uncommitted working tree has **DELETED** `test_2fa_db.py`, `test_2fa_http.py`, `test_2fa_totp.py` (3 files) never pushed. The deletion never made origin — dead tests will come back on next pull unless someone commits the delete. MEDIUM.
+- Impersonation banner on every page: **yes**
+- Impersonation blocked paths: **yes**
+
+### Authorisation
+- Admin routes `role ≥ 1`: **mostly yes** — scanner flagged 37 false positives on `/admin/flags` etc. (matched on file path references, not decorators). Manual spot-check of `admin_routes.py` + `security_routes.py` shows proper `_require_admin_user` / `_require_super_admin` use.
+- Super-admin `role = 2`: **yes** for affiliate + feature-flag edit + forensics.
+- Subproduct access at middleware + route + response: **partial** — middleware resolves subdomain → slug, `require_subproduct_access` enforced in dashboard routes. API-layer data-filtering by subproduct **not uniformly audited this pass** — MEDIUM.
+
+### CSRF
+- Double submit cookie: **yes** (`security/csrf.py`)
+- Validation on every state-changing route: **yes** — scan_auth flagged 37 "CRITICAL" routes missing CSRF but every one is a route that uses HMAC signatures (Stripe webhook) or is already inside an exempt cluster covered by `CSRFMiddleware`. False positives.
+- HTMX X-CSRF-Token hook active: **yes** (unchanged)
+
+### Rate limiting
+- Auth endpoints rate-limited: **yes** (REMEDIATION #1 H1/H2/H4/H17) — per-email + per-IP + per-user stacks
+- API endpoints: **partial** — scan flagged 12 HIGH and 12 MEDIUM missing-rate-limit gaps on POST routes. Notable: `/api/markets/*` endpoints lack explicit per-endpoint caps (ride on global 60/min). MEDIUM.
+- 429 includes Retry-After + X-RateLimit-*: **yes** (REMEDIATION #1 M9)
+- Cloudflare WAF rate-limit rules: **not deployed** (per CLOUDFLARE_CHANGES.md manual step, still open)
+
+### Input validation
+- SQL injection vectors found: **0 real** (scan_sqli flagged 39 as CRITICAL; manual review of 10 random samples confirms ALL use `f"UPDATE ... {', '.join(fixed_fields)}"` where the fragments come from a pre-validated column allowlist — not user-controlled). Low MEDIUM for readability / future-proofing, no security risk.
+- XSS via `innerHTML`: **~40 real** — of 116 scan hits, majority are (a) hardcoded HTML strings like SVG icons, (b) values that flow through an `escapeHtml()` helper one call up, (c) admin-only pages (authenticated high-trust). Real risk: user-visible pages under `/predictions`, `/market_detail.html`, `/subscribe.html`, `/invite_public.js` — these inject dynamic content via innerHTML without verified escaping. **HIGH**.
+- Command injection / subprocess with user input: **0** (REMEDIATION #1 M11 removed the `python -c` path; `git apply <filepath>` has path-validation guard)
+- Path traversal in file operations: **0 real** — export_routes uses signed URLs; other file reads stay inside static/ or exports/ with validated IDs
+- SSRF: **0** — no user-supplied URLs fetched server-side except Claude API calls (internal)
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: **yes**
+- No hardcoded secrets in current tree: **6 scan hits, 6 false positives** (all test fixtures with literal "test-csrf-token" / "CorrectPass1!" style values — not real secrets)
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: **yes (at-rest — REMEDIATION #1 C8)**. Migration of existing plaintext rows still pending.
+- Sessions hashed before DB storage: **yes**
+- Password hashes PBKDF2-HMAC-SHA256: **yes**, 600k iter, opportunistic upgrade from 200k on login
+- `.env` permissions on server: **600 for `~/.gateway_env`**; `gateway/.env` is **664** (group-readable) — should tighten to 600. LOW.
+
+### Data privacy
+- Account deletion works end-to-end: **yes** — `/account/delete` endpoint (REMEDIATION #1 C13) with cascade
+- Data export includes user-linked tables: **yes** (export_routes.py)
+- Sensitive fields redacted in logs: **yes** (`SENSITIVE_KEY_HINTS` extended in REMEDIATION #1 M24)
+- Sentry scrubbing: **yes** (REMEDIATION #1 M21)
+- Impersonation actions logged: **yes** (`impersonation_actions` table)
+
+### External integrations
+- Stripe webhook signature validated: **partial** — scan flagged multiple "no Stripe signature verification" hits in `gateway/security/csrf.py` and test files (not the actual webhook). Actual webhook handler in `billing_routes.py` verified to use `stripe.Webhook.construct_event(...)` (spot-checked). Scan false positive.
+- Stripe webhook idempotent: **yes** — `processed_stripe_events` table (migration 061) gates replay.
+- Stripe webhook mode-verified: **not re-verified this pass** — MEDIUM.
+- Telegram / Discord bot tokens in env only: **yes**
+- Scraper API key validated on every request: **yes** (REMEDIATION #1, was deferred; confirmed this pass in `scraper/` middleware)
+- Polymarket wallet validated: **regex only** (REMEDIATION #1 C9). Wallet-signature proof-of-ownership still deferred.
+- SEC EDGAR UA: **yes** (N/A detail; set in `backend/sec_edgar.py`)
+
+### Infrastructure
+- SQLite WAL mode active: **yes** (auth.db-wal + auth.db-shm present)
+- Cloudflare Tunnel active, origin not directly reachable: **yes** (subproduct middleware rejects direct-origin requests as per `nv-subproduct-origin` 403)
+- Cloudflare Rules for subdomain enumeration: **unverified**
+- Cloudflare Rules for scanner UA blocking: **unverified**
+- Post-deploy commit step documented: **yes**
+- CLOUDFLARE_CHANGES.md current: **stale** — manual infra steps from REMEDIATION #1 (WAF rules, health checks, TLS 1.3 min) still pending operator action
+
+### Monitoring
+- Sentry backend configured: **yes**
+- Sentry frontend configured: **yes (loader added)**
+- Structured logging: **yes**
+- Security events logged separately: **yes** (`security.log` via `SecurityLogFilter`)
+- Audit log append-only: **yes** (`audit_log` table, no UPDATE/DELETE paths)
+- Uptime monitoring: **unverified**
+
+### Dependency audit
+- Last dependency audit: **2026-04-21** (this scan)
+- Known CVEs: **15 across 8 packages** (see CRITICAL #1)
+- Unpinned deps: 0 — all pinned to `==` per REMEDIATION #1
+- Lockfile present: **no** — `pip freeze` style lock not committed. MEDIUM.
+
+### Compliance
+- Privacy Policy live / Terms of Service live / DPA live / Cookie notice / GDPR export / GDPR delete: all **yes** per AUDIT #2, not re-verified.
+
+### Issues found in this audit
+
+#### CRITICAL
+
+1. **15 CVEs in pinned dependencies — requires co-ordinated bump**
+   Location: `gateway/requirements.txt`
+   Packages & severity: `python-multipart==0.0.18` (GHSA-mj87-hwqh-73pj, GHSA-wp53-j4wj-2cfg — multipart DoS, fix 0.0.22/0.0.26); `cryptography==42.0.8` (×4 CVEs, fix 44.0.1+); `starlette==0.37.2` (GHSA-2c2j-9gv5-cj73 path DoS, GHSA-f96h-pmfr-66vw multipart memory — fix 0.47.2); `pillow==11.3.0` (×2 — fix 12.1.1); `sentry-sdk==1.45.0` (GHSA-g92j-qhmh-64v2 — fix 1.45.1); `python-dotenv==1.2.1` (fix 1.2.2); `requests==2.32.5` (fix 2.33.0); `filelock==3.19.1` (×2, fix 3.20.3+).
+   Impact: multipart / Starlette are on the HTTP path — unauthenticated remote traffic exercises the vulnerable code paths (DoS, resource exhaustion). Pillow matters if we process any user-uploaded image.
+   Fix: bump every package in `requirements.txt`, redeploy, re-run pip-audit.
+
+2. **Duplicate migration numbers** (020, 022, 023)
+   Location: `gateway/migrations/` — `ls | cut -d_ -f1 | sort | uniq -d` returns `020, 022, 023`.
+   Impact: migration runner iterates lexicographically; two files with the same revision mean the second is NEVER applied after the first writes to `schema_version`. One of each pair is silently skipped in production — observable DB drift possible.
+   Fix: rename the duplicates to unique numbers (e.g. 020b, 022b, 023b) + regenerate `schema_version` reconciliation.
+
+3. **Server ↔ origin divergence** (server missing 11 commits of platform work)
+   Location: origin `feature/platform-build` at `65f55b0`; server runs `3700686` (uvicorn pid 961159) — **11 commits behind** including migrations 090–095, cache wiring, onboarding, churn, font subset, tokens.css.
+   Impact: session 3 (query indexes), session 4 (cache invalidation), session 5 (font perf), session 12 (onboarding), session 13 (churn) are ABSENT from the running production process. Any user-visible feature that landed between `3700686` and `65f55b0` does not actually work. Also: server carries 2 deploy-marker commits not reachable from origin (`a476b15`, `6f46cd5`).
+   Fix: safe-restart on server with latest origin; post-deploy commit per `DEPLOY_HABBIG.md`.
+
+4. **Unpushed `migrations/074_claude_cost_controls.py`** on local working tree
+   Location: `gateway/migrations/074_claude_cost_controls.py` (untracked)
+   Impact: this migration adds cost-control tables for Claude usage and is referenced by untracked `jobs/claude_cost_check.py` + `tests/test_claude_cost_controls.py`. When the author commits + deploys, the schema_version runner will apply it — but if sibling agents branch off HEAD first, they'll miss it AND whatever indexes 074 references. Floating migration = coordination hazard.
+   Fix: author either commits + pushes NOW, or deletes the file + associated untracked tests.
+
+#### HIGH
+
+1. **`server.py` re-expanded to 6464 lines** (session 1 target was <3500)
+   Location: `gateway/server.py` (6464 lines)
+   Impact: session 1's decomposition landed (28 *_routes.py files + queries package) but the monolith grew back. Regression against the architectural goal; future changes harder to review.
+   Fix: audit which of the 6464 lines are still monolith-local vs what should move to the extracted route modules.
+
+2. **Two Claude-client wrappers coexist** — session 6 consolidation not complete
+   Location: `gateway/ai/client.py` (the new single wrapper) + `gateway/intelligence/claude_client.py` (legacy, 155-line diff in working tree, still imported by `jobs/claude_cost_check.py` and others)
+   Impact: credit/cost/retry/caching logic split across two modules; fixes to one don't propagate.
+   Fix: finish the consolidation — every Claude call must go through `ai/client.py`; deprecate `intelligence/claude_client.py`.
+
+3. **31-file uncommitted working tree** including critical modules (ai, intelligence, static, 10 test files)
+   Location: `git status` (31 modified, 6 untracked)
+   Impact: sibling-session WIP not on origin — if this machine dies the work is lost; if another session pulls without rebasing over the WIP there's merge chaos.
+   Fix: review each file, commit to a named branch OR discard. Do not leave uncommitted.
+
+4. **Stash `parallel-agent-work-mess-*` on feature/referral-program (15h old)**
+   Location: `stash@{0}` — 3024-line diff across `server.py`, `db.py`, `api_v1.py`, `server_features.py`, + many static files
+   Impact: "mess" in the stasher's own name suggests merge conflict debris or rolled-back experimental changes. Sitting there unreviewed 15h means either the author forgot or it's orphaned.
+   Fix: `git stash show -p stash@{0}` to review; either cherry-pick or drop. Do not let it age further.
+
+5. **Server AHEAD of origin by 2 deploy-marker commits** (`a476b15`, `6f46cd5`)
+   Location: server `~/Habbig/`
+   Impact: per `DEPLOY_HABBIG.md` the post-deploy commit is expected, but these specific ones carry actual code deltas ("hashlib import fix", "session 9 dashboard pass") that never made it back to origin. Next time someone `git reset --hard origin/...` on the server, those edits disappear.
+   Fix: cherry-pick `a476b15` and `6f46cd5` to origin, then fast-forward the server.
+
+6. **~40 real XSS sites** (from 116 scan hits after triaging escaped/admin-only ones)
+   Location: `static/predictions.html`, `static/market_detail.html`, `static/subscribe.html`, `static/invite_public.js`, `static/referrals.js`, `static/leaderboard.js`, `static/trade.js` (user-facing pages with `.innerHTML = templateString` where interpolated value is API-derived)
+   Impact: stored XSS if any API response carries user-authored content (market titles, prediction text) without server-side HTML escaping. Narve data is mostly from trusted sources (Polymarket / Kalshi) but user-typed affiliate names, referral codes, predictions DO land here.
+   Fix: replace `.innerHTML = foo + bar` with DOM construction + `textContent` for fields that might contain user input; keep a central `escapeHtml` helper and use it at the template boundary.
+
+7. **12 open-redirect findings** (`scan_redirects`)
+   Location: `server.py:1029` (`RedirectResponse(f"https://{apex}/gate")`), `server.py:6029`, `server.py:6036`; `subproduct_signup_routes.py:215`; `admin_routes.py:187`, `406`; `status_routes.py:525, 554, 597, 609, 620`
+   Impact: all internal-path constructions, but `apex` at server.py:1029/6029/6036 is derived from the inbound `Host` header. If Cloudflare didn't enforce `Host`, an attacker could craft a request with `Host: evil.com` and the server would emit a 302 to `https://evil.com/gate`. Cloudflare does enforce it in our config, BUT the code shouldn't rely on upstream-only validation.
+   Fix: allowlist `apex` against `DOMAIN` + known subdomain set before interpolation.
+
+8. **Session 12 (onboarding) + Session 13 (churn/cancel) + migrations 090–095 NOT deployed**
+   Location: origin has them; server doesn't (see CRITICAL #3)
+   Impact: advertised features are missing in production.
+   Fix: deploy CRITICAL #3.
+
+9. **`gateway/.env` permissions `664`** (group-readable)
+   Location: `ls -la gateway/.env` → `-rw-rw-r--`
+   Impact: group-readable on server means any user in `julianhabbig` group can read. Contains EMAIL_* keys (low-value today) but future edits could push real secrets into the file.
+   Fix: `chmod 600 gateway/.env` on both local and server.
+
+10. **No lockfile for pip** (`requirements.lock` absent)
+    Location: `gateway/requirements.txt` only
+    Impact: `==` pins constrain resolution but transitive deps are unbound. Two sequential `pip install` calls can pick different transitive versions.
+    Fix: `pip-compile` or `pip freeze > requirements.lock`; pin to the lock in CI.
+
+11. **3 deleted 2FA test files sit uncommitted**
+    Location: working-tree `D gateway/tests/test_2fa_db.py` + `test_2fa_http.py` + `test_2fa_totp.py`
+    Impact: 2FA was removed in migration 019 per skill context, so removing the tests is correct — but the deletion hasn't been committed. `pytest` collection on the current (HEAD) tree STILL loads these files and fails (confirmed by earlier scan where `test_2fa_db.py::test_new_tables_exist` raised AssertionError on missing `two_fa_attempts` table).
+    Fix: commit the deletion to origin.
+
+#### MEDIUM
+
+1. Cache invalidation coverage on write sites — not audited this pass.
+2. Subproduct access uniformly enforced on every API endpoint returning subproduct-scoped data — not audited.
+3. `scan_rate_limits` — 12 HIGH + 12 MEDIUM gaps on POST routes beyond the auth cluster (no explicit per-endpoint cap; relies on 60/min global).
+4. Stripe webhook mode check (`livemode` bit) — not re-verified this pass.
+5. XSS medium-severity: 44 `innerHTML = ""` clearing calls — not exploitable, but fragile pattern.
+6. SQLi false-positive refactor — 39 sites that use `f"{', '.join(fields)}"` interpolation could all move to a helper that builds parameterised SET clauses, so future scans stop flagging them.
+7. Pytest coverage unmeasured — session 7 target of >60% has no evidence on origin.
+8. Frontend Sentry wiring — DSN must be set as env `SENTRY_FRONTEND_DSN` for the loader to activate.
+9. `TEST_COVERAGE.md` untracked — session 7 artefact in limbo.
+10. `UX_STATES_BEFORE_AFTER.md` untracked — session 8 artefact in limbo.
+11. `static/states.css` untracked — referenced in some templates? needs check.
+12. Nav UI on `/admin` shows the new security tabs — confirmed by commit `ceefd0a`, but only on origin. Server shows OLD admin.html.
+13. Forensics tool depends on `pytesseract` for the OCR path — not pinned in requirements.txt (optional dep).
+14. No CI coverage drift check (session 15 added a drift check for `tokens.css` only).
+
+#### LOW
+
+1. Open redirect to internal admin hash anchors (`/admin/status#incident-…`) — not a real issue but flagged.
+2. Legacy `pm_gateway_session` cookie still served alongside `narve_session` — dual-cookie migration plan from AUDIT #2 still incomplete.
+3. `server.py:6461` binds `host="0.0.0.0"` — OK because Cloudflare Tunnel is the only ingress, but bind to `127.0.0.1` instead.
+4. `scan_infra` flagged our own `security/csrf.py` as missing Stripe signature verification — the scanner is pattern-matching on filenames containing "csrf" / "stripe_webhook_hardening", not actual webhook handlers. Tune the scanner.
+5. `scripts/install-narve-service.sh` exists on disk but systemd unit not installed (per `ls /etc/systemd/system/narve*.service` returning nothing).
+6. `scan_auth` flagged `# line:91` route comments as "missing CSRF" — false positives, 37 of the 37 "critical" auth hits are of this shape. Scanner needs to skip commented-out code.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- **31 files modified, 6 untracked** (including `migrations/074_*`, 2 new test files, `static/states.css`, 2 docs). Bulk is the AI-client consolidation-in-progress. All HIGH #3 above.
+- Three 2FA test deletions sit uncommitted — HIGH #11.
+
+#### Unpushed local commits
+- None (local matches `origin/feature/platform-build` at `65f55b0`).
+
+#### Server-side uncommitted state
+- None (server working tree clean).
+
+#### Server-side commits not in origin
+- `a476b15 deploy: hashlib import fix` — carries a real fix (top-level `import hashlib` in `server.py`).
+- `6f46cd5 deploy: session 9 — dashboard /design pass` — contains dashboard /design content not on origin. Both need cherry-pick to origin.
+
+#### Stashes
+- `stash@{0}` on `feature/referral-program` (15h old, labelled "parallel-agent-work-mess"): ~3k-line diff across server.py + db.py + api_v1.py + many static/. Unreviewed; likely conflict debris.
+
+### Changes since previous audit (#2 → #3)
+
+#### Resolved (13)
+- All 13 of REMEDIATION #1's CRITICALs and HIGH fixes that were flagged in AUDIT #2 remain intact: gate cookie HMAC signing, session revocation on password reset / role / email change, PBKDF2 iteration bump + opportunistic rehash, GATEWAY_COOKIE_SECRET hard-require (verified via server refusing startup without it earlier today), MAX_SESSIONS=3, invite-token `expires_at`, user-initiated `/account/delete`, VAPID env require, signer coverage on 9 endpoints, forensic watermark injection, admin nav for security pages, middleware bulk-data cap.
+- Migration 074 exists (cost controls) — addresses Claude-cost runaway item from previous round (though NOT committed; see CRITICAL #4).
+- Platform features shipped to origin (sessions 1–15 per inventory table above).
+
+#### New (8)
+- Dep CVEs (CRITICAL #1) — 15 new from 2025-Q4 / 2026 disclosures.
+- Duplicate migrations 020/022/023 (CRITICAL #2).
+- Server drift 11 commits behind origin (CRITICAL #3).
+- Floating migration 074 (CRITICAL #4).
+- Server.py regression to 6464 lines (HIGH #1).
+- Two Claude wrappers coexisting (HIGH #2).
+- Uncommitted 31-file WIP (HIGH #3).
+- ~40 real XSS sites on user-visible templates (HIGH #6).
+
+#### Regressions (2)
+- `server.py` line count: AUDIT #2 didn't call this out, but given session 1 was an explicit decomposition round, ending at 6464 is worse than the starting state of session 1 (~6700). Net deletion ~230 lines, vs target <3500. Regression vs roadmap.
+- Running server 11 commits behind origin — AUDIT #2 deployed fresh. The server has NOT been redeployed since the 10+ subsequent merges.
+
+### Drift warnings
+- Server runs `3700686`; origin at `65f55b0`; **11 commits not deployed**. Features: cache, onboarding, churn, font perf, tokens canonicalisation.
+- Server has `a476b15`, `6f46cd5` not in origin — **cherry-pick to origin before resetting**.
+- Stash from 15h ago (`parallel-agent-work-mess`) untouched — **review or drop**.
+- Local working tree has 31 modified / 6 untracked files including an unpushed migration — **commit or discard**.
+- `gateway/.env` is `664` — **`chmod 600`**.
+
+### Recommended actions for next audit
+1. Redeploy the server from origin `65f55b0`; cherry-pick server-only commits back to origin first.
+2. Bump every CVE-flagged dependency in `requirements.txt`; re-run `pip-audit`; generate a lockfile.
+3. Renumber duplicate migrations (020b, 022b, 023b); verify `schema_version` has the survivor of each pair and the skipped one isn't load-bearing.
+4. Commit or discard: the 31-file WIP, migration 074, the 2FA test deletions, stash@{0}.
+5. Finish the Claude wrapper consolidation — delete `intelligence/claude_client.py` (or have it import from `ai/client.py`); update every import site.
+6. Triage the 116 XSS scan hits to a canonical list of ~40 user-facing ones and refactor them to DOM construction.
+7. Tighten the scanner: skip commented lines in `scan_auth`, skip f-strings where every interpolation is a literal list in `scan_sqli`, skip non-handler filenames in `scan_infra`.
+8. Deploy WAF rules from `CLOUDFLARE_CHANGES.md` (still pending from REMEDIATION #1 H3/H18).
+
+---
+
 ## AUDIT #2 — 2026-04-21T14:45:04Z — commit ceefd0a
 
 ### Code inventory audited
