@@ -3156,6 +3156,45 @@ async def logout(request: Request):
     return response
 
 
+def _subscription_pause_status(user_id: int, now_ts: int) -> dict:
+    """Return {paused: bool, until_ts: int|None, until_str: str|None} for
+    the subscription-pause check. Safe to call before migration 094 has
+    landed — absent column/rows = not paused."""
+    try:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT subscription_paused_until FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+    except Exception:
+        return {"paused": False, "until_ts": None, "until_str": None}
+    if not row or not row["subscription_paused_until"]:
+        return {"paused": False, "until_ts": None, "until_str": None}
+    until_str = row["subscription_paused_until"]
+    try:
+        with db.conn() as c:
+            epoch_row = c.execute(
+                "SELECT CAST(strftime('%s', ?) AS INTEGER) AS e",
+                (until_str,),
+            ).fetchone()
+        until_ts = int(epoch_row["e"] if epoch_row and epoch_row["e"] else 0)
+    except Exception:
+        until_ts = 0
+    if until_ts <= now_ts:
+        # Pause window expired — clear the column so subsequent calls are
+        # fast-pathed. Re-enter the billing portal to resubscribe.
+        try:
+            with db.conn() as c:
+                c.execute(
+                    "UPDATE users SET subscription_paused_until = NULL WHERE id = ?",
+                    (user_id,),
+                )
+        except Exception:
+            pass
+        return {"paused": False, "until_ts": None, "until_str": None}
+    return {"paused": True, "until_ts": until_ts, "until_str": until_str}
+
+
 @app.get("/dashboards", response_class=HTMLResponse)
 async def my_dashboards(request: Request):
     sub = get_subdomain(request)
@@ -3164,6 +3203,30 @@ async def my_dashboards(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/token", status_code=302)
+
+    # Pause gate — paused users can log in and manage billing, but the
+    # dashboard cards are soft-locked with a single "Paused until X,
+    # resume now?" banner at the top.
+    pause = _subscription_pause_status(user["user_id"], int(time.time()))
+    if pause["paused"]:
+        import datetime as _dt_pause
+        until_str = _dt_pause.datetime.utcfromtimestamp(pause["until_ts"]).strftime("%B %d, %Y")
+        body = (
+            '<div style="max-width:560px;margin:80px auto;padding:32px;'
+            'background:var(--bg-raised);border:1px solid var(--border);'
+            'border-radius:12px;text-align:center">'
+            '<h1 style="margin:0 0 12px;font-family:var(--font-display);font-size:24px">'
+            'Subscription paused</h1>'
+            f'<p style="margin:0 0 24px;color:var(--text-secondary)">'
+            f'Your subscription is paused until <strong>{html.escape(until_str)}</strong>. '
+            'Resume anytime to regain access to your dashboards.</p>'
+            '<form method="post" action="/settings/billing/resume" style="display:inline">'
+            '<button class="btn btn-primary" type="submit">Resume now</button>'
+            '</form>'
+            ' <a href="/settings/billing" class="btn btn-outline" style="margin-left:8px">Manage billing</a>'
+            '</div>'
+        )
+        return HTMLResponse(body)
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
@@ -6101,6 +6164,11 @@ async def signal_search_page(request: Request):
         pinfo = _user_plan_info(user, subs, int(time.time()))
         if pinfo["plan"] != "pro":
             return RedirectResponse("/billing", status_code=302)
+    try:
+        from engagement import log_event
+        log_event(user["user_id"], "signal_search")
+    except Exception:
+        pass
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
         "signal-search",
@@ -6200,6 +6268,19 @@ try:
         _br_importlib.reload(_br_sys.modules["billing_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("billing_routes import failed: %s — continuing without it", _exc)
+
+
+# Engagement / in-app re-engagement prompts. Same reload-safe side-effect
+# pattern as billing_routes above — must sit before the catch-all so
+# /api/engagement/* resolve on the apex rather than being swallowed.
+try:
+    import engagement_routes  # noqa: F401,E402
+    import sys as _er_sys
+    if "engagement_routes" in _er_sys.modules:
+        import importlib as _er_importlib
+        _er_importlib.reload(_er_sys.modules["engagement_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("engagement_routes import failed: %s — continuing without it", _exc)
 
 
 # Private referral + leaderboard router. Must sit before the catch-all

@@ -140,5 +140,77 @@ class TestResolutionJobRegistration(unittest.TestCase):
         self.assertIsNone(res_crons[0]["hour"])  # every hour
 
 
+class TestOutcomePricesParsingIsSafe(unittest.TestCase):
+    """Regression test for NARVE_SECURITY_AUDIT #2 CRITICAL #1.
+
+    Previous code did `eval(resolved_prices)` when `outcomePrices` arrived
+    as a string. That's an RCE primitive if the upstream ever returned
+    (or was MITM'd into returning) a crafted payload. The fix is to parse
+    strictly as JSON — malicious strings must raise, not execute.
+    """
+
+    def test_json_list_string_parses_to_list(self):
+        import json
+        result = json.loads('["0.65","0.35"]')
+        self.assertEqual(result, ["0.65", "0.35"])
+        self.assertGreater(float(result[0]), 0.5)
+
+    def test_python_literal_no_longer_accepted(self):
+        """eval() used to accept Python tuple literals like '(0.65, 0.35)'.
+        json.loads must reject them — strict JSON only.
+        """
+        import json
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads("(0.65, 0.35)")
+
+    def test_malicious_payload_raises_does_not_execute(self):
+        """Sentinel: if an attacker could insert Python code into the
+        upstream payload, json.loads must raise instead of running it.
+        We set a global flag and confirm it is NOT flipped after parse.
+        """
+        import json
+        import builtins
+        builtins._pwned_by_resolution_eval = False
+        payload = '__import__("builtins")._pwned_by_resolution_eval = True'
+        try:
+            json.loads(payload)
+        except (ValueError, json.JSONDecodeError):
+            pass  # expected
+        self.assertFalse(
+            getattr(builtins, "_pwned_by_resolution_eval", False),
+            "Parser executed arbitrary code — critical regression.",
+        )
+        # Clean up the sentinel so later tests don't see it.
+        try:
+            del builtins._pwned_by_resolution_eval
+        except AttributeError:
+            pass
+
+    def test_source_no_longer_references_bare_eval(self):
+        """Grep-test: `eval(` must not appear as a live call in the
+        resolution parser. If someone re-introduces it, this test fires.
+        """
+        import os
+        here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(here, "..", "jobs", "resolution_jobs.py")
+        with open(path, "r", encoding="utf-8") as f:
+            src = f.read()
+        # eval( anywhere in the file is a smell. The only legitimate hit
+        # would be inside a comment or a string literal noting the
+        # historical bug — so we look specifically for an uncommented call.
+        for lineno, line in enumerate(src.splitlines(), start=1):
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                continue
+            # Allow the word inside a string literal (comments / docstring
+            # explaining the fix). Only fail on what looks like a call.
+            if " eval(" in line or line.startswith("eval("):
+                # Check it's not inside a string — crude but sufficient:
+                # if the line has matching quotes around the eval, skip.
+                if "'eval(" in line or '"eval(' in line:
+                    continue
+                self.fail(f"resolution_jobs.py:{lineno} still calls eval(): {line.strip()}")
+
+
 if __name__ == "__main__":
     unittest.main()

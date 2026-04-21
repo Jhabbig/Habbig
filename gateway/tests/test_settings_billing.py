@@ -394,10 +394,20 @@ class TestCancelFlow(_DbIsolation):
         )
 
     def test_cancel_sets_status_cancelled(self):
-        r = _post_form("/settings/billing/cancel", token=self.token, data={"reason": "too_expensive"})
-        self.assertEqual(r.status_code, 302)
-        self.assertIn("/settings/billing", r.headers["location"])
-        self.assertIn("saved=cancelled", r.headers["location"])
+        # Step 1 of the 3-step retention flow — records the attempt and
+        # advances to step 2 (pause offer). Subscription status stays
+        # active until step 3 finalizes.
+        r1 = _post_form("/settings/billing/cancel", token=self.token, data={"reason": "too_expensive", "step": "1"})
+        self.assertEqual(r1.status_code, 302)
+        self.assertIn("/settings/billing/cancel-flow?step=2", r1.headers["location"])
+        attempt_id = int(r1.headers["location"].split("attempt_id=")[-1])
+        # Step 3 — final confirmation. Flips subs to cancelled.
+        r2 = _post_form(
+            "/settings/billing/cancel", token=self.token,
+            data={"step": "3", "attempt_id": str(attempt_id)},
+        )
+        self.assertEqual(r2.status_code, 302)
+        self.assertIn("saved=cancelled", r2.headers["location"])
         with db.conn() as c:
             row = c.execute(
                 "SELECT status, expires_at FROM subscriptions "

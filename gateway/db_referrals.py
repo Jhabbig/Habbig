@@ -406,6 +406,14 @@ def upsert_user_accuracy(
         )
 
 
+_LEADERBOARD_SORT_COLUMNS = frozenset({
+    "ua.accuracy_all_time",
+    "ua.accuracy_90d",
+    "ua.accuracy_30d",
+    "ua.accuracy_7d",
+})
+
+
 def get_leaderboard(
     *,
     period: str = "all",
@@ -420,6 +428,14 @@ def get_leaderboard(
         "30d": "ua.accuracy_30d",
         "7d":  "ua.accuracy_7d",
     }.get(period, "ua.accuracy_all_time")
+    # Defence-in-depth: the dict lookup above already restricts `col` to a
+    # known-safe set, but interpolating into SQL without an explicit
+    # allowlist check means a future refactor (e.g. taking the column
+    # name straight from query params) could silently regress into SQL
+    # injection. Assert the contract at the interpolation site so the
+    # safety is local and obvious.
+    if col not in _LEADERBOARD_SORT_COLUMNS:
+        raise ValueError(f"invalid leaderboard column: {col!r}")
     with db.conn() as c:
         return c.execute(
             f"""

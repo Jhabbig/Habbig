@@ -1536,7 +1536,25 @@ async def auth_login(request: Request):
 
 @app.post("/auth/logout")
 async def auth_logout(request: Request):
-    """Revoke the hardened session AND the legacy session cookie."""
+    """Revoke the hardened session AND the legacy session cookie.
+
+    Rate-limited per-IP (20/min) so an attacker can't spam the endpoint
+    to burn CSRF cycles or fill the security-event log. 20/min is
+    generous for legitimate multi-tab / multi-device sign-out storms.
+    """
+    ip = _get_client_ip(request)
+    if server._is_rate_limited(f"{ip}:logout", limit=20, window=60):
+        # Don't give the spammer a signal; still clear the client-side
+        # cookies so a single legitimate click in a spam storm doesn't
+        # leave them locked out. Log once per throttle event.
+        log.warning("auth.logout: rate-limited ip=%s", ip)
+        response = JSONResponse({"ok": True}, status_code=429)
+        response.headers["Retry-After"] = "60"
+        clear_session_cookie_hardened(response, request)
+        clear_session_cookie(response, request)
+        clear_pending_token_cookie(response, request)
+        return response
+
     raw_hardened = request.cookies.get(SESSION_COOKIE, "")
     if raw_hardened:
         try:

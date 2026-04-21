@@ -958,6 +958,10 @@ async def churn_dashboard(request: Request):
     admin = _require_admin_user(request, page=True)
     if admin is None:
         return _denied_response(request)
+    # _require_admin_user returns a RedirectResponse when 2FA is required.
+    # Pass it through directly — don't try to index it like a user dict.
+    if not isinstance(admin, dict):
+        return admin
 
     dist = _churn_risk_distribution()
     top = _top_at_risk_users(limit=20)

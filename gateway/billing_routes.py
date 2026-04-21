@@ -256,8 +256,11 @@ def _render_current_plan(pinfo: dict, subs: dict, status: str) -> str:
         '</form>'
     ]
     if status == "active":
+        # Link directly to the multi-step retention flow — the in-page
+        # modal is kept around for degraded-JS fallback but the primary
+        # path is the dedicated /settings/billing/cancel-flow page.
         action_btns.append(
-            '<button type="button" class="sb-btn sb-btn-ghost" data-open-cancel>Cancel subscription</button>'
+            '<a href="/settings/billing/cancel-flow" class="sb-btn sb-btn-ghost">Cancel subscription</a>'
         )
     elif status == "cancelled":
         action_btns.append(
@@ -485,6 +488,35 @@ async def settings_billing_page(request: Request):
         flash = '<div class="sb-notice sb-notice-success">Trading add-on activated.</div>'
     elif saved == "addon_removed":
         flash = '<div class="sb-notice sb-notice-success">Trading add-on removed.</div>'
+    elif saved == "paused":
+        days_param = request.query_params.get("days", "30")
+        flash = f'<div class="sb-notice sb-notice-success">Subscription paused for {html.escape(days_param)} days. Resume anytime from here.</div>'
+    elif saved == "resumed":
+        flash = '<div class="sb-notice sb-notice-success">Subscription resumed.</div>'
+
+    # Pause banner — always visible while the pause window is active,
+    # independent of the ?saved= flash. Lets the user resume without
+    # leaving the billing page.
+    pause_banner = ""
+    try:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT subscription_paused_until FROM users WHERE id = ?",
+                (user["user_id"],),
+            ).fetchone()
+        if row and row["subscription_paused_until"]:
+            pause_banner = (
+                '<div class="sb-resubscribe" style="background:rgba(245,158,11,0.08);border-color:rgba(245,158,11,0.3)">'
+                '<div class="sb-resubscribe-text">Your subscription is <strong>paused</strong> until '
+                f'{html.escape(str(row["subscription_paused_until"]))}. No charges during the pause window.</div>'
+                '<form method="post" action="/settings/billing/resume" style="display:inline">'
+                '<button type="submit" class="sb-btn sb-btn-primary">Resume now</button>'
+                '</form>'
+                '</div>'
+            )
+    except Exception:
+        pass
+    flash = pause_banner + flash
 
     danger_zone = ""
     if status == "active" and pinfo.get("plan"):
@@ -566,24 +598,361 @@ async def settings_billing_page(request: Request):
     )
 
 
+def _retention_stats(user_id: int) -> dict:
+    """Pull the numbers shown on the cancel retention screen.
+
+    Each query is defensive: a missing table (schema skew between branches)
+    returns 0 rather than bubbling an exception. The point of this screen
+    is to get the user to pause — showing "Loading…" forever or 500-ing
+    defeats the whole point.
+    """
+    stats = {
+        "watchlist_count": 0,
+        "saved_signals_count": 0,
+        "streak_days": 0,
+        "accuracy_pct": None,
+        "prediction_count": 0,
+    }
+    try:
+        with db.conn() as c:
+            # Watchlist: followed_sources rows where notify_on_prediction
+            # is set OR any saved prediction is still "active" (unresolved).
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM followed_sources WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            stats["watchlist_count"] = int(row["n"] if row else 0)
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM saved_predictions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            stats["saved_signals_count"] = int(row["n"] if row else 0)
+            # Predictions made by the user — read from user_prediction_stats
+            # if available (populated by the scoring pipeline), else count
+            # raw predictions rows keyed to the user.
+            try:
+                row = c.execute(
+                    "SELECT total_predictions, accuracy_pct, current_streak_days "
+                    "FROM user_prediction_stats WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()
+                if row:
+                    stats["prediction_count"] = int(row["total_predictions"] or 0)
+                    if row["accuracy_pct"] is not None:
+                        stats["accuracy_pct"] = float(row["accuracy_pct"])
+                    stats["streak_days"] = int(row["current_streak_days"] or 0)
+            except Exception:
+                pass
+            # Fallback streak: count distinct days with a 'login' event in
+            # engagement_events, looking back up to 60 days.
+            if stats["streak_days"] == 0:
+                try:
+                    row = c.execute(
+                        """
+                        SELECT COUNT(DISTINCT date(created_at)) AS d
+                        FROM engagement_events
+                        WHERE user_id = ?
+                          AND event_type = 'login'
+                          AND created_at >= datetime('now', '-60 days')
+                        """,
+                        (user_id,),
+                    ).fetchone()
+                    stats["streak_days"] = int(row["d"] if row else 0)
+                except Exception:
+                    pass
+    except Exception as exc:
+        log.warning("retention_stats: failed for uid=%s: %s", user_id, exc)
+    return stats
+
+
+def _render_cancel_step1(user_id: int, pinfo: dict) -> str:
+    """Step 1 of the 3-step cancel flow: show what the user loses."""
+    stats = _retention_stats(user_id)
+    plan_label = PLAN_DEFS.get(pinfo.get("plan") or "trader", {}).get("label", "Pro")
+    bullet = lambda txt: f'<li style="padding:6px 0;border-bottom:1px solid var(--border)">{html.escape(txt)}</li>'
+    bullets = []
+    if stats["watchlist_count"]:
+        bullets.append(bullet(f"{stats['watchlist_count']} sources you're following"))
+    if stats["saved_signals_count"]:
+        bullets.append(bullet(f"{stats['saved_signals_count']} saved signals"))
+    if stats["streak_days"] and stats["streak_days"] >= 3:
+        bullets.append(bullet(f"Your {stats['streak_days']}-day research streak"))
+    if stats["accuracy_pct"] is not None and stats["prediction_count"]:
+        acc = round(stats["accuracy_pct"] * 100 if stats["accuracy_pct"] <= 1.0 else stats["accuracy_pct"], 1)
+        bullets.append(bullet(f"{acc}% accuracy across your {stats['prediction_count']} predictions"))
+    if not bullets:
+        bullets.append(bullet(f"Every {plan_label} feature you've come to rely on"))
+
+    return (
+        '<h2 style="margin:0 0 12px">Before you cancel</h2>'
+        f'<p style="margin:0 0 16px;color:var(--text-secondary)">Here\'s what you\'d lose if you cancel your {html.escape(plan_label)} subscription:</p>'
+        f'<ul style="list-style:none;padding:0;margin:0 0 24px">{"".join(bullets)}</ul>'
+        '<form method="post" action="/settings/billing/cancel" style="display:flex;gap:8px;flex-direction:column">'
+        '<input type="hidden" name="step" value="1">'
+        '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Reason for leaving (optional)</label>'
+        '<select name="reason" style="padding:8px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;color:var(--text-primary)">'
+        '<option value="">—</option>'
+        '<option value="too_expensive">Too expensive</option>'
+        '<option value="not_using">Not using it enough</option>'
+        '<option value="found_alternative">Found an alternative</option>'
+        '<option value="missing_feature">Missing a feature I need</option>'
+        '<option value="other">Other</option>'
+        '</select>'
+        '<div style="display:flex;gap:8px;margin-top:20px">'
+        '<a href="/settings/billing" class="sb-btn sb-btn-primary" style="flex:1;text-align:center">Keep my subscription</a>'
+        '<button type="submit" class="sb-btn sb-btn-ghost" style="flex:1">Continue to cancel →</button>'
+        '</div>'
+        '</form>'
+    )
+
+
+def _render_cancel_step2(attempt_id: int) -> str:
+    """Step 2: offer a pause before the final cancel confirmation."""
+    return (
+        '<h2 style="margin:0 0 12px">Rather than cancel, would you like to pause?</h2>'
+        '<p style="margin:0 0 16px;color:var(--text-secondary)">'
+        'Pausing keeps your data, settings, and watchlist. You can resume anytime '
+        'from /settings/billing. No extra charge.'
+        '</p>'
+        '<div style="display:flex;gap:8px;flex-direction:column">'
+        f'<form method="post" action="/settings/billing/pause">'
+        '<input type="hidden" name="attempt_id" value="' + str(attempt_id) + '">'
+        '<input type="hidden" name="days" value="30">'
+        '<button type="submit" class="sb-btn sb-btn-primary" style="width:100%">Pause for 30 days</button>'
+        '</form>'
+        f'<form method="post" action="/settings/billing/pause">'
+        '<input type="hidden" name="attempt_id" value="' + str(attempt_id) + '">'
+        '<input type="hidden" name="days" value="60">'
+        '<button type="submit" class="sb-btn sb-btn-outline" style="width:100%">Pause for 60 days</button>'
+        '</form>'
+        f'<form method="post" action="/settings/billing/cancel">'
+        '<input type="hidden" name="step" value="3">'
+        '<input type="hidden" name="attempt_id" value="' + str(attempt_id) + '">'
+        '<button type="submit" class="sb-btn sb-btn-ghost" style="width:100%">No, cancel anyway</button>'
+        '</form>'
+        '</div>'
+    )
+
+
+def _open_cancel_attempt(user_id: int, reason: str, reached_step: int) -> int:
+    """Record a new cancel_attempts row and return its id."""
+    with db.conn() as c:
+        cur = c.execute(
+            "INSERT INTO cancellation_attempts (user_id, reason, reached_step) "
+            "VALUES (?, ?, ?)",
+            (user_id, (reason or "").strip()[:80] or None, reached_step),
+        )
+        return int(cur.lastrowid or 0)
+
+
+def _finalize_cancel_attempt(attempt_id: int, outcome: str, reached_step: int, pause_days: int | None = None) -> None:
+    """Close out a cancel_attempts row with the final outcome."""
+    if not attempt_id:
+        return
+    with db.conn() as c:
+        c.execute(
+            "UPDATE cancellation_attempts "
+            "SET outcome = ?, reached_step = MAX(reached_step, ?), "
+            "    pause_days = ?, completed_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (outcome, reached_step, pause_days, attempt_id),
+        )
+
+
+def _queue_winback_emails(user_id: int, email: str) -> None:
+    """Queue +7d and +30d win-back emails. Payload-only — the SMTP send
+    wires up separately. Failures here are logged, not raised: a missed
+    email queue shouldn't block the cancel from completing."""
+    try:
+        import asyncio
+        from jobs import enqueue_job
+        now_ts = int(time.time())
+        payloads = [
+            ("winback_7d", now_ts + 7 * 86400),
+            ("winback_30d", now_ts + 30 * 86400),
+        ]
+        coros = [
+            enqueue_job(
+                "send_email",
+                to=email,
+                template=tmpl,
+                context={"user_id": user_id},
+                tags=["winback", tmpl],
+                run_at=run_at_ts,
+            )
+            for tmpl, run_at_ts in payloads
+        ]
+        # Fire-and-forget — we can await via asyncio.gather in an event
+        # loop (we're inside an async handler caller), but the current
+        # site's call site may be sync. Use run_until on a transient loop
+        # only if we aren't already in one.
+        loop = None
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                for coro in coros:
+                    asyncio.create_task(coro)
+                return
+        except RuntimeError:
+            loop = None
+        # No running loop — synchronously drive the enqueues. This path
+        # is rare (tests, stand-alone scripts) and tolerates blocking.
+        import asyncio as _asyncio
+        _asyncio.run(_asyncio.gather(*coros, return_exceptions=True))
+    except Exception as exc:
+        log.warning("winback enqueue failed for uid=%s: %s", user_id, exc)
+
+
+@app.get("/settings/billing/cancel-flow", response_class=HTMLResponse, include_in_schema=False)
+async def settings_billing_cancel_flow(request: Request):
+    """The 3-step retention UI — step 1 renders by default; step 2 is
+    driven by a POST that creates a cancellation_attempt row and then
+    redirects back here with ?step=2&attempt_id=...
+    """
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    pinfo = _user_plan_info(user, subs, int(time.time()))
+    pinfo["_user_id"] = user["user_id"]
+
+    step = request.query_params.get("step", "1")
+    attempt_id_raw = request.query_params.get("attempt_id", "")
+    try:
+        attempt_id = int(attempt_id_raw)
+    except ValueError:
+        attempt_id = 0
+
+    if step == "2" and attempt_id:
+        inner = _render_cancel_step2(attempt_id)
+    else:
+        inner = _render_cancel_step1(user["user_id"], pinfo)
+
+    return render_page(
+        "settings_billing_cancel",
+        request=request,
+        email=user["email"],
+        username=user.get("username", user["email"]),
+        raw_cancel_inner=inner,
+        raw_nav_role=_role_badge(user),
+        _is_admin=user.get("is_admin"),
+        raw_admin_link=('<a href="/admin">Admin</a>' if user.get("is_admin") else ""),
+    )
+
+
 @app.post("/settings/billing/cancel", include_in_schema=False)
-async def settings_billing_cancel(request: Request, reason: str = Form("")):
-    """Flip all active subs to cancelled. User keeps access until expires_at."""
+async def settings_billing_cancel(
+    request: Request,
+    reason: str = Form(""),
+    step: str = Form("1"),
+    attempt_id: str = Form(""),
+):
+    """Three-step cancel funnel.
+
+    step=1 → record attempt, advance to step 2 (pause offer).
+    step=3 → finalize cancel (flip subs to 'cancelled', queue win-back emails).
+    Any other value → treat as step 1.
+    """
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+
+    try:
+        attempt_id_int = int(attempt_id)
+    except ValueError:
+        attempt_id_int = 0
+
+    if step == "3":
+        # Final confirmation — flip subs + queue win-back emails.
+        with db.conn() as c:
+            c.execute(
+                "UPDATE subscriptions SET status = 'cancelled' "
+                "WHERE user_id = ? AND status = 'active'",
+                (user["user_id"],),
+            )
+        _finalize_cancel_attempt(attempt_id_int, outcome="cancelled", reached_step=3)
+        _queue_winback_emails(user["user_id"], user["email"])
+        log.info(
+            "User %s cancelled subscription (attempt=%s)",
+            user.get("username", user["email"]),
+            attempt_id_int,
+        )
+        return RedirectResponse("/settings/billing?saved=cancelled", status_code=302)
+
+    # Default: step 1 → record attempt, forward to step 2.
+    reason_clean = (reason or "").strip()[:80]
+    attempt_id_int = _open_cancel_attempt(user["user_id"], reason_clean, reached_step=1)
+    return RedirectResponse(
+        f"/settings/billing/cancel-flow?step=2&attempt_id={attempt_id_int}",
+        status_code=302,
+    )
+
+
+@app.post("/settings/billing/pause", include_in_schema=False)
+async def settings_billing_pause(
+    request: Request,
+    days: str = Form("30"),
+    attempt_id: str = Form(""),
+):
+    """Pause the subscription for N days. Logs a pause row + finalizes
+    the cancellation_attempt as outcome='paused'.
+    """
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+
+    try:
+        pause_days = max(7, min(90, int(days)))
+    except ValueError:
+        pause_days = 30
+    try:
+        attempt_id_int = int(attempt_id)
+    except ValueError:
+        attempt_id_int = 0
+
+    now_ts = int(time.time())
+    resume_ts = now_ts + pause_days * 86400
+    with db.conn() as c:
+        c.execute(
+            "INSERT INTO subscription_pauses (user_id, resume_at) "
+            "VALUES (?, datetime(?, 'unixepoch'))",
+            (user["user_id"], resume_ts),
+        )
+        c.execute(
+            "UPDATE users SET subscription_paused_until = datetime(?, 'unixepoch') "
+            "WHERE id = ?",
+            (resume_ts, user["user_id"]),
+        )
+    _finalize_cancel_attempt(attempt_id_int, outcome="paused", reached_step=2, pause_days=pause_days)
+    log.info(
+        "User %s paused subscription for %d days (attempt=%s)",
+        user.get("username", user["email"]), pause_days, attempt_id_int,
+    )
+    return RedirectResponse(
+        f"/settings/billing?saved=paused&days={pause_days}",
+        status_code=302,
+    )
+
+
+@app.post("/settings/billing/resume", include_in_schema=False)
+async def settings_billing_resume(request: Request):
+    """Resume a paused subscription early."""
     user = current_user(request)
     if not user:
         return RedirectResponse("/token", status_code=302)
     with db.conn() as c:
         c.execute(
-            "UPDATE subscriptions SET status = 'cancelled' "
-            "WHERE user_id = ? AND status = 'active'",
+            "UPDATE users SET subscription_paused_until = NULL WHERE id = ?",
             (user["user_id"],),
         )
-    log.info(
-        "User %s cancelled subscription (reason=%s)",
-        user.get("username", user["email"]),
-        (reason or "")[:50],
-    )
-    return RedirectResponse("/settings/billing?saved=cancelled", status_code=302)
+        c.execute(
+            "UPDATE subscription_pauses SET resumed_early_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = ? AND resumed_early_at IS NULL",
+            (user["user_id"],),
+        )
+    log.info("User %s resumed subscription early", user.get("username", user["email"]))
+    return RedirectResponse("/settings/billing?saved=resumed", status_code=302)
 
 
 @app.post("/settings/billing/resubscribe", include_in_schema=False)

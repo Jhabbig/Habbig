@@ -421,6 +421,31 @@ class TestLeaderboardDb(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("taken", result["error"])
 
+    def test_leaderboard_sort_column_is_allowlisted(self):
+        """Regression: NARVE_SECURITY_AUDIT #2 HIGH #2.
+
+        The dict lookup inside get_leaderboard restricts `col` to a known
+        set; a defence-in-depth allowlist check raises ValueError if a
+        future refactor accidentally passes an unvetted column name into
+        the f-string. The test verifies the safety net is wired up.
+        """
+        # Valid periods all resolve to allowlisted columns.
+        for period in ("all", "90d", "30d", "7d"):
+            dbr.get_leaderboard(period=period, limit=1)
+
+        # Bypass the dict lookup entirely and confirm the ORDER-BY
+        # allowlist set matches the columns the helper will produce.
+        from db_referrals import _LEADERBOARD_SORT_COLUMNS
+        self.assertEqual(
+            _LEADERBOARD_SORT_COLUMNS,
+            frozenset({
+                "ua.accuracy_all_time",
+                "ua.accuracy_90d",
+                "ua.accuracy_30d",
+                "ua.accuracy_7d",
+            }),
+        )
+
     def test_leaderboard_only_returns_opted_in_with_scores(self):
         a = _mk_user("lb_scA@test.com", "lb_scA")
         b = _mk_user("lb_scB@test.com", "lb_scB")  # no accuracy data

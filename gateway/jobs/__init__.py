@@ -66,6 +66,9 @@ for _mod in (
     "insider_jobs",
     "backtest_jobs",
     "ai_maintenance",
+    # Churn/engagement: recomputes churn_signals nightly from the
+    # engagement_events ring buffer. Depends on migrations 092+093.
+    "compute_churn_signals",
 ):
     try:
         __import__(f"jobs.{_mod}")

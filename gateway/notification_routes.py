@@ -158,6 +158,15 @@ async def api_notification_mark_read(request: Request, notif_id: int) -> JSONRes
         raise HTTPException(status_code=404, detail="Notification not found")
 
     changed = db.mark_notification_read(notif_id, user["user_id"])
+    if changed:
+        # A mark-read is the closest proxy for "click-through" the gateway
+        # sees — the bell UI and push landing page both hit this endpoint
+        # when the user engages with a notification. Log for churn signal.
+        try:
+            from engagement import log_event
+            log_event(user["user_id"], "click_notification", metadata={"notif_id": notif_id})
+        except Exception:
+            pass
     return JSONResponse({"ok": True, "changed": bool(changed)})
 
 

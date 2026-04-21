@@ -87,6 +87,68 @@ class TestLogoutHttpSurface(unittest.TestCase):
         self.assertIn(r.status_code, (200, 403))
 
 
+class TestLogoutRateLimit(unittest.TestCase):
+    """Regression: NARVE_SECURITY_AUDIT #2 HIGH #1.
+
+    /auth/logout used to accept unbounded POSTs — a trivial DoS and a
+    cheap way to spam the security event log. Limit is 20/min per IP.
+
+    _get_client_ip ignores x-forwarded-for when the peer is not in
+    _TRUSTED_PROXY_HOSTS, and TestClient's peer is always `testclient`,
+    so every request from these tests shares a single limiter key. We
+    clear the rate-limit store in setUp to isolate from other tests in
+    the same process.
+    """
+
+    def setUp(self):
+        server._rate_store.clear()
+
+    def test_twenty_first_logout_from_same_ip_is_throttled(self):
+        # The limiter runs inside the handler, after CSRF. Every POST here
+        # carries a matching _csrf cookie + x-csrf-token header AND posts
+        # a JSON body so the middleware routes through the header-check
+        # branch. Without content-type=application/json the middleware
+        # won't look at x-csrf-token and will 403.
+        c = TestClient(server.app)
+        c.cookies.set("_csrf", "t")
+        headers = {"x-csrf-token": "t"}
+
+        for i in range(20):
+            r = c.post("/auth/logout", json={}, headers=headers)
+            self.assertNotEqual(
+                r.status_code, 429,
+                f"premature throttle at call {i + 1}: {r.status_code}",
+            )
+            self.assertNotEqual(
+                r.status_code, 403,
+                f"unexpected CSRF fail at call {i + 1}: {r.text[:120]}",
+            )
+
+        r = c.post("/auth/logout", json={}, headers=headers)
+        self.assertEqual(r.status_code, 429,
+                         f"expected throttle, got {r.status_code}: {r.text[:120]}")
+        self.assertEqual(r.headers.get("Retry-After"), "60")
+
+    def test_throttle_still_clears_cookies(self):
+        """Even when throttled, the client-side cookies must be cleared so
+        a user caught in a spam storm isn't locked into a stale session.
+        """
+        c = TestClient(server.app)
+        c.cookies.set("_csrf", "t")
+        headers = {"x-csrf-token": "t"}
+        r = None
+        for _ in range(21):
+            r = c.post("/auth/logout", json={}, headers=headers)
+        # Last response is 429; the clear-cookie helpers must still fire.
+        self.assertEqual(r.status_code, 429)
+        set_cookie = r.headers.get_list("set-cookie") if hasattr(r.headers, "get_list") else []
+        joined = " ".join(set_cookie).lower()
+        self.assertTrue(
+            "max-age=0" in joined or "expires=" in joined,
+            f"expected cookie-clearing headers on throttled response, got: {joined[:200]}",
+        )
+
+
 class TestPostLogoutAccess(unittest.TestCase):
     """After revoking a session, the next protected-route hit must bounce
     to /token. We exercise this at the DB layer + middleware layer rather

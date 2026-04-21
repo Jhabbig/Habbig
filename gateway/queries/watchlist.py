@@ -19,6 +19,13 @@ from typing import Optional
 import db
 
 
+_ALLOWED_SAVED_ORDER_CLAUSES = frozenset({
+    "sp.saved_at DESC",
+    "sc.global_credibility DESC NULLS LAST, sp.saved_at DESC",
+    "p.resolved_at DESC NULLS LAST, sp.saved_at DESC",
+})
+
+
 def save_prediction(user_id: int, prediction_id: int, notes: Optional[str] = None) -> int:
     """Insert-or-return-existing saved_predictions row. Returns the row id."""
     with db.conn() as c:
@@ -79,6 +86,12 @@ def list_saved_predictions(
         "credibility": "sc.global_credibility DESC NULLS LAST, sp.saved_at DESC",
         "resolution_date": "p.resolved_at DESC NULLS LAST, sp.saved_at DESC",
     }.get(sort, "sp.saved_at DESC")
+    # Defence-in-depth: assert the chosen ORDER BY clause is one we built
+    # ourselves before interpolating into SQL. Without this, a future
+    # refactor that accepts a caller-supplied clause would silently
+    # become a SQL-injection vector.
+    if order not in _ALLOWED_SAVED_ORDER_CLAUSES:
+        raise ValueError(f"invalid saved-predictions sort: {order!r}")
     sql = (
         "SELECT sp.id AS saved_id, sp.saved_at, sp.notes, sp.notified_on_resolution, "
         "p.id AS prediction_id, p.content, p.source_handle, p.category, "

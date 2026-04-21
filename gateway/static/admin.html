@@ -124,6 +124,7 @@
           <a class="admin-tab" href="/admin/flags" style="text-decoration:none;display:inline-flex;align-items:center">Flags</a>
           <a class="admin-tab" href="/admin/emails" style="text-decoration:none;display:inline-flex;align-items:center">Emails</a>
           <a class="admin-tab" href="/admin/impersonations" style="text-decoration:none;display:inline-flex;align-items:center">Impersonation</a>
+          <a class="admin-tab" href="/admin/churn" style="text-decoration:none;display:inline-flex;align-items:center">Churn</a>
           <a class="admin-tab" href="/admin/audit-log" style="text-decoration:none;display:inline-flex;align-items:center">Audit</a>
           <a class="admin-tab" href="/admin/security/bulk-fetches" style="text-decoration:none;display:inline-flex;align-items:center">Bulk&nbsp;fetches</a>
           <a class="admin-tab" href="/admin/security/forensics" style="text-decoration:none;display:inline-flex;align-items:center">Forensics</a>
@@ -146,7 +147,7 @@
             <button class="filter-btn" onclick="filterTokens('revoked',this)">Revoked</button>
           </div>
 
-          <div class="admin-list">
+          <div class="admin-list" data-empty-hint="No invite tokens yet. Generate one above to share access.">
             {{ raw_token_rows }}
           </div>
         </div>
@@ -180,7 +181,7 @@
 
           <form id="bulk-form" method="post" action="/admin/users/bulk">
             {{ raw_csrf_field }}
-            <div class="admin-list">
+            <div class="admin-list" data-empty-hint="No users match your search. Clear the filter or invite someone via the Tokens tab.">
               {{ raw_user_rows }}
             </div>
           </form>
@@ -193,7 +194,7 @@
             <button class="filter-btn" onclick="filterEnquiries('enquiry',this)">Enquiries</button>
             <button class="filter-btn" onclick="filterEnquiries('ticket',this)">Support Tickets</button>
           </div>
-          <div class="admin-list">
+          <div class="admin-list" data-empty-hint="No enquiries or support tickets yet.">
             {{ raw_enquiry_rows }}
           </div>
         </div>

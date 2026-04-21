@@ -225,6 +225,14 @@ def create_session(user_id: int) -> str:
             "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
             (token, user_id, now, now + SESSION_TTL),
         )
+    # Fire-and-forget engagement ping so the churn-signal job sees a
+    # 'login' event. Lazy import keeps this file's imports lean and
+    # avoids a cycle if engagement.py ever grows imports from here.
+    try:
+        from engagement import log_event
+        log_event(user_id, "login")
+    except Exception:
+        pass
     return token
 
 
