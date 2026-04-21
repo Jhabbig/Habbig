@@ -245,25 +245,27 @@ def recompute_all_credibilities() -> int:
     MIN_FOR_UNLOCK = 10 # minimum resolved predictions to unlock accuracy badge
     now = int(time.time())
 
-    # Get all sources that have at least one resolved prediction.
+    # One query for every resolved prediction across every source, instead
+    # of 1 + N queries (one per source). For 1 000 sources × 50 resolved
+    # each the old shape opened 1 001 connections and issued 1 001 queries;
+    # this version issues one and partitions in Python. Ordering by
+    # source_handle lets us stream into per-source buckets without building
+    # a full dict first, but we build the dict anyway because the per-
+    # source block below already loads the whole bucket into memory to
+    # compute decay weights.
     with db.conn() as c:
-        source_rows = c.execute(
-            "SELECT DISTINCT source_handle FROM predictions "
+        all_rows = c.execute(
+            "SELECT source_handle, resolved_correct, resolved_at, category "
+            "FROM predictions "
             "WHERE resolved = 1 AND resolved_correct IS NOT NULL"
         ).fetchall()
 
+    preds_by_handle: dict = {}
+    for r in all_rows:
+        preds_by_handle.setdefault(r["source_handle"], []).append(r)
+
     count = 0
-    for src_row in source_rows:
-        handle = src_row["source_handle"]
-
-        with db.conn() as c:
-            preds = c.execute(
-                "SELECT resolved_correct, resolved_at, category "
-                "FROM predictions "
-                "WHERE source_handle = ? AND resolved = 1 AND resolved_correct IS NOT NULL",
-                (handle,),
-            ).fetchall()
-
+    for handle, preds in preds_by_handle.items():
         if not preds:
             continue
 
