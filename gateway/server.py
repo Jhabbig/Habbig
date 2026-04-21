@@ -1929,11 +1929,14 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
             r'\1' + csrf_field,
             page
         )
-    # Auto-inject skeleton CSS (Feature 4) + skeleton JS library. Pages that
-    # don't use them ignore the <link>/<script>; pages that need data loaders
-    # can call `window.narveSkel.show(...)` without wiring anything.
+    # Auto-inject skeleton CSS (Feature 4) + skeleton JS library + the shared
+    # states.css (error-state / error-card / empty-state). Pages that don't
+    # use them ignore the <link>/<script>; pages that need data loaders can
+    # call `window.narveSkel.show(...)` without wiring anything, and pages
+    # with empty/error states just add the BEM classes.
     skel_injection = (
         '<link rel="stylesheet" href="/_gateway_static/skeletons.css">\n'
+        '<link rel="stylesheet" href="/_gateway_static/states.css">\n'
         '<script src="/_gateway_static/skeletons.js" defer></script>'
     )
     if "skeletons.js" not in page:
@@ -2262,6 +2265,11 @@ def _render_subproduct_landing(request: Request, slug: str) -> HTMLResponse:
         f'<span class="pill">{html.escape(p)}</span>' for p in ctx["stat_pills"]
     )
 
+    # Bundle-math figures for the price card's "or Pro" footnote. Summed
+    # once from the catalogue so the landing always shows the truthful
+    # total even if we add or re-price a subproduct later.
+    bundle_sum_usd = sum(float(v["price_usd"]) for v in _SP.values())
+
     return render_page(
         "subproduct_landing",
         request=request,
@@ -2274,6 +2282,8 @@ def _render_subproduct_landing(request: Request, slug: str) -> HTMLResponse:
         subproduct_price_usd=f"{ctx['price_usd']:.2f}",
         subproduct_price_gbp=f"{ctx['price_gbp']:.2f}",
         subproduct_dashboard_key=dashboard_key,
+        subproduct_animation_style=ctx.get("animation_style", "drift"),
+        bundle_sum_usd=f"{bundle_sum_usd:.2f}",
         raw_floating_numbers=floating_html,
         raw_stat_pills=pills_html,
     )
