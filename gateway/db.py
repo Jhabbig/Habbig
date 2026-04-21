@@ -113,9 +113,30 @@ CREATE TABLE IF NOT EXISTS user_market_credentials (
     polymarket_wallet_address   TEXT,
     connected_at                INTEGER NOT NULL,
     last_used_at                INTEGER,
+    is_active                   INTEGER NOT NULL DEFAULT 1,
     UNIQUE(user_id, source),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS user_positions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             INTEGER NOT NULL,
+    platform            TEXT NOT NULL,
+    market_id           TEXT NOT NULL,
+    market_title        TEXT NOT NULL,
+    side                TEXT NOT NULL,
+    shares              REAL NOT NULL DEFAULT 0,
+    avg_entry_price     REAL NOT NULL DEFAULT 0,
+    current_price       REAL NOT NULL DEFAULT 0,
+    unrealised_pnl      REAL NOT NULL DEFAULT 0,
+    position_value_usd  REAL NOT NULL DEFAULT 0,
+    last_synced_at      INTEGER NOT NULL,
+    UNIQUE(user_id, platform, market_id, side),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_positions_user ON user_positions(user_id);
+CREATE INDEX IF NOT EXISTS idx_positions_user_platform ON user_positions(user_id, platform);
 
 CREATE TABLE IF NOT EXISTS user_bet_history (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1707,22 +1728,24 @@ def upsert_market_credential(
     kalshi_token_expires_at: Optional[int] = None,
     polymarket_wallet_address: Optional[str] = None,
 ) -> None:
-    """Insert or update market credentials for a user/source pair."""
+    """Insert or update market credentials for a user/source pair. Always
+    marks the row is_active=1 so reconnecting after an expiry reactivates."""
     now = int(time.time())
     with conn() as c:
         c.execute(
             """
             INSERT INTO user_market_credentials
                 (user_id, source, kalshi_token, kalshi_member_id, kalshi_token_expires_at,
-                 polymarket_wallet_address, connected_at, last_used_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 polymarket_wallet_address, connected_at, last_used_at, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(user_id, source) DO UPDATE SET
                 kalshi_token = excluded.kalshi_token,
                 kalshi_member_id = excluded.kalshi_member_id,
                 kalshi_token_expires_at = excluded.kalshi_token_expires_at,
                 polymarket_wallet_address = excluded.polymarket_wallet_address,
                 connected_at = excluded.connected_at,
-                last_used_at = excluded.last_used_at
+                last_used_at = excluded.last_used_at,
+                is_active = 1
             """,
             (user_id, source, kalshi_token, kalshi_member_id,
              kalshi_token_expires_at, polymarket_wallet_address, now, now),
@@ -1799,6 +1822,203 @@ def list_bet_history(user_id: int, limit: int = 50) -> list[sqlite3.Row]:
             "SELECT * FROM user_bet_history WHERE user_id = ? ORDER BY placed_at DESC LIMIT ?",
             (user_id, limit),
         ).fetchall()
+
+
+# ── Market connection activation ───────────────────────────────────────────
+
+
+def set_market_credential_active(user_id: int, source: str, active: bool) -> None:
+    """Flip is_active on a user's market connection without deleting the row.
+
+    Used when upstream credentials expire (e.g. Kalshi 401) so the UI can
+    prompt for a reconnect instead of silently dropping the account."""
+    with conn() as c:
+        c.execute(
+            "UPDATE user_market_credentials SET is_active = ? WHERE user_id = ? AND source = ?",
+            (1 if active else 0, user_id, source),
+        )
+
+
+def disconnect_market_credential(user_id: int, source: str) -> bool:
+    """User-initiated disconnect. Keep the row so the UI can show
+    'Reconnect', but scrub the Kalshi token and mark the row inactive.
+    Returns True if a row was updated."""
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE user_market_credentials "
+            "SET is_active = 0, kalshi_token = NULL, kalshi_token_expires_at = NULL "
+            "WHERE user_id = ? AND source = ?",
+            (user_id, source),
+        )
+        return cur.rowcount > 0
+
+
+# ── User positions (Polymarket + Kalshi snapshots) ────────────────────────
+
+
+def upsert_user_position(
+    user_id: int,
+    platform: str,
+    market_id: str,
+    market_title: str,
+    side: str,
+    shares: float,
+    avg_entry_price: float,
+    current_price: float,
+    unrealised_pnl: float,
+    position_value_usd: float,
+) -> None:
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            """
+            INSERT INTO user_positions
+                (user_id, platform, market_id, market_title, side, shares,
+                 avg_entry_price, current_price, unrealised_pnl,
+                 position_value_usd, last_synced_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, platform, market_id, side) DO UPDATE SET
+                market_title       = excluded.market_title,
+                shares             = excluded.shares,
+                avg_entry_price    = excluded.avg_entry_price,
+                current_price      = excluded.current_price,
+                unrealised_pnl     = excluded.unrealised_pnl,
+                position_value_usd = excluded.position_value_usd,
+                last_synced_at     = excluded.last_synced_at
+            """,
+            (user_id, platform, market_id, market_title, side, shares,
+             avg_entry_price, current_price, unrealised_pnl,
+             position_value_usd, now),
+        )
+
+
+def get_user_positions(
+    user_id: int, platform: Optional[str] = None,
+) -> list[sqlite3.Row]:
+    with conn() as c:
+        if platform:
+            return c.execute(
+                "SELECT * FROM user_positions WHERE user_id = ? AND platform = ? "
+                "ORDER BY position_value_usd DESC",
+                (user_id, platform),
+            ).fetchall()
+        return c.execute(
+            "SELECT * FROM user_positions WHERE user_id = ? "
+            "ORDER BY position_value_usd DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def delete_user_positions(user_id: int, platform: Optional[str] = None) -> int:
+    """Drop cached positions. Platform-scoped if given. Returns rows deleted."""
+    with conn() as c:
+        if platform:
+            cur = c.execute(
+                "DELETE FROM user_positions WHERE user_id = ? AND platform = ?",
+                (user_id, platform),
+            )
+        else:
+            cur = c.execute(
+                "DELETE FROM user_positions WHERE user_id = ?", (user_id,),
+            )
+        return cur.rowcount
+
+
+def prune_stale_positions(
+    user_id: int, platform: str, keep_keys: set[tuple[str, str]],
+) -> int:
+    """Delete rows for a platform that are NOT in *keep_keys* (set of
+    (market_id, side) tuples). Used after a sync to drop positions the
+    exchange no longer reports (closed trades)."""
+    with conn() as c:
+        rows = c.execute(
+            "SELECT market_id, side FROM user_positions "
+            "WHERE user_id = ? AND platform = ?",
+            (user_id, platform),
+        ).fetchall()
+        to_delete = [
+            (r["market_id"], r["side"]) for r in rows
+            if (r["market_id"], r["side"]) not in keep_keys
+        ]
+        for mid, side in to_delete:
+            c.execute(
+                "DELETE FROM user_positions "
+                "WHERE user_id = ? AND platform = ? AND market_id = ? AND side = ?",
+                (user_id, platform, mid, side),
+            )
+        return len(to_delete)
+
+
+def get_portfolio_stats(user_id: int) -> dict:
+    """Aggregate stats across cached positions.
+
+    Value/P&L/active come from user_positions; resolved-bet win rate comes
+    from user_bet_history (bets with resolved_correct set)."""
+    with conn() as c:
+        agg = c.execute(
+            "SELECT "
+            " COALESCE(SUM(position_value_usd), 0) AS total_value, "
+            " COALESCE(SUM(unrealised_pnl), 0)    AS total_pnl, "
+            " COUNT(*) AS active "
+            "FROM user_positions WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        resolved = c.execute(
+            "SELECT "
+            " COUNT(*)  AS total, "
+            " SUM(CASE WHEN resolved_correct = 1 THEN 1 ELSE 0 END) AS wins "
+            "FROM user_bet_history "
+            "WHERE user_id = ? AND resolved_correct IS NOT NULL",
+            (user_id,),
+        ).fetchone()
+    total_bets = int(resolved["total"] or 0)
+    wins = int(resolved["wins"] or 0)
+    win_rate = (wins / total_bets) if total_bets else None
+    return {
+        "total_value_usd": round(float(agg["total_value"]), 2),
+        "unrealised_pnl_usd": round(float(agg["total_pnl"]), 2),
+        "active_positions": int(agg["active"]),
+        "resolved_bets": total_bets,
+        "winning_bets": wins,
+        "win_rate": round(win_rate, 4) if win_rate is not None else None,
+    }
+
+
+# ── User bankroll (Kelly preferences) ──────────────────────────────────────
+
+
+def get_user_bankroll(user_id: int) -> dict:
+    """Return the user's stated bankroll and Kelly fraction preference."""
+    with conn() as c:
+        row = c.execute(
+            "SELECT bankroll, kelly_fraction FROM users WHERE id = ?", (user_id,),
+        ).fetchone()
+    if not row:
+        return {"bankroll": None, "kelly_fraction": 0.5}
+    return {
+        "bankroll": float(row["bankroll"]) if row["bankroll"] is not None else None,
+        "kelly_fraction": float(row["kelly_fraction"] or 0.5),
+    }
+
+
+def set_user_bankroll(
+    user_id: int,
+    bankroll: Optional[float] = None,
+    kelly_fraction: Optional[float] = None,
+) -> None:
+    sets: list[str] = []
+    params: list = []
+    if bankroll is not None:
+        sets.append("bankroll = ?")
+        params.append(float(bankroll))
+    if kelly_fraction is not None:
+        sets.append("kelly_fraction = ?")
+        params.append(float(kelly_fraction))
+    if not sets:
+        return
+    params.append(user_id)
+    with conn() as c:
+        c.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", tuple(params))
 
 
 # ── Trading add-on operations ────────────────────────────────────────────────
@@ -3704,3 +3924,185 @@ def set_user_env_preferences(user_id: int, *, show: bool, unit: str) -> bool:
             (1 if show else 0, unit, user_id),
         )
     return cur.rowcount > 0
+
+
+# ── Embed widgets ────────────────────────────────────────────────────────────
+#
+# Token-gated, domain-locked widgets that subscribers embed on their own
+# sites. See migrations/021_embed_widgets.py for the table. Token signing
+# helpers live in embed_tokens.py — imported lazily here so db.py stays
+# importable by processes that never use embeds.
+
+EMBED_WIDGET_TYPES = frozenset({"source_credibility", "market_probability", "best_bets"})
+EMBED_WIDGET_THEMES = frozenset({"light", "dark", "auto"})
+MAX_EMBED_WIDGETS_PER_USER = 10
+
+
+def has_any_active_subscription(user_id: int) -> bool:
+    """True if the user has at least one active subscription on any dashboard.
+
+    Admins bypass this check. Used by cross-dashboard features that require
+    being a paying narve.ai customer but aren't scoped to a single product
+    (e.g. embed widgets). Distinct from ``has_active_subscription`` which
+    takes a dashboard_key.
+    """
+    now = int(time.time())
+    with conn() as c:
+        admin_row = c.execute(
+            "SELECT is_admin FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if admin_row and admin_row[0]:
+            return True
+        row = c.execute(
+            "SELECT 1 FROM subscriptions "
+            "WHERE user_id = ? AND status = 'active' "
+            "AND (expires_at IS NULL OR expires_at > ?) "
+            "LIMIT 1",
+            (user_id, now),
+        ).fetchone()
+    return row is not None
+
+
+def count_user_active_embed_widgets(user_id: int) -> int:
+    with conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM embed_widgets "
+            "WHERE user_id = ? AND is_active = 1",
+            (user_id,),
+        ).fetchone()
+    return row["n"] if row else 0
+
+
+def create_embed_widget(
+    user_id: int,
+    widget_type: str,
+    target: str,
+    domain: str,
+    theme: str = "auto",
+) -> Optional[sqlite3.Row]:
+    """Create a widget for ``user_id``. Returns the row or ``None`` if over limit.
+
+    Caller validates ``widget_type``, ``target``, ``domain``, and ``theme``
+    before calling. The limit check lives inside the same transaction as
+    the insert so two concurrent creates can't both slip past.
+    """
+    import embed_tokens  # lazy import: avoids a cycle at module load
+    widget_id = embed_tokens.new_widget_id()
+    token_salt = embed_tokens.new_salt()
+    now = int(time.time())
+    with conn() as c:
+        existing = c.execute(
+            "SELECT COUNT(*) AS n FROM embed_widgets "
+            "WHERE user_id = ? AND is_active = 1",
+            (user_id,),
+        ).fetchone()
+        if existing and existing["n"] >= MAX_EMBED_WIDGETS_PER_USER:
+            return None
+        c.execute(
+            "INSERT INTO embed_widgets "
+            "(widget_id, user_id, widget_type, target, domain, token_salt, "
+            " theme, created_at, is_active, impressions) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)",
+            (
+                widget_id, user_id, widget_type, target, domain.lower(),
+                token_salt, theme, now,
+            ),
+        )
+        return c.execute(
+            "SELECT * FROM embed_widgets WHERE widget_id = ?", (widget_id,)
+        ).fetchone()
+
+
+def list_user_embed_widgets(user_id: int, include_inactive: bool = True) -> list[sqlite3.Row]:
+    """Return all widgets for the user, newest first.
+
+    Deactivated widgets are included by default so the management UI can
+    show historical impression counts. Pass ``include_inactive=False`` to
+    scope to live widgets only.
+    """
+    with conn() as c:
+        if include_inactive:
+            return c.execute(
+                "SELECT * FROM embed_widgets WHERE user_id = ? "
+                "ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+        return c.execute(
+            "SELECT * FROM embed_widgets WHERE user_id = ? AND is_active = 1 "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def get_embed_widget_by_widget_id(widget_id: str) -> Optional[sqlite3.Row]:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM embed_widgets WHERE widget_id = ?", (widget_id,)
+        ).fetchone()
+
+
+def get_user_embed_widget(user_id: int, widget_id: str) -> Optional[sqlite3.Row]:
+    """Scoped lookup: returns the row only if ``user_id`` owns it."""
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM embed_widgets WHERE user_id = ? AND widget_id = ?",
+            (user_id, widget_id),
+        ).fetchone()
+
+
+def deactivate_embed_widget(user_id: int, widget_id: str) -> bool:
+    """Flip is_active=0 for a user's widget. Idempotent."""
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE embed_widgets SET is_active = 0 "
+            "WHERE user_id = ? AND widget_id = ?",
+            (user_id, widget_id),
+        )
+    return cur.rowcount > 0
+
+
+def rotate_embed_widget_token(user_id: int, widget_id: str) -> Optional[sqlite3.Row]:
+    """Replace token_salt with a fresh nonce. Returns the updated row or None.
+
+    Only rotates tokens for active widgets — rotating a deactivated widget
+    would be pointless and may indicate a mistake, so it's a no-op that
+    returns ``None``.
+    """
+    import embed_tokens
+    fresh_salt = embed_tokens.new_salt()
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE embed_widgets SET token_salt = ? "
+            "WHERE user_id = ? AND widget_id = ? AND is_active = 1",
+            (fresh_salt, user_id, widget_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        return c.execute(
+            "SELECT * FROM embed_widgets WHERE widget_id = ?", (widget_id,)
+        ).fetchone()
+
+
+def increment_embed_widget_impression(widget_id: str) -> None:
+    """Bump impressions + last_used_at for a widget. Background-safe."""
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            "UPDATE embed_widgets SET impressions = impressions + 1, "
+            "last_used_at = ? WHERE widget_id = ? AND is_active = 1",
+            (now, widget_id),
+        )
+
+
+def deactivate_all_user_embed_widgets(user_id: int) -> int:
+    """Deactivate every live widget for a user. Called when a sub lapses.
+
+    Returns the number of rows flipped — useful for telemetry and tests.
+    """
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE embed_widgets SET is_active = 0 "
+            "WHERE user_id = ? AND is_active = 1",
+            (user_id,),
+        )
+    return cur.rowcount

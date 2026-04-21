@@ -27,6 +27,7 @@ from jobs.backend import (  # noqa: F401
 
 # Import the job modules so their @register_job decorators run at startup.
 from jobs import email_jobs  # noqa: F401
+from jobs import embed_jobs  # noqa: F401
 from jobs import notification_jobs  # noqa: F401
 from jobs import pipeline_jobs  # noqa: F401
 from jobs import resolution_jobs  # noqa: F401
