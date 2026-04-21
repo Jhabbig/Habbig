@@ -452,7 +452,7 @@ class TestLeaderboardDb(unittest.TestCase):
 
 class TestInviteHttp(unittest.TestCase):
     def setUp(self):
-        tag = self._testMethodName[:20]
+        tag = self._testMethodName
         self.referrer = _mk_user(f"http_{tag}_r@test.com", f"http_{tag}_r")
         self.code = dbr.ensure_user_referral_code(self.referrer)
 
@@ -472,7 +472,16 @@ class TestInviteHttp(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         data = r.json()
         self.assertTrue(data["valid"])
-        self.assertEqual(data["referrer_display_name"], "http_r")
+        # setUp derives the referrer username from the test method name to
+        # dodge UNIQUE-email collisions across the shared in-memory DB, so
+        # we compare against the actual username rather than a hardcoded
+        # "http_r" literal.
+        with db.conn() as c:
+            expected = c.execute(
+                "SELECT username FROM users WHERE id = ?",
+                (self.referrer,),
+            ).fetchone()["username"]
+        self.assertEqual(data["referrer_display_name"], expected)
 
     def test_api_invite_validate_invalid_returns_404(self):
         r = client.get("/api/invite/NOTACODE__")
@@ -531,7 +540,7 @@ class TestReferralsApi(unittest.TestCase):
         self.assertEqual(r.status_code, 401)
 
     def test_api_me_returns_code_and_stats(self):
-        tag = self._testMethodName[:20]
+        tag = self._testMethodName
         uid = _mk_user(f"api_me_{tag}@test.com", f"api_me_{tag}")
         c = _authed_client(uid)
         r = c.get("/api/referrals/me")
@@ -563,7 +572,7 @@ class TestLeaderboardApi(unittest.TestCase):
         self.assertEqual(r.status_code, 401)
 
     def test_api_leaderboard_returns_empty_when_no_participants_visible(self):
-        tag = self._testMethodName[:20]
+        tag = self._testMethodName
         uid = _mk_user(f"lb_http_u_{tag}@test.com", f"lb_http_u_{tag}")
         c = _authed_client(uid)
         r = c.get("/api/leaderboard")
@@ -573,7 +582,7 @@ class TestLeaderboardApi(unittest.TestCase):
         self.assertIsInstance(data["rows"], list)
 
     def test_participate_then_opt_out(self):
-        tag = self._testMethodName[:20]
+        tag = self._testMethodName
         uid = _mk_user(f"lb_toggle_{tag}@test.com", f"lb_toggle_{tag}")
         c = _authed_client(uid)
         r = c.post(
@@ -592,7 +601,7 @@ class TestLeaderboardApi(unittest.TestCase):
         self.assertFalse(me["participating"])
 
     def test_bad_display_name_returns_400(self):
-        tag = self._testMethodName[:20]
+        tag = self._testMethodName
         uid = _mk_user(f"lb_bad_name_{tag}@test.com", f"lb_bad_name_{tag}")
         c = _authed_client(uid)
         r = c.post(
@@ -602,7 +611,7 @@ class TestLeaderboardApi(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
 
     def test_period_param_defaults_to_all_on_invalid(self):
-        tag = self._testMethodName[:20]
+        tag = self._testMethodName
         uid = _mk_user(f"lb_period_{tag}@test.com", f"lb_period_{tag}")
         c = _authed_client(uid)
         r = c.get("/api/leaderboard?period=bogus")
