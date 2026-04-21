@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Billing — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/_gateway_static/scroll-animations.css">
   <style>
     .billing-plan-card { background: var(--bg-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 24px; margin-bottom: 24px; }
@@ -96,7 +97,7 @@
         <div class="billing-dashboards-title">Dashboard access</div>
         <p style="font-size:13px;color:var(--text-tertiary);margin-bottom:16px">{{ raw_access_desc }}</p>
 
-        <div class="billing-list">
+        <div class="billing-list" data-empty-hint="No dashboards available yet — check back once your plan is active.">
           {{ billing_rows }}
         </div>
       </div>

@@ -3,198 +3,258 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Affiliate dashboard · narve.ai</title>
-  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <title>Affiliate · narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
-  <style>
-    /* Affiliate-specific layout. Reuses gateway.css tokens but adds its
-       own grid + card treatment so the page stands on its own without
-       depending on settings.html's sidebar shell. */
-    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
-    .aff-wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
-    .aff-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 32px; flex-wrap: wrap; }
-    .aff-head h1 { margin: 0 0 8px; font-size: 28px; font-weight: 600; }
-    .aff-tier-badge { display: inline-block; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase; }
-    .aff-commission-rate { opacity: 0.7; margin-top: 6px; font-size: 14px; }
-    .aff-back { opacity: 0.6; text-decoration: none; color: inherit; font-size: 14px; }
-    .aff-back:hover { opacity: 1; }
-
-    .aff-section { margin-bottom: 40px; }
-    .aff-section h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 0.6px; opacity: 0.8; }
-
-    .aff-card { background: var(--surface, #141414); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 20px; }
-
-    .aff-link-box { display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.03); padding: 12px 16px; border-radius: 6px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.08); }
-    .aff-link-box code { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; overflow-x: auto; white-space: nowrap; }
-    .aff-link-box button { background: rgba(255,255,255,0.08); border: 0; color: inherit; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-    .aff-link-box button:hover { background: rgba(255,255,255,0.16); }
-
-    .aff-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .aff-stat { background: var(--surface, #141414); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 16px 18px; }
-    .aff-stat-label { font-size: 12px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-    .aff-stat-value { font-size: 24px; font-weight: 600; }
-
-    table.aff-table { width: 100%; border-collapse: collapse; }
-    table.aff-table th, table.aff-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 13px; }
-    table.aff-table th { opacity: 0.6; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
-    table.aff-table code { font-size: 12px; opacity: 0.9; }
-
-    .aff-row-form { display: flex; gap: 8px; margin-bottom: 16px; }
-    .aff-row-form input { flex: 1; background: var(--surface, #141414); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 8px 10px; color: inherit; font-family: inherit; font-size: 13px; }
-    .aff-row-form button { background: var(--accent, #fff); color: var(--bg, #0d0d0d); border: 0; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; }
-
-    .aff-payout-box { background: var(--surface, #141414); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 20px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
-    .aff-payout-note { opacity: 0.7; font-size: 13px; }
-    .aff-payout-btn { background: var(--accent, #fff); color: var(--bg, #0d0d0d); border: 0; padding: 10px 20px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 14px; }
-    .aff-payout-btn[disabled] { opacity: 0.3; cursor: not-allowed; }
-
-    .aff-error { background: rgba(255, 80, 80, 0.1); border: 1px solid rgba(255, 80, 80, 0.3); padding: 10px 14px; border-radius: 4px; font-size: 13px; margin-top: 10px; }
-    .aff-success { background: rgba(80, 255, 120, 0.08); border: 1px solid rgba(80, 255, 120, 0.3); padding: 10px 14px; border-radius: 4px; font-size: 13px; margin-top: 10px; }
-  </style>
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <div class="aff-wrap">
+  <div class="app-shell">
 
-    <div class="aff-head">
-      <div>
-        <a class="aff-back" href="/dashboards">← Dashboards</a>
-        <h1>Affiliate dashboard</h1>
-        <span class="aff-tier-badge">{{ affiliate_tier }}</span>
-        <div class="aff-commission-rate">{{ affiliate_commission_rate_pct }}% commission on first payment</div>
-      </div>
-    </div>
-
-    <!-- Default link -->
-    <div class="aff-section">
-      <h2>Your link</h2>
-      <div class="aff-link-box">
-        <code id="default-link">{{ default_link }}</code>
-        <button type="button" onclick="narveAff.copy('default-link')">Copy</button>
-      </div>
-    </div>
-
-    <!-- Stats -->
-    <div class="aff-section">
-      <h2>Performance (all time)</h2>
-      <div class="aff-stats">
-        <div class="aff-stat">
-          <div class="aff-stat-label">Clicks</div>
-          <div class="aff-stat-value">{{ total_clicks }}</div>
-        </div>
-        <div class="aff-stat">
-          <div class="aff-stat-label">Signups</div>
-          <div class="aff-stat-value">{{ total_signups }}</div>
-        </div>
-        <div class="aff-stat">
-          <div class="aff-stat-label">Paid conversions</div>
-          <div class="aff-stat-value">{{ total_paid_conversions }}</div>
-        </div>
-        <div class="aff-stat">
-          <div class="aff-stat-label">Earned</div>
-          <div class="aff-stat-value">£{{ total_earned_gbp }}</div>
-        </div>
-        <div class="aff-stat">
-          <div class="aff-stat-label">Paid</div>
-          <div class="aff-stat-value">£{{ total_paid_gbp }}</div>
-        </div>
-        <div class="aff-stat">
-          <div class="aff-stat-label">Pending</div>
-          <div class="aff-stat-value">£{{ total_pending_gbp }}</div>
-        </div>
+    <!-- ── Sidebar ──────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
       </div>
 
-      <!-- Payout request -->
-      <div class="aff-payout-box">
-        <div>
-          <div style="font-weight:600;margin-bottom:4px">Payout</div>
-          <div class="aff-payout-note">
-            Minimum payout threshold is £{{ payout_threshold_gbp }}.
-            You have £{{ total_pending_gbp }} pending.
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+
+        <a href="/dashboards" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+          </svg>
+          Dashboards
+        </a>
+
+        <a href="/billing" class="nav-item">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="14" height="10" rx="2"/><line x1="1" y1="7" x2="15" y2="7"/>
+          </svg>
+          Billing
+        </a>
+
+        <a href="/settings" class="nav-item active">
+          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85"/>
+          </svg>
+          Settings
+        </a>
+
+        {{ raw_admin_link }}
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <!-- ── Main content ─────────────────────────────────────────── -->
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/settings" class="breadcrumb-item" style="text-decoration:none;color:inherit">Settings</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Affiliate</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Affiliate</h1>
+        <p class="page-subtitle">
+          {{ affiliate_tier }} tier · {{ affiliate_commission_rate_pct }}% commission on every referred user's first payment.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:900px">
+
+          <!-- Share link -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Your share link</div>
+              <div class="settings-section-desc">
+                Drop this anywhere. Any signup in the next 90 days is credited to you.
+              </div>
+              <div class="field-row" style="grid-template-columns:1fr auto;gap:10px;padding:0;border:0">
+                <div class="field-control">
+                  <input type="text" id="default-link" value="{{ default_link }}" readonly
+                    style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px">
+                </div>
+                <div>
+                  <button type="button" class="btn-danger" style="border-color:var(--border-default)"
+                    onclick="narveAff.copy('default-link')">Copy</button>
+                </div>
+              </div>
+            </div>
           </div>
+
+          <!-- Performance -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Performance (all time)</div>
+              <div class="settings-section-desc">
+                Commission accrues on first payment only. Pending balances roll forward
+                until you request a payout.
+              </div>
+
+              <div class="stat-grid">
+                <div class="stat-tile">
+                  <div class="stat-label">Clicks</div>
+                  <div class="stat-value">{{ total_clicks }}</div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-label">Signups</div>
+                  <div class="stat-value">{{ total_signups }}</div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-label">Paid</div>
+                  <div class="stat-value">{{ total_paid_conversions }}</div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-label">Earned</div>
+                  <div class="stat-value">£{{ total_earned_gbp }}</div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-label">Paid out</div>
+                  <div class="stat-value">£{{ total_paid_gbp }}</div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-label">Pending</div>
+                  <div class="stat-value">£{{ total_pending_gbp }}</div>
+                </div>
+              </div>
+
+              <div class="save-bar" style="position:static;margin-top:12px">
+                <span class="save-bar-status">
+                  Minimum payout threshold is £{{ payout_threshold_gbp }}.
+                </span>
+                <button id="payout-btn" type="button" class="btn btn-primary"
+                  onclick="narveAff.requestPayout()"
+                  data-eligible="{{ payout_eligible }}">
+                  Request payout
+                </button>
+              </div>
+              <div id="payout-message"></div>
+            </div>
+          </div>
+
+          <!-- Custom tracking links -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Custom tracking links</div>
+              <div class="settings-section-desc">
+                One link per channel — podcast episode, newsletter issue, tweet.
+                Slugs are lowercase letters, digits, dash, underscore (max 40 chars).
+              </div>
+
+              <div class="field-row" style="grid-template-columns:1fr 1fr auto;gap:10px;padding:0;border:0">
+                <div class="field-control">
+                  <input type="text" id="utm-campaign-input" placeholder="Campaign slug (e.g., podcast_ep_47)" maxlength="40">
+                </div>
+                <div class="field-control">
+                  <input type="text" id="utm-content-input" placeholder="Friendly label (optional)" maxlength="200">
+                </div>
+                <div>
+                  <button type="button" class="btn-danger" style="border-color:var(--border-default)"
+                    onclick="narveAff.createLink()">Create</button>
+                </div>
+              </div>
+              <div id="link-message" style="margin-top:10px"></div>
+            </div>
+
+            <div class="admin-card" style="margin-top:16px">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">Label</th>
+                    <th>Tracking URL</th>
+                    <th class="num">Clicks</th>
+                    <th class="num">Conv.</th>
+                  </tr>
+                </thead>
+                <tbody id="links-tbody">
+                  {{ raw_link_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Recent conversions -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Recent conversions</div>
+              <div class="settings-section-desc">
+                Emails are anonymised (<code>jake@.com</code>). Your partners' privacy stays intact.
+              </div>
+            </div>
+
+            <div class="admin-card">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">Date</th>
+                    <th>User</th>
+                    <th>Status</th>
+                    <th class="num">Commission</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_conversion_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
-        <button
-          id="payout-btn"
-          class="aff-payout-btn"
-          type="button"
-          onclick="narveAff.requestPayout()"
-          data-eligible="{{ payout_eligible }}">
-          Request payout
-        </button>
-      </div>
-      <div id="payout-message"></div>
-    </div>
-
-    <!-- Custom tracking links -->
-    <div class="aff-section">
-      <h2>Custom tracking links</h2>
-      <p class="aff-commission-rate" style="margin-bottom:10px">
-        One link per campaign (e.g., "podcast_ep_47"). Lowercase, letters/digits/dash/underscore only.
-      </p>
-      <div class="aff-row-form">
-        <input type="text" id="utm-campaign-input" placeholder="Campaign slug (e.g., podcast_ep_47)" maxlength="40">
-        <input type="text" id="utm-content-input" placeholder="Friendly label (optional)" maxlength="200">
-        <button type="button" onclick="narveAff.createLink()">Create link</button>
-      </div>
-      <div id="link-message"></div>
-      <div class="aff-card" style="padding:0;margin-top:12px">
-        <table class="aff-table">
-          <thead>
-            <tr>
-              <th>Label</th>
-              <th>Tracking URL</th>
-              <th>Clicks</th>
-              <th>Conversions</th>
-            </tr>
-          </thead>
-          <tbody id="links-tbody">
-            {{ raw_link_rows }}
-          </tbody>
-        </table>
       </div>
     </div>
 
-    <!-- Recent conversions -->
-    <div class="aff-section">
-      <h2>Recent conversions</h2>
-      <div class="aff-card" style="padding:0">
-        <table class="aff-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>User</th>
-              <th>Status</th>
-              <th>Commission</th>
-            </tr>
-          </thead>
-          <tbody>
-            {{ raw_conversion_rows }}
-          </tbody>
-        </table>
-      </div>
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Affiliate</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
     </div>
+
   </div>
-
+{{ raw_sitemap }}
 <script>
-// Self-contained dashboard client. No framework, no build step — matches
-// the rest of narve.ai's settings pages. All endpoints are already
-// auth-gated by session cookie, so we just need JSON fetches.
+/* Self-contained dashboard client. No framework, no build step — matches
+   the rest of narve.ai's settings pages. All endpoints are already
+   auth-gated by session cookie, so we only need JSON fetches + a CSRF
+   header pulled from the cookie (double-submit). */
 window.narveAff = (function() {
+  function csrf() {
+    var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
   function setMsg(id, text, kind) {
     var el = document.getElementById(id);
     if (!el) return;
-    el.innerHTML = text
-      ? '<div class="aff-' + (kind || 'success') + '">' + text + '</div>'
-      : '';
+    if (!text) { el.innerHTML = ''; return; }
+    var bg = kind === 'error' ? 'var(--error-bg)' : 'var(--semantic-high-bg)';
+    var bd = kind === 'error' ? 'var(--error-border)' : 'var(--semantic-high-border)';
+    el.innerHTML =
+      '<div style="padding:10px 14px;border-radius:6px;font-size:13px;' +
+      'margin-top:6px;background:' + bg + ';border:1px solid ' + bd + '">' +
+      text + '</div>';
   }
   return {
     copy: function(elementId) {
       var el = document.getElementById(elementId);
       if (!el) return;
-      var text = el.textContent || el.innerText;
+      var text = el.value !== undefined ? el.value : (el.textContent || el.innerText);
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).catch(function(){});
       } else {
-        // Fallback: select + copy via execCommand
         var r = document.createRange();
         r.selectNode(el);
         window.getSelection().removeAllRanges();
@@ -211,9 +271,9 @@ window.narveAff = (function() {
         setMsg('link-message', 'Enter a campaign slug.', 'error');
         return;
       }
-      fetch('/api/affiliate/links', {
+      fetch('/api/v1/affiliate/links', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
         body: JSON.stringify({ utm_campaign: campaign, utm_content: content || null }),
       })
         .then(function(r) { return r.json().then(function(j){ return [r.ok, j]; }); })
@@ -225,21 +285,19 @@ window.narveAff = (function() {
           setMsg('link-message', 'Link created. Refreshing…');
           setTimeout(function(){ window.location.reload(); }, 600);
         })
-        .catch(function(){
-          setMsg('link-message', 'Network error.', 'error');
-        });
+        .catch(function(){ setMsg('link-message', 'Network error.', 'error'); });
     },
 
     requestPayout: function() {
       var btn = document.getElementById('payout-btn');
       if (btn.getAttribute('data-eligible') !== 'yes') {
-        setMsg('payout-message', 'Threshold not yet met.', 'error');
+        setMsg('payout-message', 'You haven\u2019t hit the payout threshold yet.', 'error');
         return;
       }
       btn.setAttribute('disabled', 'disabled');
-      fetch('/api/affiliate/payout-request', {
+      fetch('/api/v1/affiliate/payout-request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
         body: '{}',
       })
         .then(function(r) { return r.json().then(function(j){ return [r.ok, j]; }); })
@@ -249,7 +307,7 @@ window.narveAff = (function() {
             btn.removeAttribute('disabled');
             return;
           }
-          setMsg('payout-message', pair[1].message || 'Requested.');
+          setMsg('payout-message', pair[1].message || 'Payout requested. We\u2019ll be in touch within 3 business days.');
         })
         .catch(function(){
           setMsg('payout-message', 'Network error.', 'error');
@@ -258,6 +316,13 @@ window.narveAff = (function() {
     },
   };
 })();
+/* Sidebar avatar initial, same script as dashboards.html */
+(function(){
+  var av=document.querySelector('.sidebar-user-avatar[data-username]');
+  if(av){var u=av.getAttribute('data-username');av.textContent=u?u.charAt(0).toUpperCase():'?';}
+})();
 </script>
+<script src="/_gateway_static/user-features.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>

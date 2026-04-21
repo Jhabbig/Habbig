@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Request Access — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/_gateway_static/scroll-animations.css">
   <style>
     .enq-page {
@@ -192,15 +193,21 @@
       cursor: not-allowed;
       transform: none;
     }
-    .enq-spinner {
-      width: 16px;
-      height: 16px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: var(--text-primary);
-      border-radius: 50%;
-      animation: spin 0.6s linear infinite;
+    /* Pending state — animated dots replace the old rotating border ring
+       so every page uses the same loading vocabulary. */
+    .enq-submit.is-pending::after {
+      content: "";
+      display: inline-block;
+      width: 4px;
+      margin-left: 2px;
+      animation: enq-loading-dots 1.2s steps(4) infinite;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes enq-loading-dots {
+      0%, 20%  { content: "."; }
+      40%      { content: ".."; }
+      60%      { content: "..."; }
+      80%, 100%{ content: ""; }
+    }
 
     /* Success state */
     .enq-success {
@@ -424,9 +431,10 @@ function getCsrf() {
 
     if (!valid) return;
 
-    // Loading state
+    // Loading state — animated dots via .is-pending ::after.
     submitBtn.disabled = true;
-    submitText.innerHTML = '<div class="enq-spinner"></div> Sending...';
+    submitBtn.classList.add('is-pending');
+    submitText.textContent = 'Sending';
 
     try {
       const resp = await fetch('/api/enquire', {
@@ -444,6 +452,7 @@ function getCsrf() {
     } catch (err) {
       apiError.classList.add('visible');
       submitBtn.disabled = false;
+      submitBtn.classList.remove('is-pending');
       submitText.textContent = 'Send Enquiry';
     }
   });
