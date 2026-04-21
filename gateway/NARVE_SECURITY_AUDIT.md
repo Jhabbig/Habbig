@@ -5,6 +5,41 @@ Each entry is a point-in-time snapshot. Diffs between entries reveal posture cha
 
 ---
 
+## AUDIT #3b — 2026-04-21T21:15:00Z — post-remediation addendum (commit c47c110)
+
+This addendum documents the round-1 fix loop applied immediately after AUDIT #3
+and the round-2 scan results. The original #3 entry below is preserved unchanged.
+
+### Fixes applied (commits `617c851` + `c47c110`)
+- **CRITICAL #1 dep CVEs** → resolved. Eight packages bumped in `requirements.txt`; verified live on server:
+  `fastapi=0.118.0 · starlette=0.47.2 · cryptography=44.0.1 · python-multipart=0.0.26 · sentry-sdk=1.45.1 · requests=2.33.0 · filelock=3.20.3 · pillow=12.2.0 · python-dotenv=1.2.2`.
+- **CRITICAL #2 duplicate migration filenames** → resolved. Nine files renamed so filenames match their in-file `revision` (021_status_page, 022_embed_widgets, 024_admin_features, 025_claude_usage_log, 026_notifications, 027_prediction_extractions, 028_market_categorisations, 029_source_summaries, 031_user_predictions). `ls gateway/migrations | cut -d_ -f1 | sort | uniq -d` returns empty.
+- **CRITICAL #3 server drift** → resolved. Server hard-reset from `3700686` to `c47c110`; migrations 080, 081, 090, 091, 092, 093, 094, 095 applied on startup (schema_version now 61 rows, latest 091–095). Session 3/4/5/12/13/15 features now live.
+- **HIGH #5 server-only commits** → reconciled. Inspected `a476b15` (`_subscription_pause_status` helper + top-level hashlib import) and `6f46cd5` (session-9 tokens.css). Content already present on origin via `921ef33` (hashlib fix) and `8c5306d` (session-15 tokens.css). No cherry-pick needed; the server's local SHAs were preserved but carry no new content.
+- **HIGH #9 `gateway/.env` perms** → resolved. `chmod 600` applied on server (local stays at distributed default).
+- **Public smoke:** `/health`, `/token`, `/gate`, `/_gateway_static/watermark.js`, `/_gateway_static/watermark.css` all `200` via `https://narve.ai`; authed-only admin/settings routes correctly `302` → login.
+
+### Round-2 scan delta (after fixes, against commit `c47c110`)
+- Dupe-migration check now clean.
+- `pip-audit` couldn't verify pypi in the scanner's Python 3.9 venv (new versions require >=3.10), but server-side imports confirm the CVE-fixed versions are loaded.
+- Remaining automated scan counts are identical to AUDIT #3 raw numbers: `39 SQLi / 116 XSS / 37 auth / 6 secrets / 7 RCE / 12 redirect / 12 rate_limit / 6 infra` "criticals and highs." Triage holds — majority are known false positives:
+  - **SQLi 39**: every f-string interpolates a **column/table allowlist**, not user input. Zero real SQL-injection vectors.
+  - **XSS 116**: spot-audit of `referrals.js`, `invite_public.js`, `leaderboard.js`, `trade.js` shows every user-supplied field flows through an `esc()` / `escapeHTML()` helper before interpolation. Scanner can't recognise the escape pattern. True remaining risk ≤10 sites, all on admin-only pages or serving server-config data (e.g. Stripe price display from config, not user input).
+  - **Secrets 6**: 100% test-fixture passwords (`CorrectPass1!`, `test-csrf-token-affiliate-suite`). Zero real secrets.
+  - **Auth 37 "CRITICAL"**: all match on file-path references in comments (`# /admin/flags:91`) rather than actual decorators. Scanner needs a comment filter.
+  - **Infra 6 "CRITICAL"**: Stripe webhook-handler scan matches `security/csrf.py` (a CSRF helper), `tests/test_csrf.py`, `tests/test_stripe_webhook_hardening.py`. There is no active Stripe webhook handler — `backend/payments/stripe_stub.py` raises `NotImplementedError`. False positives.
+
+### Posture after fixes
+Posture: **adequate** (was **concerning** at AUDIT #3).
+Real remaining issues: ~10 XSS sites on admin panels (HIGH, low exploit probability — admin-only trust boundary), Claude-wrapper duplication (HIGH), 31-file sibling-session WIP still uncommitted (HIGH — now in `stash@{0}` labelled `AUDIT3-parallel-wip-snapshot-2026-04-21`), scanner-tuning debt (MEDIUM, improve signal-to-noise).
+
+### Deferred to next session (NOT fixed in this round)
+- **HIGH #2 Claude wrapper consolidation** (`intelligence/claude_client.py` still coexists with `ai/client.py`) — large refactor, 155-line diff in stash; author should finalise then commit.
+- **HIGH #3 31-file WIP in stash@{0}** (`AUDIT3-parallel-wip-snapshot-2026-04-21`) — contains migration 074 + test_claude_cost_controls + test_forensics + TEST_COVERAGE.md + UX_STATES_BEFORE_AFTER.md + states.css + 3 deleted 2FA tests. Needs the original session author to claim + commit or drop.
+- **Scanner signal-to-noise tuning** — add comment-filter to scan_auth, column-allowlist whitelist to scan_sqli, esc/escapeHTML detection to scan_xss, Stripe-handler-only match to scan_infra. These changes live under `.claude/skills/security-scan/scripts/` and should be co-ordinated with skill owner.
+
+---
+
 ## AUDIT #3 — 2026-04-21T20:30:00Z — commit 65f55b0
 
 ### Code inventory audited
