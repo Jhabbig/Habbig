@@ -28,10 +28,13 @@ import server  # noqa: E402
 from status_system import db as status_db  # noqa: E402
 
 
-# Routes are exposed at /api/status/* internally; clients hit /api/v1/status/*
-# which the APIVersionMiddleware rewrites before handing off to the handler.
-API_SUBSCRIBE = "/api/v1/status/subscribe"
-API_UNSUBSCRIBE = "/api/v1/status/unsubscribe"
+# Public status-page subscription endpoints. Hit the canonical /api/status/*
+# paths directly — the CSRF exempt list and PUBLIC_PATHS both key on the
+# non-versioned path, and the sibling APIVersionMiddleware redirects /api/*
+# to /api/v1/* which TestClient follows transparently (but only the direct
+# path is in the exempt set, so we must start there to avoid the redirect).
+API_SUBSCRIBE = "/api/status/subscribe"
+API_UNSUBSCRIBE = "/api/status/unsubscribe"
 
 
 def _ensure_admin_user(email: str = "statusadmin@narve.ai") -> int:

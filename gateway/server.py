@@ -235,6 +235,10 @@ GATE_COOKIE_NAME = "narve_gate_access"
 GATE_COOKIE_TTL = 7 * 86400  # 7 days
 SITE_ACCESS_TOKEN = os.environ.get("SITE_ACCESS_TOKEN", "")
 
+# Impersonation cookie — see impersonation.py.
+IMPERSONATION_COOKIE_NAME = "narve_impersonation"
+IMPERSONATION_COOKIE_TTL = 4 * 60 * 60  # 4 hours
+
 # Leading dot on the resolved Domain attribute makes the cookie apply to
 # every subdomain of the matched apex — computed per-request so we can serve
 # multiple apexes (habbig.com + narve.ai) from a single gateway without
@@ -541,6 +545,7 @@ CSP = "; ".join([
     # js.stripe.com is required for the Stripe.js checkout integration —
     # without it the browser blocks Stripe Elements with a CSP violation.
     "script-src 'self' 'unsafe-inline' https://js.stripe.com",
+    "worker-src 'self'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
@@ -606,6 +611,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+# PWA + a11y HTML injection. Lives in a middleware (not render_page)
+# so it applies to every text/html response, and isn't affected by
+# upstream refactors of render_page(). Imported lazily so a syntax
+# error in the module doesn't take down the server.
+try:
+    from pwa_middleware import PWAInjectionMiddleware as _PWAMW  # noqa: E402
+    app.add_middleware(_PWAMW)
+except Exception as _pwa_exc:  # pragma: no cover
+    log.warning("PWA middleware import failed: %s — continuing without it", _pwa_exc)
 
 
 # ── Staging subdomain proxy ─────────────────────────────────────────────────
@@ -781,6 +796,39 @@ async def favicon():
             headers={"Cache-Control": "public, max-age=604800"},
         )
     raise HTTPException(status_code=404)
+
+# ── PWA: manifest + service worker ──────────────────────────────────
+# Both files must be served from the site root — the manifest needs a
+# root-scoped start_url, and a service worker served under a subdir
+# would only control that prefix.
+@app.get("/manifest.json")
+async def manifest():
+    from fastapi.responses import FileResponse
+    path = STATIC_DIR / "manifest.json"
+    if path.exists():
+        return FileResponse(
+            path,
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    raise HTTPException(status_code=404)
+
+
+@app.get("/sw.js")
+async def service_worker():
+    from fastapi.responses import FileResponse
+    path = STATIC_DIR / "sw.js"
+    if path.exists():
+        return FileResponse(
+            path,
+            media_type="application/javascript",
+            headers={
+                "Cache-Control": "no-cache",
+                "Service-Worker-Allowed": "/",
+            },
+        )
+    raise HTTPException(status_code=404)
+
 
 
 # Note: /token, /register, /login, /auth/validate-token etc. are handled
@@ -982,6 +1030,113 @@ try:
     app.add_middleware(_HardenedSessionMiddleware)
 except Exception as _exc:  # pragma: no cover
     log.warning("hardened session middleware unavailable: %s", _exc)
+
+
+class ImpersonationMiddleware(BaseHTTPMiddleware):
+    """Admin "view as" — see impersonation.py for details."""
+    async def dispatch(self, request, call_next):
+        token = request.cookies.get(IMPERSONATION_COOKIE_NAME) or ""
+        imp_row = None
+        if token:
+            try:
+                imp_row = db.get_impersonation_session_by_token(token)
+            except Exception as exc:
+                log.warning("impersonation lookup failed: %s", exc)
+
+        if not imp_row or imp_row["ended_at"] is not None:
+            response = await call_next(request)
+            if token:
+                _clear_impersonation_cookie(response, request)
+            return response
+
+        if int(time.time()) - int(imp_row["started_at"] or 0) > IMPERSONATION_COOKIE_TTL:
+            try:
+                db.end_impersonation_session(imp_row["id"], end_reason="expired")
+            except Exception:
+                pass
+            response = await call_next(request)
+            _clear_impersonation_cookie(response, request)
+            return response
+
+        try:
+            admin_row = db.get_user_by_id(imp_row["admin_user_id"])
+            target_row = db.get_user_by_id(imp_row["target_user_id"])
+        except Exception as exc:
+            log.warning("impersonation user lookup failed: %s", exc)
+            return await call_next(request)
+
+        if not admin_row or not target_row:
+            try:
+                db.end_impersonation_session(imp_row["id"], end_reason="user_missing")
+            except Exception:
+                pass
+            response = await call_next(request)
+            _clear_impersonation_cookie(response, request)
+            return response
+
+        request.state.impersonation = {
+            "session_id": imp_row["id"],
+            "admin_user_id": admin_row["id"],
+            "admin_email": admin_row["email"],
+            "target_user_id": target_row["id"],
+            "target_row": target_row,
+            "started_at": imp_row["started_at"],
+        }
+
+        import impersonation as _imp
+        method = request.method
+        path_ = request.url.path
+        if _imp.is_action_blocked(method, path_):
+            try:
+                db.record_impersonation_action(
+                    session_id=imp_row["id"], method=method, path=path_,
+                    status_code=403, was_blocked=True,
+                )
+            except Exception:
+                pass
+            try:
+                from security import audit as _audit
+                _audit.log_action(
+                    admin_user_id=admin_row["id"], admin_email=admin_row["email"],
+                    action=_audit.AuditAction.IMPERSONATION_BLOCKED,
+                    target_type="user", target_id=target_row["id"],
+                    target_description=target_row["email"],
+                    request=request, notes=f"{method} {path_}",
+                )
+            except Exception:
+                pass
+            return HTMLResponse(_imp.blocked_response_html(method, path_), status_code=403)
+
+        response = await call_next(request)
+        try:
+            db.record_impersonation_action(
+                session_id=imp_row["id"], method=method, path=path_,
+                status_code=response.status_code, was_blocked=False,
+            )
+        except Exception:
+            pass
+        return response
+
+
+app.add_middleware(ImpersonationMiddleware)
+
+
+def _set_impersonation_cookie(response, token: str, request) -> None:
+    kwargs = dict(key=IMPERSONATION_COOKIE_NAME, value=token,
+                  max_age=IMPERSONATION_COOKIE_TTL, httponly=True,
+                  samesite="lax", secure=IS_PRODUCTION, path="/")
+    domain = cookie_domain_for(request)
+    if domain:
+        kwargs["domain"] = domain
+    response.set_cookie(**kwargs)
+
+
+def _clear_impersonation_cookie(response, request) -> None:
+    kwargs = dict(key=IMPERSONATION_COOKIE_NAME, path="/")
+    domain = cookie_domain_for(request)
+    if domain:
+        kwargs["domain"] = domain
+    response.delete_cookie(**kwargs)
 
 
 # ── Rate limiting ────────────────────────────────────────────────────────────
@@ -1330,13 +1485,82 @@ def ensure_dev_user() -> int:
     return user_id
 
 
+def _real_admin_user(request: Request) -> Optional[dict]:
+    """The actual logged-in user, ignoring impersonation.
+
+    Mirrors current_user() session-cookie lookup but never swaps in the
+    target. Admin routes rely on this so they stay reachable while
+    impersonating (particularly /admin/impersonations/end).
+    """
+    hardened = getattr(getattr(request, "state", None), "user", None)
+    if hardened:
+        return {
+            "user_id": hardened["user_id"],
+            "username": hardened["username"],
+            "email": hardened["email"],
+            "is_admin": hardened["is_admin"],
+            "is_super_admin": hardened["is_super_admin"],
+            "admin_level": hardened["admin_level"],
+        }
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        session = db.get_session(token)
+        if session:
+            admin_level = session["is_admin"] or 0
+            return {
+                "user_id": session["user_id"],
+                "username": session["username"],
+                "email": session["email"],
+                "is_admin": bool(admin_level),
+                "is_super_admin": admin_level >= 2,
+                "admin_level": admin_level,
+            }
+    if is_local_host(request):
+        user_id = ensure_dev_user()
+        row = db.get_user_by_id(user_id)
+        if not row:
+            return None
+        admin_level = row["is_admin"] or 0
+        return {
+            "user_id": user_id,
+            "username": row["username"] if "username" in row.keys() else "dev",
+            "email": row["email"],
+            "is_admin": bool(admin_level),
+            "is_super_admin": admin_level >= 2,
+            "admin_level": admin_level,
+            "_dev_bypass": True,
+        }
+    return None
+
+
 def current_user(request: Request) -> Optional[dict]:
     """Return a dict describing the current session user, or None.
 
     Always returns a plain dict (never a sqlite3.Row) so callers can use
     ``.get()`` and ``["key"]`` uniformly. Keys:
         user_id, email, is_admin, _dev_bypass (optional)
+
+    During impersonation this returns the TARGET user with extra
+    underscore-prefixed keys — callers that need the admin use
+    _real_admin_user() instead.
     """
+    imp = getattr(getattr(request, "state", None), "impersonation", None)
+    if imp:
+        t = imp["target_row"]
+        t_admin = (t["is_admin"] or 0) if ("is_admin" in t.keys()) else 0
+        return {
+            "user_id": t["id"],
+            "username": t["username"] if ("username" in t.keys()) else "",
+            "email": t["email"],
+            "is_admin": bool(t_admin),
+            "is_super_admin": t_admin >= 2,
+            "admin_level": t_admin,
+            "_impersonating": True,
+            "_real_admin_id": imp["admin_user_id"],
+            "_real_admin_email": imp["admin_email"],
+            "_impersonation_session_id": imp["session_id"],
+            "_impersonation_started_at": imp["started_at"],
+        }
     # Prefer the hardened session cookie (narve_session) — attached by
     # SessionMiddleware at request.state.user. Falls back to the legacy
     # pm_gateway_session cookie so existing routes keep working during the
@@ -1522,6 +1746,25 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         head_idx = lower.rfind("</head>")
         if head_idx != -1:
             page = page[:head_idx] + skel_injection + "\n" + page[head_idx:]
+    # Impersonation banner — inject after <body> so the admin always sees
+    # they're viewing-as. Banner HTML handles its own padding.
+    imp_state = getattr(getattr(request, "state", None), "impersonation", None) if request else None
+    if imp_state and "narve-impersonation-banner" not in page:
+        try:
+            import impersonation as _imp
+            banner = _imp.banner_html(
+                target_display=_imp.display_name_for(imp_state.get("target_row")),
+                admin_email=imp_state.get("admin_email", ""),
+                started_at=imp_state.get("started_at", 0),
+                csrf_field=context.get("raw_csrf_field", "") if context else "",
+            )
+            page = re.sub(
+                r"(<body[^>]*>)",
+                lambda m: m.group(1) + "\n" + banner,
+                page, count=1,
+            )
+        except Exception as _exc:
+            log.warning("impersonation banner inject failed: %s", _exc)
     return HTMLResponse(page)
 
 
@@ -1590,7 +1833,7 @@ def _sitemap_html() -> str:
     return (
         '<div id="sitemap-btn" onclick="document.getElementById(\'sitemap-modal\').style.display=\'flex\'" '
         'style="position:fixed;bottom:20px;left:20px;background:#f3f4f6;border:1px solid #e5e7eb;'
-        'border-radius:999px;padding:6px 14px;font-size:0.75rem;font-weight:500;color:#6b7280;'
+        'border-radius:999px;padding:6px 14px;font-size:0.75rem;font-weight:500;color:#374151;'
         'cursor:pointer;z-index:9998;transition:opacity 0.15s">'
         'Dev &mdash; Sitemap</div>'
         '<div id="sitemap-modal" onclick="if(event.target===this)this.style.display=\'none\'" '
@@ -3606,7 +3849,8 @@ def _require_admin_user(request: Request, *, page: bool = False):
     cannot be used to mass-mutate users/grants/tokens. Keying on the admin
     email (not IP) defends against an attacker rotating IPs via VPN.
     """
-    user = current_user(request)
+    # Use the real admin during impersonation so /admin stays reachable.
+    user = _real_admin_user(request) or current_user(request)
     if not user or not user.get("is_admin"):
         if page:
             return None
@@ -4600,6 +4844,17 @@ async def admin_bulk_users(request: Request):
     except Exception:
         pass
     return RedirectResponse("/admin", status_code=302)
+
+
+# ── Admin: Impersonation / feature flags / email templates ──────────────
+#
+# Registered from admin_routes.py — see that module for the handlers.
+
+try:
+    import admin_routes as _admin_routes  # noqa: E402
+    _admin_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("admin_routes.register failed: %s", _exc)
 
 
 # ── Admin: Audit log ─────────────────────────────────────────────────────────
@@ -6538,6 +6793,19 @@ try:
         _em_importlib.reload(_em_sys.modules["embed_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("embed_routes import failed: %s — continuing without it", _exc)
+
+
+# Web Push subscription + delivery (/api/push/*). Registers BEFORE the
+# catch-all so the /api/push/* paths hit our handlers. Same reload-safe
+# pattern as notification_routes/embed_routes above.
+try:
+    import push_routes  # noqa: F401,E402
+    import sys as _pr_sys
+    if "push_routes" in _pr_sys.modules:
+        import importlib as _pr_importlib
+        _pr_importlib.reload(_pr_sys.modules["push_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("push_routes import failed: %s — continuing without it", _exc)
 
 
 # Billing UI — /settings/billing + /api/v1/billing/*. Same reload-safe pattern

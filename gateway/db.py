@@ -4476,3 +4476,263 @@ def get_source_prediction_context(source_handle: str, limit: int = 50) -> list[s
             """,
             (source_handle, int(limit)),
         ).fetchall()
+
+
+
+# ── Impersonation sessions (Migration 022) ──────────────────────────────────
+
+
+def create_impersonation_session(
+    *,
+    admin_user_id: int,
+    target_user_id: int,
+    reason: str,
+    ip_address=None,
+    user_agent=None,
+) -> dict:
+    """Create an impersonation session, returning {id, cookie_token, started_at}.
+
+    The cookie_token is set on the admin's browser; every request that
+    presents it is treated as the admin viewing the target user.
+    """
+    token = secrets.token_urlsafe(48)
+    now = int(time.time())
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO impersonation_sessions "
+            "(admin_user_id, target_user_id, cookie_token, reason, ip_address, user_agent, started_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (admin_user_id, target_user_id, token, reason, ip_address, user_agent, now),
+        )
+        return {"id": cur.lastrowid, "cookie_token": token, "started_at": now}
+
+
+def get_impersonation_session_by_token(token: str):
+    """Look up by cookie token. Does NOT filter on ended_at so callers decide."""
+    if not token:
+        return None
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM impersonation_sessions WHERE cookie_token = ?",
+            (token,),
+        ).fetchone()
+
+
+def get_impersonation_session(session_id: int):
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM impersonation_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+
+
+def end_impersonation_session(session_id: int, end_reason: str = "admin_ended") -> None:
+    with conn() as c:
+        c.execute(
+            "UPDATE impersonation_sessions SET ended_at = ?, end_reason = ? "
+            "WHERE id = ? AND ended_at IS NULL",
+            (int(time.time()), end_reason, session_id),
+        )
+
+
+def record_impersonation_action(
+    *,
+    session_id: int,
+    method: str,
+    path: str,
+    status_code,
+    was_blocked: bool,
+) -> None:
+    with conn() as c:
+        c.execute(
+            "INSERT INTO impersonation_actions "
+            "(session_id, timestamp, method, path, status_code, was_blocked) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, int(time.time()), method, path, status_code, 1 if was_blocked else 0),
+        )
+        c.execute(
+            "UPDATE impersonation_sessions SET action_count = action_count + 1 WHERE id = ?",
+            (session_id,),
+        )
+
+
+def list_impersonation_sessions(limit: int = 100):
+    with conn() as c:
+        return c.execute(
+            "SELECT s.*, "
+            "  a.email AS admin_email, a.username AS admin_username, "
+            "  t.email AS target_email, t.username AS target_username "
+            "FROM impersonation_sessions s "
+            "LEFT JOIN users a ON a.id = s.admin_user_id "
+            "LEFT JOIN users t ON t.id = s.target_user_id "
+            "ORDER BY s.started_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+def list_impersonation_actions(session_id: int, limit: int = 500):
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM impersonation_actions WHERE session_id = ? "
+            "ORDER BY timestamp ASC LIMIT ?",
+            (session_id, limit),
+        ).fetchall()
+
+
+# ── Feature flags (Migration 022) ────────────────────────────────────────────
+
+
+def list_feature_flags():
+    with conn() as c:
+        return c.execute("SELECT * FROM feature_flags ORDER BY key ASC").fetchall()
+
+
+def get_feature_flag(key: str):
+    with conn() as c:
+        return c.execute("SELECT * FROM feature_flags WHERE key = ?", (key,)).fetchone()
+
+
+def create_feature_flag(
+    *,
+    key: str,
+    name: str,
+    description: str = "",
+    enabled_globally: bool = False,
+    enabled_for_tiers=None,
+    enabled_for_user_ids=None,
+    disabled_for_user_ids=None,
+    rollout_percentage: int = 0,
+    updated_by_admin_id=None,
+) -> int:
+    import json as _json
+    now = int(time.time())
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO feature_flags "
+            "(key, name, description, enabled_globally, enabled_for_tiers, "
+            " enabled_for_user_ids, disabled_for_user_ids, rollout_percentage, "
+            " created_at, updated_at, updated_by_admin_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                key, name, description,
+                1 if enabled_globally else 0,
+                _json.dumps(enabled_for_tiers or []),
+                _json.dumps(enabled_for_user_ids or []),
+                _json.dumps(disabled_for_user_ids or []),
+                max(0, min(100, int(rollout_percentage))),
+                now, now, updated_by_admin_id,
+            ),
+        )
+        return cur.lastrowid
+
+
+def update_feature_flag(
+    key: str,
+    *,
+    name=None,
+    description=None,
+    enabled_globally=None,
+    enabled_for_tiers=None,
+    enabled_for_user_ids=None,
+    disabled_for_user_ids=None,
+    rollout_percentage=None,
+    updated_by_admin_id=None,
+) -> bool:
+    import json as _json
+    fields = []
+    params = []
+    if name is not None:
+        fields.append("name = ?"); params.append(name)
+    if description is not None:
+        fields.append("description = ?"); params.append(description)
+    if enabled_globally is not None:
+        fields.append("enabled_globally = ?"); params.append(1 if enabled_globally else 0)
+    if enabled_for_tiers is not None:
+        fields.append("enabled_for_tiers = ?"); params.append(_json.dumps(enabled_for_tiers))
+    if enabled_for_user_ids is not None:
+        fields.append("enabled_for_user_ids = ?"); params.append(_json.dumps(enabled_for_user_ids))
+    if disabled_for_user_ids is not None:
+        fields.append("disabled_for_user_ids = ?"); params.append(_json.dumps(disabled_for_user_ids))
+    if rollout_percentage is not None:
+        fields.append("rollout_percentage = ?")
+        params.append(max(0, min(100, int(rollout_percentage))))
+    if updated_by_admin_id is not None:
+        fields.append("updated_by_admin_id = ?"); params.append(updated_by_admin_id)
+    if not fields:
+        return False
+    fields.append("updated_at = ?"); params.append(int(time.time()))
+    params.append(key)
+    with conn() as c:
+        cur = c.execute(
+            f"UPDATE feature_flags SET {', '.join(fields)} WHERE key = ?",
+            tuple(params),
+        )
+        return cur.rowcount > 0
+
+
+def delete_feature_flag(key: str) -> bool:
+    with conn() as c:
+        cur = c.execute("DELETE FROM feature_flags WHERE key = ?", (key,))
+        return cur.rowcount > 0
+
+
+def record_feature_flag_event(flag_key: str, user_id, result: bool) -> None:
+    with conn() as c:
+        c.execute(
+            "INSERT INTO feature_flag_events (flag_key, user_id, result, timestamp) "
+            "VALUES (?, ?, ?, ?)",
+            (flag_key, user_id, 1 if result else 0, int(time.time())),
+        )
+
+
+# ── Email templates (Migration 022) ──────────────────────────────────────────
+
+
+def list_email_templates():
+    with conn() as c:
+        return c.execute("SELECT * FROM email_templates ORDER BY key ASC").fetchall()
+
+
+def get_email_template(key: str):
+    with conn() as c:
+        return c.execute("SELECT * FROM email_templates WHERE key = ?", (key,)).fetchone()
+
+
+def upsert_email_template(
+    *,
+    key: str,
+    subject: str,
+    body_html: str,
+    body_text=None,
+    variables=None,
+    is_active: bool = True,
+    updated_by_admin_id=None,
+) -> None:
+    import json as _json
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            "INSERT INTO email_templates "
+            "(key, subject, body_html, body_text, variables, is_active, updated_at, updated_by_admin_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET "
+            "  subject = excluded.subject, "
+            "  body_html = excluded.body_html, "
+            "  body_text = excluded.body_text, "
+            "  variables = excluded.variables, "
+            "  is_active = excluded.is_active, "
+            "  updated_at = excluded.updated_at, "
+            "  updated_by_admin_id = excluded.updated_by_admin_id",
+            (
+                key, subject, body_html, body_text,
+                _json.dumps(variables or []),
+                1 if is_active else 0,
+                now, updated_by_admin_id,
+            ),
+        )
+
+
+def delete_email_template(key: str) -> bool:
+    with conn() as c:
+        cur = c.execute("DELETE FROM email_templates WHERE key = ?", (key,))
+        return cur.rowcount > 0

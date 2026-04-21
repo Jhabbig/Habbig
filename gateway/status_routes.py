@@ -369,8 +369,13 @@ async def _read_json(request: Request) -> dict:
 @app.get("/admin/status", response_class=HTMLResponse, include_in_schema=False)
 async def admin_status_page(request: Request):
     user = _require_admin_user(request, page=True)
+    # _require_admin_user can return None (non-admin → render 403),
+    # a RedirectResponse (2FA pending → hand it back untouched), or a
+    # dict (admin ok). Guard against the non-dict cases.
     if user is None:
         return _denied_response(request)
+    if not isinstance(user, dict):
+        return user  # RedirectResponse — hand straight back to Starlette
 
     open_incidents = status_db.list_open_incidents()
     recent = status_db.list_recent_incidents(limit=30)
@@ -478,6 +483,10 @@ def _admin_subscriber_rows(subs: list[dict]) -> str:
 @app.post("/admin/incidents", include_in_schema=False)
 async def admin_create_incident(request: Request):
     user = _require_admin_user(request)
+    # _require_admin_user may return a RedirectResponse for 2FA-pending
+    # sessions instead of raising HTTPException. Forward it verbatim.
+    if not isinstance(user, dict):
+        return user
     form = await request.form()
 
     title = (form.get("title") or "").strip()
@@ -519,6 +528,8 @@ async def admin_create_incident(request: Request):
 @app.post("/admin/incidents/{incident_id}", include_in_schema=False)
 async def admin_update_incident(request: Request, incident_id: int):
     user = _require_admin_user(request)
+    if not isinstance(user, dict):
+        return user
     inc = status_db.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail="incident not found")
@@ -546,6 +557,8 @@ async def admin_update_incident(request: Request, incident_id: int):
 @app.post("/admin/incidents/{incident_id}/updates", include_in_schema=False)
 async def admin_post_incident_update(request: Request, incident_id: int):
     user = _require_admin_user(request)
+    if not isinstance(user, dict):
+        return user
     inc = status_db.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail="incident not found")
@@ -587,6 +600,8 @@ async def admin_post_incident_update(request: Request, incident_id: int):
 @app.post("/admin/incidents/{incident_id}/resolve", include_in_schema=False)
 async def admin_resolve_incident(request: Request, incident_id: int):
     user = _require_admin_user(request)
+    if not isinstance(user, dict):
+        return user
     inc = status_db.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail="incident not found")

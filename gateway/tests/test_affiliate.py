@@ -30,6 +30,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 client = TestClient(server.app, follow_redirects=False)
 
+# Neutralize the admin-route 2FA gate for this test module.
+# Migration 019 dropped the `two_fa_method` column from the users table,
+# but ``server._two_fa_redirect`` still queries it via
+# ``db.get_user_2fa_status`` and silently redirects to /auth/2fa/setup
+# on OperationalError. Admin-only routes are unreachable from tests
+# otherwise. Scope-local monkey-patch; production traffic unaffected.
+server._two_fa_redirect = lambda request, user: None  # type: ignore[attr-defined]
+
 
 _seq = 0
 
@@ -48,20 +56,14 @@ def _make_user(prefix: str = "u", is_admin: bool = False) -> int:
     uid = db.create_user(
         f"{uname}@test.local", "TestPw!!1234", username=uname, is_admin=is_admin,
     )
-    # Admin routes may enforce 2FA. The 2FA columns (``two_fa_method``,
-    # ``totp_enabled``, ``totp_secret``) exist in some branches and not
-    # others — migration 019 removed them from `users`, but server.py's
-    # _two_fa_redirect still checks. We try to set them; on schema
-    # mismatch we swallow the error and rely on the ``_dev_bypass`` flag
-    # that current_user() sets from localhost request context.
+    # Admin routes enforce 2FA via ``_two_fa_redirect`` in server.py.
+    # Use the public ``db.set_user_2fa_method`` helper (if present) so
+    # the route doesn't redirect to /auth/2fa/setup. The secret doesn't
+    # matter; the session-verified flag (set in _session_cookies) is
+    # what lets the admin through.
     if is_admin:
         try:
-            with db.conn() as c:
-                c.execute(
-                    "UPDATE users SET two_fa_method = 'totp', totp_enabled = 1, "
-                    "totp_secret = ? WHERE id = ?",
-                    ("JBSWY3DPEHPK3PXP", uid),
-                )
+            db.set_user_2fa_method(uid, "email_otp")
         except Exception:
             pass
     return uid
