@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ market_question }} — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <meta name="robots" content="noindex, nofollow">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ market_question }}">
+  <meta property="og:description" content="Tracked by narve.ai — invite-only prediction market intelligence">
+  <meta property="og:image" content="/og/shared/market/{{ token }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="/og/shared/market/{{ token }}">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <style>
+    body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-ui); margin: 0; min-height: 100vh; }
+    .share-main { max-width: 640px; margin: 0 auto; padding: 64px 24px; }
+    .share-brand { font-family: var(--font-display); font-weight: 500; font-size: 13px; color: var(--text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 32px; }
+    .share-question { font-family: var(--font-display); font-size: 32px; line-height: 1.25; letter-spacing: -0.02em; margin: 0 0 32px; font-weight: 500; color: var(--text-primary); }
+    .share-metric { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 32px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+    .metric-label { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+    .metric-value { font-family: var(--font-display); font-size: 36px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .share-meta { font-size: 12px; color: var(--text-tertiary); margin: 32px 0 48px; text-align: center; }
+    .share-cta { display: block; text-align: center; background: var(--text-primary); color: var(--bg-base); padding: 16px 24px; border-radius: var(--radius-md); text-decoration: none; font-weight: 500; letter-spacing: 0.01em; margin-bottom: 16px; }
+    .share-cta:hover { opacity: 0.88; }
+    .share-fineprint { text-align: center; font-size: 12px; color: var(--text-tertiary); }
+    .share-fineprint a { color: var(--text-primary); }
+  </style>
+</head>
+<body>
+  <main class="share-main">
+    <div class="share-brand">narve.ai</div>
+    <h1 class="share-question">{{ market_question }}</h1>
+
+    <div class="share-metric">
+      <div>
+        <div class="metric-label">Market probability</div>
+        <div class="metric-value">{{ market_probability }}</div>
+      </div>
+    </div>
+
+    <div class="share-meta">
+      {% if sharer_handle %}
+        Shared by @{{ sharer_handle }}
+      {% else %}
+        Shared via narve.ai
+      {% endif %}
+    </div>
+
+    <a class="share-cta" href="/#waitlist">Join the waitlist</a>
+    <div class="share-fineprint">
+      narve.ai is invite-only. <a href="/about">Learn more</a>.
+    </div>
+  </main>
+</body>
+</html>

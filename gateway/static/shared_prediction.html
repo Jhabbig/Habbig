@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resolved prediction — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <meta name="robots" content="noindex, nofollow">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="@{{ sharer_handle }} predicted {{ direction }} at {{ confidence }} — resolved correct">
+  <meta property="og:description" content="Track your own prediction accuracy on narve.ai">
+  <meta property="og:image" content="/og/shared/prediction/{{ token }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="/og/shared/prediction/{{ token }}">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <style>
+    body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-ui); margin: 0; min-height: 100vh; }
+    .share-main { max-width: 640px; margin: 0 auto; padding: 64px 24px; }
+    .share-brand { font-family: var(--font-display); font-weight: 500; font-size: 13px; color: var(--text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 32px; }
+    .share-callout { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 40px 32px; margin-bottom: 32px; text-align: center; }
+    .callout-status { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 16px; }
+    .callout-body { font-family: var(--font-display); font-size: 22px; line-height: 1.4; letter-spacing: -0.01em; font-weight: 500; }
+    .callout-body strong { font-weight: 500; }
+    .share-meta { font-size: 12px; color: var(--text-tertiary); margin: 32px 0 48px; text-align: center; }
+    .share-cta { display: block; text-align: center; background: var(--text-primary); color: var(--bg-base); padding: 16px 24px; border-radius: var(--radius-md); text-decoration: none; font-weight: 500; letter-spacing: 0.01em; margin-bottom: 16px; }
+    .share-cta:hover { opacity: 0.88; }
+    .share-fineprint { text-align: center; font-size: 12px; color: var(--text-tertiary); }
+    .share-fineprint a { color: var(--text-primary); }
+  </style>
+</head>
+<body>
+  <main class="share-main">
+    <div class="share-brand">narve.ai · prediction</div>
+
+    <div class="share-callout">
+      <div class="callout-status">resolved correct</div>
+      <div class="callout-body">
+        @{{ sharer_handle }} predicted <strong>{{ direction }}</strong> on
+        <strong>{{ market_slug }}</strong> at <strong>{{ confidence }}</strong>.
+      </div>
+    </div>
+
+    <div class="share-meta">Track your own accuracy on narve.ai</div>
+
+    <a class="share-cta" href="/#waitlist">Request invite</a>
+    <div class="share-fineprint">
+      narve.ai is invite-only. <a href="/about">Learn more</a>.
+    </div>
+  </main>
+</body>
+</html>

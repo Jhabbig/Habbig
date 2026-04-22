@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your Invites — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <meta name="robots" content="noindex, nofollow">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <style>
+    body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-ui); margin: 0; min-height: 100vh; }
+    .inv-main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+    .inv-crumb { font-size: 12px; color: var(--text-tertiary); margin-bottom: 18px; letter-spacing: 0.02em; }
+    .inv-crumb a { color: var(--text-tertiary); text-decoration: none; }
+    .inv-crumb a:hover { color: var(--text-primary); }
+    .inv-h1 { font-family: var(--font-display); font-size: 28px; letter-spacing: -0.02em; margin: 0 0 32px; font-weight: 500; }
+    .inv-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 28px; margin-bottom: 24px; }
+    .inv-card h2 { font-size: 14px; font-weight: 500; letter-spacing: 0.02em; margin: 0 0 16px; color: var(--text-primary); }
+    .inv-balance { font-family: var(--font-display); font-size: 48px; line-height: 1; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
+    .inv-balance-sub { color: var(--text-tertiary); font-size: 13px; margin-bottom: 20px; }
+    .inv-quota { color: var(--text-secondary); font-size: 13px; margin-top: 12px; }
+    .inv-code-list { list-style: none; padding: 0; margin: 16px 0 0; }
+    .inv-code-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); margin-bottom: 8px; font-family: var(--font-mono, ui-monospace, "SF Mono", monospace); font-size: 13px; letter-spacing: 0.02em; }
+    .inv-code-item code { flex: 1; }
+    .inv-copy-btn { background: transparent; color: var(--text-tertiary); border: 1px solid var(--border-default); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 12px; cursor: pointer; letter-spacing: 0.02em; }
+    .inv-copy-btn:hover { color: var(--text-primary); border-color: var(--text-primary); }
+    .inv-copy-btn.copied { color: var(--text-primary); border-color: var(--text-primary); }
+    .inv-empty { color: var(--text-tertiary); font-size: 13px; padding: 16px; text-align: center; background: var(--bg-base); border-radius: var(--radius-md); border: 1px dashed var(--border-default); }
+    .inv-ref-link { display: flex; gap: 8px; align-items: center; padding: 12px 16px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+    .inv-ref-link code { flex: 1; font-family: var(--font-mono, ui-monospace, "SF Mono", monospace); font-size: 13px; word-break: break-all; }
+    .inv-footer-note { color: var(--text-tertiary); font-size: 13px; line-height: 1.6; margin-top: 16px; }
+    .inv-footer-note a { color: var(--text-primary); }
+  </style>
+</head>
+<body>
+  <main class="inv-main">
+    <div class="inv-crumb"><a href="/settings">Settings</a> / Invites</div>
+    <h1 class="inv-h1">Your Invites</h1>
+
+    <div class="inv-card">
+      <h2>Balance</h2>
+      <div class="inv-balance" id="balance-count">—</div>
+      <div class="inv-balance-sub" id="balance-sub">unused invites</div>
+      <div class="inv-quota" id="quota-line"></div>
+    </div>
+
+    <div class="inv-card">
+      <h2>Invite someone specific</h2>
+      <p style="color: var(--text-secondary); font-size: 13px; margin: 0 0 12px;">
+        Share this link — each visit opens the invite page tied to your referral code.
+      </p>
+      <div class="inv-ref-link">
+        <code id="ref-link">loading…</code>
+        <button class="inv-copy-btn" data-copy="ref-link">Copy</button>
+      </div>
+    </div>
+
+    <div class="inv-card">
+      <h2>Or give them a one-time code</h2>
+      <p style="color: var(--text-secondary); font-size: 13px; margin: 0 0 8px;">
+        Each code is single-use. The recipient enters it at <a href="/token" style="color: var(--text-primary);">narve.ai/token</a>.
+      </p>
+      <ul class="inv-code-list" id="code-list">
+        <li class="inv-empty">loading…</li>
+      </ul>
+    </div>
+
+    <div class="inv-footer-note">
+      Invites replenish monthly by tier: 2 for Trader, 5 for Pro, 20 for Enterprise.
+      Unused invites roll over up to 2× your monthly allotment.
+      You earn rewards when someone you invited subscribes — see
+      <a href="/settings/referrals">Referrals</a>.
+    </div>
+  </main>
+
+  <script>
+    async function loadInvites() {
+      const r = await fetch("/api/invites/me", { credentials: "same-origin" });
+      if (!r.ok) {
+        if (r.status === 402) window.location.href = "/subscribe";
+        return;
+      }
+      const data = await r.json();
+
+      document.getElementById("balance-count").textContent = data.balance;
+      document.getElementById("balance-sub").textContent =
+        data.balance === 1 ? "unused invite" : "unused invites";
+      document.getElementById("quota-line").textContent =
+        data.tier.charAt(0).toUpperCase() + data.tier.slice(1) +
+        " tier · " + data.monthly_allotment + "/month · cap " + data.rollover_cap;
+
+      const ref = await fetch("/api/referrals/me", { credentials: "same-origin" });
+      if (ref.ok) {
+        const refData = await ref.json();
+        if (refData.share_url) {
+          document.getElementById("ref-link").textContent = refData.share_url;
+          document.getElementById("ref-link").dataset.rawUrl = refData.share_url;
+        }
+      }
+
+      const list = document.getElementById("code-list");
+      if (!data.tokens.length) {
+        list.innerHTML = '<li class="inv-empty">No unused codes. New invites arrive on the 1st of each month.</li>';
+        return;
+      }
+      list.innerHTML = data.tokens.map(function(t) {
+        return '<li class="inv-code-item"><code>NARVE-' + escapeHtml(t.token) + '</code>' +
+               '<button class="inv-copy-btn" data-copy-code="' + escapeHtml(t.token) + '">Copy</button></li>';
+      }).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function(c) {
+        return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
+      });
+    }
+
+    document.addEventListener("click", function(e) {
+      var btn = e.target.closest("[data-copy-code], [data-copy]");
+      if (!btn) return;
+      var text;
+      if (btn.dataset.copyCode) {
+        text = "NARVE-" + btn.dataset.copyCode;
+      } else {
+        var src = document.getElementById(btn.dataset.copy);
+        text = (src && (src.dataset.rawUrl || src.textContent)) || "";
+      }
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(function() {
+        btn.classList.add("copied");
+        var orig = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(function() { btn.classList.remove("copied"); btn.textContent = orig; }, 1500);
+      });
+    });
+
+    loadInvites();
+  </script>
+</body>
+</html>
