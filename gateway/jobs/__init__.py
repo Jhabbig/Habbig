@@ -33,6 +33,25 @@ from jobs import pipeline_jobs  # noqa: F401
 from jobs import resolution_jobs  # noqa: F401
 from jobs import status_jobs  # noqa: F401
 
+# Forecast benchmark sync — daily fetch of external platform probabilities
+# (Metaculus, Manifold, 538, Silver Bulletin). Defensively imported: if
+# migration 127 hasn't been applied yet, the job import itself is still
+# safe (tables are only touched at run time), but we wrap anyway for
+# symmetry with the other optional modules below.
+try:
+    from jobs import forecast_sync  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("forecast_sync import failed: %s", _e)
+
+# Community Takes daily resolution job. Defensively imported so a fresh
+# DB (no migration 122/124 yet) doesn't break the rest of the registry.
+try:
+    from jobs import take_resolution_jobs  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("take_resolution_jobs import failed: %s", _e)
+
 # Portfolio sync (Polymarket every 10 min, Kalshi every 15 min),
 # subscription reconciliation (daily 03:17 UTC), and Telegram outbound
 # jobs. Defensively imported — one bad optional module must not prevent
