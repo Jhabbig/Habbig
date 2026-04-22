@@ -5274,6 +5274,42 @@ async def settings_page(request: Request, saved: Optional[str] = None):
     billing_html += '</div></div></div>'
 
 
+    sessions_html = (
+        '<div class="settings-card" style="margin-top:24px">'
+        '<div class="settings-section">'
+        '<div class="settings-section-title">Active sessions</div>'
+        '<div class="settings-section-desc">Every device where your account is signed in.</div>'
+        '<div id="sessions-list" style="margin-top:12px;font-size:13px;color:var(--text-secondary)">Loading sessions…</div>'
+        '<div style="padding:16px 0 0">'
+        '<button type="button" id="sign-out-others-btn" class="btn">Sign out all other sessions</button>'
+        '</div>'
+        '</div></div>'
+        '<script>'
+        '(function(){'
+        'var list=document.getElementById("sessions-list");'
+        'var btn=document.getElementById("sign-out-others-btn");'
+        'function csrf(){var m=document.cookie.match(/(?:^|;\\\\s*)_csrf=([^;]*)/);return m?decodeURIComponent(m[1]):"";}'
+        'function load(){fetch("/api/auth/sessions").then(function(r){return r.json();}).then(function(d){'
+        'if(!d.sessions||!d.sessions.length){list.textContent="No active sessions.";return;}'
+        'list.innerHTML=d.sessions.map(function(s){'
+        'var label=(s.browser||"Unknown")+" \u00b7 "+(s.os||"Unknown");'
+        'var cur=s.is_current?"<span style=\\"margin-left:8px;padding:2px 8px;border-radius:9999px;background:var(--interactive-ghost);color:var(--text-primary);font-size:11px\\">Current</span>":"";'
+        'var last=new Date(s.last_active_at*1000).toLocaleString();'
+        'var act=s.is_current?"":("<button class=\\"btn btn-ghost\\" onclick=\\"revokeSession("+s.id+")\\">Revoke</button>");'
+        'return "<div style=\\"display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)\\">"+'
+        '"<div><div style=\\"color:var(--text-primary);font-weight:500\\">"+label+cur+"</div>"+'
+        '"<div style=\\"font-size:11px;color:var(--text-tertiary);margin-top:2px\\">Last active: "+last+"</div></div>"+'
+        '"<div>"+act+"</div></div>";'
+        '}).join("");}).catch(function(){list.textContent="Failed to load sessions.";});}'
+        'window.revokeSession=function(id){if(!confirm("Revoke this session?"))return;'
+        'fetch("/api/auth/sessions/"+id,{method:"DELETE",headers:{"x-csrf-token":csrf()}}).then(load);};'
+        'btn.addEventListener("click",function(){if(!confirm("Sign out of every other session?"))return;'
+        'fetch("/api/auth/sessions",{method:"DELETE",headers:{"x-csrf-token":csrf()}}).then(load);});'
+        'load();'
+        '})();'
+        '</script>'
+    )
+
     # Environmental impact preferences (Feature 008)
     env_prefs = db.get_user_env_preferences(user["user_id"])
     env_show_checked = "checked" if env_prefs.get("show") else ""
@@ -5293,7 +5329,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         raw_saved_banner=saved_banner,
         raw_market_connections=mc_html,
         raw_billing_section=billing_html,
-        raw_security_section=security_html,
+        raw_security_section=sessions_html,
         raw_admin_link=admin_link,
         raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
         env_show_checked=env_show_checked,
