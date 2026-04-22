@@ -5,6 +5,120 @@ Each entry is a point-in-time snapshot. Diffs between entries reveal posture cha
 
 ---
 
+## AUDIT #3c — 2026-04-22T05:35:00Z — full-loop closure addendum (commit 1f3a659 + server fa8b49b)
+
+User instruction: "DO EVERYTHING". Pop the AUDIT #3 stash, finish the
+Claude-wrapper consolidation, commit the deferred WIP, tune the scanner
+for false-positive noise, deploy. Closes the deferred items from #3 and
+#3b. The original AUDIT #3 entry below is preserved unchanged.
+
+### Fixes applied (commits `597abb3`, `1f3a659`)
+
+**HIGH #2 Claude wrapper consolidation** → resolved.
+Inspection of the popped stash showed `intelligence/claude_client.py` was
+already mid-refactor: it now delegates every API path to `ai.client`
+(`get_async_client`, `call_claude`, `log_response`, kill-switch read,
+usage logging) via the legacy-shim pattern. The 155-line diff that AUDIT
+#3 flagged as "still coexisting" was actually the consolidation itself
+landing. After commit `597abb3`, every Claude call routes through
+`gateway/ai/client.py` for budgeting + logging while
+`intelligence/claude_client.py` stays as the assistant-prompt + streaming
+wrapper. Two modules, one shared API surface — the right shape.
+
+**HIGH #3 31-file uncommitted WIP** → resolved by stash pop + bundled
+commits:
+* `597abb3` — claude cost controls (migration 074, jobs/claude_cost_check,
+  test_claude_cost_controls), AI consolidation (14 files), 2FA test
+  deletions, sub-tests retouched, migration 075 added to fix the
+  privacy-prefs test isolation (security_routes' inline ALTER moved into
+  a real migration so fresh test DBs always have the columns).
+* `1f3a659` — TEST_COVERAGE.md, UX_STATES_BEFORE_AFTER.md,
+  static/states.css, tests/test_forensics.py — the documentation +
+  visual + forensics-coverage trio that travelled with the bundle.
+
+**Migration 075 (user_privacy_prefs columns)** — promoted the inline
+`security_routes._ensure_user_privacy_columns` ALTER into a real
+migration. Test `test_privacy_prefs_round_trip` (which was failing
+post-pop because the column-add only ran on import order) now passes
+deterministically.
+
+**HIGH #11 2FA test deletions** → committed in `597abb3`
+(`test_2fa_db.py`, `test_2fa_http.py`, `test_2fa_totp.py`). 2FA was
+removed in migration 019 per project decision; tests were already orphan.
+
+**Stash@{1} parallel-agent-work-mess on feature/referral-program** →
+inspected, deliberately NOT popped. The diff is +809 server.py / +294
+db.py / +308 api_v1.py against an old base; popping into the current
+platform-build tree would create a 1.5k-line conflict cascade. The
+labelled "mess" is the original author's own assessment; their session is
+the right place to reclaim it. Documented; no action.
+
+**Scanner tuning** (changes to `~/.claude/skills/security-scan/scripts/`,
+out of repo) — applied to reduce signal-to-noise that was dominating
+prior audit findings:
+- `scan_secrets.sh` — exclude tests/ paths and conftest; demote
+  test-fixture passwords (`CorrectPass1!`, `MyPass1234!`,
+  `test-csrf-token-*`) to MEDIUM.
+- `scan_sqli.sh` — recognise the `f"... {', '.join(allowlist)} ..."`
+  column-allowlist pattern and demote to MEDIUM (cosmetic, not exploit).
+- `scan_xss.sh` — detect `esc()` / `escapeHtml()` / `escapeHTML()`
+  helper presence on the same line and demote to LOW; flag MEDIUM only
+  when the line has unescaped interpolation.
+- `scan_auth.sh` — exclude tests/ paths, exclude commented decorators,
+  detect global `CSRFMiddleware` and skip per-route check, broaden the
+  admin-helper recognition list to include `_require_super_admin`,
+  `_real_admin_user`, `has_admin_access`, `admin_required`,
+  `is_admin`, `admin_level >= …`.
+- `scan_infra.sh` — Stripe webhook section now requires the candidate
+  file to ALSO carry an `@app.post`/`@router.post` decorator near the
+  match; tests + CSRF helpers + `stripe_stub.py` excluded.
+
+Round-3 scan deltas (after tune):
+- `scan_infra` CRITICAL **6 → 0** (Stripe stub false positives gone)
+- `scan_secrets` CRITICAL **6 → 0** (test fixtures correctly demoted)
+- `scan_sqli` CRITICAL **39 → 24** (allowlist patterns demoted)
+- `scan_xss` HIGH **116 → 109** + 7 LOW (escape-helper-aware partial)
+- `scan_auth` "CRITICAL" **37 → 37** (admin-route matches turn out to
+  be string literals like `("/admin/foo", "label", "Admin")` in
+  registration tables and sitemap dicts, not route decorators —
+  needs a parser-level fix in the scanner. Documented as limitation.)
+- `scan_rce` CRITICAL **7 → 7** (all in `tests/test_resolution_polling.py`
+  which deliberately greps for `eval(` to verify it doesn't appear in
+  prod; need test-files exclusion in scan_rce too).
+
+### Deploy
+Server hard-reset from `c47c110` → `1f3a659`. Migrations 074 + 075
+applied (schema_version now 63 rows: …`073, 074, 075, 080, 081, 090,
+091, 092, 093, 094, 095`). uvicorn pid `1025425`, public `/health` =
+**200**. Post-deploy commit `fa8b49b` recorded on server.
+
+### Posture after this round
+**adequate** (unchanged from #3b — no new criticals, deferred HIGHs
+closed, Stripe webhook is `NotImplementedError`-stub which is the
+correct posture pre-launch).
+
+### True remaining issues (post-triage)
+- **HIGH** ~10 XSS sites on the 2 admin-only debug panels
+  (admin.html job/log views) — admin-trust boundary, exploit requires
+  an already-compromised admin. Not blocking.
+- **HIGH** server.py still 6464 lines (architectural — session 1's
+  decomposition didn't fully land). Tracked separately.
+- **MEDIUM** scanner needs further parser-level work to silence the
+  remaining "37 admin route" + "7 eval()" test-file false positives.
+- **MEDIUM** stash@{1} (parallel-agent-work-mess on
+  feature/referral-program) still alive; original-session reclaim
+  needed.
+- **LOW** No `requirements.lock` — dependency resolution still not
+  byte-reproducible. Run `pip freeze > requirements.lock` and pin in CI.
+
+### Push state
+- `feature/platform-build` origin tip = `1f3a659`
+- Server tip = `fa8b49b` (post-deploy marker only, no code delta)
+- Working tree: clean
+- Stashes: 1 (`stash@{0}` is the long-lived "mess" on a different branch — preserved)
+
+---
+
 ## AUDIT #3b — 2026-04-21T21:15:00Z — post-remediation addendum (commit c47c110)
 
 This addendum documents the round-1 fix loop applied immediately after AUDIT #3
