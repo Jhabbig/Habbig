@@ -795,6 +795,12 @@ _CSRF_EXEMPT_POSTS = frozenset({
     # bounded — no privileged state change is possible from a forgery.
     "/api/status/subscribe",
     "/api/status/unsubscribe",
+    # Search click logging — fires from the command palette on nav
+    # intent, often via fetch keepalive while the page is unloading.
+    # Appending a result click to an analytics row is not a
+    # state-change a forgery could exploit (the row already belongs
+    # to the user's query_id; we never expose cross-user data).
+    "/api/search/click",
 })
 
 # Prefix-matched POST exemptions for endpoints with dynamic path segments.
@@ -1966,6 +1972,15 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         head_idx = lower.rfind("</head>")
         if head_idx != -1:
             page = page[:head_idx] + skel_injection + "\n" + page[head_idx:]
+    # ⌘K command palette. Mounts itself on first keypress — single script
+    # handles modal DOM, FTS search, click logging, command mode. Inject
+    # into every rendered page so the hotkey is uniformly available.
+    cmdp_injection = '<script src="/_gateway_static/js/command-palette.js" defer></script>'
+    if "command-palette.js" not in page:
+        lower = page.lower()
+        head_idx = lower.rfind("</head>")
+        if head_idx != -1:
+            page = page[:head_idx] + cmdp_injection + "\n" + page[head_idx:]
     # Forensic watermark overlay + anti-capture JS — only on authenticated
     # pages (user is resolvable from the request). See gateway/watermark.py.
     try:
@@ -5766,6 +5781,23 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("api_v1 router failed to mount: %s", _exc)
 
+# Unified ⌘K search MUST register BEFORE server_features below, because
+# server_features.py defines a legacy `/api/search` with a different
+# response shape. FastAPI routes first-match, so the earliest registration
+# wins — putting mine first lets the palette endpoint shadow the legacy
+# one. (The legacy handler stays in server_features so existing callers
+# that import the helper don't break; it's just not reachable via HTTP.)
+try:
+    import search_routes as _search_routes  # noqa: E402
+    import sys as _sr2_sys
+    if "search_routes" in _sr2_sys.modules:
+        import importlib as _sr2_importlib
+        _sr2_importlib.reload(_sr2_sys.modules["search_routes"])
+    _search_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.warning("search_routes register failed: %s — continuing without it", _exc)
+
+
 try:
     import server_features  # noqa: F401,E402
     # If server.py is being re-executed (e.g. via importlib.reload in tests),
@@ -5881,6 +5913,17 @@ except Exception as _exc:  # pragma: no cover
     log.warning("routes_referrals import failed: %s — continuing without it", _exc)
 
 
+# Share-artifacts + per-user invite-token router. Same ordering rule:
+# the /s/m/{token} /s/s/{token} /s/p/{token} public pages + /og/shared/*
+# image endpoints + /settings/invites + /tools/card-preview would all
+# 404 via the catch-all if mounted below it.
+try:
+    from routes_sharing import router as _sharing_router  # noqa: E402
+    app.include_router(_sharing_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("routes_sharing import failed: %s — continuing without it", _exc)
+
+
 # Subproduct + portfolio + extension + bot routes. All registered via a
 # ``register(app)`` function so server.py stays free of business logic.
 # Same defensive try/except pattern as the rest of this section — one
@@ -5892,6 +5935,7 @@ for _mod_name in (
     "extension_routes",
     "bot_routes",
     "security_routes",
+    "collections_routes",
 ):
     try:
         _mod = __import__(_mod_name, fromlist=["register"])
