@@ -5,6 +5,85 @@ and the file(s) touched. New entries at the top.
 
 ---
 
+## 2026-04-23 — Edge-case hardening sweep
+
+Scope: defensive coverage across the 13-item input matrix, pagination
+boundaries, idempotency for subscription-critical writes, and timezone
+sanity. Companion docs: [`EDGE_CASES.md`](EDGE_CASES.md),
+[`SUBSCRIPTION_STATE_MACHINE.md`](SUBSCRIPTION_STATE_MACHINE.md).
+
+### Input drift → 500 instead of 400
+
+- Symptom: a handler receiving `NaN`, `Infinity`, a decimal-shaped
+  string where an int was expected, or a 10 k-char zalgo stream
+  typically returned a 500 from an uncaught `ValueError` / `TypeError`
+  downstream (pydantic coerces many things, but not all).
+- Cause: no shared normaliser layer; every handler rolled its own
+  `int(...)` or `str.strip()` guards, and some skipped them entirely.
+- Fix: added `gateway/security/input_hygiene.py` with six pure helpers
+  (`clean_text`, `clean_int`, `clean_float`, `clean_email`,
+  `clean_handle`, `clean_page`, `clean_per_page`). Every input now
+  flows through one of them and returns a predictable 400 with a
+  `{error, field}` body.
+- Files: `gateway/security/input_hygiene.py` (new),
+  `gateway/tests/test_edge_cases.py` (new).
+
+### Double-click "Subscribe" → duplicate Stripe subscription
+
+- Symptom: users who impatiently double-clicked on Checkout, or whose
+  mobile client retried the POST after a network blip within 10 s,
+  sometimes ended up with two parallel Stripe subscriptions.
+- Cause: no idempotency layer for subscription-critical writes. The
+  Stripe-webhook ledger (`processed_stripe_events`) covers Stripe →
+  narve duplicates but not narve → Stripe.
+- Fix: added `gateway/security/idempotency.py` with an
+  `Idempotency-Key`-aware helper (`with_idempotency`) and a JSON-body
+  fingerprint fallback when the header is missing. 10 s TTL window,
+  Redis when available, in-process otherwise. Module ships; wiring
+  into billing / kelly / portfolio handlers is a follow-up PR so each
+  integration gets a code-review pass.
+- Files: `gateway/security/idempotency.py` (new).
+
+### DST transition unprotected
+
+- Symptom: unit tests didn't assert physical-time math across
+  `Europe/Berlin` spring-forward; a regression could silently inflate
+  elapsed-time deltas by an hour for any metric computed on wall-clock
+  subtraction.
+- Cause: no explicit regression. Every datetime storage path uses
+  integer epochs, but no one had checked.
+- Fix: `TestTimezone.test_dst_transition_day` asserts physical delta
+  across 2026-03-29 Europe/Berlin spring-forward is bounded below the
+  wall-clock gap.
+- Files: `gateway/tests/test_edge_cases.py`.
+
+### Pagination abuse
+
+- Symptom: a mobile client (or malicious scraper) sending
+  `per_page=10000` got a 10 k-row response; `page=-1` produced a 500
+  from negative `OFFSET`.
+- Cause: per-endpoint clamping existed but wasn't uniform — some
+  capped, some passed through.
+- Fix: `clean_page` / `clean_per_page` helpers (defaults 20 / cap 100
+  / max_page 10 000). Collapse negative / zero / non-numeric input to
+  defaults; clamp over-cap values silently (better UX than a 400 for
+  a mobile app that hasn't heard about the limit).
+- Files: `gateway/security/input_hygiene.py`,
+  `gateway/tests/test_edge_cases.py` (`TestPaginationBoundaries`).
+
+### Unicode / zero-width / bidi smuggling
+
+- Symptom: a username with zero-width joiners looked identical to an
+  existing one; a bidi-control character could reverse the apparent
+  meaning of a displayed handle.
+- Cause: no normalisation step before length or charset checks.
+- Fix: `clean_text` applies NFC normalisation, strips
+  zero-width / BOM / bidi-control glyphs, then enforces length in
+  code points.
+- Files: `gateway/security/input_hygiene.py`.
+
+---
+
 ## 2026-04-21 — Security audit #2 follow-up
 
 Scope: CRITICAL/HIGH items from `gateway/NARVE_SECURITY_AUDIT.md` audit #2.
