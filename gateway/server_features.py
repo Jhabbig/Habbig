@@ -1506,26 +1506,14 @@ async def auth_login(request: Request):
     except Exception as exc:
         log.warning("auth.login: rehash-on-login failed for user_id=%d: %s", user_id, exc)
 
-    # Check 2FA status so the frontend knows whether to redirect to /auth/2fa
-    try:
-        status = db.get_user_2fa_status(user_id)
-        has_2fa = bool(status and status["two_fa_method"])
-    except Exception:
-        has_2fa = False
+    # 2FA was removed — login always completes without a second factor.
+    has_2fa = False
 
     response = JSONResponse({
         "success": True,
         "requires_2fa": has_2fa,
     })
     await _issue_hardened_session(user_id, request, response)
-
-    # If 2FA is enabled, the frontend will redirect to /auth/2fa.
-    # We still issue the session cookie so the 2FA page can read it.
-    if has_2fa and status and status["two_fa_method"] == "email_otp":
-        try:
-            await server._issue_email_otp(user_id, user["email"], ip)
-        except Exception as e:
-            log.warning("email OTP dispatch failed: %s", e)
 
     log.info("auth.login: user_id=%d success (2fa=%s)", user_id, has_2fa)
     security_log.info(

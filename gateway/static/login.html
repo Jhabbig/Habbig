@@ -222,11 +222,7 @@ function submitLogin(ev) {
     return r.json().then(function(d){ return { ok: r.ok, status: r.status, data: d }; });
   }).then(function(res) {
     if (res.ok && res.data && res.data.success) {
-      if (res.data.requires_2fa) {
-        window.location.href = '/auth/2fa';
-      } else {
-        window.location.href = '/dashboards';
-      }
+      window.location.href = '/dashboards';
       return;
     }
     btn.disabled = false;
