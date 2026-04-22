@@ -89,7 +89,21 @@ def insert_market_snapshot(
             (slug, market_question, category,
              float(yes_price), no_price, volume, ts, source_platform),
         )
-        return cur.lastrowid
+        row_id = cur.lastrowid
+    # Realtime fan-out outside the transaction so a slow hub never holds
+    # the sqlite lock. Best-effort — a failed broadcast just means this
+    # tick doesn't reach live charts; the next snapshot (60s later) will.
+    try:
+        from realtime.broadcast import emit_price_tick
+        emit_price_tick(
+            market_slug=slug,
+            yes_price=float(yes_price),
+            no_price=(float(no_price) if no_price is not None else None),
+            volume_24h=(float(volume) if volume is not None else None),
+        )
+    except Exception:
+        pass
+    return row_id
 
 
 def get_market_history(market_slug: str, limit: int = 500) -> list[sqlite3.Row]:

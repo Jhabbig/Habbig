@@ -329,6 +329,18 @@ def recompute_all_credibilities() -> int:
         except Exception:
             pass  # calibration is best-effort; don't fail the whole recompute
 
+        # Realtime fan-out — one event per source on the global feed + every
+        # market channel the source contributes to. Best-effort only; an
+        # import failure or dead hub connection never rolls back the recompute.
+        try:
+            from realtime.broadcast import emit_credibility_update
+            emit_credibility_update(
+                source_handle=handle,
+                global_credibility=round(global_cred, 6),
+            )
+        except Exception:
+            pass
+
         count += 1
 
     return count

@@ -120,6 +120,29 @@ def _insert_predictions(
         except Exception as exc:
             log.warning("ttl_invalidate after extract failed: %s", exc)
 
+        # Realtime fan-out — best-effort, never let a hub failure block ingest.
+        try:
+            from realtime.broadcast import emit_new_prediction
+            for pred in predictions:
+                if not pred:
+                    continue
+                content = pred.get("claim") or pred.get("content") or ""
+                if not content.strip():
+                    continue
+                emit_new_prediction(
+                    source_handle=source_handle,
+                    market_slug=pred.get("market_slug"),
+                    category=pred.get("category") or "other",
+                    direction=(pred.get("direction") or "").upper() or None,
+                    predicted_probability=(
+                        pred.get("explicit_probability")
+                        or pred.get("predicted_probability")
+                    ),
+                    content=content,
+                )
+        except Exception as exc:
+            log.debug("realtime emit_new_prediction failed: %s", exc)
+
     return written
 
 

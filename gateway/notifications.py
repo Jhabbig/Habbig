@@ -167,6 +167,14 @@ async def create_notification(
         await _broadcast(user_id, payload)
     except Exception:
         log.exception("notifications: broadcast failed id=%s", notif_id)
+    # Realtime fan-out on the shared /ws hub. Non-fatal if the import or
+    # broadcast fails — the legacy SSE path above still delivers to
+    # tabs that haven't migrated to WebSocket yet.
+    try:
+        from realtime.broadcast import emit_notification
+        emit_notification(user_id=user_id, notification=payload)
+    except Exception as exc:  # pragma: no cover
+        log.debug("realtime emit_notification failed: %s", exc)
     return notif_id
 
 

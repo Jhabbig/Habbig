@@ -4820,6 +4820,21 @@ except Exception as _exc:  # pragma: no cover
     log.exception("intelligence_routes.register failed: %s", _exc)
 
 
+# ── Realtime WebSocket hub ────────────────────────────────────────────────
+#
+# /ws + /admin/realtime + /admin/realtime/stats. Must be registered before
+# the catch-all websocket_proxy at the bottom of this file — the module
+# inserts its WebSocket route at position 0 in app.router.routes for that
+# reason. Broadcast sites (see hub.broadcast) live in the write paths of
+# predictions, market snapshots, notifications, credibility, forensics.
+
+try:
+    import realtime as _realtime  # noqa: E402
+    _realtime.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("realtime.register failed: %s", _exc)
+
+
 # ── Admin: Audit log ─────────────────────────────────────────────────────────
 
 

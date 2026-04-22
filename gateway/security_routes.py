@@ -204,6 +204,18 @@ async def capture_attempt(request: Request) -> JSONResponse:
         user_id, event_type, ip, list(metadata.keys()),
     )
 
+    # Realtime fan-out to admin:security. Best-effort — a hub failure
+    # never blocks the capture-attempt response.
+    try:
+        from realtime.broadcast import emit_capture_attempt
+        emit_capture_attempt(
+            user_id=user_id,
+            kind=event_type,
+            context={"ip": ip, "metadata_keys": list(metadata.keys())},
+        )
+    except Exception:
+        pass
+
     # Flood alert: >5 events / 10 min → fire an admin notification.
     try:
         count = recent_events_for_user(user_id, window_seconds=600)

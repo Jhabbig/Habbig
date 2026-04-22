@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Realtime — Admin — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <meta name="realtime-autoconnect" content="off">
+  <style>
+    .rt-shell { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; color: var(--text-primary); }
+    .rt-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
+    .rt-title { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+    .rt-sub { font-size: 13px; color: var(--text-tertiary); }
+    .rt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+    .rt-dot.ok { background: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15); }
+    .rt-dot.stale { background: #f59e0b; }
+    .rt-dot.err { background: #ef4444; }
+    .rt-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .rt-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 20px; }
+    .rt-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 8px; }
+    .rt-value { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .rt-sub-value { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+    .rt-section { margin-top: 28px; }
+    .rt-section-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 12px; }
+    .rt-table { width: 100%; border-collapse: collapse; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); overflow: hidden; font-size: 13px; }
+    .rt-table th { text-align: left; padding: 12px 16px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); border-bottom: 1px solid var(--border-ghost); }
+    .rt-table td { padding: 12px 16px; border-top: 1px solid var(--border-ghost); font-variant-numeric: tabular-nums; }
+    .rt-table tr:first-child td { border-top: none; }
+    .rt-num { text-align: right; }
+    .rt-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .rt-empty { padding: 24px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+
+    .rt-spark { display: flex; align-items: flex-end; gap: 2px; height: 48px; margin-top: 12px; }
+    .rt-spark-bar { flex: 1; background: var(--text-primary); opacity: 0.18; min-height: 2px; border-radius: 1px; transition: height 0.2s, opacity 0.2s; }
+    .rt-spark-bar.hot { opacity: 0.9; }
+
+    .rt-pie-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .rt-pie-tag { display: inline-flex; align-items: center; padding: 6px 12px; background: var(--bg-overlay); border: 1px solid var(--border-default); border-radius: 100px; font-size: 12px; }
+    .rt-pie-tag strong { font-weight: 600; margin-right: 6px; font-variant-numeric: tabular-nums; }
+    .rt-pie-tag em { color: var(--text-tertiary); font-style: normal; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <main class="rt-shell" data-realtime-admin-security="1">
+    <header class="rt-header">
+      <div>
+        <h1 class="rt-title">Realtime</h1>
+        <div class="rt-sub">
+          <span id="rt-status-dot" class="rt-dot stale"></span>
+          <span id="rt-status-text">connecting…</span>
+          <span style="margin-left:12px">refresh 2s · window 60s</span>
+        </div>
+      </div>
+      <a href="/admin" style="font-size:13px;color:var(--text-secondary);text-decoration:none">← Admin</a>
+    </header>
+
+    <div class="rt-stat-grid">
+      <div class="rt-card">
+        <div class="rt-label">Connections</div>
+        <div class="rt-value" id="rt-connections">—</div>
+        <div class="rt-sub-value"><span id="rt-unique-users">—</span> unique users</div>
+      </div>
+      <div class="rt-card">
+        <div class="rt-label">Channels</div>
+        <div class="rt-value" id="rt-channels">—</div>
+        <div class="rt-sub-value">active now</div>
+      </div>
+      <div class="rt-card">
+        <div class="rt-label">Msgs · 60s</div>
+        <div class="rt-value" id="rt-msgs-60s">—</div>
+        <div class="rt-sub-value">avg <span id="rt-msgs-rate">—</span>/s</div>
+      </div>
+      <div class="rt-card">
+        <div class="rt-label">Dropped · 60s</div>
+        <div class="rt-value" id="rt-dropped-60s">—</div>
+        <div class="rt-sub-value">send failures</div>
+      </div>
+    </div>
+
+    <div class="rt-section">
+      <div class="rt-section-title">Messages per second (last 60s)</div>
+      <div class="rt-card">
+        <div class="rt-spark" id="rt-spark"></div>
+      </div>
+    </div>
+
+    <div class="rt-section">
+      <div class="rt-section-title">Top 10 channels</div>
+      <table class="rt-table">
+        <thead><tr><th>Channel</th><th class="rt-num">Subscribers</th></tr></thead>
+        <tbody id="rt-channel-rows">
+          <tr><td colspan="2" class="rt-empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="rt-section">
+      <div class="rt-section-title">Disconnect reasons (since boot)</div>
+      <div class="rt-pie-row" id="rt-reasons"><span class="rt-pie-tag"><em>none yet</em></span></div>
+    </div>
+
+    <div class="rt-section">
+      <div class="rt-section-title">Live admin:security events</div>
+      <table class="rt-table">
+        <thead><tr><th>Time</th><th>Type</th><th>Payload</th></tr></thead>
+        <tbody id="rt-security-rows">
+          <tr><td colspan="3" class="rt-empty">Awaiting events…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="/_gateway_static/js/realtime.js"></script>
+  <script src="/_gateway_static/js/realtime-bindings.js"></script>
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const fmt = (n) => (n == null ? "—" : new Intl.NumberFormat().format(n));
+
+      let lastFetchAt = 0;
+
+      async function refresh() {
+        try {
+          const res = await fetch("/admin/realtime/stats", { credentials: "same-origin" });
+          if (!res.ok) throw new Error(res.status);
+          const s = await res.json();
+          $("rt-connections").textContent = fmt(s.connections);
+          $("rt-unique-users").textContent = fmt(s.unique_users);
+          $("rt-channels").textContent = fmt(s.channels);
+          $("rt-msgs-60s").textContent = fmt(s.msgs_last_60s);
+          $("rt-msgs-rate").textContent = (s.msgs_last_60s / 60).toFixed(1);
+          $("rt-dropped-60s").textContent = fmt(s.dropped_last_60s);
+
+          // sparkline: 60 bars, height proportional to max
+          const buckets = s.per_second || [];
+          const max = Math.max(1, ...buckets.map((b) => b.sent));
+          const spark = $("rt-spark");
+          spark.innerHTML = "";
+          const tail = buckets.slice(-60);
+          // pad to 60 for a stable layout even at boot
+          for (let i = tail.length; i < 60; i += 1) tail.unshift({ ts: 0, sent: 0 });
+          tail.forEach((b) => {
+            const bar = document.createElement("div");
+            bar.className = "rt-spark-bar" + (b.sent > 0 ? " hot" : "");
+            bar.style.height = Math.max(2, (b.sent / max) * 48) + "px";
+            bar.title = b.sent + " msg/s at t=" + b.ts;
+            spark.appendChild(bar);
+          });
+
+          // channels
+          const rows = (s.top_channels || []).map((c) =>
+            `<tr><td class="rt-mono">${escapeHtml(c.channel)}</td>` +
+            `<td class="rt-num">${fmt(c.subscribers)}</td></tr>`
+          );
+          $("rt-channel-rows").innerHTML = rows.length
+            ? rows.join("")
+            : '<tr><td colspan="2" class="rt-empty">No active channels.</td></tr>';
+
+          // reasons
+          const reasonEntries = Object.entries(s.disconnect_reasons || {});
+          $("rt-reasons").innerHTML = reasonEntries.length
+            ? reasonEntries.map(([k, v]) => `<span class="rt-pie-tag"><strong>${fmt(v)}</strong><em>${escapeHtml(k)}</em></span>`).join("")
+            : '<span class="rt-pie-tag"><em>none yet</em></span>';
+
+          lastFetchAt = Date.now();
+          $("rt-status-dot").className = "rt-dot ok";
+          $("rt-status-text").textContent = "live";
+        } catch (err) {
+          $("rt-status-dot").className = "rt-dot err";
+          $("rt-status-text").textContent = "stats endpoint unreachable";
+        }
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      // Live admin:security feed: subscribe via the shared rt client, which
+      // realtime-bindings.js already wired because of data-realtime-admin-security="1".
+      window.showCaptureAttempt = function (evt) { appendSecurity("capture_attempt", evt); };
+      window.handleRtEvent = function (evt) { appendSecurity(evt.type || "event", evt); };
+
+      const MAX_ROWS = 25;
+      function appendSecurity(type, evt) {
+        const tbody = $("rt-security-rows");
+        if (tbody.querySelector(".rt-empty")) tbody.innerHTML = "";
+        const row = document.createElement("tr");
+        const t = new Date().toLocaleTimeString();
+        const payload = Object.assign({}, evt);
+        delete payload.channel; delete payload.ts;
+        row.innerHTML = `<td>${t}</td><td class="rt-mono">${escapeHtml(type)}</td><td class="rt-mono">${escapeHtml(JSON.stringify(payload))}</td>`;
+        tbody.insertBefore(row, tbody.firstChild);
+        while (tbody.children.length > MAX_ROWS) tbody.removeChild(tbody.lastChild);
+      }
+
+      // Start WS + kick off polling
+      if (window.rt) window.rt.connect();
+      refresh();
+      setInterval(refresh, 2000);
+    })();
+  </script>
+</body>
+</html>
