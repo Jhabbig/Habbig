@@ -154,22 +154,9 @@ def log_failure(*, feature: str, model: str) -> Optional[int]:
 
 
 def get_async_client() -> Any:
-    """Return an AsyncAnthropic client, or None if unavailable.
-
-    Kept here so every feature follows the same import/key convention and
-    tests can monkey-patch this single entry point to inject a fake client
-    without reaching into each module.
+    """Legacy shim — delegates to ai.client.get_async_client so there's
+    one SDK initialisation path. Kept so older tests importing this
+    symbol keep working without touching ai.client directly.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        return None
-    try:
-        import anthropic
-    except ImportError:
-        log.warning("anthropic SDK not installed")
-        return None
-    try:
-        return anthropic.AsyncAnthropic(api_key=api_key)
-    except Exception as exc:
-        log.error("AsyncAnthropic instantiation failed: %s", exc)
-        return None
+    from ai import client as _ai_client
+    return _ai_client.get_async_client()

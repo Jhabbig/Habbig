@@ -148,28 +148,17 @@ def _fallback(market_question: str) -> dict:
 
 
 async def _call_claude(market_question: str, market_description: str) -> tuple[Optional[str], Any]:
-    sdk = client.get_async_client()
-    if sdk is None:
-        return None, None
     user_msg = f"Market: {market_question}\n"
     if market_description:
         user_msg += f"Description: {market_description[:1000]}\n"
-    try:
-        resp = await sdk.messages.create(
-            model=client.ANTHROPIC_MODELS["categorisation"],
-            max_tokens=CATEGORISATION_MAX_TOKENS,
-            system=CATEGORISATION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-    except Exception as exc:
-        log.error("categoriser: Claude call failed: %s", exc)
-        return None, None
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return ("".join(parts) if parts else None), resp
+    text = await client.call_claude(
+        feature="categorisation",
+        system=CATEGORISATION_SYSTEM_PROMPT,
+        user=user_msg,
+        model=client.ANTHROPIC_MODELS["categorisation"],
+        max_tokens=CATEGORISATION_MAX_TOKENS,
+    )
+    return text, (True if text is not None else None)
 
 
 async def categorise_market(
@@ -187,28 +176,18 @@ async def categorise_market(
     if not force:
         cached = cache.get(key)
         if cached is not None:
-            client.log_response(
+            client.log_claude_usage_row(
                 feature="categorisation",
                 model=client.ANTHROPIC_MODELS["categorisation"],
-                response=None, cached_hit=True,
+                cached_hit=True,
             )
             return cached
 
-    raw, resp = await _call_claude(market_question, market_description)
-    if resp is not None:
-        client.log_response(
-            feature="categorisation",
-            model=client.ANTHROPIC_MODELS["categorisation"],
-            response=resp, cached_hit=False,
-        )
-    else:
-        client.log_failure(
-            feature="categorisation",
-            model=client.ANTHROPIC_MODELS["categorisation"],
-        )
+    raw, _resp = await _call_claude(market_question, market_description)
+    # call_claude already logged success or failure.
 
     result = _parse(raw, market_question)
-    ttl = CATEGORISATION_TTL_SECONDS if resp is not None else FAILURE_TTL_SECONDS
+    ttl = CATEGORISATION_TTL_SECONDS if raw is not None else FAILURE_TTL_SECONDS
     cache.set(
         key, result,
         ttl_seconds=ttl,

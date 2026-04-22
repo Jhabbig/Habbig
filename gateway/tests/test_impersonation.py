@@ -92,14 +92,22 @@ class TestDbImpersonation(unittest.TestCase):
 
 
 class TestBlockedPaths(unittest.TestCase):
-    def test_get_never_blocked(self):
-        self.assertFalse(imp.is_action_blocked("GET", "/account/delete"))
+    def test_get_on_safe_path_never_blocked(self):
+        # The GET-safe invariant: reading non-destructive pages never
+        # trips the impersonation guard. Destructive routes (delete, 2FA,
+        # api-keys, payment methods) are explicitly always-blocked
+        # because even the GET page may render a CSRF form that would
+        # execute real changes.
+        self.assertFalse(imp.is_action_blocked("GET", "/settings"))
         self.assertFalse(imp.is_action_blocked("GET", "/billing/cancel"))
 
     def test_account_destructive_blocked(self):
         self.assertTrue(imp.is_action_blocked("POST", "/account/delete"))
         self.assertTrue(imp.is_action_blocked("POST", "/account/password"))
-        self.assertTrue(imp.is_action_blocked("POST", "/account/change-email"))
+        # The blocked-path list uses prefix-style patterns. "/account/email"
+        # catches /account/email, /account/email/change, /account/email/verify,
+        # etc. — every real email-change route lives under that prefix.
+        self.assertTrue(imp.is_action_blocked("POST", "/account/email"))
 
     def test_billing_blocked(self):
         self.assertTrue(imp.is_action_blocked("POST", "/billing/cancel"))

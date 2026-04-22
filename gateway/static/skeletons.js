@@ -124,12 +124,68 @@
     templates[name] = fn;
   }
 
+  /**
+   * Ergonomic fetch() wrapper that brackets a request with skeleton lifecycle.
+   * Use this for new code so every data-loading path follows the same contract:
+   *   skeleton → request → render (success) OR error panel (failure).
+   *
+   *   narveSkel.wrapFetch({
+   *     containerId: 'feed-table',
+   *     template: 'prediction-row',
+   *     count: 8,
+   *     url: '/api/feed',
+   *     onData: function (data) { renderFeed(data); },
+   *     errorMessage: "Couldn't load predictions.",
+   *   });
+   *
+   * Returns a Promise that resolves with the parsed JSON on success, or
+   * rejects with the underlying error. On error, the container is replaced
+   * with a `.skeleton-error` panel (see `error()` above).
+   */
+  function wrapFetch(opts) {
+    var containerId = opts.containerId;
+    var url = opts.url;
+    var fetchOpts = opts.fetchOpts || {};
+    var template = opts.template || 'prediction-row';
+    var count = opts.count || 6;
+    var onData = opts.onData || function () {};
+    var errorMessage = opts.errorMessage || "Couldn't load this section.";
+    var retryFn = opts.retryFn;
+
+    if (!containerId || !url) {
+      console.warn('narveSkel.wrapFetch: containerId and url are required');
+      return Promise.reject(new Error('wrapFetch: missing args'));
+    }
+
+    show(containerId, template, count);
+
+    return fetch(url, fetchOpts)
+      .then(function (r) {
+        if (!r.ok) {
+          throw new Error(r.status + ' ' + r.statusText);
+        }
+        return r.json();
+      })
+      .then(function (data) {
+        hide(containerId);
+        // Let the hide fade-out finish before injecting real content so the
+        // transition doesn't look like a jump cut.
+        setTimeout(function () { onData(data); }, 200);
+        return data;
+      })
+      .catch(function (e) {
+        error(containerId, errorMessage, retryFn);
+        throw e;
+      });
+  }
+
   window.narveSkel = {
     show: show,
     hide: hide,
     fadeInContent: fadeInContent,
     error: error,
     registerTemplate: registerTemplate,
+    wrapFetch: wrapFetch,
     templates: templates,
   };
 })();

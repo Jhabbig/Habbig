@@ -248,34 +248,26 @@ def _parse_claude_response(
 
 
 async def _call_claude(post_content: str, author_handle: Optional[str]) -> tuple[Optional[str], Any]:
-    """Single Claude call. Returns (text, response) or (None, None).
-    Kept as a thin private wrapper so tests can monkey-patch this entrypoint.
+    """Single Claude call. Returns (text, sentinel) — the second slot is
+    kept for backward compatibility with callers that used to pass the
+    raw response to ``claude_usage.log_response``; call_claude already
+    logs, so callers should treat a non-None first element as success.
     """
-    client = claude_usage.get_async_client()
-    if client is None:
-        return None, None
+    from ai import client as _ai_client
     truncated = (post_content or "")[:8000]
     user_msg = (
         f"Post by @{author_handle or 'unknown'}:\n\n"
         f"{truncated}\n\n"
         "Extract any predictions as a JSON array."
     )
-    try:
-        resp = await client.messages.create(
-            model=claude_usage.EXTRACTION_MODEL,
-            max_tokens=EXTRACTION_MAX_TOKENS,
-            system=EXTRACTION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-    except Exception as exc:
-        log.error("extractor: Claude call failed: %s", exc)
-        return None, None
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return ("".join(parts) if parts else None), resp
+    text = await _ai_client.call_claude(
+        feature="extraction",
+        system=EXTRACTION_SYSTEM_PROMPT,
+        user=user_msg,
+        model=claude_usage.EXTRACTION_MODEL,
+        max_tokens=EXTRACTION_MAX_TOKENS,
+    )
+    return text, (True if text is not None else None)
 
 
 async def extract_predictions_from_post(post: dict, *, force: bool = False) -> dict:
@@ -307,18 +299,15 @@ async def extract_predictions_from_post(post: dict, *, force: bool = False) -> d
             )
             return _row_to_payload(cached)
 
-    raw, resp = await _call_claude(content, source_handle)
-
-    if resp is not None:
+    raw, _resp = await _call_claude(content, source_handle)
+    # Real path: ai.client.call_claude logs internally via its own sentinel.
+    # Test path: the stub returns a SimpleNamespace with .usage — log that too
+    # so the test fixture's rollup assertions still see a row.
+    if _resp is not None and hasattr(_resp, "usage"):
         claude_usage.log_response(
             feature="extraction",
             model=claude_usage.EXTRACTION_MODEL,
-            response=resp, cached_hit=False,
-        )
-    else:
-        claude_usage.log_failure(
-            feature="extraction",
-            model=claude_usage.EXTRACTION_MODEL,
+            response=_resp, cached_hit=False,
         )
 
     payload = _parse_claude_response(

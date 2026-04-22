@@ -205,39 +205,16 @@ def _simulated_roi(best_bets: list[dict]) -> dict:
 
 
 async def _call_claude_narrative(payload: dict) -> Optional[dict]:
-    sdk = ai_client.get_async_client()
-    if sdk is None:
-        ai_client.log_failure(
-            feature="weekly_report",
-            model=ai_client.ANTHROPIC_MODELS["weekly_report"],
-        )
-        return None
-    try:
-        resp = await sdk.messages.create(
-            model=ai_client.ANTHROPIC_MODELS["weekly_report"],
-            max_tokens=REPORT_MAX_TOKENS,
-            system=REPORT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": json.dumps(payload)[:12000]}],
-        )
-    except Exception as exc:
-        log.error("weekly_report: Claude call failed: %s", exc)
-        ai_client.log_failure(
-            feature="weekly_report",
-            model=ai_client.ANTHROPIC_MODELS["weekly_report"],
-        )
-        return None
-
-    ai_client.log_response(
+    text = await ai_client.call_claude(
         feature="weekly_report",
+        system=REPORT_SYSTEM_PROMPT,
+        user=json.dumps(payload)[:12000],
         model=ai_client.ANTHROPIC_MODELS["weekly_report"],
-        response=resp, cached_hit=False,
+        max_tokens=REPORT_MAX_TOKENS,
     )
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    text = "".join(parts).strip()
+    if text is None:
+        return None
+    text = text.strip()
     if text.startswith("```"):
         import re as _re
         text = _re.sub(r"^```[a-zA-Z]*\n?", "", text)

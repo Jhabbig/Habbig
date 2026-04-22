@@ -114,26 +114,15 @@ def _build_user_message(
 
 async def _call_claude(user_message: str) -> tuple[Optional[str], Any]:
     """Single Claude call; tests monkey-patch this."""
-    client = claude_usage.get_async_client()
-    if client is None:
-        return None, None
-    try:
-        resp = await client.messages.create(
-            model=claude_usage.SUMMARISATION_MODEL,
-            max_tokens=SUMMARY_MAX_TOKENS,
-            system=SUMMARY_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
-    except Exception as exc:
-        log.error("source_summary: Claude call failed: %s", exc)
-        return None, None
-
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return ("".join(parts) if parts else None), resp
+    from ai import client as _ai_client
+    text = await _ai_client.call_claude(
+        feature="summarisation",
+        system=SUMMARY_SYSTEM_PROMPT,
+        user=user_message,
+        model=claude_usage.SUMMARISATION_MODEL,
+        max_tokens=SUMMARY_MAX_TOKENS,
+    )
+    return text, (True if text is not None else None)
 
 
 # ── Public entry points ──────────────────────────────────────────────────────
@@ -185,10 +174,10 @@ async def generate_source_summary(
     if not force:
         cached = db.get_source_summary(handle)
         if cached:
-            claude_usage.log_response(
+            from ai import client as _ai_client
+            _ai_client.log_claude_usage_row(
                 feature="summarisation",
                 model=claude_usage.SUMMARISATION_MODEL,
-                response=None,
                 cached_hit=True,
             )
             return {
@@ -227,20 +216,8 @@ async def generate_source_summary(
         return {"source_handle": handle, **payload}
 
     user_message = _build_user_message(handle, cred, categories, predictions)
-    raw, resp = await _call_claude(user_message)
-
-    if resp is not None:
-        claude_usage.log_response(
-            feature="summarisation",
-            model=claude_usage.SUMMARISATION_MODEL,
-            response=resp,
-            cached_hit=False,
-        )
-    else:
-        claude_usage.log_failure(
-            feature="summarisation",
-            model=claude_usage.SUMMARISATION_MODEL,
-        )
+    raw, _resp = await _call_claude(user_message)
+    # call_claude inside _call_claude already logged success/failure.
 
     summary_text = (raw or "").strip()
     if not summary_text:

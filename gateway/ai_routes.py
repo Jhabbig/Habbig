@@ -42,6 +42,31 @@ async def source_summary(request: Request, handle: str):
     return JSONResponse(summary)
 
 
+async def admin_kill_switch_set(request: Request):
+    """POST /admin/api/ai/kill-switch { active: bool, reason?: str }
+
+    Super-admin only — flipping the kill-switch pauses every uncached
+    Claude call across the platform, so we require tier=2 not just admin.
+    """
+    import server
+    user = server._require_admin_user(request)
+    if int(user.get("admin_level") or 1) < 2:
+        raise HTTPException(status_code=403, detail="Super-admin required")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid body")
+    active = bool(body.get("active"))
+    reason = (body.get("reason") or "").strip() or None
+
+    from ai import client as _ai_client
+    _ai_client.set_kill_switch(
+        active=active, reason=reason,
+        triggered_by=user.get("email") or f"admin_{user.get('user_id')}",
+    )
+    return JSONResponse(_ai_client.get_kill_switch_status())
+
+
 async def admin_ai_usage(request: Request):
     import server
     user = server._require_admin_user(request)
@@ -131,6 +156,27 @@ async def admin_ai_usage_page(request: Request):
     total_hits = int(total_row["hits"] or 0) if total_row else 0
     hit_rate = round(100 * total_hits / total_calls, 1) if total_calls else 0.0
 
+    from ai import client as _ai_client
+    ks = _ai_client.get_kill_switch_status()
+    is_super = int(user.get("admin_level") or 1) >= 2
+
+    # Top-10 most expensive calls in the last 24h (by output tokens).
+    one_day_ago = int(time.time()) - 86400
+    conn2 = _connect()
+    try:
+        top_rows = conn2.execute(
+            "SELECT feature, model, input_tokens, output_tokens, cost_usd, "
+            "       timestamp "
+            "FROM claude_usage_log "
+            "WHERE timestamp >= ? AND cached_hit = 0 "
+            "ORDER BY output_tokens DESC LIMIT 10",
+            (one_day_ago,),
+        ).fetchall()
+    except sqlite3.Error:
+        top_rows = []
+    finally:
+        conn2.close()
+
     table_rows = "".join(
         f"<tr><td class='mono'>{_html.escape(r['day'])}</td>"
         f"<td>{_html.escape(r['feature'])}</td>"
@@ -140,6 +186,33 @@ async def admin_ai_usage_page(request: Request):
         f"<td class='r mono'>${r['cost_usd']:.4f}</td></tr>"
         for r in rows
     ) or "<tr><td colspan='6' style='text-align:center;color:var(--text-tertiary)'>No calls yet.</td></tr>"
+
+    # Kill-switch banner. Non-super-admins see a read-only status; super-
+    # admins see a toggle button wired to the /admin/api/ai/kill-switch POST.
+    if ks["active"]:
+        ks_html = (
+            "<div class='ks ks-on'>"
+            "<strong>Claude kill-switch: ACTIVE</strong> — uncached calls are blocked."
+            f"<div class='ks-reason'>{_html.escape(ks.get('reason') or '')}</div>"
+        )
+    else:
+        ks_html = "<div class='ks ks-off'><strong>Claude kill-switch: OFF</strong>"
+    if is_super:
+        ks_html += (
+            "<button id='ks-toggle' class='ks-btn'>"
+            f"{'Deactivate' if ks['active'] else 'Activate'} kill-switch"
+            "</button>"
+        )
+    ks_html += "</div>"
+
+    top_rows_html = "".join(
+        f"<tr><td>{_html.escape(r['feature'])}</td>"
+        f"<td class='mono'>{_html.escape(r['model'])}</td>"
+        f"<td class='r mono'>{r['input_tokens']}/{r['output_tokens']}</td>"
+        f"<td class='r mono'>${r['cost_usd']:.4f}</td>"
+        f"<td class='r mono'>{_html.escape(time.strftime('%H:%M:%S', time.gmtime(r['timestamp'])))}</td></tr>"
+        for r in top_rows
+    ) or "<tr><td colspan='5' style='text-align:center;color:var(--text-tertiary)'>No uncached calls in last 24h.</td></tr>"
 
     body = f"""<!DOCTYPE html><html><head>
 <meta charset='utf-8'><title>AI usage — narve.ai</title>
@@ -157,6 +230,16 @@ border-radius:10px;padding:16px 20px}}
 .label{{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;
 color:var(--text-secondary);margin-bottom:6px}}
 .value{{font-family:var(--font-display);font-size:28px;font-weight:500}}
+.ks{{padding:14px 18px;border-radius:8px;margin-bottom:20px;
+display:flex;align-items:center;gap:14px;flex-wrap:wrap}}
+.ks-on{{background:#2a0e0e;border:1px solid #6b1f1f;color:#ffb4b4}}
+.ks-off{{background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-secondary)}}
+.ks-reason{{font-size:12px;opacity:0.8;flex:1 1 100%}}
+.ks-btn{{margin-left:auto;padding:8px 14px;border-radius:6px;
+background:var(--text-primary);color:var(--bg-base);border:0;cursor:pointer;
+font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em}}
+.ks-btn:hover{{opacity:0.9}}
+.section-title{{font-size:14px;font-weight:600;margin:28px 0 10px;letter-spacing:-0.01em}}
 table{{width:100%;border-collapse:collapse;font-size:13px;
 border:1px solid var(--border-default);border-radius:8px;overflow:hidden}}
 th{{text-align:left;background:var(--bg-surface);color:var(--text-secondary);
@@ -166,7 +249,8 @@ td{{padding:10px 14px;border-top:1px solid var(--border-default)}}
 .mono{{font-family:var(--font-mono);font-size:12px}}
 </style></head><body>
 <h1>AI usage</h1>
-<p class='meta'>Admin · {user['email']} · {days}-day window</p>
+<p class='meta'>Admin · {_html.escape(user['email'])} · {days}-day window</p>
+{ks_html}
 <div class='cards'>
   <div class='card'><div class='label'>Total spend</div>
     <div class='value'>${total_cost:.2f}</div></div>
@@ -177,12 +261,52 @@ td{{padding:10px 14px;border-top:1px solid var(--border-default)}}
   <div class='card'><div class='label'>Window</div>
     <div class='value'>{days} d</div></div>
 </div>
+<div class='section-title'>Per-feature breakdown</div>
 <table>
 <thead><tr><th>Day</th><th>Feature</th><th class='r'>Calls</th>
 <th class='r'>Cache hits</th><th class='r'>Tokens (in/out)</th>
 <th class='r'>Cost</th></tr></thead>
 <tbody>{table_rows}</tbody>
 </table>
+<div class='section-title'>Top 10 most expensive uncached calls (last 24h)</div>
+<table>
+<thead><tr><th>Feature</th><th>Model</th><th class='r'>Tokens (in/out)</th>
+<th class='r'>Cost</th><th class='r'>Time UTC</th></tr></thead>
+<tbody>{top_rows_html}</tbody>
+</table>
+<script>
+(function(){{
+  var btn = document.getElementById('ks-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', async function(){{
+    var currentlyActive = {('true' if ks['active'] else 'false')};
+    var reason = null;
+    if (!currentlyActive) {{
+      reason = prompt('Reason for activating kill-switch (shown to operators):') || '';
+    }} else if (!confirm('Deactivate Claude kill-switch? Uncached calls will resume.')) {{
+      return;
+    }}
+    btn.disabled = true;
+    try {{
+      var r = await fetch('/admin/api/ai/kill-switch', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{active: !currentlyActive, reason: reason}}),
+      }});
+      if (!r.ok) {{
+        var err = await r.json().catch(function(){{ return {{}}; }});
+        alert(err.detail || 'Toggle failed ('+r.status+')');
+        btn.disabled = false;
+        return;
+      }}
+      location.reload();
+    }} catch (e) {{
+      alert('Network error — try again.');
+      btn.disabled = false;
+    }}
+  }});
+}})();
+</script>
 </body></html>"""
     from fastapi.responses import HTMLResponse
     return HTMLResponse(body)
@@ -191,6 +315,9 @@ td{{padding:10px 14px;border-top:1px solid var(--border-default)}}
 def register(app) -> None:
     app.add_api_route("/api/sources/{handle}/summary", source_summary, methods=["GET"])
     app.add_api_route("/admin/api/ai/usage", admin_ai_usage, methods=["GET"])
+    app.add_api_route(
+        "/admin/api/ai/kill-switch", admin_kill_switch_set, methods=["POST"],
+    )
     from fastapi.responses import HTMLResponse
     app.add_api_route(
         "/admin/ai-usage", admin_ai_usage_page,

@@ -158,29 +158,14 @@ async def generate_retrospective(
 
 async def _call_claude(user_message: str) -> Optional[str]:
     """Call Claude to generate the retrospective. Returns raw response text."""
-    try:
-        import anthropic
-    except ImportError:
-        log.warning("anthropic SDK not installed, skipping retrospective generation")
-        return None
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        log.warning("ANTHROPIC_API_KEY not set, skipping retrospective generation")
-        return None
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=RETROSPECTIVE_MODEL,
-            max_tokens=RETROSPECTIVE_MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        return response.content[0].text if response.content else None
-    except Exception as exc:
-        log.exception("Claude retrospective call failed: %s", exc)
-        return None
+    from ai import client as _ai_client
+    return await _ai_client.call_claude(
+        feature="retrospective",
+        system=SYSTEM_PROMPT,
+        user=user_message,
+        model=RETROSPECTIVE_MODEL,
+        max_tokens=RETROSPECTIVE_MAX_TOKENS,
+    )
 
 
 def _get_cached(market_id: str) -> Optional[dict]:

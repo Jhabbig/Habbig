@@ -155,40 +155,20 @@ async def _call_claude(market_question: str, market_category: str, yes_price: fl
     Kept as a thin private wrapper so tests can monkey-patch this entrypoint
     and inject fixture responses without going near the Anthropic SDK.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        log.warning("environmental: ANTHROPIC_API_KEY not set, returning stub")
-        return None
-    try:
-        import anthropic
-    except ImportError:
-        log.warning("environmental: anthropic SDK not installed, returning stub")
-        return None
-
+    from ai import client as _ai_client
     user_msg = (
         f"Analyse the environmental impact of this prediction market:\n"
         f"Title: {market_question}\n"
         f"Category: {market_category}\n"
         f"Current YES probability: {yes_price * 100:.0f}%\n"
     )
-
-    try:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        resp = await client.messages.create(
-            model=ENV_MODEL,
-            max_tokens=ENV_MAX_TOKENS,
-            system=ENV_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        parts: list[str] = []
-        for block in resp.content:
-            text = getattr(block, "text", None)
-            if text:
-                parts.append(text)
-        return "".join(parts) if parts else None
-    except Exception as exc:
-        log.error("environmental: Claude call failed for %s: %s", market_question[:80], exc)
-        return None
+    return await _ai_client.call_claude(
+        feature="environmental",
+        system=ENV_SYSTEM_PROMPT,
+        user=user_msg,
+        model=ENV_MODEL,
+        max_tokens=ENV_MAX_TOKENS,
+    )
 
 
 # ── Schema validation / coercion ─────────────────────────────────────────────

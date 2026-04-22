@@ -387,13 +387,17 @@ class TestKalshiServiceAuth(unittest.TestCase):
         from backend.markets.kalshi_client import KalshiClient
         c = KalshiClient()
         self.assertIsNone(c._service_email)
-        self.assertIsNone(c._service_password)
+        # No credentials supplied → no password provider.
+        self.assertIsNone(c._password_provider)
 
     def test_service_auth_initialised_with_creds(self):
         from backend.markets.kalshi_client import KalshiClient
         c = KalshiClient(service_email="svc@example.com", service_password="pw")
         self.assertEqual(c._service_email, "svc@example.com")
-        self.assertEqual(c._service_password, "pw")
+        # Password is stored as a callable provider, not a plaintext
+        # attribute — calling it returns the credential.
+        self.assertIsNotNone(c._password_provider)
+        self.assertEqual(c._password_provider(), "pw")
         self.assertIsNone(c._service_token)
 
     def test_get_service_token_returns_none_without_creds(self):

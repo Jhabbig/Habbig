@@ -152,26 +152,15 @@ def convert_co2(value: Optional[float], unit: str) -> dict:
 
 
 async def _call_claude(market_question: str, category: str) -> tuple[Optional[str], Any]:
-    sdk = client.get_async_client()
-    if sdk is None:
-        return None, None
     user_msg = f"Market: {market_question}\nCategory: {category or 'unknown'}"
-    try:
-        resp = await sdk.messages.create(
-            model=client.ANTHROPIC_MODELS["environmental"],
-            max_tokens=ENV_MAX_TOKENS,
-            system=ENV_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-    except Exception as exc:
-        log.error("environmental: Claude call failed: %s", exc)
-        return None, None
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return ("".join(parts) if parts else None), resp
+    text = await client.call_claude(
+        feature="environmental",
+        system=ENV_SYSTEM_PROMPT,
+        user=user_msg,
+        model=client.ANTHROPIC_MODELS["environmental"],
+        max_tokens=ENV_MAX_TOKENS,
+    )
+    return text, (True if text is not None else None)
 
 
 def _stub(reason: str) -> dict:
@@ -220,25 +209,15 @@ async def generate_environmental_impact(
                     and abs(float(yes_price) - float(last_price)) >= PRICE_DRIFT_THRESHOLD):
                 force = True
             else:
-                client.log_response(
+                client.log_claude_usage_row(
                     feature="environmental",
                     model=client.ANTHROPIC_MODELS["environmental"],
-                    response=None, cached_hit=True,
+                    cached_hit=True,
                 )
                 return cached
 
-    raw, resp = await _call_claude(market_question, category)
-    if resp is not None:
-        client.log_response(
-            feature="environmental",
-            model=client.ANTHROPIC_MODELS["environmental"],
-            response=resp, cached_hit=False,
-        )
-    else:
-        client.log_failure(
-            feature="environmental",
-            model=client.ANTHROPIC_MODELS["environmental"],
-        )
+    raw, _resp = await _call_claude(market_question, category)
+    # call_claude already logged success, failure, or kill-switch.
 
     parsed = _parse(raw) or _stub("Claude unavailable or response invalid")
     parsed["_generated_at"] = int(time.time())

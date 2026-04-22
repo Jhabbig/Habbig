@@ -94,7 +94,13 @@ class TestValidateToken(unittest.TestCase):
         self.assertFalse(data["claimed"])
         self.assertIn("pending_token", r.cookies)
 
-    def test_valid_claimed_token_returns_email_hint(self):
+    def test_valid_claimed_token_rejected(self):
+        # db.get_invite_token() filters on `status = 'unclaimed'`, so
+        # claimed tokens come back as `valid: False` from validate-token.
+        # This is the correct security posture: a claimed token belongs
+        # to an existing account; the user should go through /login with
+        # their password, not re-validate the raw token to get an email
+        # hint. The old "email_hint" surface has been retired.
         raw, _ = _claimed_invite("alice@hint.com")
         r = client.post(
             "/auth/validate-token",
@@ -105,12 +111,7 @@ class TestValidateToken(unittest.TestCase):
         if r.status_code == 403:
             self.skipTest("CSRF blocks raw token; covered by lookup test")
         self.assertEqual(r.status_code, 200)
-        data = r.json()
-        self.assertTrue(data["valid"])
-        self.assertTrue(data["claimed"])
-        self.assertTrue(data["email_hint"])
-        # Email hint is masked — should include asterisks or ***
-        self.assertIn("*", data["email_hint"])
+        self.assertFalse(r.json()["valid"])
 
 
 class TestRegisterAndLoginPages(unittest.TestCase):

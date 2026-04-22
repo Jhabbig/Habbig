@@ -143,26 +143,21 @@ def _parse(raw: Optional[str]) -> list[dict]:
 
 
 async def _call_claude(post_text: str) -> tuple[Optional[str], Any]:
-    """Thin async wrapper — tests monkey-patch this."""
-    sdk = client.get_async_client()
-    if sdk is None:
-        return None, None
-    try:
-        resp = await sdk.messages.create(
-            model=client.ANTHROPIC_MODELS["extraction"],
-            max_tokens=EXTRACTION_MAX_TOKENS,
-            system=EXTRACTION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": post_text[:8000]}],
-        )
-    except Exception as exc:
-        log.error("extractor: Claude call failed: %s", exc)
-        return None, None
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return ("".join(parts) if parts else None), resp
+    """Thin async wrapper — tests monkey-patch this.
+
+    Delegates to ``ai.client.call_claude`` so logging, kill-switch and
+    usage accounting live in one place. Returns a (text, sentinel)
+    tuple; the second slot is a truthy success flag, kept so older
+    tests that unpack a 2-tuple keep working.
+    """
+    text = await client.call_claude(
+        feature="extraction",
+        system=EXTRACTION_SYSTEM_PROMPT,
+        user=post_text[:8000],
+        model=client.ANTHROPIC_MODELS["extraction"],
+        max_tokens=EXTRACTION_MAX_TOKENS,
+    )
+    return text, (True if text is not None else None)
 
 
 async def extract_predictions_from_post(
@@ -185,32 +180,20 @@ async def extract_predictions_from_post(
     if not force:
         cached = cache.get(key)
         if cached is not None:
-            client.log_response(
+            client.log_claude_usage_row(
                 feature="extraction",
                 model=client.ANTHROPIC_MODELS["extraction"],
-                response=None, cached_hit=True,
+                cached_hit=True,
             )
             return _attach_post_id(cached, post_id)
 
-    raw, resp = await _call_claude(post_text)
-
-    if resp is not None:
-        client.log_response(
-            feature="extraction",
-            model=client.ANTHROPIC_MODELS["extraction"],
-            response=resp, cached_hit=False,
-        )
-    else:
-        client.log_failure(
-            feature="extraction",
-            model=client.ANTHROPIC_MODELS["extraction"],
-        )
-
+    raw, _resp = await _call_claude(post_text)
+    # call_claude already logged the dispatch (success, failure, or kill-switch).
     predictions = _parse(raw)
 
     # Negative results get a short TTL so retries can happen; confirmed
     # predictions get the full 30-day window.
-    ttl = EXTRACTION_TTL_SECONDS if (resp is not None and predictions) else FAILURE_TTL_SECONDS
+    ttl = EXTRACTION_TTL_SECONDS if (raw is not None and predictions) else FAILURE_TTL_SECONDS
     cache.set(
         key, predictions,
         ttl_seconds=ttl,

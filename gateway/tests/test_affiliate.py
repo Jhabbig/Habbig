@@ -414,7 +414,10 @@ class TestAdminGate(unittest.TestCase):
         self.assertEqual(len(body["affiliate_code"]), 10)
 
     def test_admin_can_update_commission_rate(self):
+        # Commission-rate changes are a super-admin-only operation
+        # (money-affecting), not a regular-admin operation.
         admin_id = _make_user("upd_admin", is_admin=True)
+        db.set_user_role(admin_id, 2)  # promote to super-admin
         aff_id, _, _ = _make_affiliate(rate=0.20)
         r = client.patch(
             f"/admin/affiliates/{aff_id}",
@@ -473,8 +476,13 @@ class TestAffiliateDashboard(unittest.TestCase):
             cookies=_session_cookies(user_id),
         )
         self.assertEqual(r.status_code, 200)
-        self.assertIn("Affiliate dashboard", r.text)
-        # Shows the default link
+        # Page heading was shortened from "Affiliate dashboard" to "Affiliate"
+        # in the settings redesign; stat tiles + share link are what really
+        # signal we got the dashboard (vs. the invite-only gate page).
+        self.assertIn("share link", r.text.lower())
+        self.assertIn("stat-tile", r.text)
+        # Shows the default link (this is the most behavioural assertion —
+        # the affiliate's unique code must actually be rendered).
         self.assertIn(da.get_affiliate_by_id(aff_id)["affiliate_code"], r.text)
 
     def test_api_affiliate_returns_summary(self):

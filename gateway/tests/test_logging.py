@@ -250,6 +250,8 @@ class TestNoPrintInProductionCode(unittest.TestCase):
         "scraper/setup_truthsocial_session.py",
         "migrations/",
         ".pytest_cache/",
+        # Operator-facing CLI tools — print() is intentional UX.
+        "scripts/",
     )
     EXCLUDED_EXACT = {
         "backend/markets/encryption.py",          # docstring only
@@ -259,6 +261,9 @@ class TestNoPrintInProductionCode(unittest.TestCase):
         # prints are intentional UX for a human running the setup step.
         "scraper/scrapers/twitter.py",
         "scraper/scrapers/truthsocial.py",
+        # Forensics watermark extractor is a CLI tool — prints decoded
+        # user_id + confidence to stdout when run from the command line.
+        "forensics/extract_watermark.py",
     }
 
     def test_no_print_statements(self):

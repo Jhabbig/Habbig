@@ -68,15 +68,15 @@ def _build_messages(history: list, user_message: str) -> list[dict]:
 
 
 def _get_client():
-    """Lazy import + construct an Anthropic client."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not configured")
-    try:
-        import anthropic
-    except ImportError as e:
-        raise RuntimeError("anthropic SDK not installed") from e
-    return anthropic.AsyncAnthropic(api_key=api_key)
+    """Legacy shim — delegates to ai.client.get_async_client so we don't
+    instantiate the SDK twice. Kept so older tests that import this
+    symbol keep working.
+    """
+    from ai import client as _ai_client
+    sdk = _ai_client.get_async_client()
+    if sdk is None:
+        raise RuntimeError("Anthropic SDK not available (key missing or import failed)")
+    return sdk
 
 
 def get_intelligence_response(
@@ -87,31 +87,55 @@ def get_intelligence_response(
 ) -> str:
     """Blocking variant — returns the full assistant text.
 
-    Used by tests and as a fallback if streaming is disabled.
+    Used by tests and as a fallback if streaming is disabled. Routes
+    through ai.client so the global kill-switch, usage log and cost
+    accounting all apply; multi-turn history is folded into the user
+    prompt so it fits the single-turn call_claude shape.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        return "Intelligence assistant not configured (missing ANTHROPIC_API_KEY)."
-    try:
-        import anthropic
-    except ImportError:
-        return "Intelligence assistant unavailable (anthropic SDK not installed)."
-    client = anthropic.Anthropic(api_key=api_key)
+    from ai import client as _ai_client
+    if _ai_client.is_kill_switch_active():
+        return "Intelligence assistant paused by operator (cost kill-switch). Try again later."
     tier = user.get("tier") or "none"
     system = INTELLIGENCE_SYSTEM_PROMPT.format(context=context_text, tier=tier)
-    messages = _build_messages(history, user_message)
-    response = client.messages.create(
-        model=os.environ.get("INTELLIGENCE_MODEL", "claude-sonnet-4-5-20250929"),
-        max_tokens=2048,
-        system=system,
-        messages=messages,
+
+    # Flatten the last-20 exchanges into a plain text prefix — simpler
+    # than passing messages through and losing the streaming pathway's
+    # consistency. Multi-turn users should prefer the streaming endpoint.
+    history_text = "\n\n".join(
+        f"{(m.get('role') or 'user').upper()}: {m.get('content') or ''}"
+        for m in history[-20:]
+        if (m.get("role") if isinstance(m, dict) else getattr(m, "role", None)) and
+        (m.get("content") if isinstance(m, dict) else getattr(m, "content", None))
     )
-    parts = []
-    for block in response.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return "".join(parts)
+    full_user = f"{history_text}\n\nUSER: {user_message}" if history_text else user_message
+
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Nested-loop case (tests). call_claude is async; use a new loop.
+            raise RuntimeError("already running")
+        out = loop.run_until_complete(_ai_client.call_claude(
+            feature="intelligence",
+            system=system,
+            user=full_user,
+            model=os.environ.get("INTELLIGENCE_MODEL", "claude-sonnet-4-5-20250929"),
+            max_tokens=2048,
+            user_id=user.get("user_id"),
+        ))
+    except RuntimeError:
+        out = asyncio.run(_ai_client.call_claude(
+            feature="intelligence",
+            system=system,
+            user=full_user,
+            model=os.environ.get("INTELLIGENCE_MODEL", "claude-sonnet-4-5-20250929"),
+            max_tokens=2048,
+            user_id=user.get("user_id"),
+        ))
+
+    if out is None:
+        return "Intelligence assistant temporarily unavailable."
+    return out
 
 
 async def stream_intelligence_response(
@@ -120,25 +144,62 @@ async def stream_intelligence_response(
     history: list,
     context_text: str,
 ) -> AsyncIterator[str]:
-    """Yield text chunks from Claude as they arrive."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        yield "Intelligence assistant not configured (missing ANTHROPIC_API_KEY)."
+    """Yield text chunks from Claude as they arrive.
+
+    Streaming is the one call path we cannot route through
+    ``ai.client.call_claude`` — the SDK's stream context isn't
+    non-blocking-compatible with the cache/short-circuit shape of that
+    helper. We still honour the cost kill-switch and log final usage
+    through ``ai.client.log_response`` after the stream completes, so
+    the dashboards stay accurate.
+    """
+    from ai import client as _ai_client
+
+    if _ai_client.is_kill_switch_active():
+        yield "Intelligence assistant paused by operator (cost kill-switch). Try again later."
         return
-    try:
-        import anthropic
-    except ImportError:
-        yield "Intelligence assistant unavailable (anthropic SDK not installed)."
+
+    sdk = _ai_client.get_async_client()
+    if sdk is None:
+        yield "Intelligence assistant not configured (ANTHROPIC_API_KEY missing or SDK not installed)."
+        _ai_client.log_failure(
+            feature="intelligence",
+            model=os.environ.get("INTELLIGENCE_MODEL", "claude-sonnet-4-5-20250929"),
+            user_id=user.get("user_id"),
+        )
         return
-    client = anthropic.AsyncAnthropic(api_key=api_key)
     tier = user.get("tier") or "none"
     system = INTELLIGENCE_SYSTEM_PROMPT.format(context=context_text, tier=tier)
     messages = _build_messages(history, user_message)
-    async with client.messages.stream(
-        model=os.environ.get("INTELLIGENCE_MODEL", "claude-sonnet-4-5-20250929"),
-        max_tokens=2048,
-        system=system,
-        messages=messages,
-    ) as stream:
-        async for text in stream.text_stream:
-            yield text
+    model = os.environ.get("INTELLIGENCE_MODEL", "claude-sonnet-4-5-20250929")
+    try:
+        async with sdk.messages.stream(
+            model=model,
+            max_tokens=2048,
+            system=system,
+            messages=messages,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
+            # Log final usage — the SDK exposes aggregated counters on the
+            # final message object after the stream completes.
+            try:
+                final_msg = await stream.get_final_message()
+                _ai_client.log_response(
+                    feature="intelligence",
+                    model=model,
+                    response=final_msg,
+                    cached_hit=False,
+                    user_id=user.get("user_id"),
+                )
+            except Exception:
+                _ai_client.log_failure(
+                    feature="intelligence", model=model,
+                    user_id=user.get("user_id"),
+                )
+    except Exception:
+        _ai_client.log_failure(
+            feature="intelligence", model=model,
+            user_id=user.get("user_id"),
+        )
+        yield "Intelligence assistant failed mid-stream. Please retry."

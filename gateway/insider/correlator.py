@@ -130,9 +130,6 @@ def _parse(raw: Optional[str], market_slugs: set[str]) -> list[dict]:
 
 
 async def _call_claude(signal_payload: dict, markets: list[dict]) -> tuple[Optional[str], Any]:
-    sdk = ai_client.get_async_client()
-    if sdk is None:
-        return None, None
     user = {
         "signal": signal_payload,
         "markets": [{
@@ -141,22 +138,14 @@ async def _call_claude(signal_payload: dict, markets: list[dict]) -> tuple[Optio
             "category": m.get("category"),
         } for m in markets[:25]],
     }
-    try:
-        resp = await sdk.messages.create(
-            model=ai_client.ANTHROPIC_MODELS["correlation"],
-            max_tokens=CORRELATION_MAX_TOKENS,
-            system=CORRELATION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": json.dumps(user)[:12000]}],
-        )
-    except Exception as exc:
-        log.error("correlator: Claude call failed: %s", exc)
-        return None, None
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return ("".join(parts) if parts else None), resp
+    text = await ai_client.call_claude(
+        feature="correlation",
+        system=CORRELATION_SYSTEM_PROMPT,
+        user=json.dumps(user)[:12000],
+        model=ai_client.ANTHROPIC_MODELS["correlation"],
+        max_tokens=CORRELATION_MAX_TOKENS,
+    )
+    return text, (True if text is not None else None)
 
 
 async def correlate_signal(
@@ -193,25 +182,15 @@ async def correlate_signal(
             if val.get("correlation_type"):  # cached non-empty
                 cached_all.append(val)
         if not any_miss:
-            ai_client.log_response(
+            ai_client.log_claude_usage_row(
                 feature="correlation",
                 model=ai_client.ANTHROPIC_MODELS["correlation"],
-                response=None, cached_hit=True,
+                cached_hit=True,
             )
             return _score_all(cached_all, signal)
 
-    raw, resp = await _call_claude(signal, active_markets)
-    if resp is not None:
-        ai_client.log_response(
-            feature="correlation",
-            model=ai_client.ANTHROPIC_MODELS["correlation"],
-            response=resp, cached_hit=False,
-        )
-    else:
-        ai_client.log_failure(
-            feature="correlation",
-            model=ai_client.ANTHROPIC_MODELS["correlation"],
-        )
+    raw, _resp = await _call_claude(signal, active_markets)
+    # call_claude already logged success, failure, or kill-switch.
 
     correlations = _parse(raw, market_slugs)
     # Cache each pair (including "no correlation" as a sentinel so we

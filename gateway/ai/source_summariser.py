@@ -236,25 +236,14 @@ def _fallback_summary(handle: str, total: int) -> str:
 
 
 async def _call_claude(user_message: str) -> tuple[Optional[str], Any]:
-    sdk = client.get_async_client()
-    if sdk is None:
-        return None, None
-    try:
-        resp = await sdk.messages.create(
-            model=client.ANTHROPIC_MODELS["summarisation"],
-            max_tokens=SUMMARY_MAX_TOKENS,
-            system=SUMMARY_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
-    except Exception as exc:
-        log.error("source_summariser: Claude call failed: %s", exc)
-        return None, None
-    parts: list[str] = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return ("".join(parts) if parts else None), resp
+    text = await client.call_claude(
+        feature="summarisation",
+        system=SUMMARY_SYSTEM_PROMPT,
+        user=user_message,
+        model=client.ANTHROPIC_MODELS["summarisation"],
+        max_tokens=SUMMARY_MAX_TOKENS,
+    )
+    return text, (True if text is not None else None)
 
 
 async def generate_source_summary(
@@ -280,10 +269,10 @@ async def generate_source_summary(
         if not force:
             cached = _read_cached(conn, handle, now)
             if cached is not None:
-                client.log_response(
+                client.log_claude_usage_row(
                     feature="summarisation",
                     model=client.ANTHROPIC_MODELS["summarisation"],
-                    response=None, cached_hit=True,
+                    cached_hit=True,
                 )
                 return {
                     "handle": handle,
@@ -319,24 +308,16 @@ async def generate_source_summary(
             }
 
         user_msg = _build_user_message(handle, src, categories, predictions)
-        raw, resp = await _call_claude(user_msg)
+        raw, _resp = await _call_claude(user_msg)
+        # call_claude already logged success, failure, or kill-switch.
 
-        if resp is not None:
-            client.log_response(
-                feature="summarisation",
-                model=client.ANTHROPIC_MODELS["summarisation"],
-                response=resp, cached_hit=False,
-            )
+        if raw is not None:
             model_used = client.ANTHROPIC_MODELS["summarisation"]
-            summary_text = (raw or "").strip()[:1200]
+            summary_text = raw.strip()[:1200]
             if not summary_text:
                 summary_text = _fallback_summary(handle, total)
                 model_used = "fallback_empty"
         else:
-            client.log_failure(
-                feature="summarisation",
-                model=client.ANTHROPIC_MODELS["summarisation"],
-            )
             summary_text = _fallback_summary(handle, total)
             model_used = "fallback_unavailable"
 

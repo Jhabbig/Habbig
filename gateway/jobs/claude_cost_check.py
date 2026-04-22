@@ -30,6 +30,7 @@ log = logging.getLogger("jobs.claude_cost_check")
 
 
 DEFAULT_THRESHOLD = float(os.environ.get("CLAUDE_DAILY_SPEND_THRESHOLD_USD", "50"))
+KILL_SWITCH_THRESHOLD = float(os.environ.get("CLAUDE_KILL_SWITCH_THRESHOLD_USD", "200"))
 ADMIN_EMAILS = [
     e.strip() for e in os.environ.get(
         "CLAUDE_COST_ALERT_EMAILS",
@@ -84,23 +85,62 @@ async def check_daily_claude_spend() -> dict[str, Any]:
     total_cost = round(sum(f["cost_usd"] for f in by_feature.values()), 4)
     over = total_cost > DEFAULT_THRESHOLD
 
+    kill_switch_tripped = False
     if over:
         log.error(
             "claude daily spend alert: day=%s cost_usd=%.4f threshold=%.2f breakdown=%s",
             yesterday, total_cost, DEFAULT_THRESHOLD, by_feature,
         )
+        _record_alert(yesterday, total_cost, DEFAULT_THRESHOLD)
         _audit_log(yesterday, total_cost, by_feature)
         await _try_enqueue_email(yesterday, total_cost, by_feature)
     else:
         log.info("claude daily spend OK: day=%s cost_usd=%.4f", yesterday, total_cost)
+
+    if total_cost > KILL_SWITCH_THRESHOLD:
+        log.critical(
+            "claude kill-switch TRIPPED: day=%s cost_usd=%.4f > %.2f — blocking uncached calls",
+            yesterday, total_cost, KILL_SWITCH_THRESHOLD,
+        )
+        _record_alert(yesterday, total_cost, KILL_SWITCH_THRESHOLD)
+        try:
+            from ai.client import set_kill_switch  # type: ignore
+            set_kill_switch(
+                active=True,
+                reason=f"Auto-trip: ${total_cost:.2f} on {yesterday}",
+                triggered_by="cost_check_job",
+            )
+            kill_switch_tripped = True
+        except Exception as exc:
+            log.exception("set_kill_switch failed: %s", exc)
 
     return {
         "day": yesterday,
         "cost_usd": total_cost,
         "threshold_usd": DEFAULT_THRESHOLD,
         "over_threshold": over,
+        "kill_switch_tripped": kill_switch_tripped,
         "by_feature": by_feature,
     }
+
+
+def _record_alert(day: str, cost_usd: float, threshold: float) -> None:
+    """Log an alert row, dedupe on (day, threshold) so re-runs are idempotent."""
+    try:
+        conn = sqlite3.connect(_db_path())
+    except Exception:
+        return
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO claude_cost_alerts "
+            "(alert_date, threshold_usd, total_cost_usd, sent_at) VALUES (?, ?, ?, ?)",
+            (day, float(threshold), float(cost_usd), int(time.time())),
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        log.warning("claude_cost_alerts insert failed: %s", exc)
+    finally:
+        conn.close()
 
 
 def _audit_log(day: str, total_cost: float, breakdown: dict) -> None:

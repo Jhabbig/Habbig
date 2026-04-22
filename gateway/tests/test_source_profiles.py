@@ -137,12 +137,19 @@ class TestRobotsTxt(unittest.TestCase):
         self.assertIn("User-agent: *", r.text)
         self.assertIn("Disallow: /admin/", r.text)
         self.assertIn("Disallow: /api/", r.text)
-        self.assertIn("Disallow: /gate", r.text)
+        # /token is the gate entry point in the token-first auth flow.
+        self.assertIn("Disallow: /token", r.text)
         self.assertIn("Sitemap:", r.text)
 
-    def test_robots_allows_sources(self):
+    def test_robots_allows_public_pages(self):
+        # The robots.txt served by server_features puts public pages under
+        # an unqualified "Allow: /" (plus named whitelists for /pricing,
+        # /terms, /privacy, /dpa, etc.). Source profile URLs (/sources/<h>)
+        # are NOT explicitly disallowed, which is what we actually care
+        # about for SEO.
         r = client.get("/robots.txt")
-        self.assertIn("Allow: /sources/", r.text)
+        self.assertIn("Allow: /", r.text)
+        self.assertNotIn("Disallow: /sources", r.text)
 
 
 if __name__ == "__main__":
