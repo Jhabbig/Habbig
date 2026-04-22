@@ -11,6 +11,7 @@ qrcode[pil]==7.4.2
 sentry-sdk[fastapi]==1.45.1
 anthropic==0.30.0
 logtail-python==0.2.0
+apscheduler==3.10.4
 # Bumped below: transitive deps pinned for supply-chain reproducibility +
 # CVE closure (starlette multipart memory, Pillow image parsing, requests
 # cert handling, python-dotenv parser, filelock race).

@@ -138,6 +138,61 @@ ssh julianhabbig@100.69.44.108 "tail -f /tmp/gateway_staging.log"
 ssh julianhabbig@100.69.44.108 "sudo journalctl -u cloudflared -f"
 ```
 
+## Scheduled jobs
+
+Every recurring job (health checks, weekly reports, portfolio syncs,
+Claude cost rollups, etc.) is driven by APScheduler from inside the
+gateway process. The configuration lives in `gateway/scheduler/`:
+
+* `scheduler/scheduler.py` — `Scheduler` wrapper + the singleton.
+* `scheduler/registry.py`  — wires every job at startup. Bridges the
+  legacy `jobs/*.py` `@register_cron` calls + adds the spec-named
+  jobs.
+* Migration `105_scheduler_job_runs` owns the `job_runs` audit table.
+
+**⚠️ Never run uvicorn with `--workers > 1` on this host until the
+scheduler is moved off-process.** Every worker would instantiate its
+own `AsyncIOScheduler` and fire every job N times. The singleton
+supports soft leader election via `NARVE_SCHEDULER_LEADER`:
+
+* `NARVE_SCHEDULER_LEADER=1` — this process runs the scheduler (the
+  default when the env var is unset).
+* `NARVE_SCHEDULER_LEADER=0` — this process skips scheduling. Set on
+  every non-leader worker if you ever do run multi-worker uvicorn.
+* `NARVE_SKIP_SCHEDULER=1` — unconditionally skip. Used by the test
+  harness.
+
+### Inspect + control jobs
+
+Admins can see every registered job at `/admin/jobs`:
+
+* Last run, next run, last duration, avg duration, 24h failure count.
+* Pause / resume / trigger-now buttons per job.
+* Per-job history view (click a row) of the last 50 runs.
+
+Rollback to the legacy in-process cron loop (pre-APScheduler) by
+setting `NARVE_LEGACY_CRON_LOOP=1` on the gateway process. Only use
+this if APScheduler is misbehaving and you need breathing room to
+diagnose — the two loops will double-fire every job, so don't leave
+it on.
+
+### Checking job history from SQL
+
+```sql
+-- Last 10 runs across every job
+SELECT job_name, started_at, duration_ms, ok, error
+FROM job_runs
+ORDER BY started_at DESC
+LIMIT 10;
+
+-- Failing jobs in the last 24h
+SELECT job_name, COUNT(*) AS fails
+FROM job_runs
+WHERE ok = 0 AND started_at >= strftime('%s', 'now') - 86400
+GROUP BY job_name
+ORDER BY fails DESC;
+```
+
 ## Database
 
 The production DB is a single SQLite file (`auth.db`) in WAL mode. There

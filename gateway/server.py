@@ -431,12 +431,27 @@ async def _startup():
     except Exception as e:
         log.warning("startup totp/encryption-key check failed: %s", e)
 
-    # Start the background job queue (in-process by default).
+    # Start the background job queue (in-process by default). This drives
+    # the *one-shot* enqueued work (emails, pipeline kicks) via
+    # ``jobs/backend.py`` and writes ``background_jobs``.
     try:
         from jobs import start_worker as _start_worker
         await _start_worker()
     except Exception as e:
         log.exception("job queue start failed: %s", e)
+
+    # Start the APScheduler-backed recurring scheduler. Separate concern
+    # from ``jobs/backend.py``: this drives the *scheduled* recurring
+    # jobs (health checks, weekly reports, etc.) and writes ``job_runs``.
+    # Single-process guard lives inside ``scheduler.start`` — see
+    # RUNBOOK.md for the leader-election story.
+    try:
+        from scheduler.registry import register_all as _register_scheduler
+        from scheduler import scheduler as _scheduler
+        _register_scheduler()
+        _scheduler.start()
+    except Exception as e:
+        log.exception("scheduler start failed: %s", e)
 
 
 @app.on_event("shutdown")
@@ -456,6 +471,12 @@ async def _shutdown():
     try:
         from jobs import stop_worker as _stop_worker
         await _stop_worker()
+    except Exception:
+        pass
+    # Stop APScheduler.
+    try:
+        from scheduler import scheduler as _scheduler
+        _scheduler.shutdown(wait=False)
     except Exception:
         pass
 
@@ -5807,6 +5828,19 @@ try:
         _pr_importlib.reload(_pr_sys.modules["push_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("push_routes import failed: %s — continuing without it", _exc)
+
+
+# Scheduled-job admin UI (/admin/jobs + /admin/api/jobs/*). Registers
+# BEFORE the catch-all so the admin routes hit our handlers. Same
+# reload-safe pattern as notification_routes / push_routes above.
+try:
+    import admin_jobs_routes  # noqa: F401,E402
+    import sys as _ajr_sys
+    if "admin_jobs_routes" in _ajr_sys.modules:
+        import importlib as _ajr_importlib
+        _ajr_importlib.reload(_ajr_sys.modules["admin_jobs_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("admin_jobs_routes import failed: %s — continuing without it", _exc)
 
 
 # Billing UI — /settings/billing + /api/v1/billing/*. Same reload-safe pattern

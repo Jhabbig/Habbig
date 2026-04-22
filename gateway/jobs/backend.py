@@ -180,9 +180,20 @@ class InProcessBackend:
 
     async def start(self) -> None:
         _ensure_jobs_table()
-        if self._cron_task is None:
-            self._cron_task = asyncio.create_task(self._cron_loop())
-            log.info("jobs: in-process backend started (%d cron jobs registered)", len(cron_jobs))
+        # Default: APScheduler (scheduler/*) drives recurring cron jobs
+        # now. Leave one-shot ``enqueue_job`` dispatch active but skip
+        # spawning the legacy cron loop — otherwise every job fires twice.
+        # Set NARVE_LEGACY_CRON_LOOP=1 to restore the old loop (used for
+        # emergency rollback if APScheduler is misbehaving).
+        if os.environ.get("NARVE_LEGACY_CRON_LOOP", "").lower() in ("1", "true"):
+            if self._cron_task is None:
+                self._cron_task = asyncio.create_task(self._cron_loop())
+                log.info("jobs: in-process backend started with legacy cron loop (%d cron jobs)", len(cron_jobs))
+        else:
+            log.info(
+                "jobs: in-process backend started (legacy cron loop disabled — APScheduler owns %d cron jobs)",
+                len(cron_jobs),
+            )
 
     async def stop(self) -> None:
         self._shutdown.set()
