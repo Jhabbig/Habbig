@@ -1,0 +1,212 @@
+/* Shared error / empty / loading states for every gateway page.
+ *
+ * Use:
+ *   .error-state  — full-width error panel (failed load, broken flow)
+ *   .error-card   — inline banner above content (partial failure, warning)
+ *   .empty-state  — "nothing here yet" for tabs/tables/lists
+ *
+ * Existing single-underscore selectors (.empty-state-title, .empty-state-body)
+ * stay supported so predictions.html / saved.html / intelligence.html keep
+ * rendering unchanged. New code should prefer the double-underscore BEM
+ * form (.empty-state__title) so searches, linting, and design-system docs
+ * line up with the rest of the gateway.
+ */
+
+
+/* ── Full-page error ────────────────────────────────────────────────────── */
+
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  text-align: center;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-md, var(--radius));
+  background: var(--surface-raised, var(--bg-raised));
+}
+.error-state__icon {
+  width: 24px;
+  height: 24px;
+  opacity: 0.5;
+  margin-bottom: var(--space-3);
+}
+.error-state__title {
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+.error-state__body {
+  font-size: 14px;
+  max-width: 340px;
+  margin-bottom: var(--space-4);
+  line-height: 1.55;
+}
+.error-state__actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.error-state__actions button,
+.error-state__actions .btn,
+.error-state__actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.error-state__actions button:hover,
+.error-state__actions .btn:hover,
+.error-state__actions a:hover {
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
+}
+
+
+/* ── Inline error banner ─────────────────────────────────────────────────── */
+
+.error-card {
+  padding: var(--space-4);
+  background: var(--surface-raised, var(--bg-raised));
+  border-left: 2px solid var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.error-card strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.error-card + .error-card {
+  margin-top: var(--space-2);
+}
+
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.empty-state {
+  text-align: center;
+  padding: var(--space-10) var(--space-4);
+  color: var(--text-secondary);
+}
+
+/* BEM canonical form (new code) */
+.empty-state__title {
+  font-size: 20px;
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
+  letter-spacing: -0.01em;
+}
+.empty-state__body {
+  max-width: 400px;
+  margin: 0 auto var(--space-5);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.empty-state__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid var(--interactive-bg);
+  transition: background 0.12s ease;
+}
+.empty-state__cta:hover {
+  background: var(--interactive-hover);
+  border-color: var(--interactive-hover);
+}
+
+/* Back-compat: legacy single-dash class names used by predictions.html,
+   saved.html, intelligence.html. Map 1:1 onto the BEM rules. */
+.empty-state-title {
+  font-size: 20px;
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
+  letter-spacing: -0.01em;
+}
+.empty-state-body {
+  max-width: 400px;
+  margin: 0 auto var(--space-5);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+
+/* ── Inline empty state — compact variant for tables, lists, grids ─────── */
+
+.empty-state--inline {
+  padding: var(--space-6) var(--space-4);
+  border: 1px dashed var(--border-ghost);
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+.empty-state--inline .empty-state__title,
+.empty-state--inline .empty-state-title {
+  font-size: 15px;
+  margin-bottom: var(--space-2);
+}
+.empty-state--inline .empty-state__body,
+.empty-state--inline .empty-state-body {
+  font-size: 13px;
+  margin-bottom: 0;
+}
+
+/* Automatic fallback: any element tagged `[data-empty-hint="..."]` shows
+   that hint via `::after` when the element renders with no children. Lets
+   us keep empty-state copy in the HTML without backend logic — the server
+   just renders the container; CSS picks up the empty case. */
+[data-empty-hint]:empty {
+  display: block;
+  padding: var(--space-6) var(--space-4);
+  border: 1px dashed var(--border-ghost);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+[data-empty-hint]:empty::after {
+  content: attr(data-empty-hint);
+}
+
+
+/* ── Simple loading text fallback (pages without a skeleton container) ──── */
+
+.loading-text {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  padding: var(--space-5);
+  text-align: center;
+}
+.loading-text::after {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  margin-left: 2px;
+  vertical-align: baseline;
+  animation: loading-dots 1.2s steps(4) infinite;
+}
+@keyframes loading-dots {
+  0%, 20%  { content: "."; }
+  40%      { content: ".."; }
+  60%      { content: "..."; }
+  80%, 100%{ content: ""; }
+}
