@@ -42,7 +42,7 @@ def subscribe_newsletter(
         }
 
     Position is computed as:
-        subscriber_rank - 5 * num_successful_referrals
+        subscriber_rank - num_successful_referrals
     floored at 1. Rank is the 1-indexed row order by subscribed_at, so
     new signups always start at the back and climb as their link gets used.
 
@@ -133,7 +133,7 @@ def _waitlist_position(c, referral_code: str) -> int:
 
     Rank = number of subscribers who signed up at-or-before this one
     (ordered by subscribed_at, tie-broken by id). Each successful referral
-    the subscriber has made bumps them forward by 5 slots. Floor at 1 so
+    the subscriber has made bumps them forward by one slot. Floor at 1 so
     nobody gets a zero or negative number.
     """
     row = c.execute(
@@ -156,7 +156,7 @@ def _waitlist_position(c, referral_code: str) -> int:
         (referral_code,),
     ).fetchone()[0]
 
-    return max(1, rank - 5 * referrals)
+    return max(1, rank - referrals)
 
 
 def get_newsletter_position(email: str) -> Optional[dict]:

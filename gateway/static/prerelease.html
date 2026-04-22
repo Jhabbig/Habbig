@@ -187,6 +187,12 @@
       max-width: 420px;
     }
     .pr-success.visible { display: block; }
+    /* When signup succeeds, collapse the hero copy so the success
+       card gets the whole viewport (esp. on mobile where everything
+       stacks and the headline + card otherwise overflow). */
+    .pr-hero:has(.pr-success.visible) .pr-line1,
+    .pr-hero:has(.pr-success.visible) .pr-line2,
+    .pr-hero:has(.pr-success.visible) .pr-soon { display: none; }
     .pr-success-title { font-family: var(--font-ui); font-weight: 500; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 24px; }
     .pr-position-block { padding: 24px 0; }
     .pr-position-number { font-family: 'Fraunces', 'Lora', serif; font-style: italic; font-size: 5rem; line-height: 1; color: var(--text-primary); letter-spacing: -0.04em; }
@@ -251,7 +257,7 @@
       </div>
       <div class="pr-ref-hint">
         Move up the list by referring friends. Each person who signs up with your link
-        moves you <strong style="color:var(--text-secondary)">5 places forward</strong>.
+        moves you <strong style="color:var(--text-secondary)">1 place forward</strong>.
       </div>
       <div class="pr-share-row">
         <a class="pr-share-btn" id="pr-share-x" href="#" target="_blank" rel="noopener">Share on X →</a>
