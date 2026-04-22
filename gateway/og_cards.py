@@ -227,6 +227,59 @@ def market_card(
     )
 
 
+# ── Share card renderers (feature: shareable artifacts) ─────────────────────
+#
+# These wrap the existing _render primitive with copy that's tuned for the
+# invite-gated share destinations. The renderers stay here (rather than in
+# routes_sharing.py) so caching semantics are uniform across every OG card
+# the gateway serves.
+
+
+def render_shared_market_card(
+    *, market_slug: str, sharer_handle: str,
+) -> bytes:
+    """Social card for /s/m/{token}. Intentionally sparse — the full
+    market question may be long, so we key off the slug and trust the
+    social platform's title line to carry the rest. Sharer attribution
+    only renders if the sharer opted into a public handle."""
+    attribution = f"Shared by @{sharer_handle}" if sharer_handle else "Shared via narve.ai"
+    return _render(
+        eyebrow="narve.ai · market signal",
+        heading=market_slug.replace("-", " ").title(),
+        footer=f"{attribution} · invite-only",
+    )
+
+
+def render_shared_source_card(
+    *, source_handle: str, sharer_handle: str,
+) -> bytes:
+    """Social card for /s/s/{token}. The credibility number isn't in the
+    signed token (it moves over time — a 4-week-old link would render a
+    stale score), so the card just leads with the handle and routes the
+    reader into the invite path for the live number."""
+    attribution = f"Shared by @{sharer_handle}" if sharer_handle else "Shared via narve.ai"
+    return _render(
+        eyebrow="narve.ai · source profile",
+        heading=f"@{source_handle}",
+        footer=f"{attribution} · credibility-scored · invite-only",
+    )
+
+
+def render_shared_prediction_card(
+    *, user_prediction_id: int, sharer_handle: str,
+) -> bytes:
+    """Social card for /s/p/{token}. Called only for resolved-correct
+    predictions (the db_sharing.create_shared_prediction invariant).
+    The ``resolved correct`` eyebrow is the whole value prop — someone
+    calling their shot right is worth a card."""
+    attribution = f"@{sharer_handle}" if sharer_handle else "A narve.ai user"
+    return _render(
+        eyebrow="resolved correct",
+        heading=f"{attribution} called it.",
+        footer="Track your own accuracy on narve.ai — invite-only",
+    )
+
+
 # ── Cache shim ───────────────────────────────────────────────────────────────
 #
 # Delegates to the process-wide TTL cache (cache/ttl.py). Keys are namespaced

@@ -55,6 +55,13 @@ except Exception as _e:  # pragma: no cover
     import logging as _l
     _l.getLogger("jobs").warning("telegram_sends import failed: %s", _e)
 
+# Monthly per-tier invite token replenishment (share-loop feature).
+try:
+    from jobs import invite_replenish  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("invite_replenish import failed: %s", _e)
+
 # Intelligence-layer jobs. Each one is self-registering through the
 # module-level @register_job / register_cron calls, so just importing
 # them is enough. Defensive imports keep a partial schema tree bootable.
