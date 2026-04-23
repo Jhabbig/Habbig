@@ -35,6 +35,7 @@ CSRF: the public POST /api/invite/{code}/accept prefix exemption
 share-mint POSTs go through the normal CSRF double-submit check.
 """
 
+import os
 from __future__ import annotations
 
 import logging
@@ -146,9 +147,12 @@ async def public_shared_market(request: Request, token: str):
     )
     # Attribution cookie: lets the signup flow link this visitor's
     # eventual registration to the share they came from.
+    # AUDIT #4 HIGH #3 — gate Secure on production so HTTP downgrades
+    # can't leak the attribution metric_id (referral re-attribution).
+    _is_prod = os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
     response.set_cookie(
         "narve_share_attribution", str(metric_id),
-        max_age=7 * 86400, httponly=True, samesite="lax",
+        max_age=7 * 86400, httponly=True, samesite="lax", secure=_is_prod,
     )
     return response
 
@@ -186,9 +190,12 @@ async def public_shared_source(request: Request, token: str):
         cred_score=cred_score,
         token=token,
     )
+    # AUDIT #4 HIGH #3 — gate Secure on production so HTTP downgrades
+    # can't leak the attribution metric_id (referral re-attribution).
+    _is_prod = os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
     response.set_cookie(
         "narve_share_attribution", str(metric_id),
-        max_age=7 * 86400, httponly=True, samesite="lax",
+        max_age=7 * 86400, httponly=True, samesite="lax", secure=_is_prod,
     )
     return response
 
@@ -223,9 +230,12 @@ async def public_shared_prediction(request: Request, token: str):
         ),
         token=token,
     )
+    # AUDIT #4 HIGH #3 — gate Secure on production so HTTP downgrades
+    # can't leak the attribution metric_id (referral re-attribution).
+    _is_prod = os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
     response.set_cookie(
         "narve_share_attribution", str(metric_id),
-        max_age=7 * 86400, httponly=True, samesite="lax",
+        max_age=7 * 86400, httponly=True, samesite="lax", secure=_is_prod,
     )
     return response
 

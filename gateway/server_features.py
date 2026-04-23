@@ -202,6 +202,14 @@ async def api_set_language(request: Request):
             log.warning("set-language: persist failed: %s", e)
 
     resp = JSONResponse({"ok": True, "lang": lang, "persisted": bool(user)})
+    # AUDIT #4 HIGH #3 — Secure should track PRODUCTION like every other
+    # cookie. The legacy GATEWAY_COOKIE_SECURE env var is kept as an
+    # explicit override for staging where PRODUCTION=1 but CF terminates
+    # at HTTP upstream. Either flag being true flips Secure on.
+    _secure = (
+        os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
+        or os.environ.get("GATEWAY_COOKIE_SECURE", "0").lower() in ("1", "true")
+    )
     resp.set_cookie(
         key=_LANG_COOKIE,
         value=lang,
@@ -209,7 +217,7 @@ async def api_set_language(request: Request):
         path="/",
         samesite="lax",
         httponly=False,
-        secure=os.environ.get("GATEWAY_COOKIE_SECURE", "0").lower() in ("1", "true"),
+        secure=_secure,
     )
     return resp
 
@@ -290,6 +298,18 @@ async def auth_reset_password(
     new_password: str = Form(""),
     confirm_password: str = Form(""),
 ):
+    # AUDIT #4 HIGH #1 — cap reset-password submissions to 5 per IP per hour
+    # so a leaked token fragment can't be brute-forced at line rate. Every
+    # other /auth/* POST already has an inline `_is_rate_limited` guard;
+    # this one was the outlier.
+    ip = _get_client_ip(request)
+    if server._is_rate_limited(f"{ip}:reset-password", limit=5, window=3600):
+        return HTMLResponse(
+            _reset_page_html(token=token, error="Too many attempts. Try again in an hour."),
+            status_code=429,
+            headers={"Retry-After": "3600"},
+        )
+
     token = (token or "").strip()
     if new_password != confirm_password:
         return HTMLResponse(_reset_page_html(token=token, error="Passwords do not match."), status_code=400)

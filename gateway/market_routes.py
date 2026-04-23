@@ -323,8 +323,17 @@ async def api_connect_polymarket(request: Request):
     except Exception:
         return JSONResponse({"error": "Invalid request body"}, status_code=400)
     address = (body.get("wallet_address") or "").strip()
-    if not address or len(address) < 10:
-        return JSONResponse({"error": "Valid wallet address required"}, status_code=400)
+    # AUDIT #4 LOW #1 — require a real 0x-prefixed 40-hex-digit EVM address.
+    # The length-only check accepted any ≥10-char string and landed junk
+    # in ``user_market_credentials`` that only failed later on the
+    # Polymarket client. EIP-55 checksum is not enforced (users often
+    # paste lowercase addresses); case-insensitive hex is fine.
+    import re as _re
+    if not _re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
+        return JSONResponse(
+            {"error": "Valid wallet address required (0x followed by 40 hex characters)"},
+            status_code=400,
+        )
     db.upsert_market_credential(
         user["user_id"], "polymarket",
         polymarket_wallet_address=address,

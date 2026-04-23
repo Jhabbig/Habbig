@@ -4427,6 +4427,16 @@ async def admin_page(request: Request):
 @app.post("/admin/tokens/generate")
 async def admin_generate_token(request: Request, note: str = Form(""), target_email: str = Form("")):
     user = _require_admin_user(request)
+    # AUDIT #4 HIGH #2 — cap generate to 30/min per admin.
+    # Defence-in-depth: admin cookie compromise (XSS / stolen session /
+    # lapsed impersonation) shouldn't let an attacker mint hundreds of
+    # invite tokens in one second.
+    if _is_rate_limited(f"admin-tokens-gen:{user['user_id']}", 30, 60):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many token generations. Try again in a minute.",
+            headers={"Retry-After": "60"},
+        )
     new_token = db.create_invite_token(note.strip(), target_email=target_email.strip())
     log.info("Admin %s generated invite token: %s... (target: %s)", user["email"], new_token[:8], target_email.strip() or "none")
     try:
@@ -4448,6 +4458,14 @@ async def admin_generate_token(request: Request, note: str = Form(""), target_em
 @app.post("/admin/tokens/revoke")
 async def admin_revoke_token(request: Request, token_id: int = Form(0)):
     user = _require_admin_user(request)
+    # AUDIT #4 HIGH #2 — same ceiling as generate. Blanket-revoke at
+    # line rate would clear every pending invite during an attack window.
+    if _is_rate_limited(f"admin-tokens-rev:{user['user_id']}", 30, 60):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many token revocations. Try again in a minute.",
+            headers={"Retry-After": "60"},
+        )
     db.revoke_invite_token(token_id)
     log.info("Admin %s revoked token id=%d", user["email"], token_id)
     try:
@@ -6412,9 +6430,15 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
 
 if __name__ == "__main__":
     import uvicorn
+    # AUDIT #4 MEDIUM #1 — bind loopback by default. Production runs uvicorn
+    # via the deploy command which pins `--host 127.0.0.1`; this ``python -m
+    # server`` path is dev-only, and 0.0.0.0 was the wrong default for a
+    # gateway that's meant to sit behind Cloudflare Tunnel. Override with
+    # GATEWAY_HOST= if you actually need LAN-reachable.
+    _host = os.environ.get("GATEWAY_HOST", "127.0.0.1")
     uvicorn.run(
         "server:app",
-        host="0.0.0.0",
+        host=_host,
         port=GATEWAY_PORT,
         log_level="info",
     )

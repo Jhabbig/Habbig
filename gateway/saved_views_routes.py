@@ -337,10 +337,15 @@ async def share_view(request: Request, token: str):
     # Attach a one-time flash so the scope page can render an "Added view?"
     # banner. Implementation: cookie set here, read by the scope page JS.
     response = RedirectResponse(url=target, status_code=302)
+    # AUDIT #4 HIGH #3 — gate on Secure in production. Cookie is
+    # deliberately non-HttpOnly (JS reads it for the flash banner) but
+    # a HTTP-downgrade should not leak its value.
+    import os as _os
+    _is_prod = _os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
     response.set_cookie(
         "narve_shared_view",
         json.dumps({"id": view_id, "name": row["name"][:80], "scope": row["scope"]}),
-        max_age=300, httponly=False, samesite="lax",
+        max_age=300, httponly=False, samesite="lax", secure=_is_prod,
     )
     return response
 
