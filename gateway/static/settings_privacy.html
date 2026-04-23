@@ -3,109 +3,192 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Privacy & data export · narve.ai</title>
-  <link rel="stylesheet" href="{{ static: gateway.css }}">
-  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <title>Privacy · narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
-  <style>
-    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.55; }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 80px; }
-    .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; gap: 16px; }
-    .head h1 { margin: 0; font-size: 26px; font-weight: 600; }
-    .backlink { opacity: 0.55; color: inherit; text-decoration: none; font-size: 13px; }
-    .backlink:hover { opacity: 1; }
-    .note { font-size: 13px; opacity: 0.6; margin: 6px 0 28px; line-height: 1.55; }
-    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 28px; }
-    .stat-card { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 6px; padding: 12px 14px; }
-    .stat-label { font-size: 10px; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-    .stat-value { font-size: 16px; font-weight: 600; }
-    h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; margin: 38px 0 12px; }
-    .adm-list { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
-    .admin-row { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); gap: 16px; }
-    .admin-row:last-child { border-bottom: 0; }
-    .admin-row-info { flex: 1; min-width: 0; }
-    .admin-row-main { font-size: 14px; margin-bottom: 4px; }
-    .admin-row-meta { font-size: 12px; opacity: 0.55; line-height: 1.5; }
-    .badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; margin-left: 4px; vertical-align: middle; }
-    .btn, .btn-primary-outline { display: inline-block; padding: 8px 16px; border-radius: 6px; text-decoration: none; color: inherit; border: 1px solid var(--border, rgba(255,255,255,0.15)); background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
-    .btn-primary { background: var(--accent, #fff); color: var(--bg, #0d0d0d); border: 0; font-weight: 600; }
-    .btn:hover, .btn-primary-outline:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
-    form.request { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
-    #status-msg { font-size: 13px; opacity: 0.75; margin-left: 4px; }
-  </style>
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <main class="wrap" id="main">
-    <div class="head">
-      <div>
-        <a class="backlink" href="/account">← Account</a>
-        <h1>Privacy &amp; data export {{ raw_nav_role }}</h1>
+  <div class="app-shell">
+
+    <!-- ── Sidebar ──────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/billing" class="nav-item">Billing</a>
+        <a href="/settings" class="nav-item active">Settings</a>
+        {{ raw_admin_link }}
+      </nav>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <!-- ── Main content ─────────────────────────────────────────── -->
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/settings" class="breadcrumb-item" style="text-decoration:none;color:inherit">Settings</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Privacy</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Privacy &amp; data export</h1>
+        <p class="page-subtitle">
+          Under GDPR Article 20 you can request a copy of your personal data
+          any time. Exports are a ZIP — account, predictions, saved markets,
+          followed sources, notifications, activity — with a 7-day download
+          link. Rate-limited to 1 export per 24 hours.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:900px">
+
+          <!-- Request an export -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Request a new export</div>
+              <div class="settings-section-desc">
+                We queue the ZIP, email you when it's ready, and keep the
+                download link live for 7 days.
+              </div>
+
+              <form class="request" id="export-form" onsubmit="return submitExportRequest(event)">
+                {{ raw_csrf_field }}
+                <div class="save-bar" style="position:static;margin-top:0">
+                  <span class="save-bar-status" id="status-msg"></span>
+                  <button class="btn btn-primary" type="submit">Request export</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Past exports -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Past exports</h2>
+              <span class="admin-section-count">last 90 days</span>
+            </div>
+            <div class="admin-card">
+              {{ raw_export_rows }}
+            </div>
+          </div>
+
+          <!-- Session protection -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Session protection</div>
+              <div class="settings-section-desc">
+                narve watermarks every session for leak attribution. These toggles
+                control optional browser-side blur behavior. Watermarking and
+                bulk-fetch limits can't be disabled — they're the teeth behind
+                the product's privacy promise.
+              </div>
+
+              <form method="post" action="/settings/privacy/toggles">
+                {{ raw_csrf_field }}
+
+                <label class="field-row" style="cursor:pointer">
+                  <span class="field-label">Auto-blur on focus loss</span>
+                  <span class="field-control" style="display:flex;gap:12px;align-items:flex-start;padding-top:6px">
+                    <input type="checkbox" id="inactive_blur" name="inactive_blur" {{ raw_inactive_checked }}
+                           style="width:18px;height:18px;accent-color:var(--text-primary);margin-top:4px">
+                    <span>
+                      <span style="font-size:13.5px">Dashboard blurs 3 seconds after you switch tabs.</span>
+                      <span class="field-helper">Helpful when screen-sharing on a call.</span>
+                    </span>
+                  </span>
+                </label>
+
+                <label class="field-row" style="cursor:pointer">
+                  <span class="field-label">DevTools blur</span>
+                  <span class="field-control" style="display:flex;gap:12px;align-items:flex-start;padding-top:6px">
+                    <input type="checkbox" id="devtools_blur" name="devtools_blur" {{ raw_devtools_checked }}
+                           style="width:18px;height:18px;accent-color:var(--text-primary);margin-top:4px">
+                    <span>
+                      <span style="font-size:13.5px">Blur the page when browser developer tools open.</span>
+                      <span class="field-helper">Casual anti-snooping. Not a real barrier against a determined attacker.</span>
+                    </span>
+                  </span>
+                </label>
+
+                <div class="save-bar">
+                  <button class="btn btn-primary" type="submit">Save</button>
+                </div>
+              </form>
+            </div>
+
+            <div class="settings-section" style="margin-top:8px;border-top:1px solid var(--border-ghost);padding-top:20px">
+              <div class="settings-section-title" style="font-size:14px">Always on</div>
+              <div class="settings-section-desc" style="margin-bottom:0">
+                Session-level SVG watermark (your email, user ID, session
+                fragment, masked IP woven into every rendered page);
+                per-user data-level signing on list API responses;
+                bulk-fetch cap of 5,000 rows/hour and 20,000/day across the
+                API. Any screenshot, copy, or data dump is traceable back
+                to the account that produced it.
+              </div>
+            </div>
+          </div>
+
+          <p style="font-size:13px;color:var(--text-tertiary);margin-top:24px">
+            Questions? Email <a href="mailto:privacy@narve.ai">privacy@narve.ai</a>.
+            Our full privacy policy lives at <a href="/privacy">/privacy</a>.
+          </p>
+
+        </div>
       </div>
     </div>
-    <p class="note">Under GDPR Article 20 you can request a copy of your personal data at any time. Exports are a ZIP file — account, predictions, saved markets, followed sources, notifications, activity — and the download link is valid for 7 days. Rate-limited to 1 request per 24 hours.</p>
 
-    <h2>Request a new export</h2>
-    <form class="request" id="export-form" onsubmit="return submitExportRequest(event)">
-      {{ raw_csrf_field }}
-      <button class="btn btn-primary" type="submit">Request export</button>
-      <span id="status-msg"></span>
-    </form>
-
-    <h2>Past exports</h2>
-    <div class="adm-list">{{ raw_export_rows }}</div>
-
-    <h2>Session protection</h2>
-    <p class="note">narve.ai watermarks every session for leak attribution. The two toggles below control optional browser-side protections. Watermarking and bulk-fetch limits cannot be disabled — they&rsquo;re the teeth behind the product&rsquo;s privacy promise.</p>
-    <form method="post" action="/settings/privacy/toggles" style="background:var(--surface, #141414);border:1px solid var(--border, rgba(255,255,255,0.06));border-radius:8px;padding:20px 22px;margin-bottom:16px;">
-      {{ raw_csrf_field }}
-      <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-        <label for="inactive_blur" style="flex:1;font-size:13.5px;">
-          Auto-blur when window loses focus
-          <span style="display:block;font-size:12px;opacity:0.55;margin-top:3px;">Dashboard blurs 3 seconds after you switch tabs. Helpful when screen-sharing on a call.</span>
-        </label>
-        <input type="checkbox" id="inactive_blur" name="inactive_blur" {{ raw_inactive_checked }} style="width:18px;height:18px;accent-color:#fff;">
-      </div>
-      <div style="display:flex;align-items:center;gap:14px;padding:10px 0;">
-        <label for="devtools_blur" style="flex:1;font-size:13.5px;">
-          Blur when developer tools are open
-          <span style="display:block;font-size:12px;opacity:0.55;margin-top:3px;">Casual anti-snooping. Determined users can disable breakpoints — not a real barrier.</span>
-        </label>
-        <input type="checkbox" id="devtools_blur" name="devtools_blur" {{ raw_devtools_checked }} style="width:18px;height:18px;accent-color:#fff;">
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-top:14px;">
-        <button class="btn btn-primary" type="submit">Save</button>
-      </div>
-    </form>
-
-    <div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.12);border-radius:8px;padding:14px 16px;font-size:12.5px;opacity:0.68;line-height:1.7;margin-bottom:28px;">
-      <strong style="opacity:0.9;">Always on:</strong>
-      session-level SVG watermark (your email, user ID, session fragment, masked IP woven into every rendered page); per-user data-level signing on list API responses; bulk-fetch cap of 5,000 rows/hour and 20,000/day across the API. Any screenshot, copy-paste, or data dump is traceable back to the account that produced it.
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Settings · Privacy</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
     </div>
+  </div>
 
-    <p class="note">Questions? Email <a href="mailto:privacy@narve.ai" style="color:inherit">privacy@narve.ai</a>. Our full privacy policy is at <a href="/privacy" style="color:inherit">/privacy</a>.</p>
-
-    <script>
-      function submitExportRequest(ev) {
-        ev.preventDefault();
-        var msg = document.getElementById('status-msg');
-        msg.textContent = 'Requesting…';
-        var csrfInput = ev.target.querySelector('input[name="_csrf"]');
-        var fd = new FormData();
-        if (csrfInput) fd.append('_csrf', csrfInput.value);
-        fetch('/api/account/export', {
-          method: 'POST', body: fd, credentials: 'same-origin',
-        }).then(function(r) { return r.json().then(function(j) { return {ok: r.ok, j: j}; }); })
-          .then(function(res) {
-            if (res.ok) {
-              msg.textContent = 'Queued — refresh in a minute to see the download link.';
-              setTimeout(function(){ window.location.reload(); }, 3000);
-            } else {
-              msg.textContent = (res.j && res.j.detail) || 'Request failed.';
-            }
-          }).catch(function(){ msg.textContent = 'Network error — try again.'; });
-        return false;
-      }
-    </script>
-  </main>
+<script>
+  function submitExportRequest(ev) {
+    ev.preventDefault();
+    var msg = document.getElementById('status-msg');
+    msg.textContent = 'Requesting…';
+    var csrfInput = ev.target.querySelector('input[name="_csrf"]');
+    var fd = new FormData();
+    if (csrfInput) fd.append('_csrf', csrfInput.value);
+    fetch('/api/account/export', {
+      method: 'POST', body: fd, credentials: 'same-origin',
+    }).then(function(r) { return r.json().then(function(j) { return {ok: r.ok, j: j}; }); })
+      .then(function(res) {
+        if (res.ok) {
+          msg.textContent = 'Queued — refresh in a minute to see the download link.';
+          setTimeout(function(){ window.location.reload(); }, 3000);
+        } else {
+          msg.textContent = (res.j && res.j.detail) || 'Request failed.';
+        }
+      }).catch(function(){ msg.textContent = 'Network error — try again.'; });
+    return false;
+  }
+  (function(){
+    var av = document.querySelector('.sidebar-user-avatar[data-username]');
+    if (av){ var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+  })();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>
