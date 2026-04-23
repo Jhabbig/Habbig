@@ -53,6 +53,10 @@
     } catch { /* quota / disabled */ }
   }
 
+  function clearRecents() {
+    try { localStorage.removeItem(RECENTS_KEY); } catch { /* disabled */ }
+  }
+
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -67,6 +71,8 @@
     user: '●',
     command: '/',
     recent: '↻',
+    'recent-clear': '×',
+    popular: '✦',
   };
   const TYPE_LABEL = {
     market: 'Markets',
@@ -138,6 +144,7 @@
           <div class="narve-cmdp-footer" aria-hidden="true">
             <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
             <span><kbd>↵</kbd> open</span>
+            <span><kbd>⌘1</kbd>–<kbd>9</kbd> jump</span>
             <span><kbd>esc</kbd> close</span>
           </div>
         </div>`;
@@ -182,12 +189,17 @@
       const recents = readRecents();
       const baseGroups = [];
       if (recents.length) {
-        baseGroups.push({
-          type: 'recent',
-          items: recents.map(q => ({
+        // Surface a Clear pseudo-row at the top of the Recent group so
+        // users have a way to forget a typo without opening devtools.
+        // Click handler is special-cased in navigate().
+        const recentItems = [
+          { type: 'recent-clear', title: 'Clear recent searches',
+            subtitle: '', action: 'clear-recents' },
+          ...recents.map(q => ({
             type: 'recent', title: q, subtitle: 'Recent search', query: q,
           })),
-        });
+        ];
+        baseGroups.push({ type: 'recent', items: recentItems });
       }
       baseGroups.push({
         type: 'command',
@@ -422,11 +434,35 @@
         e.preventDefault();
         const item = this.items[this.sel];
         if (item) this.navigate(item);
+        return;
+      }
+      // Cmd/Ctrl + digit — jump straight to the Nth visible result.
+      // Matches Raycast / Linear conventions; skips recents/commands-
+      // only empty state because "jump to #3 command" is less useful.
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key >= '1' && e.key <= '9') {
+        const idx = Number(e.key) - 1;
+        const item = this.items[idx];
+        if (item) {
+          e.preventDefault();
+          this.sel = idx;
+          this.highlight();
+          this.navigate(item);
+        }
       }
     }
 
     async navigate(item) {
       if (!item) return;
+      // Clear-recents pseudo-row: wipe storage, re-render empty state.
+      if (item.action === 'clear-recents' || item.type === 'recent-clear') {
+        clearRecents();
+        this.input.value = '';
+        this.lastQ = '';
+        this.renderEmpty();
+        this.input.focus();
+        return;
+      }
       // "Recent" entries are queries, not targets — requeue the search.
       if (item.type === 'recent') {
         this.input.value = item.query;
