@@ -1021,8 +1021,14 @@ _PUBLIC_PATHS = frozenset({
     # Public SEO content pages — see seo_routes.py
     "/about", "/how-it-works", "/methodology", "/faq",
     "/team", "/press", "/changelog", "/narve",
+    # Developer docs — public page describing /api/public/v1/* for SEO.
+    "/api/docs",
 })
-_PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/", "/predictions/public/")
+# The gate is bypassed on these prefixes. The public developer API
+# (/api/public/v1/*) uses Bearer-token auth and has no gate cookie, so
+# we whitelist the whole prefix rather than enumerate every endpoint.
+_PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/",
+                    "/predictions/public/", "/api/public/v1/")
 
 
 class GateMiddleware(BaseHTTPMiddleware):
@@ -2031,13 +2037,29 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
     skel_injection = (
         '<link rel="stylesheet" href="/_gateway_static/skeletons.css">\n'
         '<link rel="stylesheet" href="/_gateway_static/states.css">\n'
-        '<script src="/_gateway_static/skeletons.js" defer></script>'
+        '<link rel="stylesheet" href="/_gateway_static/lang-switcher.css">\n'
+        '<script src="/_gateway_static/skeletons.js" defer></script>\n'
+        '<script src="/_gateway_static/lang-switcher.js" defer></script>'
     )
     if "skeletons.js" not in page:
         lower = page.lower()
         head_idx = lower.rfind("</head>")
         if head_idx != -1:
             page = page[:head_idx] + skel_injection + "\n" + page[head_idx:]
+
+    # ── i18n switcher mount — inject a tiny container directly above the
+    # sidebar-user block on every page that has one. lang-switcher.js picks
+    # up `#lang-switcher-mount` on DOMContentLoaded. Pages without a
+    # sidebar silently skip — window.SUPPORTED_LANGS stays available so
+    # a future placement (topbar, modal) can mount elsewhere.
+    if "lang-switcher-mount" not in page and len(_I18N_SUPPORTED) > 1:
+        m = re.search(
+            r'<(?:a|div|button)\b[^>]*class="[^"]*\bsidebar-user\b[^"]*"[^>]*>',
+            page,
+        )
+        if m:
+            mount_html = '<div id="lang-switcher-mount"></div>\n          '
+            page = page[:m.start()] + mount_html + page[m.start():]
 
     # ── i18n: set <html lang="..."> and expose window.LANG for client JS
     #    (Intl.NumberFormat / Intl.DateTimeFormat read it for locale-aware
@@ -4899,6 +4921,48 @@ try:
     _seo_routes.register(app)
 except Exception as _exc:  # pragma: no cover
     log.exception("seo_routes.register failed: %s", _exc)
+
+
+# ── Public developer API v1 + API-key + webhook settings pages ────────
+#
+# /api/public/v1/* — Bearer-authenticated JSON endpoints (api_public/).
+# /settings/api-keys, /settings/webhooks, /admin/webhooks — session pages.
+# /api/docs — static developer docs.
+
+try:
+    import api_public  # noqa: E402
+    app.include_router(api_public.router)
+except Exception as _exc:  # pragma: no cover
+    log.exception("api_public router mount failed: %s", _exc)
+
+try:
+    import api_keys_routes as _api_keys_routes  # noqa: E402
+    _api_keys_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("api_keys_routes.register failed: %s", _exc)
+
+try:
+    import webhooks_routes as _webhooks_routes  # noqa: E402
+    _webhooks_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("webhooks_routes.register failed: %s", _exc)
+
+# Bridge realtime hub broadcasts into external webhook subscribers (no-op
+# if the hub doesn't expose register_after_broadcast yet).
+try:
+    import webhooks as _webhooks_mod  # noqa: E402
+    _webhooks_mod.register_with_hub()
+except Exception as _exc:  # pragma: no cover
+    log.exception("webhooks.register_with_hub failed: %s", _exc)
+
+
+@app.get("/api/docs", response_class=HTMLResponse)
+async def api_docs_page(request: Request):
+    """Developer docs for /api/public/v1/*. Static; no auth required."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/docs")
+    return render_page("api_docs", request=request)
 
 
 # ── Topics (Pro-tier saved search topics) ──────────────────────────────

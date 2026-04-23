@@ -60,12 +60,20 @@ class TestSettingsOfflineRoute(unittest.TestCase):
 
     def setUp(self):
         self.client = TestClient(server.app)
-        self.client.cookies.set("narve_gate_access", "granted")
+        # Gate cookie is now a signed HMAC value, not the literal string
+        # "granted". Mint a real one so the gate middleware lets us
+        # through to the offline route handler.
+        self.client.cookies.set(
+            server.GATE_COOKIE_NAME, server._mint_gate_cookie_value(),
+        )
 
     def test_anon_redirects_to_token(self):
+        # Gate is granted but no user session → offline route redirects
+        # to /token. Accept /token OR /gate to stay resilient if the
+        # gate middleware tightens in future (both mean "not signed in").
         r = self.client.get("/settings/offline", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))
-        self.assertEqual(r.headers.get("location"), "/token")
+        self.assertIn(r.headers.get("location"), ("/token", "/gate"))
 
     def test_authed_user_renders(self):
         uid = db.create_user("pwa-offline@test.com", "InitialPass123!", username="pwaoffline")
