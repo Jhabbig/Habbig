@@ -433,31 +433,54 @@
     function copyLink() {
       const qs = serialize(state.filters);
       const href = `${window.location.origin}${window.location.pathname}${qs ? "?" + qs : ""}`;
-      navigator.clipboard && navigator.clipboard.writeText(href);
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(href)
+          .then(() => { if (window.toast) window.toast("Link copied", "success"); })
+          .catch(() => { if (window.toast) window.toast("Couldn't copy link", "error"); });
+      } else if (window.toast) {
+        window.toast("Clipboard unavailable", "error");
+      }
     }
 
-    async function save() {
+    async function save(saveBtn) {
       const name = prompt("Name this view:");
       if (!name || !name.trim()) return;
       const isDefault = confirm("Make this the default for this tab?");
       const isPinned = confirm("Pin to sidebar?");
-      const r = await fetch("/api/saved-views", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: apiHeaders(true),
-        body: JSON.stringify({
-          scope, name: name.trim(), filters: state.filters,
-          is_default: isDefault, is_pinned: isPinned,
-        }),
-      });
-      if (!r.ok) {
-        alert("Save failed. " + (r.status === 403 ? "Subscription required or limit reached." : ""));
-        return;
+
+      if (saveBtn) saveBtn.classList.add("is-busy");
+      const loadingId = window.toast ? window.toast.loading("Saving view\u2026") : null;
+      try {
+        const r = await fetch("/api/saved-views", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: apiHeaders(true),
+          body: JSON.stringify({
+            scope, name: name.trim(), filters: state.filters,
+            is_default: isDefault, is_pinned: isPinned,
+          }),
+        });
+        if (!r.ok) {
+          if (window.toast) {
+            window.toast(
+              r.status === 403
+                ? "Subscription required or view limit reached"
+                : "Save failed — try again",
+              "error",
+            );
+          }
+          return;
+        }
+        const body = await r.json();
+        const shareUrl = `${window.location.origin}/v/${body.view.share_token}`;
+        if (navigator.clipboard) navigator.clipboard.writeText(shareUrl);
+        if (window.toast) window.toast("Saved — share link copied", "success");
+      } catch (_) {
+        if (window.toast) window.toast("Network error — try again", "error");
+      } finally {
+        if (loadingId && window.toast && window.toast.hide) window.toast.hide(loadingId);
+        if (saveBtn) saveBtn.classList.remove("is-busy");
       }
-      const body = await r.json();
-      const shareUrl = `${window.location.origin}/v/${body.view.share_token}`;
-      if (navigator.clipboard) navigator.clipboard.writeText(shareUrl);
-      alert(`Saved. Share link copied:\n${shareUrl}`);
     }
 
     // ── Render ────────────────────────────────────────────────────
@@ -493,7 +516,7 @@
         el("div", { class: "filter-actions__row" },
           el("button", {
             type: "button", class: "filter-btn",
-            onClick: save,
+            onClick: function (e) { save(e.currentTarget); },
           }, "Save view"),
           el("button", {
             type: "button", class: "filter-btn",

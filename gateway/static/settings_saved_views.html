@@ -71,14 +71,9 @@
       font-size: 13px;
     }
     .views-empty a { color: var(--text-primary); text-decoration: underline; }
-    .views-toast {
-      position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
-      padding: 10px 16px; background: var(--bg-float);
-      border: 1px solid var(--border-subtle); border-radius: var(--radius);
-      box-shadow: var(--shadow-md); font-size: 13px; color: var(--text-primary);
-      opacity: 0; transition: opacity 0.2s; pointer-events: none;
-    }
-    .views-toast.is-visible { opacity: 1; }
+    /* Toast styles come from states.css (nv-toast-host/.nv-toast).
+       The local `toast(msg, type)` helper below just forwards to
+       window.toast from static/toast.js. */
   </style>
 </head>
 <body>
@@ -144,8 +139,6 @@
 
   </div>
 
-  <div class="views-toast" id="toast" role="status" aria-live="polite"></div>
-
   <script>
     (function () {
       var avatars = document.querySelectorAll(".sidebar-user-avatar[data-username]");
@@ -155,6 +148,8 @@
       });
     })();
   </script>
+  <link rel="stylesheet" href="/_gateway_static/states.css">
+  <script src="/_gateway_static/toast.js" defer></script>
   <script src="/_gateway_static/filter_panel.js" defer></script>
   <script>
     document.addEventListener("DOMContentLoaded", function () {
@@ -165,14 +160,13 @@
     });
 
     var state = { scope: "markets", views: [] };
-    var toastTimer = null;
 
-    function toast(msg) {
-      var el = document.getElementById("toast");
-      el.textContent = msg;
-      el.classList.add("is-visible");
-      if (toastTimer) clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { el.classList.remove("is-visible"); }, 2200);
+    function toast(msg, type) {
+      // Fall back to alert only if the shared toast module somehow
+      // failed to load — still always visible feedback, never a silent
+      // no-op.
+      if (window.toast) window.toast(msg, type || "info");
+      else alert(msg);
     }
 
     function csrfHeaders(withBody) {

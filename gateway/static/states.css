@@ -210,3 +210,296 @@
   60%      { content: "..."; }
   80%, 100%{ content: ""; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   In-flight, disabled, validation, progress — shared across the product.
+   Every interactive control on every page should pick these up by
+   default so the user never sees a jarring "did my click register?"
+   moment. Also covers the toast host positioning so toast.js works
+   without any per-page CSS.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── In-flight buttons (spec Part 4) ────────────────────────────────── */
+/* Add .is-busy to any button that's currently sending a request. It
+   hides the label and exposes a small spinner via the pseudo-element
+   so no layout shift happens on toggle. */
+
+.btn.is-busy,
+button.is-busy,
+.nv-busy {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+  cursor: wait;
+}
+.btn.is-busy::after,
+button.is-busy::after,
+.nv-busy::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  color: var(--text-primary);
+  opacity: 0.7;
+  animation: nv-spin 0.7s linear infinite;
+}
+@keyframes nv-spin { to { transform: rotate(360deg); } }
+
+/* Small inline spinner you can drop next to text in a button label. */
+.nv-spinner-sm {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.7;
+  vertical-align: -2px;
+  animation: nv-spin 0.7s linear infinite;
+}
+
+
+/* ── Disabled state (spec Part 6) ───────────────────────────────────── */
+/* Both native `[disabled]` and ARIA-only `[aria-disabled]` get the
+   same visual so server-rendered anchors that can't use the HTML
+   disabled attribute still look right. */
+
+button[disabled],
+input[disabled],
+select[disabled],
+textarea[disabled],
+[aria-disabled="true"]:not(.nv-busy) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+[aria-disabled="true"]:not(.nv-busy) * { pointer-events: none; }
+
+
+/* ── Form-field validation (spec Part 8) ────────────────────────────── */
+/* Inline, per-field, blur-triggered. Apply via `.field` wrapper +
+   `.field--error` / `.field--valid` state classes. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+}
+.field__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.field__input,
+.field input[type="text"],
+.field input[type="email"],
+.field input[type="password"],
+.field input[type="number"],
+.field input[type="search"],
+.field textarea,
+.field select {
+  padding: 10px 12px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field__input:focus-visible,
+.field input:focus-visible,
+.field textarea:focus-visible,
+.field select:focus-visible {
+  outline: none;
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--interactive-ghost);
+}
+.field__hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.field__error {
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+  padding: 4px 8px;
+  border-left: 2px solid var(--text-primary);
+  background: var(--bg-surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  display: none;
+}
+.field--error .field__input,
+.field--error .field input,
+.field--error .field textarea,
+.field--error .field select { border-color: var(--text-primary); }
+.field--error .field__error { display: block; }
+
+
+/* ── Progress (spec Part 7) ─────────────────────────────────────────── */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-sm);
+}
+.progress__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.progress__bar {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-raised);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress__fill {
+  height: 100%;
+  background: var(--text-primary);
+  transition: width 0.3s ease;
+}
+.progress__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+/* Indeterminate (unknown total) — animated sweep bar. */
+.progress--indeterminate .progress__fill {
+  width: 35%;
+  animation: nv-progress-sweep 1.4s ease-in-out infinite;
+}
+@keyframes nv-progress-sweep {
+  0%   { margin-left: -35%; }
+  100% { margin-left: 100%;  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   Toast host + cards (consumed by static/toast.js).
+   Lives in states.css so every page that loads states.css inherits the
+   toast styles automatically — no extra <link> per page.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.nv-toast-host {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column-reverse;  /* newest closest to bottom edge */
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;            /* host is a container; toasts opt-in */
+  max-width: calc(100vw - 32px);
+}
+.nv-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-float);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 220px;
+  max-width: 420px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.nv-toast--enter { opacity: 1; transform: translateY(0); }
+.nv-toast--exit  { opacity: 0; transform: translateY(8px); }
+.nv-toast-body {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nv-toast-icon-wrap {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.nv-toast-icon { width: 14px; height: 14px; }
+.nv-toast-close {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.nv-toast-close:hover { color: var(--text-primary); }
+
+/* Error toast: border-emphasised, never coloured red (monochrome). */
+.nv-toast--error {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--text-primary), var(--shadow-lg);
+}
+
+.nv-toast-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.7;
+  animation: nv-spin 0.7s linear infinite;
+}
+
+/* Mobile: stick to the top so the OS status bar / virtual keyboard
+   don't fight the toast for space at the bottom. */
+@media (max-width: 640px) {
+  .nv-toast-host {
+    top: 12px;
+    bottom: auto;
+    flex-direction: column;
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   Empty-state variants (spec Part 1)
+   Additive to the existing .empty-state / .empty-state-title family.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.empty-state--compact {
+  padding: var(--space-4) var(--space-3);
+}
+.empty-state--compact .empty-state-title,
+.empty-state--compact .empty-state__title {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.empty-state__cta-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: var(--space-3);
+}

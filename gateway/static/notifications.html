@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Notifications — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <link rel="stylesheet" href="/_gateway_static/states.css">
+  <link rel="stylesheet" href="/_gateway_static/skeletons.css">
   <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
@@ -254,7 +256,23 @@
       function renderList(){
         const rows=filterItems(state.items);
         if (!rows.length){
-          listEl.innerHTML='<div class="narve-notif-empty" style="padding:48px 16px">No notifications yet.</div>';
+          const filterActive = state.filter && state.filter !== 'all';
+          listEl.innerHTML =
+            '<div class="empty-state" style="padding:48px 24px;text-align:center">' +
+              '<div class="empty-state-title" style="font-size:16px;font-weight:600;margin-bottom:8px">' +
+                (filterActive ? 'Nothing in this filter' : 'No notifications yet') +
+              '</div>' +
+              '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary);max-width:480px;margin:0 auto var(--space-4);line-height:1.55">' +
+                (filterActive
+                  ? 'Try another filter above, or clear it to see everything.'
+                  : 'When markets you\'re following resolve — or a high-credibility source posts a signal — you\'ll see it here.') +
+              '</div>' +
+              (filterActive ? '' :
+                '<div class="empty-state__cta-row">' +
+                  '<a class="btn btn-primary" href="/leaderboard">Follow top predictors</a>' +
+                  '<a class="btn" href="/settings">Notification settings</a>' +
+                '</div>') +
+            '</div>';
           return;
         }
         const byDay={};
@@ -303,7 +321,29 @@
           const r=await api(API+'?limit=100');
           state.items=r.notifications||[];
         }catch(e){
-          listEl.innerHTML='<div class="narve-notif-empty" style="padding:48px 16px">Failed to load.</div>';
+          const is401 = e && String(e.message||'').indexOf('HTTP 401') === 0;
+          listEl.innerHTML =
+            '<div class="error-state">' +
+              '<svg class="error-state__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+                '<circle cx="8" cy="8" r="6.5"/><line x1="8" y1="5" x2="8" y2="9"/><circle cx="8" cy="11.5" r="0.5" fill="currentColor"/>' +
+              '</svg>' +
+              '<div class="error-state__title">' +
+                (is401 ? 'Your session expired' : 'Could not load notifications') +
+              '</div>' +
+              '<div class="error-state__body">' +
+                (is401
+                  ? 'Sign in again to see your alerts.'
+                  : 'Check your connection and retry.') +
+              '</div>' +
+              '<div class="error-state__actions">' +
+                (is401
+                  ? '<a href="/token">Sign in</a>'
+                  : '<button type="button" id="notif-retry">Retry</button>') +
+                '<a href="/dashboards">Back to dashboards</a>' +
+              '</div>' +
+            '</div>';
+          const retry = document.getElementById('notif-retry');
+          if (retry) retry.addEventListener('click', load);
           return;
         }
         renderList();
@@ -362,9 +402,13 @@
         prefsStatus.textContent='Saving…';
         try{
           await api(API+'/preferences',{method:'PATCH',body});
-          prefsStatus.textContent='Saved';
-          setTimeout(()=>{prefsStatus.textContent='';}, 1500);
-        }catch(e){ prefsStatus.textContent='Save failed'; }
+          prefsStatus.textContent='';
+          if (window.toast) window.toast('Preferences saved', 'success');
+        }catch(e){
+          prefsStatus.textContent='';
+          if (window.toast) window.toast('Could not save preferences', 'error');
+          else prefsStatus.textContent='Save failed';
+        }
       }
       prefsEl.addEventListener('change',(e)=>{
         if (e.target.matches('input[type="checkbox"]')) queuePrefsSave();
@@ -374,6 +418,8 @@
       loadPrefs();
     })();
   </script>
+  <script src="/_gateway_static/skeletons.js" defer></script>
+  <script src="/_gateway_static/toast.js" defer></script>
   <script src="/_gateway_static/filter_panel.js" defer></script>
   <script>
     // Mount pinned saved-view list + show shared-view banner if the user

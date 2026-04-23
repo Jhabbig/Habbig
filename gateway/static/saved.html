@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Saved — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="stylesheet" href="/_gateway_static/states.css">
+  <link rel="stylesheet" href="/_gateway_static/skeletons.css">
   <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
@@ -164,10 +166,14 @@
 
   function renderRows(items){
     if (!items.length){
-      body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
-        + '<div class="empty-state-title" style="font-size:15px;font-weight:600;margin-bottom:6px">No saved predictions yet.</div>'
-        + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary);max-width:500px;margin:0 auto;line-height:1.5">'
-        + 'When you find a prediction you want to track over time, tap the bookmark icon. Resolved ones show up here with their outcomes so you can see which sources you trust most.'
+      body.innerHTML = '<div class="empty-state" style="padding:48px 24px;text-align:center">'
+        + '<div class="empty-state-title" style="font-size:16px;font-weight:600;margin-bottom:8px">Nothing saved yet</div>'
+        + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary);max-width:460px;margin:0 auto var(--space-4);line-height:1.55">'
+        + 'Tap the bookmark icon on any prediction to track it here. When the market resolves, you\'ll see who called it right.'
+        + '</div>'
+        + '<div class="empty-state__cta-row">'
+        +   '<a class="btn btn-primary" href="/dashboards">Browse dashboards</a>'
+        +   '<a class="btn" href="/leaderboard">Top predictors</a>'
         + '</div>'
         + '</div>';
       return;
@@ -246,23 +252,52 @@
   }
 
   function load(){
-    body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center"><div class="empty-state-title" style="font-size:14px;color:var(--text-tertiary)">Loading…</div></div>';
+    // Skeleton rows while the fetch is in flight — smoother than a
+    // plain "Loading…" chip. narveSkel is loaded via skeletons.js.
+    if (window.narveSkel && window.narveSkel.show) {
+      window.narveSkel.show('saved-body', 'prediction-row', 6);
+    } else {
+      body.innerHTML = '<div class="loading-text">Loading saved</div>';
+    }
     /* Always fetch the full set; client-side filter handles status chips
        + search. Avoids a round-trip on every chip click and keeps KPIs
        honest (they count across the whole set, not the filtered slice). */
     fetch('/api/saved?resolved=all')
-      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if (!r.ok) throw new Error('http_' + r.status);
+        return r.json();
+      })
       .then(function(d){
         var items = d.items || [];
         updateKpis(items);
         renderRows(items);
         applyClientFilter();
       })
-      .catch(function(){
-        body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
-          + '<div class="empty-state-title" style="font-size:15px;font-weight:600;margin-bottom:6px">Failed to load.</div>'
-          + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary)">Refresh to retry.</div>'
-          + '</div>';
+      .catch(function(err){
+        // 401 → session expired; otherwise generic failure.
+        var is401 = err && String(err.message || '').indexOf('http_401') === 0;
+        body.innerHTML =
+          '<div class="error-state">' +
+            '<svg class="error-state__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+              '<circle cx="8" cy="8" r="6.5"/><line x1="8" y1="5" x2="8" y2="9"/><circle cx="8" cy="11.5" r="0.5" fill="currentColor"/>' +
+            '</svg>' +
+            '<div class="error-state__title">' +
+              (is401 ? 'Your session expired' : 'Could not load saved predictions') +
+            '</div>' +
+            '<div class="error-state__body">' +
+              (is401
+                ? 'Sign in again to pick up where you left off.'
+                : 'Check your connection and retry. If this keeps happening, it\'s on us.') +
+            '</div>' +
+            '<div class="error-state__actions">' +
+              (is401
+                ? '<a href="/token">Sign in</a>'
+                : '<button type="button" id="saved-retry">Retry</button>') +
+              '<a href="/dashboards">Back to dashboards</a>' +
+            '</div>' +
+          '</div>';
+        var retry = document.getElementById('saved-retry');
+        if (retry) retry.addEventListener('click', load);
       });
   }
 
@@ -286,6 +321,8 @@
 {{ raw_sitemap }}
 <script src="/_gateway_static/user-features.js" defer></script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/skeletons.js" defer></script>
+<script src="/_gateway_static/toast.js" defer></script>
 <script src="/_gateway_static/filter_panel.js" defer></script>
 <script>
   // Mount pinned saved-view list into the sidebar slot + auto-show the
