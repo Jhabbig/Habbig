@@ -71,8 +71,12 @@
       : pos === "no"
       ? "var(--semantic-low)"
       : "var(--text-secondary)";
+    // "conf 8" reads better than "8/10" — nobody's confused about the
+    // scale once they've seen the post modal, and it's one fewer token
+    // to parse on every row.
     var conf = confidence
-      ? ', <strong style="color:' + tone + '">' + confidence + "/10</strong>"
+      ? ' <span style="color:var(--text-tertiary);font-size:11px">' +
+        'conf ' + '<strong style="color:' + tone + '">' + confidence + "</strong></span>"
       : "";
     return (
       '<span style="color:' + tone + ';font-weight:600">' + esc(label) +

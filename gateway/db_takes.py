@@ -549,7 +549,24 @@ def _recount_votes(c, take_id: int) -> tuple[int, int]:
 
 
 def _apply_vote_effects(c, take_id: int) -> None:
-    """Refresh upvotes/downvotes + quality_score + shadow_hidden on one take."""
+    """Refresh upvotes/downvotes + quality_score + shadow_hidden on one take.
+
+    When a take transitions INTO shadow_hidden state (prev=0, new=1), the
+    author gets an in-app notification via `notifications` (migration 026)
+    so they can see why their take vanished from other users' feeds.
+    The notify helper is a best-effort fire-and-forget — a missing
+    notifications table or an older gateway build just logs and skips.
+    """
+    # Read the take's PREVIOUS shadow_hidden + market_slug BEFORE updating
+    # — we need the previous value to detect the 0→1 transition, and the
+    # slug for the notification deep-link.
+    prev = c.execute(
+        "SELECT shadow_hidden, market_slug FROM market_takes WHERE id = ?",
+        (take_id,),
+    ).fetchone()
+    prev_shadow = int(prev["shadow_hidden"] or 0) if prev else 0
+    market_slug = prev["market_slug"] if prev else ""
+
     up, dn = _recount_votes(c, take_id)
     c.execute(
         "UPDATE market_takes SET upvotes = ?, downvotes = ? WHERE id = ?",
@@ -571,6 +588,47 @@ def _apply_vote_effects(c, take_id: int) -> None:
         "UPDATE market_takes SET quality_score = ?, shadow_hidden = ? WHERE id = ?",
         (q, shadow, take_id),
     )
+
+    # Edge-triggered: only notify on the first transition 0→1, not on every
+    # subsequent vote while still hidden (which would spam the author).
+    if prev_shadow == 0 and shadow == 1:
+        _notify_shadow_hidden(c, take["user_id"], take_id, market_slug)
+
+
+def _notify_shadow_hidden(c, user_id: int, take_id: int, market_slug: str) -> None:
+    """Insert a row into `notifications` telling the author their take was
+    shadow-hidden. Never raises. Uses the same transaction `c` as the
+    update that triggered it, so the notification either lands WITH the
+    shadow-hide or doesn't land at all (atomic)."""
+    if not user_id:
+        return
+    try:
+        c.execute(
+            "INSERT INTO notifications "
+            "(user_id, type, title, body, link_url, icon, metadata, created_at) "
+            "VALUES (?, 'system', ?, ?, ?, 'alert-triangle', ?, ?)",
+            (
+                user_id,
+                "Your take was hidden",
+                (
+                    "One of your takes got enough downvotes + a low enough "
+                    "quality score that it's no longer shown to other users. "
+                    "You can still see and edit it."
+                ),
+                f"/markets/{market_slug}#take-{take_id}",
+                # Empty JSON object — metadata column is TEXT in the schema.
+                "{}",
+                int(time.time()),
+            ),
+        )
+    except sqlite3.OperationalError:
+        # notifications table not present (fresh DB, migration 026 not
+        # applied on this branch). Treated as soft failure so the core
+        # shadow-hide action still succeeds.
+        return
+    except Exception:
+        # Never let a notification write break the vote pipeline.
+        return
 
 
 def cast_vote(take_id: int, user_id: int, vote: int) -> tuple[int, int]:

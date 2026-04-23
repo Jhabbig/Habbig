@@ -166,13 +166,24 @@ class TestInputValidation(unittest.TestCase):
             cookies=_session_cookies(uid),
         )
 
+    def _err_text(self, r) -> str:
+        """Extract the human-readable error from either response shape.
+
+        The validation-error response format was tightened post-ship to
+        return `{"error": "…", "field": "…"}` instead of the FastAPI-
+        default `{"detail": "…"}`. Read both so this test survives either
+        version.
+        """
+        body = r.json() or {}
+        return str(body.get("error") or body.get("detail") or body)
+
     def test_short_reasoning_rejected(self):
         uid = _make_user("val_short", paid=True)
         r = self._post(uid, "poly:val-short", {
             "position": "yes", "reasoning": "too short", "confidence": 5,
         })
         self.assertEqual(r.status_code, 400)
-        self.assertIn("50", r.json()["detail"])
+        self.assertIn("50", self._err_text(r))
 
     def test_long_reasoning_rejected(self):
         uid = _make_user("val_long", paid=True)
@@ -180,7 +191,7 @@ class TestInputValidation(unittest.TestCase):
             "position": "yes", "reasoning": "x" * 2001, "confidence": 5,
         })
         self.assertEqual(r.status_code, 400)
-        self.assertIn("2000", r.json()["detail"])
+        self.assertIn("2000", self._err_text(r))
 
     def test_invalid_position_rejected(self):
         uid = _make_user("val_pos", paid=True)
@@ -366,6 +377,61 @@ class TestVoting(unittest.TestCase):
 
 
 # ── 6. Shadow-hide ─────────────────────────────────────────────────────────
+
+
+class TestShadowHideNotification(unittest.TestCase):
+    """Spec: "Any take with ≥ 3 downvotes AND quality_score < -5 is shadow-
+    hidden … Author notified." Tests cover the notification wiring."""
+
+    def _count_notifications_for(self, user_id: int) -> int:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM notifications WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return int(row["n"] or 0) if row else 0
+
+    def test_first_shadow_hide_creates_one_notification(self):
+        author = _make_user("shn_author", paid=True)
+        tid = db_takes.create_take(
+            user_id=author, market_slug="poly:shn-test",
+            position="yes", reasoning=_good_reasoning(),
+        )
+        self.assertEqual(self._count_notifications_for(author), 0)
+
+        for i in range(10):
+            voter = _make_user(f"shn_voter_{i}")
+            db_takes.cast_vote(tid, voter, -1)
+
+        self.assertTrue(int(db_takes.get_take(tid)["shadow_hidden"]))
+        # Exactly one notification even though many votes triggered the
+        # recompute — the notification is edge-triggered on the 0→1 flip.
+        self.assertEqual(self._count_notifications_for(author), 1)
+
+        with db.conn() as c:
+            n = c.execute(
+                "SELECT title, link_url, type FROM notifications WHERE user_id = ?",
+                (author,),
+            ).fetchone()
+        self.assertEqual(n["type"], "system")
+        self.assertIn("hidden", (n["title"] or "").lower())
+        self.assertIn("poly:shn-test", n["link_url"] or "")
+        self.assertIn(f"take-{tid}", n["link_url"] or "")
+
+    def test_subsequent_downvotes_while_hidden_dont_renotify(self):
+        author = _make_user("shn_dup", paid=True)
+        tid = db_takes.create_take(
+            user_id=author, market_slug="poly:shn-dup",
+            position="yes", reasoning=_good_reasoning(),
+        )
+        # First batch: tip into shadow.
+        for i in range(10):
+            db_takes.cast_vote(tid, _make_user(f"shn_dup_v1_{i}"), -1)
+        self.assertEqual(self._count_notifications_for(author), 1)
+        # Second batch: already hidden → no new notification.
+        for i in range(5):
+            db_takes.cast_vote(tid, _make_user(f"shn_dup_v2_{i}"), -1)
+        self.assertEqual(self._count_notifications_for(author), 1)
 
 
 class TestShadowHide(unittest.TestCase):
