@@ -246,6 +246,108 @@ print(f'wrote auth.db.backup_{ts}')
 "
 ```
 
+### Automated 3-2-1 backup (installed via cron)
+
+Production host runs four crons (see `scripts/install_backup_cron.sh`):
+
+| Cadence | Script | Path | Retention |
+|---|---|---|---|
+| Hourly at `:07` | `backup_hourly.sh` | `/var/backups/narve/auth.db.YYYYMMDD_HHMM` | 24 snapshots |
+| Daily at `03:14` | `backup_daily.sh` | `/var/backups/narve/daily/auth.db.YYYYMMDD.gz` | 30 days |
+| Sun `03:42` | `backup_offsite.sh` | encrypted GPG + rsync to offsite target | 12 weeks |
+| Mon `04:07` | `backup_verify.sh` | gunzip latest daily, `PRAGMA integrity_check` | log-only |
+
+Offsite requires two env vars in `/etc/default/narve-backup`:
+
+```
+BACKUP_GPG_RECIPIENT=backup@narve.ai
+BACKUP_OFFSITE_RSYNC_TARGET=user@offsite-host:/backups/narve/
+```
+
+See `/admin/backups` for live freshness, last verify result, and
+recovery-drill history.
+
+### Restore from backup
+
+**Data-loss tolerance:**
+
+* Hourly snapshot → up to 60 min lost
+* Daily snapshot  → up to 24 h lost
+* Offsite weekly  → up to 7 days lost
+
+**From latest hourly (< 1h data loss):**
+
+```bash
+ssh julianhabbig@100.69.44.108 "
+    # 1. Stop the app so nothing writes mid-restore
+    sudo fuser -k 7000/tcp || true
+    sleep 2
+    cd ~/Habbig/gateway
+
+    # 2. Move aside the corrupted/stale files
+    mv auth.db         auth.db.corrupted.\$(date +%s)         2>/dev/null || true
+    mv auth.db-wal     auth.db-wal.corrupted.\$(date +%s)     2>/dev/null || true
+    mv auth.db-shm     auth.db-shm.corrupted.\$(date +%s)     2>/dev/null || true
+
+    # 3. Copy in the latest hourly backup
+    LATEST=\$(ls -t /var/backups/narve/auth.db.* | head -1)
+    cp \"\$LATEST\" auth.db
+
+    # 4. Verify integrity BEFORE restarting
+    sqlite3 auth.db 'PRAGMA integrity_check' | head -3
+
+    # 5. Restart uvicorn (the usual path — see server-commit section)
+"
+```
+
+Verify `/health` returns 200 and `/admin/backups` reflects the new
+freshest hourly once restart completes.
+
+**From a daily archive (< 24h data loss):**
+
+```bash
+ssh julianhabbig@100.69.44.108 "
+    cd ~/Habbig/gateway
+    # Stop + move aside as above, then:
+    LATEST=\$(ls -t /var/backups/narve/daily/*.gz | head -1)
+    gunzip -c \"\$LATEST\" > auth.db
+    sqlite3 auth.db 'PRAGMA integrity_check'
+    # Restart uvicorn
+"
+```
+
+**From the offsite weekly (≤ 7d data loss):**
+
+Pull the `.gpg` file from the offsite provider to a local workstation,
+then:
+
+```bash
+gpg --decrypt auth.db.YYYYMMDD.gpg > auth.db
+sqlite3 auth.db "PRAGMA integrity_check"     # must print 'ok'
+scp auth.db julianhabbig@100.69.44.108:~/Habbig/gateway/auth.db.restored
+# On the server: stop service, move aside live DB, rename .restored → auth.db, restart.
+```
+
+**After ANY restore:**
+
+1. `sqlite3 auth.db "PRAGMA integrity_check"` → must be `ok`.
+2. Restart app; check `/health` returns 200.
+3. Check `/admin/backups` freshness cards go green.
+4. Commit the restored DB binary to the local server branch if that's
+   part of your workflow (most hosts keep the DB outside git).
+
+### Recovery drill
+
+Automated quarterly via `jobs/db_maintenance.py::recovery_drill`
+(first of Jan/Apr/Jul/Oct, 05:20 UTC). Writes a row to `drill_runs`:
+
+* takes a live snapshot via SQLite's `.backup` API,
+* runs `PRAGMA integrity_check` + `PRAGMA foreign_key_check` on the copy,
+* compares `COUNT(*)` on `users` + `predictions` — divergence > 1% = FAIL,
+* deletes the tmp copy.
+
+History is visible at `/admin/backups § Recovery drills`.
+
 ## Scraper
 
 Not yet deployed. The scraper lives at `~/Habbig/scraper/` locally but is

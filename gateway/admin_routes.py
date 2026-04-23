@@ -16,14 +16,12 @@ import json
 import logging
 import re
 import time
-from typing import Optional
 
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
 import features
-import impersonation as _imp
 
 
 log = logging.getLogger("gateway.admin_routes")
@@ -822,6 +820,224 @@ async def cache_clear(request: Request):
     return RedirectResponse("/admin/cache", status_code=302)
 
 
+# ── /admin/backups ───────────────────────────────────────────────────────
+#
+# Reads straight from /var/backups/narve on the host + the drill_runs
+# table. Everything is best-effort — if the backup dir doesn't exist
+# we render empty cards (dev machines never have it) rather than 500.
+
+
+_BACKUP_DIRS = {
+    "hourly": "/var/backups/narve",
+    "daily":  "/var/backups/narve/daily",
+}
+_VERIFY_LOG = "/var/log/narve-backup-verify.log"
+
+
+def _scan_backup_dir(path: str, prefix: str) -> list[dict]:
+    """Return a list of {name, size, mtime} for files in ``path``
+    whose basename starts with ``prefix``. Safe against a missing
+    directory and unreadable files."""
+    import os
+    entries: list[dict] = []
+    try:
+        names = os.listdir(path)
+    except (FileNotFoundError, PermissionError):
+        return entries
+    for n in names:
+        if not n.startswith(prefix):
+            continue
+        fp = os.path.join(path, n)
+        try:
+            st = os.stat(fp)
+        except OSError:
+            continue
+        entries.append({"name": n, "size": st.st_size, "mtime": int(st.st_mtime)})
+    entries.sort(key=lambda e: e["mtime"], reverse=True)
+    return entries
+
+
+def _read_verify_tail(limit: int = 5) -> list[str]:
+    """Tail the verification log; empty list if the file doesn't exist."""
+    try:
+        with open(_VERIFY_LOG, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except (FileNotFoundError, PermissionError):
+        return []
+    return [ln.rstrip() for ln in lines[-limit:]]
+
+
+def _fmt_size(bytes_: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if bytes_ < 1024 or unit == "GB":
+            return f"{bytes_:.0f} {unit}" if unit == "B" else f"{bytes_:.1f} {unit}"
+        bytes_ /= 1024
+    return f"{bytes_:.1f} GB"
+
+
+async def backups_page(request: Request):
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    hourly = _scan_backup_dir(_BACKUP_DIRS["hourly"], "auth.db.")[:24]
+    daily = _scan_backup_dir(_BACKUP_DIRS["daily"], "auth.db.")[:30]
+    verify_tail = _read_verify_tail(limit=5)
+
+    now = int(time.time())
+    # Age-based alert cards — hourly > 2h stale or daily > 26h stale
+    # signals a failed cron.
+    hourly_latest = hourly[0]["mtime"] if hourly else None
+    daily_latest = daily[0]["mtime"] if daily else None
+    hourly_age_h = (now - hourly_latest) / 3600 if hourly_latest else None
+    daily_age_h = (now - daily_latest) / 3600 if daily_latest else None
+
+    hourly_alert = (
+        hourly_latest is None or hourly_age_h is not None and hourly_age_h > 2
+    )
+    daily_alert = (
+        daily_latest is None or daily_age_h is not None and daily_age_h > 26
+    )
+
+    def _row(entry: dict) -> str:
+        return (
+            f"<tr><td><code>{html.escape(entry['name'])}</code></td>"
+            f"<td class='num'>{_fmt_size(entry['size'])}</td>"
+            f"<td class='num'>{_fmt_ts(entry['mtime'])}</td></tr>"
+        )
+
+    hourly_html = "".join(_row(e) for e in hourly) or (
+        "<tr><td colspan='3' class='muted'>No hourly snapshots found. "
+        f"Check <code>{_BACKUP_DIRS['hourly']}</code> and the cron log.</td></tr>"
+    )
+    daily_html = "".join(_row(e) for e in daily) or (
+        "<tr><td colspan='3' class='muted'>No daily snapshots found. "
+        f"Check <code>{_BACKUP_DIRS['daily']}</code> and the cron log.</td></tr>"
+    )
+    verify_html = "".join(
+        f"<li><code>{html.escape(ln)}</code></li>" for ln in verify_tail
+    ) or "<li class='muted'>No verification log yet.</li>"
+
+    # Drill history — last 10 recovery-drill outcomes.
+    drill_rows: list[str] = []
+    try:
+        with db.conn() as c:
+            rows = c.execute(
+                "SELECT id, started_at, completed_at, integrity_ok, "
+                "       foreign_key_ok, users_live, users_restore, "
+                "       predictions_live, predictions_restore, notes "
+                "FROM drill_runs ORDER BY started_at DESC LIMIT 10"
+            ).fetchall()
+            for r in rows:
+                status = (
+                    '<span class="badge" style="background:rgba(46,160,67,0.12);'
+                    'color:#2ea043">PASS</span>'
+                    if (r["integrity_ok"] and r["foreign_key_ok"] and
+                        (not r["notes"] or r["notes"] == "ok"))
+                    else '<span class="badge" style="background:rgba(248,81,73,0.12);'
+                         'color:#f85149">FAIL</span>'
+                )
+                drill_rows.append(
+                    f"<tr><td>{_fmt_ts(r['started_at'])}</td>"
+                    f"<td>{status}</td>"
+                    f"<td class='num'>{r['users_live'] or '—'}"
+                    f" / {r['users_restore'] or '—'}</td>"
+                    f"<td class='num'>{r['predictions_live'] or '—'}"
+                    f" / {r['predictions_restore'] or '—'}</td>"
+                    f"<td><code>{html.escape((r['notes'] or '')[:80])}</code></td></tr>"
+                )
+    except Exception:
+        log.exception("backups_page: drill_runs query failed")
+    drill_html = "".join(drill_rows) or (
+        "<tr><td colspan='5' class='muted'>"
+        "No recovery drills recorded yet. First run lands on the next "
+        "1st of Jan/Apr/Jul/Oct at 05:20 UTC.</td></tr>"
+    )
+
+    def _alert_card(kind: str, age_h, threshold: float) -> str:
+        if age_h is None:
+            label = "missing"
+            colour = "#f85149"
+        elif age_h > threshold:
+            label = f"{age_h:.1f}h stale"
+            colour = "#f0883e"
+        else:
+            label = f"{age_h:.1f}h old"
+            colour = "#2ea043"
+        return (
+            f"<div class='card'><p class='card-label'>Latest {kind}</p>"
+            f"<p class='card-value' style='color:{colour}'>{label}</p></div>"
+        )
+
+    body = f"""<!DOCTYPE html><html lang='en'><head>
+<meta charset='utf-8'><title>Backups — narve admin</title>
+<link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
+<style>
+body{{background:var(--bg-base);color:var(--text-primary);font-family:var(--font-ui);
+padding:40px;max-width:1100px;margin:0 auto}}
+h1{{font-family:var(--font-display);font-style:italic;font-size:40px;
+margin:0 0 8px;letter-spacing:-0.02em}}
+.meta{{color:var(--text-tertiary);font-size:12px;font-family:var(--font-mono);
+text-transform:uppercase;letter-spacing:0.1em;margin-bottom:32px}}
+.grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:32px}}
+.card{{background:var(--bg-raised);border:1px solid var(--border-default);
+border-radius:12px;padding:16px}}
+.card-label{{font-size:11px;color:var(--text-tertiary);text-transform:uppercase;
+letter-spacing:0.08em;margin:0 0 8px;font-family:var(--font-mono)}}
+.card-value{{font-size:22px;font-weight:500;margin:0;font-variant-numeric:tabular-nums}}
+h2{{font-family:var(--font-display);font-style:italic;font-size:24px;margin:32px 0 8px}}
+table{{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}}
+th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border-subtle)}}
+th{{color:var(--text-tertiary);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;
+font-family:var(--font-mono);font-weight:500}}
+.num{{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--font-mono)}}
+code{{font-family:var(--font-mono);font-size:12px;color:var(--text-primary)}}
+.muted{{color:var(--text-tertiary);padding:24px;font-style:italic}}
+.badge{{padding:2px 8px;border-radius:4px;font-family:var(--font-mono);font-size:10px;
+letter-spacing:0.04em}}
+ul.log{{list-style:none;padding:0;margin:12px 0}}
+ul.log li{{padding:6px 12px;background:var(--bg-raised);margin:4px 0;border-radius:4px;
+font-family:var(--font-mono);font-size:11px}}
+</style></head><body>
+<h1>Backups</h1>
+<p class='meta'>3-2-1 snapshot strategy · hourly + daily + weekly offsite</p>
+
+<div class='grid'>
+  {_alert_card('hourly', hourly_age_h, 2)}
+  {_alert_card('daily',  daily_age_h,  26)}
+  <div class='card'>
+    <p class='card-label'>Latest verification</p>
+    <p class='card-value' style='color:{"#2ea043" if verify_tail and "OK" in verify_tail[-1] else "#f0883e"}'>
+      {html.escape(verify_tail[-1][:60]) if verify_tail else "never run"}
+    </p>
+  </div>
+</div>
+
+<h2>Hourly snapshots (last 24)</h2>
+<table><thead><tr><th>File</th><th class='num'>Size</th><th class='num'>Modified</th></tr></thead>
+<tbody>{hourly_html}</tbody></table>
+
+<h2>Daily snapshots (last 30)</h2>
+<table><thead><tr><th>File</th><th class='num'>Size</th><th class='num'>Modified</th></tr></thead>
+<tbody>{daily_html}</tbody></table>
+
+<h2>Verification tail</h2>
+<ul class='log'>{verify_html}</ul>
+
+<h2>Recovery drills (last 10)</h2>
+<table><thead><tr><th>Started</th><th>Status</th>
+  <th class='num'>users live/restore</th>
+  <th class='num'>predictions live/restore</th>
+  <th>Notes</th></tr></thead>
+<tbody>{drill_html}</tbody></table>
+
+<p class='meta' style='margin-top:32px'>
+  Restore procedure: <a href='/admin/runbook' style='color:inherit'>RUNBOOK § Restore from backup</a>
+</p>
+</body></html>"""
+    return HTMLResponse(body)
+
+
 # ── /admin/churn ─────────────────────────────────────────────────────────
 #
 # Reads from the ``churn_signals`` table (populated nightly by
@@ -1487,4 +1703,12 @@ def register(app) -> None:
     app.add_api_route(
         "/admin/cache/clear", cache_clear,
         methods=["POST"], include_in_schema=False,
+    )
+
+    # Backup health + recovery drill history. Surfaces what's in
+    # /var/backups/narve and the last N rows of drill_runs so ops
+    # knows backups are live + verifies are passing.
+    app.add_api_route(
+        "/admin/backups", backups_page,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
     )
