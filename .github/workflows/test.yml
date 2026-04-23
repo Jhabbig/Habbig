@@ -1,0 +1,92 @@
+name: test
+on:
+  push:
+    branches: [main, feature/**, fix/**]
+  pull_request:
+
+# Cancel superseded runs — every push to a PR branch should kill the
+# previous one so the queue doesn't back up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+      fail-fast: false
+    defaults:
+      run:
+        working-directory: gateway
+    env:
+      # Deterministic test env — no live tokens, no prod flags.
+      SITE_ACCESS_TOKEN: ""
+      PRODUCTION: ""
+      RATE_LIMIT_ENABLED: "true"
+      GLOBAL_RATE_LIMIT_PER_MIN: "100000"
+      ANTHROPIC_API_KEY: "test-placeholder"
+      STRIPE_WEBHOOK_SECRET: "whsec_test_placeholder"
+      STRIPE_SECRET_KEY: "sk_test_placeholder"
+      CREDENTIALS_ENCRYPTION_KEY: "dGVzdGtleS1wbGFjZWhvbGRlci0zMi1ieXRlcw=="
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest pytest-xdist pytest-cov pytest-mock pytest-asyncio
+          pip install cryptography
+
+      - name: Run tests with coverage
+        run: |
+          python -m pytest tests/ \
+            --cov=. --cov-config=.coveragerc \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term \
+            --cov-report=html:cov_html \
+            -m "not slow and not network" \
+            -n auto \
+            --maxfail=50
+
+      - name: Upload coverage HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-${{ matrix.python-version }}
+          path: gateway/cov_html
+          retention-days: 7
+
+      - name: Upload coverage XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-${{ matrix.python-version }}
+          path: gateway/coverage.xml
+          retention-days: 7
+
+  lint-syntax:
+    # Cheap sanity pass — catches syntax errors in PRs before the full
+    # 3-minute pytest run even starts.
+    name: syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile-check every .py file
+        run: |
+          python -m compileall -q gateway \
+            -x '__pycache__' \
+            -x 'node_modules'

@@ -161,3 +161,44 @@ The 68 remaining failures fall into three buckets:
 - **~18 real spec drift** in `test_embed_widgets` (referer policy tightened), `test_portfolio_integration` (Kalshi/Polymarket refactor), and a handful of one-off assertions that would require deeper rewrites per file.
 
 Fixing any of these requires either codebase changes (out of scope — "DO NOT TOUCH: any gateway/ file except to import from it") or substantial per-file rewrites of tests. Coverage is already over the 60% gate.
+
+---
+
+## 2026-04-23 test-infra pass
+
+This pass touched `gateway/tests/` only — no production code, so no
+delta to the coverage numbers above. What landed:
+
+- `gateway/.coveragerc` — central coverage config
+  (branch on, tests/migrations/scripts omitted, standard
+  `exclude_lines` stanza).
+- `gateway/scripts/test_coverage.sh` — one-shot runner with HTML +
+  terminal reports. `GATEWAY_TEST_MARKERS=` overrides the default
+  "not slow and not network" filter.
+- CI (`.github/workflows/test.yml`) now runs with coverage every push
+  and uploads both the HTML report and `coverage.xml` as 7-day
+  artifacts.
+- `gateway/pytest.ini` defines the marker vocabulary
+  (`slow`, `network`, `integration`, `unit`, `forensic`, `e2e`) with
+  `strict-markers` so typos fail loudly.
+
+See `TEST_INFRA.md` at the repo root for the full list of fixtures,
+mocks, and helpers introduced in the same pass.
+
+## Reproducing the numbers
+
+```bash
+cd gateway
+scripts/test_coverage.sh
+# HTML: /tmp/cov_html/index.html
+```
+
+```bash
+# Matches the CI gate exactly
+cd gateway
+python3 -m pytest tests/ \
+  --cov=. --cov-config=.coveragerc \
+  --cov-report=term \
+  -m "not slow and not network" \
+  -n auto
+```

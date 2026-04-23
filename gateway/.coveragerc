@@ -1,0 +1,34 @@
+[run]
+source = .
+branch = True
+omit =
+    tests/*
+    migrations/*
+    scripts/*
+    */__pycache__/*
+    */.venv/*
+    */venv/*
+    conftest.py
+    */node_modules/*
+
+[report]
+# Fail on the overall number, not per-module — migrations and scripts
+# have nothing to cover.
+show_missing = True
+skip_covered = False
+skip_empty = True
+sort = -Cover
+exclude_lines =
+    # The usual ``pragma: no cover`` escape hatch.
+    pragma: no cover
+    # Defensive imports guard against missing deps in early boot.
+    except ImportError
+    # ``if __name__ == '__main__':`` never runs under pytest.
+    if __name__ == .__main__.:
+    # NotImplementedError stubs signal intentionally-unimplemented paths.
+    raise NotImplementedError
+    # ``@abstractmethod`` bodies are never executed.
+    @(abc\.)?abstractmethod
+
+[html]
+directory = /tmp/cov_html
