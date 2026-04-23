@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Developer API — narve.ai</title>
+  <meta name="description" content="Documentation for the narve.ai public developer API. Authenticate with a Bearer API key and query markets, sources, predictions, best-bets, and submit your own predictions programmatically.">
+  <link rel="canonical" href="https://narve.ai/api/docs">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Developer API — narve.ai">
+  <meta property="og:description" content="Bearer-authenticated JSON API for markets, sources, predictions, and webhooks.">
+  <meta property="og:url" content="https://narve.ai/api/docs">
+  <style>
+    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 820px; margin: 0 auto; padding: 72px 24px 120px; }
+    .backlink { opacity: 0.55; color: inherit; text-decoration: none; font-size: 13px; }
+    h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin: 16px 0 6px; }
+    .tagline { font-size: 17px; opacity: 0.7; margin: 0 0 40px; }
+    h2 { font-size: 22px; font-weight: 600; margin: 52px 0 14px; letter-spacing: -0.01em; }
+    h3 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+    p { margin: 0 0 14px; }
+    ul { padding-left: 22px; margin: 0 0 18px; }
+    li { margin-bottom: 6px; }
+    code { font-family: ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    pre { font-family: ui-monospace, Menlo, monospace; background: #141414; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 18px 22px; margin: 16px 0; font-size: 12.5px; line-height: 1.6; white-space: pre; overflow-x: auto; }
+    .toc { background: #141414; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px 22px; margin-bottom: 40px; }
+    .toc h4 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6; }
+    .toc ol { padding-left: 22px; margin: 0; }
+    .toc a { color: inherit; text-decoration: none; opacity: 0.9; }
+    .toc a:hover { text-decoration: underline; }
+    .endpoint { border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; padding: 18px 22px; margin: 16px 0; background: #141414; }
+    .endpoint h3 { margin-top: 0; font-family: ui-monospace, Menlo, monospace; text-transform: none; letter-spacing: 0; opacity: 1; font-size: 14px; }
+    .endpoint .method { display: inline-block; font-family: ui-monospace, Menlo, monospace; font-weight: 600; font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-right: 8px; background: rgba(255,255,255,0.08); }
+    .endpoint .method.post { background: rgba(34,197,94,0.15); color: #22c55e; }
+    .note-box { border-left: 2px solid var(--text-primary, #fff); padding: 8px 14px; margin: 14px 0; font-size: 13px; opacity: 0.85; background: rgba(255,255,255,0.03); }
+    .error-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .error-table th, .error-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
+    .error-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6; }
+    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main class="wrap" id="main">
+    <a class="backlink" href="/">← narve.ai</a>
+    <h1>Developer API</h1>
+    <p class="tagline">narve.ai v1 — Bearer-authenticated JSON over HTTPS.</p>
+
+    <div class="toc">
+      <h4>Contents</h4>
+      <ol>
+        <li><a href="#auth">Authentication</a></li>
+        <li><a href="#limits">Rate limits</a></li>
+        <li><a href="#endpoints">Endpoints</a></li>
+        <li><a href="#errors">Error codes</a></li>
+        <li><a href="#webhooks">Webhooks</a></li>
+        <li><a href="#changelog">Change log</a></li>
+      </ol>
+    </div>
+
+    <p>Everything under <code>/api/public/v1/*</code> is the stable developer surface. The older <code>/api/v1/*</code> paths continue to work for historical clients but new integrations should point here.</p>
+
+    <h2 id="auth">1. Authentication</h2>
+    <p>Every request carries a Bearer token:</p>
+    <pre>Authorization: Bearer narve_&lt;your-api-key&gt;</pre>
+    <p>Mint keys at <a class="inline" href="/settings/api-keys">/settings/api-keys</a>. Each key is displayed <strong>once</strong> at creation — we store only the SHA-256 hash. If you lose a key, revoke it and mint a new one.</p>
+    <p>Keys carry one or both scopes:</p>
+    <ul>
+      <li><code>read</code> — all GET endpoints. Granted automatically to every key.</li>
+      <li><code>write</code> — POST endpoints (currently <code>POST /predictions</code>). Request on key creation; granted automatically on Pro / Enterprise tiers.</li>
+    </ul>
+
+    <h2 id="limits">2. Rate limits</h2>
+    <p>Per-key, measured in requests per clock hour (UTC). Resets at the top of every hour.</p>
+    <ul>
+      <li>Free / Trader tier — <strong>1 key, 1,000 req/hr</strong></li>
+      <li>Pro tier — <strong>5 keys, 10,000 req/hr each</strong></li>
+      <li>Enterprise — <strong>custom, contact us</strong></li>
+    </ul>
+    <p>When you exceed a limit you get a <code>429</code> with <code>Retry-After</code> in seconds and <code>X-RateLimit-*</code> headers telling you where you stand. Your current hour's usage is also queryable at <code>GET /api/public/v1/usage</code>.</p>
+
+    <h2 id="endpoints">3. Endpoints</h2>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/markets</h3>
+      <p>Search live markets. Query params: <code>q</code> (search term), <code>limit</code> (max 200).</p>
+      <pre>curl -H "Authorization: Bearer narve_$KEY" \
+  "https://narve.ai/api/public/v1/markets?q=election&amp;limit=20"
+
+{"markets": [...], "limit": 20, "q": "election"}</pre>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/markets/{slug}</h3>
+      <p>One market by slug. Returns the latest snapshot.</p>
+      <pre>curl -H "Authorization: Bearer narve_$KEY" \
+  https://narve.ai/api/public/v1/markets/us-election-2028</pre>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/markets/{slug}/predictions</h3>
+      <p>All predictions narve has extracted for this market. Query: <code>limit</code> (max 500).</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/markets/{slug}/history</h3>
+      <p>Time-series of market price + narve credibility-weighted probability. Query: <code>limit</code> (max 2000).</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/sources</h3>
+      <p>Credibility-scored sources. Query: <code>limit</code> (max 500), <code>offset</code>.</p>
+      <pre>{"sources": [{"source_handle": "nate_silver", "global_credibility": 0.68,
+  "accuracy_unlocked": true, "total_predictions": 412, ...}],
+ "total": 1843, "limit": 100, "offset": 0}</pre>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/sources/{handle}</h3>
+      <p>Full profile for one source, including calibration + category breakdown.</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/sources/{handle}/predictions</h3>
+      <p>Every tracked prediction for a source, newest first. Query: <code>limit</code> (max 500).</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/sources/{handle}/history</h3>
+      <p>Credibility snapshots over time. Useful for charting.</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/feed</h3>
+      <p>Recent extracted predictions across all sources. Query: <code>limit</code> (max 500), <code>category</code>.</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/best-bets</h3>
+      <p>Current top edge opportunities — narve-probability vs market-price delta. Query: <code>limit</code> (max 100).</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/calendar</h3>
+      <p>Upcoming market resolutions with deadlines.</p>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method post">POST</span>/predictions <em style="opacity:.55;font-weight:400">— requires write scope</em></h3>
+      <p>Submit your own prediction on any market. Body is JSON.</p>
+      <pre>curl -X POST \
+  -H "Authorization: Bearer narve_$KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"market_slug":"btc-gt-100k-eoy",
+       "predicted_outcome":"YES",
+       "predicted_probability":0.72,
+       "reasoning":"Mining hashrate + spot ETF flows…",
+       "is_public":true}' \
+  https://narve.ai/api/public/v1/predictions
+
+{"prediction_id": 19281, "status": "ok"}</pre>
+      <div class="note-box">Direction (YES/NO) is locked at submission. You can edit probability / reasoning for 24 hours from your browser at <a class="inline" href="/predictions">/predictions</a>.</div>
+    </div>
+
+    <div class="endpoint">
+      <h3><span class="method">GET</span>/usage</h3>
+      <p>Your current hour's request count and reset time. No params.</p>
+      <pre>{"key_id": 42, "key_prefix": "narve_AbC12", "name": "backtest bot",
+ "scopes": ["read", "write"], "rate_limit_hour": 10000,
+ "requests_this_hour": 1247, "hour_bucket_start": 1714928400,
+ "bucket_resets_at": 1714932000}</pre>
+    </div>
+
+    <h2 id="errors">4. Error codes</h2>
+    <table class="error-table">
+      <thead><tr><th>Status</th><th>Meaning</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>400</td><td>Bad request (invalid params / body)</td><td>Check the error detail; fix the payload.</td></tr>
+        <tr><td>401</td><td>Missing, malformed, or revoked API key</td><td>Mint a new key at /settings/api-keys.</td></tr>
+        <tr><td>402</td><td>Your plan doesn't include API access</td><td>Upgrade at /pricing.</td></tr>
+        <tr><td>403</td><td>Key lacks required scope (e.g. write)</td><td>Re-create the key with the right scope.</td></tr>
+        <tr><td>404</td><td>Market / source / prediction not found</td><td>Check the slug / handle.</td></tr>
+        <tr><td>409</td><td>Conflict (e.g. duplicate active prediction)</td><td>Wait for resolution or edit the existing row.</td></tr>
+        <tr><td>429</td><td>Hourly rate limit exceeded</td><td>Honour <code>Retry-After</code>; shard across multiple keys if you have a higher tier.</td></tr>
+        <tr><td>500</td><td>Server error</td><td>Retry; escalate to <a class="inline" href="mailto:hello@narve.ai">hello@narve.ai</a> if it persists.</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="webhooks">5. Webhooks</h2>
+    <p>Register endpoints to receive push events instead of polling. Configure at <a class="inline" href="/settings/webhooks">/settings/webhooks</a>.</p>
+
+    <h3>Event types</h3>
+    <ul>
+      <li><code>best_bet.new</code> — a new high-edge opportunity appears</li>
+      <li><code>market.resolved</code> — a tracked market resolves</li>
+      <li><code>source.credibility_updated</code> — a source's credibility score changes</li>
+      <li><code>insider_signal.new</code> — a high-conviction source posts a new prediction</li>
+      <li><code>user.prediction.resolved</code> — one of your own predictions resolves</li>
+    </ul>
+
+    <h3>Payload + signature</h3>
+    <p>Every delivery is an HTTP POST of JSON. narve computes <code>HMAC-SHA256(secret, raw_body)</code> and sends it as <code>X-Narve-Signature: sha256=&lt;hex&gt;</code>. Verify server-side:</p>
+    <pre>import hmac, hashlib
+
+def verify(raw_body: bytes, signature: str, secret: str) -> bool:
+    expected = "sha256=" + hmac.new(
+        secret.encode(), raw_body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)</pre>
+
+    <h3>Retries</h3>
+    <p>Non-2xx responses are retried 5 times with exponential backoff: <strong>30s, 5m, 30m, 1h, 4h</strong>. Five consecutive failed deliveries (across any event) auto-disable the subscription and email you.</p>
+
+    <h3>Test firing</h3>
+    <p>The webhooks settings page has a <strong>Test</strong> button that sends a synthetic <code>test.ping</code> event so you can verify your endpoint before wiring up real events.</p>
+
+    <h2 id="changelog">6. Change log</h2>
+    <ul>
+      <li><strong>2026-04-22</strong> — v1.0: public API at <code>/api/public/v1/*</code>, webhooks with HMAC signatures and retries.</li>
+      <li><strong>2026-01-14</strong> — Legacy API keys shipped on <code>/api/v1/*</code>.</li>
+    </ul>
+
+    <p style="margin-top: 48px; opacity: 0.55; font-size: 14px;">
+      Questions? Email <a class="inline" href="mailto:hello@narve.ai">hello@narve.ai</a> — we read every API-tagged message within two business days.
+    </p>
+  </main>
+</body>
+</html>

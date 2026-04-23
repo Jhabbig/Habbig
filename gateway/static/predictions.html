@@ -45,40 +45,56 @@
 
       <div class="page-header">
         <h1 class="page-title">Your predictions</h1>
-        <p class="page-subtitle">Track your calls. Accuracy and calibration are scored when markets resolve.</p>
-
-        <div id="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px">
-          <div class="stat-card" data-k="total">
-            <div class="stat-label">Total</div><div class="stat-value" id="s-total">—</div>
-          </div>
-          <div class="stat-card" data-k="resolved">
-            <div class="stat-label">Resolved</div><div class="stat-value" id="s-resolved">—</div>
-          </div>
-          <div class="stat-card" data-k="accuracy">
-            <div class="stat-label">Accuracy</div><div class="stat-value" id="s-accuracy">—</div>
-          </div>
-          <div class="stat-card" data-k="brier">
-            <div class="stat-label">Brier</div><div class="stat-value" id="s-brier">—</div>
-          </div>
-          <div class="stat-card" data-k="streak">
-            <div class="stat-label">Current streak</div><div class="stat-value" id="s-streak">—</div>
-          </div>
-          <div class="stat-card" data-k="best-cat">
-            <div class="stat-label">Best category</div><div class="stat-value" id="s-bestcat">—</div>
-          </div>
-        </div>
-
-        <div class="filter-bar" style="margin-top:16px">
-          <button class="filter-btn active" data-filter="all">All</button>
-          <button class="filter-btn" data-filter="active">Active</button>
-          <button class="filter-btn" data-filter="correct">Resolved correct</button>
-          <button class="filter-btn" data-filter="incorrect">Resolved incorrect</button>
-        </div>
+        <p class="page-subtitle">
+          Track your calls. Accuracy, Brier score, and streaks populate as
+          markets resolve. Brier is lower-is-better: 0.0 is a perfect forecast,
+          0.25 is a coin flip.
+        </p>
       </div>
 
       <div class="content-area">
+        <div class="stat-grid" id="stats-grid" style="margin-bottom:16px">
+          <div class="stat-tile" data-k="total">
+            <div class="stat-label">Total</div>
+            <div class="stat-value" id="s-total">—</div>
+          </div>
+          <div class="stat-tile" data-k="resolved">
+            <div class="stat-label">Resolved</div>
+            <div class="stat-value" id="s-resolved">—</div>
+          </div>
+          <div class="stat-tile" data-k="accuracy">
+            <div class="stat-label">Accuracy</div>
+            <div class="stat-value" id="s-accuracy">—</div>
+            <div class="stat-trend">% of resolved calls correct</div>
+          </div>
+          <div class="stat-tile" data-k="brier">
+            <div class="stat-label">Brier</div>
+            <div class="stat-value" id="s-brier">—</div>
+            <div class="stat-trend">lower is better</div>
+          </div>
+          <div class="stat-tile" data-k="streak">
+            <div class="stat-label">Current streak</div>
+            <div class="stat-value" id="s-streak">—</div>
+          </div>
+          <div class="stat-tile" data-k="best-cat">
+            <div class="stat-label">Best category</div>
+            <div class="stat-value" id="s-bestcat" style="font-size:16px">—</div>
+          </div>
+        </div>
+
+        <div class="admin-filter-bar" role="toolbar" aria-label="Filter predictions">
+          <input type="search" id="pred-search" placeholder="Search market or question…" aria-label="Search your predictions">
+          <span class="filter-spacer"></span>
+          <button type="button" class="filter-chip active" data-filter="all">All</button>
+          <button type="button" class="filter-chip" data-filter="active">Active</button>
+          <button type="button" class="filter-chip" data-filter="correct">Correct</button>
+          <button type="button" class="filter-chip" data-filter="incorrect">Incorrect</button>
+        </div>
+
         <div id="predictions-body">
-          <div class="empty-state"><div class="empty-state-title">Loading…</div></div>
+          <div class="empty-state" style="padding:40px;text-align:center">
+            <div class="empty-state-title" style="font-size:14px;color:var(--text-tertiary)">Loading…</div>
+          </div>
         </div>
       </div>
     </div>
@@ -135,32 +151,48 @@
     }).catch(function(){});
   }
 
+  function rowStatus(p){
+    if (!p.resolved) return 'active';
+    return p.resolved_correct ? 'correct' : 'incorrect';
+  }
+
   function renderRows(items){
     if (!items.length){
-      body.innerHTML = '<div class="empty-state">'
-        + '<div class="empty-state-title">No predictions yet.</div>'
-        + '<div class="empty-state-body">Open a market page and record your call. You will see your accuracy, Brier score, and streak here once markets start resolving.</div>'
+      body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
+        + '<div class="empty-state-title" style="font-size:15px;font-weight:600;margin-bottom:6px">No predictions yet.</div>'
+        + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary);max-width:520px;margin:0 auto;line-height:1.5">'
+        + 'Open any market and record your call. Accuracy, Brier score, and streaks populate here as markets resolve.'
+        + '</div>'
         + '</div>';
       return;
     }
-    var html = '<table class="db-table"><thead><tr>'
-      + '<th>State</th><th>Market</th><th>Your pred</th><th>Market @ call</th><th>Edge</th><th>When</th><th></th>'
+    var html = '<div class="admin-card"><table class="admin-table" id="pred-table"><thead><tr>'
+      + '<th style="width:9%">State</th>'
+      + '<th>Market</th>'
+      + '<th style="width:16%">Your pred</th>'
+      + '<th class="num" style="width:11%">Market @ call</th>'
+      + '<th class="num" style="width:9%">Edge</th>'
+      + '<th class="num" style="width:11%">When</th>'
+      + '<th class="actions"></th>'
       + '</tr></thead><tbody>';
     items.forEach(function(p){
       var pct = Math.round((p.predicted_probability || 0) * 100);
       var mkt = p.market_price_at_prediction;
       var edge = p.edge_at_prediction;
-      html += '<tr data-pid="' + p.id + '">'
+      var searchBlob = ((p.market_question || '') + ' ' + (p.market_slug || '')).toLowerCase();
+      html += '<tr data-pid="' + p.id + '" data-status="' + esc(rowStatus(p)) + '" data-search="' + esc(searchBlob) + '">'
         + '<td>' + stateLabel(p) + '</td>'
-        + '<td class="db-cell-primary"><a href="/market/' + encodeURIComponent(p.market_slug) + '" style="color:inherit;text-decoration:none">' + esc(p.market_question || p.market_slug) + '</a></td>'
+        + '<td><a href="/market/' + encodeURIComponent(p.market_slug) + '" style="color:inherit;text-decoration:none">' + esc(p.market_question || p.market_slug) + '</a></td>'
         + '<td>' + esc(p.predicted_outcome) + ' (' + pct + '%)</td>'
-        + '<td>' + (mkt === null || mkt === undefined ? '—' : fmtPct(mkt, 0)) + '</td>'
-        + '<td>' + fmtPp(edge) + '</td>'
-        + '<td class="db-cell-data">' + esc(fmtDate(p.created_at)) + '</td>'
-        + '<td>' + (p.resolved ? '' : '<button class="btn-ghost delete-btn" data-pid="' + p.id + '">Delete</button>') + '</td>'
+        + '<td class="num">' + (mkt === null || mkt === undefined ? '—' : fmtPct(mkt, 0)) + '</td>'
+        + '<td class="num">' + fmtPp(edge) + '</td>'
+        + '<td class="num">' + esc(fmtDate(p.created_at)) + '</td>'
+        + '<td class="actions">'
+        +   (p.resolved ? '' : '<button class="btn-danger delete-btn" data-pid="' + p.id + '" style="font-size:12px;padding:5px 10px">Delete</button>')
+        + '</td>'
         + '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     body.innerHTML = html;
 
     body.querySelectorAll('.delete-btn').forEach(function(btn){
@@ -172,22 +204,48 @@
     });
   }
 
-  function load(){
-    body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Loading…</div></div>';
-    fetch('/api/predictions/me?status=' + encodeURIComponent(currentFilter))
-      .then(function(r){return r.json();})
-      .then(function(d){ renderRows(d.items || []); })
-      .catch(function(){ body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Failed to load.</div></div>'; });
+  function applyClientFilter(){
+    var q = (document.getElementById('pred-search').value || '').trim().toLowerCase();
+    var rows = document.querySelectorAll('#pred-table tbody tr');
+    rows.forEach(function(row){
+      var statusMatch = (currentFilter === 'all') ||
+        (row.getAttribute('data-status') === currentFilter);
+      var searchMatch = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
+      row.style.display = (statusMatch && searchMatch) ? '' : 'none';
+    });
   }
 
-  document.querySelectorAll('.filter-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      document.querySelectorAll('.filter-btn').forEach(function(b){ b.classList.remove('active'); });
-      btn.classList.add('active');
-      currentFilter = btn.getAttribute('data-filter');
-      load();
+  function load(){
+    body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
+      + '<div class="empty-state-title" style="font-size:14px;color:var(--text-tertiary)">Loading…</div>'
+      + '</div>';
+    /* Always fetch the full set; chips + search filter client-side so
+       the view stays snappy and the stats tiles reflect the whole set. */
+    fetch('/api/predictions/me?status=all')
+      .then(function(r){return r.json();})
+      .then(function(d){
+        renderRows(d.items || []);
+        applyClientFilter();
+      })
+      .catch(function(){
+        body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
+          + '<div class="empty-state-title" style="font-size:15px;font-weight:600;margin-bottom:6px">Failed to load.</div>'
+          + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary)">Refresh to retry.</div>'
+          + '</div>';
+      });
+  }
+
+  document.querySelectorAll('.filter-chip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      document.querySelectorAll('.filter-chip').forEach(function(c){ c.classList.remove('active'); });
+      chip.classList.add('active');
+      currentFilter = chip.getAttribute('data-filter');
+      applyClientFilter();
     });
   });
+
+  var searchInput = document.getElementById('pred-search');
+  if (searchInput){ searchInput.addEventListener('input', applyClientFilter); }
 
   load();
   loadStats();
