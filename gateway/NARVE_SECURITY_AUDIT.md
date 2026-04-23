@@ -5,6 +5,223 @@ Each entry is a point-in-time snapshot. Diffs between entries reveal posture cha
 
 ---
 
+## AUDIT #5 — 2026-04-23T20:25:00Z — commit 337a451 (post-hardening + testing batch)
+
+### Code inventory audited
+- Committed tip: `337a451` (a11y: WCAG 2.1 AA pass — 26/28 pages clean, structural surface verified)
+- Local unpushed commits: none — local in sync with origin/feature/platform-build
+- Local uncommitted files: none (working tree clean)
+- Local stashes: 1 — `stash@{0}` on `feature/referral-program`, `parallel-agent-work-mess-1776748996`, un-triaged since AUDIT #3c
+- Server uncommitted files: clean (no diff on server working tree)
+- Server tip vs origin: **1 ahead, 4 behind** — server HEAD is `2d43dd4 deploy: a11y pass` which origin does NOT have; origin has `337a451`, `d950e1c`, `e75c45a`, `4dcf933` that server does NOT have. Running process therefore loads **older** code than this audit's SHA.
+- Running uvicorn loaded from: `/home/julianhabbig/Habbig/gateway/server.py` (mtime `2026-04-23 20:24:15 +0100`, PID 1212772, listening on 127.0.0.1:7000). Two orphan uvicorn processes still on 7001 (staging) and 7050 (legacy Polymarket) — carried over from previous audits.
+- Branches with recent work (last 14d not in current): `feature/referral-program` (3 days), `feature/annoyance-polish` (3 days), `feature/invite-token-system` (12 days)
+- DRIFT FLAG: **server and origin diverge** — server has one deploy commit origin hasn't picked up; origin has four commits server hasn't seen. Worst-case risk is that a deploy of origin reverts the ad-hoc fix in `2d43dd4` without anyone noticing.
+
+### Summary
+Posture: **concerning** (no CRITICAL, but HIGH findings in DB integrity + infra + drift)
+Critical issues: 0
+High-priority: 4
+Medium-priority: 6
+Low-priority: 3
+Resolved since last audit: 2 (SSH server enumeration works again; CSP headers added to embed responses — confirmed by scan_xss)
+New since last audit: 5 (all HIGH listed below are new to AUDIT #5)
+Regressions: 1 (server and origin drift — AUDIT #4 could not see server; AUDIT #5 can and they disagree)
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT
+- pm_gateway_session + narve_session both accepted: yes
+- narve_session stored as SHA-256 hash in DB: yes (verified via scan_auth)
+- Session cookie HttpOnly: yes (COOKIE_NAME set with httponly=True in server.py)
+- Session cookie Secure: yes (IS_PRODUCTION gate)
+- Session cookie SameSite: Lax (session); strict (gate); lax (impersonation)
+- Session revocation on logout: works
+- Session rotation on privilege change: implemented (see delete_sessions_for_user helper)
+- Max sessions per user enforced: unlimited — still open from AUDIT #2, no change
+- Password reset invalidates sessions: partial — password_reset routes clear the used token, but need manual verification that all sessions for that user are revoked (grep for `delete_sessions_for_user` call inside reset_password handler)
+- Password hashing: PBKDF2-HMAC-SHA256, iterations `600_000` (`queries/auth.py:137`)
+- 2FA status: removed in migration 019 (intentional, not a finding)
+- Impersonation banner visible on every page while active: yes (render_page banner injection)
+- Impersonation blocked paths enforced: yes (expanded in AUDIT #3 follow-up; impersonation.py lines 45-98)
+
+### Authorisation
+- Admin routes require role ≥ 1: yes — every `@app.post("/admin/...")` calls `_require_admin_user()`
+- Super admin routes require role = 2: yes — `_can_manage_user` helper
+- Subproduct access checked at middleware + route + response: partial — middleware (`middleware/subproduct.py`) + `has_subproduct_access` dep + response-level category filter in api_public/routes.py
+- has_subproduct_access called on every subproduct route: yes (audit-verified via grep in AUDIT #3)
+- Feature flag evaluation in use: yes — `features.is_feature_enabled` adopted; legacy tier checks still ~25 call sites (documented in STATE_RECONCILIATION.md, not a regression)
+- Gift subscription enforcement: yes (`gifted_subscriptions` table with expires_at honoured)
+
+### CSRF
+- Double submit cookie: yes (`_csrf` cookie + hidden field; see server.py CSRFMiddleware)
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — CSRFMiddleware is the single enforcement point (see CSRF_AUDIT.md)
+- HTMX X-CSRF-Token hook active: yes (static/base.html htmx:configRequest)
+- Exempt routes list minimal and documented: yes — `_CSRF_EXEMPT_POSTS` + `_CSRF_EXEMPT_POST_PREFIXES` in server.py; `/api/public/v1/` added AUDIT #5 (Bearer-token auth, session-CSRF irrelevant)
+
+### Rate limiting
+- Auth endpoints: partial — 7 `@app.post` routes flagged by scan_auth as lacking explicit `@rate_limit`; most delegate to `_auth_rate_limited(ip)` shared bucket, but needs a pass to confirm every one does (HIGH-M below)
+- API endpoints: yes — per-key hourly bucket on `/api/public/v1/*` + `GlobalRateLimitMiddleware` per-IP
+- Per-user and per-IP as appropriate: yes
+- 429 response includes Retry-After: yes (api_public/auth.py line 95)
+- Cloudflare-level rate limit rules: present (CLOUDFLARE_CHANGES.md Rules D + E)
+
+### Input validation
+- SQL injection vectors found: 0 after verification. scan_sqli flagged 11 f-string-in-SQL sites; every one interpolates a developer-controlled identifier (table name from whitelist dict, ORDER BY clause from allowlist dict with safe default + in one case explicit `raise ValueError`). Documented in Issues → verified-safe below.
+- XSS via innerHTML with user content: 0 — `raw_*` keys surveyed below; every one sources from a server-built HTML string or a secrets-generated token, not untrusted input.
+- Command injection / subprocess with user input: 0 — scan_rce clean.
+- Path traversal in file operations: 0 — scan_rce clean.
+- SSRF in URL-fetching code: 0 — webhook URL allowlist guards against RFC1918/loopback; other httpx.get sites are constants.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes
+- No hardcoded secrets in current tree: clean (scan_secrets: zero hits)
+- No secrets in git history: clean (scan_secrets history scan + TruffleHog CI on every push)
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes (migration 006 + queries/markets.upsert_market_credential)
+- Sessions hashed before DB storage: yes
+- Password hashes use PBKDF2-HMAC-SHA256: yes (600k iterations)
+- .env permissions on server: not verified — server .env file not stat'd this run (owner-only was checked but output was empty)
+
+### Data privacy
+- Account deletion works end-to-end: verified in AUDIT #3; no changes since
+- Data export includes all user-linked tables: verified in AUDIT #3 (export_routes.py mirrors STATE_RECONCILIATION § "user-owned tables")
+- Sensitive fields redacted in logs: yes (logging_config.py line 125 explicitly filters known-secret keys)
+- Sentry scrubbing active (if Sentry configured): N/A — SENTRY_DSN empty in running uvicorn env
+- Impersonation actions logged: yes (impersonation_actions table — see impersonation.py)
+
+### External integrations
+- Stripe webhook signature validated: yes (billing_routes.py calls stripe.Webhook.construct_event)
+- Stripe webhook idempotent: yes (migration 061 added `processed_stripe_events` + id lookup before dispatch)
+- Stripe webhook mode-verified: yes (`event.livemode` check against ENVIRONMENT)
+- Telegram bot token in env only: yes
+- Discord bot token in env only: yes
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: yes (validators/wallets.py)
+- SEC EDGAR User-Agent set: yes (insider/sec_*.py)
+
+### Infrastructure
+- SQLite WAL mode active: yes
+- Cloudflare Tunnel active, origin not directly reachable: unverified from this session (requires external-internet check)
+- Cloudflare Rules for subdomain enumeration: yes (CLOUDFLARE_CHANGES.md Rule A)
+- Cloudflare Rules for scanner UA blocking: yes (Rule B)
+- Post-deploy commit step documented: yes (RUNBOOK.md)
+- CLOUDFLARE_CHANGES.md current: yes (last modified 2026-04-21)
+
+### Monitoring
+- Sentry backend configured: no (SENTRY_DSN unset on prod uvicorn env)
+- Sentry frontend configured: no
+- Structured logging configured: yes — JSON output with timestamp, level, service, logger, request_id, user_id (logging_config.py)
+- Security events logged separately: yes (gateway.audit logger writes to audit_log table)
+- Audit log append-only: yes (no DELETE path anywhere in server.py for audit_log)
+- Uptime monitoring active: partial — internal /status page runs component checks; no external prober configured
+
+### Dependency audit
+- Last dependency audit: 2026-04-23 this run — **FAILED** to complete (pip-audit's pip install failed on `python-multipart==0.0.26`; pin doesn't match any distribution). CVE posture **unknown** this audit.
+- Known CVEs: unknown (see above)
+- Unpinned deps: 0 (all 28 entries in requirements.txt are `==`-pinned)
+- Lockfile present: no (requirements.txt only — MEDIUM)
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes (export_routes.py)
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+none — scan_sqli + scan_rce + scan_xss + scan_deserialisation all returned zero confirmed hits after manual verification of flagged f-string SQL and `raw_*` template keys.
+
+#### HIGH
+
+1. **Server `PRAGMA integrity_check` is NOT ok — NULL value in users.kelly_fraction**
+   Location: production `auth.db`, `users.kelly_fraction` column
+   Impact: A NOT NULL constraint was added to `kelly_fraction` without backfilling existing rows. Downstream queries that assume non-null (portfolio Kelly-sizing, trading addon gates) may return 500s or read wrong-user data if the query hits a row with the invariant broken. Hasn't been user-facing yet because the read paths tolerate the NULL, but `integrity_check` failing means the DB file is one bad migration away from refusing to open.
+   Fix: either (a) migration 162_backfill_kelly_fraction that sets NULL rows to a sane default (0.0 or tier-median), or (b) relax the NOT NULL constraint via ALTER TABLE … rename trick. Backfill preferred — the column was added with a default for a reason.
+
+2. **Server `auth.db` permissions are 644**
+   Location: `/home/julianhabbig/Habbig/gateway/auth.db` on 100.69.44.108
+   Impact: Any local Unix user on the Ubuntu box can read the DB file containing PBKDF2 password hashes, session tokens, CSRF tokens, 2FA secrets (historical), Stripe customer IDs, and all user predictions. PBKDF2 at 600k iterations means hash-to-password takes expensive work per target, but offline brute-force against weak passwords (rockyou top-10k etc.) completes in hours per user. Session tokens are stored hashed, so leaking those doesn't immediately hijack sessions, but ongoing read access lets an attacker watch hash updates as they happen.
+   Fix: `chmod 600 ~/Habbig/gateway/auth.db` on server; also set a restrictive umask (`umask 077` in the uvicorn launch script) so WAL/SHM files don't regress. Audit the cron/systemd that writes the file so neither overwrites with 644.
+
+3. **Backup strategy documented but no cron installed**
+   Location: documented in RUNBOOK.md + referenced in DB_HEALTH audit, but `crontab -l` on server returns empty lines for anything containing "backup" or "auth.db"
+   Impact: A single DB corruption event (disk failure, bad migration, accidental `rm`) costs **all** user data since inception. Hash leak plus data loss is a reportable GDPR incident.
+   Fix: install the documented hourly `sqlite3 auth.db ".backup /backups/auth.db.$(date +\%Y\%m\%d\%H).sq3"` entry in julianhabbig's crontab + the daily off-host rsync to Tailscale peer. Verify restore with `sqlite3 /backups/<snap>.sq3 "PRAGMA integrity_check"`.
+
+4. **Server process running older code than audit SHA (drift)**
+   Location: server HEAD `2d43dd4` vs origin `337a451` — server is behind by 4 commits AND has 1 commit origin doesn't. The audit scan ran against origin; the running uvicorn executes something else.
+   Impact: Every finding below that cites an origin line number may not match the actually-live code. Conversely, any fix applied to origin won't be active in prod until the next deploy, and the next deploy risks reverting `2d43dd4` if it's done naively (`git pull` + `scp` from a local worktree that doesn't have `2d43dd4`).
+   Fix: cherry-pick `2d43dd4` back to origin (or `git fetch` + `git cherry-pick 2d43dd4` on local + push), then fast-forward-deploy origin HEAD to server.
+
+#### MEDIUM
+
+1. **Two FK columns declared without ON DELETE clause** — `users.invite_token_id → invite_tokens(id)` and `invite_tokens.claimed_by_user_id → users(id)`. Cycle + missing cascade means deleting either row hand-waves the reference. Add `ON DELETE SET NULL` in a new migration.
+
+2. **No lockfile for Python deps** — requirements.txt pins versions but transitive dependencies re-resolve on each install. Add `pip-compile`-generated `requirements.lock` or switch to `uv pip compile`.
+
+3. **pip-audit couldn't run this audit** — `python-multipart==0.0.26` pin doesn't match any PyPI distribution, so the auditor failed to install the tree. Either bump the pin to an installable version or mark 0.0.26 as the intended upgrade target and ship the bump.
+
+4. **Four `raw_*` template keys warrant manual re-verification** — `server.py:4351-4352` (revenue_tab + revenue_content) construct HTML inline from DB rows; `status_routes.py:204-208` component/uptime/incident HTML built from status_system snapshots. All are server-built today, but any refactor that passes user-controlled data through these channels would become XSS. Worth a comment in each assignment explaining the invariant.
+
+5. **Seven auth-ish POST endpoints flagged without explicit `@rate_limit`** — server_features.py lines 232/294/1358/1493/1653/1744 and server.py:2887. Spot-check: most delegate to the shared `_auth_rate_limited(ip)` bucket via `if _auth_rate_limited(_get_client_ip(request))`. Three are admin-only routes that carry their own `_require_admin_user` rate limit. Worth a one-pass confirmation per route that either the shared bucket is called or the admin-mut limit applies; any gap is a brute-force target.
+
+6. **Billing endpoints without explicit @rate_limit** — billing_routes.py cancel/pause/resume/resubscribe/addon + server.py /billing + /billing/subscribe. All are session-authed and thus limited by `GlobalRateLimitMiddleware` per-IP, but a session-bound-per-user limit would be safer (stops a compromised account from repeatedly hitting /billing/resubscribe to re-instate a cancelled plan).
+
+#### LOW
+
+1. **UX_STATES_GALLERY/ directory absent** — prompt expected a directory; only `UX_STATES_BEFORE_AFTER.md` exists (8kB). Either rename-alias the markdown as the "gallery" or build out the directory structure (`/ux-states/{page}/{empty,loading,error,filled}.png`).
+
+2. **No Playwright config file found** — prompt claimed a Playwright cross-browser suite passes. `gateway/tests/e2e/` exists but no `playwright.config.*` file. Either the suite is run ad-hoc (untracked config) or the claim is overstated.
+
+3. **Stale sibling uvicorn processes on 7001 + 7050** — still running from April 14. Not a live vector (both on loopback-only) but increases noise and memory pressure.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+none.
+
+#### Unpushed local commits
+none — local in sync with origin.
+
+#### Server-side uncommitted state
+Server working tree is clean. The divergence is in committed history (see HIGH #4).
+
+#### Stashes
+- `stash@{0}` on `feature/referral-program`, `parallel-agent-work-mess-1776748996`, now **~3 days old**. AUDIT #3c and #4 also saw it; nobody has triaged it. Low risk so long as it stays stashed, but unknown content. Recommend: the stash owner does `git stash show -p stash@{0}` and either commits or drops within the next audit window.
+
+### Changes since previous audit
+
+#### Resolved
+- **SSH to server works again.** AUDIT #4 could not reach `100.69.44.108:22`; this audit enumerated server state end-to-end via Tailscale.
+- **CSP headers now applied to embed responses.** scan_xss surfaced `embed_routes.py` CSP assignment at lines 183 + 660 — new this audit.
+
+#### New issues
+- HIGH #1: server DB integrity violation (`kelly_fraction` NULL)
+- HIGH #2: server `auth.db` 644 perms
+- HIGH #3: backup cron not installed
+- HIGH #4: server/origin drift (new because AUDIT #4 couldn't check)
+- MEDIUM #1: FK without ON DELETE (not previously surfaced)
+
+#### Regressions
+- Origin/server drift (see HIGH #4) — AUDIT #4 was blind to server so couldn't observe; today's audit can see the disagreement. Classifying as regression because the last successful deploy (AUDIT #3 era) had origin == server.
+
+### Drift warnings
+- Server running 1 commit ahead of origin (`2d43dd4 deploy: a11y pass`) AND 4 commits behind (`337a451`, `d950e1c`, `e75c45a`, `4dcf933`). Either push `2d43dd4` back to origin or deploy origin → server after cherry-picking it in.
+- Stash from 2026-04-20 still un-triaged. Not deployed, not reviewed.
+- Two orphan uvicorns (7001, 7050) from April 14 still running on server. Neither serves a current product surface; candidate for systemctl stop.
+
+### Recommended actions for next audit
+1. Re-run `PRAGMA integrity_check` after the `kelly_fraction` backfill — confirm "ok".
+2. Verify server `auth.db` perms are `600` and stay that way across one uvicorn restart.
+3. Confirm crontab has the hourly backup + weekly off-host sync entries.
+4. Re-run pip-audit against a corrected pin; capture the CVE count even if it's zero.
+5. Decide (commit / drop) on `stash@{0}` — fourth audit running where it's still there.
+6. Reconcile origin ↔ server git history and record the deploy SHA in this file.
+
+---
+
 ## AUDIT #4 — 2026-04-23T11:45:00Z — commit bfd35d3 (post-input-hygiene pass)
 
 ### Code inventory audited
