@@ -209,9 +209,11 @@ async def dashboard_models(request: Request):
         from fastapi.responses import RedirectResponse
         return RedirectResponse("/billing?upgrade=models", status_code=302)
 
+    since_ts = int(time.time()) - 30 * 86400
     summary = _compute_divergence_summary()
+    brier = db_forecasts.compute_brier_scores(since_ts=since_ts, min_samples=3)
 
-    rows_html = _render_divergence_rows(summary["per_provider"])
+    rows_html = _render_divergence_rows(summary["per_provider"], brier)
 
     return render_page(
         "dashboard_models",
@@ -223,6 +225,7 @@ async def dashboard_models(request: Request):
         ),
         total_markets=summary["total_markets"],
         total_snapshots=summary["total_snapshots"],
+        resolved_markets_scored=sum(s["markets"] for s in brier.values()),
         disclaimer=DISCLAIMER,
         raw_divergence_rows=rows_html,
         window_days=30,
@@ -307,10 +310,21 @@ def _narve_prob_at(
     return best
 
 
-def _render_divergence_rows(per_provider: dict[str, dict]) -> str:
+def _render_divergence_rows(
+    per_provider: dict[str, dict],
+    brier: dict[str, dict] | None = None,
+) -> str:
     """Produce the <tr> rows for the Pro dashboard table. Rendered
     server-side because the dataset is small (4 rows) and doing it
-    in Python keeps the template free of template-logic."""
+    in Python keeps the template free of template-logic.
+
+    Adds a Brier column if ``brier`` is provided. Brier is shown as
+    a 3-decimal fraction (0.000-1.000) with the resolved-market
+    sample count so users see how much data the number rests on.
+    A provider with no resolved-market data shows "—" in the Brier
+    cell but still reports its divergence numbers.
+    """
+    brier = brier or {}
     rows: list[str] = []
     for provider, stats in per_provider.items():
         if stats["samples"] == 0:
@@ -319,6 +333,15 @@ def _render_divergence_rows(per_provider: dict[str, dict]) -> str:
         else:
             avg = f"{100 * stats['avg_divergence']:.1f}pp"
             mx = f"{100 * stats['max_divergence']:.1f}pp"
+        brier_stats = brier.get(provider)
+        if brier_stats is None:
+            brier_cell = "<span style='color:var(--text-quaternary)'>—</span>"
+        else:
+            brier_cell = (
+                f"{brier_stats['brier']:.3f}"
+                f" <span style='color:var(--text-tertiary);font-size:11px'>"
+                f"({brier_stats['samples']}n / {brier_stats['markets']}m)</span>"
+            )
         rows.append(
             "<tr>"
             f"<td>{_html.escape(provider)}</td>"
@@ -326,10 +349,11 @@ def _render_divergence_rows(per_provider: dict[str, dict]) -> str:
             f"<td class='num'>{stats['samples']}</td>"
             f"<td class='num'>{avg}</td>"
             f"<td class='num'>{mx}</td>"
+            f"<td class='num'>{brier_cell}</td>"
             "</tr>"
         )
     return "".join(rows) or (
-        "<tr><td colspan='5' class='empty-cell'>"
+        "<tr><td colspan='6' class='empty-cell'>"
         "No external forecast data yet. The nightly sync populates this table.</td></tr>"
     )
 

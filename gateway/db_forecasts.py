@@ -283,6 +283,76 @@ def list_unmatched_active_markets(limit: int = 200) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def compute_brier_scores(
+    *, since_ts: Optional[int] = None, min_samples: int = 1,
+) -> dict[str, dict]:
+    """Brier score per external provider, against resolved markets.
+
+    For each provider we join ``external_forecasts`` to the
+    ``predictions`` table on ``market_slug = market_id`` (the two
+    columns use different names but hold the same platform slug) and
+    pick rows where the market has ``resolved = 1``. The provider's
+    probability is scored against the binary outcome (1 if YES
+    resolved correct, 0 if NO resolved correct).
+
+    Brier = mean((probability - outcome)^2). 0.0 is perfect,
+    0.25 is a coin-flip, 1.0 is maximally wrong.
+
+    Returned shape: ``{provider: {"samples": int, "brier": float,
+    "markets": int}}``. Providers with < ``min_samples`` resolved
+    snapshots are omitted so the UI can gate "no data yet" cleanly.
+
+    Gotcha: ``predictions`` is a separate table from the market
+    snapshots — it holds extracted source predictions. The
+    ``resolved`` + ``resolved_correct`` flags there are the closest
+    thing the codebase has to binary market outcomes. If multiple
+    predictions resolve the same market, we take the most recent
+    authoritative row per slug (each resolved row agrees by
+    construction).
+    """
+    with db.conn() as c:
+        # Build a resolution map: slug → 0 / 1 (correct = YES-resolved).
+        # Take one row per slug — the predictions table can have many
+        # extracted rows per market, but resolved_correct agrees once
+        # resolution lands.
+        res_rows = c.execute(
+            "SELECT market_id AS slug, MAX(resolved_correct) AS outcome "
+            "FROM predictions "
+            "WHERE resolved = 1 "
+            "  AND market_id IS NOT NULL "
+            "  AND resolved_correct IS NOT NULL "
+            "GROUP BY market_id"
+        ).fetchall()
+    resolutions = {
+        r["slug"]: 1 if int(r["outcome"]) == 1 else 0
+        for r in res_rows
+    }
+    if not resolutions:
+        return {}
+
+    scores: dict[str, dict] = {}
+    for provider in SUPPORTED_PROVIDERS:
+        rows = provider_series_for_scoring(provider, since_ts=since_ts)
+        errs: list[float] = []
+        markets_hit: set[str] = set()
+        for row in rows:
+            slug = row["market_slug"]
+            outcome = resolutions.get(slug)
+            if outcome is None:
+                continue
+            p = float(row["probability"])
+            errs.append((p - outcome) ** 2)
+            markets_hit.add(slug)
+        if len(errs) < min_samples:
+            continue
+        scores[provider] = {
+            "samples": len(errs),
+            "markets": len(markets_hit),
+            "brier": sum(errs) / len(errs),
+        }
+    return scores
+
+
 def equivalence_summary() -> dict:
     """KPIs for /admin/equivalences header."""
     with db.conn() as c:

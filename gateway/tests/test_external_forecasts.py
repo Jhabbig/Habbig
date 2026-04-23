@@ -582,5 +582,81 @@ class TestDivergenceCalc(unittest.TestCase):
         self.assertGreaterEqual(metaculus["max_divergence"], 0.20)
 
 
+class TestBrierScore(unittest.TestCase):
+    """Verify compute_brier_scores joins external_forecasts to
+    predictions.resolved correctly + computes the canonical
+    mean((p - outcome)^2)."""
+
+    def test_computes_scored_markets_only(self):
+        slug = _uniq("brier-mkt")
+        now = int(time.time())
+        # Seed a resolved prediction with market_id = slug, outcome YES (1).
+        with db.conn() as c:
+            c.execute(
+                "INSERT INTO predictions "
+                "(source_handle, market_id, category, predicted_probability, "
+                " content, extracted_at, resolved, resolved_correct) "
+                "VALUES ('test_source', ?, 'other', 0.5, 'x', ?, 1, 1)",
+                (slug, now - 86400 * 2),
+            )
+        # Two forecast snapshots for the same slug, provider=manifold:
+        #  p = 0.80 → error = (0.80 - 1)^2 = 0.04
+        #  p = 0.60 → error = (0.60 - 1)^2 = 0.16
+        # Mean = 0.10
+        db_forecasts.record_forecast(
+            market_slug=slug, provider="manifold",
+            probability=0.80, recorded_at=now - 3600,
+        )
+        db_forecasts.record_forecast(
+            market_slug=slug, provider="manifold",
+            probability=0.60, recorded_at=now - 1800,
+        )
+
+        brier = db_forecasts.compute_brier_scores(min_samples=1)
+        self.assertIn("manifold", brier)
+        mf = brier["manifold"]
+        # Exact-match on the slug we seeded; sample count ≥ 2 (shared DB
+        # may have other manifold rows from earlier tests, but this slug
+        # contributes exactly 2 to the sum).
+        self.assertGreaterEqual(mf["samples"], 2)
+        # Brier floor: both of our samples average to 0.10, but other
+        # tests' manifold rows can only pull the mean up or down if
+        # their markets are ALSO in the resolutions map — which they
+        # aren't (other tests don't seed predictions rows).
+        self.assertAlmostEqual(mf["brier"], 0.10, places=4)
+
+    def test_no_resolved_markets_returns_empty(self):
+        """Before any predictions.resolved rows exist the call returns
+        an empty dict — /dashboard/models just shows "—" for Brier."""
+        # Wipe any resolved predictions we or earlier tests may have
+        # seeded so we can exercise the empty-map path.
+        with db.conn() as c:
+            c.execute("UPDATE predictions SET resolved = 0, resolved_correct = NULL")
+        brier = db_forecasts.compute_brier_scores(min_samples=1)
+        self.assertEqual(brier, {})
+
+    def test_min_samples_filters(self):
+        slug = _uniq("brier-min-mkt")
+        now = int(time.time())
+        with db.conn() as c:
+            c.execute(
+                "INSERT INTO predictions "
+                "(source_handle, market_id, category, predicted_probability, "
+                " content, extracted_at, resolved, resolved_correct) "
+                "VALUES ('test_source', ?, 'other', 0.5, 'x', ?, 1, 0)",
+                (slug, now - 86400),
+            )
+        db_forecasts.record_forecast(
+            market_slug=slug, provider="fivethirtyeight",
+            probability=0.40, recorded_at=now - 3600,
+        )
+        # Only 1 sample → excluded from the default min_samples=3 view
+        brier = db_forecasts.compute_brier_scores(min_samples=3)
+        self.assertNotIn("fivethirtyeight", brier)
+        # Down-threshold surfaces it.
+        brier_lax = db_forecasts.compute_brier_scores(min_samples=1)
+        self.assertIn("fivethirtyeight", brier_lax)
+
+
 if __name__ == "__main__":
     unittest.main()

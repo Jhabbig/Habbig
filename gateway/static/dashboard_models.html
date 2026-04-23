@@ -60,12 +60,17 @@
               <div class="stat-value">{{ total_snapshots }}</div>
               <div class="stat-trend">narve ↔ external pairs</div>
             </div>
+            <div class="stat-tile">
+              <div class="stat-label">Resolved markets scored</div>
+              <div class="stat-value">{{ resolved_markets_scored }}</div>
+              <div class="stat-trend">Brier sample size</div>
+            </div>
           </div>
 
           <div class="admin-section" style="margin-top:32px">
             <div class="admin-section-head">
-              <h2>Per-provider divergence</h2>
-              <span class="admin-section-count">lower avg = better agreement</span>
+              <h2>Per-provider scorecard</h2>
+              <span class="admin-section-count">lower is better</span>
             </div>
             <div class="admin-card">
               <table class="admin-table">
@@ -76,6 +81,7 @@
                     <th class="num">Samples</th>
                     <th class="num">Avg gap</th>
                     <th class="num">Max gap</th>
+                    <th class="num">Brier</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -84,11 +90,16 @@
               </table>
             </div>
             <p style="font-size:12px;color:var(--text-tertiary);margin-top:12px;line-height:1.5">
-              "Gap" is the absolute difference between the provider's probability
-              and narve's yes_price at the nearest-in-time snapshot, averaged.
-              Values in percentage points (pp). Once resolved-market outcomes
-              are wired in, this table swaps for true Brier scores — the same
-              shape, same cell format.
+              <strong>Gap</strong> (avg / max) is the absolute difference between the
+              provider's probability and narve's yes_price at the nearest-in-time
+              snapshot, in percentage points. <strong>Brier</strong> is
+              <code style="font-size:11px">mean((probability − outcome)²)</code> on
+              markets that have already resolved (outcome = 1 if YES was correct,
+              else 0). Brier of 0.000 is perfect; 0.250 is a coin flip;
+              a lower score means the provider was sharper on the markets where
+              we know the answer. The parenthesised counts show
+              <code style="font-size:11px">n</code> snapshots across
+              <code style="font-size:11px">m</code> resolved markets.
             </p>
           </div>
 
