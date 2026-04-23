@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Your predictions — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
@@ -28,6 +29,10 @@
         <a href="/settings" class="nav-item">Settings</a>
         {{ raw_admin_link }}
       </nav>
+
+      <!-- Pinned saved-view slot — populated client-side by filter_panel.js.
+           Silent when signed out or no pinned views. -->
+      <div id="pinned-views"></div>
 
       <a href="/profile" class="sidebar-user" style="text-decoration:none">
         <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
@@ -253,5 +258,15 @@
 </script>
 {{ raw_sitemap }}
 <script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/filter_panel.js" defer></script>
+<script>
+  // Mount pinned saved-view list + show shared-view banner if the user
+  // arrived via a /v/{token} link. Silent no-ops otherwise.
+  document.addEventListener("DOMContentLoaded", function () {
+    if (window.NarveFilterPanel && typeof window.NarveFilterPanel.mountSidebar === "function") {
+      window.NarveFilterPanel.mountSidebar();
+    }
+  });
+</script>
 </body>
 </html>

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Saved — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
@@ -48,6 +49,11 @@
         </a>
         {{ raw_admin_link }}
       </nav>
+
+      <!-- Pinned saved-view slot. filter_panel.js fetches /api/saved-views/pinned
+           and replaces this div with a rendered list — silent no-op when
+           signed out or when the user hasn't pinned anything. -->
+      <div id="pinned-views"></div>
 
       <a href="/profile" class="sidebar-user" style="text-decoration:none">
         <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
@@ -280,5 +286,18 @@
 {{ raw_sitemap }}
 <script src="/_gateway_static/user-features.js" defer></script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/filter_panel.js" defer></script>
+<script>
+  // Mount pinned saved-view list into the sidebar slot + auto-show the
+  // shared-view flash banner if the user just followed a /v/{token} link.
+  // Silent no-op when signed out or when nothing is pinned — the
+  // pre-existing /api/saved filter bar above is untouched.
+  document.addEventListener("DOMContentLoaded", function () {
+    if (!window.NarveFilterPanel) return;
+    if (typeof window.NarveFilterPanel.mountSidebar === "function") {
+      window.NarveFilterPanel.mountSidebar();
+    }
+  });
+</script>
 </body>
 </html>
