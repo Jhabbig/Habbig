@@ -512,7 +512,12 @@ class TestSelfVoteBlocked(_Base):
         item_id = _seed_item(uid, title="My own feedback")
         r = _post_form(f"/api/feedback/{item_id}/vote", token, data={}, accept_json=True)
         self.assertEqual(r.status_code, 400)
-        self.assertIn("your own", (r.json().get("detail") or "").lower())
+        # The global error handler wraps HTTPException.detail into
+        # {"error": "...", "message": "..."}. Accept either shape so
+        # this test survives a handler refactor either direction.
+        body = r.json()
+        msg = (body.get("message") or body.get("detail") or "").lower()
+        self.assertIn("your own", msg)
         # Verify the upvote counter didn't move.
         with db.conn() as c:
             row = c.execute("SELECT upvotes FROM feedback_items WHERE id = ?", (item_id,)).fetchone()

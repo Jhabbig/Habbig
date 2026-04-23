@@ -14,14 +14,13 @@ Wire via ``scenarios_routes.register(app)``. No server.py or db.py edits.
 
 from __future__ import annotations
 
-import html as _html
 import json
 import logging
 import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse

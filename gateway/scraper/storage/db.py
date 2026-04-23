@@ -10,7 +10,6 @@ from __future__ import annotations
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 from scraper.config import SCRAPER_DB_PATH, DEFAULT_TWITTER_KEYWORDS, DEFAULT_TRUTHSOCIAL_KEYWORDS

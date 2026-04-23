@@ -10,11 +10,8 @@ Runs as an async job since computation may take a few seconds on large datasets.
 
 from __future__ import annotations
 
-import json
 import logging
 import math
-import time
-from typing import Any, Optional
 
 import db
 

@@ -29,10 +29,8 @@ The admin page layout these feed:
 
 from __future__ import annotations
 
-import sqlite3
 import time
 from collections import defaultdict
-from typing import Optional
 
 import db
 

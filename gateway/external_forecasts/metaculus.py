@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 import httpx
 
-from external_forecasts.base import Candidate, ProviderError, clamp_probability
+from external_forecasts.base import Candidate, clamp_probability
 
 
 log = logging.getLogger("forecasts.metaculus")

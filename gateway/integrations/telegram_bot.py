@@ -21,7 +21,6 @@ import logging
 import os
 import re
 import time
-from typing import Optional
 
 # Telegram handle format: 1-30 alphanumeric / underscore characters.
 _HANDLE_RE = re.compile(r"^[a-zA-Z0-9_]{1,30}$")
@@ -46,7 +45,7 @@ async def start_bot() -> None:
         return
 
     try:
-        from telegram import Update, Bot
+        from telegram import Update
         from telegram.ext import Application, CommandHandler, ContextTypes
     except ImportError:
         log.warning("python-telegram-bot not installed, skipping Telegram bot")
@@ -150,7 +149,6 @@ async def start_bot() -> None:
 
     async def cmd_edge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show top edge markets."""
-        import db
         from backend.markets import unified_markets
         from backend.markets.polymarket_client import PolymarketClient
         from backend.markets.kalshi_client import KalshiClient

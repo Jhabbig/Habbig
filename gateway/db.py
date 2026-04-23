@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
 
 # The SQLite database path. Defaults to ./auth.db beside this file, but can
 # be overridden via GATEWAY_DB_PATH so staging can use auth-staging.db on the
@@ -717,7 +714,6 @@ def _fts_sanitize_query(q: str) -> str:
 # Backup codes and email OTPs reuse _hash_password (PBKDF2-HMAC-SHA256).
 # Rate limiting for 2FA attempts uses the persistent rate_limits table.
 
-import json as _json_2fa
 
 
 # ── Email OTP helpers ─────────────────────────────────────────────────────────

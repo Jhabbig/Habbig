@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Optional
 
 from scraper.storage.models import RawPost
 from scraper.storage import db as store

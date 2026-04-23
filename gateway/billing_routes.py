@@ -38,7 +38,6 @@ from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
-import server
 from server import (
     app,
     render_page,

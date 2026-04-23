@@ -149,7 +149,6 @@ def get_whale_intelligence_for_market(market_id: str) -> dict:
         convergence: "converge" | "diverge" | "neutral" | None
     """
     import db
-    from backend.markets.unified_markets import enrich_markets_with_intelligence, UnifiedMarket
 
     whales = get_whale_activity_for_market(market_id, days=7)
     if not whales:

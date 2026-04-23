@@ -143,7 +143,6 @@ def _resolve_items(items: list[dict]) -> list[dict]:
     if market_ids:
         try:
             from backend.markets import unified_markets
-            import server as _server
             # Read from the enrichment cache — we don't want to pay a
             # Polymarket/Kalshi fetch on every board view.
             cached = unified_markets._get_cached("enriched_markets", 120)
