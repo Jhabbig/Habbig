@@ -128,7 +128,7 @@
       backdrop.innerHTML = `
         <div class="narve-cmdp" role="dialog" aria-modal="true" aria-label="Search">
           <input class="narve-cmdp-input" type="text"
-                 placeholder="Search markets, sources, predictions… (/ for commands)"
+                 placeholder="Search… ( / commands, @ sources )"
                  autocomplete="off" autocorrect="off" spellcheck="false"
                  role="combobox" aria-expanded="true" aria-autocomplete="list"
                  aria-controls="narve-cmdp-listbox" aria-label="Search">
@@ -225,7 +225,15 @@
         return;
       }
 
-      if (q.length < MIN_QUERY_LEN) {
+      // @ prefix — Twitter-style source lookup. "@fed" searches sources
+      // only; the @ itself is stripped before being sent to FTS (MATCH
+      // doesn't accept @ as a token character anyway). Narrowing types
+      // keeps a common search fast and focused.
+      const atMode = q.startsWith('@') && q.length > 1;
+      const queryToSend = atMode ? q.slice(1) : q;
+      const typesParam = atMode ? 'sources' : 'all';
+
+      if (queryToSend.length < MIN_QUERY_LEN) {
         this.list.innerHTML = `<div class="narve-cmdp-hint">Keep typing…</div>`;
         this.items = [];
         this.sel = 0;
@@ -241,7 +249,9 @@
       const signal = this.ac.signal;
 
       try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+        const url = `/api/search?q=${encodeURIComponent(queryToSend)}`
+                  + `&types=${encodeURIComponent(typesParam)}`;
+        const r = await fetch(url, {
           credentials: 'same-origin',
           headers: { 'Accept': 'application/json' },
           signal,
