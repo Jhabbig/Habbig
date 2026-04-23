@@ -66,50 +66,107 @@
       <div class="breadcrumb">
         <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
         <span class="breadcrumb-separator">/</span>
-        <span class="breadcrumb-item">Notifications</span>
+        <span class="breadcrumb-item current">Notifications</span>
       </div>
 
-      <div class="notif-page">
-        <div class="notif-page-header">
-          <h1>Notifications</h1>
-          <button type="button" class="narve-notif-mark-all" id="notif-mark-all">Mark all read</button>
+      <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+        <div>
+          <h1 class="page-title">Notifications</h1>
+          <p class="page-subtitle">
+            Market resolutions, signal alerts, and anything else you asked to be told about.
+            Tap a notification to jump to the source; it's marked read automatically.
+          </p>
         </div>
+        <button type="button" class="btn-danger" id="notif-mark-all"
+                style="align-self:flex-end;border-color:var(--border-default)">
+          Mark all read
+        </button>
+      </div>
 
-        <div class="notif-filterbar" id="notif-filterbar">
-          <button type="button" data-filter="all" class="is-active">All</button>
-          <button type="button" data-filter="unread">Unread</button>
-          <button type="button" data-filter="market_resolved">Markets</button>
-          <button type="button" data-filter="market_mover">Movers</button>
-          <button type="button" data-filter="high_ev_alert">Alerts</button>
-          <button type="button" data-filter="source_prediction">Sources</button>
-          <button type="button" data-filter="payment">Payments</button>
-        </div>
+      <div class="content-area">
+        <div style="max-width:960px">
 
-        <div id="notif-page-list" class="notif-day-group">
-          <div class="narve-notif-empty" style="padding:48px 16px">Loading…</div>
-        </div>
-
-        <div class="notif-page-prefs" id="notif-prefs">
-          <h2>Notification preferences</h2>
-          <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px">
-            Delivery channels — turn any off to stop that route for every type at once.
+          <div class="admin-filter-bar" id="notif-filterbar" role="toolbar" aria-label="Filter notifications">
+            <span class="filter-spacer"></span>
+            <button type="button" class="filter-chip active" data-filter="all">All</button>
+            <button type="button" class="filter-chip" data-filter="unread">Unread</button>
+            <button type="button" class="filter-chip" data-filter="market_resolved">Markets</button>
+            <button type="button" class="filter-chip" data-filter="market_mover">Movers</button>
+            <button type="button" class="filter-chip" data-filter="high_ev_alert">Alerts</button>
+            <button type="button" class="filter-chip" data-filter="source_prediction">Sources</button>
+            <button type="button" class="filter-chip" data-filter="payment">Payments</button>
           </div>
-          <label><input type="checkbox" data-pref="inapp_enabled"> In-app notifications</label>
-          <label><input type="checkbox" data-pref="push_enabled"> Push notifications (browser)</label>
-          <label><input type="checkbox" data-pref="email_enabled"> Email notifications</label>
 
-          <h2 style="margin-top:16px">Notification types</h2>
-          <label><input type="checkbox" data-type="market_resolved"> Market resolutions</label>
-          <label><input type="checkbox" data-type="high_ev_alert"> High-EV signal alerts</label>
-          <label><input type="checkbox" data-type="source_prediction"> Sources you follow post predictions</label>
-          <label><input type="checkbox" data-type="insider_signal"> Insider trading signals</label>
-          <label><input type="checkbox" data-type="market_mover"> Significant market movements</label>
-          <label><input type="checkbox" data-type="payment"> Payment and billing</label>
-          <label><input type="checkbox" data-type="system"> System announcements</label>
-          <div id="notif-prefs-status" style="font-size:11px;color:var(--text-tertiary);margin-top:4px"></div>
+          <div id="notif-page-list" class="notif-day-group">
+            <div class="narve-notif-empty" style="padding:48px 16px">Loading…</div>
+          </div>
+
+          <!-- Preferences — on the same page so you can dial in your delivery
+               right after seeing what comes in. Autosaves on every change. -->
+          <div class="settings-card" id="notif-prefs" style="margin-top:32px">
+            <div class="settings-section">
+              <div class="settings-section-title">Delivery channels</div>
+              <div class="settings-section-desc">
+                Turn any channel off to stop that route for every notification type
+                at once. Individual types are further tunable below.
+              </div>
+
+              <label class="field-row" style="cursor:pointer;border-top:0;padding-top:0">
+                <span class="field-label">In-app</span>
+                <span class="field-control" style="display:flex;align-items:center;gap:10px;padding-top:10px">
+                  <input type="checkbox" data-pref="inapp_enabled">
+                  <span style="font-size:13px;color:var(--text-secondary)">Show in the bell dropdown and this page.</span>
+                </span>
+              </label>
+              <label class="field-row" style="cursor:pointer">
+                <span class="field-label">Push</span>
+                <span class="field-control" style="display:flex;align-items:center;gap:10px;padding-top:10px">
+                  <input type="checkbox" data-pref="push_enabled">
+                  <span style="font-size:13px;color:var(--text-secondary)">Browser push notifications (requires permission grant).</span>
+                </span>
+              </label>
+              <label class="field-row" style="cursor:pointer">
+                <span class="field-label">Email</span>
+                <span class="field-control" style="display:flex;align-items:center;gap:10px;padding-top:10px">
+                  <input type="checkbox" data-pref="email_enabled">
+                  <span style="font-size:13px;color:var(--text-secondary)">Per-event emails to the address on your profile.</span>
+                </span>
+              </label>
+            </div>
+
+            <div class="settings-section" style="margin-top:8px;border-top:1px solid var(--border-ghost);padding-top:20px">
+              <div class="settings-section-title">Notification types</div>
+              <div class="settings-section-desc">
+                Fine-grained control. A type is only delivered if both the type
+                <em>and</em> at least one delivery channel above are on.
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px 16px">
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-type="market_resolved"> Market resolutions</label>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-type="high_ev_alert"> High-EV signal alerts</label>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-type="source_prediction"> Sources you follow post predictions</label>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-type="insider_signal"> Insider trading signals</label>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-type="market_mover"> Significant market movements</label>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-type="payment"> Payment and billing</label>
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-type="system"> System announcements</label>
+              </div>
+              <div id="notif-prefs-status" style="font-size:12px;color:var(--text-tertiary);margin-top:12px;min-height:16px"></div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
+
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Notifications</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
   </div>
 
   <!-- Bell + dropdown (fixed top-right, same component as every other page) -->
@@ -247,11 +304,17 @@
         renderList();
       }
 
-      // Filter bar
+      // Filter bar — chips use `.active` per the shared .admin-filter-bar
+      // pattern. Keep `.is-active` toggled too so any older CSS rule that
+      // still references it keeps working during the rollout.
       filterbar.addEventListener('click',(e)=>{
         const btn=e.target.closest('button[data-filter]'); if(!btn) return;
-        filterbar.querySelectorAll('button').forEach(b=>b.classList.remove('is-active'));
+        filterbar.querySelectorAll('button').forEach(b=>{
+          b.classList.remove('is-active');
+          b.classList.remove('active');
+        });
         btn.classList.add('is-active');
+        btn.classList.add('active');
         state.filter=btn.dataset.filter;
         renderList();
       });
