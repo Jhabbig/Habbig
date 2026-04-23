@@ -406,5 +406,119 @@ class TestFollowNotifications(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class TestExtras(unittest.TestCase):
+    """Coverage for the five follow-up additions: typeahead search,
+    notification opt-out, share button presence, RSS feed, and the
+    profile-page public-collections section."""
+
+    def setUp(self):
+        _clear()
+        client.cookies.clear()
+
+    def test_search_returns_source_matches(self):
+        # Seed a source credibility row so the typeahead has something to
+        # match. The endpoint is authenticated — make one and query.
+        with db.conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO source_credibility "
+                "(source_handle, global_credibility, total_predictions, "
+                " correct_predictions, categories_active, last_computed_at) "
+                "VALUES ('test_seer', 0.8, 42, 30, 3, ?)",
+                (int(time.time()),),
+            )
+        uid, tok = _mk("ta")
+        r = client.get("/api/collections/search?q=test_seer&kind=source",
+                       headers=_auth(tok))
+        self.assertEqual(r.status_code, 200)
+        results = r.json()["results"]
+        self.assertTrue(any(x["item_ref"] == "test_seer" and x["item_type"] == "source"
+                            for x in results))
+
+    def test_search_rejects_short_query(self):
+        _, tok = _mk("sh")
+        r = client.get("/api/collections/search?q=a", headers=_auth(tok))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["results"], [])
+
+    def test_search_requires_auth(self):
+        r = client.get("/api/collections/search?q=foo")
+        self.assertEqual(r.status_code, 401)
+
+    def test_patch_follow_toggles_notifications(self):
+        owner, _ = _mk("po")
+        follower, tok = _mk("pf")
+        cid = coll.create_collection(owner, "Pub", visibility="public")
+        coll.follow_collection(follower, cid)
+
+        r = client.patch(
+            f"/api/collections/{cid}/follow", headers=_auth(tok),
+            json={"notifications_on": False},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["notifications_on"])
+        # followers list with only_notifiable=True should now exclude them
+        self.assertEqual(coll.list_followers(cid, only_notifiable=True), [])
+
+    def test_patch_follow_requires_existing_follow(self):
+        owner, _ = _mk("pox")
+        stranger, tok = _mk("pst")
+        cid = coll.create_collection(owner, "Pub", visibility="public")
+        r = client.patch(
+            f"/api/collections/{cid}/follow", headers=_auth(tok),
+            json={"notifications_on": False},
+        )
+        self.assertEqual(r.status_code, 404)
+
+    def test_rss_feed_public_only(self):
+        owner, _ = _mk("rss")
+        cid_public = coll.create_collection(owner, "RSS board", visibility="public")
+        cid_private = coll.create_collection(owner, "Private RSS", visibility="private")
+        coll.add_item(cid_public, owner_id=owner,
+                      item_type="source", item_ref="alice")
+        with db.conn() as c:
+            handle = c.execute(
+                "SELECT username FROM users WHERE id = ?", (owner,),
+            ).fetchone()["username"]
+
+        r = client.get(f"/c/{handle}/rss-board.rss")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("application/rss+xml", r.headers.get("content-type", ""))
+        self.assertIn("<rss", r.text)
+        self.assertIn("<item>", r.text)
+
+        # Private → 404 (no feed fingerprinting).
+        r2 = client.get(f"/c/{handle}/private-rss.rss")
+        self.assertEqual(r2.status_code, 404)
+
+    def test_share_button_in_public_page(self):
+        owner, _ = _mk("sh")
+        cid = coll.create_collection(owner, "Share me", visibility="public")
+        with db.conn() as c:
+            handle = c.execute(
+                "SELECT username FROM users WHERE id = ?", (owner,),
+            ).fetchone()["username"]
+        r = client.get(f"/c/{handle}/share-me")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('id="c-share-btn"', r.text)
+
+    def test_profile_lists_public_collections(self):
+        uid, tok = _mk("prof")
+        coll.create_collection(uid, "Prof board", visibility="public")
+        r = client.get("/profile", headers=_auth(tok))
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Public collections", r.text)
+        self.assertIn("Prof board", r.text)
+
+    def test_profile_hides_section_for_user_with_no_public(self):
+        uid, tok = _mk("quiet")
+        coll.create_collection(uid, "Secret", visibility="private")
+        r = client.get("/profile", headers=_auth(tok))
+        self.assertEqual(r.status_code, 200)
+        # Section is omitted entirely when the user has nothing public,
+        # so the heading doesn't appear. A private board should not leak
+        # into the profile surface.
+        self.assertNotIn("Public collections", r.text)
+
+
 if __name__ == "__main__":
     unittest.main()

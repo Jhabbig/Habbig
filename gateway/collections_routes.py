@@ -722,9 +722,31 @@ async def page_collections(request: Request):
         _card_html(c, f"/collections/{c['id']}") for c in own
     ) or '<div class="c-empty">No collections yet. Create your first board below.</div>'
 
-    followed_cards = "".join(
-        _card_html(c, f"/collections/{c['id']}") for c in followed
-    ) or '<div class="c-empty">You\'re not following any collections. Head to /explore.</div>'
+    # Followed cards get a small bell toggle in the top-right corner that
+    # mutes notifications without un-following (notifications_on column).
+    def _followed_card_html(c: dict) -> str:
+        notif_on = bool(c.get("notifications_on", 1))
+        cid = c["id"]
+        card = _card_html(c, f"/collections/{cid}")
+        bell_color = "var(--ink)" if notif_on else "var(--muted)"
+        bell_glyph = "\U0001F514" if notif_on else "\U0001F515"
+        bell_title = "Mute notifications" if notif_on else "Unmute notifications"
+        notif_flag = 1 if notif_on else 0
+        return (
+            '<div style="position:relative">'
+            f'{card}'
+            f'<button type="button" data-follow-id="{cid}" '
+            f'data-notif-on="{notif_flag}" class="c-bell" title="{bell_title}" '
+            f'style="position:absolute;top:10px;right:10px;background:var(--bg);'
+            f'border:1px solid var(--border);cursor:pointer;font-size:12px;padding:4px 8px;'
+            f'border-radius:6px;color:{bell_color}">{bell_glyph}</button>'
+            '</div>'
+        )
+
+    if followed:
+        followed_cards = "".join(_followed_card_html(c) for c in followed)
+    else:
+        followed_cards = '<div class="c-empty">You\'re not following any collections. Head to /explore.</div>'
 
     body = f"""<!DOCTYPE html><html><head>
 <meta charset='utf-8'><title>Collections — narve.ai</title>
@@ -806,6 +828,33 @@ async def page_collections(request: Request):
     }}
     var data = await r.json();
     location.href = '/collections/' + data.id;
+  }});
+
+  // Mute/un-mute notifications on followed cards (bell toggle).
+  document.querySelectorAll('.c-bell[data-follow-id]').forEach(function(btn){{
+    btn.addEventListener('click', async function(ev){{
+      ev.preventDefault(); ev.stopPropagation();
+      var cid = btn.dataset.followId;
+      var current = btn.dataset.notifOn === '1';
+      btn.disabled = true;
+      try {{
+        var csrf = (document.cookie.match(/(?:^|;\\s*)_csrf=([^;]*)/) || [])[1] || '';
+        var r = await fetch('/api/collections/' + cid + '/follow', {{
+          method: 'PATCH',
+          headers: {{'Content-Type': 'application/json', 'x-csrf-token': csrf}},
+          body: JSON.stringify({{ notifications_on: !current }}),
+        }});
+        if (!r.ok) throw new Error('failed');
+        btn.dataset.notifOn = current ? '0' : '1';
+        btn.textContent = current ? '\\ud83d\\udd15' : '\\ud83d\\udd14';
+        btn.title = current ? 'Unmute notifications' : 'Mute notifications';
+        btn.style.color = current ? 'var(--muted)' : 'var(--ink)';
+      }} catch (e) {{
+        alert('Could not update notifications.');
+      }} finally {{
+        btn.disabled = false;
+      }}
+    }});
   }});
 }})();
 </script>
@@ -1422,10 +1471,14 @@ def register(app) -> None:
                       response_class=HTMLResponse, include_in_schema=False)
     app.add_api_route("/collections/{id}", page_collection_detail, methods=["GET"],
                       response_class=HTMLResponse, include_in_schema=False)
-    app.add_api_route("/c/{handle}/{slug}", page_public, methods=["GET"],
-                      response_class=HTMLResponse, include_in_schema=False)
+    # Register the RSS route BEFORE the HTML variant. FastAPI matches
+    # routes in registration order and the HTML path's ``{slug}`` would
+    # otherwise greedily swallow the trailing ``.rss``, leaving feed
+    # readers with a 404.
     app.add_api_route("/c/{handle}/{slug}.rss", rss_feed, methods=["GET"],
                       include_in_schema=False)
+    app.add_api_route("/c/{handle}/{slug}", page_public, methods=["GET"],
+                      response_class=HTMLResponse, include_in_schema=False)
     app.add_api_route("/explore", page_explore, methods=["GET"],
                       response_class=HTMLResponse, include_in_schema=False)
     app.add_api_route("/admin/collections", page_admin_collections, methods=["GET"],
