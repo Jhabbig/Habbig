@@ -330,6 +330,7 @@ class TestSetLanguageRoute(unittest.TestCase):
     def test_underscore_locale_normalised(self):
         r = self.client.post(
             "/api/set-language?lang=pt_BR",
+            json={},
             cookies=self.cookies,
             headers=self.csrf_headers,
         )
