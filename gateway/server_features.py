@@ -980,9 +980,40 @@ async def api_list_saved(
     request: Request,
     resolved: str = "all",
     sort: str = "saved_at",
+    page: int = 1,
+    per_page: int = 50,
 ):
+    """List a user's saved predictions.
+
+    Paginated so a user with 5 000+ saved items doesn't get a single
+    50 k-row payload. `resolved` / `sort` are opaque filter strings
+    passed to `db.list_saved_predictions`; we normalise them against
+    the known value set and fall through to defaults on anything else
+    (safer than a 400 when the frontend sends a new value we haven't
+    taught the backend about yet).
+    """
     user = _require_auth(request)
-    rows = db.list_saved_predictions(user["user_id"], resolved_filter=resolved, sort=sort)
+
+    # Share the canonical pagination helpers — zero/negative/over-cap
+    # inputs collapse to sensible defaults rather than 500-ing through
+    # LIMIT/OFFSET.
+    from security.input_hygiene import clean_page, clean_per_page
+    p = clean_page(page)
+    pp = clean_per_page(per_page, default=50, max_per_page=200)
+
+    # Accept only the filter values db.list_saved_predictions understands.
+    if resolved not in {"all", "resolved", "unresolved"}:
+        resolved = "all"
+    if sort not in {"saved_at", "extracted_at", "credibility"}:
+        sort = "saved_at"
+
+    all_rows = db.list_saved_predictions(
+        user["user_id"], resolved_filter=resolved, sort=sort,
+    )
+    total = len(all_rows)
+    start = (p - 1) * pp
+    rows = all_rows[start:start + pp]
+
     items = []
     for row in rows:
         items.append({
@@ -1007,7 +1038,14 @@ async def api_list_saved(
                 "accuracy_unlocked": bool(row["accuracy_unlocked"]) if row["accuracy_unlocked"] is not None else False,
             },
         })
-    return JSONResponse({"items": items, "count": len(items)})
+    return JSONResponse({
+        "items": items,
+        "count": len(items),
+        "total": total,
+        "page": p,
+        "per_page": pp,
+        "pages": max(1, (total + pp - 1) // pp),
+    })
 
 
 @app.patch("/api/saved/{prediction_id}")
@@ -1109,9 +1147,30 @@ async def api_update_follow(request: Request, handle: str):
 
 
 @app.get("/api/sources/following")
-async def api_list_following(request: Request):
+async def api_list_following(
+    request: Request,
+    page: int = 1,
+    per_page: int = 100,
+):
+    """List the sources a user follows.
+
+    Paginated defensively (someone following thousands of sources is
+    rare but possible after a bulk-import). The whole list is still
+    fetched from the DB — db.list_followed_sources has no LIMIT — and
+    sliced in Python. Good enough up to ~50 k rows; if that ever
+    bites, push the pagination into the SQL helper.
+    """
     user = _require_auth(request)
-    rows = db.list_followed_sources(user["user_id"])
+
+    from security.input_hygiene import clean_page, clean_per_page
+    p = clean_page(page)
+    pp = clean_per_page(per_page, default=100, max_per_page=500)
+
+    all_rows = db.list_followed_sources(user["user_id"])
+    total = len(all_rows)
+    start = (p - 1) * pp
+    rows = all_rows[start:start + pp]
+
     payload = {
         "items": [
             {
@@ -1127,6 +1186,10 @@ async def api_list_following(request: Request):
             for r in rows
         ],
         "count": len(rows),
+        "total": total,
+        "page": p,
+        "per_page": pp,
+        "pages": max(1, (total + pp - 1) // pp),
     }
     return JSONResponse(server._forensic_sign(user, payload, "api_sources_following"))
 

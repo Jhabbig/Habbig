@@ -428,5 +428,91 @@ class TestConcurrentWrites(unittest.TestCase):
         self.assertLessEqual(counter["n"], 2)
 
 
+# ── Integration: wiring-level checks for the handlers we just hardened ────
+#
+# These exercise the *module imports* + the specific idempotency key /
+# pagination helper wiring added in the 2026-04-23 "save locally, don't
+# push" session. They don't spin up a FastAPI TestClient — the full
+# HTTP surface is tested elsewhere — they're smoke tests that the
+# wiring itself is present + the helpers resolve the right tokens.
+
+
+class TestWiredFeedbackEndpoint(unittest.TestCase):
+    """Verify /api/feedback now routes through clean_text for body/title.
+
+    Import the module, grep for the expected call shape. If an agent
+    accidentally unwires the hygiene layer this fails loudly.
+    """
+
+    def test_feedback_imports_clean_text(self):
+        import feedback_routes  # noqa: F401
+        import inspect
+        src = inspect.getsource(feedback_routes)
+        self.assertIn(
+            "from security.input_hygiene import clean_text",
+            src,
+            "feedback_routes must import clean_text for input sanitisation",
+        )
+        self.assertIn('clean_text(', src)
+        # Specific field names — if someone renames without updating
+        # the error surface, this catches it.
+        self.assertIn('field="title"', src)
+        self.assertIn('field="body"', src)
+
+
+class TestWiredPortfolioKalshi(unittest.TestCase):
+    """The Kalshi connect handler must collapse near-duplicate retries
+    via `with_idempotency`. A regression would re-introduce the
+    double-login bug the idempotency layer exists to prevent."""
+
+    def test_kalshi_connect_imports_with_idempotency(self):
+        from portfolio import routes as portfolio_routes
+        import inspect
+        src = inspect.getsource(portfolio_routes)
+        self.assertIn("from security.idempotency import with_idempotency", src)
+        self.assertIn('op="kalshi_connect"', src)
+
+
+class TestWiredBilling(unittest.TestCase):
+    """Billing mutations that fan out emails or shift timestamps must
+    route through `with_idempotency`. The three risky ones:
+
+      * /settings/billing/cancel step=3 — queues winback emails
+      * /settings/billing/addon        — shifts period_end by 30 days
+    """
+
+    def test_cancel_step3_has_idempotency(self):
+        import billing_routes
+        import inspect
+        src = inspect.getsource(billing_routes)
+        self.assertIn('op="billing_cancel_finalize"', src)
+
+    def test_addon_add_has_idempotency(self):
+        import billing_routes
+        import inspect
+        src = inspect.getsource(billing_routes)
+        self.assertIn('op="billing_addon_add"', src)
+
+
+class TestWiredPaginationHelpers(unittest.TestCase):
+    """`/api/saved` + `/api/sources/following` must use the canonical
+    pagination helpers. Previously both had bespoke (or absent) clamps
+    that let per_page=10000 through."""
+
+    def test_saved_uses_clean_pagination(self):
+        import server_features
+        import inspect
+        src = inspect.getsource(server_features.api_list_saved)
+        self.assertIn("clean_page", src)
+        self.assertIn("clean_per_page", src)
+
+    def test_following_uses_clean_pagination(self):
+        import server_features
+        import inspect
+        src = inspect.getsource(server_features.api_list_following)
+        self.assertIn("clean_page", src)
+        self.assertIn("clean_per_page", src)
+
+
 if __name__ == "__main__":
     unittest.main()

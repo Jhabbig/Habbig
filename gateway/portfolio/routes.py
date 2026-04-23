@@ -70,35 +70,57 @@ def register(app) -> None:
             return JSONResponse(
                 {"error": "email and password required"}, status_code=400,
             )
-        try:
-            result = await kalshi.login(email, password)
-        except Exception as exc:
-            log.info("kalshi login failed: %s", exc)
-            return JSONResponse(
-                {"error": "Kalshi login failed"}, status_code=401,
+
+        # Idempotency: a double-click / retry within 10 s must NOT trigger
+        # two Kalshi login calls (rate-limited upstream) and must NOT
+        # emit two encrypted-token writes. Key on the client-supplied
+        # Idempotency-Key header, or fall back to a hash of the
+        # (email) submitted — the same user retrying the same email is
+        # what we're protecting against, so "same email twice in 10 s"
+        # is a safe fingerprint. We do NOT include the password in the
+        # fingerprint (logging hygiene).
+        from security.idempotency import with_idempotency
+        uid = _user_id(user)
+        client_key = request.headers.get("Idempotency-Key")
+
+        async def _do_connect() -> dict:
+            try:
+                result = await kalshi.login(email, password)
+            except Exception as exc:
+                log.info("kalshi login failed: %s", exc)
+                return {"_status": 401, "error": "Kalshi login failed"}
+            token = result.get("token") or result.get("access_token")
+            if not token:
+                return {"_status": 502, "error": "Unexpected response from Kalshi"}
+            ok = kalshi.upsert_connection(
+                user_id=uid,
+                email=email,
+                token=token,
+                member_id=result.get("member_id"),
+                token_expires_at=result.get("expires_at"),
             )
-        token = result.get("token") or result.get("access_token")
-        if not token:
-            return JSONResponse(
-                {"error": "Unexpected response from Kalshi"}, status_code=502,
-            )
-        ok = kalshi.upsert_connection(
-            user_id=_user_id(user),
-            email=email,
-            token=token,
-            member_id=result.get("member_id"),
-            token_expires_at=result.get("expires_at"),
+            if not ok:
+                # CREDENTIALS_ENCRYPTION_KEY missing — refuse the plaintext.
+                return {
+                    "_status": 503,
+                    "error": "Server not configured for Kalshi connections",
+                }
+            return {
+                "_status": 200,
+                "connected": True,
+                "member_id": result.get("member_id"),
+            }
+
+        result = await with_idempotency(
+            user_id=uid,
+            op="kalshi_connect",
+            client_key=client_key,
+            ttl_seconds=10,
+            body=_do_connect,
+            fallback_fingerprint=email,
         )
-        if not ok:
-            # CREDENTIALS_ENCRYPTION_KEY missing — refuse the plaintext.
-            return JSONResponse(
-                {"error": "Server not configured for Kalshi connections"},
-                status_code=503,
-            )
-        return JSONResponse({
-            "connected": True,
-            "member_id": result.get("member_id"),
-        })
+        status = int(result.pop("_status", 200))
+        return JSONResponse(result, status_code=status)
 
     # ── Positions + summary ─────────────────────────────────────────────
     @app.get("/api/portfolio/summary")

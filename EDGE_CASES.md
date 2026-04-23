@@ -44,7 +44,8 @@ listed under **pending**.
 
 ### Pending inputs (logged, not yet gated)
 
-* `gateway/server.py` — `/api/feedback` body. Currently relies on FastAPI / Pydantic limits.
+* ~~`/api/feedback` body~~ — ✅ wired in the 2026-04-23 follow-up commit
+  (`feedback_routes.py` uses `clean_text` with `max_len=200`/`4000`).
 * `gateway/ai_routes.py` — user prompts. Rate-limited, but no length cap.
 * Outer trim of email display names (MIME header injection). Not a security path today (bot emails use fixed templates).
 
@@ -72,8 +73,11 @@ Endpoints that already clamp correctly (verified by code review):
 
 ### Pending pagination
 
-* Migrate `/api/sources/following`, `/api/saved` to use `clean_page` /
-  `clean_per_page` (they currently have bespoke clamps).
+* ~~`/api/sources/following`, `/api/saved`~~ — ✅ migrated 2026-04-23.
+  Both now route page / per_page through `clean_page` + `clean_per_page`
+  and return the canonical `{items, total, page, per_page, pages}`
+  envelope. Covered by
+  `TestWiredPaginationHelpers.test_{saved,following}_uses_clean_pagination`.
 
 ---
 
@@ -94,11 +98,21 @@ available, in-process otherwise.
 | No key AND no fingerprint | Degrades open — body runs every call. | ✅ accepted (degraded mode) |
 | Threaded race on same key | Collapses to ≤ 2 executions; documented as tab-race protection, not a lock. | ✅ handled within stated scope |
 
-### Where it's wired (as of this commit)
+### Where it's wired (as of 2026-04-23)
 
-**Not yet**. Module shipped in this commit; the callsite wiring into
-`billing_routes.py` + `/api/kelly/bet` + `/api/portfolio/*` is a
-follow-up PR so each integration gets a code-review pass.
+| Endpoint | Key | TTL | Why |
+|---|---|---|---|
+| `POST /api/portfolio/kalshi/connect` | header or `email` fingerprint | 10 s | Prevents double Kalshi login + encrypted-token double-write |
+| `POST /settings/billing/cancel` step=3 | header or `attempt_id` fingerprint | 30 s | Prevents duplicate cancellation-email fanout |
+| `POST /settings/billing/addon` | header or `addon` fingerprint | 10 s | Prevents period_end shifting forward on double-click |
+
+Still pending (module in place, wiring not done):
+
+* `/api/kelly/bet` (scaffolded but not yet shipped).
+* `/api/portfolio/polymarket/connect` — upsert is already self-idempotent
+  on `(user_id, wallet_address)` so no emails / rate-limited upstream
+  calls to guard. Left alone.
+* Webhook-side idempotency is separate — see `processed_stripe_events`.
 
 ---
 
@@ -172,7 +186,7 @@ for the full transition table.
 | Two users claim last invite token | `UPDATE invite_tokens SET status='claimed' WHERE id=? AND status='unclaimed'` is single-statement; only one UPDATE returns `rowcount=1`. | ✅ accepted |
 | Two admins impersonate same user | Each impersonation session has a unique cookie token; both work in parallel; audit log shows both. | ✅ accepted (not a conflict) |
 | User deleted mid-request | Middleware resolves `request.state.user = None` on next request; handlers return 401 not 500. | ✅ accepted |
-| Tab double-click on Subscribe | Collapsed via `with_idempotency(..., client_key=<header>)` — wiring follow-up PR. | ⚠️ module in place, wiring pending |
+| Tab double-click on Subscribe / Cancel / Add-on / Kalshi connect | Collapsed via `with_idempotency`. Key from `Idempotency-Key` header or from a body fingerprint when missing. 10 s default TTL; 30 s on cancel-finalize to absorb the email-queue latency. | ✅ wired 2026-04-23 on the four risky POST handlers |
 
 ---
 

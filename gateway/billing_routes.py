@@ -869,19 +869,41 @@ async def settings_billing_cancel(
 
     if step == "3":
         # Final confirmation — flip subs + queue win-back emails.
-        with db.conn() as c:
-            c.execute(
-                "UPDATE subscriptions SET status = 'cancelled' "
-                "WHERE user_id = ? AND status = 'active'",
-                (user["user_id"],),
+        # Idempotent: the UPDATE is safe to re-run, but _queue_winback_emails
+        # fans out 3–5 scheduled emails per call. A double-submit would
+        # spam the user. Key on (user_id, attempt_id) so legitimately
+        # distinct cancel attempts still each get their own emails,
+        # while a retry of the same attempt collapses to one.
+        from security.idempotency import with_idempotency
+
+        async def _do_cancel() -> dict:
+            with db.conn() as c:
+                c.execute(
+                    "UPDATE subscriptions SET status = 'cancelled' "
+                    "WHERE user_id = ? AND status = 'active'",
+                    (user["user_id"],),
+                )
+            _finalize_cancel_attempt(
+                attempt_id_int, outcome="cancelled", reached_step=3,
             )
-        _finalize_cancel_attempt(attempt_id_int, outcome="cancelled", reached_step=3)
-        _queue_winback_emails(user["user_id"], user["email"])
-        ttl_invalidate.on_subscription_change(user["user_id"])
-        log.info(
-            "User %s cancelled subscription (attempt=%s)",
-            user.get("username", user["email"]),
-            attempt_id_int,
+            _queue_winback_emails(user["user_id"], user["email"])
+            ttl_invalidate.on_subscription_change(user["user_id"])
+            log.info(
+                "User %s cancelled subscription (attempt=%s)",
+                user.get("username", user["email"]),
+                attempt_id_int,
+            )
+            return {"cancelled": True}
+
+        await with_idempotency(
+            user_id=user["user_id"],
+            op="billing_cancel_finalize",
+            client_key=request.headers.get("Idempotency-Key"),
+            ttl_seconds=30,  # slightly longer because the email fan-out
+                             # job queueing takes a moment; protect the
+                             # slow-click-as-retry case
+            body=_do_cancel,
+            fallback_fingerprint=f"attempt:{attempt_id_int}",
         )
         return RedirectResponse("/settings/billing?saved=cancelled", status_code=302)
 
@@ -983,16 +1005,38 @@ async def settings_billing_resubscribe(request: Request):
 
 @app.post("/settings/billing/addon", include_in_schema=False)
 async def settings_billing_addon_add(request: Request, addon: str = Form(...)):
-    """Add an add-on. Only 'trading' is wired up — Stripe stubbed."""
+    """Add an add-on. Only 'trading' is wired up — Stripe stubbed.
+
+    Idempotent: a double-click would otherwise push period_end an
+    additional 30 days forward on each POST. We route the mutation
+    through ``with_idempotency`` keyed on (user, addon) so a retry
+    within 10 s replays the first response without re-running the
+    period-shift. A genuinely-later re-add (> 10 s) still extends, by
+    design: the user chose to top up again.
+    """
     user = current_user(request)
     if not user:
         return RedirectResponse("/token", status_code=302)
     if addon != "trading":
         return RedirectResponse("/settings/billing", status_code=302)
-    now = int(time.time())
-    db.set_trading_addon(user["user_id"], True, period_end=now + 30 * 86400)
-    ttl_invalidate.on_subscription_change(user["user_id"])
-    log.info("User %s added trading add-on", user.get("username", user["email"]))
+    from security.idempotency import with_idempotency
+    uid = user["user_id"]
+
+    async def _do_add() -> dict:
+        now = int(time.time())
+        db.set_trading_addon(uid, True, period_end=now + 30 * 86400)
+        ttl_invalidate.on_subscription_change(uid)
+        log.info("User %s added trading add-on", user.get("username", user["email"]))
+        return {"ran": True}
+
+    await with_idempotency(
+        user_id=uid,
+        op="billing_addon_add",
+        client_key=request.headers.get("Idempotency-Key"),
+        ttl_seconds=10,
+        body=_do_add,
+        fallback_fingerprint=addon,
+    )
     return RedirectResponse("/settings/billing?saved=addon_added", status_code=302)
 
 

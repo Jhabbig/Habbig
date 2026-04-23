@@ -5,6 +5,92 @@ and the file(s) touched. New entries at the top.
 
 ---
 
+## 2026-04-23 — Edge-case hardening follow-up (local-only commit, no deploy)
+
+Scope: wire the `security/input_hygiene.py` + `security/idempotency.py`
+modules shipped earlier the same day into the specific handlers flagged
+as ⚠️ pending in `EDGE_CASES.md`. No new modules; no schema changes.
+
+### `/api/portfolio/kalshi/connect` — double-login on retry
+
+- Symptom: a retry within 10 s (flaky network + "Connect" button
+  without a loading state) fired two full Kalshi login calls. Kalshi
+  rate-limits aggressively, so the second call often returned 429
+  and the user saw "Connect failed" even though the first call had
+  already stored a valid token.
+- Cause: no idempotency at the narve→Kalshi edge.
+- Fix: wrap the login + upsert in `with_idempotency(op="kalshi_connect")`
+  keyed on `Idempotency-Key` header or the submitted email (never the
+  password — logging hygiene). 10 s TTL. Second call replays the
+  cached response without re-calling Kalshi.
+- Files: `gateway/portfolio/routes.py`.
+
+### `/settings/billing/cancel` step=3 — duplicate winback emails
+
+- Symptom: double-submit of the final cancel step queued the winback
+  email sequence twice. A user cancelling with "Back" + "Continue"
+  typing too fast would receive 6–10 emails over the next 30 days
+  instead of 3–5.
+- Cause: `_queue_winback_emails(user_id, email)` is a fan-out; no
+  idempotency.
+- Fix: wrap the step=3 branch in `with_idempotency(op="billing_cancel_finalize")`
+  keyed on `attempt_id`. 30 s TTL (longer than other ops because the
+  email-queue insert takes a moment; catches the slow-click-as-retry
+  case).
+- Files: `gateway/billing_routes.py`.
+
+### `/settings/billing/addon` — period_end shifted forward on retry
+
+- Symptom: clicking "Add trading add-on" twice pushed `period_end`
+  forward by 60 days total instead of 30. Rare but real — users get a
+  free 30-day top-up accidentally, which quietly costs us.
+- Cause: `set_trading_addon(True, period_end=now + 30*86400)` is
+  additive-looking but not keyed on idempotency.
+- Fix: `with_idempotency(op="billing_addon_add")` keyed on the addon
+  name. 10 s TTL.
+- Files: `gateway/billing_routes.py`.
+
+### `/api/saved` + `/api/sources/following` — no pagination
+
+- Symptom: a user who had saved 5 000+ predictions got the entire
+  list in one response — 2–3 MB, ~800 ms backend time. The "Saved"
+  tab stuttered on mobile.
+- Cause: both endpoints pulled the full list from the DB helper and
+  returned it flat.
+- Fix: wire `clean_page` / `clean_per_page` (defaults 50 / 100,
+  caps 200 / 500) and return the canonical
+  `{items, total, page, per_page, pages}` envelope. Keeps the
+  existing `count` field for backwards compatibility with older
+  clients.
+- Files: `gateway/server_features.py`.
+
+### `/api/feedback` — bespoke input validation missed control chars
+
+- Symptom: pasting text that contained zero-width joiners or BOM
+  produced feedback rows that looked identical to legitimate rows
+  but hashed differently — duplicate-detection + search-exact missed
+  them. Null-byte pastes triggered 500 downstream at the DB layer.
+- Cause: handler used `(title or "").strip()[:200]` which doesn't
+  normalise unicode or reject control chars.
+- Fix: route title + body through `clean_text(..., required=True)`
+  with per-field `max_len`. NFC normalises; zero-width / bidi
+  stripped; null / C0 rejected with a clean 400 carrying
+  `{"error", "field"}`.
+- Files: `gateway/feedback_routes.py`.
+
+### Regression tests for the above
+
+- Added 6 integration-level tests to `tests/test_edge_cases.py`:
+  `TestWiredFeedbackEndpoint`, `TestWiredPortfolioKalshi`,
+  `TestWiredBilling` (× 2), `TestWiredPaginationHelpers` (× 2). Each
+  inspects the source of the wired handler and fails loudly if an
+  agent accidentally unwires the hygiene / idempotency / pagination
+  layer.
+- Full suite: **60 passing**.
+- Files: `gateway/tests/test_edge_cases.py`.
+
+---
+
 ## 2026-04-23 — Edge-case hardening sweep
 
 Scope: defensive coverage across the 13-item input matrix, pagination
