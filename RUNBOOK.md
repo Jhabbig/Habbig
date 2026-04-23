@@ -136,3 +136,41 @@ The branch `feature/platform-build` has multiple active Claude sessions
 committing in parallel. See [CONTRIBUTING.md](CONTRIBUTING.md#parallel-session-discipline)
 for pull-before-commit + server-commit-after-deploy discipline. Pushing
 to `origin` is gated on the operator's explicit approval per session.
+
+
+## Severity + response SLA
+
+| Severity | Definition | Acknowledge | Mitigate |
+| --- | --- | --- | --- |
+| **SEV-1** | Site fully down, users can't access anything, data-loss risk. | 15 min | 2 h |
+| **SEV-2** | Major feature broken, partial outage, payment flow degraded. | 1 h | 8 h |
+| **SEV-3** | Minor feature broken, UX affected, no data risk. | 24 h | 1 week |
+| **SEV-4** | Cosmetic / metrics anomaly, no user impact. | best effort | best effort |
+
+### How to triage when the pager fires
+
+1. **Five-minute rule.** If you can't classify SEV-1 vs SEV-2 within
+   five minutes of the alert, default to SEV-1. Erring high is free;
+   erring low loses SLA.
+2. **Scope.** "All users" = SEV-1. "Pro tier only" = SEV-2. "One
+   vocal Twitter user" = probably SEV-3.
+3. **Data loss.** Anything that can destroy user-visible state
+   (predictions, saved items, subscriptions, portfolio connections)
+   jumps one tier up on the table above.
+
+### Playbooks
+
+Specific incident recipes live in [`playbooks/`](playbooks/) at repo
+root. Index:
+
+* [site_down.md](playbooks/site_down.md) — SEV-1
+* [database_corruption.md](playbooks/database_corruption.md) — SEV-1
+* [admin_account_takeover.md](playbooks/admin_account_takeover.md) — SEV-1
+* [cloudflare_incident.md](playbooks/cloudflare_incident.md) — SEV-1/2
+* [stripe_webhook_flood.md](playbooks/stripe_webhook_flood.md) — SEV-2
+* [mass_leak_detected.md](playbooks/mass_leak_detected.md) — SEV-2
+* [runaway_claude_cost.md](playbooks/runaway_claude_cost.md) — SEV-3
+* [scraper_falling_behind.md](playbooks/scraper_falling_behind.md) — SEV-3
+* [suspicious_login_pattern.md](playbooks/suspicious_login_pattern.md) — SEV-3
+* [postmortem_template.md](playbooks/postmortem_template.md) — fill in after any SEV-1/2
+* [on_call.md](playbooks/on_call.md) — who carries the pager

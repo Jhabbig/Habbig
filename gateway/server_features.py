@@ -981,7 +981,11 @@ async def api_save_prediction(request: Request, prediction_id: int):
         body = await request.json()
     except Exception:
         body = {}
-    notes = (body.get("notes") or None) if isinstance(body, dict) else None
+    # Free-form notes — normalise through clean_text so pasted unicode
+    # and stray null bytes become either valid text or a predictable 400.
+    from security.input_hygiene import clean_text
+    raw_notes = body.get("notes") if isinstance(body, dict) else None
+    notes = clean_text(raw_notes, max_len=2000, field="notes")
     saved_id = db.save_prediction(user["user_id"], prediction_id, notes=notes)
     if saved_id == 0:
         raise HTTPException(status_code=404, detail="Prediction not found")
@@ -1075,11 +1079,14 @@ async def api_update_saved_notes(request: Request, prediction_id: int):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-    notes = body.get("notes")
-    if notes is not None and not isinstance(notes, str):
-        return JSONResponse({"error": "notes must be a string or null"}, status_code=400)
-    if isinstance(notes, str) and len(notes) > 2000:
-        return JSONResponse({"error": "notes too long (max 2000 chars)"}, status_code=400)
+    # Collapse the old bespoke "is str? too long?" checks into clean_text
+    # — same length cap, but now also NFC-normalises + strips
+    # zero-width / bidi / null bytes. allow_empty=True so a deliberate
+    # blank note clears the field.
+    from security.input_hygiene import clean_text
+    notes = clean_text(
+        body.get("notes"), max_len=2000, field="notes", allow_empty=True,
+    )
     ok = db.update_saved_prediction_notes(user["user_id"], prediction_id, notes)
     if not ok:
         raise HTTPException(status_code=404, detail="Saved prediction not found")
@@ -1500,16 +1507,21 @@ async def auth_register(request: Request):
     except Exception:
         return JSONResponse({"error": "Invalid request."}, status_code=400)
 
-    display_name = (body.get("display_name") or "").strip()
+    # display_name normalisation mirrors the public handle constraint:
+    # unicode NFC, strip zero-width / bidi control, reject null bytes.
+    # Length check stays at 2–40 to match the UI copy.
+    from security.input_hygiene import clean_text
+    try:
+        display_name = clean_text(
+            body.get("display_name"),
+            min_len=2, max_len=40, required=True, field="display_name",
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"error": str(exc.detail)}
+        return JSONResponse(detail, status_code=exc.status_code)
     email = (body.get("email") or "").strip().lower()
     password = body.get("password") or ""
     confirm_password = body.get("confirm_password") or ""
-
-    if not display_name or len(display_name) < 2 or len(display_name) > 40:
-        return JSONResponse(
-            {"error": "Display name must be 2-40 characters.", "field": "display_name"},
-            status_code=400,
-        )
     if not email or "@" not in email or len(email) > 254:
         return JSONResponse({"error": "Enter a valid email.", "field": "email"}, status_code=400)
     if password != confirm_password:

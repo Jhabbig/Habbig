@@ -514,5 +514,139 @@ class TestWiredPaginationHelpers(unittest.TestCase):
         self.assertIn("clean_per_page", src)
 
 
+# ── Subscription-lifecycle corner case: rapid cancel → resub → cancel ─────
+#
+# If a user hits "Cancel" then "Resubscribe" then "Cancel" again inside
+# the 30s idempotency window on the cancel-finalize op, what happens?
+#
+# Each op uses its OWN idempotency namespace ("billing_cancel_finalize"
+# vs "billing_resubscribe"), so the two are independent — a cancel
+# doesn't replay for a resubscribe. We DO want the SECOND cancel (same
+# op name + attempt) to collapse; we do NOT want a resubscribe between
+# two cancels to see either cached response.
+
+
+class TestResubscribeCornerCase(unittest.TestCase):
+    def setUp(self):
+        reset_idem()
+
+    def tearDown(self):
+        reset_idem()
+
+    def test_cancel_then_resub_then_cancel_is_not_collapsed(self):
+        """Distinct op names must not share cache entries."""
+        cancel_runs = {"n": 0}
+        resub_runs = {"n": 0}
+
+        async def cancel_body():
+            cancel_runs["n"] += 1
+            return {"op": "cancel", "run": cancel_runs["n"]}
+
+        async def resub_body():
+            resub_runs["n"] += 1
+            return {"op": "resub", "run": resub_runs["n"]}
+
+        uid = 777
+        # First cancel.
+        r1 = _run(with_idempotency(
+            user_id=uid, op="billing_cancel_finalize",
+            client_key=None, ttl_seconds=30, body=cancel_body,
+            fallback_fingerprint="attempt:1",
+        ))
+        # Resubscribe between the two cancels. Different op — must run.
+        r2 = _run(with_idempotency(
+            user_id=uid, op="billing_resubscribe",
+            client_key=None, ttl_seconds=30, body=resub_body,
+            fallback_fingerprint="attempt:1",
+        ))
+        # Second cancel — same op and same fingerprint as the FIRST, so
+        # within the 30s TTL it replays the first cancel's response.
+        # That's the intended protection: a user who double-submits the
+        # cancel form shouldn't fire winback emails twice.
+        r3 = _run(with_idempotency(
+            user_id=uid, op="billing_cancel_finalize",
+            client_key=None, ttl_seconds=30, body=cancel_body,
+            fallback_fingerprint="attempt:1",
+        ))
+        self.assertEqual(cancel_runs["n"], 1,
+                         "cancel must run once across two submissions")
+        self.assertEqual(resub_runs["n"], 1,
+                         "resubscribe must run regardless of cancel state")
+        self.assertEqual(r1, r3, "replayed cancel returns cached result")
+        self.assertEqual(r2["op"], "resub")
+
+    def test_different_attempts_each_get_their_own_run(self):
+        """A legitimately distinct cancellation attempt (new attempt_id)
+        should fire its own winback emails, not replay the previous
+        attempt's."""
+        runs = {"n": 0}
+
+        async def body():
+            runs["n"] += 1
+            return {"attempt": runs["n"]}
+
+        uid = 778
+        _run(with_idempotency(
+            user_id=uid, op="billing_cancel_finalize",
+            client_key=None, ttl_seconds=30, body=body,
+            fallback_fingerprint="attempt:1",
+        ))
+        _run(with_idempotency(
+            user_id=uid, op="billing_cancel_finalize",
+            client_key=None, ttl_seconds=30, body=body,
+            fallback_fingerprint="attempt:2",  # different attempt
+        ))
+        self.assertEqual(runs["n"], 2)
+
+
+# ── Wiring-level check for the new clean_text integrations ────────────────
+
+
+class TestWiredNoteFields(unittest.TestCase):
+    def test_save_prediction_notes(self):
+        import server_features
+        import inspect
+        src = inspect.getsource(server_features.api_save_prediction)
+        self.assertIn("clean_text", src)
+
+    def test_update_saved_notes(self):
+        import server_features
+        import inspect
+        src = inspect.getsource(server_features.api_update_saved_notes)
+        self.assertIn("clean_text", src)
+
+    def test_auth_register_display_name(self):
+        import server_features
+        import inspect
+        src = inspect.getsource(server_features.auth_register)
+        self.assertIn("clean_text(", src)
+        self.assertIn('field="display_name"', src)
+
+
+class TestWiredLeaderboard(unittest.TestCase):
+    def test_participate_uses_clean_text(self):
+        import routes_referrals
+        import inspect
+        src = inspect.getsource(routes_referrals)
+        self.assertIn("clean_text(", src)
+        self.assertIn('field="display_name"', src)
+
+
+class TestWiredTakes(unittest.TestCase):
+    def test_update_take_uses_clean_text(self):
+        from take_routes import api_update_take
+        import inspect
+        src = inspect.getsource(api_update_take)
+        self.assertIn("clean_text", src)
+        self.assertIn('field="reasoning"', src)
+
+    def test_report_take_uses_clean_text(self):
+        from take_routes import api_report_take
+        import inspect
+        src = inspect.getsource(api_report_take)
+        self.assertIn("clean_text", src)
+        self.assertIn('field="details"', src)
+
+
 if __name__ == "__main__":
     unittest.main()

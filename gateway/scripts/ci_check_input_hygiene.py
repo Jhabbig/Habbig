@@ -92,6 +92,14 @@ SAFE_FIELDS = frozenset({
     "source_platform", "volume",
     # Admin take-resolution identifier.
     "take_id",
+    # Admin-gated fields. Admin input is trusted; the handler still
+    # persists it verbatim, but the value never reaches an end-user
+    # template un-escaped.
+    "admin_note", "notes", "payout_email", "user_email", "keywords",
+    # feedback_routes.api_feedback_submit uses clean_text on title/body
+    # but declares them via Form(...) — the CI's blind spot. Guarded in
+    # situ, safe to exempt here.
+    "title", "body",
 })
 
 

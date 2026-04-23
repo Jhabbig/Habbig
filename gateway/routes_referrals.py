@@ -318,7 +318,19 @@ async def api_leaderboard_participate(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    display_name = (body.get("display_name") or "").strip()
+    # Display name on the public leaderboard — NFC-normalise, strip
+    # zero-width / bidi control, reject null bytes. Length cap matches
+    # the auth_register helper.
+    from security.input_hygiene import clean_text
+    try:
+        display_name = clean_text(
+            body.get("display_name"),
+            max_len=40, required=True, field="display_name",
+        )
+    except Exception as exc:
+        # Let FastAPI bubble HTTPException; other failures fall through
+        # to the db helper's own "ok/error" contract.
+        raise
     result = dbr.set_leaderboard_participation(
         user["user_id"],
         participate=True,

@@ -318,13 +318,29 @@ async def api_create_take(slug: str, request: Request):
 async def api_update_take(take_id: int, request: Request):
     user = _require_paid(request)
     body = await _parse_json(request)
+
+    # Route title + body through clean_text so edits get the same
+    # unicode / control-char guards that creates do. Both fields are
+    # optional on an update (PATCH semantics) — the clean_text call is
+    # skipped entirely when the key isn't present in the body.
+    from security.input_hygiene import clean_text
+    position = (
+        clean_text(body.get("position"), max_len=64, field="position")
+        if "position" in body else None
+    )
+    reasoning = (
+        clean_text(body.get("reasoning"), max_len=2000, field="reasoning",
+                   allow_empty=True)
+        if "reasoning" in body else None
+    )
+
     try:
         ok, err = db_takes.update_take(
             take_id,
             user["user_id"],
-            position=body.get("position"),
+            position=position,
             confidence=body.get("confidence") if "confidence" in body else None,
-            reasoning=body.get("reasoning"),
+            reasoning=reasoning,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -413,12 +429,21 @@ async def api_report_take(take_id: int, request: Request):
             status_code=400,
             detail=f"reason must be one of {sorted(_REPORT_REASONS)}",
         )
+    # Route free-form "details" through clean_text. Reports land on the
+    # admin triage queue rendered as HTML — without unicode normalisation
+    # a report containing zero-width joiners looks different from an
+    # identical one submitted twice, breaking dedupe.
+    from security.input_hygiene import clean_text
+    details = clean_text(
+        body.get("details"), max_len=1000, field="details", allow_empty=True,
+    )
+
     try:
         rid = db_takes.create_report(
             take_id=take_id,
             reporter_user_id=user["user_id"],
             reason=reason,
-            details=body.get("details"),
+            details=details,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
