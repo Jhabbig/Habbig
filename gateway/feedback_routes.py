@@ -180,11 +180,26 @@ def _list_items(
     type_: Optional[str] = None,
     sort: str = "top",
     include_private: bool = False,
+    user_id: Optional[int] = None,
+    q: Optional[str] = None,
     limit: int = 100,
 ) -> list[dict]:
+    """List feedback items with optional filters.
+
+    ``user_id`` scopes to a single author — used by the /feedback?mine=1
+    view (#3) and by admin-filtered views. Passing user_id implicitly
+    drops the is_public=1 gate because the user can see their own
+    private submissions.
+
+    ``q`` is a case-insensitive LIKE search on title, used by the
+    similar-items hint (#5). Max 60 chars so the pattern stays cheap.
+    """
     where = []
     params: list[Any] = []
-    if not include_private:
+    if user_id is not None:
+        where.append("user_id = ?")
+        params.append(user_id)
+    elif not include_private:
         where.append("is_public = 1")
     if status and status in VALID_STATUSES:
         where.append("status = ?")
@@ -192,6 +207,11 @@ def _list_items(
     if type_ and type_ in VALID_TYPES:
         where.append("type = ?")
         params.append(type_)
+    if q:
+        q_clean = q.strip()[:60]
+        if q_clean:
+            where.append("LOWER(title) LIKE ?")
+            params.append(f"%{q_clean.lower()}%")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     order_sql = {
@@ -286,12 +306,18 @@ async def feedback_list_page(request: Request):
     status = request.query_params.get("status")
     type_ = request.query_params.get("type")
     sort = request.query_params.get("sort", "top")
+    # ENHANCEMENT #3 — ?mine=1 scopes the list to the current user's
+    # own submissions (public + private). The user_id filter in
+    # _list_items bypasses the is_public gate, so private posts show up
+    # for their author.
+    mine = request.query_params.get("mine") == "1"
 
     items = _list_items(
         status=_sanitize_status(status) if status else None,
         type_=_sanitize_type(type_) if type_ and type_ != "all" else None,
         sort=sort,
         include_private=False,
+        user_id=(user["user_id"] if mine else None),
         limit=200,
     )
 
@@ -321,6 +347,12 @@ async def feedback_list_page(request: Request):
         chip("Features",   "type", "feature",  type_ == "feature"),
         chip("Questions",  "type", "question", type_ == "question"),
     ]
+    # "Mine" is a separate axis from type/status — reuses the chip
+    # factory but with its own parameter. The href flips ?mine= on/off
+    # so clicking it again toggles back to the full list.
+    mine_href = "/feedback" if mine else "/feedback?mine=1"
+    mine_cls = "fb-chip fb-chip-active" if mine else "fb-chip"
+    mine_chip = f'<a class="{mine_cls}" href="{mine_href}">My submissions</a>'
     status_nav = [
         chip("Open",         "status", "open",         status == "open"),
         chip("In progress",  "status", "in_progress",  status == "in_progress"),
@@ -347,7 +379,7 @@ async def feedback_list_page(request: Request):
         _is_admin=user.get("is_admin"),
         raw_admin_link=('<a href="/admin">Admin</a>' if user.get("is_admin") else ""),
         raw_rows=rows_html,
-        raw_type_nav="".join(type_nav),
+        raw_type_nav="".join(type_nav) + mine_chip,
         raw_status_nav="".join(status_nav),
         raw_sort_nav="".join(sort_nav),
         raw_admin_passthrough=admin_link,
@@ -451,6 +483,38 @@ async def feedback_detail_page(request: Request, item_id: int):
     )
 
 
+@app.get("/api/feedback/search", include_in_schema=False)
+async def api_feedback_search(request: Request, q: str = ""):
+    """ENHANCEMENT #5 — similar-items hint for the submit modal.
+
+    The feedback button's modal calls this on title-input blur and
+    renders up to 3 existing items with matching titles to nudge the
+    user away from duplicate submissions. Only searches public items —
+    a private dup can't conflict with a public one.
+
+    Rate-limited implicitly by the modal (debounced, single call on
+    blur). Returns {items: [{id, title, status, upvotes}]}.
+    """
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    q_clean = (q or "").strip()[:60]
+    if len(q_clean) < 3:
+        return JSONResponse({"items": []})
+    items = _list_items(q=q_clean, sort="top", include_private=False, limit=3)
+    return JSONResponse({
+        "items": [
+            {
+                "id": i["id"],
+                "title": i["title"],
+                "status": i["status"],
+                "upvotes": i["upvotes"],
+            }
+            for i in items
+        ],
+    })
+
+
 @app.post("/api/feedback", include_in_schema=False)
 async def api_feedback_submit(
     request: Request,
@@ -462,6 +526,26 @@ async def api_feedback_submit(
     user = current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    # ENHANCEMENT #1 — Submission rate limit. A compromised session or
+    # a bored user can otherwise fill the admin triage inbox. 10/hour is
+    # generous for legitimate use (a user reporting a burst of bugs)
+    # and still caps the blast radius. Keyed on user_id rather than IP
+    # so a VPN-hopping attacker can't evade. Tests can bypass via the
+    # FEEDBACK_RATELIMIT_DISABLED env flag.
+    import os as _os
+    if _os.environ.get("FEEDBACK_RATELIMIT_DISABLED") != "1":
+        try:
+            if server._is_rate_limited(
+                f"feedback-submit:{user['user_id']}",
+                limit=10, window=3600,
+            ):
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many submissions. Try again in an hour.",
+                )
+        except AttributeError:
+            pass  # Older server.py without the helper — fall through.
 
     type_clean = _sanitize_type(type)
 
@@ -502,6 +586,17 @@ async def api_feedback_submit(
         "feedback submitted uid=%s type=%s public=%s id=%s",
         user["user_id"], type_clean, public_flag, new_id,
     )
+    # ENHANCEMENT #4 — record an engagement event so the churn-signal
+    # job sees feedback submission as active behaviour. Fire-and-forget
+    # so any failure in engagement.py can't break the submit flow.
+    try:
+        from engagement import log_event
+        log_event(
+            user["user_id"], "feedback_submit",
+            metadata={"id": new_id, "type": type_clean, "public": bool(public_flag)},
+        )
+    except Exception:
+        pass
     # XHR submissions get JSON; classic form POSTs get a redirect.
     wants_json = "application/json" in (request.headers.get("accept") or "")
     if wants_json:
@@ -512,12 +607,25 @@ async def api_feedback_submit(
 
 @app.post("/api/feedback/{item_id}/vote", include_in_schema=False)
 async def api_feedback_vote(request: Request, item_id: int, toggle: str = Form("1")):
-    """Toggle upvote. Subscriber-only. Idempotent: calling twice un-votes."""
+    """Toggle upvote. Subscriber-only. Idempotent: calling twice un-votes.
+
+    ENHANCEMENT #2 — rejects self-votes. An author upvoting their own
+    submission biases the top-voted sort by author volume rather than
+    community interest, which defeats the whole point of the page.
+    """
     user = _require_subscriber(request)
     with db.conn() as c:
-        row = c.execute("SELECT id FROM feedback_items WHERE id = ?", (item_id,)).fetchone()
+        row = c.execute(
+            "SELECT id, user_id FROM feedback_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Feedback item not found")
+        if row["user_id"] == user["user_id"]:
+            raise HTTPException(
+                status_code=400,
+                detail="You can't upvote your own feedback.",
+            )
         existing = c.execute(
             "SELECT 1 FROM feedback_votes WHERE user_id = ? AND feedback_id = ?",
             (user["user_id"], item_id),
@@ -549,6 +657,16 @@ async def api_feedback_vote(request: Request, item_id: int, toggle: str = Form("
             (item_id,),
         ).fetchone()
         new_count = int(new_count_row["upvotes"] if new_count_row else 0)
+
+    # ENHANCEMENT #4 — engagement signal. Only log the "added a vote"
+    # direction; un-voting isn't meaningful churn data and would just
+    # noise up the histogram.
+    if voted:
+        try:
+            from engagement import log_event
+            log_event(user["user_id"], "feedback_vote", metadata={"id": item_id})
+        except Exception:
+            pass
 
     wants_json = "application/json" in (request.headers.get("accept") or "")
     if wants_json:
@@ -606,6 +724,10 @@ async def admin_feedback_page(request: Request):
         limit=300,
     )
 
+    # ENHANCEMENT #6 — rows are wrapped in a single <form> below so a
+    # checkbox column enables bulk status change. Each row now starts
+    # with a hidden checkbox bound to the same form as the footer
+    # "Apply" button.
     rows_html: list[str] = []
     for item in items:
         pub_badge = ("public" if item["is_public"] else "private")
@@ -615,7 +737,9 @@ async def admin_feedback_page(request: Request):
         rows_html.append(
             f'<div class="af-row" data-id="{item["id"]}" style="padding:14px 16px;'
             f'border-bottom:1px solid var(--border);display:grid;'
-            f'grid-template-columns:80px 1fr 160px;gap:14px;align-items:center">'
+            f'grid-template-columns:28px 80px 1fr 160px;gap:14px;align-items:center">'
+            f'<input type="checkbox" name="ids" value="{item["id"]}" form="af-bulk" '
+            f'aria-label="Select feedback #{item["id"]}" style="accent-color:var(--text-primary)">'
             f'<div>{_render_status_chip(item["status"])}</div>'
             f'<div style="min-width:0">'
             f'<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">'
@@ -652,6 +776,30 @@ async def admin_feedback_page(request: Request):
             f'<a class="{cls}" href="/admin/feedback{qs}">{html.escape(label)}</a>'
         )
 
+    # ENHANCEMENT #6 — bulk status change bar. A single <form
+    # id="af-bulk"> posts all checked ids + the chosen status to
+    # /admin/feedback/bulk-status. Rendering a matching hidden <form>
+    # element with `id="af-bulk"` lets the row checkboxes (with
+    # `form="af-bulk"`) submit to it.
+    bulk_bar = (
+        '<form id="af-bulk" method="post" action="/admin/feedback/bulk-status" '
+        'style="display:flex;gap:8px;align-items:center;padding:12px 16px;'
+        'background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;'
+        'margin-top:14px">'
+        '<span style="font-size:11px;font-weight:600;color:var(--text-muted);'
+        'text-transform:uppercase;letter-spacing:0.05em">Bulk action</span>'
+        '<select name="status" required style="font-size:12px;padding:6px 10px;'
+        'background:var(--bg-base);border:1px solid var(--border);border-radius:4px;'
+        'color:var(--text-primary)">'
+        + "".join(f'<option value="{s}">{s}</option>' for s in sorted(VALID_STATUSES))
+        + '</select>'
+        '<button type="submit" class="sb-btn sb-btn-outline" '
+        'style="font-size:12px;padding:6px 12px">Apply to selected</button>'
+        '<span style="font-size:11px;color:var(--text-muted);margin-left:auto">'
+        'Tick rows above, then pick a status.</span>'
+        '</form>'
+    )
+
     return render_page(
         "admin-feedback",
         request=request,
@@ -664,6 +812,7 @@ async def admin_feedback_page(request: Request):
             'No feedback submitted yet.</div>'
         ),
         raw_status_filters="".join(status_filters),
+        raw_bulk_bar=bulk_bar,
     )
 
 
@@ -702,6 +851,58 @@ async def admin_feedback_status(
     event = "shipped" if status_clean == "shipped" else "status"
     _notify_submitter(submitter_id, item_id, event, extra={"status": status_clean})
 
+    return RedirectResponse("/admin/feedback", status_code=302)
+
+
+@app.post("/admin/feedback/bulk-status", include_in_schema=False)
+async def admin_feedback_bulk_status(request: Request):
+    """ENHANCEMENT #6 — set the same status on N checked items at once.
+
+    The triage page is a <form> per row (single save) PLUS a bulk form
+    at the bottom with checkboxes bound via ``form="af-bulk"``. Posts
+    land here as ``ids=1&ids=2&ids=3&status=shipped``.
+
+    Silently skips any id that doesn't resolve — an attacker spraying
+    random ids won't leak existence through response shape.
+    """
+    admin = _require_admin(request)
+    form = await request.form()
+    status_clean = _sanitize_status(form.get("status", ""))
+    if not status_clean:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    raw_ids = form.getlist("ids") if hasattr(form, "getlist") else []
+    # Coerce to ints, drop anything that isn't.
+    item_ids: list[int] = []
+    for r in raw_ids:
+        try:
+            item_ids.append(int(r))
+        except (TypeError, ValueError):
+            continue
+    if not item_ids:
+        return RedirectResponse("/admin/feedback", status_code=302)
+
+    event = "shipped" if status_clean == "shipped" else "status"
+    updated = 0
+    with db.conn() as c:
+        for iid in item_ids:
+            row = c.execute(
+                "SELECT user_id FROM feedback_items WHERE id = ?",
+                (iid,),
+            ).fetchone()
+            if not row:
+                continue
+            c.execute(
+                "UPDATE feedback_items SET status = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (status_clean, iid),
+            )
+            submitter_id = row["user_id"] if row["user_id"] != admin["user_id"] else None
+            _notify_submitter(submitter_id, iid, event, extra={"status": status_clean})
+            updated += 1
+    log.info(
+        "bulk status admin=%s -> status=%s count=%d",
+        admin["user_id"], status_clean, updated,
+    )
     return RedirectResponse("/admin/feedback", status_code=302)
 
 

@@ -172,24 +172,88 @@
 
     var resultBox = el("div", { style: "margin-top:12px" });
 
+    // ENHANCEMENT #5 — similar-items hint container. Populated on
+    // title-input blur by a GET /api/feedback/search call; cleared
+    // when the search returns no matches or the input is too short.
+    var similarBox = el("div", {
+      id: "nf-similar",
+      style: "margin-bottom:14px;display:none",
+    });
+
     var typesWrap = el("div", {
       style: "display:flex;gap:8px;margin-bottom:14px",
     }, typeButtons);
     wireTypeHighlight(typesWrap);
+
+    var titleInput = el("input", {
+      type: "text", name: "title", maxlength: "200", required: "required",
+      placeholder: "What's the gist?",
+      style:
+        "width:100%;padding:9px 12px;font:inherit;font-size:13px;background:var(--bg-base);" +
+        "border:1px solid var(--border);border-radius:6px;color:var(--text-primary);" +
+        "margin-bottom:14px;box-sizing:border-box",
+    });
+
+    // Similar-items lookup: debounce on input (500ms), run on blur too.
+    var similarTimer = null;
+    function refreshSimilar() {
+      var q = (titleInput.value || "").trim();
+      if (q.length < 3) {
+        similarBox.style.display = "none";
+        similarBox.innerHTML = "";
+        return;
+      }
+      fetch("/api/feedback/search?q=" + encodeURIComponent(q), {
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      }).then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          var items = (j && j.items) || [];
+          if (!items.length) {
+            similarBox.style.display = "none";
+            similarBox.innerHTML = "";
+            return;
+          }
+          similarBox.innerHTML = "";
+          similarBox.style.display = "block";
+          var heading = el("div", {
+            style: "font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px",
+          }, ["Possibly similar — upvote instead of re-posting?"]);
+          similarBox.appendChild(heading);
+          items.forEach(function (it) {
+            var row = el("a", {
+              href: "/feedback/" + it.id,
+              target: "_blank",
+              rel: "noopener",
+              style:
+                "display:flex;gap:10px;align-items:center;padding:6px 10px;margin-bottom:4px;" +
+                "background:var(--bg-base);border:1px solid var(--border);border-radius:6px;" +
+                "font-size:12px;color:var(--text-primary);text-decoration:none",
+            }, [
+              el("span", { style: "flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" },
+                 [it.title || ("#" + it.id)]),
+              el("span", { style: "font-size:10px;color:var(--text-muted);text-transform:uppercase" },
+                 [(it.status || "open").replace("_", " ")]),
+              el("span", { style: "font-variant-numeric:tabular-nums;font-weight:600" },
+                 [String(it.upvotes || 0), " ↑"]),
+            ]);
+            similarBox.appendChild(row);
+          });
+        }).catch(function () {});
+    }
+    titleInput.addEventListener("input", function () {
+      if (similarTimer) clearTimeout(similarTimer);
+      similarTimer = setTimeout(refreshSimilar, 500);
+    });
+    titleInput.addEventListener("blur", refreshSimilar);
 
     var form = el("form", { style: "display:block" }, [
       typesWrap,
       el("label", {
         style: "display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px",
       }, ["Title"]),
-      el("input", {
-        type: "text", name: "title", maxlength: "200", required: "required",
-        placeholder: "What's the gist?",
-        style:
-          "width:100%;padding:9px 12px;font:inherit;font-size:13px;background:var(--bg-base);" +
-          "border:1px solid var(--border);border-radius:6px;color:var(--text-primary);" +
-          "margin-bottom:14px;box-sizing:border-box",
-      }),
+      titleInput,
+      similarBox,
       el("label", {
         style: "display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px",
       }, ["Details"]),

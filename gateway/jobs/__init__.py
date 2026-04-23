@@ -102,6 +102,9 @@ for _mod in (
     # Churn/engagement: recomputes churn_signals nightly from the
     # engagement_events ring buffer. Depends on migrations 092+093.
     "compute_churn_signals",
+    # Feedback: monthly "what shipped from your feedback" email digest.
+    # Payload-only — transport is stubbed elsewhere.
+    "feedback_digest",
 ):
     try:
         __import__(f"jobs.{_mod}")

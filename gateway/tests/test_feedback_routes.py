@@ -464,5 +464,301 @@ class TestComments(_Base):
         self.assertIn("replied", notif["title"].lower())
 
 
+# ── ENHANCEMENT tests ────────────────────────────────────────────────────────
+
+
+class TestRateLimit(_Base):
+    """#1 — 10 submissions / hour / user cap."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ.pop("FEEDBACK_RATELIMIT_DISABLED", None)
+        # Reset the server's in-memory rate-limit buckets so the tests
+        # don't bleed counters across runs.
+        try:
+            import server
+            getattr(server, "_rate_limit_buckets", {}).clear()
+        except Exception:
+            pass
+
+    def tearDown(self):
+        # Re-enable the bypass so sibling test files that seed lots of
+        # submissions (smoke/load) keep working.
+        os.environ["FEEDBACK_RATELIMIT_DISABLED"] = "1"
+        super().tearDown()
+
+    def test_11th_submission_in_an_hour_returns_429(self):
+        uid, token = _make_user("rl@t.com", "rl_user")
+        for i in range(10):
+            r = _post_form(
+                "/api/feedback", token,
+                data={"type": "bug", "title": f"Rpt {i}", "body": "Body"},
+                accept_json=True,
+            )
+            self.assertEqual(r.status_code, 200, f"submission #{i + 1} should be allowed")
+        r11 = _post_form(
+            "/api/feedback", token,
+            data={"type": "bug", "title": "One too many", "body": "Body"},
+            accept_json=True,
+        )
+        self.assertEqual(r11.status_code, 429)
+
+
+class TestSelfVoteBlocked(_Base):
+    """#2 — authors can't upvote their own feedback."""
+
+    def test_self_vote_returns_400(self):
+        uid, token = _make_user("self-vote@t.com", "self_vote")
+        item_id = _seed_item(uid, title="My own feedback")
+        r = _post_form(f"/api/feedback/{item_id}/vote", token, data={}, accept_json=True)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("your own", (r.json().get("detail") or "").lower())
+        # Verify the upvote counter didn't move.
+        with db.conn() as c:
+            row = c.execute("SELECT upvotes FROM feedback_items WHERE id = ?", (item_id,)).fetchone()
+        self.assertEqual(row["upvotes"], 0)
+
+    def test_other_user_can_still_vote(self):
+        author_uid, _ = _make_user("sv-auth@t.com", "sv_auth")
+        _, voter_token = _make_user("sv-voter@t.com", "sv_voter")
+        item_id = _seed_item(author_uid, title="Cross-user vote")
+        r = _post_form(f"/api/feedback/{item_id}/vote", voter_token, data={}, accept_json=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["voted"])
+
+
+class TestMineFilter(_Base):
+    """#3 — /feedback?mine=1 scopes to the current user's submissions."""
+
+    def test_mine_filter_shows_only_own(self):
+        owner_uid, owner_token = _make_user("mine-own@t.com", "mine_own")
+        other_uid, _ = _make_user("mine-other@t.com", "mine_other")
+        _seed_item(owner_uid, title="MineA")
+        _seed_item(other_uid, title="NotMine")
+        r = client.get(
+            "/feedback?mine=1",
+            cookies={server.COOKIE_NAME: owner_token},
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("MineA", r.text)
+        self.assertNotIn("NotMine", r.text)
+
+    def test_mine_filter_includes_private_own(self):
+        """The owner's private posts are visible under ?mine=1 even
+        though they're hidden from the default /feedback listing."""
+        owner_uid, owner_token = _make_user("mine-priv@t.com", "mine_priv")
+        _seed_item(owner_uid, title="MyPrivateOne", is_public=0)
+        r = client.get(
+            "/feedback?mine=1",
+            cookies={server.COOKIE_NAME: owner_token},
+            follow_redirects=False,
+        )
+        self.assertIn("MyPrivateOne", r.text)
+
+
+class TestEngagementOnFeedback(_Base):
+    """#4 — submit + vote fire engagement events."""
+
+    def test_submit_logs_feedback_submit_event(self):
+        uid, token = _make_user("eng-sub@t.com", "eng_sub")
+        _post_form(
+            "/api/feedback", token,
+            data={"type": "feature", "title": "Make it faster", "body": "Details"},
+            accept_json=True,
+        )
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM engagement_events "
+                "WHERE user_id = ? AND event_type = 'feedback_submit'",
+                (uid,),
+            ).fetchone()
+        self.assertGreaterEqual(row["n"], 1)
+
+    def test_vote_logs_feedback_vote_event(self):
+        author_uid, _ = _make_user("eng-va@t.com", "eng_va")
+        voter_uid, voter_token = _make_user("eng-vv@t.com", "eng_vv")
+        item_id = _seed_item(author_uid, title="Will be voted")
+        _post_form(f"/api/feedback/{item_id}/vote", voter_token, data={}, accept_json=True)
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM engagement_events "
+                "WHERE user_id = ? AND event_type = 'feedback_vote'",
+                (voter_uid,),
+            ).fetchone()
+        self.assertGreaterEqual(row["n"], 1)
+
+    def test_unvote_does_not_log_event(self):
+        """Un-voting isn't meaningful signal — only the add direction
+        should be recorded."""
+        author_uid, _ = _make_user("eng-uva@t.com", "eng_uva")
+        voter_uid, voter_token = _make_user("eng-uvv@t.com", "eng_uvv")
+        item_id = _seed_item(author_uid, title="Toggle vote")
+        _post_form(f"/api/feedback/{item_id}/vote", voter_token, data={}, accept_json=True)
+        _post_form(f"/api/feedback/{item_id}/vote", voter_token, data={}, accept_json=True)
+        with db.conn() as c:
+            n = c.execute(
+                "SELECT COUNT(*) AS n FROM engagement_events "
+                "WHERE user_id = ? AND event_type = 'feedback_vote'",
+                (voter_uid,),
+            ).fetchone()["n"]
+        self.assertEqual(n, 1)
+
+
+class TestSimilarSearch(_Base):
+    """#5 — /api/feedback/search returns 0-3 matching public items."""
+
+    def test_short_query_returns_empty(self):
+        _, token = _make_user("ss-short@t.com", "ss_short")
+        r = client.get("/api/feedback/search?q=ab", cookies={server.COOKIE_NAME: token}, follow_redirects=False)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["items"], [])
+
+    def test_title_match_returns_items(self):
+        owner_uid, _ = _make_user("ss-own@t.com", "ss_own")
+        _, viewer_token = _make_user("ss-v@t.com", "ss_v")
+        _seed_item(owner_uid, title="Dark mode toggle please")
+        _seed_item(owner_uid, title="Login screen dark")
+        _seed_item(owner_uid, title="Unrelated telegram thing")
+        r = client.get(
+            "/api/feedback/search?q=dark",
+            cookies={server.COOKIE_NAME: viewer_token},
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 200)
+        titles = [i["title"] for i in r.json()["items"]]
+        self.assertTrue(any("dark" in t.lower() for t in titles), titles)
+        self.assertFalse(any("telegram" in t.lower() for t in titles))
+
+    def test_private_items_excluded(self):
+        owner_uid, _ = _make_user("ss-priv-o@t.com", "ss_priv_o")
+        _, viewer_token = _make_user("ss-priv-v@t.com", "ss_priv_v")
+        _seed_item(owner_uid, title="Hidden secret thing", is_public=0)
+        r = client.get(
+            "/api/feedback/search?q=hidden",
+            cookies={server.COOKIE_NAME: viewer_token},
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["items"], [])
+
+
+class TestAdminBulkStatus(_Base):
+    """#6 — bulk status change applies to N selected items + notifies."""
+
+    def _post_urlencoded(self, path: str, token: str, pairs: list[tuple[str, str]]):
+        """Explicit x-www-form-urlencoded body so the CSRF middleware can
+        parse ``_csrf`` out of it. httpx's ``data=list[tuple]`` path
+        sometimes upgrades to multipart which the middleware won't read.
+        """
+        from urllib.parse import urlencode
+        csrf = _prime_csrf(token)
+        body = urlencode(pairs + [("_csrf", csrf)])
+        return client.post(
+            path,
+            content=body,
+            cookies={server.COOKIE_NAME: token, "_csrf": csrf},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    def test_bulk_marks_multiple_shipped(self):
+        owner_uid, _ = _make_user("bulk-own@t.com", "bulk_own")
+        _, admin_token = _make_user("bulk-adm@t.com", "bulk_adm", admin=True)
+        a = _seed_item(owner_uid, title="Bulk A")
+        b = _seed_item(owner_uid, title="Bulk B")
+        c_id = _seed_item(owner_uid, title="Bulk C")
+        r = self._post_urlencoded(
+            "/admin/feedback/bulk-status", admin_token,
+            [("ids", str(a)), ("ids", str(b)), ("status", "shipped")],
+        )
+        self.assertEqual(r.status_code, 302)
+        with db.conn() as c:
+            statuses = {
+                row["id"]: row["status"]
+                for row in c.execute("SELECT id, status FROM feedback_items").fetchall()
+            }
+        self.assertEqual(statuses[a], "shipped")
+        self.assertEqual(statuses[b], "shipped")
+        self.assertEqual(statuses[c_id], "open", "unchecked row should stay untouched")
+
+    def test_bulk_notifies_submitter_per_item(self):
+        owner_uid, _ = _make_user("bulk-notif-own@t.com", "bulk_notif_own")
+        _, admin_token = _make_user("bulk-notif-adm@t.com", "bulk_notif_adm", admin=True)
+        a = _seed_item(owner_uid, title="Will notify A")
+        b = _seed_item(owner_uid, title="Will notify B")
+        self._post_urlencoded(
+            "/admin/feedback/bulk-status", admin_token,
+            [("ids", str(a)), ("ids", str(b)), ("status", "declined")],
+        )
+        with db.conn() as c:
+            n = c.execute(
+                "SELECT COUNT(*) AS n FROM notifications "
+                "WHERE user_id = ? AND type = 'feedback'",
+                (owner_uid,),
+            ).fetchone()["n"]
+        self.assertEqual(n, 2, "one notification per shipped item")
+
+    def test_bulk_empty_selection_is_noop(self):
+        _, admin_token = _make_user("bulk-empty@t.com", "bulk_empty", admin=True)
+        csrf = _prime_csrf(admin_token)
+        r = client.post(
+            "/admin/feedback/bulk-status",
+            data={"status": "shipped", "_csrf": csrf},
+            cookies={server.COOKIE_NAME: admin_token, "_csrf": csrf},
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 302)
+
+    def test_bulk_non_admin_rejected(self):
+        _, user_token = _make_user("bulk-reg@t.com", "bulk_reg")
+        r = self._post_urlencoded(
+            "/admin/feedback/bulk-status", user_token,
+            [("ids", "1"), ("status", "shipped")],
+        )
+        self.assertEqual(r.status_code, 403)
+
+
+class TestFeedbackDigest(_Base):
+    """#7 — monthly digest queues payloads for submitters + voters."""
+
+    def test_dry_run_picks_up_shipped_items_and_recipients(self):
+        from jobs.feedback_digest import compute_feedback_digest_sync
+        owner_uid, _ = _make_user("dig-own@t.com", "dig_own")
+        voter_uid, _ = _make_user("dig-vote@t.com", "dig_vote")
+        nobody_uid, _ = _make_user("dig-nada@t.com", "dig_nada", sub=False)
+
+        shipped_id = _seed_item(owner_uid, title="Shipped last week")
+        other_id = _seed_item(owner_uid, title="Still open")
+        # Mark shipped + update updated_at to 'now' so the 30d window catches it.
+        with db.conn() as c:
+            c.execute(
+                "UPDATE feedback_items SET status = 'shipped', updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (shipped_id,),
+            )
+            # Voter cast their vote on the shipped item.
+            c.execute(
+                "INSERT INTO feedback_votes (user_id, feedback_id) VALUES (?, ?)",
+                (voter_uid, shipped_id),
+            )
+
+        out = compute_feedback_digest_sync(dry_run=True)
+        self.assertEqual(out["shipped"], 1)
+        # Submitter + voter should both appear; free-tier user shouldn't.
+        recipient_ids = {r["user_id"] for r in out["recipients"]}
+        self.assertIn(owner_uid, recipient_ids)
+        self.assertIn(voter_uid, recipient_ids)
+        self.assertNotIn(nobody_uid, recipient_ids)
+
+    def test_no_shipped_items_returns_empty(self):
+        from jobs.feedback_digest import compute_feedback_digest_sync
+        _make_user("dig-empty@t.com", "dig_empty")
+        out = compute_feedback_digest_sync(dry_run=True)
+        self.assertEqual(out["shipped"], 0)
+        self.assertEqual(out["queued"], 0)
+        self.assertEqual(out["recipients"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
