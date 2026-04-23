@@ -35,10 +35,10 @@ CSRF: the public POST /api/invite/{code}/accept prefix exemption
 share-mint POSTs go through the normal CSRF double-submit check.
 """
 
-import os
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Request
