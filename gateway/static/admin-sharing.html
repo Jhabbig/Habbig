@@ -48,6 +48,12 @@
       color: var(--text-primary, #fff);
       border-color: var(--border, rgba(255,255,255,0.12));
     }
+    /* Keyboard focus is invisible under the monochrome scheme
+       without this — design-critique #3 accessibility fix. */
+    .adm-window a:focus-visible {
+      outline: 1px solid var(--text-primary, #fff);
+      outline-offset: 2px;
+    }
 
     /* Layout */
     .adm-grid {
@@ -101,9 +107,7 @@
         <h1>Sharing {{ raw_nav_role }}</h1>
       </div>
       <div class="adm-window" role="navigation" aria-label="Time window">
-        <a href="?days=7">7d</a>
-        <a href="?days=30">30d</a>
-        <a href="?days=90">90d</a>
+        {{ raw_window_tabs }}
       </div>
     </div>
 
@@ -149,24 +153,12 @@
         {{ raw_referrers }}
       </div>
 
-      <div class="adm-card adm-card-full">
+      <div class="adm-card">
         <h2 class="adm-card-title">Country breakdown</h2>
         {{ raw_countries }}
       </div>
     </div>
   </div>
 
-  <script>
-    // Mark the active window tab. Server doesn't know which preset matches
-    // because ?days=X can be any int; cheaper to decide here.
-    (function () {
-      var p = new URLSearchParams(window.location.search);
-      var d = parseInt(p.get("days") || "30", 10);
-      var target = [7, 30, 90].includes(d) ? d : 30;
-      document.querySelectorAll(".adm-window a").forEach(function (a) {
-        if (a.getAttribute("href") === "?days=" + target) a.classList.add("active");
-      });
-    })();
-  </script>
 </body>
 </html>

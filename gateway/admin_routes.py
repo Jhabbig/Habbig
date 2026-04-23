@@ -1247,8 +1247,16 @@ def _render_sparkline(series: list[dict]) -> str:
     poly = " ".join(pts)
     last_label = totals[-1]
     peak_label = mx
+    # Accessibility: screen readers need the gist of the sparkline.
+    # role=img + aria-label summarise peak + current; the visual
+    # labels below remain the primary channel for sighted users.
+    aria = (
+        f"Daily views over {len(totals)} days. "
+        f"Peak {peak_label} per day; most recent day {last_label}."
+    )
     return (
-        f'<svg viewBox="0 0 {w} {h}" width="100%" height="{h}" '
+        f'<svg viewBox="0 0 {w} {h}" width="100%" height="{h}" role="img" '
+        f'aria-label="{html.escape(aria)}" '
         'style="display:block;margin-bottom:8px">'
         f'<polyline points="{poly}" fill="none" stroke="currentColor" stroke-width="1.5" '
         'stroke-linecap="round" stroke-linejoin="round"/>'
@@ -1259,6 +1267,21 @@ def _render_sparkline(series: list[dict]) -> str:
         f'<span>today {last_label:,}</span>'
         '</div>'
     )
+
+
+def _render_window_tabs(days: int) -> str:
+    """Server-rendered tab strip with the active preset already
+    marked. Pre-rendering avoids the post-load class-mutation flash
+    the pure-JS version showed on cold navigation."""
+    presets = (7, 30, 90)
+    out = []
+    for d in presets:
+        cls = "active" if d == days else ""
+        out.append(
+            f'<a href="?days={d}" class="{cls}" '
+            f'aria-current="{"page" if d == days else "false"}">{d}d</a>'
+        )
+    return "".join(out)
 
 
 async def sharing_dashboard(request: Request):
@@ -1290,6 +1313,7 @@ async def sharing_dashboard(request: Request):
             raw_nav_role=_role_badge(admin),
             _is_admin=admin.get("is_admin"),
             days=days,
+            raw_window_tabs=_render_window_tabs(days),
             raw_summary="<div style=\"padding:24px;color:var(--text-muted);"
                         "font-size:13px\">Sharing metrics unavailable — migrations "
                         "110-114 may not yet be applied on this host.</div>",
@@ -1350,6 +1374,7 @@ async def sharing_dashboard(request: Request):
         raw_nav_role=_role_badge(admin),
         _is_admin=admin.get("is_admin"),
         days=days,
+        raw_window_tabs=_render_window_tabs(days),
         raw_summary=summary,
         raw_sparkline=_render_sparkline(series),
         raw_totals=_render_totals_table(totals),
