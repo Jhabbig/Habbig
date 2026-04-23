@@ -1,0 +1,131 @@
+# Changelog
+
+All notable user-visible changes to narve.ai are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Versioning is date-based (no semver yet); releases correspond to
+deploy commits on `feature/platform-build`.
+
+## [Unreleased]
+
+Work in flight on `feature/platform-build` that hasn't been tagged.
+
+### Added
+
+- **Community Takes** on every market detail page — paid subscribers post
+  YES / NO / Neutral takes with confidence + reasoning; anyone logged in
+  can upvote / downvote; shadow-hide at downvotes ≥ 3 AND
+  quality_score < −5 with in-app author notification on the edge transition.
+- Public profile strip at `/u/{user_id}/takes` — top 5 takes by
+  quality, gated on the existing leaderboard opt-in.
+- Blended credibility badge next to each take author (0.85 × global
+  accuracy + 0.15 × take accuracy).
+- `/settings/takes` — user's own take history with correct / incorrect /
+  hit-rate / average-quality tiles.
+- `/admin/moderation` — admin queue for reported takes; cascade-closes
+  sibling reports on delete.
+- `/api/v1/forecasts/compare/{slug}` + `/api/v1/forecasts/providers` —
+  market-detail comparison against Metaculus, Manifold, 538, Silver
+  Bulletin with real Brier scores at `/dashboard/models`.
+- Collections — Spotify-style playlists for markets / sources /
+  predictions with typeahead, share, RSS, profile section, typeahead
+  add-widget on detail surfaces.
+- Scenarios — conditional probability + correlation matrix (Pro).
+- Share loop + referral rewards — share buttons on market / source /
+  prediction pages, OG cards, daily retention cron, invite-replenish
+  monthly job.
+- ⌘K command palette with FTS snippet highlight, `@` prefix for
+  sources, `Cmd+1..9` tab jump, "popular" empty-state, abortable
+  search, clear-recent-searches.
+- Public API v1 — keyed Bearer-auth dev API with sources / predictions
+  / consensus / edge endpoints; new `/api/version` and full OpenAPI docs.
+- Saved views — pinned sidebar + shared-view banner across 4 user
+  tabs.
+- WebSocket infra — single `/ws` endpoint, 5 channels, hub pub/sub +
+  after-broadcast hook.
+- In-app notification bell (migration 026) with preference gating +
+  SSE fan-out.
+- Onboarding tour + first-week goals + admin metrics (migrations
+  090-091) + first-run sample-feed loader.
+- Engagement tracking, churn detection, 3-step cancel-retention flow.
+- Feedback board + roadmap voting + admin triage (migration 130) with
+  rate-limit, self-vote block, "mine" filter, similar-items,
+  bulk-admin tools, monthly digest.
+- i18n scaffold — language switcher UI, client-side `t()`, Intl
+  helpers, landing-page conversion, extended extractor + JSON-body
+  bridge.
+- PWA install-app banner (login-gated).
+- Multi-jurisdiction compliance scaffold on `/terms` + `/privacy`.
+- Chrome extension, portfolio sync (Polymarket + Kalshi), Telegram +
+  Discord bots, insider signals, environmental-impact panel, weekly
+  reports, market-movement alerts, Claude-based prediction extractor
+  (migrations 050–059).
+
+### Changed
+
+- Admin dashboard: monochrome cleanup, new-tab links, shared app-shell
+  chrome across 3 admin detail pages + `admin_affiliates.html` +
+  `admin_status.html`.
+- `predictions_public` + `predictions_history` + `saved` + `notifications`
+  + `predictions` + `settings_billing` + `settings_embeds` +
+  `settings_privacy` all rebuilt on the shared chrome.
+- Scenarios, command-palette, sharing dashboard, and takes surfaces
+  passed through `/design-critique` — a11y + keyboard nav + focus
+  styles + sticky modal actions + empty-state CTAs.
+- Database reorganisation — 246 queries extracted into per-domain
+  `gateway/queries/`; 46 routes extracted from `server.py` into 4
+  feature modules.
+- `takes` row copy: `8/10` → `conf 8`; post button `Post your take +`
+  → `Post take`; sort labels `By quality` → `Quality`.
+- Scheduler centralised on APScheduler with `/admin/jobs` UI
+  (migration 105).
+
+### Fixed
+
+- Forecast Brier score now computed from real provider data instead of
+  placeholder.
+- Sharing metrics FOUC on window-tab switch; sparkline a11y
+  (role="img" + aria-label with peak/recent); country card demoted to
+  2-col width; focus-visible outline on window tabs.
+- Schema drift in `market_snapshots` columns re-declared (migration
+  095).
+- Waitlist advances +1 place per referral (bug: previously +5 silently
+  miscounted).
+- Email template cache invalidation on admin edits.
+- TTL cache integration on hot read paths (api_v1 sources, consensus,
+  edge) with `on_subscription_change` invalidation.
+
+### Security
+
+- **AUDIT #4** closed — 0C / 3H / 4M / 6L findings all remediated.
+- **AUDIT #3b / #3c** closure — CVE dependency bumps (starlette,
+  pillow, requests, python-dotenv, filelock) and duplicate migration
+  de-collision.
+- 2FA module fully removed (routes, templates, admin gate, settings
+  card) after broken-feature assessment; see migration 019.
+- Input hygiene: `POST /api/v1/markets/{slug}/takes` hardened with
+  max-length + markdown strip on reasoning; self-vote blocked at the
+  DB layer; bulk-report idempotency via unique index.
+- Forensic watermarking: visible overlay + canvas steganography +
+  per-response numeric signing + capture detection on the client +
+  email alerts on admin-side detection.
+- Claude cost controls (migration 074) — daily-spend job, kill switch,
+  alert thresholds.
+
+---
+
+## Release cadence
+
+No calendar cadence yet; releases are operator-triggered via the
+deploy procedure in [RUNBOOK.md](RUNBOOK.md). Each deploy commits on
+the server under a `deploy: <summary>` message; the local branch may
+be at a different SHA depending on push policy at the time. Tagged
+releases will begin once the public API v1 contract is frozen.
+
+---
+
+## Older history
+
+The branch pre-dates this CHANGELOG; commit messages carry the full
+history. `git log --since="60 days ago" --oneline` reproduces the
+current-version entries; older changes are documented in-line in
+their commit messages.
