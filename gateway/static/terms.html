@@ -7,18 +7,27 @@
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <style>
-    .legal-shell { max-width: 760px; margin: 0 auto; padding: 64px 24px 96px; }
+    .legal-shell { max-width: 820px; margin: 0 auto; padding: 64px 24px 96px; }
     .legal-header { margin-bottom: 48px; }
     .legal-eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 12px; }
     .legal-title { font-family: var(--font-display); font-size: 42px; font-weight: 500; letter-spacing: -0.02em; margin: 0 0 16px; color: var(--text-primary); }
     .legal-meta { font-size: 13px; color: var(--text-secondary); }
+    .legal-toc { background: var(--bg-raised); border: 1px solid var(--border-default); border-radius: 10px; padding: 20px 24px; margin: 32px 0 48px; font-size: 13px; }
+    .legal-toc ol { columns: 2; column-gap: 32px; margin: 0; padding-left: 20px; color: var(--text-secondary); line-height: 1.8; }
+    .legal-toc ol a { color: var(--text-secondary); text-decoration: none; }
+    .legal-toc ol a:hover { color: var(--text-primary); text-decoration: underline; }
     .legal-content h2 { font-family: var(--font-display); font-size: 22px; font-weight: 500; margin: 48px 0 16px; color: var(--text-primary); letter-spacing: -0.01em; }
     .legal-content h3 { font-size: 15px; font-weight: 600; margin: 24px 0 10px; color: var(--text-primary); }
     .legal-content p { font-size: 15px; line-height: 1.7; color: var(--text-secondary); margin: 0 0 16px; }
-    .legal-content ul { padding-left: 22px; margin: 0 0 16px; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
+    .legal-content ul, .legal-content ol.body { padding-left: 22px; margin: 0 0 16px; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
     .legal-content li { margin-bottom: 8px; }
     .legal-content a { color: var(--text-primary); text-decoration: underline; }
     .legal-content strong { color: var(--text-primary); font-weight: 500; }
+    .legal-content code { font-family: var(--font-mono); font-size: 13px; background: var(--bg-raised); padding: 1px 6px; border-radius: 4px; }
+    .legal-content table.pl { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0 0 16px; }
+    .legal-content table.pl th, .legal-content table.pl td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    .legal-content table.pl th { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-mono); font-weight: 500; }
+    .legal-content blockquote { border-left: 3px solid var(--border-default); padding: 8px 16px; margin: 16px 0; color: var(--text-secondary); font-size: 14px; background: var(--bg-raised); border-radius: 4px; }
     .legal-back { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); text-decoration: none; margin-bottom: 32px; }
     .legal-back:hover { color: var(--text-primary); }
     .legal-footer { margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border-default); font-size: 12px; color: var(--text-tertiary); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
@@ -37,140 +46,572 @@
       <h1 class="legal-title">Terms of Service</h1>
       <div class="legal-meta">
         Last updated: {{ last_updated }}<br>
-        Effective date: {{ effective_date }}
+        Effective date: {{ effective_date }}<br>
+        Version: 3.0
       </div>
     </header>
 
+    <div class="legal-toc" aria-label="Table of contents">
+      <ol>
+        <li><a href="#s1">Introduction &amp; acceptance</a></li>
+        <li><a href="#s2">Definitions</a></li>
+        <li><a href="#s3">The Service</a></li>
+        <li><a href="#s4">Not financial advice</a></li>
+        <li><a href="#s5">Eligibility &amp; jurisdiction</a></li>
+        <li><a href="#s6">Sanctions &amp; export controls</a></li>
+        <li><a href="#s7">Accounts, credentials &amp; security</a></li>
+        <li><a href="#s8">Subscriptions, billing, taxes</a></li>
+        <li><a href="#s9">Consumer cancellation rights</a></li>
+        <li><a href="#s10">Refunds &amp; chargebacks</a></li>
+        <li><a href="#s11">Free trials &amp; promotions</a></li>
+        <li><a href="#s12">Acceptable use</a></li>
+        <li><a href="#s13">User-generated content</a></li>
+        <li><a href="#s14">Moderation &amp; reporting (DSA)</a></li>
+        <li><a href="#s15">Intellectual property</a></li>
+        <li><a href="#s16">DMCA &amp; EU copyright notices</a></li>
+        <li><a href="#s17">Trademarks</a></li>
+        <li><a href="#s18">Third-party services</a></li>
+        <li><a href="#s19">API access &amp; developer terms</a></li>
+        <li><a href="#s20">Extensions &amp; integrations</a></li>
+        <li><a href="#s21">Beta features</a></li>
+        <li><a href="#s22">Privacy &amp; data protection</a></li>
+        <li><a href="#s23">Cookies &amp; tracking</a></li>
+        <li><a href="#s24">Disclaimers</a></li>
+        <li><a href="#s25">Limitation of liability</a></li>
+        <li><a href="#s26">Indemnification</a></li>
+        <li><a href="#s27">Term &amp; termination</a></li>
+        <li><a href="#s28">Dispute resolution &amp; arbitration</a></li>
+        <li><a href="#s29">Class-action waiver</a></li>
+        <li><a href="#s30">Governing law</a></li>
+        <li><a href="#s31">Changes to the Terms</a></li>
+        <li><a href="#s32">Assignment, severability, entire agreement</a></li>
+        <li><a href="#s33">Electronic communications</a></li>
+        <li><a href="#s34">Force majeure</a></li>
+        <li><a href="#s35">Regional addenda</a></li>
+        <li><a href="#s36">Contact</a></li>
+      </ol>
+    </div>
+
     <div class="legal-content">
-      <h2>1. Acceptance of Terms</h2>
+
+      <h2 id="s1">1. Introduction and acceptance</h2>
       <p>
-        By accessing or using narve.ai ("the Service", "we", "us", "our"), you agree to be bound
-        by these Terms of Service. If you do not agree, do not use the Service.
+        These Terms of Service ("<strong>Terms</strong>") form a binding legal agreement between you
+        ("<strong>you</strong>", "<strong>User</strong>", "<strong>Customer</strong>") and narve.ai
+        ("<strong>we</strong>", "<strong>us</strong>", "<strong>our</strong>", the
+        "<strong>Company</strong>"), the operator of the prediction-market intelligence platform
+        available at <a href="https://narve.ai">narve.ai</a> and its subdomains, APIs, browser
+        extensions, mobile progressive web app, email communications, embeddable widgets, and any
+        other services we make available (together, the "<strong>Service</strong>").
       </p>
       <p>
-        These terms apply to all users including visitors, registered users, and subscribers.
+        <strong>By creating an account, clicking "I agree", accessing the Service, or using any part
+        of it, you agree to be bound by these Terms and by our
+        <a href="/privacy">Privacy Policy</a>, our
+        <a href="/dpa">Data Processing Agreement</a> (where applicable), and any product-specific
+        terms we reference.</strong> If you do not agree, you must not use the Service.
+      </p>
+      <p>
+        If you are accepting these Terms on behalf of an organisation, you represent that you have
+        authority to bind that organisation, and "you" refers both to you personally and to that
+        organisation.
+      </p>
+      <p>
+        These Terms constitute a distance contract concluded by electronic means. You acknowledge
+        that under applicable consumer protection laws we are required to provide you with certain
+        information before you are bound; by clicking accept you confirm that information has been
+        made available to you in a durable form (including these Terms and the Privacy Policy).
       </p>
 
-      <h2>2. Description of Service</h2>
-      <p>narve.ai is a prediction market intelligence platform that:</p>
+      <h2 id="s2">2. Definitions</h2>
       <ul>
-        <li>Collects and analyses publicly available social media posts</li>
-        <li>Scores sources by historical accuracy and credibility</li>
-        <li>Surfaces expected-value signals for prediction market traders</li>
-        <li>Does not provide financial advice</li>
+        <li><strong>"Account"</strong> — the user account created on the Service.</li>
+        <li><strong>"Affiliate"</strong> — any entity controlling, controlled by, or under common control with a party.</li>
+        <li><strong>"Content"</strong> — any text, data, predictions, takes, comments, votes, feedback, markets, or other material made available through the Service.</li>
+        <li><strong>"Customer Content"</strong> — Content that you submit, upload, or transmit to the Service.</li>
+        <li><strong>"Service"</strong> — as defined in §1.</li>
+        <li><strong>"Subscription"</strong> — a paid plan granting access to tier-gated features.</li>
+        <li><strong>"Personal Data"</strong> — as defined in GDPR Art. 4(1) / UK GDPR, or equivalent terms under CCPA, LGPD, PIPEDA, and other applicable laws.</li>
+        <li><strong>"Applicable Law"</strong> — all laws, statutes, regulations, and binding codes applicable to either party in relation to the Service.</li>
+      </ul>
+
+      <h2 id="s3">3. Description of the Service</h2>
+      <p>narve.ai provides:</p>
+      <ul>
+        <li>Aggregation and analysis of publicly available social-media posts relating to prediction markets.</li>
+        <li>Source credibility scoring, calibration analysis, and time-series of predictive accuracy.</li>
+        <li>Signal Search, Insider Signals, Market Movers, edge/EV indicators, and related analytic views.</li>
+        <li>A feedback, saved-markets, watchlist, and notifications layer.</li>
+        <li>Developer API, browser extension, embeddable widgets, and webhooks.</li>
+        <li>Optional integrations with third-party venues such as Polymarket and Kalshi for read-only informational purposes.</li>
       </ul>
       <p>
-        The Service is for informational purposes only. Nothing on this platform constitutes
-        financial, investment, or trading advice. You are solely responsible for your trading
-        decisions.
+        We may modify, add, or remove features at any time. Material changes that materially reduce
+        functionality of a paid tier during an active billing cycle will either (a) be reversed if
+        you object within 30 days, or (b) entitle you to a pro-rated refund for the remainder of
+        the cycle, at our choice.
       </p>
 
-      <h2>3. Eligibility</h2>
-      <ul>
-        <li>You must be at least 18 years old to use this Service.</li>
-        <li>You must not be prohibited from using the Service under applicable law.</li>
-        <li>Prediction market trading may be restricted in your jurisdiction — it is your responsibility to verify local laws.</li>
-      </ul>
-
-      <h2>4. Accounts and Access Tokens</h2>
-      <p><strong>4.1</strong> Access tokens are issued upon payment and are single-use.</p>
-      <p><strong>4.2</strong> Tokens are permanently linked to one account upon registration.</p>
-      <p><strong>4.3</strong> You may not share, sell, or transfer your access token or account.</p>
-      <p><strong>4.4</strong> You are responsible for maintaining the security of your account.</p>
-      <p><strong>4.5</strong> Notify us immediately at {{ support_email }} if you suspect unauthorised access.</p>
-
-      <h2>5. Subscriptions and Billing</h2>
-      <p><strong>5.1</strong> Subscriptions are billed in GBP on a monthly or annual basis.</p>
-      <p><strong>5.2</strong> Subscriptions auto-renew unless cancelled before the renewal date.</p>
-      <p><strong>5.3</strong> You may cancel at any time — access continues until period end.</p>
-      <p><strong>5.4</strong> Refunds are issued at our discretion. Contact {{ support_email }}.</p>
-      <p><strong>5.5</strong> We reserve the right to change pricing with 30 days notice.</p>
-      <p><strong>5.6</strong> USD prices shown are for reference only. You are charged in GBP.</p>
-
-      <h2>6. Acceptable Use</h2>
-      <p>You agree not to:</p>
-      <ul>
-        <li>Use the Service for any unlawful purpose</li>
-        <li>Attempt to reverse engineer, scrape, or copy our platform</li>
-        <li>Circumvent access controls or authentication</li>
-        <li>Share your account credentials with others</li>
-        <li>Use the Service to manipulate prediction markets</li>
-        <li>Distribute our data or signals to third parties without permission</li>
-      </ul>
-
-      <h2>7. Intellectual Property</h2>
-      <p><strong>7.1</strong> All platform content, code, algorithms, and credibility scoring methodology are owned by narve.ai and protected by copyright.</p>
-      <p><strong>7.2</strong> Source data (social media posts) belongs to their original authors.</p>
-      <p><strong>7.3</strong> You may use signals and analysis for personal trading decisions only.</p>
-      <p><strong>7.4</strong> You may not redistribute, resell, or commercialise our data.</p>
-
-      <h2>8. Data and Privacy</h2>
-      <p>We collect and process personal data as described in our <a href="/privacy">Privacy Policy</a>. By using the Service you consent to this processing.</p>
-      <ul>
-        <li>We collect publicly available social media posts for analysis.</li>
-        <li>We do not store private messages or non-public content.</li>
-      </ul>
-
-      <h2>9. Disclaimer of Warranties</h2>
+      <h2 id="s4">4. Not financial, legal, tax, or investment advice</h2>
       <p>
-        THE SERVICE IS PROVIDED "AS IS" WITHOUT WARRANTIES OF ANY KIND.
-        WE DO NOT WARRANT THAT SIGNALS ARE ACCURATE, COMPLETE, OR PROFITABLE.
-        PREDICTION MARKETS INVOLVE RISK. YOU MAY LOSE MONEY.
-        WE ARE NOT RESPONSIBLE FOR YOUR TRADING OUTCOMES.
+        The Service is provided for <strong>informational and educational purposes only</strong>.
+        Nothing on narve.ai constitutes financial, investment, legal, tax, accounting, or trading
+        advice, a recommendation to buy or sell any instrument, a solicitation, or an offer to
+        provide regulated services. narve.ai is not a broker, dealer, investment adviser, futures
+        commission merchant, designated contract market, swap execution facility, or similar
+        regulated entity in any jurisdiction.
+      </p>
+      <p>
+        Prediction markets, event contracts, and similar instruments are high-risk. You may lose
+        some or all of the funds you commit. Past performance of any source, market, or signal is
+        not a reliable indicator of future results.
+      </p>
+      <p>
+        You are solely responsible for (i) determining whether any activity is lawful in your
+        jurisdiction, (ii) your own investment, trading, and risk-management decisions, and (iii)
+        seeking independent professional advice.
       </p>
 
-      <h2>10. Limitation of Liability</h2>
-      <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW:</p>
+      <h2 id="s5">5. Eligibility &amp; jurisdictional restrictions</h2>
       <ul>
-        <li>Our liability is limited to the amount you paid us in the last 3 months</li>
-        <li>We are not liable for trading losses, indirect, or consequential damages</li>
-        <li>We are not liable for data inaccuracies or platform downtime</li>
+        <li>You must be at least <strong>18 years old</strong> (or the age of majority in your jurisdiction, whichever is higher) to create an account.</li>
+        <li>You must not be a resident of, or physically present in, a country or territory subject to comprehensive sanctions imposed by the United Nations, the European Union, the United Kingdom, Switzerland, or the United States (OFAC), nor on any specially designated nationals list.</li>
+        <li>You must not be prohibited from using the Service under any Applicable Law.</li>
+        <li>You must not use the Service in a way that conflicts with the terms of a prediction-market operator or regulator in your jurisdiction.</li>
+        <li>You are solely responsible for ensuring that your use of any third-party prediction market is lawful where you live.</li>
       </ul>
 
-      <h2>11. Indemnification</h2>
-      <p>You agree to indemnify narve.ai against claims arising from:</p>
+      <h2 id="s6">6. Sanctions &amp; export controls</h2>
+      <p>
+        You represent and warrant that (a) you are not located in, under the control of, or a
+        national or resident of any country subject to comprehensive economic sanctions, and (b)
+        you are not listed on the U.S. Specially Designated Nationals list, the EU consolidated
+        sanctions list, HM Treasury's sanctions list, or any equivalent list. You will not access
+        or use the Service, nor transfer any software or technology obtained from the Service, in
+        violation of applicable export-control or sanctions laws (including the U.S. Export
+        Administration Regulations and the EU dual-use regulation).
+      </p>
+
+      <h2 id="s7">7. Accounts, credentials and security</h2>
+      <p><strong>7.1 Registration.</strong> You must provide accurate, current, and complete information when registering. You must keep your account information up to date.</p>
+      <p><strong>7.2 One account per person.</strong> Each natural person may hold one individual account. Organisations using the Service must procure a plan appropriate for multi-seat use.</p>
+      <p><strong>7.3 Credentials &amp; tokens.</strong> Access tokens and API keys are confidential. You are responsible for all activity under your account (including activity carried out using your API keys or session cookies) unless you promptly notify us of unauthorised use.</p>
+      <p><strong>7.4 Security obligations.</strong> You must use strong passwords, not share your credentials, enable multi-factor authentication if offered, and log out of shared devices.</p>
+      <p><strong>7.5 Incident notification.</strong> If you suspect unauthorised access or a compromise of your credentials, you must notify us at <a href="mailto:{{ support_email }}">{{ support_email }}</a> without undue delay. We will take reasonable steps to mitigate, and may suspend the account while we investigate.</p>
+      <p><strong>7.6 Impersonation / shared accounts.</strong> You may not impersonate another person or create an account using information that is not yours. Shared accounts are prohibited except where expressly permitted by a team plan.</p>
+
+      <h2 id="s8">8. Subscriptions, billing &amp; taxes</h2>
+      <p><strong>8.1 Plans.</strong> Paid plans are set out on our pricing page. Features are tier-gated; when you downgrade you lose access to features exclusive to the higher tier at the end of the current billing period.</p>
+      <p><strong>8.2 Billing cycles.</strong> Subscriptions are billed monthly or annually in advance. The first charge occurs at sign-up; subsequent charges occur on the corresponding day of each period. If no corresponding day exists (e.g., 31 Feb) we charge on the last day of that period.</p>
+      <p><strong>8.3 Auto-renewal.</strong> Subscriptions renew automatically at the then-current list price unless cancelled before renewal. We will send a renewal reminder where required by law (including at least one reminder for EU/UK consumer annual plans).</p>
+      <p><strong>8.4 Payment processor.</strong> Payments are processed by Stripe, Inc. and its affiliates. By subscribing, you also agree to Stripe's terms. We never see or store full card numbers.</p>
+      <p><strong>8.5 Currency.</strong> Subscriptions are charged in the currency displayed at checkout. Any converted amounts shown in other currencies are indicative only and may differ from the amount charged due to FX fluctuations.</p>
+      <p><strong>8.6 Taxes.</strong> Prices are stated exclusive of VAT, GST, sales tax, use tax, or similar indirect taxes unless explicitly stated. We will charge applicable taxes based on your billing address using, where relevant, the rules of the EU VAT OSS, the UK VAT regime, the Swiss VAT Act, or the applicable US state sales tax regime (including economic nexus rules). You are responsible for any withholding taxes in your jurisdiction.</p>
+      <p><strong>8.7 Price changes.</strong> We may change prices with at least 30 days' notice. If you object, you may cancel before the new price takes effect.</p>
+      <p><strong>8.8 Late payments.</strong> If payment fails, we may retry up to 5 times within 21 days. Continued failure may result in suspension of access. Reactivating a suspended account requires payment of outstanding amounts.</p>
+      <p><strong>8.9 Invoices &amp; statements.</strong> You may download invoices from your billing dashboard. For EU/UK VAT purposes, invoices include all mandatory fields.</p>
+
+      <h2 id="s9">9. Consumer cancellation rights (EU, UK, Switzerland)</h2>
+      <p>
+        If you reside in the European Economic Area, the United Kingdom, or Switzerland and you are
+        a consumer (i.e., acting outside your trade, business, craft or profession), you have the
+        right to withdraw from a distance contract within <strong>14 days</strong> without giving
+        any reason, in accordance with Directive 2011/83/EU (Consumer Rights Directive), the UK
+        Consumer Contracts (Information, Cancellation and Additional Charges) Regulations 2013,
+        and the Swiss Consumer Information Ordinance.
+      </p>
+      <p>
+        <strong>Exception — digital content / services started immediately.</strong> Where you
+        expressly request that we begin supplying the digital content or the digital service
+        before the 14-day period expires, and you acknowledge that you will thereby lose your
+        right of withdrawal once the service has been fully performed (or the download/streaming
+        of digital content has begun), the right of withdrawal does not apply. We make this
+        acknowledgement a prerequisite of checkout for accounts requesting immediate access. If
+        you prefer to wait 14 days before activation, contact us at
+        <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+      </p>
+      <p>
+        To exercise the right of withdrawal within 14 days (where it applies), send an
+        unambiguous statement to <a href="mailto:{{ legal_email }}">{{ legal_email }}</a> or use
+        the model withdrawal form available on request. We will reimburse all payments received
+        within 14 days using the same means of payment unless you expressly agree otherwise.
+      </p>
+
+      <h2 id="s10">10. Refunds &amp; chargebacks</h2>
+      <p>
+        Outside the statutory withdrawal window (§9), fees are non-refundable except as expressly
+        stated in these Terms or required by Applicable Law. We may, at our discretion, grant
+        pro-rata refunds in circumstances including material service degradation or evidence of
+        payment error.
+      </p>
+      <p>
+        If you initiate a chargeback with your card issuer without first contacting us and giving
+        us 14 days to resolve, we may suspend your account. Abusive or fraudulent chargebacks
+        will be reported to the issuer and to relevant fraud registries.
+      </p>
+
+      <h2 id="s11">11. Free trials &amp; promotional credits</h2>
+      <p>
+        Free trials, if offered, convert to paid subscriptions at the trial's end unless you
+        cancel. We will send at least one reminder before conversion. Promotional codes are
+        single-use unless stated otherwise, cannot be combined, and may be revoked in cases of
+        abuse (including multiple account creation to stack discounts).
+      </p>
+
+      <h2 id="s12">12. Acceptable use</h2>
+      <p>You must not:</p>
       <ul>
-        <li>Your violation of these Terms</li>
-        <li>Your use of the Service</li>
-        <li>Your trading decisions based on our data</li>
-      </ul>
-
-      <h2>12. Termination</h2>
-      <p>We may suspend or terminate your account for:</p>
-      <ul>
-        <li>Violation of these Terms</li>
-        <li>Fraudulent activity</li>
-        <li>Chargebacks or payment disputes</li>
-        <li>At our discretion with reasonable notice</li>
+        <li>Use the Service for any unlawful purpose or in violation of any Applicable Law.</li>
+        <li>Scrape, crawl, reverse-engineer, decompile, or otherwise attempt to extract the source code, algorithms, or non-public model parameters of the Service, except to the extent expressly permitted by mandatory law (e.g., Article 6 of Directive 2009/24/EC).</li>
+        <li>Circumvent rate limits, authentication, paywalls, or any other access-control mechanism.</li>
+        <li>Use the Service to build a competing product, or to train machine-learning models on our scores, labels, or methodology, without our prior written consent.</li>
+        <li>Resell, sublicence, rent, or white-label the Service except under a written partner agreement.</li>
+        <li>Use the Service to coordinate market manipulation, wash trading, pump-and-dump schemes, or to harass or threaten individuals identified in public posts we ingest.</li>
+        <li>Post, upload, or transmit Content that is unlawful, defamatory, obscene, infringing, harassing, or that contains malware, viruses, or worms.</li>
+        <li>Probe, scan, or test the vulnerability of the Service except under our published security-research policy.</li>
+        <li>Use our emails, push notifications, or SMS to send spam, phishing, or content that violates anti-spam laws (CAN-SPAM, CASL, ePrivacy).</li>
+        <li>Use any automated means to access the Service except via our official API within its documented limits.</li>
       </ul>
       <p>
-        Upon termination, your access ends. No refunds for unused subscription time unless
-        required by applicable law.
+        We may suspend or terminate access for any breach of §12 without prior notice where we
+        reasonably believe continued access would cause harm or violate Applicable Law.
       </p>
 
-      <h2>13. Governing Law</h2>
+      <h2 id="s13">13. User-generated content</h2>
       <p>
-        These Terms are governed by applicable international law. Disputes will be resolved
-        through good-faith negotiation first, then binding arbitration if unresolved within
-        30 days.
+        The Service lets you submit content — including "takes", comments, votes, watchlists,
+        saved predictions, market annotations, feedback, and support correspondence
+        ("<strong>Customer Content</strong>").
       </p>
-
-      <h2>14. Changes to Terms</h2>
+      <p><strong>13.1 Ownership.</strong> You retain ownership of your Customer Content.</p>
       <p>
-        We may update these Terms with 14 days notice via email or in-app notice. Continued
-        use after notice constitutes acceptance.
+        <strong>13.2 Licence to us.</strong> You grant us a worldwide, non-exclusive, royalty-free,
+        sub-licensable, transferable licence to host, store, reproduce, display, adapt, translate,
+        and make available the Customer Content <strong>solely</strong> for the purposes of (i)
+        providing the Service to you, (ii) enforcing these Terms, (iii) complying with legal
+        obligations, and (iv) in aggregated and de-identified form, improving the Service. This
+        licence ends when you delete the Customer Content, subject to reasonable backup retention
+        and our retention schedule set out in the Privacy Policy.
+      </p>
+      <p><strong>13.3 Your warranties.</strong> You represent that you have all necessary rights to the Customer Content you submit and that it does not infringe third-party rights, violate any law, or contain unlawful material.</p>
+      <p><strong>13.4 No obligation to store.</strong> We may refuse, remove, or restrict access to Customer Content that we reasonably believe violates these Terms or Applicable Law.</p>
+
+      <h2 id="s14">14. Moderation, reporting &amp; the EU Digital Services Act</h2>
+      <p>
+        The Service may be a "hosting service" or "online platform" as defined in Regulation (EU)
+        2022/2065 (the "<strong>DSA</strong>"). Consistent with Articles 14–16 of the DSA we maintain a
+        notice-and-action mechanism.
+      </p>
+      <p><strong>14.1 Notice and action.</strong> You can report illegal content to <a href="mailto:{{ legal_email }}">{{ legal_email }}</a> with the subject line "DSA notice". Please include (a) a sufficiently substantiated explanation of why the content is illegal, (b) the exact URL, (c) your name and email, and (d) a statement of good-faith belief and accuracy under penalty of perjury.</p>
+      <p><strong>14.2 Statement of reasons.</strong> If we restrict or remove Customer Content, we will issue you a statement of reasons consistent with Article 17 DSA, unless doing so would conflict with an ongoing investigation.</p>
+      <p><strong>14.3 Internal complaint-handling.</strong> You may appeal moderation decisions by replying to the statement of reasons; we review appeals by a human reviewer within 30 days.</p>
+      <p><strong>14.4 Out-of-court dispute settlement.</strong> Where you remain dissatisfied, you may refer disputes to a certified DSA out-of-court body in your member state.</p>
+      <p><strong>14.5 Transparency.</strong> Where thresholds are met we publish transparency reports under Article 15 DSA.</p>
+      <p><strong>14.6 Trusted flaggers.</strong> We prioritise notices from trusted flaggers certified under Article 22 DSA.</p>
+
+      <h2 id="s15">15. Intellectual property</h2>
+      <p>
+        We (and our licensors) own all right, title, and interest in and to the Service,
+        including all software, source code, models, scoring algorithms, credibility methodology,
+        UI designs, trademarks, and documentation. Except for the limited licence expressly
+        granted to you in these Terms, no rights are transferred.
+      </p>
+      <p>
+        Subject to these Terms, we grant you a limited, revocable, non-exclusive, non-transferable
+        licence to access and use the Service for your internal, personal purposes (or, for
+        business plans, your internal business purposes).
+      </p>
+      <p>
+        Our credibility scores, rankings, calibration data, and derived signals are provided only
+        for your own decision-making. You may not redistribute them, publish them as a stand-alone
+        product, or use them to create a derivative data product.
+      </p>
+      <p>
+        Feedback you voluntarily provide (bug reports, feature requests, suggestions) may be used
+        by us without restriction or compensation.
       </p>
 
-      <h2>15. Contact</h2>
+      <h2 id="s16">16. Copyright notices — DMCA (US) &amp; EU copyright</h2>
+      <p>
+        We respect intellectual-property rights. If you believe Content on the Service infringes
+        your copyright, please send a notice containing:
+      </p>
+      <ol class="body">
+        <li>A physical or electronic signature of the copyright owner or authorised agent.</li>
+        <li>Identification of the copyrighted work claimed to be infringed.</li>
+        <li>Identification of the allegedly infringing material and its URL.</li>
+        <li>Your name, address, phone, and email.</li>
+        <li>A statement of good-faith belief that use is not authorised.</li>
+        <li>A statement, under penalty of perjury, that the information is accurate and you are the owner or authorised to act.</li>
+      </ol>
+      <p>Send to: <a href="mailto:{{ legal_email }}">{{ legal_email }}</a> (subject: "DMCA notice"). Counter-notices are accepted at the same address and forwarded in accordance with 17 U.S.C. § 512. For notices under Article 17 of Directive (EU) 2019/790, please use the same address and include the equivalent information.</p>
+      <p>Repeat infringers will have their accounts terminated.</p>
+
+      <h2 id="s17">17. Trademarks</h2>
+      <p>
+        "narve", "narve.ai", the narve wordmark, and associated logos are trademarks of the
+        Company. You may not use them without prior written permission except for fair reference
+        (e.g., "Our integration with narve.ai"). You may not use them in a way that implies
+        endorsement, partnership, or sponsorship absent a written agreement.
+      </p>
+
+      <h2 id="s18">18. Third-party services</h2>
+      <p>
+        The Service links to or integrates with third-party services (e.g., Polymarket, Kalshi,
+        Stripe, Anthropic, email delivery providers, Cloudflare). We are not responsible for
+        third-party services, their terms, or their availability. Your use of third-party services
+        is at your own risk and governed by the third party's own terms and privacy notices.
+      </p>
+
+      <h2 id="s19">19. API access &amp; developer terms</h2>
+      <p><strong>19.1 Keys.</strong> API keys are issued per account and per tier. Keys embed a hashed identifier; the raw key is shown once at generation.</p>
+      <p><strong>19.2 Rate limits.</strong> Limits depend on your tier. Persistent exceeding or circumvention of limits may result in throttling, key revocation, or account suspension.</p>
+      <p><strong>19.3 Attribution.</strong> When redistributing derived insights in reports, include an attribution line "Source: narve.ai" or a link to our homepage.</p>
+      <p><strong>19.4 Prohibited uses.</strong> You may not use the API to build a competing credibility-scoring product, train machine-learning models on our outputs, scrape market identities we surface, or reverse-engineer our methodology.</p>
+      <p><strong>19.5 Deprecation.</strong> We commit to a 12-month deprecation window for breaking changes to versioned API endpoints (<code>/api/v1/*</code>), subject to emergency security fixes. Unversioned paths (<code>/api/*</code>) may change at any time.</p>
+      <p><strong>19.6 Webhooks.</strong> Webhook endpoints you register must be HTTPS and handle idempotent delivery with signed payload verification.</p>
+
+      <h2 id="s20">20. Browser extension, PWA &amp; embeds</h2>
+      <p>
+        We provide a browser extension, a progressive web app, and embeddable widgets. Their use
+        is subject to these Terms, to the applicable platform's store policies (e.g., Chrome Web
+        Store, Firefox Add-ons, Apple App Store, Google Play), and to any additional permissions
+        prompted at install. Embedded widgets are licensed only for display on domains you own or
+        control, and must not be framed inside deceptive or competing products.
+      </p>
+
+      <h2 id="s21">21. Beta features</h2>
+      <p>
+        Features we label "beta", "alpha", "preview", or "experimental" are provided on an
+        as-available basis, may change or be discontinued without notice, and are excluded from
+        any service-level commitment. We may limit access to such features to specific tiers,
+        individuals, or regions.
+      </p>
+
+      <h2 id="s22">22. Privacy &amp; data protection</h2>
+      <p>
+        Our processing of personal data is described in our <a href="/privacy">Privacy Policy</a>.
+        Where we process personal data on behalf of business customers acting as "controller" in
+        the GDPR/UK GDPR sense, our <a href="/dpa">Data Processing Agreement</a> applies and is
+        incorporated by reference into these Terms.
+      </p>
+      <p>
+        You are responsible for complying with your own privacy obligations when submitting any
+        personal data to the Service, including obtaining required consents and providing required
+        notices to individuals whose data you submit.
+      </p>
+
+      <h2 id="s23">23. Cookies &amp; tracking technologies</h2>
+      <p>
+        We use only essential cookies required for authentication, session management, and CSRF
+        protection. We do not use advertising, retargeting, analytics, or behavioural tracking
+        cookies. See §7 of our Privacy Policy for a full list.
+      </p>
+
+      <h2 id="s24">24. Disclaimers</h2>
+      <p>
+        THE SERVICE AND ALL CONTENT ARE PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF
+        ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE,
+        NON-INFRINGEMENT, ACCURACY, OR UNINTERRUPTED OPERATION, TO THE FULLEST EXTENT PERMITTED BY
+        APPLICABLE LAW.
+      </p>
+      <p>
+        WITHOUT LIMITING THE FOREGOING, WE DO NOT WARRANT THAT CREDIBILITY SCORES, SIGNALS,
+        EDGE/EV INDICATORS, OR OTHER OUTPUTS ARE CORRECT, COMPLETE, CURRENT, OR PROFITABLE; THAT
+        THE SERVICE WILL BE UNINTERRUPTED; OR THAT DEFECTS WILL BE CORRECTED. YOU ASSUME ALL RISK
+        ARISING FROM USE OF THE SERVICE AND YOUR TRADING ACTIVITY.
+      </p>
+      <p>
+        Certain jurisdictions do not allow the exclusion of implied warranties. In those
+        jurisdictions the exclusions in this §24 apply only to the maximum extent permitted by
+        law, and nothing in these Terms excludes any implied statutory term that cannot lawfully
+        be excluded.
+      </p>
+
+      <h2 id="s25">25. Limitation of liability</h2>
+      <p>
+        TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL WE, OUR AFFILIATES,
+        OFFICERS, DIRECTORS, EMPLOYEES, OR AGENTS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+        EXEMPLARY, PUNITIVE, OR CONSEQUENTIAL DAMAGES, NOR FOR ANY LOSS OF PROFITS, REVENUE, DATA,
+        BUSINESS, OR GOODWILL, ARISING OUT OF OR IN CONNECTION WITH THE SERVICE OR THESE TERMS,
+        EVEN IF WE HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+      </p>
+      <p>
+        OUR AGGREGATE LIABILITY TO YOU UNDER THESE TERMS SHALL NOT EXCEED THE GREATER OF (A) THE
+        AMOUNTS PAID BY YOU TO US IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT
+        GIVING RISE TO THE CLAIM, OR (B) ONE HUNDRED U.S. DOLLARS (USD 100).
+      </p>
+      <p>
+        Nothing in these Terms excludes or limits liability that cannot lawfully be excluded or
+        limited, including liability for (i) death or personal injury caused by our negligence,
+        (ii) fraud or fraudulent misrepresentation, (iii) any matter for which it would be
+        unlawful to exclude or attempt to exclude liability (e.g., under UK Consumer Rights Act
+        2015, Unfair Contract Terms Act 1977, the German BGB §309 Nr. 7, or equivalent consumer
+        protection rules).
+      </p>
+
+      <h2 id="s26">26. Indemnification</h2>
+      <p>
+        To the extent permitted by Applicable Law, you agree to defend, indemnify, and hold
+        harmless the Company and its Affiliates, officers, directors, employees, and agents from
+        and against any claims, liabilities, damages, losses, and expenses (including reasonable
+        legal fees) arising out of or connected with (a) your use of the Service, (b) your
+        breach of these Terms, (c) your Customer Content, or (d) your violation of any law or
+        third-party right.
+      </p>
+      <p>
+        This §26 does not apply to consumers where and to the extent Applicable Law prohibits it.
+      </p>
+
+      <h2 id="s27">27. Term and termination</h2>
+      <p><strong>27.1 Term.</strong> These Terms start when you first access the Service and continue until terminated.</p>
+      <p><strong>27.2 Termination by you.</strong> You may terminate at any time by closing your account from <code>/settings</code> or writing to <a href="mailto:{{ support_email }}">{{ support_email }}</a>. Subscription charges already paid are non-refundable, subject to §9 and mandatory consumer law.</p>
+      <p><strong>27.3 Termination by us.</strong> We may suspend or terminate your access, with or without notice, for (i) breach of these Terms, (ii) prolonged account inactivity, (iii) risk to the Service or to other users, (iv) legal or regulatory requirement, or (v) where continuing the relationship is commercially unreasonable.</p>
+      <p><strong>27.4 Effect.</strong> On termination, your right to use the Service ceases. We may delete your account and associated Customer Content in line with our retention schedule. The following sections survive termination: §13 (licence back), §15, §17, §24–§30.</p>
+
+      <h2 id="s28">28. Dispute resolution; informal negotiation</h2>
+      <p>
+        Before filing any claim, you agree to contact us at <a href="mailto:{{ legal_email }}">{{ legal_email }}</a>
+        with a written description of the dispute and the relief you seek, and to negotiate in good
+        faith for at least 30 days.
+      </p>
+      <p>
+        <strong>Arbitration (non-consumer, US).</strong> If you are a business user or otherwise not
+        a consumer entitled to local court jurisdiction, then unresolved disputes shall be finally
+        resolved by binding arbitration under the AAA Commercial Arbitration Rules, seated in
+        Delaware, United States, one arbitrator, English language, with judgement on the award
+        entered in any court of competent jurisdiction.
+      </p>
+      <p>
+        <strong>EU/UK/CH consumers.</strong> Mandatory consumer protection laws of your country of
+        residence apply. You retain the right to bring proceedings before your local courts. The
+        European Commission provides an Online Dispute Resolution platform at
+        <a href="https://ec.europa.eu/consumers/odr">https://ec.europa.eu/consumers/odr</a>.
+      </p>
+      <p>
+        <strong>Opt-out.</strong> You may opt out of arbitration within 30 days of account creation
+        by emailing <a href="mailto:{{ legal_email }}">{{ legal_email }}</a> with subject
+        "Arbitration Opt-Out" and including your name, account email, and a clear statement that
+        you wish to opt out.
+      </p>
+
+      <h2 id="s29">29. Class-action &amp; jury-trial waiver (where permitted)</h2>
+      <p>
+        WHERE NOT PROHIBITED BY APPLICABLE LAW, ANY DISPUTE RESOLUTION PROCEEDINGS WILL BE
+        CONDUCTED ON AN INDIVIDUAL BASIS. YOU AND THE COMPANY WAIVE THE RIGHT TO BRING OR
+        PARTICIPATE IN ANY CLASS, COLLECTIVE, CONSOLIDATED, OR REPRESENTATIVE ACTION, AND THE
+        RIGHT TO A TRIAL BY JURY. This waiver does not apply to residents of jurisdictions that
+        prohibit it (including the EU and the UK).
+      </p>
+
+      <h2 id="s30">30. Governing law &amp; venue</h2>
+      <p>
+        These Terms are governed by the laws of the jurisdiction where the Company is
+        incorporated, excluding its conflict-of-laws rules and the UN Convention on Contracts for
+        the International Sale of Goods. Subject to §28 and to mandatory consumer protection law,
+        the competent courts of that jurisdiction have exclusive jurisdiction.
+      </p>
+      <p>
+        Nothing in this clause deprives a consumer of the protection of the law of the country in
+        which the consumer has their habitual residence, as provided by Article 6 of Regulation
+        (EC) No 593/2008 (Rome I).
+      </p>
+
+      <h2 id="s31">31. Changes to these Terms</h2>
+      <p>
+        We may update these Terms. Material changes will be notified by email and/or in-product
+        banner at least <strong>14 days</strong> before they take effect (30 days for material
+        changes affecting EU/UK consumers under active subscriptions). Your continued use after
+        the effective date constitutes acceptance. If you do not accept the updated Terms, you
+        may cancel before they take effect.
+      </p>
+
+      <h2 id="s32">32. Assignment, severability, entire agreement</h2>
+      <p><strong>32.1 Assignment.</strong> You may not assign or transfer these Terms without our prior written consent. We may assign to an Affiliate or in connection with a merger or sale.</p>
+      <p><strong>32.2 Severability.</strong> If any provision is held invalid, the remainder remains in effect.</p>
+      <p><strong>32.3 No waiver.</strong> Failure to enforce any right is not a waiver.</p>
+      <p><strong>32.4 Entire agreement.</strong> These Terms, together with the Privacy Policy, DPA (if applicable), and any order form, constitute the entire agreement and supersede all prior proposals and agreements on the subject matter.</p>
+      <p><strong>32.5 Relationship.</strong> The parties are independent contractors; these Terms do not create a partnership, joint venture, agency, or employment relationship.</p>
+      <p><strong>32.6 Third-party beneficiaries.</strong> There are no third-party beneficiaries, except as expressly stated.</p>
+      <p><strong>32.7 Language.</strong> The English version of these Terms controls. Translations are for convenience only.</p>
+
+      <h2 id="s33">33. Electronic communications</h2>
+      <p>
+        You consent to receive notices, statements, disclosures, and other communications from us
+        in electronic form (including by email, in-app notice, or web publication). Electronic
+        communications satisfy any legal requirement that communications be in writing.
+      </p>
+
+      <h2 id="s34">34. Force majeure</h2>
+      <p>
+        Neither party is liable for any failure or delay caused by events beyond its reasonable
+        control, including acts of God, war, terrorism, riots, civil unrest, government action,
+        sanctions, embargoes, epidemics or pandemics, strikes, internet backbone outages, power
+        failures, or third-party service outages.
+      </p>
+
+      <h2 id="s35">35. Regional addenda</h2>
+      <h3>35.1 California residents (CCPA / CPRA)</h3>
+      <p>
+        California residents have additional rights described in our Privacy Policy §14. We do
+        not sell or share personal information as defined in the CCPA. Our global opt-out signal
+        honours the Global Privacy Control (GPC) header.
+      </p>
+      <h3>35.2 Other U.S. state residents</h3>
+      <p>
+        Residents of Virginia (VCDPA), Colorado (CPA), Connecticut (CTDPA), Utah (UCPA), Delaware
+        (DPDPA), Texas (TDPSA), Oregon (OCPA), Montana (MCDPA), Iowa (ICDPA), New Hampshire
+        (NHPA), New Jersey (NJDPA), Tennessee (TIPA), Minnesota (MNCDPA), and Maryland (MCDPA)
+        have comparable rights, also described in the Privacy Policy.
+      </p>
+      <h3>35.3 EU/EEA residents</h3>
+      <p>
+        The GDPR and Directive 2011/83/EU apply as summarised in §9 and the Privacy Policy.
+        Complaints may be lodged with any EU data protection authority.
+      </p>
+      <h3>35.4 United Kingdom residents</h3>
+      <p>
+        UK GDPR and the Data Protection Act 2018 apply. You may complain to the Information
+        Commissioner's Office (<a href="https://ico.org.uk">ico.org.uk</a>).
+      </p>
+      <h3>35.5 Switzerland residents</h3>
+      <p>
+        The revised Federal Act on Data Protection (revFADP) applies. The competent authority is
+        the Federal Data Protection and Information Commissioner (FDPIC).
+      </p>
+      <h3>35.6 Canada residents</h3>
+      <p>PIPEDA, CASL (anti-spam), and applicable provincial statutes (including Québec Law 25) apply.</p>
+      <h3>35.7 Brazil residents</h3>
+      <p>LGPD applies. You may exercise your rights through the ANPD or directly with us.</p>
+      <h3>35.8 Australia residents</h3>
+      <p>The Privacy Act 1988 (Cth) and the Australian Privacy Principles apply. Complaints may be lodged with the OAIC.</p>
+      <h3>35.9 Japan residents</h3>
+      <p>The Act on the Protection of Personal Information (APPI) applies.</p>
+      <h3>35.10 Singapore residents</h3>
+      <p>The Personal Data Protection Act 2012 (PDPA) applies.</p>
+      <h3>35.11 India residents</h3>
+      <p>
+        The Digital Personal Data Protection Act, 2023 applies. A grievance officer is contactable
+        at <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>.
+      </p>
+      <h3>35.12 South Korea residents</h3>
+      <p>The Personal Information Protection Act (PIPA) applies.</p>
+      <h3>35.13 New Zealand residents</h3>
+      <p>The Privacy Act 2020 applies.</p>
+      <h3>35.14 South Africa residents</h3>
+      <p>The Protection of Personal Information Act, 2013 (POPIA) applies.</p>
+
+      <h2 id="s36">36. Contact</h2>
       <p>
         narve.ai<br>
-        Email: <a href="mailto:{{ legal_email }}">{{ legal_email }}</a><br>
-        Support: <a href="mailto:{{ support_email }}">{{ support_email }}</a>
+        Legal notices: <a href="mailto:{{ legal_email }}">{{ legal_email }}</a><br>
+        Support: <a href="mailto:{{ support_email }}">{{ support_email }}</a><br>
+        Privacy &amp; data requests: <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>
       </p>
     </div>
 
     <footer class="legal-footer">
-      <div>© 2026 narve.ai. Prices in GBP. Not financial advice.</div>
+      <div>© 2026 narve.ai. Not financial advice. Version 3.0.</div>
       <div>
         <a href="/terms">Terms</a>
         <a href="/privacy">Privacy</a>

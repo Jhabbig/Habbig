@@ -4,71 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Profile — narve.ai</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <style>
-    .profile-card {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-lg);
-      padding: 32px;
-      box-shadow: var(--shadow-sm);
-      margin-bottom: 24px;
-    }
-    .profile-section-title {
-      font-size: 17px;
-      font-weight: 600;
-      margin-bottom: 6px;
-      font-family: var(--font-display);
-    }
-    .profile-section-desc {
-      font-size: 14px;
-      color: var(--text-secondary);
-      line-height: 1.55;
-      margin-bottom: 20px;
-    }
-    .profile-field { margin-bottom: 20px; }
-    .profile-label {
-      display: block;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-secondary);
-      margin-bottom: 8px;
-    }
-    .profile-input {
-      width: 100%;
-      padding: 12px 14px;
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-sm);
-      font-family: inherit;
-      font-size: 14px;
-      background: var(--bg-surface);
-      color: var(--text-primary);
-      transition: border-color 0.15s, box-shadow 0.15s;
-    }
-    .profile-input:focus {
-      outline: none;
-      border-color: var(--text-primary);
-      box-shadow: 0 0 0 3px var(--interactive-ghost);
-    }
-    .profile-input-locked {
-      background: var(--bg-overlay);
-      color: var(--text-tertiary);
-      cursor: not-allowed;
-      border-color: var(--border-subtle);
-    }
-    .profile-locked-hint {
-      font-size: 11px;
-      color: var(--text-tertiary);
-      margin-top: 4px;
-    }
-    .profile-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 12px;
-      margin-top: 8px;
-    }
-    .profile-avatar {
+    /* Profile-specific styles only — everything else pulled from
+       gateway.css's settings-card / field-row / save-bar utilities. */
+    .profile-avatar-lg {
       width: 72px;
       height: 72px;
       border-radius: 50%;
@@ -83,7 +24,7 @@
     }
     .profile-meta {
       display: flex;
-      gap: 12px;
+      gap: 8px;
       flex-wrap: wrap;
       margin-bottom: 24px;
     }
@@ -91,18 +32,32 @@
       font-size: 12px;
       color: var(--text-tertiary);
       padding: 4px 12px;
-      background: var(--bg-overlay);
-      border-radius: 20px;
-      border: 1px solid var(--border-default);
-      font-family: var(--font-mono);
+      background: var(--bg-raised);
+      border: 1px solid var(--border-subtle);
+      border-radius: 999px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    .notice { margin-bottom: 20px; }
-    .notice-success { background: var(--interactive-ghost); border-color: var(--positive); color: var(--positive); }
-    .notice-error { background: var(--interactive-ghost); border-color: var(--text-secondary); color: var(--text-secondary); }
-    .notice:empty { display: none; }
+    .input-locked {
+      background: var(--bg-inset) !important;
+      color: var(--text-tertiary) !important;
+      cursor: not-allowed;
+      border-color: var(--border-subtle) !important;
+    }
+    /* Password show/hide toggle — relative-positioned within field-control. */
     .pw-wrap { position: relative; }
-    .pw-wrap input { padding-right: 44px; }
-    .pw-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--text-tertiary); padding: 4px; line-height: 0; }
+    .pw-wrap input { padding-right: 44px !important; }
+    .pw-toggle {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-tertiary);
+      padding: 4px;
+      line-height: 0;
+    }
     .pw-toggle:hover { color: var(--text-primary); }
     .pw-toggle svg { width: 18px; height: 18px; }
   </style>
@@ -164,12 +119,13 @@
 
       <div class="page-header">
         <h1 class="page-title">{{ username }}</h1>
+        <p class="page-subtitle">Your narve.ai identity. Email and username are locked.</p>
       </div>
 
       <div class="content-area">
         <div style="max-width:760px">
 
-          <div class="profile-avatar">{{ avatar_letter }}</div>
+          <div class="profile-avatar-lg">{{ avatar_letter }}</div>
           <div class="profile-meta">
             <span class="profile-meta-item">{{ email }}</span>
             {{ raw_role_badge }}
@@ -179,60 +135,107 @@
           {{ raw_banner }}
 
           <!-- Account info (read-only) -->
-          <div class="profile-card">
-            <div class="profile-section-title">Account</div>
-            <div class="profile-section-desc">Your username is permanent and cannot be changed.</div>
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Account</div>
+              <div class="settings-section-desc">
+                Your username is permanent. Contact admin if your email needs to change.
+              </div>
 
-            <div class="profile-field">
-              <label class="profile-label" for="profile-username">Username</label>
-              <input id="profile-username" class="profile-input profile-input-locked" type="text" value="{{ username }}" readonly autocomplete="username">
-              <div class="profile-locked-hint">Locked — usernames cannot be changed</div>
-            </div>
+              <div class="field-row">
+                <label class="field-label" for="profile-username">Username</label>
+                <div class="field-control">
+                  <input id="profile-username" class="input-locked" type="text"
+                         value="{{ username }}" readonly autocomplete="username">
+                  <div class="field-helper">Locked — usernames cannot be changed.</div>
+                </div>
+              </div>
 
-            <div class="profile-field">
-              <label class="profile-label" for="profile-email">Email</label>
-              <input id="profile-email" class="profile-input profile-input-locked" type="email" value="{{ email }}" readonly autocomplete="email">
-              <div class="profile-locked-hint">Contact admin to change your email</div>
+              <div class="field-row">
+                <label class="field-label" for="profile-email">Email</label>
+                <div class="field-control">
+                  <input id="profile-email" class="input-locked" type="email"
+                         value="{{ email }}" readonly autocomplete="email">
+                  <div class="field-helper">Contact admin to change your email.</div>
+                </div>
+              </div>
             </div>
           </div>
 
           <!-- Change password -->
-          <div class="profile-card">
-            <div class="profile-section-title">Change Password</div>
-            <div class="profile-section-desc">Enter your current password and choose a new one.</div>
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Change password</div>
+              <div class="settings-section-desc">
+                Enter your current password and choose a new one. Minimum 12
+                characters with upper + lower + number + special.
+              </div>
 
-            <form method="post" action="/profile/password">
-              {{ raw_csrf_field }}
-              <div class="profile-field">
-                <label class="profile-label" for="current_password">Current Password</label>
-                <div class="pw-wrap"><input class="profile-input" type="password" id="current_password" name="current_password" required autocomplete="current-password">
-                  <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="Show password"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg><svg style="display:none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18"/></svg></button>
+              <form method="post" action="/profile/password">
+                {{ raw_csrf_field }}
+
+                <div class="field-row">
+                  <label class="field-label" for="current_password">Current password</label>
+                  <div class="field-control">
+                    <div class="pw-wrap">
+                      <input type="password" id="current_password" name="current_password"
+                             required autocomplete="current-password">
+                      <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="Show password">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        <svg style="display:none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div class="profile-field">
-                <label class="profile-label" for="new_password">New Password</label>
-                <div class="pw-wrap"><input class="profile-input" type="password" id="new_password" name="new_password" required autocomplete="new-password" minlength="12">
-                  <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="Show password"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg><svg style="display:none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18"/></svg></button>
+
+                <div class="field-row">
+                  <label class="field-label" for="new_password">New password</label>
+                  <div class="field-control">
+                    <div class="pw-wrap">
+                      <input type="password" id="new_password" name="new_password"
+                             required autocomplete="new-password" minlength="12">
+                      <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="Show password">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        <svg style="display:none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
+                      </button>
+                    </div>
+                    <div class="field-helper">At least 12 characters. Uppercase, lowercase, number, and special.</div>
+                  </div>
                 </div>
-                <div class="profile-locked-hint">12+ characters. Uppercase, lowercase, number, and special character.</div>
-              </div>
-              <div class="profile-field">
-                <label class="profile-label" for="confirm_password">Confirm New Password</label>
-                <div class="pw-wrap"><input class="profile-input" type="password" id="confirm_password" name="confirm_password" required autocomplete="new-password">
-                  <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="Show password"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg><svg style="display:none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18"/></svg></button>
+
+                <div class="field-row">
+                  <label class="field-label" for="confirm_password">Confirm password</label>
+                  <div class="field-control">
+                    <div class="pw-wrap">
+                      <input type="password" id="confirm_password" name="confirm_password"
+                             required autocomplete="new-password">
+                      <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="Show password">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        <svg style="display:none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.59 6.59m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div class="profile-actions">
-                <button type="submit" class="btn btn-primary" style="padding:12px 24px;font-size:14px;background:var(--interactive-bg);border:none">Change Password</button>
-              </div>
-            </form>
+
+                <div class="save-bar">
+                  <button type="submit" class="btn btn-primary">Change password</button>
+                </div>
+              </form>
+            </div>
           </div>
 
-          <!-- Danger zone -->
-          <div class="profile-card" style="border-color:rgba(255,255,255,0.06)">
-            <div class="profile-section-title" style="color:var(--text-secondary)">Sessions</div>
-            <div class="profile-section-desc">Sign out of this device. Other sessions stay active.</div>
-            <a href="/logout" class="btn btn-danger" style="display:inline-block;padding:10px 20px;font-size:13px;text-decoration:none">Sign out</a>
+          <!-- Danger zone: sessions -->
+          <div class="settings-card">
+            <div class="settings-section settings-danger" style="margin-top:0;padding-top:0;border-top:0">
+              <div class="settings-section-title">Sessions</div>
+              <div class="settings-section-desc">
+                Sign out of this device only. Your other signed-in sessions stay active
+                until you sign out of them explicitly.
+              </div>
+              <a href="/logout" class="btn-danger" style="display:inline-block;text-decoration:none">
+                Sign out of this device
+              </a>
+            </div>
           </div>
 
         </div>
@@ -253,8 +256,15 @@
 function togglePw(btn) {
   var input = btn.parentElement.querySelector('input');
   var svgs = btn.querySelectorAll('svg');
-  if (input.type === 'password') { input.type = 'text'; svgs[0].style.display = 'none'; svgs[1].style.display = ''; }
-  else { input.type = 'password'; svgs[0].style.display = ''; svgs[1].style.display = 'none'; }
+  if (input.type === 'password') {
+    input.type = 'text';
+    svgs[0].style.display = 'none';
+    svgs[1].style.display = '';
+  } else {
+    input.type = 'password';
+    svgs[0].style.display = '';
+    svgs[1].style.display = 'none';
+  }
 }
 </script>
 {{ raw_sitemap }}

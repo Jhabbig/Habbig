@@ -7,18 +7,27 @@
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <style>
-    .legal-shell { max-width: 760px; margin: 0 auto; padding: 64px 24px 96px; }
+    .legal-shell { max-width: 820px; margin: 0 auto; padding: 64px 24px 96px; }
     .legal-header { margin-bottom: 48px; }
     .legal-eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 12px; }
     .legal-title { font-family: var(--font-display); font-size: 42px; font-weight: 500; letter-spacing: -0.02em; margin: 0 0 16px; color: var(--text-primary); }
     .legal-meta { font-size: 13px; color: var(--text-secondary); }
+    .legal-toc { background: var(--bg-raised); border: 1px solid var(--border-default); border-radius: 10px; padding: 20px 24px; margin: 32px 0 48px; font-size: 13px; }
+    .legal-toc ol { columns: 2; column-gap: 32px; margin: 0; padding-left: 20px; color: var(--text-secondary); line-height: 1.8; }
+    .legal-toc ol a { color: var(--text-secondary); text-decoration: none; }
+    .legal-toc ol a:hover { color: var(--text-primary); text-decoration: underline; }
     .legal-content h2 { font-family: var(--font-display); font-size: 22px; font-weight: 500; margin: 48px 0 16px; color: var(--text-primary); letter-spacing: -0.01em; }
     .legal-content h3 { font-size: 15px; font-weight: 600; margin: 24px 0 10px; color: var(--text-primary); }
     .legal-content p { font-size: 15px; line-height: 1.7; color: var(--text-secondary); margin: 0 0 16px; }
-    .legal-content ul { padding-left: 22px; margin: 0 0 16px; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
+    .legal-content ul, .legal-content ol.body { padding-left: 22px; margin: 0 0 16px; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
     .legal-content li { margin-bottom: 8px; }
     .legal-content a { color: var(--text-primary); text-decoration: underline; }
     .legal-content strong { color: var(--text-primary); font-weight: 500; }
+    .legal-content code { font-family: var(--font-mono); font-size: 13px; background: var(--bg-raised); padding: 1px 6px; border-radius: 4px; }
+    .legal-content table.pl { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0 0 16px; }
+    .legal-content table.pl th, .legal-content table.pl td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    .legal-content table.pl th { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-mono); font-weight: 500; }
+    .legal-content blockquote { border-left: 3px solid var(--border-default); padding: 8px 16px; margin: 16px 0; color: var(--text-secondary); font-size: 14px; background: var(--bg-raised); border-radius: 4px; }
     .legal-back { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); text-decoration: none; margin-bottom: 32px; }
     .legal-back:hover { color: var(--text-primary); }
     .legal-footer { margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border-default); font-size: 12px; color: var(--text-tertiary); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
@@ -37,183 +46,606 @@
       <h1 class="legal-title">Privacy Policy</h1>
       <div class="legal-meta">
         Last updated: {{ last_updated }}<br>
-        Effective date: {{ effective_date }}
+        Effective date: {{ effective_date }}<br>
+        Version: 3.0
       </div>
     </header>
 
+    <div class="legal-toc" aria-label="Table of contents">
+      <ol>
+        <li><a href="#s1">At a glance</a></li>
+        <li><a href="#s2">Who we are / controller</a></li>
+        <li><a href="#s3">Scope &amp; definitions</a></li>
+        <li><a href="#s4">Personal data we collect</a></li>
+        <li><a href="#s5">Sources of data</a></li>
+        <li><a href="#s6">Purposes &amp; legal bases</a></li>
+        <li><a href="#s7">Cookies &amp; similar technologies</a></li>
+        <li><a href="#s8">Analytics &amp; advertising (none)</a></li>
+        <li><a href="#s9">Sub-processors &amp; recipients</a></li>
+        <li><a href="#s10">International transfers</a></li>
+        <li><a href="#s11">Retention schedule</a></li>
+        <li><a href="#s12">Security</a></li>
+        <li><a href="#s13">Automated decision-making</a></li>
+        <li><a href="#s14">Your rights — GDPR / UK GDPR</a></li>
+        <li><a href="#s15">Your rights — California (CCPA / CPRA)</a></li>
+        <li><a href="#s16">Your rights — other U.S. states</a></li>
+        <li><a href="#s17">Your rights — Brazil (LGPD)</a></li>
+        <li><a href="#s18">Your rights — Canada (PIPEDA / Québec Law 25)</a></li>
+        <li><a href="#s19">Your rights — Australia, NZ</a></li>
+        <li><a href="#s20">Your rights — Switzerland (revFADP)</a></li>
+        <li><a href="#s21">Your rights — Japan (APPI), Korea (PIPA), Singapore (PDPA), India (DPDP Act), South Africa (POPIA)</a></li>
+        <li><a href="#s22">Children's privacy</a></li>
+        <li><a href="#s23">Marketing &amp; unsubscribe</a></li>
+        <li><a href="#s24">Do Not Track &amp; Global Privacy Control</a></li>
+        <li><a href="#s25">Data breach notification</a></li>
+        <li><a href="#s26">Social media posts we ingest</a></li>
+        <li><a href="#s27">Publicly visible profiles</a></li>
+        <li><a href="#s28">Support &amp; business communications</a></li>
+        <li><a href="#s29">Changes to this Policy</a></li>
+        <li><a href="#s30">Complaints &amp; DPO / EU &amp; UK representatives</a></li>
+        <li><a href="#s31">Contact</a></li>
+      </ol>
+    </div>
+
     <div class="legal-content">
-      <h2>1. Who we are</h2>
-      <p>narve.ai ("we", "us", "our") operates the prediction market intelligence platform at narve.ai.</p>
-      <p>Contact: <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a></p>
 
-      <h2>2. Data we collect</h2>
-      <h3>2.1 Account data</h3>
+      <h2 id="s1">1. At a glance</h2>
       <ul>
-        <li>Email address</li>
-        <li>Display name</li>
-        <li>Subscription tier and billing status</li>
-        <li>Access token (hashed)</li>
-      </ul>
-      <h3>2.2 Usage data</h3>
-      <ul>
-        <li>Pages visited and features used</li>
-        <li>Prediction markets viewed</li>
-        <li>Topics saved in Signal Search</li>
-        <li>Session timestamps</li>
-      </ul>
-      <h3>2.3 Payment data</h3>
-      <ul>
-        <li>Payment processing is handled by Stripe</li>
-        <li>We store only: subscription status, tier, Stripe customer ID</li>
-        <li>We never store card numbers or full payment details</li>
-      </ul>
-      <h3>2.4 Communications</h3>
-      <ul>
-        <li>Email address for transactional emails (token delivery, billing)</li>
-        <li>Newsletter subscription if opted in</li>
-      </ul>
-      <h3>2.5 Technical data</h3>
-      <ul>
-        <li>IP address (for rate limiting and security)</li>
-        <li>Browser type and OS (anonymised)</li>
-        <li>Error logs (via Sentry — no personal data in error reports)</li>
-      </ul>
-      <h3>2.6 Social media data</h3>
-      <ul>
-        <li>We collect <strong>publicly available</strong> posts from X and TruthSocial</li>
-        <li>We analyse post content to extract predictions</li>
-        <li>We do not collect private messages or non-public content</li>
-        <li>We do not create profiles of social media users</li>
+        <li>We collect only the personal data we need to run the Service and comply with law.</li>
+        <li><strong>We do not sell or share personal data for advertising.</strong></li>
+        <li>We do not run Google Analytics, Meta Pixel, behavioural cookies, or session-replay scripts.</li>
+        <li>We use essential cookies for authentication and CSRF protection. No consent banner is required because essential cookies are exempt under ePrivacy.</li>
+        <li>You can export, correct, or delete your data at any time from <code>/settings</code> or by writing to <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>.</li>
+        <li>We respect Global Privacy Control signals as opt-outs.</li>
       </ul>
 
-      <h2>3. How we use your data</h2>
-      <p><strong>3.1</strong> To provide the Service — account management, feature access</p>
-      <p><strong>3.2</strong> To process payments — billing, subscription management</p>
-      <p><strong>3.3</strong> To communicate — transactional emails, service updates</p>
-      <p><strong>3.4</strong> To improve the Service — usage analytics, error monitoring</p>
-      <p><strong>3.5</strong> To ensure security — rate limiting, fraud prevention</p>
-      <p><strong>3.6</strong> Legal compliance — where required by law</p>
+      <h2 id="s2">2. Who we are — data controller</h2>
       <p>
-        <strong>We do not sell your personal data.</strong><br>
-        <strong>We do not use your data for advertising.</strong><br>
-        <strong>We do not share your data with third parties except as described below.</strong>
-      </p>
-
-      <h2>4. Data sharing</h2>
-      <p><strong>4.1 Stripe</strong> — payment processing (stripe.com/privacy)</p>
-      <p><strong>4.2 Sentry</strong> — error monitoring, anonymised (sentry.io/privacy)</p>
-      <p><strong>4.3 Email provider</strong> — transactional email delivery</p>
-      <p><strong>4.4 Law enforcement</strong> — if required by valid legal process</p>
-      <p>We do not share data with data brokers or advertising networks.</p>
-
-      <h2>5. Data retention</h2>
-      <ul>
-        <li>Account data: retained while account is active + 90 days after deletion</li>
-        <li>Payment records: 7 years (legal requirement)</li>
-        <li>Usage logs: 30 days rolling</li>
-        <li>Error logs: 90 days</li>
-        <li>Newsletter subscribers: until unsubscribed + 30 days</li>
-        <li>Social media posts: 30 days in our system</li>
-      </ul>
-
-      <h2>6. Your rights</h2>
-      <p>Depending on your location, you may have the right to:</p>
-      <p><strong>6.1 Access</strong> — request a copy of your personal data</p>
-      <p><strong>6.2 Correction</strong> — correct inaccurate data</p>
-      <p><strong>6.3 Deletion</strong> — request deletion ("right to be forgotten")</p>
-      <p><strong>6.4 Portability</strong> — receive your data in a machine-readable format</p>
-      <p><strong>6.5 Restriction</strong> — limit how we process your data</p>
-      <p><strong>6.6 Objection</strong> — object to certain processing</p>
-      <p><strong>6.7 Withdraw consent</strong> — where processing is based on consent</p>
-      <p>To exercise these rights: <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>. We respond within 30 days.</p>
-      <p>
-        <strong>GDPR (EU/UK) users:</strong> you have all rights above and may lodge a complaint
-        with your local data protection authority.
+        <strong>narve.ai</strong> is the controller of personal data processed through the Service
+        (except where we act as a processor on behalf of business customers — see our
+        <a href="/dpa">Data Processing Agreement</a>).
       </p>
       <p>
-        <strong>CCPA (California) users:</strong> you have the right to know, delete, and opt-out
-        of sale (we do not sell data).
+        Contact for privacy matters: <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>. Our
+        <a href="/impressum">legal imprint</a> lists our registered business address and
+        company number where applicable.
       </p>
 
-      <h2>7. Cookies</h2>
+      <h2 id="s3">3. Scope and key definitions</h2>
       <p>
-        We use only essential cookies that are required for the site to function.
-        No advertising cookies. No tracking pixels. No analytics cookies.
+        This Policy covers personal data processed when you visit our websites, use the Service,
+        talk to our support team, open our emails, install our browser extension, receive our
+        push notifications, or sign up for our newsletters.
+      </p>
+      <p>
+        Defined terms in this Policy track the GDPR / UK GDPR (controller, processor, data subject,
+        personal data, processing, special category data). Equivalent terms apply under the CCPA
+        ("business", "service provider", "personal information"), LGPD (controlador, operador),
+        PIPEDA, APPI, DPDP Act, and similar laws.
       </p>
 
-      <h3>7.1 Essential cookies we set</h3>
+      <h2 id="s4">4. Personal data we collect</h2>
+      <h3>4.1 Account data</h3>
       <ul>
-        <li><strong>pm_gateway_session</strong> — session authentication (90 days). Identifies your logged-in session.</li>
-        <li><strong>_csrf</strong> — security token protecting against cross-site request forgery (2 hours, rotates).</li>
-        <li><strong>narve_gate_access</strong> — site access gate cookie for closed-beta visitors (7 days).</li>
-      </ul>
-      <p>
-        We also store your light/dark theme preference in <strong>localStorage</strong>
-        under the key <code>narve-theme</code>. This is not a cookie and is never
-        transmitted to our servers.
-      </p>
-      <p>
-        These cookies cannot be disabled — the site will not function without them.
-        Under the GDPR, essential cookies do not require a consent banner, so you
-        will not see one.
-      </p>
-
-      <h3>7.2 What we do NOT use</h3>
-      <ul>
-        <li>No Google Analytics, Meta Pixel, or similar third-party analytics.</li>
-        <li>No advertising or retargeting cookies.</li>
-        <li>No session-replay or behavior-tracking scripts.</li>
-        <li>We do not sell or share your data with advertisers.</li>
+        <li>Email address (required for all accounts).</li>
+        <li>Display name / username (optional).</li>
+        <li>Hashed password (PBKDF2 with per-user salt; we never store the plaintext).</li>
+        <li>Account creation timestamp, subscription tier, plan status, billing period dates.</li>
+        <li>Session tokens (HTTP-only cookies, hashed server-side), CSRF tokens, API keys (hashed).</li>
       </ul>
 
+      <h3>4.2 Billing data</h3>
+      <ul>
+        <li>We use <strong>Stripe</strong> to process payments. We never see or store full card numbers, CVVs, or full expiry dates.</li>
+        <li>We store: Stripe customer ID, last-4 digits and brand of your card (for statements), billing address, subscription status, invoice identifiers, amount paid, currency.</li>
+        <li>Where required for tax purposes (EU VAT, UK VAT, US sales tax nexus) we store your jurisdiction and tax ID.</li>
+      </ul>
+
+      <h3>4.3 Usage telemetry</h3>
+      <ul>
+        <li>Pages viewed, features interacted with, counts and timestamps.</li>
+        <li>Predictions you saved, sources you followed, markets you watched, feedback you gave.</li>
+        <li>API usage (per key: endpoint, status code, latency, quota state).</li>
+      </ul>
+
+      <h3>4.4 Device &amp; connection</h3>
+      <ul>
+        <li>IP address (for rate-limiting, security, geolocation for VAT; stored briefly in logs).</li>
+        <li>User-Agent string (browser &amp; OS family, not a fingerprint).</li>
+        <li>Request-scoped headers needed for routing and CSRF validation.</li>
+      </ul>
+
+      <h3>4.5 Support communications</h3>
+      <ul>
+        <li>Emails you send us, including the address you send from and any content you include.</li>
+        <li>Feedback submissions, bug reports, feature requests.</li>
+      </ul>
+
+      <h3>4.6 Customer-generated content</h3>
+      <ul>
+        <li>Takes, comments, votes, watchlists, saved predictions, market annotations, survey responses.</li>
+        <li>Any content you attach when using the feedback or market-suggestion forms.</li>
+      </ul>
+
+      <h3>4.7 Notification preferences and delivery data</h3>
+      <ul>
+        <li>Which notification types you opted into (email, push, in-app).</li>
+        <li>Web-push subscription endpoints (for the browser you granted permission on).</li>
+        <li>Email send/open events where transactional deliverability monitoring requires it (we do not track newsletter opens for marketing).</li>
+      </ul>
+
+      <h3>4.8 Observability</h3>
+      <ul>
+        <li>Error events captured by Sentry (anonymised stack traces, no user-supplied content included by default).</li>
+        <li>Application logs (request metadata, status codes).</li>
+      </ul>
+
+      <h3>4.9 Integration data</h3>
+      <ul>
+        <li>If you link a prediction-market venue account (Polymarket, Kalshi), we store the OAuth / API credentials encrypted at rest, and read-only market positions for the features you enabled.</li>
+      </ul>
+
+      <h3>4.10 Special categories</h3>
       <p>
-        For details on how we process personal data on behalf of business customers,
-        see our <a href="/dpa">Data Processing Agreement</a>.
+        We do not intentionally collect special categories of personal data (health, religion,
+        sexuality, biometrics, genetics). Do not submit such data through forms or uploads.
       </p>
 
-      <h2>8. Security</h2>
-      <p>We protect your data using:</p>
+      <h2 id="s5">5. Sources of personal data</h2>
       <ul>
-        <li>Encryption in transit (HTTPS/TLS)</li>
-        <li>Encrypted storage of sensitive credentials</li>
-        <li>Rate limiting and CSRF protection</li>
-        <li>Regular security audits</li>
-        <li>Access controls and authentication</li>
+        <li><strong>Directly from you</strong> — registration, settings, feedback, integrations.</li>
+        <li><strong>From your devices</strong> — standard HTTP headers.</li>
+        <li><strong>From Stripe</strong> — billing events, invoice data.</li>
+        <li><strong>From your email provider</strong> — bounce / deliverability events.</li>
+        <li><strong>From publicly visible sources</strong> — we ingest public posts from social platforms solely to score the <em>author as a prediction source</em>; see §26.</li>
+        <li><strong>From referral links</strong> — a referral code identifying the user who invited you.</li>
+      </ul>
+
+      <h2 id="s6">6. Purposes and legal bases</h2>
+      <p>We rely on the following GDPR/UK GDPR Article 6(1) bases (equivalents apply under LGPD, UK DPA, and state privacy laws):</p>
+      <table class="pl">
+        <thead><tr><th>Purpose</th><th>Data</th><th>Legal basis</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Create &amp; operate your account; deliver the Service</td>
+            <td>4.1, 4.3, 4.7, 4.9</td>
+            <td>Contract (Art. 6(1)(b))</td>
+          </tr>
+          <tr>
+            <td>Process payments, issue invoices, recover overdue amounts</td>
+            <td>4.2</td>
+            <td>Contract; Legal obligation (Art. 6(1)(b), (c))</td>
+          </tr>
+          <tr>
+            <td>Authenticate sessions &amp; prevent CSRF</td>
+            <td>4.1, 4.4</td>
+            <td>Contract; Legitimate interest in security (Art. 6(1)(b), (f))</td>
+          </tr>
+          <tr>
+            <td>Rate-limit and detect abuse</td>
+            <td>4.3, 4.4</td>
+            <td>Legitimate interest in platform integrity (Art. 6(1)(f))</td>
+          </tr>
+          <tr>
+            <td>Send transactional emails (token delivery, receipts, product notices)</td>
+            <td>4.1, 4.7</td>
+            <td>Contract (Art. 6(1)(b))</td>
+          </tr>
+          <tr>
+            <td>Send newsletter / product updates</td>
+            <td>4.1, 4.7</td>
+            <td>Consent (Art. 6(1)(a)); withdrawable at any time</td>
+          </tr>
+          <tr>
+            <td>Respond to support requests</td>
+            <td>4.5</td>
+            <td>Legitimate interest (Art. 6(1)(f)); Contract where applicable</td>
+          </tr>
+          <tr>
+            <td>Improve the Service via aggregate analytics</td>
+            <td>4.3, 4.4 (aggregated)</td>
+            <td>Legitimate interest (Art. 6(1)(f))</td>
+          </tr>
+          <tr>
+            <td>Comply with tax, accounting, and other legal obligations</td>
+            <td>4.2, 4.1</td>
+            <td>Legal obligation (Art. 6(1)(c))</td>
+          </tr>
+          <tr>
+            <td>Respond to valid legal requests, protect rights</td>
+            <td>any</td>
+            <td>Legal obligation (Art. 6(1)(c)); Legitimate interest (f)</td>
+          </tr>
+          <tr>
+            <td>Public-source social-media ingestion for credibility scoring</td>
+            <td>Public post metadata; public author handle</td>
+            <td>Legitimate interest (Art. 6(1)(f)) and, where applicable, Art. 85 journalistic &amp; research derogation</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Where we rely on legitimate interest we have conducted a balancing assessment (LIA) and
+        consider that our interest is not overridden by your rights and freedoms, given the limited
+        and non-sensitive nature of the data and the safeguards in place.
+      </p>
+
+      <h2 id="s7">7. Cookies &amp; similar technologies</h2>
+      <h3>7.1 Strictly-essential cookies we set</h3>
+      <table class="pl">
+        <thead><tr><th>Name</th><th>Purpose</th><th>Duration</th></tr></thead>
+        <tbody>
+          <tr><td><code>pm_gateway_session</code></td><td>Logged-in session authentication (HttpOnly, Secure, SameSite=Lax).</td><td>Up to 90 days; rotates on login.</td></tr>
+          <tr><td><code>_csrf</code></td><td>Protects against cross-site request forgery.</td><td>2 hours; rotates.</td></tr>
+          <tr><td><code>narve_gate_access</code></td><td>Closed-beta gate token.</td><td>7 days.</td></tr>
+          <tr><td><code>narve_impersonation</code></td><td>Admin impersonation token. Set only when an admin is impersonating a user for support debugging.</td><td>4 hours; deleted on logout.</td></tr>
+          <tr><td><code>narve-theme</code></td><td>Remembers light/dark mode. Stored in <code>localStorage</code>, not a cookie; never sent to our servers.</td><td>Until cleared.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        These cookies are <strong>strictly necessary</strong> for the Service to function. Under the
+        ePrivacy Directive (Art. 5(3)) and UK PECR they are exempt from the consent requirement.
+        Disabling them will prevent the Service from working.
+      </p>
+
+      <h3>7.2 No tracking or advertising technologies</h3>
+      <ul>
+        <li>No third-party advertising SDKs, retargeting pixels, or conversion tags.</li>
+        <li>No Google Analytics, Meta Pixel, Adobe Analytics, Segment, Amplitude, or similar.</li>
+        <li>No session-replay tools (Hotjar, FullStory, LogRocket).</li>
+        <li>No device fingerprinting SDKs.</li>
+      </ul>
+
+      <h2 id="s8">8. Analytics &amp; advertising (we don't do it)</h2>
+      <p>
+        We do not participate in behavioural advertising ecosystems. We do not share personal data
+        with data brokers or ad networks. We do not build audiences for targeting purposes.
+      </p>
+      <p>
+        We run internal aggregate usage counts (total active users, feature-adoption percentages)
+        from server-side logs; these aggregates are not linkable back to an individual.
+      </p>
+
+      <h2 id="s9">9. Sub-processors and recipients</h2>
+      <p>We rely on the following categories of sub-processor / service provider (the current list is kept at <a href="/dpa#subprocessors">/dpa#subprocessors</a>):</p>
+      <table class="pl">
+        <thead><tr><th>Category</th><th>Examples</th><th>Location</th></tr></thead>
+        <tbody>
+          <tr><td>Hosting &amp; CDN</td><td>Cloudflare, primary cloud host</td><td>Global edge; EU/US primary</td></tr>
+          <tr><td>Payments</td><td>Stripe</td><td>US, EU</td></tr>
+          <tr><td>AI model inference</td><td>Anthropic (Claude API)</td><td>US</td></tr>
+          <tr><td>Transactional email</td><td>Resend / Postmark (or equivalent)</td><td>US/EU</td></tr>
+          <tr><td>Push notifications</td><td>Web-push standard via Apple / Google / Mozilla push services</td><td>Various</td></tr>
+          <tr><td>Observability</td><td>Sentry</td><td>US/EU</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Each sub-processor is bound by contractual data-protection commitments (GDPR Art. 28 DPA).
+        We post at least 30 days' advance notice of any new sub-processor so business customers
+        can object; see the DPA for the objection process.
+      </p>
+
+      <h2 id="s10">10. International data transfers</h2>
+      <p>
+        We are a global service and may transfer personal data outside your country of residence.
+        Where we transfer personal data from the EEA, UK, or Switzerland to a country without an
+        adequacy decision, we rely on appropriate safeguards:
+      </p>
+      <ul>
+        <li><strong>Standard Contractual Clauses</strong> — EU Commission Decision 2021/914 ("new SCCs"), supplemented with the UK International Data Transfer Addendum where UK data is involved, and the Swiss FDPIC-approved amendments for Swiss data.</li>
+        <li><strong>EU-US Data Privacy Framework</strong> — where our U.S. sub-processor is certified, transfers rely on the DPF.</li>
+        <li><strong>Derogations (Art. 49 GDPR)</strong> — used only where an explicit derogation applies (e.g., necessary for the performance of the contract at your request).</li>
       </ul>
       <p>
-        No system is 100% secure. We will notify you of breaches within 72 hours as required by GDPR.
+        A transfer-risk assessment (TIA) has been completed for each relevant third country,
+        considering local surveillance laws and the practical risk of government access. Contact
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a> to request a summary.
       </p>
 
-      <h2>9. Children</h2>
-      <p>Our Service is not directed at children under 18. We do not knowingly collect data from minors.</p>
-
-      <h2>10. International transfers</h2>
-      <p>Your data may be processed in countries outside your own. We ensure appropriate safeguards are in place.</p>
-
-      <h2>11. Changes</h2>
-      <p>We will notify you of material changes via email with 14 days notice.</p>
-
-      <h2>12. Contact</h2>
+      <h2 id="s11">11. Retention schedule</h2>
+      <table class="pl">
+        <thead><tr><th>Category</th><th>Retention</th></tr></thead>
+        <tbody>
+          <tr><td>Active account data</td><td>Duration of the account + 30 days after deletion</td></tr>
+          <tr><td>Billing records &amp; invoices</td><td>7 years (EU/UK tax law) or as required in your jurisdiction, whichever is longer</td></tr>
+          <tr><td>Session tokens</td><td>Revoked after 7 days of inactivity or on logout</td></tr>
+          <tr><td>CSRF tokens</td><td>2 hours (rolling)</td></tr>
+          <tr><td>Security / audit logs</td><td>90 days</td></tr>
+          <tr><td>Application &amp; request logs</td><td>30 days rolling</td></tr>
+          <tr><td>Error events (Sentry)</td><td>90 days</td></tr>
+          <tr><td>Support tickets &amp; email threads</td><td>3 years from last correspondence</td></tr>
+          <tr><td>Newsletter subscribers</td><td>Until unsubscribed + 30 days</td></tr>
+          <tr><td>Marketing consent records</td><td>3 years after withdrawal</td></tr>
+          <tr><td>Social-media posts we ingest</td><td>30 days raw content; derived credibility features retained indefinitely in de-identified form</td></tr>
+          <tr><td>Exported data bundles (<code>/settings/data-export</code>)</td><td>7 days after generation, then auto-expire</td></tr>
+          <tr><td>Inactive accounts</td><td>Notified after 24 months of inactivity, then deleted after a further 30 days</td></tr>
+          <tr><td>Deletion request fulfilment</td><td>Within 30 days of a verified request, subject to legal holds</td></tr>
+        </tbody>
+      </table>
       <p>
-        Privacy questions: <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a><br>
-        Data requests: <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a><br>
-        Response time: within 30 days
+        Retention periods may be extended where necessary to comply with legal obligations,
+        resolve disputes, or enforce our agreements.
       </p>
 
-      <h2>13. Data Retention</h2>
-      <p>We apply the following concrete retention periods across operational systems:</p>
+      <h2 id="s12">12. Security</h2>
+      <p>
+        We maintain organisational and technical safeguards appropriate to the risk, including:
+      </p>
       <ul>
-        <li><strong>Session tokens</strong> — revoked after 7 days of inactivity or on logout.</li>
-        <li><strong>Security/audit logs</strong> — retained 90 days.</li>
-        <li><strong>Application logs</strong> — retained 30 days.</li>
-        <li><strong>Deleted account data</strong> — purged within 30 days of a deletion request.</li>
-        <li><strong>Data exports</strong> — auto-expire 7 days after generation.</li>
-        <li><strong>Inactive accounts</strong> — accounts with no login in 24 months are notified and then deleted per the GDPR storage limitation principle.</li>
+        <li>Encryption in transit (TLS 1.2+), encryption at rest for secrets.</li>
+        <li>PBKDF2-HMAC-SHA256 password hashing with per-user salts and high iteration counts.</li>
+        <li>API keys stored as hashes only; shown once at creation.</li>
+        <li>CSRF tokens on all state-changing requests; SameSite=Lax cookies.</li>
+        <li>Rate limiting, IP-based abuse detection, and automated blocklisting.</li>
+        <li>Content-Security-Policy, Strict-Transport-Security, Referrer-Policy, Permissions-Policy, Cross-Origin-Opener/Resource policies.</li>
+        <li>Secret-scanning in source control and CI.</li>
+        <li>Role-based access control for admin surfaces; audit-logging of admin actions; impersonation sessions are separately logged.</li>
+        <li>Regular dependency updates, periodic vulnerability scanning, and responsible-disclosure channel.</li>
+        <li>Backups encrypted and region-restricted; backup retention matches the data retention table above.</li>
       </ul>
+      <p>
+        No security measure is perfect. We will notify affected users and, where applicable,
+        competent authorities of personal-data breaches in accordance with GDPR Art. 33/34 (within
+        72 hours to the supervisory authority), UK GDPR, and analogous laws.
+      </p>
+
+      <h2 id="s13">13. Automated decision-making &amp; profiling</h2>
+      <p>
+        Core features of the Service rely on machine-processed analysis of publicly available
+        posts to produce credibility scores. These scores are <strong>not</strong> used to make
+        decisions producing legal or similarly significant effects concerning you as a user. We
+        do not use automated decision-making within the meaning of Art. 22 GDPR to make decisions
+        about you (such as refusing service or setting prices).
+      </p>
+
+      <h2 id="s14">14. Your rights — EEA &amp; UK (GDPR / UK GDPR)</h2>
+      <p>You have the right to:</p>
+      <ul>
+        <li><strong>Access</strong> (Art. 15) — obtain a copy of your personal data and information about the processing.</li>
+        <li><strong>Rectification</strong> (Art. 16) — correct inaccurate or incomplete data.</li>
+        <li><strong>Erasure</strong> (Art. 17) — "right to be forgotten", subject to limited exceptions.</li>
+        <li><strong>Restriction</strong> (Art. 18).</li>
+        <li><strong>Data portability</strong> (Art. 20) — receive data you provided in a structured, machine-readable format.</li>
+        <li><strong>Object</strong> (Art. 21) — to processing based on legitimate interest or for direct marketing (absolute right for direct marketing).</li>
+        <li><strong>Withdraw consent</strong> (Art. 7(3)) — without affecting the lawfulness of processing before withdrawal.</li>
+        <li><strong>Lodge a complaint</strong> with your supervisory authority (Art. 77) — or with ours; see §30.</li>
+        <li><strong>Not be subject to solely automated decisions</strong> (Art. 22) — see §13.</li>
+      </ul>
+      <p>
+        To exercise your rights email <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>
+        or use <code>/settings/data-export</code> and <code>/settings/data-deletion</code>. We
+        respond within one calendar month (extensible by two months for complex requests); we will
+        verify your identity before acting. There is no fee unless your request is manifestly
+        unfounded or excessive.
+      </p>
+
+      <h2 id="s15">15. Your rights — California (CCPA / CPRA)</h2>
+      <p>If you are a California resident, in addition to §14 you have the right to:</p>
+      <ul>
+        <li><strong>Know</strong> what personal information we collect, use, disclose, and sell.</li>
+        <li><strong>Delete</strong> personal information.</li>
+        <li><strong>Correct</strong> inaccurate personal information.</li>
+        <li><strong>Opt-out of sale / sharing.</strong> <em>We do not sell or share personal information as defined in the CCPA.</em> We honour the Global Privacy Control signal as an opt-out.</li>
+        <li><strong>Limit use of sensitive personal information</strong> — we do not use SPI for purposes that require opt-out.</li>
+        <li><strong>Non-discrimination</strong> — we will not deny service, charge different prices, or provide a different quality of service because you exercised a right.</li>
+      </ul>
+      <p>
+        To submit a request, email <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a> or
+        use the in-app tools. An authorised agent may submit a request on your behalf with your
+        signed permission; we will verify your identity and the agent's authority.
+      </p>
+      <p>
+        Categories of personal information collected, business purposes, and recipients are
+        described in §4–§9 and map to the CCPA categories (identifiers, customer records,
+        commercial information, internet/network activity, geolocation at a coarse level,
+        inferences).
+      </p>
+
+      <h2 id="s16">16. Your rights — other U.S. states</h2>
+      <p>
+        Residents of Virginia (VCDPA), Colorado (CPA), Connecticut (CTDPA), Utah (UCPA), Delaware
+        (DPDPA), Texas (TDPSA), Oregon (OCPA), Montana (MCDPA), Iowa (ICDPA), New Hampshire
+        (NHPA), New Jersey (NJDPA), Tennessee (TIPA), Minnesota (MNCDPA), Maryland (MCDPA),
+        Indiana, and Rhode Island have comparable rights to access, correct, delete, obtain
+        copies, and opt out of targeted advertising, sale, or profiling that has a legal/
+        significant effect. Because we do not engage in sale, targeted advertising, or Art. 22-type
+        profiling, opt-out signals primarily apply to "sharing" categories which we do not use.
+      </p>
+      <p>
+        Colorado residents may appeal a refusal to act on a request by replying to our response;
+        if unresolved you may contact the Colorado Attorney General.
+      </p>
+
+      <h2 id="s17">17. Your rights — Brazil (LGPD)</h2>
+      <p>
+        Titulares de dados pessoais no Brasil têm o direito de: (i) confirmação da existência de
+        tratamento; (ii) acesso aos dados; (iii) correção de dados incompletos, inexatos ou
+        desatualizados; (iv) anonimização, bloqueio ou eliminação de dados desnecessários; (v)
+        portabilidade; (vi) eliminação dos dados tratados com consentimento; (vii) informação sobre
+        entidades com as quais compartilhamos dados; (viii) informação sobre a possibilidade de não
+        fornecer consentimento e as suas consequências; (ix) revogação do consentimento; (x)
+        revisão de decisões automatizadas. Contato:
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>. Autoridade: ANPD
+        (gov.br/anpd).
+      </p>
+
+      <h2 id="s18">18. Your rights — Canada (PIPEDA and Québec Law 25)</h2>
+      <p>
+        Residents of Canada have the right to access and correct their personal information, to
+        withdraw consent, and to be notified of breaches that pose a real risk of significant
+        harm. Residents of Québec additionally have the right to data portability, the right to
+        de-indexation, and specific consent rules under Law 25. Contact
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>; you may escalate to the
+        Office of the Privacy Commissioner of Canada (priv.gc.ca) or the Commission d'accès à
+        l'information du Québec.
+      </p>
+
+      <h2 id="s19">19. Your rights — Australia &amp; New Zealand</h2>
+      <p>
+        Australian residents have rights under the Privacy Act 1988 (Cth) and the Australian
+        Privacy Principles (including APP 12 access and APP 13 correction). Complaints may be
+        lodged with the Office of the Australian Information Commissioner (oaic.gov.au). New
+        Zealand residents have rights under the Privacy Act 2020 and may contact the Office of
+        the Privacy Commissioner (privacy.org.nz).
+      </p>
+
+      <h2 id="s20">20. Your rights — Switzerland (revFADP)</h2>
+      <p>
+        Swiss residents have rights under the revised Federal Act on Data Protection, including
+        access, rectification, deletion, data portability, and the right to lodge a complaint with
+        the Federal Data Protection and Information Commissioner (edoeb.admin.ch).
+      </p>
+
+      <h2 id="s21">21. Your rights — Japan, Korea, Singapore, India, South Africa</h2>
+      <p>
+        <strong>Japan (APPI)</strong> — right of disclosure, correction, deletion, suspension of use,
+        and to receive information about third-party provision.
+      </p>
+      <p>
+        <strong>South Korea (PIPA)</strong> — right of access, correction, deletion, suspension of
+        processing, and to withdraw consent.
+      </p>
+      <p>
+        <strong>Singapore (PDPA)</strong> — right of access and correction; right to withdraw consent
+        with reasonable notice.
+      </p>
+      <p>
+        <strong>India (DPDP Act 2023)</strong> — right to access, correct, erase, and to nominate
+        another individual; grievance officer is contactable at
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>.
+      </p>
+      <p>
+        <strong>South Africa (POPIA)</strong> — right of access, correction, deletion, and to
+        object; complaints to the Information Regulator (inforegulator.org.za).
+      </p>
+
+      <h2 id="s22">22. Children's privacy</h2>
+      <p>
+        The Service is not directed to children. We do not knowingly collect personal data from
+        anyone under 18 (or the age of majority in your jurisdiction, if higher). In the United
+        States we require all account-holders to be 18+ in part to satisfy COPPA compliance. In
+        the United Kingdom we follow the ICO Age-Appropriate Design Code. If you believe a child
+        has provided us with data, contact
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a> and we will delete the data
+        promptly.
+      </p>
+
+      <h2 id="s23">23. Marketing communications &amp; unsubscribe</h2>
+      <p>
+        Marketing emails (if any) are sent only to users who opt in and include one-click
+        unsubscribe links compliant with CAN-SPAM (US), CASL (Canada), ePrivacy (EU), and UK
+        PECR. Withdrawing consent does not affect transactional emails required for the Service
+        (e.g., password reset, billing receipts, security alerts).
+      </p>
+
+      <h2 id="s24">24. Do Not Track &amp; Global Privacy Control</h2>
+      <p>
+        Our site does not currently respond to browser DNT headers (there is no consistent
+        industry-wide standard). We do, however, honour the <strong>Global Privacy Control</strong>
+        (<code>Sec-GPC: 1</code>) header as a valid opt-out signal for sale/sharing under the CCPA
+        and equivalent U.S. state laws.
+      </p>
+
+      <h2 id="s25">25. Data breach notification</h2>
+      <p>
+        In the event of a personal-data breach that is likely to result in risk to the rights and
+        freedoms of natural persons, we will notify the competent supervisory authority within 72
+        hours and, where the risk is high, affected individuals without undue delay. Equivalent
+        obligations apply under UK GDPR, CCPA, LGPD, PIPEDA, POPIA, and state breach-notification
+        statutes.
+      </p>
+
+      <h2 id="s26">26. Social media posts we ingest for credibility scoring</h2>
+      <p>
+        To produce source credibility scores we periodically fetch publicly visible posts from
+        third-party social platforms (e.g., X, Bluesky). We process:
+      </p>
+      <ul>
+        <li>The author's public handle (e.g., <code>@alice</code>).</li>
+        <li>The public post text and timestamp.</li>
+        <li>The public engagement counts where available.</li>
+      </ul>
+      <p>
+        We do not collect private messages, non-public content, or build consumer profiles on
+        authors beyond features needed to score their historical accuracy at predicting event
+        outcomes. Processing is based on Art. 6(1)(f) legitimate interest, supported by Art. 85
+        GDPR journalistic / research derogations as transposed in national law.
+      </p>
+      <p>
+        Authors have the right to object (Art. 21) to having their public posts included in our
+        credibility data. Contact <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>. We
+        will remove scored data for an identified account within 30 days absent overriding
+        compelling legitimate grounds.
+      </p>
+      <p>
+        Raw post content is deleted after 30 days; only de-identified aggregate features
+        (accuracy ratios, calibration metrics) are retained longer, and those are not used to
+        identify the individual.
+      </p>
+
+      <h2 id="s27">27. Publicly visible profiles</h2>
+      <p>
+        If you choose a public username and make public contributions (e.g., takes, comments,
+        predictions) those are visible to other users and may be indexed by search engines. You
+        can delete public contributions at any time; caches held by third-party search engines
+        are not within our control but we will reasonably assist in requesting removal.
+      </p>
+
+      <h2 id="s28">28. Support &amp; business communications</h2>
+      <p>
+        When you contact support we process your email, message content, and any account context
+        to resolve your request. Content is retained for up to 3 years from last correspondence
+        (UK Limitation Act / equivalent statute of limitations) unless a legal hold applies.
+      </p>
+
+      <h2 id="s29">29. Changes to this Policy</h2>
+      <p>
+        We update this Policy from time to time. Material changes are notified by email or
+        in-product banner at least 14 days before taking effect (30 days for material changes
+        affecting EU/UK consumers). The latest version is always available at
+        <a href="/privacy">/privacy</a>.
+      </p>
+
+      <h2 id="s30">30. Complaints, DPO, and EU/UK representatives</h2>
+      <p>
+        <strong>Complaint to us:</strong>
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>. We acknowledge within 5
+        business days and aim to resolve within 30 days.
+      </p>
+      <p>
+        <strong>Data Protection Officer:</strong> where appointed, contact
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a> with subject line "DPO".
+      </p>
+      <p>
+        <strong>EU Art. 27 representative:</strong> if you are in the EU/EEA and we act as a
+        controller established outside the EU, you may also contact our EU representative. Contact
+        details are posted at <a href="/dpa#eu-representative">/dpa#eu-representative</a>.
+      </p>
+      <p>
+        <strong>UK Art. 27 representative:</strong> if you are in the UK and we act as a
+        controller established outside the UK, contact details are posted at
+        <a href="/dpa#uk-representative">/dpa#uk-representative</a>.
+      </p>
+      <p>
+        <strong>Supervisory authorities:</strong> you have the right to complain to any EU
+        supervisory authority (list at <a href="https://edpb.europa.eu">edpb.europa.eu</a>), to
+        the UK ICO (ico.org.uk), the Swiss FDPIC, the Canadian OPC, Brazil's ANPD, Australia's
+        OAIC, or the competent authority in your jurisdiction.
+      </p>
+
+      <h2 id="s31">31. Contact</h2>
+      <p>
+        narve.ai<br>
+        Privacy inquiries &amp; data requests:
+        <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a><br>
+        Legal notices: <a href="mailto:{{ legal_email }}">{{ legal_email }}</a><br>
+        Support: <a href="mailto:{{ support_email }}">{{ support_email }}</a><br>
+        Response time: within one month of a verified request (extensible by two months for
+        complex requests under GDPR Art. 12(3)).
+      </p>
     </div>
 
     <footer class="legal-footer">
-      <div>© 2026 narve.ai. Prices in GBP. Not financial advice.</div>
+      <div>© 2026 narve.ai. Version 3.0.</div>
       <div>
         <a href="/terms">Terms</a>
         <a href="/privacy">Privacy</a>
