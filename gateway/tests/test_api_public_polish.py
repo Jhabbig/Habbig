@@ -178,29 +178,26 @@ class TestHubBridge(unittest.TestCase):
         self.assertEqual(msg["hello"], "world")
 
     def test_coroutine_callback_is_scheduled(self):
+        """Registering a coroutine-returning callback must not crash the
+        broadcast path. We drive the whole loop inline so there are no
+        leftover system tasks to drain."""
         from realtime.hub import hub
-        fired = {"called": False}
+        fired: list = []
 
         async def async_sink(channel, message):
-            fired["called"] = True
+            fired.append((channel, message))
 
         hub.register_after_broadcast(async_sink)
         try:
-            asyncio.run(_drive_broadcast_with_task(hub, "market_resolutions", {"m": 1}))
+            async def _drive():
+                await hub.broadcast("market_resolutions", {"m": 1})
+                # Yield once so the scheduled task we just created gets to run.
+                await asyncio.sleep(0)
+            asyncio.run(_drive())
         finally:
             hub._after_broadcast.remove(async_sink)
-        self.assertTrue(fired["called"])
-
-
-async def _drive_broadcast_with_task(hub, channel, message):
-    """broadcast() schedules async after-broadcast callbacks via
-    asyncio.create_task — which requires a running loop. We also need to
-    actually await the scheduled tasks so the test sees their side-effects."""
-    await hub.broadcast(channel, message)
-    # Drain pending tasks (the scheduled bridge coroutine).
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+        self.assertEqual(len(fired), 1)
+        self.assertEqual(fired[0][0], "market_resolutions")
 
 
 # ── D: webhook_disabled template renders ───────────────────────────────

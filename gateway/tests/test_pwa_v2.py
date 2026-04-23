@@ -226,5 +226,153 @@ class TestNarveAppJsOfflineSurface(unittest.TestCase):
         self.assertIn("'predictions'", self.js)
 
 
+class TestCachedRibbonSurface(unittest.TestCase):
+    """narve.cached.* + SW cache-header stamping (feature A).
+
+    The SW stamps X-Served-From + X-Cached-At on every response served
+    from the cache; the client reads those headers to render a "Last
+    updated X min ago (cached)" ribbon.
+    """
+
+    def setUp(self):
+        self.sw = (_STATIC / "sw.js").read_text(encoding="utf-8")
+        self.js = (_STATIC / "narve-app.js").read_text(encoding="utf-8")
+        self.css = (_STATIC / "gateway.css").read_text(encoding="utf-8")
+
+    def test_sw_stamps_served_from_cache_header(self):
+        self.assertIn("'X-Served-From'", self.sw)
+        self.assertIn("'cache'", self.sw)
+        self.assertIn("withCacheHeaders", self.sw)
+
+    def test_sw_stamps_cached_at_from_date_header(self):
+        self.assertIn("'X-Cached-At'", self.sw)
+
+    def test_narve_cached_exposes_fetchjson_and_ribbon(self):
+        self.assertIn("narve.cached", self.js)
+        self.assertIn("fetchJSON", self.js)
+        self.assertIn("renderRibbon", self.js)
+
+    def test_ribbon_css_monochrome(self):
+        self.assertIn(".narve-cached-ribbon", self.css)
+        # Monochrome — no coloured highlights.
+        lower_rule = self.css.split(".narve-cached-ribbon", 1)[1].split("}", 1)[0].lower()
+        for banned in ("#ef4444", "#f59e0b", "#10b981", "red;", "amber;"):
+            self.assertNotIn(banned, lower_rule)
+
+
+class TestSettingsNavLink(unittest.TestCase):
+    """The /settings/offline page is reachable, but the main /settings
+    page also needs a nav item or users won't discover it."""
+
+    def setUp(self):
+        self.html = (_STATIC / "settings.html").read_text(encoding="utf-8")
+
+    def test_main_settings_links_to_offline_subpage(self):
+        self.assertIn('href="/settings/offline"', self.html)
+        self.assertIn("Offline", self.html)
+
+
+class TestPushFanoutWired(unittest.TestCase):
+    """Push-notification fanout (feature C): the three email-fanout
+    jobs each enqueue a parallel send_push_notification. Grep-style
+    guard — if someone deletes the enqueue_job call, this fires."""
+
+    def setUp(self):
+        path = Path(server.__file__).resolve().parent / "jobs" / "notification_jobs.py"
+        self.src = path.read_text(encoding="utf-8")
+
+    def test_push_job_no_longer_a_stub(self):
+        self.assertNotIn("web-only, push not configured", self.src)
+        self.assertIn("push.send_to_user", self.src)
+
+    def test_market_resolution_fans_out_push(self):
+        # Must sit inside the resolution loop; a single 'send_push_'
+        # call across the file would miss the saved-prediction and
+        # mover paths, so assert each tag is present.
+        self.assertIn('"market-resolved-', self.src)
+
+    def test_saved_prediction_fans_out_push(self):
+        self.assertIn('"saved-', self.src)
+
+    def test_mover_alert_fans_out_push(self):
+        self.assertIn('"mover-', self.src)
+
+
+class TestDashboardsPrecache(unittest.TestCase):
+    """/dashboards gets pre-cached into narve-v2-runtime on idle after
+    boot for logged-in visitors, so first-offline hits the real page."""
+
+    def setUp(self):
+        self.js = (_STATIC / "narve-app.js").read_text(encoding="utf-8")
+
+    def test_precache_runs_on_idle(self):
+        self.assertIn("precacheDashboards", self.js)
+        self.assertIn("requestIdleCallback", self.js)
+
+    def test_precache_guards_with_isloggedin(self):
+        # Anonymous visitors must NOT warm the cache — it would cache
+        # a logged-out /dashboards response, then the user signs in
+        # and gets stale anonymous markup offline.
+        idx = self.js.find("async function precacheDashboards")
+        self.assertGreater(idx, 0)
+        body = self.js[idx: idx + 1000]
+        self.assertIn("isLoggedIn()", body)
+
+    def test_precache_skips_self_page(self):
+        idx = self.js.find("async function precacheDashboards")
+        body = self.js[idx: idx + 1000]
+        self.assertIn("'/dashboards'", body)
+        self.assertIn("pathname", body)
+
+    def test_precache_target_matches_sw_runtime_cache(self):
+        # The SW's RUNTIME_CACHE is `${CACHE_V}-runtime` → narve-v2-runtime.
+        self.assertIn("'narve-v2-runtime'", self.js)
+
+
+class TestNeverCacheGuard(unittest.TestCase):
+    """Belt-and-braces: the never-cache list in sw.js covers every
+    auth/admin/billing prefix. If someone adds a new /api/* path that
+    handles secrets and forgets to exclude it from SWR, this fires."""
+
+    def setUp(self):
+        self.sw = (_STATIC / "sw.js").read_text(encoding="utf-8")
+
+    def test_never_cache_prefixes_present(self):
+        for prefix in (
+            "'/api/auth'",
+            "'/api/admin'",
+            "'/api/billing'",
+            "'/auth/'",
+            "'/admin/'",
+            "'/billing/'",
+            "'/stripe/'",
+        ):
+            self.assertIn(prefix, self.sw, f"missing never-cache prefix: {prefix}")
+
+    def test_never_cache_checked_before_any_caching_strategy(self):
+        """Order in fetch listener: NEVER_CACHE_PREFIXES check must run
+        before any cacheFirst/staleWhileRevalidate dispatch. If we ever
+        reversed the order, a /api/admin GET could be cached once even
+        if the second request bypasses. Source-order check."""
+        never = self.sw.find("NEVER_CACHE_PREFIXES.some")
+        cache_first_call = self.sw.find("cacheFirst(req, STATIC_CACHE)")
+        self.assertGreater(never, 0, "NEVER_CACHE_PREFIXES scan missing")
+        self.assertGreater(cache_first_call, 0, "cacheFirst dispatch missing")
+        self.assertLess(
+            never, cache_first_call,
+            "never-cache check must appear before any caching branch",
+        )
+
+    def test_cacheable_list_excludes_secrets(self):
+        """The explicit allow-list must not mention anything under
+        /api/auth, /api/admin, /api/billing. It's an easy paste-error."""
+        # Find CACHEABLE_API_PREFIXES array
+        start = self.sw.find("CACHEABLE_API_PREFIXES")
+        end = self.sw.find("]", start)
+        allowed = self.sw[start:end]
+        for banned in ("/api/auth", "/api/admin", "/api/billing"):
+            self.assertNotIn(banned, allowed, f"{banned} leaked into cacheable list")
+
+
 if __name__ == "__main__":
     unittest.main()

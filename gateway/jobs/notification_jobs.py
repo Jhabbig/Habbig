@@ -74,6 +74,16 @@ async def send_market_resolution_notifications(
                     (r["id"],),
                 )
             notified += 1
+            # Parallel push fanout (opt-in, best-effort). The email is
+            # the authoritative delivery; push is a convenience nudge.
+            await enqueue_job(
+                "send_push_notification",
+                user_id=r["user_id"],
+                title="Market resolved",
+                body=(market_question or market_slug)[:140] + " \u2192 " + outcome,
+                url=f"/markets/{market_slug}",
+                tag=f"market-resolved-{market_slug}",
+            )
         except Exception as e:
             log.warning("resolution notif failed for user_id=%s: %s", r["user_id"], e)
 
@@ -95,16 +105,65 @@ async def send_push_notification(
     user_id: int,
     title: str,
     body: str,
+    url: str | None = None,
+    tag: str | None = None,
     data: dict | None = None,
 ) -> dict[str, Any]:
-    """Placeholder for push notifications.
+    """Dispatch a Web Push to every subscription the user owns.
 
-    The platform is web-only per spec — no iOS / Android push. If you later
-    wire up web-push subscriptions, this is where the dispatch logic goes.
-    For now it logs and returns successfully so callers don't fail.
+    Delegates to push.send_to_user() which walks push_subscriptions rows,
+    calls pywebpush, and cleans up rows the push service reports as gone.
+    Silently no-ops when pywebpush / VAPID keys are unavailable — the
+    caller still has email as a parallel channel.
     """
-    log.info("push notification (no-op) user_id=%s title=%s", user_id, title)
-    return {"sent": False, "reason": "web-only, push not configured"}
+    try:
+        import push  # lazy import: module is safe even when pywebpush missing
+        result = push.send_to_user(
+            user_id=user_id,
+            title=title,
+            body=body,
+            url=url or "/",
+            tag=tag or "narve-general",
+            data=data or {},
+        )
+        return result
+    except push.PushNotAvailable as exc:  # type: ignore[attr-defined]
+        # Not configured (no keys, pywebpush missing). Normal in dev.
+        log.debug("push not available for user_id=%s: %s", user_id, exc)
+        return {"sent": False, "reason": str(exc)}
+    except Exception as exc:  # pragma: no cover — unexpected
+        log.warning("push fanout failed user_id=%s: %s", user_id, exc)
+        return {"sent": False, "reason": "error"}
+
+
+def _fanout_push_safe(user_id: int, *, title: str, body: str, url: str, tag: str) -> None:
+    """Fire-and-forget push fanout used by the email jobs above.
+
+    Each email-fanout job enqueues a push job alongside the email send.
+    We swallow every error here — push is a best-effort parallel channel,
+    never a reason for an email-fanout job to fail its DB commit.
+    """
+    try:
+        from jobs import enqueue_job
+        import asyncio
+        # enqueue_job is async; we're inside another async job already so
+        # use ensure_future / awaitable at call sites. This wrapper just
+        # exposes a sync-looking helper; callers that can await should
+        # prefer `await enqueue_job(...)` directly. Kept sync-friendly
+        # here for readability at the call sites.
+        coro = enqueue_job(
+            "send_push_notification",
+            user_id=user_id,
+            title=title,
+            body=body,
+            url=url,
+            tag=tag,
+        )
+        task = asyncio.ensure_future(coro)
+        # Swallow the future's result silently; we're best-effort.
+        task.add_done_callback(lambda _t: None)
+    except Exception:
+        pass
 
 
 @register_job("send_saved_prediction_resolution_notifications")
@@ -171,6 +230,17 @@ async def send_saved_prediction_resolution_notifications(
             )
             db.mark_saved_prediction_notified(r["saved_id"])
             notified += 1
+            # Push parallel to email — same transactional context
+            # (the user themselves saved this prediction, so they're
+            # guaranteed to want to know).
+            await enqueue_job(
+                "send_push_notification",
+                user_id=r["user_id"],
+                title="Saved prediction " + ("resolved correct" if correct else "resolved incorrect"),
+                body=(r["content"] or "")[:140],
+                url="/saved",
+                tag=f"saved-{r['saved_id']}",
+            )
         except Exception as exc:
             log.warning("saved-prediction resolution notif failed for saved_id=%s user_id=%s: %s",
                         r["saved_id"], r["user_id"], exc)
@@ -305,6 +375,21 @@ async def check_market_movers(
                     tags=["market_mover_alert"],
                 )
                 alerts_sent += 1
+                # Push fanout for the high-credibility mover case.
+                # Only fire when there's a top_source backing the move —
+                # movement alone is noise; movement + a high-cred take
+                # is the "insider_signal_high_confidence" event type
+                # the PWA spec calls out.
+                if mover.get("top_source"):
+                    from jobs import enqueue_job
+                    await enqueue_job(
+                        "send_push_notification",
+                        user_id=user["id"],
+                        title="High-cred market move",
+                        body=f"{m.title[:80]} moved {context['price_change_display']}",
+                        url=f"/markets/{m.id}",
+                        tag=f"mover-{m.id}",
+                    )
             except Exception as e:
                 log.warning("Market mover alert failed for user %d: %s", user["id"], e)
 

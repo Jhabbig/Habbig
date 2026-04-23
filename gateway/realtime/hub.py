@@ -174,11 +174,15 @@ class Hub:
             for ws in dropped:
                 await self.unsubscribe_all(ws, reason="broadcast_send_failed")
         self._tick(sent=sent, dropped=len(dropped))
+        self._fire_after_broadcast(channel, message)
+        return sent
 
-        # Fire after-broadcast bridges (webhooks, etc.). Run each on its
-        # own task so one failing bridge never blocks the next. Exceptions
-        # are logged and swallowed — bridges are additive, never load-
-        # bearing for the WebSocket path.
+    def _fire_after_broadcast(self, channel: str, message: dict) -> None:
+        """Run every registered after-broadcast callback. Run each on its
+        own task if it's async so one slow bridge never blocks the next.
+        Exceptions are logged and swallowed — bridges are additive, never
+        load-bearing for the WebSocket path.
+        """
         for cb in self._after_broadcast:
             try:
                 result = cb(channel, message)
@@ -187,7 +191,6 @@ class Hub:
             except Exception as exc:
                 log.warning("after_broadcast callback %s raised: %s",
                             getattr(cb, "__qualname__", cb), exc)
-        return sent
 
     # ── Bridge registration ───────────────────────────────────────────
 

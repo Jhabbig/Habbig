@@ -157,10 +157,31 @@ self.addEventListener('fetch', (event) => {
 
 // ── Strategies ───────────────────────────────────────────────────────
 
+// Clone a cached Response and stamp it with served-from-cache headers so
+// the page can render a "Last updated X min ago (cached)" ribbon. The
+// SW also annotates `X-Cached-At` with the Date header from the cached
+// response — pages read this to compute a relative timestamp.
+async function withCacheHeaders(resp) {
+  if (!resp) return resp;
+  const clone = resp.clone();
+  const body = await clone.blob();
+  const headers = new Headers(resp.headers);
+  headers.set('X-Served-From', 'cache');
+  if (!headers.has('X-Cached-At')) {
+    const d = resp.headers.get('date');
+    if (d) headers.set('X-Cached-At', d);
+  }
+  return new Response(body, {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers,
+  });
+}
+
 async function cacheFirst(request, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
-  if (cached) return cached;
+  if (cached) return withCacheHeaders(cached);
   try {
     const fresh = await fetch(request);
     if (fresh && fresh.status === 200) cache.put(request, fresh.clone());
@@ -178,9 +199,11 @@ async function staleWhileRevalidate(request, cacheName) {
       if (fresh && fresh.status === 200) cache.put(request, fresh.clone());
       return fresh;
     })
-    .catch(() => cached);
-  // Return cached immediately if we have it; otherwise wait for network.
-  return cached || networkPromise;
+    .catch(() => (cached ? withCacheHeaders(cached) : undefined));
+  // Return cached (stamped) immediately if we have it; otherwise wait
+  // for network.
+  if (cached) return withCacheHeaders(cached);
+  return networkPromise;
 }
 
 async function networkFirstWithOffline(request) {
@@ -191,11 +214,11 @@ async function networkFirstWithOffline(request) {
     return fresh;
   } catch {
     const cached = await cache.match(request);
-    if (cached) return cached;
+    if (cached) return withCacheHeaders(cached);
     // Precached offline shell.
     const staticCache = await caches.open(STATIC_CACHE);
     const offline = await staticCache.match(OFFLINE_URL);
-    if (offline) return offline;
+    if (offline) return withCacheHeaders(offline);
     // Worst-case inline fallback.
     return new Response(
       '<!doctype html><meta charset="utf-8"><title>Offline</title>'

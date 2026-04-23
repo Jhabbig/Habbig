@@ -447,6 +447,48 @@
   // Thin submit wrapper used by the feed / prediction composer. Prefers
   // the network; on failure (or the SW's 202 response) queues for sync
   // and surfaces a status toast via the shared live region.
+  /**
+   * narve.cached — fetch wrapper that surfaces SW cache provenance.
+   *
+   *   const { json, cachedAt, fromCache } = await narve.cached.fetchJSON(url);
+   *
+   * When the response was served from the service-worker cache (via the
+   * `X-Served-From: cache` header the SW stamps), `fromCache` is true
+   * and `cachedAt` is a Date. Callers render a ribbon like
+   * "Last updated 3 min ago (cached)" via narve.cached.renderRibbon(el, meta).
+   */
+  narve.cached = {
+    async fetchJSON(url, init) {
+      const resp = await fetch(url, Object.assign({ credentials: 'same-origin' }, init || {}));
+      const fromCache = resp.headers.get('X-Served-From') === 'cache';
+      const cachedAtHdr = resp.headers.get('X-Cached-At') || resp.headers.get('date') || '';
+      const cachedAt = cachedAtHdr ? new Date(cachedAtHdr) : null;
+      const json = await resp.json().catch(() => null);
+      return { json, cachedAt, fromCache, ok: resp.ok };
+    },
+    renderRibbon(container, meta) {
+      if (!container) return;
+      let el = container.querySelector('.narve-cached-ribbon');
+      if (!el) {
+        el = document.createElement('p');
+        el.className = 'narve-cached-ribbon';
+        container.prepend(el);
+      }
+      if (!meta || !meta.fromCache) {
+        el.remove();
+        return;
+      }
+      const ts = meta.cachedAt instanceof Date && !isNaN(meta.cachedAt)
+        ? meta.cachedAt
+        : new Date();
+      const mins = Math.max(0, Math.round((Date.now() - ts.getTime()) / 60000));
+      const label = mins < 1 ? 'moments ago'
+        : mins < 60 ? mins + ' min ago'
+        : Math.round(mins / 60) + ' h ago';
+      el.textContent = 'Last updated ' + label + ' (cached)';
+    },
+  };
+
   narve.predictions = {
     async submit(body) {
       const payload = typeof body === 'string' ? body : JSON.stringify(body || {});
@@ -485,11 +527,38 @@
     },
   };
 
+  // Warm the SW runtime cache with /dashboards once per authed visit.
+  // First-visit-offline users get a real landing instead of the generic
+  // offline shell. Fire-and-forget; any failure is non-fatal.
+  async function precacheDashboards() {
+    try {
+      if (!('caches' in window) || !isLoggedIn()) return;
+      if (window.location.pathname === '/dashboards') return;  // already the current page
+      const key = 'narve:dashboards-precached';
+      // Re-warm once per day so a long-lived session still gets a
+      // reasonably fresh snapshot.
+      const last = Number(sessionStorage.getItem(key) || '0');
+      if (Date.now() - last < 24 * 60 * 60 * 1000) return;
+      const resp = await fetch('/dashboards', { credentials: 'same-origin' });
+      if (!resp.ok) return;
+      const cache = await caches.open('narve-v2-runtime');
+      await cache.put('/dashboards', resp.clone());
+      try { sessionStorage.setItem(key, String(Date.now())); } catch {}
+    } catch { /* best-effort */ }
+  }
+
   // ── 7. Boot ─────────────────────────────────────────────────────────
   function boot() {
     ensureMainLandmark();
     ensureLiveRegion();
     initOfflineBanner();
+    // Defer precache until after first paint so it doesn't compete
+    // with critical-path fetches.
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(precacheDashboards, { timeout: 4000 });
+    } else {
+      setTimeout(precacheDashboards, 2500);
+    }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, { once: true });
