@@ -149,6 +149,46 @@ def _scrub_value(key: str, value: Any) -> Any:
     return value
 
 
+# Known-shape secret patterns to redact from log MESSAGE contents. These
+# catch the cases that ``_scrub_value`` cannot: when a secret is
+# interpolated into a format string (``log.info("...%s...", token)``)
+# the arg value arrives at the formatter as an opaque string with no
+# associated key, so we can only match on content.
+#
+# Kept intentionally small — every pattern here has to run on every log
+# line, and a false positive silently hides real signal. Only patterns
+# with a distinctive shape (bearer prefix, query-string param, key=
+# assignment) are listed. Freeform emails / usernames / session ids
+# are NOT matched here because the legitimate admin audit trail
+# depends on them being visible.
+
+import re  # noqa: E402
+
+_MESSAGE_REDACT_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
+    # Bearer tokens in auth headers or Authorization strings.
+    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{10,}"), "bearer [REDACTED]"),
+    # Password embedded in a query string or URL fragment.
+    (re.compile(r"(?i)(password|passwd|secret|token|api[_-]?key)=[^\s&\"']{6,}"),
+     r"\1=[REDACTED]"),
+    # Basic-auth user:pass in a URL (scheme://user:pass@host).
+    (re.compile(r"(?i)([a-z]+)://([^:@\s/]+):([^@\s/]+)@"), r"\1://\2:[REDACTED]@"),
+)
+
+
+def _redact_message(msg: str) -> str:
+    """Apply the known-shape regexes to a log message string. Returns
+    the message unchanged when no pattern matches (the hot path)."""
+    if not msg or len(msg) > 50_000:
+        # Cap bounds a pathologically huge exception payload; skipping
+        # the regex on extreme messages is safe because any embedded
+        # secret is already logged and the damage is done.
+        return msg
+    out = msg
+    for pat, repl in _MESSAGE_REDACT_PATTERNS:
+        out = pat.sub(repl, out)
+    return out
+
+
 class StructuredFormatter(logging.Formatter):
     """Formats log records as JSON lines for BetterStack ingestion."""
 
@@ -159,7 +199,10 @@ class StructuredFormatter(logging.Formatter):
             "service": SERVICE_NAME,
             "environment": ENVIRONMENT,
             "logger": record.name,
-            "message": record.getMessage(),
+            # Content-level regex pass catches bearer-prefix tokens,
+            # key=value secrets in URLs, and basic-auth embedded creds
+            # that survive the per-field key-based scrub above.
+            "message": _redact_message(record.getMessage()),
         }
 
         # Attach any extra=... fields passed to the logger call

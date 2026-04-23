@@ -660,6 +660,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Centralised error handlers + request-id middleware. Registered early
+# so every other middleware's downstream exceptions get caught + logged
+# with a request id. Adds RequestIDMiddleware (runs first in reverse-
+# add order) so every response carries X-Request-ID.
+try:
+    import error_handlers as _error_handlers  # noqa: E402
+    _error_handlers.register(app)
+except Exception as _eh_exc:  # pragma: no cover
+    log.warning("error_handlers registration failed: %s — continuing without it", _eh_exc)
+
 # PWA + a11y HTML injection. Lives in a middleware (not render_page)
 # so it applies to every text/html response, and isn't affected by
 # upstream refactors of render_page(). Imported lazily so a syntax
@@ -1456,10 +1466,36 @@ import uuid as _uuid
 
 
 class LoggingContextMiddleware(BaseHTTPMiddleware):
-    """Attach request_id (and best-effort user_id) to logging context."""
+    """Attach request_id (and best-effort user_id) to logging context.
+
+    Inbound ``X-Request-ID`` header is honoured when present so upstream
+    proxies / client trace-ids thread through our logs cleanly. We
+    sanitise the value to ``[A-Za-z0-9_-]`` up to 64 chars — stops a
+    malformed / injected header (newlines, control chars) from
+    poisoning a log line. Freshly-minted ids are 8-char hex for
+    compact tail-f readability; inbound ids keep their original shape
+    so a full upstream UUID survives intact.
+    """
+
+    # Shape guard for inbound ids.
+    _INBOUND_ID_MAX = 64
+
+    def _inbound_id(self, raw: str) -> Optional[str]:
+        if not raw:
+            return None
+        raw = raw.strip()[: self._INBOUND_ID_MAX]
+        if not raw:
+            return None
+        for ch in raw:
+            if not (ch.isalnum() or ch in "-_"):
+                return None
+        return raw
 
     async def dispatch(self, request, call_next):
-        request_id = _uuid.uuid4().hex[:8]
+        request_id = (
+            self._inbound_id(request.headers.get("x-request-id", ""))
+            or _uuid.uuid4().hex[:8]
+        )
         user_id: Optional[int] = None
 
         # Best-effort user_id lookup from the session cookie. We deliberately

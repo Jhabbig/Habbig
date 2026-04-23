@@ -264,6 +264,10 @@ class TestNoPrintInProductionCode(unittest.TestCase):
         # Forensics watermark extractor is a CLI tool — prints decoded
         # user_id + confidence to stdout when run from the command line.
         "forensics/extract_watermark.py",
+        # i18n auto-translate is a manual CLI tool (python3 -m
+        # i18n.auto_translate). Prints status + stderr warnings as
+        # operator feedback; not part of the request-path surface.
+        "i18n/auto_translate.py",
     }
 
     def test_no_print_statements(self):
