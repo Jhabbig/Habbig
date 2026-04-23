@@ -94,12 +94,20 @@
       if (this.root) return;
       const backdrop = document.createElement('div');
       backdrop.className = 'narve-cmdp-backdrop';
+      // ARIA combobox pattern — input owns the results listbox via
+      // aria-controls, and aria-activedescendant points to whichever
+      // row is currently selected. This lets screen readers announce
+      // the highlighted result without moving DOM focus off the input.
       backdrop.innerHTML = `
         <div class="narve-cmdp" role="dialog" aria-modal="true" aria-label="Search">
-          <input class="narve-cmdp-input" type="text" placeholder="Search markets, sources, predictions… (/ for commands)"
-                 autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Search">
-          <div class="narve-cmdp-results" role="listbox"></div>
-          <div class="narve-cmdp-footer">
+          <input class="narve-cmdp-input" type="text"
+                 placeholder="Search markets, sources, predictions… (/ for commands)"
+                 autocomplete="off" autocorrect="off" spellcheck="false"
+                 role="combobox" aria-expanded="true" aria-autocomplete="list"
+                 aria-controls="narve-cmdp-listbox" aria-label="Search">
+          <div class="narve-cmdp-results" id="narve-cmdp-listbox" role="listbox"
+               aria-label="Search results"></div>
+          <div class="narve-cmdp-footer" aria-hidden="true">
             <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
             <span><kbd>↵</kbd> open</span>
             <span><kbd>esc</kbd> close</span>
@@ -232,19 +240,30 @@
 
     renderGroups(groups) {
       const flat = [];
-      const html = groups.map(g => {
+      // Each group gets an accessible group header with an id we point
+      // the listbox items at via aria-describedby (so screen readers
+      // announce "Markets, <title>" rather than just "<title>").
+      const html = groups.map((g, gi) => {
+        const groupId = `narve-cmdp-grp-${gi}`;
         const rows = g.items.map(it => {
           const idx = flat.length;
           flat.push(it);
           const glyph = TYPE_GLYPH[it.type] || '·';
-          return `<div class="narve-cmdp-row" data-i="${idx}" role="option">
-            <span class="narve-cmdp-glyph">${esc(glyph)}</span>
+          const optId = `narve-cmdp-opt-${idx}`;
+          // role=option + aria-selected tracks the currently-highlighted
+          // result for assistive tech. aria-describedby points at the
+          // group label so type context comes through.
+          return `<div class="narve-cmdp-row" data-i="${idx}"
+                       id="${optId}" role="option" aria-selected="false"
+                       aria-describedby="${groupId}">
+            <span class="narve-cmdp-glyph" aria-hidden="true">${esc(glyph)}</span>
             <span class="narve-cmdp-title">${esc(it.title)}</span>
             <span class="narve-cmdp-sub">${esc(it.subtitle)}</span>
           </div>`;
         }).join('');
-        return `<div class="narve-cmdp-group">
-          <div class="narve-cmdp-group-label">${TYPE_LABEL[g.type] || g.type}</div>
+        const label = TYPE_LABEL[g.type] || g.type;
+        return `<div class="narve-cmdp-group" role="group" aria-labelledby="${groupId}">
+          <div class="narve-cmdp-group-label" id="${groupId}">${label}</div>
           ${rows}
         </div>`;
       }).join('');
@@ -263,10 +282,27 @@
 
     highlight() {
       if (!this.list) return;
+      let activeId = '';
       this.list.querySelectorAll('.narve-cmdp-row').forEach((el, i) => {
-        el.classList.toggle('selected', i === this.sel);
-        if (i === this.sel) el.scrollIntoView({ block: 'nearest' });
+        const selected = i === this.sel;
+        el.classList.toggle('selected', selected);
+        el.setAttribute('aria-selected', selected ? 'true' : 'false');
+        if (selected) {
+          activeId = el.id || '';
+          el.scrollIntoView({ block: 'nearest' });
+        }
       });
+      // aria-activedescendant on the input stays in the DOM focus while
+      // the highlighted option changes — the screen-reader-accessible
+      // way to render a listbox that doesn't move focus off the search
+      // field.
+      if (this.input) {
+        if (activeId) {
+          this.input.setAttribute('aria-activedescendant', activeId);
+        } else {
+          this.input.removeAttribute('aria-activedescendant');
+        }
+      }
     }
 
     moveSel(delta) {
@@ -364,7 +400,6 @@
     const pill = document.createElement('button');
     pill.type = 'button';
     pill.className = 'narve-search-trigger narve-cmdp-pill';
-    pill.setAttribute('aria-label', 'Search (⌘K)');
     // Detect platform to show the right modifier glyph. navigator.platform
     // is deprecated but the replacement (userAgentData.platform) isn't
     // widely available yet, so fall through to legacy.
@@ -373,6 +408,12 @@
       navigator.platform || ''
     );
     const mod = isMac ? '⌘' : 'Ctrl';
+    // aria-label uses the verbose "Command K" / "Control K" phrasing so
+    // screen readers announce the shortcut rather than a cryptic glyph.
+    const modWord = isMac ? 'Command' : 'Control';
+    pill.setAttribute('aria-label',
+      `Open search — keyboard shortcut ${modWord}+K`);
+    pill.setAttribute('aria-keyshortcuts', isMac ? 'Meta+K' : 'Control+K');
     pill.innerHTML = `
       <span class="narve-cmdp-pill-icon" aria-hidden="true">⌕</span>
       <span class="narve-cmdp-pill-label">Search</span>

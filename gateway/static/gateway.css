@@ -2252,6 +2252,14 @@ a.btn:focus-visible,
   .narve-cmdp { animation: none; }
 }
 
+/* Focus rings — visible only for keyboard users (focus-visible), so
+   mouse clicks don't get a halo. Matches the peer-feature a11y pass. */
+.narve-cmdp-input:focus-visible,
+.narve-cmdp-pill:focus-visible {
+  outline: 2px solid var(--text-primary, #fff);
+  outline-offset: 2px;
+}
+
 .narve-cmdp-input {
   appearance: none;
   -webkit-appearance: none;

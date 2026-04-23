@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/_gateway_static/scroll-animations.css">
+  <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <!-- Sentry frontend (only loads if DSN present) -->
   <!-- requires server to substitute sentry_frontend_dsn; empty disables Sentry -->
@@ -86,6 +87,11 @@
         <span class="sidebar-injected" data-icon="shield">{{ raw_admin_link }}</span>
       </nav>
 
+      <!-- Pinned saved-view slot. filter_panel.js fetches /api/saved-views/pinned
+           and replaces this div with a rendered list; if the user has no pinned
+           views (or is signed out), the slot stays hidden. -->
+      <div id="pinned-views"></div>
+
       <a href="/profile" class="sidebar-user" style="text-decoration:none">
         <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
         <span class="sidebar-user-name">{{ username }}</span>
@@ -155,7 +161,18 @@
 <script src="/_gateway_static/scroll-animations.js" defer></script>
 <script src="/_gateway_static/user-features.js" defer></script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/filter_panel.js" defer></script>
+<script>
+  // Auto-mount pinned saved-view list into the sidebar slot. Silent no-op
+  // when signed-out or when the user hasn't pinned anything yet.
+  document.addEventListener("DOMContentLoaded", function () {
+    if (window.NarveFilterPanel && typeof window.NarveFilterPanel.mountSidebar === "function") {
+      window.NarveFilterPanel.mountSidebar();
+    }
+  });
+</script>
 <script src="/_gateway_static/engagement_banner.js" defer></script>
+<script src="/_gateway_static/feedback_button.js" defer></script>
 <script src="/_gateway_static/collections_widget.js" defer></script>
 </body>
 </html>

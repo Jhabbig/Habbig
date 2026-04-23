@@ -1,0 +1,398 @@
+/* ══════════════════════════════════════════════════════════════════
+   Filter panel — drop-in sidebar for markets / feed / sources /
+   predictions. Reuses the --dash-* + --text-* + --border-* tokens
+   from gateway.css (DASHBOARD CONSISTENCY LAYER) so the panel
+   matches every dashboard tab without a second token set.
+   ══════════════════════════════════════════════════════════════════ */
+
+.filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 280px;
+  flex-shrink: 0;
+  padding: var(--space-4);
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.filter-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-ghost);
+}
+.filter-panel__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+.filter-panel__count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.filter-panel__count strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.filter-section__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+/* ── Checkbox chips (multi-select category/tag/platform) ──────────── */
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dash-transition-fast), color var(--dash-transition-fast), border-color var(--dash-transition-fast);
+  font-family: inherit;
+  user-select: none;
+}
+.filter-chip:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+.filter-chip[aria-pressed="true"] {
+  background: var(--text-primary);
+  color: var(--interactive-text);
+  border-color: var(--text-primary);
+}
+
+/* ── Single-value select (platform) ───────────────────────────────── */
+
+.filter-select {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 13px;
+}
+.filter-select:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* ── Numeric range sliders (edge, probability, volume) ─────────────── */
+
+.filter-range {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.filter-range__input {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.filter-range__input:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+.filter-range__sep {
+  color: var(--text-quaternary);
+  font-size: 12px;
+}
+
+/* ── Duration pills (close_within, posted_within) ─────────────────── */
+
+.filter-duration {
+  display: flex;
+  gap: 4px;
+}
+.filter-duration button {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dash-transition-fast), color var(--dash-transition-fast), border-color var(--dash-transition-fast);
+}
+.filter-duration button:hover {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+}
+.filter-duration button[aria-pressed="true"] {
+  background: var(--text-primary);
+  color: var(--interactive-text);
+  border-color: var(--text-primary);
+}
+
+/* ── Toggles (bool dimensions) ─────────────────────────────────────── */
+
+.filter-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.filter-toggle__label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.filter-toggle input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  border: 1px solid var(--border-default);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--dash-transition-fast);
+}
+.filter-toggle input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 1px; left: 1px;
+  width: 12px; height: 12px;
+  background: var(--bg-base);
+  border-radius: 50%;
+  transition: transform var(--dash-transition-fast);
+}
+.filter-toggle input[type="checkbox"]:checked {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+}
+.filter-toggle input[type="checkbox"]:checked::before {
+  transform: translateX(12px);
+}
+.filter-toggle input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* ── Actions (apply / save / share / reset) ───────────────────────── */
+
+.filter-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-ghost);
+  margin-top: auto;
+}
+.filter-actions__row {
+  display: flex;
+  gap: 6px;
+}
+.filter-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dash-transition-fast), color var(--dash-transition-fast), border-color var(--dash-transition-fast), transform 0.08s ease;
+}
+.filter-btn:hover {
+  border-color: var(--text-primary);
+}
+.filter-btn:active { transform: scale(0.98); }
+.filter-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+.filter-btn--primary {
+  background: var(--text-primary);
+  color: var(--interactive-text);
+  border-color: var(--text-primary);
+}
+.filter-btn--primary:hover {
+  background: var(--interactive-hover);
+  border-color: var(--interactive-hover);
+}
+.filter-btn--ghost {
+  color: var(--text-tertiary);
+  border-color: var(--border-ghost);
+}
+.filter-btn--ghost:hover {
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+/* ── Saved-view manager list (shown under the Apply row) ───────────── */
+
+.filter-views {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.filter-view {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dash-transition-fast);
+}
+.filter-view:hover {
+  background: var(--interactive-ghost);
+  color: var(--text-primary);
+}
+.filter-view__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-view__badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-left: 8px;
+}
+.filter-view--default .filter-view__badge { color: var(--text-primary); }
+
+/* ── Save modal ────────────────────────────────────────────────────── */
+
+.filter-save-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.filter-save-modal__card {
+  background: var(--bg-float);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  width: 360px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.filter-save-modal__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.filter-save-modal__input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 14px;
+}
+.filter-save-modal__input:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+  border-color: var(--text-primary);
+}
+.filter-save-modal__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+/* ── Sidebar pinned views (reused in dashboard .sidebar) ──────────── */
+
+.sidebar-pinned-views {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-ghost);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-pinned-views .nav-item {
+  font-size: 12px;
+  padding: 6px 12px;
+  color: var(--text-tertiary);
+}
+.sidebar-pinned-views .nav-item:hover {
+  color: var(--text-primary);
+  background: var(--interactive-ghost);
+}
+.sidebar-pinned-manage {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 12px;
+  color: var(--text-quaternary);
+  text-decoration: none;
+}
+.sidebar-pinned-manage:hover { color: var(--text-secondary); }
+
+/* ── Mobile: panel becomes a bottom drawer ─────────────────────────── */
+
+@media (max-width: 860px) {
+  .filter-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: auto;
+    max-height: 80vh;
+    overflow-y: auto;
+    border-right: none;
+    border-top: 1px solid var(--border-subtle);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: var(--shadow-lg);
+    z-index: 60;
+    transform: translateY(100%);
+    transition: transform 0.24s ease;
+  }
+  .filter-panel.is-open { transform: translateY(0); }
+}
