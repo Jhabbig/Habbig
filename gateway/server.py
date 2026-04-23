@@ -395,6 +395,19 @@ HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 @app.on_event("startup")
 async def _startup():
     global HTTP_CLIENT
+    # Config validation runs BEFORE any other startup work so a
+    # misconfigured production server fails loudly (sys.exit(2)) instead
+    # of trickling a cryptic error deep in a handler. Dev mode only
+    # warns so local iteration with partial env stays unblocked.
+    # See gateway/config.py for the spec.
+    try:
+        import config as _cfg
+        _cfg.validate_config()
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001 — never let config import itself break startup
+        log.exception("config.validate_config() crashed — continuing (legacy env)")
+
     HTTP_CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
     mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
     log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
