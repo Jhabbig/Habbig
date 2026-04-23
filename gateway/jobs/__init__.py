@@ -105,6 +105,14 @@ for _mod in (
     # Feedback: monthly "what shipped from your feedback" email digest.
     # Payload-only — transport is stubbed elsewhere.
     "feedback_digest",
+    # DB maintenance: nightly WAL checkpoint, quarterly VACUUM, daily
+    # retention trim for slow_request_log + slow_query_log. None of
+    # these jobs read or write application data at request time.
+    "db_maintenance",
+    # Perf baseline: nightly snapshot of in-process hot-read latencies.
+    # Writes to perf_baseline_snapshots (migration 097) for the admin
+    # performance dashboard.
+    "perf_baseline",
 ):
     try:
         __import__(f"jobs.{_mod}")
