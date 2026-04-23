@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Model comparison · narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/dashboard/models" class="nav-item active">Models</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        {{ raw_admin_link }}
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Model comparison</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">How do we stack up?</h1>
+        <p class="page-subtitle">
+          narve's probability vs Metaculus, Manifold, FiveThirtyEight, and
+          Silver Bulletin — measured as average absolute gap over the last
+          {{ window_days }} days across every market where we have both.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:1100px">
+
+          <div class="stat-grid">
+            <div class="stat-tile">
+              <div class="stat-label">Markets compared</div>
+              <div class="stat-value">{{ total_markets }}</div>
+              <div class="stat-trend">Last {{ window_days }} days</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Snapshots matched</div>
+              <div class="stat-value">{{ total_snapshots }}</div>
+              <div class="stat-trend">narve ↔ external pairs</div>
+            </div>
+          </div>
+
+          <div class="admin-section" style="margin-top:32px">
+            <div class="admin-section-head">
+              <h2>Per-provider divergence</h2>
+              <span class="admin-section-count">lower avg = better agreement</span>
+            </div>
+            <div class="admin-card">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th class="num">Markets</th>
+                    <th class="num">Samples</th>
+                    <th class="num">Avg gap</th>
+                    <th class="num">Max gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_divergence_rows }}
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:12px;color:var(--text-tertiary);margin-top:12px;line-height:1.5">
+              "Gap" is the absolute difference between the provider's probability
+              and narve's yes_price at the nearest-in-time snapshot, averaged.
+              Values in percentage points (pp). Once resolved-market outcomes
+              are wired in, this table swaps for true Brier scores — the same
+              shape, same cell format.
+            </p>
+          </div>
+
+          <div style="margin-top:32px;padding:14px 16px;background:var(--bg-inset);border:1px solid var(--border-ghost);border-radius:var(--radius-sm);font-size:12px;color:var(--text-tertiary);line-height:1.5">
+            {{ disclaimer }}
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Model comparison</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit">Sign out</a>
+    </div>
+  </div>
+
+<script>
+(function(){
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av) { var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+})();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

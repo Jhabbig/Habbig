@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Equivalences · narve.ai admin</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        <a href="/admin" class="nav-item">Admin</a>
+        <a href="/admin/equivalences" class="nav-item active">Equivalences</a>
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/admin" class="breadcrumb-item" style="text-decoration:none;color:inherit">Admin</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Equivalences</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Market equivalences</h1>
+        <p class="page-subtitle">
+          Review how narve's markets map to Metaculus, Manifold, FiveThirtyEight,
+          and Silver Bulletin. Low-confidence automatic matches surface here
+          for human approval.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:1200px">
+
+          <!-- KPIs -->
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-tile">
+              <div class="stat-label">Total mappings</div>
+              <div class="stat-value">{{ total_mappings }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Admin overrides</div>
+              <div class="stat-value">{{ admin_overrides }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Low confidence</div>
+              <div class="stat-value">{{ low_confidence_count }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Rejected</div>
+              <div class="stat-value">{{ rejected_count }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Unmatched (active)</div>
+              <div class="stat-value">{{ unmatched_count }}</div>
+            </div>
+          </div>
+
+          <div id="action-message"></div>
+
+          <!-- Low-confidence queue -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Low-confidence matches</h2>
+              <span class="admin-section-count">confidence &lt; 0.70</span>
+            </div>
+            <div class="admin-card">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">narve market</th>
+                    <th>Provider</th>
+                    <th>Their ID</th>
+                    <th>Their question</th>
+                    <th class="num">Confidence</th>
+                    <th class="actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_low_conf_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Unmatched active markets -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Unmatched active markets</h2>
+              <span class="admin-section-count">no provider mapped</span>
+            </div>
+            <div class="admin-card">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">Market slug</th>
+                    <th>Question</th>
+                    <th>Category</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_unmatched_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Admin · Equivalences</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit">Sign out</a>
+    </div>
+  </div>
+
+<script>
+(function(){
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av) { var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+
+  function csrf() {
+    var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function flash(text, kind) {
+    var el = document.getElementById('action-message');
+    if (!el) return;
+    if (!text) { el.innerHTML = ''; return; }
+    var bg = kind === 'error' ? 'var(--error-bg)' : 'var(--semantic-high-bg)';
+    var bd = kind === 'error' ? 'var(--error-border)' : 'var(--semantic-high-border)';
+    el.innerHTML = '<div style="padding:10px 14px;border-radius:6px;font-size:13px;' +
+      'margin-bottom:12px;background:' + bg + ';border:1px solid ' + bd + '">' + text + '</div>';
+  }
+  document.addEventListener('click', function(ev){
+    var btn = ev.target.closest && ev.target.closest('button[data-action]');
+    if (!btn) return;
+    var action = btn.getAttribute('data-action');
+    var slug = btn.getAttribute('data-slug');
+    var provider = btn.getAttribute('data-provider');
+    if (!slug || !provider) return;
+    btn.setAttribute('disabled', 'disabled');
+    fetch('/admin/equivalences/' + encodeURIComponent(slug) + '/' + encodeURIComponent(provider), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
+      body: JSON.stringify({ action: action }),
+    }).then(function(r){ return r.json().then(function(j){ return [r.ok, j]; }); })
+      .then(function(pair){
+        if (!pair[0]) {
+          flash(pair[1].detail || 'Action failed', 'error');
+          btn.removeAttribute('disabled');
+          return;
+        }
+        flash('Saved. Refreshing…');
+        setTimeout(function(){ window.location.reload(); }, 500);
+      })
+      .catch(function(){
+        flash('Network error', 'error');
+        btn.removeAttribute('disabled');
+      });
+  });
+})();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

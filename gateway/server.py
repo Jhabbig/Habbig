@@ -5912,6 +5912,19 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("affiliate_routes import failed: %s — continuing without it", _exc)
 
+# Forecast benchmark feature — /api/v1/forecasts/compare/<slug>,
+# /dashboard/models (Pro), /admin/equivalences. Depends on migration 127
+# having run (external_forecasts + market_equivalences tables). Defensive
+# import so a stale dev DB without the migration doesn't break server start.
+try:
+    import forecast_routes  # noqa: F401,E402
+    import sys as _fr_sys
+    if "forecast_routes" in _fr_sys.modules:
+        import importlib as _fr_importlib
+        _fr_importlib.reload(_fr_sys.modules["forecast_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("forecast_routes import failed: %s — continuing without it", _exc)
+
 # Public status page (/status) + admin incident management (/admin/status).
 # Same reload-safe pattern as server_features above so pytest's module-cache
 # reuse doesn't re-register routes on the OLD `app`.
@@ -6063,6 +6076,7 @@ for _mod_name in (
     "bot_routes",
     "security_routes",
     "collections_routes",
+    "saved_views_routes",
 ):
     try:
         _mod = __import__(_mod_name, fromlist=["register"])
