@@ -43,9 +43,30 @@
   const INSTALL_DISMISS_KEY = 'narve:install-banner-dismissed';
   let deferredPrompt = null;
 
+  // Only prompt a *logged-in* visitor to install. The session cookie
+  // (pm_gateway_session) is HttpOnly so we can't read it from JS;
+  // instead we probe for DOM/JS signals that authed pages render.
+  // Kept multi-signal so the gate survives template renames — any one
+  // hit counts as "this is an authed page".
+  function isLoggedIn() {
+    // 1. Explicit opt-in: server sets <html data-narve-authed="1">.
+    if (document.documentElement.hasAttribute('data-narve-authed')) return true;
+    // 2. Dashboard switcher config (only injected on authed pages).
+    if (window.__hbSwitcher) return true;
+    // 3. Sidebar user avatar — every authed shell renders one.
+    if (document.querySelector('.sidebar-user-avatar')) return true;
+    // 4. Any logout link anchored in the DOM.
+    if (document.querySelector(
+      'a[href="/logout"], a[href*="/logout"], form[action="/logout"]'
+    )) return true;
+    return false;
+  }
+
   function installBannerSuppressed() {
     try {
       return (
+        // Public / pre-login pages never get the install nag.
+        !isLoggedIn() ||
         localStorage.getItem(INSTALL_DISMISS_KEY) === '1' ||
         // Already running as an installed PWA
         window.matchMedia('(display-mode: standalone)').matches ||
