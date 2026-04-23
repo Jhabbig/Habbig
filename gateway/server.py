@@ -331,7 +331,26 @@ def _bounded(value, max_len: int, name: str = "field") -> str:
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Polymarket Gateway", docs_url=None, redoc_url=None, openapi_url=None)
+# Prefer orjson for JSON serialisation when available — it's 3-5× faster
+# than stdlib json on our typical payloads (feed lists, market detail
+# responses) and handles datetime/decimal/bytes natively. Fall back to
+# the stdlib JSONResponse when orjson isn't installed so dev setups
+# without the wheel keep working identically.
+try:
+    from fastapi.responses import ORJSONResponse as _DefaultJSONResponse  # noqa: F401
+    import orjson  # noqa: F401 — ensures orjson is actually available
+    _JSON_SERIALIZER = "orjson"
+except Exception:  # pragma: no cover
+    from fastapi.responses import JSONResponse as _DefaultJSONResponse  # type: ignore[assignment]
+    _JSON_SERIALIZER = "stdlib"
+
+app = FastAPI(
+    title="Polymarket Gateway",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    default_response_class=_DefaultJSONResponse,
+)
 
 # Application metadata for /health and RUNBOOK tooling.
 APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
@@ -1465,6 +1484,33 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(LoggingContextMiddleware)
+
+
+# ── Response compression (outer) ─────────────────────────────────────────────
+# GZip every text response over 1 KB. Starlette's GZipMiddleware sets the
+# Content-Encoding header + handles client Accept-Encoding negotiation. The
+# 1 KB minimum is the canonical cutoff — below it the per-response gzip
+# framing overhead outweighs the payload savings. Added BEFORE the timing
+# middleware so the wall-clock we report in X-Response-Time-ms already
+# reflects the compressed-send latency (cheaper to audit than gzip-then-
+# measure when investigating slow-send complaints from mobile clients).
+try:
+    from starlette.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+except Exception as _gzip_exc:  # pragma: no cover
+    log.warning("gzip middleware import failed: %s — continuing without it", _gzip_exc)
+
+
+# ── Request timing (outermost) ───────────────────────────────────────────────
+# Sets X-Response-Time-ms on every response and logs requests that cross
+# the slow-request threshold into `slow_request_log`. Added LAST so it
+# wraps every other middleware — the measurement captures the full
+# server-side wall-clock, including auth, CSRF, rate limits, and gzip.
+try:
+    from middleware.perf import RequestTimingMiddleware
+    app.add_middleware(RequestTimingMiddleware)
+except Exception as _perf_exc:  # pragma: no cover
+    log.warning("timing middleware import failed: %s — continuing without it", _perf_exc)
 
 
 # ── Shared auth rate limit ───────────────────────────────────────────────────
