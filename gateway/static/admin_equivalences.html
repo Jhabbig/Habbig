@@ -154,6 +154,67 @@
     el.innerHTML = '<div style="padding:10px 14px;border-radius:6px;font-size:13px;' +
       'margin-bottom:12px;background:' + bg + ';border:1px solid ' + bd + '">' + text + '</div>';
   }
+  /* Inline editor for Override — replaces the actions cell with an input
+     + confirm/cancel buttons. Kept inline (no modal) because the admin is
+     typically working through a queue and a modal would break flow. */
+  function openOverrideEditor(row, slug, provider){
+    var actionsCell = row.querySelector('td.actions');
+    if (!actionsCell || actionsCell.getAttribute('data-editing') === '1') return;
+    var savedHtml = actionsCell.innerHTML;
+    actionsCell.setAttribute('data-editing', '1');
+    actionsCell.innerHTML =
+      '<div style="display:flex;gap:4px;align-items:center;justify-content:flex-end">'
+        + '<input type="text" class="ov-input" placeholder="provider_market_id" '
+        +   'style="font-size:12px;padding:4px 8px;min-width:160px;border:1px solid var(--border-default);'
+        +   'border-radius:var(--radius-sm);background:var(--bg-base);color:var(--text-primary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace">'
+        + '<button type="button" class="btn btn-primary ov-save" style="font-size:12px;padding:5px 10px">Save</button>'
+        + '<button type="button" class="btn-danger ov-cancel" style="font-size:12px;padding:5px 10px">Cancel</button>'
+      + '</div>';
+    var input = actionsCell.querySelector('.ov-input');
+    var saveBtn = actionsCell.querySelector('.ov-save');
+    var cancelBtn = actionsCell.querySelector('.ov-cancel');
+    input.focus();
+    function restore(){
+      actionsCell.removeAttribute('data-editing');
+      actionsCell.innerHTML = savedHtml;
+    }
+    cancelBtn.addEventListener('click', restore);
+    input.addEventListener('keydown', function(e){
+      if (e.key === 'Escape') restore();
+      else if (e.key === 'Enter') { e.preventDefault(); saveBtn.click(); }
+    });
+    saveBtn.addEventListener('click', function(){
+      var newId = (input.value || '').trim();
+      if (!newId) {
+        flash('Enter the provider_market_id you want to force-map to.', 'error');
+        input.focus();
+        return;
+      }
+      saveBtn.setAttribute('disabled', 'disabled');
+      cancelBtn.setAttribute('disabled', 'disabled');
+      fetch('/admin/equivalences/' + encodeURIComponent(slug) + '/' + encodeURIComponent(provider), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
+        body: JSON.stringify({ action: 'override', provider_market_id: newId }),
+      }).then(function(r){ return r.json().then(function(j){ return [r.ok, j]; }); })
+        .then(function(pair){
+          if (!pair[0]){
+            flash(pair[1].detail || 'Override failed', 'error');
+            saveBtn.removeAttribute('disabled');
+            cancelBtn.removeAttribute('disabled');
+            return;
+          }
+          flash('Override saved. Refreshing\u2026');
+          setTimeout(function(){ window.location.reload(); }, 500);
+        })
+        .catch(function(){
+          flash('Network error', 'error');
+          saveBtn.removeAttribute('disabled');
+          cancelBtn.removeAttribute('disabled');
+        });
+    });
+  }
+
   document.addEventListener('click', function(ev){
     var btn = ev.target.closest && ev.target.closest('button[data-action]');
     if (!btn) return;
@@ -161,6 +222,12 @@
     var slug = btn.getAttribute('data-slug');
     var provider = btn.getAttribute('data-provider');
     if (!slug || !provider) return;
+
+    if (action === 'override') {
+      openOverrideEditor(btn.closest('tr'), slug, provider);
+      return;
+    }
+
     btn.setAttribute('disabled', 'disabled');
     fetch('/admin/equivalences/' + encodeURIComponent(slug) + '/' + encodeURIComponent(provider), {
       method: 'POST',

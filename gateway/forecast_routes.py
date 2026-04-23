@@ -315,22 +315,25 @@ async def admin_equivalences(request: Request):
 def _render_low_conf_rows(rows) -> str:
     out: list[str] = []
     for r in rows:
+        slug_e = _html.escape(r["market_slug"])
+        provider_e = _html.escape(r["provider"])
         out.append(
             "<tr>"
-            f"<td><code>{_html.escape(r['market_slug'])}</code></td>"
-            f"<td>{_html.escape(r['provider'])}</td>"
+            f"<td><code>{slug_e}</code></td>"
+            f"<td>{provider_e}</td>"
             f"<td><code>{_html.escape(r['provider_market_id'] or '')}</code></td>"
             f"<td>{_html.escape((r['provider_question'] or '')[:100])}</td>"
             f"<td class='num'>{float(r['confidence']):.2f}</td>"
             f"<td class='actions'>"
             f"  <button class='btn-danger' "
             f"    data-action='approve' "
-            f"    data-slug='{_html.escape(r['market_slug'])}' "
-            f"    data-provider='{_html.escape(r['provider'])}'>Approve</button>"
+            f"    data-slug='{slug_e}' data-provider='{provider_e}'>Approve</button>"
+            f"  <button class='btn-danger' "
+            f"    data-action='override' "
+            f"    data-slug='{slug_e}' data-provider='{provider_e}'>Override</button>"
             f"  <button class='btn-danger' "
             f"    data-action='reject' "
-            f"    data-slug='{_html.escape(r['market_slug'])}' "
-            f"    data-provider='{_html.escape(r['provider'])}'>Reject</button>"
+            f"    data-slug='{slug_e}' data-provider='{provider_e}'>Reject</button>"
             f"</td>"
             "</tr>"
         )
