@@ -468,6 +468,46 @@ class TestShareRoutesHttp(unittest.TestCase):
         self.assertEqual(decoded.sharer_user_id, uid)
 
 
+# ── Sharer lookup for referral bridge ────────────────────────────────────────
+
+
+class TestSharerLookup(unittest.TestCase):
+    def test_sharer_lookup_resolves_for_each_kind(self):
+        """The auth_register path uses get_sharer_for_share_metric to
+        credit the sharer with a referral reward on attributed signup.
+        The lookup must work for all three share types — a typo in the
+        table whitelist silently returns None and kills the reward
+        path, which wouldn't crash but would silently break the loop."""
+        tag = _tag(self)
+
+        # market
+        m_uid = _mk_user(f"sl_m_{tag}@test.com")
+        m_row = db_sharing.create_shared_market(
+            market_slug=f"sl-m-{tag}", sharer_user_id=m_uid, sharer_handle=None,
+        )
+        m_metric = db_sharing.record_share_view(
+            share_type="market", share_id=m_row["id"],
+            referer=None, cf_country=None,
+        )
+        self.assertEqual(db_sharing.get_sharer_for_share_metric(m_metric), m_uid)
+
+        # source
+        s_uid = _mk_user(f"sl_s_{tag}@test.com")
+        s_row = db_sharing.create_shared_source(
+            source_handle=f"sl-s-{tag}", sharer_user_id=s_uid, sharer_handle=None,
+        )
+        s_metric = db_sharing.record_share_view(
+            share_type="source", share_id=s_row["id"],
+            referer=None, cf_country=None,
+        )
+        self.assertEqual(db_sharing.get_sharer_for_share_metric(s_metric), s_uid)
+
+    def test_sharer_lookup_unknown_metric_returns_none(self):
+        # 999_999_999 is absurdly higher than any autoincrement value
+        # the shared in-memory DB could reach during a single test run.
+        self.assertIsNone(db_sharing.get_sharer_for_share_metric(999_999_999))
+
+
 # ── Admin accessors ──────────────────────────────────────────────────────────
 
 

@@ -255,6 +255,15 @@ def _og_fallback() -> Response:
     return _og_response(tiny)
 
 
+# OG image cache TTL. Every share token has a 7-day lifetime (see
+# share_tokens.DEFAULT_TTL_SECONDS). Caching for a full day means a
+# scraper-retry storm against a popular tweet hits memory after the first
+# render, but a freshly-minted share still gets a current image within a
+# day of going viral. Anything shorter wastes CPU; anything longer risks
+# showing a stale card if we tweak the renderer mid-day.
+_OG_CACHE_TTL_SECONDS = 24 * 3600
+
+
 @router.get("/og/shared/market/{token}")
 async def og_shared_market(token: str):
     if not _safe_token_decode(token, "m"):
@@ -263,10 +272,14 @@ async def og_shared_market(token: str):
     if not row:
         return _og_fallback()
     try:
-        from og_cards import render_shared_market_card
-        png = render_shared_market_card(
-            market_slug=row["market_slug"],
-            sharer_handle=row["sharer_handle"] or "",
+        from og_cards import render_shared_market_card, cached
+        png = cached(
+            key=f"share:m:{token}",
+            ttl_seconds=_OG_CACHE_TTL_SECONDS,
+            factory=lambda: render_shared_market_card(
+                market_slug=row["market_slug"],
+                sharer_handle=row["sharer_handle"] or "",
+            ),
         )
         return _og_response(png)
     except Exception:
@@ -282,10 +295,14 @@ async def og_shared_source(token: str):
     if not row:
         return _og_fallback()
     try:
-        from og_cards import render_shared_source_card
-        png = render_shared_source_card(
-            source_handle=row["source_handle"],
-            sharer_handle=row["sharer_handle"] or "",
+        from og_cards import render_shared_source_card, cached
+        png = cached(
+            key=f"share:s:{token}",
+            ttl_seconds=_OG_CACHE_TTL_SECONDS,
+            factory=lambda: render_shared_source_card(
+                source_handle=row["source_handle"],
+                sharer_handle=row["sharer_handle"] or "",
+            ),
         )
         return _og_response(png)
     except Exception:
@@ -301,10 +318,14 @@ async def og_shared_prediction(token: str):
     if not row:
         return _og_fallback()
     try:
-        from og_cards import render_shared_prediction_card
-        png = render_shared_prediction_card(
-            user_prediction_id=row["user_prediction_id"],
-            sharer_handle=row["sharer_handle"] or "",
+        from og_cards import render_shared_prediction_card, cached
+        png = cached(
+            key=f"share:p:{token}",
+            ttl_seconds=_OG_CACHE_TTL_SECONDS,
+            factory=lambda: render_shared_prediction_card(
+                user_prediction_id=row["user_prediction_id"],
+                sharer_handle=row["sharer_handle"] or "",
+            ),
         )
         return _og_response(png)
     except Exception:
@@ -375,6 +396,23 @@ async def api_card_preview(request: Request):
 
 # ── Authenticated: mint a share ────────────────────────────────────
 
+# Per-user mint cap: 20 shares/hour across all three mint endpoints.
+# A single Pro user doing more than 20 shares in an hour is either
+# spamming or automated — neither is a legitimate product use case.
+# Shared budget (one key, all three endpoints) so a compromised
+# account can't fan out by alternating between market/source/prediction
+# mints to triple their effective rate.
+_MINT_LIMIT_PER_HOUR = 20
+_MINT_WINDOW_SECONDS = 3600
+
+
+def _mint_rate_limited(user_id: int) -> bool:
+    """Return True iff the user has exceeded the mint budget for the
+    current hour. Uses server's shared _is_rate_limited helper so
+    Redis-backed counters work identically to /auth/*."""
+    from server import _is_rate_limited as _irl
+    return _irl(f"share_mint:{user_id}", _MINT_LIMIT_PER_HOUR, _MINT_WINDOW_SECONDS)
+
 
 def _sharer_handle_for(user) -> Optional[str]:
     """What goes in shared_*.sharer_handle. Prefer the user's
@@ -388,6 +426,11 @@ async def api_share_market(request: Request):
     user = _require_paid(request)
     if not user:
         return JSONResponse({"error": "paid subscription required"}, status_code=402)
+    if _mint_rate_limited(user["user_id"]):
+        return JSONResponse(
+            {"error": "share mint limit reached — try again in an hour"},
+            status_code=429,
+        )
     try:
         body = await request.json()
     except Exception:
@@ -413,6 +456,11 @@ async def api_share_source(request: Request):
     user = _require_paid(request)
     if not user:
         return JSONResponse({"error": "paid subscription required"}, status_code=402)
+    if _mint_rate_limited(user["user_id"]):
+        return JSONResponse(
+            {"error": "share mint limit reached — try again in an hour"},
+            status_code=429,
+        )
     try:
         body = await request.json()
     except Exception:
@@ -438,6 +486,11 @@ async def api_share_prediction(request: Request):
     user = _require_paid(request)
     if not user:
         return JSONResponse({"error": "paid subscription required"}, status_code=402)
+    if _mint_rate_limited(user["user_id"]):
+        return JSONResponse(
+            {"error": "share mint limit reached — try again in an hour"},
+            status_code=429,
+        )
     try:
         body = await request.json()
     except Exception:

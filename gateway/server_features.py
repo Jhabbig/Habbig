@@ -1564,8 +1564,11 @@ async def auth_register(request: Request):
     # Share-loop conversion attribution. If this visitor landed on narve.ai
     # via /s/{m,s,p}/{token} we set a `narve_share_attribution` cookie
     # carrying the share_metrics row id. Link the row to the new user so
-    # /admin/sharing shows the conversion. Fail-soft: a bad cookie value,
-    # missing migration, or closed DB never blocks a signup.
+    # /admin/sharing shows the conversion AND create a referrals-table row
+    # pointing at the sharer so the nightly reward job grants them the
+    # standard "1 month free" that a direct /invite/{code} flow would.
+    # Fail-soft end-to-end: a bad cookie, missing migration, or closed DB
+    # never blocks a signup.
     share_metric_raw = request.cookies.get("narve_share_attribution")
     if share_metric_raw:
         try:
@@ -1575,7 +1578,31 @@ async def auth_register(request: Request):
         if metric_id and metric_id > 0:
             try:
                 import db_sharing
-                db_sharing.link_share_to_signup(metric_id, user_id)
+                linked = db_sharing.link_share_to_signup(metric_id, user_id)
+                if linked:
+                    # Bridge to the referral-reward pipeline. Create a
+                    # pending referral row; the daily
+                    # process_referral_rewards job resolves it into a
+                    # gifted_subscriptions grant once this new user's
+                    # subscription upsert flips converted_to_paid via
+                    # db_referrals.mark_referral_converted (wired into
+                    # db.upsert_subscription). Same reward path as the
+                    # direct /invite/{code} flow.
+                    sharer_id = db_sharing.get_sharer_for_share_metric(metric_id)
+                    if sharer_id and sharer_id != user_id:
+                        try:
+                            import db_referrals
+                            db_referrals.create_referral(
+                                referrer_user_id=sharer_id,
+                                referred_user_id=user_id,
+                                referred_email=email,
+                            )
+                        except Exception:
+                            log.exception(
+                                "auth.register: share->referral bridge "
+                                "failed (sharer=%d, user=%d, metric=%d)",
+                                sharer_id, user_id, metric_id,
+                            )
             except Exception:
                 # Log + move on. An attribution failure on signup is
                 # strictly lower priority than the signup itself.

@@ -479,6 +479,42 @@ def link_share_to_signup(share_metric_id: int, user_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def get_sharer_for_share_metric(share_metric_id: int) -> Optional[int]:
+    """Resolve the sharer's user_id for a share_metrics row. Joins
+    back into the correct shared_* table by ``share_type`` — nullable
+    because an expired / deleted share still leaves the metric row
+    behind, and we don't want callers to crash when the table lookup
+    returns nothing.
+
+    Used by the auth_register attribution path to credit the sharer
+    with a referral reward via db_referrals.create_referral. Kept
+    here (not in db_referrals) because the schema coupling is in
+    this module — db_referrals doesn't know share_metrics exists."""
+    with db.conn() as c:
+        mrow = c.execute(
+            "SELECT share_type, share_id FROM share_metrics WHERE id = ?",
+            (share_metric_id,),
+        ).fetchone()
+        if not mrow:
+            return None
+        table_by_type = {
+            "market": "shared_market_cards",
+            "source": "shared_source_cards",
+            "prediction": "shared_predictions",
+        }
+        table = table_by_type.get(mrow["share_type"])
+        if not table:
+            return None
+        # Parameterised share_type, but the table name itself is a
+        # whitelisted lookup — not user input — so string interpolation
+        # for the table is safe.
+        srow = c.execute(
+            f"SELECT sharer_user_id FROM {table} WHERE id = ?",
+            (mrow["share_id"],),
+        ).fetchone()
+    return int(srow["sharer_user_id"]) if srow else None
+
+
 # ── Convenience for /settings/referrals attribution join ────────────
 
 
