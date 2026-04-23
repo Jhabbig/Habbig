@@ -1,0 +1,113 @@
+/* Language switcher — tiny popover anchored above the sidebar-user row.
+ * Backend (render_page) injects the HTML + the JS client; this stylesheet
+ * is auto-pulled via /_gateway_static/lang-switcher.css in the same
+ * injection block.
+ */
+
+.lang-switcher {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-2);
+  margin: 0 var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  width: calc(100% - var(--space-2));
+  text-align: left;
+  font-family: inherit;
+  line-height: 1.2;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.lang-switcher:hover,
+.lang-switcher:focus-visible {
+  background: var(--interactive-ghost);
+  border-color: var(--border-ghost);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.lang-switcher__flag {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.lang-switcher__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lang-switcher__chevron {
+  width: 10px;
+  height: 10px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.lang-switcher__menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: var(--space-1);
+  right: var(--space-1);
+  background: var(--bg-float);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  z-index: 50;
+  list-style: none;
+  margin: 0;
+  display: none;
+}
+.lang-switcher__menu[data-open="true"] { display: block; }
+.lang-switcher__menu li { margin: 0; padding: 0; }
+.lang-switcher__menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.lang-switcher__menu button:hover,
+.lang-switcher__menu button:focus-visible {
+  background: var(--interactive-ghost);
+  color: var(--text-primary);
+  outline: none;
+}
+.lang-switcher__menu button[aria-current="true"] {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.lang-switcher__menu button[aria-current="true"]::after {
+  content: "✓";
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+/* Narrow-viewport / collapsed sidebar — hide the label, keep the flag.
+   Assumes the sidebar itself applies the `--collapsed` modifier when
+   narrow; if not, this block is a cheap no-op. */
+.sidebar[data-collapsed="true"] .lang-switcher__name,
+.sidebar[data-collapsed="true"] .lang-switcher__chevron {
+  display: none;
+}
