@@ -247,23 +247,68 @@ async def api_list_takes(slug: str, request: Request):
 
 @app.post("/api/v1/markets/{slug}/takes")
 async def api_create_take(slug: str, request: Request):
+    """Create a take on a market.
+
+    Hardened two ways:
+
+    1. Input hygiene — ``position`` and ``reasoning`` flow through
+       ``clean_text`` so NFC-normalised unicode, zero-width / bidi
+       stripping, and null-byte rejection happen before the row lands
+       in ``takes``. Length caps match the column definitions in
+       migration 122 (``position`` = 64 chars, ``reasoning`` = 2000).
+    2. Idempotency — a double-click or retry within 10 s collapses
+       into a single row. Key on the ``Idempotency-Key`` header, or
+       fingerprint on (slug, position, reasoning) when absent. Without
+       this protection a flaky network + enthusiastic user-click
+       duplicates takes in the same market, which then show as two
+       separate rows on the market detail page.
+    """
     user = _require_paid(request)
     body = await _parse_json(request)
-    try:
-        take_id = db_takes.create_take(
-            user_id=user["user_id"],
-            market_slug=slug,
-            position=body.get("position", ""),
-            confidence=body.get("confidence"),
-            reasoning=body.get("reasoning", ""),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    take = db_takes.get_take(take_id)
-    return JSONResponse(
-        _take_to_dict(take, viewer_user_id=user["user_id"], viewer_vote=None),
-        status_code=201,
+
+    from security.input_hygiene import clean_text
+    from security.idempotency import with_idempotency
+
+    position = clean_text(
+        body.get("position"), max_len=64, required=True, field="position",
     )
+    reasoning = clean_text(
+        body.get("reasoning"), max_len=2000, required=False, field="reasoning",
+    ) or ""
+    confidence = body.get("confidence")
+
+    uid = user["user_id"]
+
+    async def _do_create() -> dict:
+        try:
+            take_id = db_takes.create_take(
+                user_id=uid,
+                market_slug=slug,
+                position=position,
+                confidence=confidence,
+                reasoning=reasoning,
+            )
+        except ValueError as e:
+            # Surface DB validation failures as 400 to the caller.
+            return {"_status": 400, "_detail": str(e)}
+        take = db_takes.get_take(take_id)
+        return {
+            "_status": 201,
+            "take": _take_to_dict(take, viewer_user_id=uid, viewer_vote=None),
+        }
+
+    result = await with_idempotency(
+        user_id=uid,
+        op=f"take_create:{slug}",
+        client_key=request.headers.get("Idempotency-Key"),
+        ttl_seconds=10,
+        body=_do_create,
+        fallback_fingerprint=f"{slug}|{position}|{reasoning}",
+    )
+    status = int(result.pop("_status", 201))
+    if status != 201:
+        raise HTTPException(status_code=status, detail=result.get("_detail") or "bad request")
+    return JSONResponse(result["take"], status_code=201)
 
 
 # ── PATCH /api/v1/takes/{id} ──────────────────────────────────────────────
