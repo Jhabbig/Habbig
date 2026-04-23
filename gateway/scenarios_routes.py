@@ -426,14 +426,31 @@ border-left:3px solid var(--text-primary);padding-left:9px}}
     <button class='btn' id='run-btn' type='button'>Run scenario</button>
     <button class='btn secondary' id='save-btn' type='button' disabled
             aria-label='Save this scenario to your list'>Save scenario</button>
+    <button class='btn secondary' id='drawer-btn' type='button'
+            aria-controls='saved-drawer' aria-expanded='false'>Saved scenarios</button>
     <a class='btn secondary' href='/tools/correlations'>Correlation matrix →</a>
   </div>
 </div>
 
+<div id='saved-drawer' class='panel' hidden aria-live='polite'>
+  <h3 style='margin:0 0 12px;font:500 15px var(--font-display)'>Saved scenarios</h3>
+  <div id='saved-body' class='small'>Loading…</div>
+</div>
+
 <div id='results' class='panel' hidden aria-live='polite' aria-busy='false'>
-  <h3 style='margin:0 0 12px;font:500 16px var(--font-display)'>Correlated markets</h3>
+  <div style='display:flex;align-items:center;gap:12px;margin-bottom:12px'>
+    <h3 style='margin:0;font:500 16px var(--font-display)'>Correlated markets</h3>
+    <div id='track-actions' style='margin-left:auto;display:flex;gap:8px;align-items:center' hidden>
+      <span class='small' id='track-count' aria-live='polite'>0 selected</span>
+      <button class='btn secondary' id='track-btn' type='button' disabled
+              aria-label='Track selected markets on your watchlist'>Track selected</button>
+    </div>
+  </div>
   <table aria-label='Correlated markets and expected probability shifts'>
     <thead><tr>
+      <th scope='col' style='width:28px'>
+        <input type='checkbox' id='track-all' aria-label='Select all correlated markets'>
+      </th>
       <th scope='col'>Market</th>
       <th scope='col' class='r'>Corr</th>
       <th scope='col' class='r'>Expected shift</th>
@@ -548,22 +565,115 @@ document.getElementById('run-btn').addEventListener('click',async()=>{{
   }}
   const shifts=data.shifts||[];
   if(!shifts.length){{
-    tbody.innerHTML='<tr><td colspan=\"3\" class=\"small\">No significant correlations above the 0.25 threshold.</td></tr>';
+    tbody.innerHTML='<tr><td colspan=\"4\" class=\"small\">No significant correlations above the 0.25 threshold.</td></tr>';
+    document.getElementById('track-actions').hidden=true;
   }} else {{
     tbody.innerHTML=shifts.slice(0,30).map(s=>{{
       const dir=s.expected_shift>=0?'shift-up':'shift-down';
       const arrow=s.expected_shift>=0?'↑':'↓';
       const sign=s.expected_shift>=0?'+':'';
       const srText=(s.expected_shift>=0?'up':'down')+' '+sign+Math.round(s.expected_shift*100)+' percentage points, to '+Math.round(s.projected_price*100)+'%';
-      return '<tr><th scope=\"row\" style=\"font-weight:400;text-align:left\">'
+      return '<tr>'
+           +'<td><input type=\"checkbox\" class=\"track-row\" data-slug=\"'+escape(s.slug)+'\" aria-label=\"Track '+escape(s.question)+'\"></td>'
+           +'<th scope=\"row\" style=\"font-weight:400;text-align:left\">'
            +escape(s.question)+'<div class=\"small\">'+escape(s.category||'')+'</div></th>'
            +'<td class=\"r mono\">'+(s.correlation>=0?'+':'')+s.correlation.toFixed(2)+'</td>'
            +'<td class=\"r mono '+dir+'\" aria-label=\"'+srText+'\">'
            +arrow+' '+sign+Math.round(s.expected_shift*100)+'pp (to '+Math.round(s.projected_price*100)+'%)</td></tr>';
     }}).join('');
+    document.getElementById('track-actions').hidden=false;
+    updateTrackCount();
   }}
   results.setAttribute('aria-busy','false');
   document.getElementById('save-btn').disabled=false;
+}});
+
+// ── Track-selected wiring ────────────────────────────────────────────────
+function selectedTrackSlugs(){{
+  return Array.from(document.querySelectorAll('.track-row:checked'))
+    .map(el => el.dataset.slug)
+    .filter(Boolean);
+}}
+
+function updateTrackCount(){{
+  const n = selectedTrackSlugs().length;
+  const label = document.getElementById('track-count');
+  const btn = document.getElementById('track-btn');
+  if (label) label.textContent = n + ' selected';
+  if (btn) btn.disabled = n === 0;
+}}
+
+document.addEventListener('change', (e) => {{
+  if (e.target.matches('.track-row') || e.target.id === 'track-all') {{
+    if (e.target.id === 'track-all') {{
+      const checked = e.target.checked;
+      document.querySelectorAll('.track-row').forEach(c => {{ c.checked = checked; }});
+    }}
+    updateTrackCount();
+  }}
+}});
+
+document.getElementById('track-btn').addEventListener('click', async () => {{
+  const slugs = selectedTrackSlugs();
+  if (!slugs.length) return;
+  const btn = document.getElementById('track-btn');
+  btn.disabled = true;
+  btn.textContent = 'Tracking…';
+  // Reuse the existing per-market tracker so the Feed resolution-notification
+  // pipeline picks these up. One request per slug keeps the backend contract
+  // unchanged; network overhead is negligible for \u226430 items.
+  let ok = 0, fail = 0;
+  for (const slug of slugs) {{
+    try {{
+      const r = await fetch('/api/markets/' + encodeURIComponent(slug) + '/track-view', {{
+        method: 'POST',
+        credentials: 'same-origin',
+      }});
+      if (r.ok) ok++; else fail++;
+    }} catch {{ fail++; }}
+  }}
+  btn.textContent = (fail === 0) ? ('Tracked ' + ok + ' ✓') : ('Tracked ' + ok + ' · ' + fail + ' failed');
+  document.querySelectorAll('.track-row:checked').forEach(c => {{ c.checked = false; }});
+  updateTrackCount();
+  // Re-enable after 2.5s so users can track a fresh selection.
+  setTimeout(() => {{ btn.textContent = 'Track selected'; }}, 2500);
+}});
+
+// ── Saved scenarios drawer ──────────────────────────────────────────────
+const drawer = document.getElementById('saved-drawer');
+const drawerBtn = document.getElementById('drawer-btn');
+const drawerBody = document.getElementById('saved-body');
+
+async function loadSavedDrawer(){{
+  drawerBody.textContent = 'Loading…';
+  try {{
+    const r = await fetch('/api/scenario/saved', {{credentials:'same-origin'}});
+    if (!r.ok) {{ drawerBody.textContent = 'Could not load saved scenarios.'; return; }}
+    const data = await r.json();
+    const saved = data.saved || [];
+    if (!saved.length) {{
+      drawerBody.innerHTML = '<p class=\"small\">No saved scenarios yet. Run one and click Save scenario.</p>';
+      return;
+    }}
+    drawerBody.innerHTML = '<ul style=\"list-style:none;padding:0;margin:0\">' + saved.map(s => {{
+      const when = new Date((s.created_at||0)*1000).toLocaleString();
+      return '<li style=\"padding:8px 0;border-top:1px solid var(--border-default);display:flex;gap:12px;align-items:baseline\">'
+           + '<strong>' + escape(s.anchor_slug) + '</strong>'
+           + '<span class=\"small\">resolves ' + escape((s.hypothetical||'').toUpperCase()) + '</span>'
+           + '<span class=\"small\" style=\"margin-left:auto\">' + escape(when) + '</span>'
+           + '<a class=\"small\" href=\"/tools/scenario#' + encodeURIComponent(s.anchor_slug) + '\">Reopen →</a>'
+           + '</li>';
+    }}).join('') + '</ul>';
+  }} catch {{
+    drawerBody.textContent = 'Could not load saved scenarios.';
+  }}
+}}
+
+drawerBtn.addEventListener('click', () => {{
+  const open = !drawer.hidden;
+  drawer.hidden = open;
+  drawerBtn.setAttribute('aria-expanded', String(!open));
+  if (!open) loadSavedDrawer();
 }});
 
 document.getElementById('save-btn').addEventListener('click',async()=>{{
