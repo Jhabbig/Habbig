@@ -397,6 +397,67 @@ class TestClickLogging(unittest.TestCase):
 # ── /admin/search-analytics ─────────────────────────────────────────────────
 
 
+class TestPopularQueries(unittest.TestCase):
+    """Palette empty-state shows a 'Popular' group sourced from the
+    aggregated search_queries log. Endpoint must:
+      * return queries seen ≥ 3× in the last 7d with non-zero results
+      * exclude queries shorter than 3 chars
+      * exclude @-prefixed queries (those can echo private handles)
+    """
+
+    def setUp(self):
+        # Fresh limiter bucket so seeding doesn't burn quota.
+        _reset_rate_limiter()
+        from cache import ttl_cache
+        ttl_cache.delete_prefix("search:")
+
+    def _log(self, query: str, n: int, result_count: int = 5) -> None:
+        import time as _t
+        with db.conn() as c:
+            for _ in range(n):
+                c.execute(
+                    "INSERT INTO search_queries (user_id, query, result_count, ts) "
+                    "VALUES (?, ?, ?, ?)",
+                    (None, query, result_count, int(_t.time())),
+                )
+
+    def test_returns_min_count_queries(self):
+        self._log("quantitative easing", 4)
+        self._log("once-off typo", 1)  # below floor
+        r = client.get("/api/search/popular")
+        self.assertEqual(r.status_code, 200)
+        qs = r.json().get("queries") or []
+        self.assertIn("quantitative easing", qs)
+        self.assertNotIn("once-off typo", qs)
+
+    def test_excludes_at_prefixed(self):
+        # Ensure an admin's user-lookup via "@" never leaks into the public
+        # popular feed even if it's searched a lot.
+        self._log("@private_handle", 10)
+        r = client.get("/api/search/popular")
+        qs = r.json().get("queries") or []
+        self.assertNotIn("@private_handle", qs)
+
+    def test_excludes_short_queries(self):
+        self._log("ab", 10)
+        r = client.get("/api/search/popular")
+        qs = r.json().get("queries") or []
+        self.assertNotIn("ab", qs)
+
+    def test_excludes_zero_result(self):
+        with db.conn() as c:
+            import time as _t
+            for _ in range(5):
+                c.execute(
+                    "INSERT INTO search_queries (user_id, query, result_count, ts) "
+                    "VALUES (?, ?, ?, ?)",
+                    (None, "zero-result phrase", 0, int(_t.time())),
+                )
+        r = client.get("/api/search/popular")
+        qs = r.json().get("queries") or []
+        self.assertNotIn("zero-result phrase", qs)
+
+
 class TestAdminAnalytics(unittest.TestCase):
     def test_non_admin_gets_403(self):
         uid = _make_user("reg_analytics@test.local", "reganalytics", admin=False)

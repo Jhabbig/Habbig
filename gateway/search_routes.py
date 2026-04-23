@@ -378,6 +378,56 @@ async def log_click(request: Request):
     return JSONResponse({"logged": True})
 
 
+# ── Popular queries (public, aggregated) ───────────────────────────────────
+
+
+# Longer TTL than results — popular set shifts slowly, and every palette
+# open fires this endpoint. 5 min is plenty.
+_POPULAR_TTL_SECONDS = 300
+_POPULAR_MIN_COUNT = 3  # must have been searched ≥3× to qualify
+
+
+@rate_limit(limit=120, window_seconds=60, key_func=_search_rate_key)
+async def popular_queries(request: Request):
+    """Top non-zero-result queries from the last 7 days, aggregated.
+
+    Rendered in the palette's empty-state so first-time visitors have a
+    starting point. Filters:
+      * query length ≥ 3 (nothing like single letters)
+      * count ≥ _POPULAR_MIN_COUNT (can't leak a single admin's typo)
+      * excludes queries containing '@' (those are user-lookup attempts
+        from admins and may echo private handles)
+
+    No PII, no admin gating — the set is naturally k-anonymous via the
+    min-count floor. Aggregated through the TTL cache to keep SQLite
+    off the per-open hot path.
+    """
+    def _compute() -> dict:
+        since = int(time.time()) - 7 * 86400
+        try:
+            with db.conn() as c:
+                rows = c.execute(
+                    "SELECT query, COUNT(*) AS n "
+                    "FROM search_queries "
+                    "WHERE ts >= ? AND result_count > 0 "
+                    "  AND LENGTH(query) >= 3 AND query NOT LIKE '%@%' "
+                    "GROUP BY query "
+                    "HAVING n >= ? "
+                    "ORDER BY n DESC, query ASC "
+                    "LIMIT 6",
+                    (since, _POPULAR_MIN_COUNT),
+                ).fetchall()
+                return {"queries": [r["query"] for r in rows]}
+        except sqlite3.Error as exc:
+            log.warning("popular_queries failed: %s", exc)
+            return {"queries": []}
+
+    payload = ttl_cache.get_or_compute(
+        "search:popular:7d", _compute, _POPULAR_TTL_SECONDS,
+    )
+    return JSONResponse(payload)
+
+
 # ── Admin analytics ─────────────────────────────────────────────────────────
 
 
@@ -521,6 +571,8 @@ code{{font-family:var(--font-mono);font-size:12px;color:var(--text-primary)}}
 def register(app) -> None:
     """Wire unified-search routes into the given FastAPI app."""
     app.add_api_route("/api/search", unified_search, methods=["GET"],
+                      include_in_schema=False)
+    app.add_api_route("/api/search/popular", popular_queries, methods=["GET"],
                       include_in_schema=False)
     app.add_api_route("/api/search/click", log_click, methods=["POST"],
                       include_in_schema=False)

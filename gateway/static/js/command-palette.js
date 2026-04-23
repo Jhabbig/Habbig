@@ -75,6 +75,7 @@
     user: 'Users',
     command: 'Commands',
     recent: 'Recent',
+    popular: 'Popular',
   };
 
   // FTS snippet delimiters we tolerate in server responses. Anything else
@@ -174,36 +175,73 @@
     }
 
     renderEmpty() {
+      // Build groups synchronously with the data we have (recents +
+      // commands), render immediately, then fire an async fetch for
+      // popular queries and merge them in when they arrive. This keeps
+      // the palette responsive on cold cache.
       const recents = readRecents();
-      if (recents.length === 0) {
-        this.renderGroups([{
-          type: 'command',
-          items: COMMANDS.map(c => ({
-            type: 'command',
-            title: c.label,
-            subtitle: c.subtitle,
-            url: c.url,
-          })),
-        }]);
-        return;
-      }
-      this.renderGroups([
-        {
+      const baseGroups = [];
+      if (recents.length) {
+        baseGroups.push({
           type: 'recent',
           items: recents.map(q => ({
-            type: 'recent',
+            type: 'recent', title: q, subtitle: 'Recent search', query: q,
+          })),
+        });
+      }
+      baseGroups.push({
+        type: 'command',
+        items: COMMANDS.map(c => ({
+          type: 'command', title: c.label, subtitle: c.subtitle, url: c.url,
+        })),
+      });
+      this.renderGroups(baseGroups);
+
+      // Popular queries — aggregated from /api/search logs, TTL-cached
+      // server-side so this is cheap. We insert them AFTER the recents
+      // group so "what I just searched" always wins visual priority.
+      this.loadPopular(baseGroups);
+    }
+
+    async loadPopular(baseGroups) {
+      // Only fetch when the input is still empty — if the user has
+      // already started typing by the time the request lands, their
+      // search takes precedence.
+      if (this.input && this.input.value) return;
+      try {
+        const r = await fetch('/api/search/popular', {
+          credentials: 'same-origin',
+          headers: { 'Accept': 'application/json' },
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (this.input && this.input.value) return;  // typed during fetch
+        const queries = (data && data.queries) || [];
+        if (!queries.length) return;
+        // Dedupe against recents so "popular" doesn't echo what's
+        // already shown above.
+        const already = new Set((baseGroups
+          .find(g => g.type === 'recent') || { items: [] })
+          .items.map(it => it.title));
+        const fresh = queries.filter(q => !already.has(q)).slice(0, 5);
+        if (!fresh.length) return;
+        const popular = {
+          type: 'popular',
+          items: fresh.map(q => ({
+            type: 'recent',   // reuse 'recent' handler: click re-queries
             title: q,
-            subtitle: 'Recent search',
+            subtitle: 'Popular',
             query: q,
           })),
-        },
-        {
-          type: 'command',
-          items: COMMANDS.map(c => ({
-            type: 'command', title: c.label, subtitle: c.subtitle, url: c.url,
-          })),
-        },
-      ]);
+        };
+        // Insert popular between recent and command if recent exists;
+        // else first.
+        const recentIdx = baseGroups.findIndex(g => g.type === 'recent');
+        const merged = baseGroups.slice();
+        if (recentIdx >= 0) merged.splice(recentIdx + 1, 0, popular);
+        else merged.unshift(popular);
+        this.renderGroups(merged);
+      } catch { /* best effort */ }
     }
 
     async doSearch() {
