@@ -5,6 +5,259 @@ Each entry is a point-in-time snapshot. Diffs between entries reveal posture cha
 
 ---
 
+## AUDIT #4 — 2026-04-23T11:45:00Z — commit bfd35d3 (post-input-hygiene pass)
+
+### Code inventory audited
+- Committed tip: `bfd35d3` (input-hygiene: harden POST /api/v1/markets/{slug}/takes + CI gate + tz helper)
+- Local unpushed commits: none — in sync with origin/feature/platform-build
+- Local uncommitted files: none (working tree clean)
+- Local stashes: 1 — `stash@{0}` on `feature/referral-program` from 2026-04-20, labelled `parallel-agent-work-mess-1776748996`. Same stash audit #3c documented + declined to pop; still un-triaged by its author.
+- Server uncommitted files: **UNKNOWN** — SSH to `100.69.44.108` timed out during enumeration (`ssh ... 22 Operation timed out`). Server-side drift could not be verified this run.
+- Server tip vs origin: **UNKNOWN** (same SSH failure)
+- Running uvicorn loaded from: **UNKNOWN** (same SSH failure)
+- Branches with recent work (last 14d): `feature/platform-build` (HEAD), `feature/referral-program` (3d old stash branch), `feature/annoyance-polish` (3d old)
+- **DRIFT FLAG: SSH to prod server unreachable from audit host — cannot verify running-process vs on-disk vs origin drift.** Not necessarily a regression; Tailscale may be offline here. But every previous audit (#2, #3, #3c) verified server state — the audit gap must be closed before the next deploy.
+
+### Summary
+Posture: **adequate**
+Critical issues: 0
+High-priority: 3
+Medium-priority: 4
+Low-priority: 6
+Resolved since last audit: 3 (Claude-wrapper consolidation, 31-file WIP bundled, 2FA test orphans — all landed in #3c)
+New since last audit: 5 (scheduler surface, queries/ package, public feedback, take input-hygiene CI gate, timezone cookie)
+Regressions: 0
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT — `/token` renders, `/auth/validate-token` backs it.
+- pm_gateway_session + narve_session both accepted: yes (`server.py:1859` reads either cookie)
+- narve_session stored as SHA-256 hash in DB: yes (`queries/auth.py` — `_hash_session_token` + `user_sessions.token_hash`)
+- Session cookie HttpOnly: yes (hardened path, `auth/cookies.py:128 httponly=True`)
+- Session cookie Secure: yes in production (`auth/cookies.py:131 secure=_is_production()`)
+- Session cookie SameSite: Strict (`auth/cookies.py:129 samesite="strict"`)
+- Session revocation on logout: works (`queries/auth.py:784 revoke_user_session_by_token`)
+- Session rotation on privilege change: implemented (`server.py:3726, 3792` revoke_all on role change, password reset)
+- Max sessions per user enforced: yes (`MAX_SESSIONS_PER_USER = 3` in queries/auth.py, enforced at create-time)
+- Password reset invalidates sessions: yes (`server.py:3954 db.revoke_all_user_sessions(reset["user_id"])`)
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations (`queries/auth.py:137 PBKDF2_ITERATIONS = 600_000`)
+- 2FA status: removed in migration 019 (intentional product decision — confirmed absent this audit)
+- Impersonation banner visible on every page while active: yes (`impersonation.py:165` + `server.py:2148` auto-inject check)
+- Impersonation blocked paths enforced: yes (`server.py:1165` `IMPERSONATION_BLOCKED` audit action fires when blocked-path hit)
+
+### Authorisation
+- Admin routes require role ≥ 1: yes — `_require_admin_user()` + `_real_admin_user()` present
+- Super admin routes require role = 2: unverified this run (spot-check: affiliate + gift + impersonation admin routes check level=2)
+- Subproduct access checked at middleware + route + response: yes — `require_subproduct_access(slug)` dependency on every /dashboard/<slug> route, `SubproductMiddleware` validates Host header
+- has_subproduct_access called: 17 call sites across codebase
+- Feature flag evaluation in use: yes
+- Gift subscription enforcement: yes — `get_user_active_gifts` + `has_active_subscription` both consulted
+
+### CSRF
+- Double submit cookie: yes (`CSRF_COOKIE_NAME` non-HttpOnly + session-bound fallback)
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes (CSRFMiddleware in `security/csrf.py` + legacy `_validate_csrf` in server.py)
+- HTMX X-CSRF-Token hook active: yes
+- Exempt routes list minimal and documented: yes
+  - `_CSRF_EXEMPT_POSTS`: `/api/newsletter`, `/auth/validate-token`, `/api/status/{subscribe,unsubscribe}`, `/api/search/click` — every entry has an inline justification comment
+  - `_CSRF_EXEMPT_POST_PREFIXES`: `/api/invite/`, `/api/public/v1/` (Bearer-token auth, so CSRF adds nothing)
+  - `security/csrf.py` additionally exempts `/stripe/webhook`, `/health`, `/api/scraper/`
+
+### Rate limiting
+- Auth endpoints:
+  - `/auth/validate-token` — 5/min per IP (inline)
+  - `/auth/register` — 5/10min per IP (inline)
+  - `/auth/login` — 10/5min per IP + 5/10min per email (inline)
+  - `/auth/forgot-password` — 3/hr per IP + 3/hr per email (inline)
+  - `/auth/reset-password` — **NOT rate-limited** (HIGH #1 below)
+  - `/auth/logout` — none (idempotent, not required)
+- API endpoints: partial — most use `@rate_limit` decorator; billing/admin gaps listed in HIGH #2
+- Per-user and per-IP as appropriate: yes where applied
+- 429 response includes Retry-After: yes
+- Cloudflare-level rate limit rules: present (CLOUDFLARE_CHANGES.md documents Rule D + Rule E for /auth + /admin)
+
+### Input validation
+- SQL injection vectors found: **0 real** (automated scanner reported 40+ criticals — every one triaged as false positive — dynamic identifiers all come from hardcoded tuples, dict lookups, or the `saved_views_schema` field catalogue. No user-controlled string reaches a SQL identifier position.)
+- XSS via innerHTML with user content: 0 real (automated scanner reported 28 `raw_` template slot mediums — every slot takes server-generated HTML, never user-supplied text without escape)
+- Command injection / subprocess with user input: 0
+- Path traversal in file operations: 0 production hits (5 scanner mediums are all in tests/)
+- SSRF in URL-fetching code: 0 production hits (1 scanner HIGH is in `scripts/benchmark_endpoints.py`, dev tool)
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes — public tests https://narve.ai → 200; origin unverified this audit due to SSH gap
+- No hardcoded secrets in current tree: clean (secrets scanner: 0 hits)
+- No secrets in git history: clean (last 500 commits scanned)
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes (`backend/markets/encryption.py` Fernet-gated, refuses to save in prod if key unset)
+- Sessions hashed before DB storage: yes
+- Password hashes use PBKDF2-HMAC-SHA256: yes (600k iterations)
+- .env permissions on server: unverified (SSH gap)
+
+### Data privacy
+- Account deletion works end-to-end: yes — `queries/auth.py:821 cascade_delete_user` walks every table with a `user_id` column via `sqlite_master` enumeration, deletes, returns row-counts-per-table dict
+- Data export includes all user-linked tables: yes (mechanism mirrors cascade_delete_user)
+- Sensitive fields redacted in logs: yes (`security_log` prefixes user IDs, truncates UA)
+- Sentry scrubbing active: yes (configured via sentry_sdk defaults; no custom PII pass)
+- Impersonation actions logged: yes (`queries/auth.py` + `security/audit.py` — `IMPERSONATION_START/END/BLOCKED` audit actions)
+
+### External integrations
+- Stripe webhook signature validated: N/A (live Stripe disabled, stubbed via `backend/payments/stripe_stub.py`)
+- Stripe webhook idempotent: N/A (stub; `security/idempotency.py` wrapper exists for when live)
+- Stripe webhook mode-verified: N/A (stub)
+- Telegram bot token in env only: unverified this run
+- Discord bot token in env only: unverified this run
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: **partial** — `market_routes.py:319 api_connect_polymarket` only checks `len(address) >= 10`. No hex / 0x-prefix / EIP-55 checksum validation. **LOW #3 below.**
+- SEC EDGAR User-Agent set: yes (`insider/sec_form4.py:4 User-Agent: narve.ai contact@narve.ai`)
+
+### Infrastructure
+- SQLite WAL mode active: yes (verified via db.py conn helper)
+- Cloudflare Tunnel active, origin not directly reachable: **unverified this run** (SSH to 100.69.44.108 timed out; public narve.ai 200 OK)
+- Cloudflare Rules for subdomain enumeration: yes (`CLOUDFLARE_CHANGES.md` Rule A)
+- Cloudflare Rules for scanner UA blocking: yes
+- Post-deploy commit step documented: yes (memory)
+- CLOUDFLARE_CHANGES.md current: yes (last modified Apr 21 14:43)
+
+### Monitoring
+- Sentry backend configured: yes (`sentry-sdk[fastapi]==1.45.1` in requirements)
+- Sentry frontend configured: unverified this run
+- Structured logging configured: yes (JSON logger)
+- Security events logged separately: yes (`security_log` logger)
+- Audit log append-only: yes (`audit_log` table, INSERT-only by design)
+- Uptime monitoring active: yes (`/admin/status` + internal `status_system/probes.py`)
+
+### Dependency audit
+- Last dependency audit: 2026-04-21 (AUDIT #3 CVE sweep — 8 packages bumped)
+- Known CVEs: **unverified** — pip-audit failed to resolve on Python 3.9 (requirements include python-multipart==0.0.26 which requires Python ≥3.10, so audit host can't install for dry-run). Resolution depends on using Python 3.10+ for the audit host, OR loosening the pin.
+- Unpinned deps: 0 (every line in requirements.txt pinned with `==`)
+- Lockfile present: no — `requirements.lock` exists untracked but is from a previous session. **MEDIUM #4 below.**
+
+### Compliance
+- Privacy Policy live: yes (/privacy — verified public 200)
+- Terms of Service live: yes (/terms — extended in commit `5517598` for multi-jurisdiction scaffold)
+- DPA live: yes (/dpa)
+- Cookie notice: yes
+- GDPR data export: yes
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+(none)
+
+#### HIGH
+
+1. **`/auth/reset-password` has no rate limit**
+   Location: `gateway/server_features.py:286`
+   Impact: An attacker who already has a password-reset token fragment (e.g. via log leakage or a phishing mistake) can brute-force the remainder without throttling. Token entropy is high (SHA-256 of a 32-char random), so practical exploitability is bounded — but every other /auth/* POST has a rate limit; this one is the outlier.
+   Fix: Add `if server._is_rate_limited(f"{ip}:reset-password", limit=5, window=3600): return …429` at the top of `auth_reset_password`, matching the pattern used by /auth/login and /auth/forgot-password.
+
+2. **`/admin/tokens/generate` + `/admin/tokens/revoke` have no rate limit**
+   Location: `gateway/server.py:4427`, `gateway/server.py:4448`
+   Impact: A compromised admin cookie (XSS on admin page, stolen session, lapsed impersonation) can mass-generate or mass-revoke invite tokens with no request-rate ceiling, ballooning audit noise or cancelling every pending invite at once. Admin-gated, so this is defence-in-depth, not a direct compromise vector.
+   Fix: Add `@rate_limit(limit=30, window_seconds=60, key_func=_admin_key)` to both routes.
+
+3. **Cookie-attribute drift on three non-session cookies**
+   Location: `gateway/saved_views_routes.py:340` (`narve_shared_view`), `gateway/server_features.py:205` (lang cookie), `gateway/routes_sharing.py:149,189,226` (`narve_share_attribution`)
+   Impact: These cookies are not HttpOnly (intentional — JS reads them for flash banners / language switch) but they also skip the `Secure` attribute on production. A network attacker on the same LAN who can force an HTTP downgrade (via a captive portal, stale bookmark, etc.) sees the cookie values. None of the three carry authentication bits — the worst case is leaking "which view did the user just share" and "which language did they pick" — but `narve_share_attribution` is used by the referral-reward pipeline, so leakage lets an attacker re-attribute a signup to themselves.
+   Fix: Add `secure=IS_PRODUCTION` (or `secure=_is_production()`) to each `set_cookie` call site. LANG cookie already reads `GATEWAY_COOKIE_SECURE` — unify on the common pattern.
+
+#### MEDIUM
+
+1. **uvicorn binds 0.0.0.0 in server.py dev entrypoint**
+   Location: `gateway/server.py:6417 uvicorn.run(..., host="0.0.0.0", ...)`
+   Impact: If anyone ever launches the `if __name__ == "__main__":` path on a host where port 7000 is world-reachable (forgot to join Tailscale first, testing on a co-working VM, etc.), the gateway is exposed. Production path uses `--host 127.0.0.1`, so this doesn't affect the live server, but the in-file default is the wrong default.
+   Fix: Change the in-file default to `host="127.0.0.1"`. CLI override stays possible.
+
+2. **`gateway/auth.db` permissions on local dev DB are 644**
+   Location: `/Users/shocakarel/Habbig/gateway/auth.db`
+   Impact: Local-dev only — the server auth.db must be 600. Since SSH to server failed this audit, the production permission state is unverified. Low probability of production drift but the local mode is sloppy.
+   Fix: `chmod 600 gateway/auth.db` locally; verify the server sibling on next deploy.
+
+3. **`requirements.lock` exists untracked but repo has no lockfile in VCS**
+   Location: `gateway/requirements.lock` (untracked)
+   Impact: Supply-chain reproducibility gap. `requirements.txt` is pinned, which is better than nothing, but without a lockfile the dependency tree's transitive resolutions can drift between `pip install` runs — especially if a sub-dep yanks a release mid-week. AUDIT #3 already flagged this.
+   Fix: Either commit the existing `requirements.lock` (pip-compile output) or switch to `uv lock` / `pip-tools` and track the output file.
+
+4. **pip-audit cannot run on audit host (Python 3.9 vs python-multipart==0.0.26)**
+   Location: `gateway/requirements.txt:4 python-multipart==0.0.26`
+   Impact: The pinned `python-multipart==0.0.26` requires Python 3.10+; the audit host is 3.9, so pip-audit's dry-run install aborts. We cannot enumerate CVEs against the pinned tree from this workstation. Production server is 3.12, so production itself is fine — the gap is audit-tooling capability.
+   Fix: Either upgrade the local audit host to Python 3.10+ (simplest), or document the workaround in `scripts/scan_deps.sh` so it skips python-multipart on <3.10.
+
+#### LOW
+
+1. **Polymarket wallet address validation only checks length ≥ 10**
+   Location: `gateway/market_routes.py:319 api_connect_polymarket`
+   Impact: Users can persist arbitrary ≥10-char strings as their "wallet address". The downstream Polymarket client will fail on them, so no data is corrupted — but the UI surfaces "Connected" until the first sync, which is a small footgun.
+   Fix: Validate `re.fullmatch(r"0x[a-fA-F0-9]{40}", address)` before the `upsert_market_credential` call; 400 on fail.
+
+2. **SSH drift audit incomplete**
+   Location: Phase 1.5 enumeration
+   Impact: Can't confirm server code matches origin or that the running process is up-to-date. Documented as DRIFT FLAG at the top of this entry. Not a code defect — an audit-environment gap.
+   Fix: Confirm Tailscale is connected before running the next audit.
+
+3. **`/auth/logout` missing @rate_limit decorator (logged as HIGH by scanner)**
+   Location: `gateway/server_features.py:1712`
+   Impact: None — logout is idempotent, every call revokes the current session and clears cookies. An attacker cannot brute-force anything.
+   Fix: N/A — scanner false positive. Noted so future audits don't re-raise it.
+
+4. **Billing endpoint rate-limit gaps flagged as MEDIUM by scanner**
+   Location: `gateway/billing_routes.py:{848,919,966,987,1006,1043,1087}`, `gateway/server.py:{3409,3449}`, `gateway/subproduct_signup_routes.py:142`, `gateway/security/idempotency.py:23`
+   Impact: All are either behind an authenticated session + require a valid subscription lookup before firing (so the cost per spurious call is bounded), or stubbed against `backend/payments/stripe_stub.py` (no real Stripe hit). Still worth adding a generous per-user limit (e.g. 10/min) for defence-in-depth.
+   Fix: Add `@rate_limit(limit=10, window_seconds=60, key_func=_user_key)` to the six `/settings/billing/*` POSTs after the live-Stripe cutover.
+
+5. **Stashed `parallel-agent-work-mess-1776748996` still on `feature/referral-program` (age: 3 days)**
+   Location: `stash@{0}`
+   Impact: Already triaged in AUDIT #3c — the 809/294/308-line diff is orphan work from another session; popping creates a 1.5k-line merge conflict. Risk is stagnation (rot), not disclosure.
+   Fix: Contact the original author; they're the right person to either land or drop the stash. Not a scanner fix.
+
+6. **`scripts/benchmark_endpoints.py` does `urlopen(url)` with variable input**
+   Location: `gateway/scripts/benchmark_endpoints.py:79`
+   Impact: Dev tool — not a runtime route. If someone runs it with a user-supplied URL, SSRF is possible against their local network. Not accessible from the application.
+   Fix: Document in the script's docstring that the URL arg is trusted input, or add a scheme allowlist.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+none — working tree clean.
+
+#### Unpushed local commits
+none — in sync with origin.
+
+#### Server-side uncommitted state
+**UNVERIFIED this audit** — SSH to `100.69.44.108` timed out. Either rerun on a Tailscale-connected host, or accept the audit as partial and schedule a follow-up with server access. Every prior audit (#2, #3, #3c) verified server drift; this one leaves a known gap.
+
+#### Stashes
+- `stash@{0}` on `feature/referral-program`, 2026-04-20, labelled `parallel-agent-work-mess-1776748996`. AUDIT #3c already documented + declined to pop; the original author is the right person to reclaim it. Security-relevant: unknown (3-day-old snapshot of mid-refactor server.py + api_v1.py + db.py).
+
+### Changes since previous audit (#3c)
+
+#### Resolved
+- AUDIT #3c's flagged "Claude-wrapper consolidation" is still consolidated (verified `intelligence/claude_client.py` delegates every API path to `ai.client`).
+- 31-file uncommitted WIP from #3/#3b: committed + pushed in #3c, nothing residual.
+- 2FA test-file orphans (`test_2fa_*.py`): confirmed deleted.
+- Migration 075 (user_privacy_prefs ALTER promoted to migration): verified present in `gateway/migrations/075_user_privacy_prefs.py`.
+
+#### New issues
+- HIGH #1 `/auth/reset-password` missing rate limit — not flagged in #3c, is now.
+- HIGH #3 three cookies skip `Secure` — not in prior audits (cookies are new or the audit-scope expanded).
+- MEDIUM #4 pip-audit inability to run on 3.9 host — new audit-tooling gap.
+- LOW #1 Polymarket wallet length-only validation — not flagged before.
+- LOW #2 SSH drift gap — new audit-environment gap.
+
+#### Regressions
+none.
+
+### Drift warnings
+- SSH to production server timed out during Phase 1.5. Running-process vs origin vs on-disk state could not be verified. Re-run audit from a Tailscale-connected host before next deploy.
+- `stash@{0}` is 3 days old and still unresolved. If the author doesn't reclaim it within the week, drop it.
+
+### Recommended actions for next audit
+1. Run from a host with working SSH / Tailscale so server drift is measurable.
+2. Upgrade audit-host Python to 3.10+ so pip-audit can run against the pinned requirements.
+3. Verify that HIGH #1-#3 from this audit are closed (grep for the three file:line anchors; they should either have rate_limit or `secure=…` added).
+4. Re-check the `parallel-agent-work-mess` stash — if still there after 7 days, drop it.
+5. Cover super-admin-only routes in a targeted subpass — this audit spot-checked but didn't enumerate every is_admin>=2 gate.
+
+---
+
 ## AUDIT #3c — 2026-04-22T05:35:00Z — full-loop closure addendum (commit 1f3a659 + server fa8b49b)
 
 User instruction: "DO EVERYTHING". Pop the AUDIT #3 stash, finish the
