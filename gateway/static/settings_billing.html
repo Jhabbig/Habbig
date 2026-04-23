@@ -16,17 +16,22 @@
     /* ── Current plan ────────────────────────────────────────────────── */
     .sb-current-plan { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: start; }
     .sb-plan-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 12px; background: var(--interactive-ghost); color: var(--text-primary); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-    .sb-plan-badge-amber { background: rgba(245, 158, 11, 0.12); color: var(--amber); }
-    .sb-plan-badge-red { background: rgba(239, 68, 68, 0.12); color: var(--red); }
+    /* Monochrome-only status badges. Amber = grace / warning → mid-tone;
+       red = delinquent / past-due → stronger outline with bg-inset for
+       contrast. No coloured ink so the design stays strictly monochrome
+       in both themes. */
+    .sb-plan-badge-amber { background: var(--semantic-mid-bg); color: var(--text-primary); border: 1px solid var(--semantic-mid-border); }
+    .sb-plan-badge-red { background: var(--bg-inset); color: var(--text-primary); border: 1px solid var(--border-strong); }
     .sb-plan-name { font-size: 20px; font-weight: 700; color: var(--text-primary); margin-top: 10px; }
     .sb-plan-price { font-size: 14px; color: var(--text-secondary); margin-top: 4px; font-family: var(--font-mono); }
     .sb-plan-price strong { color: var(--text-primary); font-weight: 600; }
     .sb-plan-features { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
     .sb-plan-feature { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
     .sb-plan-feature svg { width: 14px; height: 14px; flex-shrink: 0; }
-    .sb-plan-feature.yes svg { color: var(--green); }
-    .sb-plan-feature.no { color: var(--text-muted); }
-    .sb-plan-feature.no svg { color: var(--text-tertiary); }
+    /* Plan features: .yes = included (strong ink), .no = excluded (ghost). */
+    .sb-plan-feature.yes svg { color: var(--text-primary); }
+    .sb-plan-feature.no { color: var(--text-tertiary); }
+    .sb-plan-feature.no svg { color: var(--text-quaternary); }
     .sb-plan-actions { display: flex; flex-direction: column; gap: 10px; min-width: 180px; }
 
     /* ── Buttons ────────────────────────────────────────────────────── */
@@ -38,8 +43,11 @@
     .sb-btn-outline:hover { border-color: var(--text-primary); background: var(--surface-hover); }
     .sb-btn-ghost { color: var(--text-secondary); background: transparent; }
     .sb-btn-ghost:hover { color: var(--text-primary); background: var(--surface-hover); }
-    .sb-btn-danger { border-color: var(--red); color: var(--red); background: transparent; }
-    .sb-btn-danger:hover { background: rgba(239, 68, 68, 0.08); }
+    /* Destructive actions — strong outline + interactive ghost on hover.
+       Matches .btn-danger from gateway.css so cancel/delete feels the
+       same across /settings and /admin. */
+    .sb-btn-danger { border-color: var(--border-strong); color: var(--text-primary); background: transparent; }
+    .sb-btn-danger:hover { background: var(--interactive-ghost-hover); border-color: var(--text-primary); }
     .sb-btn-sm { padding: 6px 12px; min-height: 32px; font-size: 12px; }
     .sb-btn[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; }
 
@@ -47,7 +55,9 @@
     .sb-toggle { display: inline-flex; background: var(--surface-hover); border-radius: var(--radius-sm); padding: 3px; margin-bottom: 20px; }
     .sb-toggle-btn { padding: 8px 16px; border: none; background: transparent; color: var(--text-muted); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 6px; transition: background 0.15s, color 0.15s; }
     .sb-toggle-btn.active { background: var(--bg-raised); color: var(--text-primary); box-shadow: var(--shadow-md, 0 1px 2px rgba(0,0,0,0.08)); }
-    .sb-toggle-save { font-size: 10px; margin-left: 6px; padding: 2px 6px; border-radius: 8px; background: var(--green-bg, rgba(16, 185, 129, 0.12)); color: var(--green); font-weight: 700; }
+    /* "Save X%" badge on the annual toggle — strong mono pill instead
+       of a green accent so the page stays monochrome. */
+    .sb-toggle-save { font-size: 10px; margin-left: 6px; padding: 2px 6px; border-radius: 8px; background: var(--semantic-high-bg); color: var(--text-primary); border: 1px solid var(--semantic-high-border); font-weight: 700; }
 
     .sb-plan-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     @media (max-width: 760px) { .sb-plan-cards { grid-template-columns: 1fr; } }
@@ -61,7 +71,7 @@
     .sb-card-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
     .sb-card-feats { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); }
     .sb-card-feats li { list-style: none; padding-left: 14px; position: relative; }
-    .sb-card-feats li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+    .sb-card-feats li::before { content: "✓"; position: absolute; left: 0; color: var(--text-primary); font-weight: 700; }
     .sb-card-cta { margin-top: 14px; }
 
     /* ── Add-ons ────────────────────────────────────────────────────── */
@@ -70,7 +80,9 @@
     .sb-addon-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
     .sb-addon-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
     .sb-addon-price { font-family: var(--font-mono); font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
-    .sb-addon-status { font-size: 11px; color: var(--green); font-weight: 600; margin-left: 8px; }
+    /* Addon "active" indicator — strong ink so it reads as status without
+       using a semantic colour. */
+    .sb-addon-status { font-size: 11px; color: var(--text-primary); font-weight: 600; margin-left: 8px; }
 
     /* ── Payment method ─────────────────────────────────────────────── */
     .sb-payment { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
@@ -86,7 +98,7 @@
     .sb-history-table tr:last-child td { border-bottom: none; }
     .sb-history-table .col-amount { font-family: var(--font-mono); color: var(--text-primary); font-weight: 600; text-align: right; }
     .sb-history-status { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-    .sb-history-status-paid { background: var(--green-bg, rgba(16,185,129,0.1)); color: var(--green); }
+    .sb-history-status-paid { background: var(--semantic-high-bg); color: var(--text-primary); border: 1px solid var(--semantic-high-border); }
     .sb-history-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
     /* ── Modal ──────────────────────────────────────────────────────── */
