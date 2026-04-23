@@ -358,6 +358,127 @@ class TestFiveThirtyEightWalker(unittest.TestCase):
         self.assertTrue(any("ohio" in i for i in ids))
 
 
+# ── Adapter-level unit tests (no HTTP) ───────────────────────────────
+#
+# Earlier versions of this file attempted respx-backed fetch_matching
+# tests, but respx's transport hook can't reliably intercept an
+# httpx.AsyncClient that's created inside the adapter — the client is
+# constructed AFTER the patcher installs its hook, and in practice the
+# real network call still fires and times out. Parser-level tests
+# cover the same decision surface (what do we keep, what do we skip,
+# what shape do we emit) without any network flakiness.
+
+
+class TestMetaculusParserExhaustive(unittest.TestCase):
+    """Every non-happy-path branch of metaculus._parse_question."""
+
+    def test_timeseries_fallback(self):
+        """Older Metaculus questions only have prediction_timeseries;
+        the parser should fall back to the last entry's
+        ``community_prediction`` when full.q2 is absent."""
+        from external_forecasts import metaculus as mc
+        raw = {
+            "id": 9001,
+            "title": "Legacy question",
+            "possibilities": {"type": "binary"},
+            "prediction_timeseries": [
+                {"community_prediction": 0.4},
+                {"community_prediction": 0.65},
+            ],
+            "close_time": "2027-01-01T00:00:00Z",
+        }
+        c = mc._parse_question(raw)
+        self.assertIsNotNone(c)
+        self.assertAlmostEqual(c.probability, 0.65)
+
+    def test_missing_id_skipped(self):
+        from external_forecasts import metaculus as mc
+        raw = {
+            "title": "No id",
+            "possibilities": {"type": "binary"},
+            "community_prediction": {"full": {"q2": 0.5}},
+        }
+        self.assertIsNone(mc._parse_question(raw))
+
+    def test_resolved_flag_surfaces(self):
+        """Non-null ``resolution`` means the market resolved; sync
+        skips it so the chart doesn't pin at 1.0 / 0.0 forever."""
+        from external_forecasts import metaculus as mc
+        raw = {
+            "id": 42,
+            "title": "r",
+            "possibilities": {"type": "binary"},
+            "community_prediction": {"full": {"q2": 0.9}},
+            "resolution": 1.0,
+        }
+        c = mc._parse_question(raw)
+        self.assertIsNotNone(c)
+        self.assertTrue(c.resolved)
+
+    def test_search_query_strips_stopwords(self):
+        """Query builder should drop short words (≤3 chars) and rank
+        by length desc — keeps the search scorer clean."""
+        from external_forecasts import metaculus as mc
+        q = mc._search_query({"market_question": "Will the US ban TikTok by 2026?"})
+        # "the", "US", "by" are ≤3 chars and must not appear.
+        self.assertNotIn("the", q.lower().split())
+        self.assertNotIn("us", q.lower().split())
+        # The keyword payload should keep TikTok + 2026.
+        self.assertIn("TikTok", q)
+
+    def test_bad_probability_rejects(self):
+        """A wildly-out-of-range probability is skipped via
+        clamp_probability raising ValueError — parser swallows it."""
+        from external_forecasts import metaculus as mc
+        raw = {
+            "id": 7,
+            "title": "bad",
+            "possibilities": {"type": "binary"},
+            "community_prediction": {"full": {"q2": 500}},  # absurd
+        }
+        self.assertIsNone(mc._parse_question(raw))
+
+
+class TestSilverBulletinParserDirect(unittest.TestCase):
+    """Walk Silver Bulletin's _walk helper directly — no network at
+    all, same approach as TestFiveThirtyEightWalker. Parser is
+    shared-shape so one direct-walk test is enough to prove both
+    scrapers work."""
+
+    def test_candidate_shapes_extracted(self):
+        from external_forecasts import silver_bulletin as sb
+        payload = {
+            "props": {"pageProps": {"forecast": {
+                "candidates": [
+                    {"candidate": "Alpha", "probability": 0.58},
+                    {"name": "Beta", "win_prob": 0.42},
+                ],
+                "states": [{"state": "PA", "winprob": 0.51}],
+            }}},
+        }
+        cands = list(sb._walk(payload, "http://example/"))
+        self.assertEqual(len(cands), 3)
+        self.assertTrue(all(c.provider == "silver_bulletin" for c in cands))
+        ids = {c.provider_market_id for c in cands}
+        self.assertTrue(any("alpha" in i for i in ids))
+        self.assertTrue(any("pa" in i for i in ids))
+
+    def test_percentage_form_clamped(self):
+        """A 0..100 candidate number must be coerced to [0, 1] via
+        clamp_probability, not rejected."""
+        from external_forecasts import silver_bulletin as sb
+        payload = {"pageProps": {"x": [{"state": "OH", "win_prob": 58}]}}
+        cands = list(sb._walk(payload, "http://example/"))
+        self.assertEqual(len(cands), 1)
+        self.assertAlmostEqual(cands[0].probability, 0.58)
+
+    def test_dict_without_probability_ignored(self):
+        from external_forecasts import silver_bulletin as sb
+        payload = {"pageProps": {"about": {"candidate": "Gamma"}}}
+        cands = list(sb._walk(payload, "http://example/"))
+        self.assertEqual(cands, [])
+
+
 # ── /api/v1/forecasts/providers ──────────────────────────────────────
 
 
