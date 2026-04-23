@@ -4,52 +4,103 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Impersonation session {{ session_id }} · narve.ai admin</title>
-  <link rel="stylesheet" href="{{ static: gateway.css }}">
-  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
-  <style>
-    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
-    .adm-wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
-    .adm-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 18px; flex-wrap: wrap; gap: 16px; }
-    .adm-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
-    .adm-nav-back { opacity: 0.6; color: inherit; text-decoration: none; font-size: 13px; }
-    .adm-nav-back:hover { opacity: 1; }
-    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 22px; }
-    .stat-card { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 6px; padding: 12px 14px; }
-    .stat-label { font-size: 10px; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-    .stat-value { font-size: 18px; font-weight: 600; }
-    .reason-box { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 6px; padding: 14px 16px; font-size: 13px; line-height: 1.5; margin-bottom: 22px; }
-    .reason-box .lbl { font-size: 10px; opacity: 0.55; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-    .adm-list { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 8px; overflow: hidden; }
-    .admin-row { padding: 10px 16px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
-    .admin-row:last-child { border-bottom: 0; }
-    .admin-row-main { font-size: 13px; margin-bottom: 3px; }
-    .admin-row-meta { font-size: 11px; opacity: 0.55; }
-    .badge { display: inline-block; font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; }
-  </style>
 </head>
 <body>
-  <div class="adm-wrap">
-    <div class="adm-head">
-      <div>
-        <a class="adm-nav-back" href="/admin/impersonations">← Impersonation log</a>
-        <h1>Session #{{ session_id }} {{ raw_nav_role }}</h1>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        <a href="/admin" class="nav-item">Admin</a>
+        <a href="/admin/impersonations" class="nav-item active">Impersonations</a>
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/admin" class="breadcrumb-item" style="text-decoration:none;color:inherit">Admin</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/admin/impersonations" class="breadcrumb-item" style="text-decoration:none;color:inherit">Impersonations</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">#{{ session_id }}</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Session #{{ session_id }}</h1>
+        <p class="page-subtitle">
+          Full request log for this "view as" session. Destructive actions
+          attempted while impersonating are tagged <strong>BLOCKED</strong>
+          and never reached the server.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:1100px">
+
+          <div class="stat-grid" style="margin-bottom:24px">
+            {{ raw_summary_cards }}
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Reason (as given by admin)</div>
+              <div class="settings-section-desc" style="margin-bottom:14px">
+                {{ reason }}
+              </div>
+              <div class="field-row" style="padding-top:0">
+                <span class="field-label">IP address</span>
+                <span class="field-control" style="padding-top:10px">
+                  <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px">{{ ip_address }}</code>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Actions performed</h2>
+              <span class="admin-section-count">oldest first</span>
+            </div>
+            <div class="admin-card">
+              {{ raw_action_rows }}
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
 
-    <div class="stat-grid">{{ raw_summary_cards }}</div>
-
-    <div class="reason-box">
-      <div class="lbl">Reason (as given by admin)</div>
-      {{ reason }}
-      <div class="lbl" style="margin-top:10px">IP</div>
-      {{ ip_address }}
-    </div>
-
-    <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.7;margin-bottom:10px">Actions performed</h2>
-    <div class="adm-list">
-      {{ raw_action_rows }}
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Admin · Impersonation #{{ session_id }}</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit">Sign out</a>
     </div>
   </div>
+
+<script>
+(function(){
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av){ var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+})();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>
