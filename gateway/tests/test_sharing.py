@@ -468,6 +468,53 @@ class TestShareRoutesHttp(unittest.TestCase):
         self.assertEqual(decoded.sharer_user_id, uid)
 
 
+# ── Retention cron ───────────────────────────────────────────────────────────
+
+
+class TestShareRetention(unittest.TestCase):
+    def test_prune_deletes_only_long_expired_rows(self):
+        """The retention job prunes shared_* rows whose expires_at is
+        older than now - 30d. Fresh rows + recently-expired rows
+        (within grace) must stay. Only far-expired rows should go."""
+        import asyncio
+        from jobs import share_retention as sr
+
+        tag = _tag(self)
+        uid = _mk_user(f"rt_{tag}@test.com")
+
+        # Fresh share — expires in 7d. MUST survive the sweep.
+        fresh = db_sharing.create_shared_market(
+            market_slug=f"rt-fresh-{tag}", sharer_user_id=uid, sharer_handle=None,
+        )
+        # Recently expired — within the 30d grace window. MUST survive.
+        recent = db_sharing.create_shared_market(
+            market_slug=f"rt-recent-{tag}", sharer_user_id=uid, sharer_handle=None,
+        )
+        with db.conn() as c:
+            c.execute(
+                "UPDATE shared_market_cards SET expires_at = ? WHERE id = ?",
+                (int(time.time()) - 7 * 86400, recent["id"]),  # 7d past expiry
+            )
+        # Long expired — past the grace window. MUST be deleted.
+        stale = db_sharing.create_shared_market(
+            market_slug=f"rt-stale-{tag}", sharer_user_id=uid, sharer_handle=None,
+        )
+        with db.conn() as c:
+            c.execute(
+                "UPDATE shared_market_cards SET expires_at = ? WHERE id = ?",
+                (int(time.time()) - (sr.GRACE_SECONDS + 86400), stale["id"]),
+            )
+
+        result = asyncio.run(sr.share_retention_prune())
+        self.assertGreaterEqual(result["total_deleted"], 1)
+        self.assertGreaterEqual(result["by_table"]["shared_market_cards"], 1)
+
+        # Fresh + recent still there; stale gone.
+        self.assertIsNotNone(db_sharing.get_shared_market(fresh["token"]))
+        self.assertIsNotNone(db_sharing.get_shared_market(recent["token"]))
+        self.assertIsNone(db_sharing.get_shared_market(stale["token"]))
+
+
 # ── Sharer lookup for referral bridge ────────────────────────────────────────
 
 

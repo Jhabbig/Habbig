@@ -81,6 +81,13 @@ except Exception as _e:  # pragma: no cover
     import logging as _l
     _l.getLogger("jobs").warning("invite_replenish import failed: %s", _e)
 
+# Daily prune of long-expired shared_* rows (share-loop feature).
+try:
+    from jobs import share_retention  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("share_retention import failed: %s", _e)
+
 # Intelligence-layer jobs. Each one is self-registering through the
 # module-level @register_job / register_cron calls, so just importing
 # them is enough. Defensive imports keep a partial schema tree bootable.
