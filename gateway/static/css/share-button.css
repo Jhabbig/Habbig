@@ -1,0 +1,60 @@
+/*
+ * Share-button styles — used on market, source, and prediction detail
+ * pages. Kept in its own file so detail pages only need one <link>
+ * line rather than a large inline style block, and so the
+ * design-critique of the button is one file to audit.
+ *
+ * Low-profile by design: this is a utility action, not a CTA. The
+ * button reads as "secondary" against whatever sits next to it —
+ * typically the page-title area. Monochrome, consistent with the
+ * rest of gateway.css's button treatments.
+ */
+
+.narve-share-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--border-default, rgba(255, 255, 255, 0.12));
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.narve-share-btn:hover {
+  border-color: var(--text-primary);
+}
+
+.narve-share-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Keyboard focus — invisible without this under the monochrome scheme.
+   Same outline treatment used on the admin window tabs. */
+.narve-share-btn:focus-visible {
+  outline: 1px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* State feedback. Classes are toggled by share-button.js; no layout
+   shifts between states so a click doesn't shift surrounding copy. */
+.narve-share-btn.share-btn-copied {
+  border-color: var(--text-primary);
+}
+
+.narve-share-btn.share-btn-error {
+  border-color: #d64545;
+  color: #d64545;
+}
+
+.narve-share-btn.share-btn-loading {
+  opacity: 0.7;
+}

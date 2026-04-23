@@ -8,6 +8,8 @@
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="stylesheet" href="/_gateway_static/css/share-button.css">
+  <script src="/_gateway_static/js/share-button.js" defer></script>
 </head>
 <body>
   <div style="max-width:720px;margin:40px auto;padding:0 20px">
@@ -73,10 +75,28 @@
         + '</strong>';
       if (p.brier_score !== null && p.brier_score !== undefined) html += ' — Brier ' + p.brier_score.toFixed(3);
       html += '</p>';
+      // Share button only for resolved-correct predictions. The
+      // product invariant — "shareable wins, not sharing losses" —
+      // lives on the correct branch only. Ownership isn't gated on
+      // the client because p.is_owner isn't always in the response
+      // payload; the server's create_shared_prediction already
+      // refuses non-owner mints and the button flips to
+      // "error — try again" cleanly in that case.
+      if (p.resolved_correct) {
+        html += '<div style="margin-top:16px">'
+          + '<button class="narve-share-btn" data-share-kind="prediction" '
+          + 'data-share-pid="' + pid + '" '
+          + 'aria-label="Share this resolved prediction as a public card">Share</button>'
+          + '</div>';
+      }
     } else {
       html += '<p style="margin-top:16px">This prediction is still active.</p>';
     }
     document.getElementById('pred-card').innerHTML = html;
+    // share-button.js auto-wires on DOMContentLoaded; we swap buttons
+    // in asynchronously after fetch, so dispatch the rescan event so
+    // the newly-injected button becomes clickable.
+    document.dispatchEvent(new CustomEvent('narve:rescan-share-buttons'));
   }).catch(function(){
     document.getElementById('pred-card').innerHTML = '<div class="empty-state"><div class="empty-state-title">Not found.</div><div class="empty-state-body">This prediction is private or has been deleted.</div></div>';
   });

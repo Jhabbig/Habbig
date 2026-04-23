@@ -37,6 +37,8 @@
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="{{ static: img/logo.png }}">
   <link rel="apple-touch-icon" href="{{ static: img/logo.png }}">
+  <link rel="stylesheet" href="/_gateway_static/css/share-button.css">
+  <script src="/_gateway_static/js/share-button.js" defer></script>
 </head>
 <body>
   <div class="src-shell">
@@ -54,6 +56,12 @@
                 data-item-ref="{{ handle }}"
                 style="padding:10px 16px;border:1px solid var(--border,#e5e5e5);border-radius:6px;background:transparent;color:inherit;font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:0.06em">
           + Collection
+        </button>
+        <button class="narve-share-btn"
+                data-share-kind="source"
+                data-share-handle="{{ handle }}"
+                aria-label="Share this source profile as a public card">
+          Share
         </button>
       </div>
     </header>
