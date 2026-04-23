@@ -1,0 +1,421 @@
+"""Centralised FastAPI exception handlers.
+
+Every error — HTTPException, validation error, unhandled exception —
+flows through this module so:
+
+  1. JSON API callers get the same shape every time.
+  2. HTML visitors get a branded error page with a request-id they
+     can quote to support.
+  3. Nothing leaks the internal message / stack trace / DB detail.
+  4. Every 5xx is logged with traceback + request_id for triage.
+
+Error envelope (JSON):
+
+    {
+      "error":       "slug_code",           # machine-readable
+      "message":     "Human-readable.",     # safe to show users
+      "request_id":  "abc12345",            # for support tickets
+      "details":     {...}                  # optional: validation fields
+    }
+
+Slug codes are documented in ERROR_HANDLING.md.
+"""
+
+from __future__ import annotations
+
+import logging
+import secrets
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+log = logging.getLogger("gateway.errors")
+
+
+# ── Error code slugs ──────────────────────────────────────────────────
+# Stable machine-readable names. Clients switch on these, not status
+# codes, so the wire contract survives status-code refactors.
+
+_STATUS_TO_SLUG: dict[int, str] = {
+    400: "bad_request",
+    401: "authentication_required",
+    402: "subscription_required",
+    403: "authorization_required",
+    404: "resource_not_found",
+    405: "method_not_allowed",
+    409: "duplicate_resource",
+    413: "payload_too_large",
+    415: "unsupported_media_type",
+    422: "validation_failed",
+    429: "rate_limit_exceeded",
+    500: "internal_error",
+    502: "upstream_error",
+    503: "service_unavailable",
+    504: "upstream_timeout",
+}
+
+_STATUS_TO_TITLE: dict[int, str] = {
+    400: "Bad request",
+    401: "Sign in required",
+    402: "Subscription required",
+    403: "No access",
+    404: "Page not found",
+    409: "Already exists",
+    422: "Check your input",
+    429: "Slow down",
+    500: "Something went wrong",
+    502: "Upstream error",
+    503: "Temporarily unavailable",
+    504: "Upstream timeout",
+}
+
+# Safe generic messages. Never echoes internal detail.
+_STATUS_TO_MESSAGE: dict[int, str] = {
+    400: "That request was malformed. Double-check and try again.",
+    401: "You need to sign in to see this.",
+    402: "This feature needs a subscription.",
+    403: "Your account doesn't have access to this.",
+    404: "This page doesn't exist. It may have been moved, or the link may be wrong.",
+    409: "A resource with the same identifier already exists.",
+    422: "Some fields need attention.",
+    429: "Too many requests. Try again in a moment.",
+    500: "An unexpected error occurred. Please try again.",
+    502: "One of our upstream services returned an error.",
+    503: "narve.ai is temporarily unavailable. Check /status for updates.",
+    504: "An upstream service took too long to respond.",
+}
+
+
+def slug_for_status(status: int) -> str:
+    return _STATUS_TO_SLUG.get(status, "error")
+
+
+def generate_request_id() -> str:
+    """8-char opaque request id users can quote to support."""
+    return secrets.token_hex(4)
+
+
+def get_request_id(request: Request) -> str:
+    """Pull the request_id off request.state, or mint a fresh one.
+
+    The RequestIDMiddleware (see below) stamps every incoming request;
+    error paths invoked outside that middleware still get a valid id.
+    """
+    existing = getattr(request.state, "request_id", None) if hasattr(request, "state") else None
+    if isinstance(existing, str) and existing:
+        return existing
+    fresh = generate_request_id()
+    try:
+        request.state.request_id = fresh
+    except Exception:
+        pass
+    return fresh
+
+
+def is_api_request(request: Request) -> bool:
+    """True when the caller wants JSON.
+
+    A request counts as API if any one of these holds:
+      - path starts with /api/
+      - Accept header prefers application/json
+      - Content-Type is application/json
+    """
+    path = request.url.path or ""
+    if path.startswith("/api/"):
+        return True
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept and "text/html" not in accept:
+        return True
+    ct = (request.headers.get("content-type") or "").lower()
+    if ct.startswith("application/json"):
+        return True
+    return False
+
+
+# ── Error page rendering ──────────────────────────────────────────────
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+_ERROR_TEMPLATE_PATH = _STATIC_DIR / "error_page.html"
+
+
+def _load_template() -> str:
+    try:
+        return _ERROR_TEMPLATE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        # Fall back to a minimal inline shell; still branded but bare.
+        return _FALLBACK_TEMPLATE
+
+
+_FALLBACK_TEMPLATE = (
+    "<!doctype html><html><head><meta charset='utf-8'>"
+    "<title>{title} — narve.ai</title>"
+    "<style>body{font-family:system-ui;padding:48px;max-width:560px;margin:auto;color:#111}"
+    "h1{font-weight:600;letter-spacing:-0.01em}a{color:#111}"
+    ".rid{color:#9ca3af;font-size:11px;font-family:ui-monospace,monospace}</style>"
+    "</head><body><h1>{title}</h1><p>{message}</p>"
+    "<p class='rid'>Request ID: {request_id}</p></body></html>"
+)
+
+
+def render_error_page(
+    request: Request,
+    *,
+    status: int,
+    title: Optional[str] = None,
+    message: Optional[str] = None,
+    retry_after: Optional[int] = None,
+) -> HTMLResponse:
+    """Render the shared error-page template with status-specific copy."""
+    request_id = get_request_id(request)
+    title_str = title or _STATUS_TO_TITLE.get(status, "Error")
+    message_str = message or _STATUS_TO_MESSAGE.get(status, "Something went wrong.")
+
+    tpl = _load_template()
+    # Template placeholders use {{ name }} so we can swap them with str.replace
+    # without pulling in jinja — this page must never fail to render.
+    actions_html = _action_buttons_for_status(status)
+    retry_line = ""
+    if status == 429 and isinstance(retry_after, int) and retry_after > 0:
+        retry_line = f'<p class="err-retry">Try again in {retry_after} seconds.</p>'
+    extra_line = ""
+    if status == 402:
+        extra_line = '<p class="err-extra"><a href="/billing">View pricing</a></p>'
+    if status == 503:
+        extra_line = '<p class="err-extra"><a href="/status">View status page</a></p>'
+
+    body = (
+        tpl
+        .replace("{{ status }}", str(status))
+        .replace("{{ title }}", _html_escape(title_str))
+        .replace("{{ message }}", _html_escape(message_str))
+        .replace("{{ request_id }}", _html_escape(request_id))
+        .replace("{{ actions }}", actions_html)
+        .replace("{{ retry_line }}", retry_line)
+        .replace("{{ extra_line }}", extra_line)
+    )
+    headers = {}
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+    return HTMLResponse(body, status_code=status, headers=headers)
+
+
+def _action_buttons_for_status(status: int) -> str:
+    """CTA buttons tailored per status. Kept in one place so copy stays
+    consistent across the template."""
+    buttons: list[tuple[str, str]] = []
+    if status == 401:
+        buttons = [("/token", "Sign in"), ("/invite", "Request an invite")]
+    elif status == 402:
+        buttons = [("/billing", "Upgrade"), ("/dashboards", "Back to dashboard")]
+    elif status == 403:
+        buttons = [("/dashboards", "Back to dashboard")]
+    elif status == 404:
+        buttons = [("/dashboards", "Go to dashboard"), ("/", "Go to homepage")]
+    elif status == 429:
+        buttons = [("/dashboards", "Back to dashboard")]
+    elif status == 500:
+        buttons = [
+            ("javascript:location.reload()", "Retry"),
+            ("/dashboards", "Go to dashboard"),
+        ]
+    elif status == 503:
+        buttons = [("/status", "Check status"), ("/dashboards", "Back to dashboard")]
+    else:
+        buttons = [("/dashboards", "Back to dashboard")]
+
+    parts: list[str] = []
+    for href, label in buttons:
+        parts.append(
+            f'<a class="err-btn" href="{_html_escape(href)}">{_html_escape(label)}</a>'
+        )
+    return "\n".join(parts)
+
+
+def _html_escape(s: str) -> str:
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+# ── Envelope builders ─────────────────────────────────────────────────
+
+def _json_envelope(
+    *,
+    status: int,
+    slug: str,
+    message: str,
+    request_id: str,
+    details: Optional[Any] = None,
+    headers: Optional[dict] = None,
+) -> JSONResponse:
+    body: dict[str, Any] = {
+        "error": slug,
+        "message": message,
+        "request_id": request_id,
+    }
+    if details is not None:
+        body["details"] = details
+    return JSONResponse(body, status_code=status, headers=headers or {})
+
+
+# ── Handlers ──────────────────────────────────────────────────────────
+
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
+    """Known HTTP errors (raised by app code as HTTPException)."""
+    request_id = get_request_id(request)
+    status = exc.status_code
+    slug = slug_for_status(status)
+    # exc.detail may be a short human string — if safe, echo it.
+    # Treat anything over 200 chars or containing trace-like substrings
+    # as unsafe and fall back to the generic copy.
+    message = _STATUS_TO_MESSAGE.get(status, "Something went wrong.")
+    if isinstance(exc.detail, str) and exc.detail and not _looks_like_trace(exc.detail):
+        message = exc.detail
+    retry_after: Optional[int] = None
+    headers = dict(exc.headers or {})
+    if "Retry-After" in headers:
+        try:
+            retry_after = int(headers["Retry-After"])
+        except ValueError:
+            retry_after = None
+
+    if is_api_request(request):
+        return _json_envelope(
+            status=status,
+            slug=slug,
+            message=message,
+            request_id=request_id,
+            headers=headers,
+        )
+    return render_error_page(
+        request,
+        status=status,
+        message=message,
+        retry_after=retry_after,
+    )
+
+
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> Response:
+    """Pydantic validation → 422 with per-field details."""
+    request_id = get_request_id(request)
+    errors = []
+    for e in exc.errors():
+        loc = e.get("loc") or []
+        # Strip the first item ("body", "query", etc.) for a tidier path.
+        field_parts = [str(x) for x in loc[1:]] or [str(x) for x in loc]
+        errors.append({
+            "field": ".".join(field_parts),
+            "message": _sanitize_validation_msg(str(e.get("msg") or "Invalid")),
+        })
+    if is_api_request(request):
+        return _json_envelope(
+            status=422,
+            slug="validation_failed",
+            message="Some fields need attention.",
+            request_id=request_id,
+            details={"errors": errors},
+        )
+    return render_error_page(request, status=422, message="Some fields need attention.")
+
+
+async def app_exception_handler(request: Request, exc: Exception) -> Response:
+    """Catch-all for anything an app handler raises that isn't an
+    HTTPException or ValidationError. Logs the traceback; returns a
+    generic 500 to the client. Never leaks the exception's message.
+    """
+    request_id = get_request_id(request)
+    log.exception(
+        "unhandled exception",
+        extra={
+            "request_id": request_id,
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
+    if is_api_request(request):
+        return _json_envelope(
+            status=500,
+            slug="internal_error",
+            message=_STATUS_TO_MESSAGE[500],
+            request_id=request_id,
+        )
+    return render_error_page(request, status=500)
+
+
+# ── Heuristics ────────────────────────────────────────────────────────
+
+def _looks_like_trace(s: str) -> bool:
+    """Spot obvious stack-trace / DB-error tokens that shouldn't leak
+    into the `message` field. Conservative — false positives are fine
+    (we fall back to a generic message), false negatives leak details."""
+    if len(s) > 240:
+        return True
+    tokens = (
+        "Traceback",
+        "traceback",
+        " at 0x",
+        "sqlite3.",
+        "IntegrityError",
+        "OperationalError",
+        "psycopg",
+        "column ",
+        "FOREIGN KEY",
+        "UNIQUE constraint",
+        "NOT NULL constraint",
+    )
+    return any(t in s for t in tokens)
+
+
+def _sanitize_validation_msg(msg: str) -> str:
+    """Trim pydantic's chatty messages for end users."""
+    if _looks_like_trace(msg):
+        return "Invalid value."
+    return msg[:200]
+
+
+# ── Request ID middleware ─────────────────────────────────────────────
+
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Stamps every request with a short id on request.state and echoes
+    it in the X-Request-ID response header.
+
+    Respects an incoming X-Request-ID (trust proxy / tests / retries)
+    as long as it's short + ascii-clean. Otherwise mints a fresh one.
+    """
+
+    MAX_INBOUND_LEN = 64
+
+    async def dispatch(self, request, call_next):
+        incoming = request.headers.get("x-request-id", "") or ""
+        if incoming and len(incoming) <= self.MAX_INBOUND_LEN and incoming.isprintable() and " " not in incoming:
+            rid = incoming
+        else:
+            rid = generate_request_id()
+        request.state.request_id = rid
+        response: Response = await call_next(request)
+        # Don't stomp an upstream-set header.
+        response.headers.setdefault("X-Request-ID", rid)
+        return response
+
+
+# ── Registration ──────────────────────────────────────────────────────
+
+def register(app) -> None:
+    """Attach every handler + the RequestID middleware to a FastAPI app."""
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(Exception, app_exception_handler)
+    # Middleware last so it wraps everything else.
+    app.add_middleware(RequestIDMiddleware)
+    log.info("error_handlers registered (http + validation + fallback + request_id)")

@@ -40,7 +40,11 @@ html, body {
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* 100vh crops when iOS Safari's URL bar retracts; 100dvh is the
+     stable dynamic viewport. Keep both so older browsers that don't
+     know dvh fall back to vh. See BROWSER_COMPAT.md §5. */
   min-height: 100vh;
+  min-height: 100dvh;
   font-size: 15px;
   line-height: 1.5;
 }
@@ -149,6 +153,7 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
 
 .auth-wrap {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1541,7 +1546,6 @@ html.theme-loading * { transition: none !important; }
 
 /* Probability display */
 .prob-market        { color: var(--text-tertiary); }
-.prob-betyc         { color: var(--text-primary); font-weight: 600; }
 .prob-edge-positive { color: var(--semantic-high); }
 .prob-edge-negative { color: var(--semantic-low); }
 .prob-edge-neutral  { color: var(--text-tertiary); }
@@ -1914,6 +1918,7 @@ label[for] + textarea {
   grid-template-rows: 1fr var(--dash-status-bar-h);
   grid-template-areas: "sidebar main" "sidebar status";
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg-base);
   color: var(--text-primary);
 }
@@ -1928,6 +1933,7 @@ label[for] + textarea {
   background: var(--bg-surface);
   border-right: 1px solid var(--border-subtle);
   min-height: 100vh;
+  min-height: 100dvh;
   position: sticky;
   top: 0;
 }

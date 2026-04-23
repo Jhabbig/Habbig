@@ -10,6 +10,9 @@
   var ENDPOINT = "/api/analytics/event";
 
   function pickUserAgentCategory() {
+    // UA-allowlist: device-class bucketing for analytics ONLY. Keeps
+    // daily/weekly reports honest about the mobile share without
+    // influencing rendering. See BROWSER_COMPAT.md §8.
     try {
       var ua = (navigator.userAgent || "").toLowerCase();
       if (/ipad|tablet/.test(ua)) return "tablet";

@@ -75,7 +75,9 @@
     return null;
   }
 
-  /** Detect Mac for keyboard shortcut label */
+  // UA-allowlist: platform detection for Cmd-vs-Ctrl shortcut rendering.
+  // navigator.userAgentData.platform isn't on Safari yet (Apr 2026), so
+  // we fall back to navigator.platform + userAgent. See BROWSER_COMPAT.md §8.
   var isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
   /* ================================================================

@@ -539,9 +539,9 @@
     const pill = document.createElement('button');
     pill.type = 'button';
     pill.className = 'narve-search-trigger narve-cmdp-pill';
-    // Detect platform to show the right modifier glyph. navigator.platform
-    // is deprecated but the replacement (userAgentData.platform) isn't
-    // widely available yet, so fall through to legacy.
+    // UA-allowlist: platform detection for Cmd-vs-Ctrl glyph. Prefers
+    // userAgentData.platform (Chromium) and falls back to the legacy
+    // navigator.platform on Safari/Firefox. See BROWSER_COMPAT.md §8.
     const isMac = /Mac|iPhone|iPad/i.test(
       (navigator.userAgentData && navigator.userAgentData.platform) ||
       navigator.platform || ''
