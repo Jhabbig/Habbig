@@ -81,16 +81,22 @@
   }
 
   function resolvedBadge(resolvedCorrect) {
+    // role="status" so assistive tech treats the symbol + text as a live
+    // announcement rather than loose punctuation. aria-label re-states the
+    // glyph-free meaning for screen readers (the "✓" / "✗" glyphs read as
+    // "check mark" / "cross mark" which is ambiguous out of context).
     if (resolvedCorrect === 1) {
       return (
-        '<span style="font-size:11px;color:var(--semantic-high);margin-left:8px" ' +
-        'title="This take\'s position matched the market\'s outcome.">✓ correct</span>'
+        '<span class="take-resolved take-resolved-correct" role="status" ' +
+        'aria-label="Correct: this take\'s position matched the market\'s outcome">' +
+        '✓ correct</span>'
       );
     }
     if (resolvedCorrect === 0) {
       return (
-        '<span style="font-size:11px;color:var(--semantic-low);margin-left:8px" ' +
-        'title="This take\'s position did not match the market\'s outcome.">✗ incorrect</span>'
+        '<span class="take-resolved take-resolved-wrong" role="status" ' +
+        'aria-label="Incorrect: this take\'s position did not match the outcome">' +
+        '✗ incorrect</span>'
       );
     }
     return "";
@@ -107,34 +113,45 @@
       ? ' <button class="btn take-report" data-id="' + t.id + '">report</button>'
       : "";
     var shadowNote = t.shadow_hidden && t.is_own
-      ? '<div style="font-size:11px;color:var(--text-tertiary);margin-top:6px">' +
+      ? '<div class="take-shadow-note" role="note">' +
         "This take is shadow-hidden from other users (low quality score). " +
         "Only you see it." +
         "</div>"
       : "";
 
-    // Vote buttons
+    // Vote buttons. Every button has an explicit aria-label and
+    // aria-pressed so screen readers announce "Upvote, 23 votes, pressed"
+    // (or similar) rather than "up-triangle, 23". Authors see the same
+    // counts as a static span — no buttons to tab through.
     var vote = t.viewer_vote;
     var canVote = currentUserId && !t.is_own;
-    var upActive = vote === 1 ? "background:var(--interactive-ghost);" : "";
-    var downActive = vote === -1 ? "background:var(--interactive-ghost);" : "";
+    var upPressed = vote === 1 ? "true" : "false";
+    var downPressed = vote === -1 ? "true" : "false";
+    var upClass = "btn take-vote take-vote-up" + (vote === 1 ? " is-active" : "");
+    var downClass = "btn take-vote take-vote-down" + (vote === -1 ? " is-active" : "");
     var voteBlock = canVote
-      ? '<button class="btn take-vote" data-id="' + t.id +
-        '" data-dir="1" style="' + upActive + '">▲ ' + t.upvotes +
-        "</button>" +
-        '<button class="btn take-vote" data-id="' + t.id +
-        '" data-dir="-1" style="' + downActive + '">▼ ' + t.downvotes +
-        "</button>"
-      : '<span style="color:var(--text-tertiary);font-family:var(--font-mono)">▲ ' +
+      ? '<button class="' + upClass + '" data-id="' + t.id +
+        '" data-dir="1" aria-pressed="' + upPressed + '" ' +
+        'aria-label="Upvote this take (currently ' + t.upvotes + ' upvote' +
+        (t.upvotes === 1 ? "" : "s") + ')">▲ <span aria-hidden="true">' +
+        t.upvotes + '</span></button>' +
+        '<button class="' + downClass + '" data-id="' + t.id +
+        '" data-dir="-1" aria-pressed="' + downPressed + '" ' +
+        'aria-label="Downvote this take (currently ' + t.downvotes + ' downvote' +
+        (t.downvotes === 1 ? "" : "s") + ')">▼ <span aria-hidden="true">' +
+        t.downvotes + '</span></button>'
+      : '<span class="take-vote-static" aria-label="' +
+        t.upvotes + " upvotes, " + t.downvotes + ' downvotes">▲ ' +
         t.upvotes + "  ▼ " + t.downvotes + "</span>";
 
     return (
-      '<article class="take-row" id="take-' + t.id + '" ' +
-        'style="padding:14px 0;border-bottom:1px solid var(--border-ghost)">' +
+      '<article class="take-row" id="take-' + t.id + '">' +
         '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
           '<div>' +
-            '<span style="font-weight:600">@' + esc(t.author_handle) + "</span> " +
-            '<span style="font-size:11px;color:var(--text-tertiary);margin-left:6px">' +
+            '<span class="take-author-handle">@' + esc(t.author_handle) + "</span> " +
+            '<span class="take-author-cred" ' +
+              'title="Blended credibility: global prediction accuracy with a ' +
+              'small nudge from take accuracy (0–1, higher is better).">' +
               "cred " + t.author_credibility.toFixed(2) +
             "</span>" +
             ownerChip +
@@ -148,10 +165,7 @@
         '<div style="font-size:13px;margin-top:4px">' +
           positionBadge(t.position, t.confidence) +
         "</div>" +
-        '<div class="take-reasoning" style="margin-top:8px;white-space:pre-wrap;' +
-          "font-size:14px;line-height:1.5\">" +
-          esc(t.reasoning) +
-        "</div>" +
+        '<div class="take-reasoning">' + esc(t.reasoning) + "</div>" +
         shadowNote +
         '<div style="display:flex;gap:8px;margin-top:10px;align-items:center">' +
           voteBlock +
@@ -172,12 +186,23 @@
     if (postBtn) postBtn.style.display = state.canPost ? "" : "none";
     if (gateEl) gateEl.style.display = state.canPost || !currentUserId ? "none" : "";
 
+    // Switch off the loading state for assistive tech on every render.
+    listEl.setAttribute("aria-busy", "false");
+
     if (!state.takes.length) {
+      // Tailor the empty-state CTA to the viewer.
+      var cta = "";
+      if (state.canPost) {
+        cta = " Be the first.";
+      } else if (currentUserId) {
+        // Logged in but not paid — point them at /pricing.
+        cta = ' <a href="/pricing" style="color:var(--text-primary)">Upgrade</a> to post one.';
+      }
+      // Loading → Loaded empty. Keep the text in a live region so screen
+      // readers announce the transition.
       listEl.innerHTML =
         '<div class="empty-state" style="padding:24px;text-align:center;' +
-        "color:var(--text-tertiary)\">No takes yet. " +
-        (state.canPost ? "Be the first." : "") +
-        "</div>";
+        "color:var(--text-tertiary)\">No takes yet." + cta + "</div>";
       return;
     }
     listEl.innerHTML = state.takes.map(takeRowHTML).join("");
@@ -210,52 +235,58 @@
     var existingReasoning = (existing && existing.reasoning) || "";
     var isEdit = !!existing;
 
+    // Modal uses the new .take-modal-* CSS classes for the outer chrome;
+    // the body scrolls, the action row is sticky at the bottom so Cancel/
+    // Submit stay visible even when reasoning pushes past the viewport.
     var html =
-      '<div class="take-modal-overlay" style="position:fixed;inset:0;' +
-        "background:rgba(0,0,0,0.4);z-index:500;display:flex;align-items:center;" +
-        "justify-content:center\">" +
-      '<div class="take-modal" role="dialog" aria-modal="true" aria-label="Post take" ' +
-        'style="background:var(--bg-surface);border:1px solid var(--border-default);' +
-        "border-radius:12px;padding:24px;max-width:540px;width:92%;max-height:90vh;" +
-        "overflow-y:auto\">" +
-        '<h3 style="margin:0 0 8px">' + (isEdit ? "Edit" : "Post") + " your take</h3>" +
-        '<p style="margin:0 0 16px;color:var(--text-secondary);font-size:13px">' +
-          "One take per market. You can edit for 24 hours after posting." +
-        "</p>" +
-        '<label style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">Position</label>' +
-        '<div style="display:flex;gap:6px;margin-bottom:16px">' +
-          ["yes", "no", "neutral"].map(function (p) {
-            var active = p === existingPos;
-            return (
-              '<label style="flex:1;text-align:center;padding:10px;' +
-              "border:1px solid var(--border-default);border-radius:6px;cursor:pointer;" +
-              (active ? "background:var(--interactive-ghost);" : "") +
-              "\">" +
-              '<input type="radio" name="take-pos" value="' + p + '" ' +
-              (active ? "checked" : "") + ' style="margin-right:6px">' +
-              (p === "yes" ? "YES" : p === "no" ? "NO" : "Neutral") +
-              "</label>"
-            );
-          }).join("") +
+      '<div class="take-modal-overlay">' +
+      '<div class="take-modal" role="dialog" aria-modal="true" ' +
+           'aria-labelledby="take-modal-title">' +
+        '<div class="take-modal-body">' +
+          '<h3 id="take-modal-title" style="margin:0 0 8px">' +
+            (isEdit ? "Edit" : "Post") + " your take</h3>" +
+          '<p style="margin:0 0 16px;color:var(--text-secondary);font-size:13px">' +
+            "One take per market. You can edit for 24 hours after posting." +
+          "</p>" +
+          '<label style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">Position</label>' +
+          '<div style="display:flex;gap:6px;margin-bottom:16px" role="radiogroup" aria-label="Position">' +
+            ["yes", "no", "neutral"].map(function (p) {
+              var active = p === existingPos;
+              return (
+                '<label style="flex:1;text-align:center;padding:10px;' +
+                "border:1px solid var(--border-default);border-radius:6px;cursor:pointer;" +
+                (active ? "background:var(--interactive-ghost);" : "") +
+                "\">" +
+                '<input type="radio" name="take-pos" value="' + p + '" ' +
+                (active ? "checked" : "") + ' style="margin-right:6px">' +
+                (p === "yes" ? "YES" : p === "no" ? "NO" : "Neutral") +
+                "</label>"
+              );
+            }).join("") +
+          "</div>" +
+          '<label style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
+            "Confidence: <span id=\"take-conf-label\">" +
+            (existingConf || 5) + "/10</span></label>" +
+          '<input id="take-conf" type="range" min="1" max="10" ' +
+            'aria-label="Confidence" aria-valuemin="1" aria-valuemax="10" ' +
+            'value="' + (existingConf || 5) + '" style="width:100%;margin-bottom:16px">' +
+          '<label for="take-reasoning" ' +
+            'style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
+            "Reasoning (50–2000 chars)</label>" +
+          '<textarea id="take-reasoning" rows="6" ' +
+            'aria-describedby="take-count take-error" ' +
+            'style="width:100%;padding:10px;border:1px solid var(--border-default);' +
+            "border-radius:6px;font-family:inherit;font-size:14px\">" +
+            esc(existingReasoning) +
+          "</textarea>" +
+          '<div style="display:flex;justify-content:space-between;align-items:center;' +
+            "margin-top:6px;font-size:11px\">" +
+            '<span id="take-count" style="color:var(--text-tertiary)">0 chars</span>' +
+            '<span id="take-error" role="alert" aria-live="assertive" ' +
+              'style="color:var(--semantic-low)"></span>' +
+          "</div>" +
         "</div>" +
-        '<label style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
-          "Confidence: <span id=\"take-conf-label\">" +
-          (existingConf || 5) + "/10</span></label>" +
-        '<input id="take-conf" type="range" min="1" max="10" value="' +
-          (existingConf || 5) + '" style="width:100%;margin-bottom:16px">' +
-        '<label style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
-          "Reasoning (50–2000 chars)</label>" +
-        '<textarea id="take-reasoning" rows="6" ' +
-          'style="width:100%;padding:10px;border:1px solid var(--border-default);' +
-          "border-radius:6px;font-family:inherit;font-size:14px\">" +
-          esc(existingReasoning) +
-        "</textarea>" +
-        '<div style="display:flex;justify-content:space-between;align-items:center;' +
-          "margin-top:6px;font-size:11px\">" +
-          '<span id="take-count" style="color:var(--text-tertiary)">0 chars</span>' +
-          '<span id="take-error" style="color:var(--semantic-low)"></span>' +
-        "</div>" +
-        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+        '<div class="take-modal-actions">' +
           '<button class="btn" id="take-cancel">Cancel</button>' +
           '<button class="btn btn-primary" id="take-submit">' +
             (isEdit ? "Save changes" : "Post take") +
@@ -336,34 +367,37 @@
 
   function openReportModal(takeId) {
     var html =
-      '<div class="take-modal-overlay" style="position:fixed;inset:0;' +
-        "background:rgba(0,0,0,0.4);z-index:500;display:flex;align-items:center;" +
-        "justify-content:center\">" +
+      '<div class="take-modal-overlay">' +
       '<div class="take-modal" role="dialog" aria-modal="true" ' +
-        'style="background:var(--bg-surface);border:1px solid var(--border-default);' +
-        "border-radius:12px;padding:24px;max-width:440px;width:92%\">" +
-        "<h3>Report this take</h3>" +
-        '<p style="font-size:13px;color:var(--text-secondary);margin:0 0 14px">' +
-          "We review every report. Abuse of the report button may result in a warning." +
-        "</p>" +
-        '<label style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
-          "Reason</label>" +
-        '<select id="report-reason" style="width:100%;padding:10px;' +
-          "border:1px solid var(--border-default);border-radius:6px;margin-bottom:12px\">" +
-          REPORT_REASONS.map(function (r) {
-            return '<option value="' + r.v + '">' + esc(r.l) + "</option>";
-          }).join("") +
-        "</select>" +
-        '<label style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
-          "Details (optional)</label>" +
-        '<textarea id="report-details" rows="3" ' +
-          'style="width:100%;padding:10px;border:1px solid var(--border-default);' +
-          "border-radius:6px;font-family:inherit;font-size:13px\"></textarea>" +
-        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+           'aria-labelledby="report-modal-title" ' +
+           'style="max-width:440px">' +
+        '<div class="take-modal-body">' +
+          '<h3 id="report-modal-title" style="margin:0 0 8px">Report this take</h3>' +
+          '<p style="font-size:13px;color:var(--text-secondary);margin:0 0 14px">' +
+            "We review every report. Abuse of the report button may result in a warning." +
+          "</p>" +
+          '<label for="report-reason" ' +
+            'style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
+            "Reason</label>" +
+          '<select id="report-reason" style="width:100%;padding:10px;' +
+            "border:1px solid var(--border-default);border-radius:6px;margin-bottom:12px\">" +
+            REPORT_REASONS.map(function (r) {
+              return '<option value="' + r.v + '">' + esc(r.l) + "</option>";
+            }).join("") +
+          "</select>" +
+          '<label for="report-details" ' +
+            'style="display:block;margin-bottom:6px;font-size:12px;font-weight:600">' +
+            "Details (optional)</label>" +
+          '<textarea id="report-details" rows="3" ' +
+            'style="width:100%;padding:10px;border:1px solid var(--border-default);' +
+            "border-radius:6px;font-family:inherit;font-size:13px\"></textarea>" +
+          '<div id="report-msg" style="margin-top:10px;font-size:12px" ' +
+            'role="status" aria-live="polite"></div>' +
+        "</div>" +
+        '<div class="take-modal-actions">' +
           '<button class="btn" id="report-cancel">Cancel</button>' +
           '<button class="btn btn-primary" id="report-submit">Send report</button>' +
         "</div>" +
-        '<div id="report-msg" style="margin-top:10px;font-size:12px"></div>' +
       "</div>" +
       "</div>";
     var host = document.createElement("div");

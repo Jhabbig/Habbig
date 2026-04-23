@@ -2441,3 +2441,236 @@ a.btn:focus-visible,
 @media print {
   .narve-cmdp-pill { display: none; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   COMMUNITY TAKES
+   ══════════════════════════════════════════════════════════════════════
+   Scope is `.takes-*` + `.take-*`. All colour/spacing via existing tokens.
+   Split across three concerns: (1) the section toolbar, (2) the
+   per-take row, (3) the post + report modals. */
+
+/* ── Section toolbar (filter + sort + post) ────────────────────────── */
+
+.takes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+  margin-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-ghost);
+}
+
+.takes-toolbar-group {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.takes-toolbar-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.takes-toolbar-group--sort { margin-left: auto; }
+
+/* Both filter + sort buttons share this look — a subtle background on
+   the active state, a visible focus ring on keyboard nav. */
+.takes-filter-btn,
+.takes-sort-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dash-transition-fast),
+              border-color var(--dash-transition-fast),
+              color var(--dash-transition-fast);
+}
+.takes-filter-btn:hover,
+.takes-sort-btn:hover {
+  color: var(--text-primary);
+  background: var(--interactive-ghost);
+}
+.takes-filter-btn.active,
+.takes-sort-btn.active {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.takes-filter-btn:focus-visible,
+.takes-sort-btn:focus-visible {
+  outline: 1px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* Mobile: stop the sort group floating right once the toolbar wraps.
+   Both groups left-align in a vertical stack instead. */
+@media (max-width: 600px) {
+  .takes-toolbar { gap: var(--space-3); }
+  .takes-toolbar-group--sort { margin-left: 0; }
+}
+
+/* ── Per-take row ──────────────────────────────────────────────────── */
+
+.take-row {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-ghost);
+}
+
+.take-author-handle { font-weight: 600; }
+.take-author-cred {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-left: var(--space-1);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: help;  /* signals the title tooltip */
+}
+
+.take-resolved {
+  font-size: 11px;
+  margin-left: var(--space-2);
+  font-weight: 500;
+}
+.take-resolved-correct { color: var(--semantic-high); }
+.take-resolved-wrong   { color: var(--semantic-low);  }
+
+.take-reasoning {
+  margin-top: var(--space-2);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+}
+
+.take-shadow-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-raised);
+  border-left: 2px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+/* Vote buttons — same size whether the user can vote or not, so the
+   row's vertical rhythm doesn't shift for non-paid / anon viewers. */
+.take-vote,
+.take-vote-static {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.take-vote {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  cursor: pointer;
+  transition: background var(--dash-transition-fast),
+              color var(--dash-transition-fast);
+}
+.take-vote:hover { color: var(--text-primary); background: var(--interactive-ghost); }
+.take-vote.is-active {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+}
+.take-vote:focus-visible {
+  outline: 1px solid var(--text-primary);
+  outline-offset: 2px;
+}
+.take-vote[aria-pressed="true"] { font-weight: 600; }
+.take-vote-static {
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+}
+
+/* ── Post + report modals ─────────────────────────────────────────── */
+
+.take-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.take-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 12px);
+  width: 100%;
+  max-width: 540px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;  /* sticky footer anchors inside here */
+}
+
+.take-modal-body {
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+/* Sticky action row — keeps Cancel / Post visible even when reasoning
+   scrolls past them. Critical because the textarea is the whole point
+   of the modal. */
+.take-modal-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-ghost);
+}
+
+@media (max-width: 480px) {
+  .take-modal { max-height: 100vh; border-radius: 0; }
+  .take-modal-overlay { padding: 0; }
+}
+
+/* ── Loading skeleton for the list ────────────────────────────────── */
+
+.takes-skeleton-row {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-ghost);
+}
+.takes-skeleton-row > div {
+  height: 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg,
+    var(--bg-raised) 0%,
+    var(--bg-overlay) 50%,
+    var(--bg-raised) 100%);
+  background-size: 200% 100%;
+  animation: takesSkelShimmer 1.4s ease-in-out infinite;
+}
+.takes-skeleton-row > div + div { margin-top: var(--space-2); }
+.takes-skeleton-row-1 { width: 35%; }
+.takes-skeleton-row-2 { width: 100%; }
+.takes-skeleton-row-3 { width: 88%; }
+
+@keyframes takesSkelShimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .takes-skeleton-row > div { animation: none; }
+}

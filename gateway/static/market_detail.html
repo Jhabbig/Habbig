@@ -94,35 +94,45 @@
 
         <!-- ── Community Takes ───────────────────────────────────── -->
         <section id="market-takes" class="card" style="padding:20px;margin-bottom:20px"
-                 data-market-slug="{{ market_slug }}" data-user-id="{{ user_id }}">
+                 data-market-slug="{{ market_slug }}" data-user-id="{{ user_id }}"
+                 aria-labelledby="takes-heading">
           <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
-            <h2 style="margin:0">
+            <h2 id="takes-heading" style="margin:0">
               Community Takes <span id="takes-count" style="color:var(--text-tertiary);font-weight:400">(0)</span>
             </h2>
             <div style="display:flex;gap:4px">
-              <button id="takes-post-btn" class="btn btn-primary" style="display:none">Post your take +</button>
+              <button id="takes-post-btn" class="btn btn-primary" style="display:none" aria-label="Post your take on this market">Post take</button>
               <span id="takes-post-gate" style="display:none;font-size:12px;color:var(--text-tertiary);align-self:center">
                 <a href="/pricing" style="color:var(--text-primary)">Upgrade</a> to post a take.
               </span>
             </div>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-top:12px;padding-bottom:12px;border-bottom:1px solid var(--border-ghost)">
-            <div style="display:flex;gap:4px;align-items:center">
-              <span style="font-size:11px;color:var(--text-tertiary);letter-spacing:0.08em;text-transform:uppercase">Filter</span>
-              <button class="btn takes-filter-btn active" data-filter="all">All</button>
-              <button class="btn takes-filter-btn" data-filter="yes">YES</button>
-              <button class="btn takes-filter-btn" data-filter="no">NO</button>
-              <button class="btn takes-filter-btn" data-filter="neutral">Neutral</button>
+          <div class="takes-toolbar" role="toolbar" aria-label="Takes filter and sort">
+            <div class="takes-toolbar-group" role="group" aria-label="Filter by position">
+              <span class="takes-toolbar-label">Filter</span>
+              <button class="takes-filter-btn active" data-filter="all">All</button>
+              <button class="takes-filter-btn" data-filter="yes">YES</button>
+              <button class="takes-filter-btn" data-filter="no">NO</button>
+              <button class="takes-filter-btn" data-filter="neutral">Neutral</button>
             </div>
-            <div style="display:flex;gap:4px;align-items:center;margin-left:auto">
-              <span style="font-size:11px;color:var(--text-tertiary);letter-spacing:0.08em;text-transform:uppercase">Sort</span>
-              <button class="btn takes-sort-btn active" data-sort="quality">By quality</button>
-              <button class="btn takes-sort-btn" data-sort="newest">Newest</button>
-              <button class="btn takes-sort-btn" data-sort="votes">Most voted</button>
+            <div class="takes-toolbar-group takes-toolbar-group--sort" role="group" aria-label="Sort order">
+              <span class="takes-toolbar-label">Sort</span>
+              <button class="takes-sort-btn active" data-sort="quality">Quality</button>
+              <button class="takes-sort-btn" data-sort="newest">Newest</button>
+              <button class="takes-sort-btn" data-sort="votes">Most voted</button>
             </div>
           </div>
-          <div id="takes-list" style="margin-top:8px">
-            <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-tertiary)">Loading takes…</div>
+          <div id="takes-list" style="margin-top:8px" aria-live="polite" aria-busy="true">
+            <div class="takes-skeleton-row" aria-hidden="true">
+              <div class="takes-skeleton-row-1"></div>
+              <div class="takes-skeleton-row-2"></div>
+              <div class="takes-skeleton-row-3"></div>
+            </div>
+            <div class="takes-skeleton-row" aria-hidden="true">
+              <div class="takes-skeleton-row-1"></div>
+              <div class="takes-skeleton-row-2"></div>
+              <div class="takes-skeleton-row-3"></div>
+            </div>
           </div>
         </section>
 

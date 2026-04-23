@@ -339,6 +339,42 @@ class TestInviteTokens(unittest.TestCase):
 
 
 class TestShareMetrics(unittest.TestCase):
+    def test_link_share_to_signup_flips_row(self):
+        """The auth-register attribution hook calls link_share_to_signup
+        with the cookie's metric id + the new user id. The share_metrics
+        row must flip signed_up=1, signed_up_user_id=<user>, and
+        signed_up_at must be populated so /admin/sharing can count
+        conversions and the top-sharers query can join.
+
+        Second call on the same metric id is a no-op (guarded by
+        signed_up = 0 in the UPDATE predicate)."""
+        tag = _tag(self)
+        sharer = _mk_user(f"at_sharer_{tag}@test.com")
+        invitee = _mk_user(f"at_invitee_{tag}@test.com")
+        share = db_sharing.create_shared_market(
+            market_slug=f"atmkt-{tag}",
+            sharer_user_id=sharer, sharer_handle=None,
+        )
+        metric_id = db_sharing.record_share_view(
+            share_type="market", share_id=share["id"],
+            referer="https://twitter.com/x", cf_country="US",
+        )
+        ok = db_sharing.link_share_to_signup(metric_id, invitee)
+        self.assertTrue(ok)
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT signed_up, signed_up_user_id, signed_up_at "
+                "FROM share_metrics WHERE id = ?",
+                (metric_id,),
+            ).fetchone()
+        self.assertEqual(row["signed_up"], 1)
+        self.assertEqual(row["signed_up_user_id"], invitee)
+        self.assertIsNotNone(row["signed_up_at"])
+        # Second call: no-op. Guards against double-writes if the
+        # auth-register path somehow fires twice for the same user.
+        again = db_sharing.link_share_to_signup(metric_id, invitee)
+        self.assertFalse(again)
+
     def test_referrer_classification(self):
         tag = _tag(self)
         uid = _mk_user(f"rc_{tag}@test.com")

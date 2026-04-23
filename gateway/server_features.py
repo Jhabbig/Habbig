@@ -1497,6 +1497,33 @@ async def auth_register(request: Request):
 
     response = JSONResponse({"success": True, "user_id": user_id})
     await _issue_hardened_session(user_id, request, response)
+
+    # Share-loop conversion attribution. If this visitor landed on narve.ai
+    # via /s/{m,s,p}/{token} we set a `narve_share_attribution` cookie
+    # carrying the share_metrics row id. Link the row to the new user so
+    # /admin/sharing shows the conversion. Fail-soft: a bad cookie value,
+    # missing migration, or closed DB never blocks a signup.
+    share_metric_raw = request.cookies.get("narve_share_attribution")
+    if share_metric_raw:
+        try:
+            metric_id = int(share_metric_raw)
+        except (TypeError, ValueError):
+            metric_id = None
+        if metric_id and metric_id > 0:
+            try:
+                import db_sharing
+                db_sharing.link_share_to_signup(metric_id, user_id)
+            except Exception:
+                # Log + move on. An attribution failure on signup is
+                # strictly lower priority than the signup itself.
+                log.exception(
+                    "auth.register: share attribution link failed "
+                    "(user_id=%d, metric_id=%s)",
+                    user_id, share_metric_raw,
+                )
+        # Clear the cookie either way — consumed once, no longer needed.
+        response.delete_cookie("narve_share_attribution", path="/")
+
     log.info("auth.register: user_id=%d email=%s via token=%s...", user_id, email, raw_token[:8])
     return response
 

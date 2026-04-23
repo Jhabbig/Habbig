@@ -490,17 +490,25 @@ def _render_report_rows(reports: list) -> str:
                 '<span style="color:var(--text-tertiary);font-size:11px">'
                 'take already deleted</span>'
             )
+        # Action cell wraps flex so buttons can break onto a second line
+        # on narrow viewports without piling over the reporter column.
+        # Reporter cell uses font-mono so user IDs are scan-friendly.
         out.append(
             f'<tr data-report-id="{rid}" data-take-id="{take_id}">'
             f'<td>{when}</td>'
             f'<td><code>{reason}</code>{state}</td>'
             f'<td><a href="/markets/{slug}#take-{take_id}">{slug}</a></td>'
             f'<td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{preview}</td>'
-            f'<td>u{reporter}</td>'
+            f'<td style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">u{reporter}</td>'
             f'<td>'
-            f'<button class="btn btn-danger mod-act" data-action="deleted" data-rid="{rid}" data-tid="{take_id}">Delete take</button> '
-            f'<button class="btn mod-act" data-action="warned_user" data-rid="{rid}" data-tid="{take_id}">Warn</button> '
-            f'<button class="btn mod-act" data-action="dismissed" data-rid="{rid}" data-tid="{take_id}">Dismiss</button>'
+            f'<div style="display:flex;flex-wrap:wrap;gap:6px">'
+            f'<button class="btn btn-danger mod-act" data-action="deleted" data-rid="{rid}" data-tid="{take_id}" '
+            f'        aria-label="Delete take {take_id} and close this report">Delete take</button>'
+            f'<button class="btn mod-act" data-action="warned_user" data-rid="{rid}" data-tid="{take_id}" '
+            f'        aria-label="Warn author of take {take_id}">Warn</button>'
+            f'<button class="btn mod-act" data-action="dismissed" data-rid="{rid}" data-tid="{take_id}" '
+            f'        aria-label="Dismiss this report">Dismiss</button>'
+            f'</div>'
             f'</td>'
             f'</tr>'
         )
