@@ -137,7 +137,11 @@ def _take_to_dict(
     """
     author_id = take["user_id"]
     if author_cred is None and author_id is not None:
-        author_cred = db_takes.get_user_credibility(author_id)
+        # Blended = 0.85·global accuracy + 0.15·take accuracy. The small
+        # take nudge stays SEPARATE from the global credibility score so
+        # it never inflates the predictions-engine signal — see the
+        # docstring on db_takes.get_blended_credibility.
+        author_cred = db_takes.get_blended_credibility(author_id)
 
     return {
         "id": int(take["id"]),
@@ -552,3 +556,120 @@ async def api_admin_resolve_report(report_id: int, request: Request):
         report_id, admin["user_id"], action, extra,
     )
     return {"resolved": True, "report_id": report_id, "action": action, **extra}
+
+
+# ── Public profile: /u/{user_id}/takes ─────────────────────────────────────
+
+
+@app.get("/u/{user_id}/takes", response_class=HTMLResponse)
+async def public_user_takes_page(user_id: int, request: Request):
+    """Public-facing "best takes" strip for a user who has opted in.
+
+    Re-uses the existing `users.leaderboard_participation` opt-in rather
+    than adding a dedicated takes-only flag — a user who agreed to appear
+    on the public leaderboard has already consented to a public identity
+    on the site, and this avoids a new migration on top of 122–124.
+
+    Shows up to 5 takes ranked by quality_score (strict filter: no
+    shadow-hidden rows, no NULL scores). Returns 404 for anyone who
+    hasn't opted in, so we don't leak the mere existence of an account.
+    """
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    if not db_takes.user_opts_in_public_takes(user_id):
+        # Don't reveal that the account exists — same pattern as
+        # public_profile_page in user_prediction_routes.py.
+        raise HTTPException(status_code=404, detail="Profile not public")
+
+    best = db_takes.list_user_best_takes(user_id, limit=5)
+    stats = db_takes.user_take_stats(user_id)
+    blended = db_takes.get_blended_credibility(user_id)
+
+    handle = _author_handle(user_id)
+    correct_rate = (
+        f"{stats['correct_rate'] * 100:.0f}%"
+        if stats["correct_rate"] is not None else "—"
+    )
+    avg_q = (
+        f"{stats['avg_quality']:.1f}"
+        if stats["avg_quality"] is not None else "—"
+    )
+
+    # Render server-side — stay a small, cached, SEO-friendly page. Keep
+    # the per-take markup isolated from market_takes.js to avoid pulling
+    # the whole posting/voting JS onto the public profile.
+    take_rows_html = _render_public_best_takes(best, stats["total"])
+
+    return render_page(
+        "public_user_takes",
+        request=request,
+        handle=handle,
+        email_domain=(user["email"] or "").split("@")[-1] if user["email"] else "",
+        blended_credibility=f"{blended:.2f}",
+        total_takes=str(stats["total"]),
+        correct_count=str(stats["correct"]),
+        incorrect_count=str(stats["incorrect"]),
+        correct_rate=correct_rate,
+        avg_quality=avg_q,
+        raw_best_takes=take_rows_html,
+    )
+
+
+def _render_public_best_takes(takes: list, total: int) -> str:
+    if total == 0:
+        return (
+            '<div class="empty-state" style="padding:32px;text-align:center;'
+            'color:var(--text-tertiary)">No takes yet.</div>'
+        )
+    if not takes:
+        return (
+            '<div class="empty-state" style="padding:32px;text-align:center;'
+            'color:var(--text-tertiary)">No scored takes yet — check back '
+            'after the next market resolution.</div>'
+        )
+    out: list[str] = []
+    for t in takes:
+        slug = _html.escape(t["market_slug"] or "")
+        pos = _POSITION_LABEL.get(t["position"], t["position"])
+        # Monochrome colour hints — no green/red, in line with the rest of
+        # the dashboard palette.
+        pos_tone = "var(--text-primary)" if t["position"] == "yes" else (
+            "var(--text-secondary)" if t["position"] == "no"
+            else "var(--text-tertiary)"
+        )
+        reasoning = _html.escape((t["reasoning"] or "")[:280])
+        conf = f" · {t['confidence']}/10" if t["confidence"] else ""
+        resolved = ""
+        if t["resolved_correct"] == 1:
+            resolved = (
+                '<span style="font-size:11px;color:var(--semantic-high);'
+                'margin-left:8px" title="Position matched outcome">✓ correct</span>'
+            )
+        elif t["resolved_correct"] == 0:
+            resolved = (
+                '<span style="font-size:11px;color:var(--semantic-low);'
+                'margin-left:8px" title="Position did not match outcome">✗ incorrect</span>'
+            )
+        q = (
+            f"{float(t['quality_score']):.1f}"
+            if t["quality_score"] is not None else "—"
+        )
+        out.append(
+            f'<article style="padding:16px 0;border-bottom:1px solid var(--border-ghost)">'
+            f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
+            f'<div>'
+            f'<a href="/markets/{slug}" style="text-decoration:none;color:inherit">'
+            f'<strong style="color:{pos_tone}">{pos}</strong>{conf} on '
+            f'<span style="color:var(--text-secondary)">{slug}</span></a>'
+            f'{resolved}'
+            f'</div>'
+            f'<span style="font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono)">'
+            f'q {q}</span>'
+            f'</div>'
+            f'<p style="font-size:14px;line-height:1.5;margin:8px 0 0;color:var(--text-secondary)">'
+            f'{reasoning}</p>'
+            f'</article>'
+        )
+    return "".join(out)

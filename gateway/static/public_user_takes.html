@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>@{{ handle }} — Takes — narve.ai</title>
+  <meta name="description" content="Community takes by @{{ handle }} on narve.ai prediction markets. {{ correct_count }} correct, {{ incorrect_count }} wrong, {{ correct_rate }} hit rate.">
+  <meta property="og:title" content="@{{ handle }}'s best takes — narve.ai">
+  <meta property="og:description" content="{{ correct_count }} correct, {{ correct_rate }} hit rate across {{ total_takes }} community takes.">
+  <meta name="robots" content="index, follow">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body style="background:var(--bg-base);color:var(--text-primary);font-family:var(--font-ui);min-height:100vh;margin:0">
+
+  <header style="border-bottom:1px solid var(--border-ghost);padding:16px 24px;display:flex;align-items:center;gap:12px">
+    <a href="/" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--text-primary)">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+      <strong style="font-size:15px;letter-spacing:-0.02em">narve.ai</strong>
+    </a>
+    <span style="color:var(--text-tertiary);font-size:13px">·</span>
+    <a href="/leaderboard" style="color:var(--text-secondary);font-size:13px;text-decoration:none">leaderboard</a>
+  </header>
+
+  <main style="max-width:720px;margin:0 auto;padding:48px 24px 64px">
+
+    <!-- Identity + credibility header -->
+    <section style="margin-bottom:36px">
+      <h1 class="page-title" style="margin:0 0 6px">@{{ handle }}</h1>
+      <p class="page-subtitle" style="margin:0">
+        Community takes on narve.ai markets.
+        Blended credibility <strong style="color:var(--text-primary);font-family:var(--font-mono)">{{ blended_credibility }}</strong>
+        (global accuracy × take accuracy).
+      </p>
+    </section>
+
+    <!-- Stat tiles -->
+    <section class="stat-grid" style="margin-bottom:40px">
+      <div class="stat-tile">
+        <div class="stat-label">Total takes</div>
+        <div class="stat-value">{{ total_takes }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Correct</div>
+        <div class="stat-value">{{ correct_count }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Wrong</div>
+        <div class="stat-value">{{ incorrect_count }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Hit rate</div>
+        <div class="stat-value">{{ correct_rate }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Avg quality</div>
+        <div class="stat-value">{{ avg_quality }}</div>
+      </div>
+    </section>
+
+    <!-- Best-takes strip -->
+    <section>
+      <h2 style="font-size:18px;font-weight:500;letter-spacing:-0.01em;margin:0 0 6px">Best takes</h2>
+      <p class="page-subtitle" style="font-size:12px;margin:0 0 16px">
+        Top 5 by quality score. Takes whose market hasn't resolved yet are
+        shown once they've accumulated a score from community votes.
+      </p>
+      {{ raw_best_takes }}
+    </section>
+
+    <p style="font-size:11px;color:var(--text-tertiary);margin-top:48px;text-align:center;line-height:1.6">
+      Visible because @{{ handle }} opted into the public leaderboard.
+      <a href="/settings" style="color:var(--text-secondary)">Change your visibility</a>.
+    </p>
+
+  </main>
+
+<script src="/_gateway_static/user-features.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

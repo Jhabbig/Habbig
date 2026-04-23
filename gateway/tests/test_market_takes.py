@@ -767,5 +767,143 @@ class TestListing(unittest.TestCase):
         self.assertEqual(ids[1], tid_old)
 
 
+# ── 11. Blended credibility + public profile ─────────────────────────────
+
+
+class TestBlendedCredibility(unittest.TestCase):
+    def _resolve_take(self, tid: int, correct: int) -> None:
+        with db.conn() as c:
+            c.execute(
+                "UPDATE market_takes SET resolved_correct = ? WHERE id = ?",
+                (correct, tid),
+            )
+
+    def test_no_resolved_takes_returns_base_credibility(self):
+        uid = _make_user("bc_nothing", paid=True)
+        # No user_accuracy row yet → base defaults to 0.5.
+        self.assertAlmostEqual(db_takes.get_blended_credibility(uid), 0.5, places=3)
+        self.assertIsNone(db_takes.get_user_take_accuracy(uid))
+
+    def test_perfect_take_record_nudges_up(self):
+        uid = _make_user("bc_perfect", paid=True)
+        # Author has a middling global accuracy.
+        with db.conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO user_accuracy "
+                "(user_id, accuracy_score, total_predictions, correct_predictions, "
+                " last_computed_at) VALUES (?, 0.50, 10, 5, ?)",
+                (uid, int(time.time())),
+            )
+        # Three correct takes, zero wrong.
+        for i in range(3):
+            tid = db_takes.create_take(
+                user_id=uid, market_slug=f"poly:bc-perfect-{i}",
+                position="yes", reasoning=_good_reasoning(),
+            )
+            self._resolve_take(tid, 1)
+
+        self.assertEqual(db_takes.get_user_take_accuracy(uid), 1.0)
+        blended = db_takes.get_blended_credibility(uid)
+        # 0.85·0.5 + 0.15·1.0 = 0.575 — a small nudge above the base 0.5.
+        self.assertAlmostEqual(blended, 0.575, places=3)
+        self.assertGreater(blended, 0.5)
+        self.assertLess(blended, 0.6, "nudge must stay SMALL, not dominant")
+
+    def test_wrong_take_record_nudges_down(self):
+        uid = _make_user("bc_wrong", paid=True)
+        with db.conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO user_accuracy "
+                "(user_id, accuracy_score, total_predictions, correct_predictions, "
+                " last_computed_at) VALUES (?, 0.80, 10, 8, ?)",
+                (uid, int(time.time())),
+            )
+        for i in range(4):
+            tid = db_takes.create_take(
+                user_id=uid, market_slug=f"poly:bc-wrong-{i}",
+                position="yes", reasoning=_good_reasoning(),
+            )
+            self._resolve_take(tid, 0)
+
+        self.assertEqual(db_takes.get_user_take_accuracy(uid), 0.0)
+        # 0.85·0.8 + 0.15·0.0 = 0.68 — a small dip below the base 0.8.
+        self.assertAlmostEqual(db_takes.get_blended_credibility(uid), 0.68, places=3)
+
+    def test_neutral_takes_dont_count_toward_accuracy(self):
+        uid = _make_user("bc_neutral", paid=True)
+        # Neutral takes stay unresolved (resolved_correct IS NULL), so they
+        # shouldn't pull the denominator in either direction.
+        for i in range(5):
+            db_takes.create_take(
+                user_id=uid, market_slug=f"poly:bc-neutral-{i}",
+                position="neutral", reasoning=_good_reasoning(),
+            )
+        self.assertIsNone(db_takes.get_user_take_accuracy(uid))
+
+
+class TestPublicProfile(unittest.TestCase):
+    def _opt_in(self, uid: int) -> None:
+        with db.conn() as c:
+            c.execute(
+                "UPDATE users SET leaderboard_participation = 1 WHERE id = ?",
+                (uid,),
+            )
+
+    def test_profile_404_if_not_opted_in(self):
+        uid = _make_user("prof_priv", paid=True)
+        db_takes.create_take(
+            user_id=uid, market_slug="poly:prof-priv",
+            position="yes", reasoning=_good_reasoning(),
+        )
+        r = client.get(f"/u/{uid}/takes")
+        self.assertEqual(r.status_code, 404)
+
+    def test_profile_renders_when_opted_in(self):
+        uid = _make_user("prof_pub", paid=True)
+        self._opt_in(uid)
+        tid = db_takes.create_take(
+            user_id=uid, market_slug="poly:prof-pub",
+            position="yes", reasoning=_good_reasoning(),
+        )
+        # Get a non-null quality score so the take shows up in best_takes.
+        other = _make_user("prof_pub_voter")
+        db_takes.cast_vote(tid, other, 1)
+        r = client.get(f"/u/{uid}/takes")
+        self.assertEqual(r.status_code, 200, r.text)
+        # Handle + market slug + reasoning snippet all present.
+        self.assertIn("Best takes", r.text)
+        self.assertIn("poly:prof-pub", r.text)
+
+    def test_profile_404_for_unknown_user(self):
+        r = client.get("/u/999999/takes")
+        self.assertEqual(r.status_code, 404)
+
+    def test_best_takes_filter_excludes_shadow_hidden(self):
+        uid = _make_user("prof_shadow", paid=True)
+        self._opt_in(uid)
+        tid = db_takes.create_take(
+            user_id=uid, market_slug="poly:prof-shadow",
+            position="yes", reasoning=_good_reasoning(),
+        )
+        # Push the take into shadow-hidden state with 10 downvotes.
+        for i in range(10):
+            voter = _make_user(f"prof_shadow_v_{i}")
+            db_takes.cast_vote(tid, voter, -1)
+        self.assertTrue(int(db_takes.get_take(tid)["shadow_hidden"]))
+
+        best = db_takes.list_user_best_takes(uid)
+        self.assertEqual(len(best), 0, "shadow-hidden takes must not leak to profile")
+
+    def test_best_takes_requires_non_null_quality(self):
+        uid = _make_user("prof_noscore", paid=True)
+        db_takes.create_take(
+            user_id=uid, market_slug="poly:prof-noscore",
+            position="yes", reasoning=_good_reasoning(),
+        )
+        # Brand-new take, nobody voted → quality_score is NULL.
+        best = db_takes.list_user_best_takes(uid)
+        self.assertEqual(len(best), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

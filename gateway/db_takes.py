@@ -153,6 +153,109 @@ def get_user_credibility(user_id: int) -> float:
     return max(0.0, min(1.0, score))
 
 
+def get_user_take_accuracy(user_id: int) -> Optional[float]:
+    """Fraction of this user's resolved takes that were correct.
+
+    Returns None if the user has no scored takes yet (neutral takes never
+    resolve, so they don't count in the denominator). Range [0.0, 1.0].
+
+    This is deliberately derived at query time from `market_takes` rather
+    than stored in `user_accuracy.accuracy_score`, so the "small credibility
+    nudge" for correct takes stays SEPARATE from the global credibility
+    score that feeds into the leaderboard / quality-score formula.
+    """
+    if not user_id:
+        return None
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT "
+            "  SUM(CASE WHEN resolved_correct = 1 THEN 1 ELSE 0 END) AS correct, "
+            "  SUM(CASE WHEN resolved_correct = 0 THEN 1 ELSE 0 END) AS wrong "
+            "FROM market_takes WHERE user_id = ? AND is_deleted = 0",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    c_n = int(row["correct"] or 0)
+    w_n = int(row["wrong"] or 0)
+    denom = c_n + w_n
+    if denom == 0:
+        return None
+    return c_n / float(denom)
+
+
+def get_blended_credibility(user_id: int) -> float:
+    """Global accuracy + a small nudge from correct takes.
+
+    Formula:
+        blended = 0.85 * global_accuracy + 0.15 * take_accuracy
+
+    Applied only once the user has resolved takes; with zero scored takes
+    the blend falls back to the plain global credibility so the nudge can
+    never inflate (or deflate) a brand-new poster.
+
+    The small 0.15 weight keeps this as a genuine *nudge* — someone with a
+    perfect take record (accuracy 1.0) gets at most +0.075 above their
+    global score, which matters for display + quality_score but doesn't
+    overwhelm the predictions engine's signal.
+    """
+    base = get_user_credibility(user_id)
+    take_acc = get_user_take_accuracy(user_id)
+    if take_acc is None:
+        return base
+    blended = 0.85 * base + 0.15 * take_acc
+    return max(0.0, min(1.0, blended))
+
+
+def user_opts_in_public_takes(user_id: int) -> bool:
+    """True if this user has opted into the public leaderboard.
+
+    Reuses the existing `users.leaderboard_participation` flag — a user who
+    agreed to have their predictions appear on the public leaderboard has
+    already consented to a public identity on the site. No new opt-in is
+    needed just for takes.
+    """
+    if not user_id:
+        return False
+    try:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT leaderboard_participation FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return False
+    if not row:
+        return False
+    try:
+        return bool(int(row["leaderboard_participation"] or 0))
+    except (TypeError, ValueError):
+        return False
+
+
+def list_user_best_takes(user_id: int, *, limit: int = 5) -> list[sqlite3.Row]:
+    """Top-scoring visible takes by this user. Used on the public profile.
+
+    Filter rules (stricter than the per-market lists, because the profile
+    curates):
+      - is_deleted = 0
+      - shadow_hidden = 0 (never leak an author-only hidden take off-market)
+      - quality_score IS NOT NULL (skip brand-new takes with no score)
+
+    Ordered by quality_score DESC, created_at DESC as tiebreak.
+    """
+    if not user_id:
+        return []
+    with db.conn() as c:
+        return list(c.execute(
+            "SELECT * FROM market_takes "
+            "WHERE user_id = ? AND is_deleted = 0 AND shadow_hidden = 0 "
+            "      AND quality_score IS NOT NULL "
+            "ORDER BY quality_score DESC, created_at DESC LIMIT ?",
+            (user_id, max(1, int(limit))),
+        ).fetchall())
+
+
 # ── Quality score ──────────────────────────────────────────────────────────
 
 
