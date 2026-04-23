@@ -142,9 +142,15 @@ def _list_active_markets(limit: int) -> list[dict]:
     import db
     cutoff = int(time.time()) - _RECENT_SNAPSHOT_WINDOW_SECONDS
     with db.conn() as c:
+        # market_snapshots stores the market's closing/resolution time in
+        # the ``close_time`` column. A refactor renamed it from
+        # ``close_at`` elsewhere but this query was missed — produced
+        # a ``no such column: close_at`` every nightly run until 2026-04-23.
+        # Alias back to ``close_at`` in the result set so downstream
+        # consumers (matcher) don't need a matching rename.
         rows = c.execute(
             "SELECT market_slug, market_question, category, "
-            "       MAX(volume) AS volume, MAX(close_at) AS close_at "
+            "       MAX(volume) AS volume, MAX(close_time) AS close_at "
             "FROM market_snapshots "
             "WHERE snapshotted_at >= ? "
             "GROUP BY market_slug "

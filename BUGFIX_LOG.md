@@ -5,6 +5,43 @@ and the file(s) touched. New entries at the top.
 
 ---
 
+## 2026-04-23 — Regression sweep (REGRESSION_SWEEP.md)
+
+### 17a. `forecast_sync` nightly crash — `no such column: close_at`
+
+- **Symptom:** the daily `forecast_sync` job (cron 03:15 UTC) has been the
+  only consistently-failing job on the production server. Every run raised
+  `sqlite3.OperationalError: no such column: close_at` and produced zero
+  external-forecast matches until the next run failed the same way.
+- **Cause:** a prior refactor renamed the relevant column in
+  `market_snapshots` from `close_at` → `close_time`. Everywhere else
+  followed except this job's SQL.
+- **Fix:** `gateway/jobs/forecast_sync.py:147` — use
+  `MAX(close_time) AS close_at`. The alias preserves the public result-dict
+  shape so downstream matcher code (which reads `row["close_at"]`) keeps
+  working. Inline comment added so the next rename pass catches it.
+- **Files:** `gateway/jobs/forecast_sync.py`.
+- **Detection:** `SELECT job_name, COUNT(*) FROM job_runs WHERE ok=0 AND started_at > strftime('%s','now','-1 day')` — one hit, one pattern.
+
+### 17b. `admin_routes.register()` crash — `NameError: 'backups_page' is not defined`
+
+- **Symptom:** server startup logged
+  `ERROR  admin_routes.register failed: name 'backups_page' is not defined`
+  and the admin-routes import block aborted after line 1494.
+  Every admin route REGISTERED AFTER that line was silently dropped —
+  `/admin/backups` didn't exist, and nothing after it in the `register()`
+  function got mounted either.
+- **Cause:** a parallel agent wired the `/admin/backups` registration but
+  never committed the handler.
+- **Fix:** the real `backups_page` handler landed via a parallel session
+  (`gateway/admin_routes.py:878`). Verified this pass that the route is
+  now in `app.routes` and the caught-exception block no longer fires on
+  cold boot.
+- **Files:** `gateway/admin_routes.py` (no edit needed in this session —
+  parallel agent's fix verified).
+
+---
+
 ## 2026-04-23 — Edge-case hardening follow-up (local-only commit, no deploy)
 
 Scope: wire the `security/input_hygiene.py` + `security/idempotency.py`
