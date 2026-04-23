@@ -4,43 +4,83 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Email templates · narve.ai admin</title>
-  <link rel="stylesheet" href="{{ static: gateway.css }}">
-  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
-  <style>
-    body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
-    .adm-wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
-    .adm-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 22px; flex-wrap: wrap; gap: 16px; }
-    .adm-head h1 { margin: 0; font-size: 26px; font-weight: 600; }
-    .adm-nav-back { opacity: 0.6; color: inherit; text-decoration: none; font-size: 13px; }
-    .adm-nav-back:hover { opacity: 1; }
-    .note { font-size: 13px; opacity: 0.55; margin-bottom: 18px; line-height: 1.5; }
-    .adm-list { display: flex; flex-direction: column; background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.06)); border-radius: 8px; overflow: hidden; }
-    .admin-row { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); gap: 16px; }
-    .admin-row:last-child { border-bottom: 0; }
-    .admin-row-info { flex: 1; min-width: 0; }
-    .admin-row-main { font-size: 14px; margin-bottom: 4px; }
-    .admin-row-meta { font-size: 12px; opacity: 0.55; line-height: 1.5; }
-    .badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
-    .btn-primary-outline { display: inline-block; padding: 7px 14px; border-radius: 6px; text-decoration: none; color: inherit; border: 1px solid var(--border, rgba(255,255,255,0.15)); background: transparent; font-size: 12px; }
-    .btn-primary-outline:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
-    code { font-family: ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
-  </style>
 </head>
 <body>
-  <div class="adm-wrap">
-    <div class="adm-head">
-      <div>
-        <a class="adm-nav-back" href="/admin">← Admin</a>
-        <h1>Email templates {{ raw_nav_role }}</h1>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        <a href="/admin" class="nav-item">Admin</a>
+        <a href="/admin/emails" class="nav-item active">Email templates</a>
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/admin" class="breadcrumb-item" style="text-decoration:none;color:inherit">Admin</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Email templates</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Email templates</h1>
+        <p class="page-subtitle">
+          Templates with a <strong>Custom</strong> badge have an admin-saved override;
+          others fall back to the file-based defaults in <code>email_system/templates/</code>.
+          If a custom template fails to render (missing variable, bad HTML), outbound delivery
+          automatically falls back to the default — sends are never dropped.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:1100px">
+
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Templates</h2>
+              <span class="admin-section-count">tap a row to edit</span>
+            </div>
+            <div class="admin-card">
+              {{ raw_template_rows }}
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
 
-    <p class="note">Templates with a <strong>Custom</strong> badge have an admin-saved override; others fall back to the file-based default in <code>email_system/templates/</code>. If a custom template fails to render (missing variable, bad HTML), outbound delivery automatically falls back to the default — sends are never dropped.</p>
-
-    <div class="adm-list">
-      {{ raw_template_rows }}
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Admin · Emails</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit">Sign out</a>
     </div>
   </div>
+
+<script>
+(function(){
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av){ var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+})();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>
