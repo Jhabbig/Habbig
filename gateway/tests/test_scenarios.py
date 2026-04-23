@@ -400,6 +400,38 @@ class TestScenarioRoutes(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Correlation matrix", r.text)
 
+    # ── Accessibility landmarks (post design-pass) ──
+
+    def test_scenario_page_has_a11y_landmarks(self):
+        r = self.client.get("/tools/scenario", headers=self._pro())
+        self.assertEqual(r.status_code, 200)
+        # Language attribute for screen readers.
+        self.assertIn("<html lang='en'>", r.text)
+        # Picker marked as a combobox pattern.
+        self.assertIn("aria-autocomplete='list'", r.text)
+        self.assertIn("aria-controls='picker-results'", r.text)
+        self.assertIn("role='listbox'", r.text)
+        # Outcome radios grouped via fieldset + radiogroup role.
+        self.assertIn("<fieldset", r.text)
+        self.assertIn("role='radiogroup'", r.text)
+        # Results region is a live region.
+        self.assertIn("aria-live='polite'", r.text)
+        # Disclaimer keeps role=note.
+        self.assertIn("role='note'", r.text)
+
+    def test_matrix_page_has_a11y_landmarks(self):
+        r = self.client.get("/tools/correlations", headers=self._pro())
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("<html lang='en'>", r.text)
+        # Heatmap busy state + role-annotated legend.
+        self.assertIn("aria-busy='true'", r.text)
+        self.assertIn("role='group'", r.text)
+        self.assertIn("negative pattern", r.text)
+        # Cells are announceable buttons (set client-side when the
+        # matrix renders — we can at least verify the CSS class that
+        # indicates the sign-aware pattern ships).
+        self.assertIn(".cell.neg::before", r.text)
+
 
 if __name__ == "__main__":
     unittest.main()

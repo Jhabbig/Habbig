@@ -430,50 +430,104 @@ border-left:3px solid var(--text-primary);padding-left:9px}}
   </div>
 </div>
 
-<div id='results' class='panel' hidden>
+<div id='results' class='panel' hidden aria-live='polite' aria-busy='false'>
   <h3 style='margin:0 0 12px;font:500 16px var(--font-display)'>Correlated markets</h3>
-  <table><thead><tr>
-    <th>Market</th><th class='r'>Corr</th><th class='r'>Expected shift</th>
-  </tr></thead><tbody id='results-tbody'></tbody></table>
-  <p class='disclaimer'>{DISCLAIMER}</p>
+  <table aria-label='Correlated markets and expected probability shifts'>
+    <thead><tr>
+      <th scope='col'>Market</th>
+      <th scope='col' class='r'>Corr</th>
+      <th scope='col' class='r'>Expected shift</th>
+    </tr></thead>
+    <tbody id='results-tbody'></tbody>
+  </table>
+  <p class='disclaimer' role='note'>{DISCLAIMER}</p>
 </div>
 
 <script>
 (function(){{
-let selectedSlug=null, selectedPrice=null;
+let selectedSlug=null, selectedPrice=null, activeIdx=-1;
 const pick=document.getElementById('pick');
 const pickerResults=document.getElementById('picker-results');
 const selected=document.getElementById('selected');
 const outcomePanel=document.getElementById('outcome-panel');
 const results=document.getElementById('results');
 
+// Debounce search so typing doesn't fire a request per keystroke.
+let searchTimer=0;
+function debouncedSearch(q){{
+  clearTimeout(searchTimer);
+  searchTimer=setTimeout(()=>search(q), 120);
+}}
+
 async function search(q){{
   const url='/api/scenario/markets?q='+encodeURIComponent(q);
   const r=await fetch(url,{{credentials:'same-origin'}});
-  if(!r.ok){{pickerResults.hidden=true;return}}
+  if(!r.ok){{hidePicker();return}}
   const data=await r.json();
-  pickerResults.innerHTML=(data.markets||[]).slice(0,40).map(m=>(
-    '<div class=\"picker-row\" data-slug=\"'+m.slug+'\" data-price=\"'+(m.current_price||'')+'\">'
+  pickerResults.innerHTML=(data.markets||[]).slice(0,40).map((m, i)=>(
+    '<div class=\"picker-row\" role=\"option\" tabindex=\"-1\" id=\"pick-row-'+i+'\"'
+    +' aria-selected=\"false\" data-slug=\"'+escape(m.slug)+'\" data-price=\"'+(m.current_price||'')+'\">'
     +'<div>'+escape(m.question||m.slug)+'</div>'
     +'<div class=\"small\">'+escape(m.category||'')+' · '+(m.current_price!=null?Math.round(m.current_price*100)+'% YES':'')+'</div>'
     +'</div>'
   )).join('');
-  pickerResults.hidden=data.markets.length===0;
+  const any=data.markets.length>0;
+  pickerResults.hidden=!any;
+  pick.setAttribute('aria-expanded', any ? 'true' : 'false');
+  activeIdx=-1;
+}}
+
+function hidePicker(){{
+  pickerResults.hidden=true;
+  pick.setAttribute('aria-expanded','false');
+  activeIdx=-1;
 }}
 
 function escape(s){{return (s||'').replace(/[&<>\"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}}[c]))}}
 
-pick.addEventListener('input',()=>{{if(pick.value.length>1) search(pick.value); else pickerResults.hidden=true;}});
-pickerResults.addEventListener('click',e=>{{
-  const row=e.target.closest('.picker-row'); if(!row) return;
+function rows(){{return pickerResults.querySelectorAll('.picker-row')}}
+
+function highlight(idx){{
+  const all=rows(); if(!all.length) return;
+  idx=(idx+all.length)%all.length;
+  all.forEach((r,i)=>{{r.setAttribute('aria-selected', i===idx?'true':'false')}});
+  all[idx].scrollIntoView({{block:'nearest'}});
+  pick.setAttribute('aria-activedescendant', all[idx].id);
+  activeIdx=idx;
+}}
+
+function selectRow(row){{
+  if(!row) return;
   selectedSlug=row.dataset.slug;
   selectedPrice=parseFloat(row.dataset.price)||null;
   document.getElementById('sel-q').textContent=row.querySelector('div').textContent;
   document.getElementById('sel-p').textContent=selectedPrice!=null?Math.round(selectedPrice*100)+'% YES':'—';
   selected.hidden=false;
   outcomePanel.hidden=false;
-  pickerResults.hidden=true;
+  hidePicker();
   pick.value='';
+  // Move focus to the Run button so keyboard-only users can act immediately.
+  document.getElementById('run-btn').focus();
+}}
+
+pick.addEventListener('input',()=>{{
+  if(pick.value.length>1) debouncedSearch(pick.value); else hidePicker();
+}});
+
+pick.addEventListener('keydown',e=>{{
+  const all=rows(); if(!all.length) return;
+  if(e.key==='ArrowDown'){{ e.preventDefault(); highlight(activeIdx+1); }}
+  else if(e.key==='ArrowUp'){{ e.preventDefault(); highlight(activeIdx-1); }}
+  else if(e.key==='Enter'){{ e.preventDefault(); if(activeIdx>=0) selectRow(all[activeIdx]); }}
+  else if(e.key==='Escape'){{ hidePicker(); }}
+}});
+
+pickerResults.addEventListener('click',e=>{{
+  selectRow(e.target.closest('.picker-row'));
+}});
+
+document.addEventListener('click',e=>{{
+  if(!pick.contains(e.target) && !pickerResults.contains(e.target)) hidePicker();
 }});
 
 document.getElementById('run-btn').addEventListener('click',async()=>{{
@@ -481,10 +535,17 @@ document.getElementById('run-btn').addEventListener('click',async()=>{{
   const h=document.querySelector('input[name=h]:checked').value;
   const fd=new FormData(); fd.append('anchor_slug',selectedSlug); fd.append('hypothetical',h);
   if(selectedPrice!=null) fd.append('anchor_current_price',selectedPrice);
+  results.setAttribute('aria-busy','true');
+  results.hidden=false;
+  const tbody=document.getElementById('results-tbody');
+  tbody.innerHTML='<tr><td colspan=\"3\" class=\"small\">Computing scenario…</td></tr>';
   const r=await fetch('/api/scenario/compute',{{method:'POST',body:fd,credentials:'same-origin'}});
   const data=await r.json();
-  const tbody=document.getElementById('results-tbody');
-  if(data.error){{tbody.innerHTML='<tr><td colspan=\"3\">'+escape(data.error)+'</td></tr>';results.hidden=false;return;}}
+  if(data.error){{
+    tbody.innerHTML='<tr><td colspan=\"3\">'+escape(data.error)+'</td></tr>';
+    results.setAttribute('aria-busy','false');
+    return;
+  }}
   const shifts=data.shifts||[];
   if(!shifts.length){{
     tbody.innerHTML='<tr><td colspan=\"3\" class=\"small\">No significant correlations above the 0.25 threshold.</td></tr>';
@@ -493,22 +554,38 @@ document.getElementById('run-btn').addEventListener('click',async()=>{{
       const dir=s.expected_shift>=0?'shift-up':'shift-down';
       const arrow=s.expected_shift>=0?'↑':'↓';
       const sign=s.expected_shift>=0?'+':'';
-      return '<tr><td>'+escape(s.question)+'<div class=\"small\">'+escape(s.category||'')+'</div></td>'
+      const srText=(s.expected_shift>=0?'up':'down')+' '+sign+Math.round(s.expected_shift*100)+' percentage points, to '+Math.round(s.projected_price*100)+'%';
+      return '<tr><th scope=\"row\" style=\"font-weight:400;text-align:left\">'
+           +escape(s.question)+'<div class=\"small\">'+escape(s.category||'')+'</div></th>'
            +'<td class=\"r mono\">'+(s.correlation>=0?'+':'')+s.correlation.toFixed(2)+'</td>'
-           +'<td class=\"r mono '+dir+'\">'+arrow+' '+sign+Math.round(s.expected_shift*100)+'pp (to '+Math.round(s.projected_price*100)+'%)</td></tr>';
+           +'<td class=\"r mono '+dir+'\" aria-label=\"'+srText+'\">'
+           +arrow+' '+sign+Math.round(s.expected_shift*100)+'pp (to '+Math.round(s.projected_price*100)+'%)</td></tr>';
     }}).join('');
   }}
-  results.hidden=false;
+  results.setAttribute('aria-busy','false');
   document.getElementById('save-btn').disabled=false;
 }});
 
 document.getElementById('save-btn').addEventListener('click',async()=>{{
   if(!selectedSlug) return;
+  const btn=document.getElementById('save-btn');
+  btn.disabled=true; btn.textContent='Saving…';
   const h=document.querySelector('input[name=h]:checked').value;
   const fd=new FormData(); fd.append('anchor_slug',selectedSlug); fd.append('hypothetical',h);
   const r=await fetch('/api/scenario/save',{{method:'POST',body:fd,credentials:'same-origin'}});
-  if(r.ok){{document.getElementById('save-btn').textContent='Saved ✓';document.getElementById('save-btn').disabled=true;}}
+  if(r.ok){{ btn.textContent='Saved ✓'; }}
+  else {{ btn.textContent='Save scenario'; btn.disabled=false; }}
 }});
+
+// Support deep-linking from the matrix view: /tools/scenario#<slug>
+(function autoload(){{
+  const slug=decodeURIComponent((location.hash||'').replace(/^#/,'')).trim();
+  if(!slug) return;
+  // Prefill the picker; user still picks from the list so the price
+  // field populates correctly.
+  pick.value=slug;
+  debouncedSearch(slug);
+}})();
 }})();
 </script>
 </body></html>"""
@@ -517,49 +594,75 @@ document.getElementById('save-btn').addEventListener('click',async()=>{{
 
 async def correlation_matrix_page(request: Request):
     _require_pro_user(request)
-    body = f"""<!DOCTYPE html><html><head>
+    body = f"""<!DOCTYPE html><html lang='en'><head>
 <meta charset='utf-8'><title>Correlation matrix — narve.ai</title>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
 <link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
 <style>{_common_styles()}
 .heatmap{{overflow:auto;border:1px solid var(--border-default);
 border-radius:8px;padding:8px;background:var(--bg-base)}}
 .heatmap table{{border-collapse:collapse;font-size:11px}}
 .heatmap th,.heatmap td{{border:1px solid var(--bg-base);padding:0;
-width:22px;height:22px;text-align:center;vertical-align:middle;
+width:26px;height:26px;text-align:center;vertical-align:middle;
 font-family:var(--font-mono);font-size:10px}}
 .heatmap th.row-label{{text-align:right;padding:0 6px;font-weight:400;
 color:var(--text-secondary);white-space:nowrap;max-width:180px;
 overflow:hidden;text-overflow:ellipsis}}
 .heatmap th.col-label{{writing-mode:vertical-rl;transform:rotate(180deg);
 height:120px;color:var(--text-secondary);font-weight:400}}
-.cell{{cursor:pointer;color:transparent}}
-.cell:hover{{outline:2px solid var(--text-primary);outline-offset:-2px;
-color:var(--text-primary)}}
-.legend{{display:flex;align-items:center;gap:12px;margin:12px 0 22px;font-size:12px}}
-.legend-scale{{display:flex;gap:0;height:12px;border:1px solid var(--border-default)}}
-.legend-scale span{{width:16px;height:100%}}
+/* Cells always show the numeric r — colour is supplementary, not the sole
+   carrier of the signal. Meets WCAG 1.4.1 (use of colour). Negative
+   correlations get a hash-pattern overlay so sign is visible even when
+   printed in monochrome or viewed with red-green colour blindness. */
+.cell{{cursor:pointer;position:relative;color:var(--text-primary)}}
+.cell.neg::before{{
+  content:''; position:absolute; inset:0; opacity:0.35;
+  background-image:repeating-linear-gradient(45deg,
+    transparent, transparent 3px,
+    var(--text-secondary) 3px, var(--text-secondary) 4px);
+  pointer-events:none;
+}}
+.cell span{{position:relative; z-index:1}}
+.cell:hover,.cell:focus-visible{{outline:2px solid var(--text-primary);
+outline-offset:-2px}}
+.cell:focus-visible{{outline-offset:0}}
+.legend{{display:flex;align-items:center;gap:12px;margin:12px 0 22px;
+font-size:12px;flex-wrap:wrap}}
+.legend-scale{{display:flex;gap:0;height:14px;border:1px solid var(--border-default)}}
+.legend-scale span{{width:18px;height:100%}}
+.legend-hash{{position:relative;width:24px;height:14px;border:1px solid
+var(--border-default);background:var(--bg-surface)}}
+.legend-hash::before{{content:'';position:absolute;inset:0;
+background-image:repeating-linear-gradient(45deg, transparent, transparent 3px,
+var(--text-secondary) 3px, var(--text-secondary) 4px);opacity:0.5}}
+@media (prefers-reduced-motion: reduce){{
+  .cell,.heatmap{{transition:none !important}}
+}}
 </style></head><body>
 <h1>Correlation matrix</h1>
 <p class='meta'>Top 30 active markets · 90-day hourly deltas</p>
 
-<div class='legend'>
+<div class='legend' role='group' aria-label='Colour and pattern legend'>
   <span class='small'>−1</span>
-  <div class='legend-scale' id='legend-scale'></div>
+  <div class='legend-scale' id='legend-scale' aria-hidden='true'></div>
   <span class='small'>+1</span>
-  <span class='small' style='margin-left:auto'>Click a cell to open the pair</span>
+  <span class='small' style='display:flex;align-items:center;gap:6px;margin-left:16px'>
+    <span class='legend-hash' aria-hidden='true'></span> negative pattern
+  </span>
+  <span class='small' style='margin-left:auto'>Click or press Enter on a cell to open the pair</span>
 </div>
 
-<div id='heatmap' class='heatmap'>Loading…</div>
-<p class='disclaimer'>{DISCLAIMER}</p>
+<div id='heatmap' class='heatmap' aria-busy='true'>Loading…</div>
+<p class='disclaimer' role='note'>{DISCLAIMER}</p>
 
 <script>
 (function(){{
-// Monochrome scale: negative = dashed lighter, positive = solid darker.
-// Using grayscale so the visual stays consistent with the narve.ai palette.
+// Monochrome scale: |r| drives darkness. Sign is encoded separately via
+// the hash-pattern class on negatives so the matrix is legible without
+// colour perception.
 function colorFor(r){{
   if(r==null) return 'transparent';
   const abs=Math.min(1,Math.abs(r));
-  // Map to [255 (white), 30 (near black)]
   const gray=Math.round(255-(abs*225));
   return 'rgb('+gray+','+gray+','+gray+')';
 }}
@@ -571,27 +674,49 @@ fetch('/api/scenario/heatmap?top=30&days=90',{{credentials:'same-origin'}})
   .then(r=>r.json()).then(data=>{{
     const root=document.getElementById('heatmap');
     const markets=data.markets||[]; const matrix=data.matrix||[];
-    if(!markets.length){{root.innerHTML='<p class=\"small\" style=\"padding:16px\">Not enough market snapshots to build a matrix yet.</p>';return;}}
-    let html='<table><thead><tr><th></th>';
-    markets.forEach(m=>html+='<th class=\"col-label\">'+escapeHtml(trunc(m.question,36))+'</th>');
+    if(!markets.length){{
+      root.innerHTML='<p class=\"small\" style=\"padding:16px\">Not enough market snapshots to build a matrix yet.</p>';
+      root.setAttribute('aria-busy','false');
+      return;
+    }}
+    let html='<table aria-label=\"Pairwise Pearson correlation on hourly price deltas over the past 90 days\"><thead><tr><th scope=\"col\"></th>';
+    markets.forEach((m,j)=>html+='<th scope=\"col\" class=\"col-label\" id=\"col-'+j+'\" title=\"'+escapeHtml(m.question)+'\">'+escapeHtml(trunc(m.question,36))+'</th>');
     html+='</tr></thead><tbody>';
     matrix.forEach((row,i)=>{{
-      html+='<tr><th class=\"row-label\">'+escapeHtml(trunc(markets[i].question,36))+'</th>';
+      html+='<tr><th scope=\"row\" class=\"row-label\" id=\"row-'+i+'\" title=\"'+escapeHtml(markets[i].question)+'\">'+escapeHtml(trunc(markets[i].question,36))+'</th>';
       row.forEach((r,j)=>{{
         const color=colorFor(r);
         const text=r==null?'—':(Math.round(r*100)/100).toFixed(2);
-        html+='<td class=\"cell\" style=\"background:'+color+'\" title=\"'+escapeHtml(markets[i].question)+' × '+escapeHtml(markets[j].question)+' = '+text+'\" data-a=\"'+escapeHtml(markets[i].slug)+'\">'+text+'</td>';
+        const negClass = (r!=null && r<0) ? ' neg' : '';
+        const desc='Row '+escapeHtml(markets[i].question)+' · Col '+escapeHtml(markets[j].question)+' · r = '+text;
+        html+='<td class=\"cell'+negClass+'\" role=\"button\" tabindex=\"0\"'
+             +' style=\"background:'+color+'\"'
+             +' aria-label=\"'+desc+'\"'
+             +' data-a=\"'+escapeHtml(markets[i].slug)+'\"'
+             +' data-b=\"'+escapeHtml(markets[j].slug)+'\"'
+             +'><span>'+text+'</span></td>';
       }});
       html+='</tr>';
     }});
     html+='</tbody></table>';
     root.innerHTML=html;
-    root.addEventListener('click',e=>{{
-      const c=e.target.closest('.cell'); if(!c) return;
+    root.setAttribute('aria-busy','false');
+    function openCell(c){{
       const slug=c.getAttribute('data-a');
       window.location.href='/tools/scenario#'+encodeURIComponent(slug);
+    }}
+    root.addEventListener('click',e=>{{
+      const c=e.target.closest('.cell'); if(c) openCell(c);
     }});
-  }}).catch(()=>{{document.getElementById('heatmap').innerHTML='<p class=\"small\">Matrix load failed.</p>';}});
+    root.addEventListener('keydown',e=>{{
+      const c=e.target.closest('.cell'); if(!c) return;
+      if(e.key==='Enter' || e.key===' '){{ e.preventDefault(); openCell(c); }}
+    }});
+  }}).catch(()=>{{
+    const root=document.getElementById('heatmap');
+    root.innerHTML='<p class=\"small\">Matrix load failed.</p>';
+    root.setAttribute('aria-busy','false');
+  }});
 
 function trunc(s,n){{s=s||'';return s.length>n?s.slice(0,n-1)+'…':s}}
 function escapeHtml(s){{return (s||'').replace(/[&<>\"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}}[c]))}}
