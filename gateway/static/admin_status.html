@@ -3,74 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Status Admin · narve.ai</title>
-  <link rel="stylesheet" href="{{ static: gateway.css }}">
-  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <title>Status · narve.ai admin</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <style>
-    .admin-wrap {
-      max-width: 920px;
-      margin: 0 auto;
-      padding: 40px 24px 80px;
-    }
-    .admin-head { margin-bottom: 32px; }
-    .admin-head h1 {
-      font-size: 22px;
-      font-weight: 600;
-      margin: 0 0 4px;
-    }
-    .admin-head p {
-      color: var(--text-secondary, #6b7280);
-      margin: 0;
-      font-size: 14px;
-    }
-
-    .admin-section {
-      margin: 32px 0;
-      padding: 20px 24px;
-      background: var(--bg-surface, #ffffff);
-      border: 1px solid var(--border-subtle, #e5e7eb);
-      border-radius: 6px;
-    }
-    .admin-section h2 {
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-tertiary, #9ca3af);
-      margin: 0 0 16px;
-    }
-
-    .admin-grid {
-      display: grid;
-      gap: 12px;
-      grid-template-columns: 1fr 1fr;
-    }
-    .admin-grid > label {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 12px;
-      color: var(--text-secondary, #6b7280);
-    }
-    .admin-grid input, .admin-grid select, .admin-grid textarea {
-      padding: 8px 10px;
-      font-size: 14px;
-      border: 1px solid var(--border-default, #d1d5db);
-      border-radius: 4px;
-      background: var(--bg-surface, #ffffff);
-      color: var(--text-primary, #111827);
-      font-family: inherit;
-    }
-    .admin-grid textarea {
-      min-height: 80px;
-      resize: vertical;
-      grid-column: 1 / -1;
-    }
-    .admin-grid .full { grid-column: 1 / -1; }
-
+    /* Status-admin-specific bits only. Everything else runs on the shared
+       gateway.css utilities (.settings-card, .field-row, .admin-section,
+       .save-bar, .stat-tile). */
     .admin-checks {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 6px;
+      gap: 6px 10px;
       margin-top: 4px;
     }
     .admin-check {
@@ -78,37 +22,36 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      color: var(--text-primary, #111827);
-      font-weight: 400;
-      text-transform: none;
-      letter-spacing: 0;
+      color: var(--text-primary);
     }
 
     .admin-incident {
-      padding: 16px 0;
-      border-bottom: 1px solid var(--border-ghost, #f3f4f6);
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border-ghost);
     }
     .admin-incident:last-child { border-bottom: 0; }
     .admin-incident h3 {
       font-size: 15px;
       margin: 0 0 4px;
-      font-weight: 500;
+      font-weight: 600;
     }
     .admin-incident h3 small {
-      color: var(--text-tertiary, #9ca3af);
+      color: var(--text-tertiary);
       font-weight: 400;
       margin-left: 4px;
     }
     .admin-incident-meta {
       font-size: 12px;
-      color: var(--text-tertiary, #9ca3af);
+      color: var(--text-tertiary);
       margin-bottom: 6px;
     }
     .admin-incident p {
       font-size: 14px;
-      color: var(--text-secondary, #6b7280);
+      color: var(--text-secondary);
       margin: 0 0 10px;
+      line-height: 1.5;
     }
+
     .admin-inline {
       display: flex;
       gap: 6px;
@@ -121,57 +64,30 @@
       min-width: 180px;
       padding: 6px 10px;
       font-size: 13px;
-      border: 1px solid var(--border-default, #d1d5db);
-      border-radius: 4px;
-      background: var(--bg-surface, #ffffff);
-      color: var(--text-primary, #111827);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      background: var(--bg-base);
+      color: var(--text-primary);
     }
     .admin-inline select {
       padding: 6px 10px;
       font-size: 13px;
-      border: 1px solid var(--border-default, #d1d5db);
-      border-radius: 4px;
-      background: var(--bg-surface, #ffffff);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      background: var(--bg-base);
+      color: var(--text-primary);
     }
     .admin-inline button {
       padding: 6px 12px;
       font-size: 13px;
-      border: 1px solid var(--border-default, #d1d5db);
-      border-radius: 4px;
-      background: var(--bg-surface, #ffffff);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      background: var(--bg-base);
+      color: var(--text-primary);
       cursor: pointer;
     }
-
-    .btn {
-      padding: 6px 12px;
-      font-size: 13px;
-      border: 1px solid var(--border-default, #d1d5db);
-      border-radius: 4px;
-      background: var(--bg-surface, #ffffff);
-      cursor: pointer;
-      color: inherit;
-    }
-    .btn-primary-outline {
-      border-color: var(--text-primary, #111827);
-      color: var(--text-primary, #111827);
-      background: transparent;
-    }
-    .btn-primary {
-      background: var(--text-primary, #111827);
-      color: var(--bg-surface, #ffffff);
-      border-color: var(--text-primary, #111827);
-      padding: 8px 16px;
-      font-size: 14px;
-    }
-
-    .badge {
-      display: inline-block;
-      font-size: 11px;
-      padding: 2px 6px;
-      margin-right: 4px;
-      background: var(--bg-inset, #f3f4f6);
-      color: var(--text-secondary, #6b7280);
-      border-radius: 3px;
+    .admin-inline button:hover {
+      background: var(--interactive-ghost);
     }
 
     .admin-subs {
@@ -180,76 +96,188 @@
       font-size: 13px;
     }
     .admin-subs th, .admin-subs td {
-      padding: 8px 10px;
+      padding: 10px 14px;
       text-align: left;
-      border-bottom: 1px solid var(--border-ghost, #f3f4f6);
+      border-bottom: 1px solid var(--border-ghost);
     }
     .admin-subs th {
       font-size: 11px;
       text-transform: uppercase;
-      color: var(--text-tertiary, #9ca3af);
-      letter-spacing: 0.05em;
+      color: var(--text-tertiary);
+      letter-spacing: 0.06em;
+      font-weight: 500;
+      background: var(--bg-raised);
     }
+    .admin-subs tr:last-child td { border-bottom: 0; }
 
     .status-empty {
-      font-size: 14px;
-      color: var(--text-tertiary, #9ca3af);
-      margin: 0;
+      font-size: 13px;
+      color: var(--text-tertiary);
+      padding: 20px 18px;
+      text-align: center;
     }
   </style>
 </head>
 <body>
-  <main class="admin-wrap">
-    <header class="admin-head">
-      <h1>Status admin</h1>
-      <p>Open incidents: <strong>{{ open_count }}</strong> · Subscribers: <strong>{{ total_subs }}</strong> · <a href="/admin">← Back to admin</a> · <a href="/status">View public page</a></p>
-    </header>
+  <div class="app-shell">
 
-    <section class="admin-section">
-      <h2>Create incident</h2>
-      <form method="post" action="/admin/incidents">
-        <div class="admin-grid">
-          <label class="full">
-            Title
-            <input type="text" name="title" required placeholder="e.g. Scraper service temporarily unavailable">
-          </label>
-          <label>
-            Severity
-            <select name="severity">{{ raw_severity_options }}</select>
-          </label>
-          <label>
-            Status
-            <select name="status">{{ raw_status_options }}</select>
-          </label>
-          <label class="full">
-            Affected components
-            <div class="admin-checks">{{ raw_component_checkboxes }}</div>
-          </label>
-          <label class="full">
-            Description
-            <textarea name="description" placeholder="Initial investigation notes. Markdown OK."></textarea>
-          </label>
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        <a href="/admin" class="nav-item">Admin</a>
+        <a href="/admin/incidents" class="nav-item active">Status &amp; incidents</a>
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/admin" class="breadcrumb-item" style="text-decoration:none;color:inherit">Admin</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Status &amp; incidents</span>
+      </div>
+
+      <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+        <div>
+          <h1 class="page-title">Status &amp; incidents</h1>
+          <p class="page-subtitle">
+            Create, update, and resolve the incidents that show on the public <a href="/status">/status</a>
+            page. Email subscribers are notified on create, status change, and resolution.
+          </p>
         </div>
-        <div style="margin-top:16px;display:flex;justify-content:flex-end">
-          <button type="submit" class="btn btn-primary">Create incident</button>
+        <a href="/status" class="btn-danger" style="align-self:flex-end;border-color:var(--border-default);text-decoration:none">
+          View public page
+        </a>
+      </div>
+
+      <div class="content-area">
+        <div style="max-width:1100px">
+
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-tile">
+              <div class="stat-label">Open incidents</div>
+              <div class="stat-value">{{ open_count }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Email subscribers</div>
+              <div class="stat-value">{{ total_subs }}</div>
+            </div>
+          </div>
+
+          <!-- Create incident -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Create incident</div>
+              <div class="settings-section-desc">
+                Goes live on /status immediately. Email subscribers get a notification
+                within a minute.
+              </div>
+
+              <form method="post" action="/admin/incidents">
+                {{ raw_csrf_field }}
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-title">Title</label>
+                  <div class="field-control">
+                    <input id="inc-title" type="text" name="title" required
+                           placeholder="e.g. Scraper service temporarily unavailable">
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-severity">Severity</label>
+                  <div class="field-control">
+                    <select id="inc-severity" name="severity">{{ raw_severity_options }}</select>
+                    <div class="field-helper">"Minor" = informational, "major" = degraded, "critical" = outage.</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-status">Status</label>
+                  <div class="field-control">
+                    <select id="inc-status" name="status">{{ raw_status_options }}</select>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <span class="field-label">Affected components</span>
+                  <div class="field-control" style="padding-top:4px">
+                    <div class="admin-checks">{{ raw_component_checkboxes }}</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-desc">Description</label>
+                  <div class="field-control">
+                    <textarea id="inc-desc" name="description" placeholder="Initial investigation notes. Markdown OK."></textarea>
+                  </div>
+                </div>
+
+                <div class="save-bar">
+                  <button type="submit" class="btn btn-primary">Create incident</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Open -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Open incidents</h2>
+              <span class="admin-section-count">live on /status</span>
+            </div>
+            <div class="admin-card">{{ raw_open_incidents }}</div>
+          </div>
+
+          <!-- Recent -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Recent incidents</h2>
+              <span class="admin-section-count">last 90 days</span>
+            </div>
+            <div class="admin-card">{{ raw_all_incidents }}</div>
+          </div>
+
+          <!-- Subscribers -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Email subscribers</h2>
+              <span class="admin-section-count">notified on every update</span>
+            </div>
+            <div class="admin-card">{{ raw_subscriber_list }}</div>
+          </div>
+
         </div>
-      </form>
-    </section>
+      </div>
+    </div>
 
-    <section class="admin-section">
-      <h2>Open incidents</h2>
-      {{ raw_open_incidents }}
-    </section>
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Admin · Status</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit">Sign out</a>
+    </div>
+  </div>
 
-    <section class="admin-section">
-      <h2>Recent incidents</h2>
-      {{ raw_all_incidents }}
-    </section>
-
-    <section class="admin-section">
-      <h2>Email subscribers</h2>
-      {{ raw_subscriber_list }}
-    </section>
-  </main>
+<script>
+(function(){
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av){ var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+})();
+</script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>
