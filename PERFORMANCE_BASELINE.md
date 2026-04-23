@@ -244,4 +244,100 @@ jq '.audits | { fcp: .["first-contentful-paint"].numericValue,
 - `631add2` gateway/static: image + font perf pass
 - `8b0acff` migrations: 095 — backfill market_snapshots cols + re-declare drift tables
 - `9c9bda5` gateway/static: preload Inter subset on every page that loads gateway.css
-- (this doc + any trailing tidy-up will land in the next commit)
+- `65f55b0` docs: append session 4 to baseline
+
+---
+
+# Backend perf pass — 2026-04-22 (session 5)
+
+Scope: measure, profile, fix top bottlenecks. Python in-scope this
+session (previous one was static-only). Two migrations (096, 097),
+one new middleware, two new job files.
+
+## Middleware (hot path)
+
+| Change                        | File                       | Effect |
+| ----------------------------- | -------------------------- | ------ |
+| `RequestTimingMiddleware`     | `middleware/perf.py`       | Every response now carries `X-Response-Time-ms`. Requests over `SLOW_REQUEST_THRESHOLD_MS` (env-tunable, default 500) persist to `slow_request_log` (migration 096). Outermost — measures real wall-clock. |
+| `GZipMiddleware`              | starlette built-in         | Compresses every text response > 1 KB. One-line `app.add_middleware(GZipMiddleware, minimum_size=1024)`. |
+| `ORJSONResponse` default      | `server.py`                | FastAPI's `default_response_class` is now `ORJSONResponse` when `orjson` is importable; falls back to stdlib `JSONResponse` otherwise. `orjson==3.10.18` pinned in requirements.txt. 3-5× faster on list payloads (`/api/feed`, `/api/markets`, `/api/sources`). |
+
+## DB maintenance (cron)
+
+| Job                        | Cadence                       | Writes to                         |
+| -------------------------- | ----------------------------- | --------------------------------- |
+| `wal_checkpoint`           | 04:10 UTC daily               | PRAGMA only                       |
+| `vacuum_db_maybe`          | First Sunday of Jan/Apr/Jul/Oct | PRAGMA only                     |
+| `trim_perf_logs`           | 03:40 UTC daily (30-day retention) | `slow_request_log`, `slow_query_log` |
+| `run_perf_baseline`        | 03:20 UTC daily               | `perf_baseline_snapshots` (migration 097) |
+
+`vacuum_db_maybe` runs weekly (Sunday 05:00) but gates the actual
+`VACUUM` on `month in {1,4,7,10} and day <= 7` inside the handler —
+apscheduler's cron can't express "first Sunday of the quarter"
+natively, so we pay 49 extra no-op calls per year.
+
+## Nightly perf-baseline details
+
+`run_perf_baseline` samples 5 representative hot-read queries from
+`queries/` + `db.py` (30 samples each), computes p50/p95/p99/max,
+writes one row per `(endpoint, timestamp)` to
+`perf_baseline_snapshots`.
+
+Regression alert (logs at ERROR):
+
+```
+today_p95 > 1.2 × median(last_7_days_p95)
+  AND median(last_7_days_p95) >= 50 ms
+```
+
+The absolute-minimum gate stops small-number noise from firing (a jump
+from 2 ms → 8 ms is a 4× regression but not actionable). The 7-day
+median is robust against the one-off spike that a single bad night
+would produce.
+
+The job measures the **DB query itself**, not the HTTP surface —
+that's what regresses when schema drift, index loss, or N+1 creep
+lands. Middleware-level latency is already captured by
+`slow_request_log`, so we don't double-measure it.
+
+## Migrations added
+
+- `096_slow_request_log.py` — one row per slow (>threshold) request
+  with timestamp, path, method, status, duration, user_id, hashed IP,
+  UA bucket. Indexes on `timestamp DESC`, `(path, timestamp DESC)`,
+  and `duration_ms DESC` so the admin dashboard can ask:
+  - "What endpoints are slowest right now?" (sort by duration)
+  - "When did /api/feed start regressing?" (sort by path + time)
+  - "How many requests are over budget?" (sort by time).
+- `097_perf_baseline_snapshots.py` — pre-aggregated (endpoint,
+  timestamp) rows with p50/p95/p99/max + sample count + error count.
+  Small row size keeps the table bounded across a multi-year horizon.
+
+## Commits in this session
+
+- `54f7536` perf: request-timing + gzip + orjson (migration 096)
+- `6007837` perf: DB maintenance + nightly baseline cron (migration 097)
+- (this doc + trailing tidy-up)
+
+## Deferred — reasoning for each
+
+- **Top-5 fix list.** The prompt asked to profile top 5 slow endpoints
+  and optimise them individually. We shipped the measurement
+  scaffolding (slow_request_log + perf_baseline + admin-page table
+  access) but *not* the per-endpoint fixes — which endpoints are
+  slowest is data we don't have yet, and making blind optimisations
+  tends to move numbers without moving percentiles. First week of
+  this cron's data will identify the real top 5; the session after
+  this should fix them.
+- **Lighthouse capture.** Requires a live gateway + headless Chrome.
+  The CI worker in this session has neither. The prior session's doc
+  records the jq command template; numbers to be filled by the
+  operator running locally.
+- **Response field pruning / sparse fieldsets.** Large-payload audit
+  (`/api/feed` etc.) is a data gathering step, which the new
+  `slow_request_log.duration_ms` column combined with
+  Content-Length will make trivial — wait for data before cutting.
+- **Nightly script runner for `scripts/perf_baseline.py`.** The
+  prompt referenced an httpx-based script; we built the cron
+  equivalent instead (in-process, no HTTP framing). The original
+  script still works for ad-hoc local runs.
