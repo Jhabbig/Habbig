@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Moderation — narve.ai Admin</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Admin</div>
+        <a href="/admin" class="nav-item">Panel</a>
+        <a href="/admin/moderation" class="nav-item active">Moderation</a>
+        <a href="/admin/audit" class="nav-item">Audit log</a>
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <main class="main-content" id="main" tabindex="-1" role="main">
+      <div class="breadcrumb">
+        <a href="/admin" class="breadcrumb-item" style="text-decoration:none;color:inherit">Admin</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Moderation</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Moderation queue</h1>
+        <p class="page-subtitle">
+          Open reports: <strong>{{ open_report_count }}</strong>.
+          Resolve oldest first.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <section class="settings-card">
+          <div class="admin-card" style="padding:0;overflow-x:auto">
+            <table class="admin-table" style="width:100%">
+              <thead>
+                <tr>
+                  <th style="width:150px">Reported</th>
+                  <th style="width:170px">Reason</th>
+                  <th style="width:220px">Market</th>
+                  <th>Take preview</th>
+                  <th style="width:80px">Reporter</th>
+                  <th style="width:280px">Action</th>
+                </tr>
+              </thead>
+              <tbody id="mod-queue-body">
+                {{ raw_report_rows }}
+              </tbody>
+            </table>
+          </div>
+          <div id="mod-msg" style="margin-top:12px;font-size:13px"></div>
+        </section>
+      </div>
+    </main>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Moderation</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
+  </div>
+
+<script>
+(function () {
+  var av = document.querySelector('.sidebar-user-avatar[data-username]');
+  if (av) { var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
+
+  function csrf() {
+    var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function setMsg(text, tone) {
+    var el = document.getElementById('mod-msg');
+    el.style.color = tone === 'err' ? 'var(--semantic-low)' : 'var(--semantic-high)';
+    el.textContent = text || '';
+  }
+
+  document.getElementById('mod-queue-body').addEventListener('click', function (e) {
+    var btn = e.target;
+    if (!btn || !btn.classList || !btn.classList.contains('mod-act')) return;
+
+    var rid = btn.getAttribute('data-rid');
+    var tid = btn.getAttribute('data-tid');
+    var action = btn.getAttribute('data-action');
+    if (!rid || !action) return;
+
+    // Optimistically disable the whole row while the request is in flight.
+    var row = btn.closest('tr');
+    if (row) row.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    setMsg('Processing…');
+
+    fetch('/api/v1/admin/reports/' + rid + '/resolve', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrf(),
+      },
+      body: JSON.stringify({ action: action, take_id: tid ? parseInt(tid, 10) : null }),
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+    }).then(function (res) {
+      if (!res.ok) {
+        if (row) row.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+        setMsg((res.body && res.body.detail) || 'Failed.', 'err');
+        return;
+      }
+      // Row done — fade + remove. Sibling reports on same take are
+      // auto-closed server-side; refresh to pick that up.
+      if (row) {
+        row.style.transition = 'opacity 0.2s';
+        row.style.opacity = '0.4';
+      }
+      var siblings = res.body && res.body.sibling_reports_closed
+        ? ' (' + res.body.sibling_reports_closed + ' sibling report(s) auto-closed)'
+        : '';
+      setMsg('Resolved: ' + action + siblings + '. Reloading…');
+      setTimeout(function () { window.location.reload(); }, 800);
+    }).catch(function () {
+      if (row) row.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+      setMsg('Network error. Try again.', 'err');
+    });
+  });
+})();
+</script>
+<script src="/_gateway_static/user-features.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+</body>
+</html>

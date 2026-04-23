@@ -21,6 +21,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import db
+# TTL cache wrappers for hot read paths. Keys follow the canonical schema in
+# gateway/cache/ttl.py; writes elsewhere in the app invalidate via
+# ttl_invalidate.on_* helpers so callers don't see stale rows after a
+# credibility recompute or a new prediction landing.
+from cache import ttl_cache, DEFAULT_TTLS
 
 log = logging.getLogger("api.v1")
 
@@ -150,56 +155,76 @@ def _validate_key(request: Request) -> dict:
 
 @router.get("/sources")
 async def v1_list_sources(request: Request, limit: int = 100, offset: int = 0):
-    """All sources with credibility scores."""
+    """All sources with credibility scores. Cached 120s keyed by page; flushed
+    on credibility recompute via ttl_invalidate.on_credibility_recompute."""
     _validate_key(request)
-    sources = db.list_all_source_credibilities()
-    page = sources[offset:offset + min(limit, 500)]
-    return JSONResponse({
-        "sources": [
-            {
-                "handle": s["source_handle"],
-                "global_credibility": s["global_credibility"],
-                "accuracy_unlocked": bool(s["accuracy_unlocked"]),
-                "decay_weighted_accuracy": s["decay_weighted_accuracy"],
-                "total_predictions": s["total_predictions"],
-                "correct_predictions": s["correct_predictions"],
-                "categories_active": s["categories_active"],
-            }
-            for s in page
-        ],
-        "total": len(sources),
-        "limit": limit,
-        "offset": offset,
-    })
+    limit = max(1, min(limit, 500))
+    page_num = offset // limit if limit else 0
+    cache_key = f"sources:sort_default:filter_none:page_{page_num}_size_{limit}"
+
+    def _compute() -> dict:
+        sources = db.list_all_source_credibilities()
+        page = sources[offset:offset + limit]
+        return {
+            "sources": [
+                {
+                    "handle": s["source_handle"],
+                    "global_credibility": s["global_credibility"],
+                    "accuracy_unlocked": bool(s["accuracy_unlocked"]),
+                    "decay_weighted_accuracy": s["decay_weighted_accuracy"],
+                    "total_predictions": s["total_predictions"],
+                    "correct_predictions": s["correct_predictions"],
+                    "categories_active": s["categories_active"],
+                }
+                for s in page
+            ],
+            "total": len(sources),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    payload = ttl_cache.get_or_compute(cache_key, _compute, DEFAULT_TTLS["sources"])
+    return JSONResponse(payload)
 
 
 @router.get("/sources/{handle}")
 async def v1_source_detail(request: Request, handle: str):
-    """Full source profile with calibration data."""
+    """Full source profile with calibration data. Cached 300s per handle;
+    invalidated on new prediction or credibility recompute."""
     _validate_key(request)
-    cred = db.get_source_credibility(handle)
-    if not cred:
+
+    def _compute() -> Optional[dict]:
+        cred = db.get_source_credibility(handle)
+        if not cred:
+            return None
+        cats = db.get_all_category_credibilities(handle)
+        snaps = db.get_credibility_snapshots(handle, 10)
+        cal = db.get_source_calibration(handle)
+        return {
+            "handle": handle,
+            "global_credibility": cred["global_credibility"],
+            "accuracy_unlocked": bool(cred["accuracy_unlocked"]),
+            "decay_weighted_accuracy": cred["decay_weighted_accuracy"],
+            "total_predictions": cred["total_predictions"],
+            "correct_predictions": cred["correct_predictions"],
+            "categories": [
+                {"category": c["category"], "credibility": c["category_credibility"],
+                 "prediction_count": c["prediction_count"], "correct_count": c["correct_count"]}
+                for c in cats
+            ],
+            "snapshots": [
+                {"credibility": s["global_credibility"], "at": s["snapshot_at"]}
+                for s in snaps
+            ],
+            "calibration": cal,
+        }
+
+    payload = ttl_cache.get_or_compute(
+        f"source:{handle}", _compute, DEFAULT_TTLS["source"],
+    )
+    if payload is None:
         raise HTTPException(404, "Source not found")
-
-    cats = db.get_all_category_credibilities(handle)
-    snaps = db.get_credibility_snapshots(handle, 10)
-    cal = db.get_source_calibration(handle)
-
-    return JSONResponse({
-        "handle": handle,
-        "global_credibility": cred["global_credibility"],
-        "accuracy_unlocked": bool(cred["accuracy_unlocked"]),
-        "decay_weighted_accuracy": cred["decay_weighted_accuracy"],
-        "total_predictions": cred["total_predictions"],
-        "correct_predictions": cred["correct_predictions"],
-        "categories": [
-            {"category": c["category"], "credibility": c["category_credibility"],
-             "prediction_count": c["prediction_count"], "correct_count": c["correct_count"]}
-            for c in cats
-        ],
-        "snapshots": [{"credibility": s["global_credibility"], "at": s["snapshot_at"]} for s in snaps],
-        "calibration": cal,
-    })
+    return JSONResponse(payload)
 
 
 @router.get("/predictions")

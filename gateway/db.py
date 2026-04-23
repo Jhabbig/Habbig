@@ -1069,3 +1069,250 @@ from queries.admin import (  # noqa: F401,E402
     delete_email_template,
 )
 
+
+
+# ── API keys extended (Migration 128) + webhooks (Migration 129) ────────────
+
+
+def list_api_keys(user_id: int) -> list:
+    """Every key belonging to *user_id*, newest first — revoked or not.
+
+    Returned rows include `scopes` as a comma-separated string; callers are
+    expected to split it themselves when they need a list. The raw key is
+    never persisted, so nothing sensitive is returned.
+    """
+    with conn() as c:
+        return c.execute(
+            "SELECT id, user_id, key_prefix, name, tier, scopes, "
+            "       rate_limit_hour, created_at, last_used_at, revoked_at "
+            "FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def revoke_api_key(key_id: int, user_id: int) -> bool:
+    """Idempotent revoke. Returns True if a row was actually marked revoked."""
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE api_keys SET revoked_at = ? "
+            "WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+            (int(time.time()), key_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def get_api_key_by_hash(key_hash: str):
+    """Used by the public API Bearer middleware. Returns None if revoked."""
+    if not key_hash:
+        return None
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL",
+            (key_hash,),
+        ).fetchone()
+
+
+def bump_api_usage(api_key_id: int, hour_bucket: int) -> int:
+    """UPSERT the per-hour bucket; return the post-increment count.
+
+    Sqlite's ON CONFLICT ... DO UPDATE does the atomic increment. Falls back
+    to two queries on an extremely unlikely InterfaceError (e.g. sqlite <
+    3.24) so the API doesn't hard-fail on ancient hosts.
+    """
+    with conn() as c:
+        try:
+            c.execute(
+                "INSERT INTO api_usage_hourly (api_key_id, hour_bucket, request_count) "
+                "VALUES (?, ?, 1) "
+                "ON CONFLICT(api_key_id, hour_bucket) "
+                "DO UPDATE SET request_count = request_count + 1",
+                (api_key_id, hour_bucket),
+            )
+        except sqlite3.OperationalError:
+            # Older sqlite without ON CONFLICT. Best-effort fallback.
+            cur = c.execute(
+                "UPDATE api_usage_hourly SET request_count = request_count + 1 "
+                "WHERE api_key_id = ? AND hour_bucket = ?",
+                (api_key_id, hour_bucket),
+            )
+            if cur.rowcount == 0:
+                c.execute(
+                    "INSERT INTO api_usage_hourly (api_key_id, hour_bucket, request_count) "
+                    "VALUES (?, ?, 1)",
+                    (api_key_id, hour_bucket),
+                )
+        row = c.execute(
+            "SELECT request_count FROM api_usage_hourly "
+            "WHERE api_key_id = ? AND hour_bucket = ?",
+            (api_key_id, hour_bucket),
+        ).fetchone()
+        return int(row["request_count"]) if row else 1
+
+
+def get_api_usage(api_key_id: int, hour_bucket: int) -> int:
+    with conn() as c:
+        row = c.execute(
+            "SELECT request_count FROM api_usage_hourly "
+            "WHERE api_key_id = ? AND hour_bucket = ?",
+            (api_key_id, hour_bucket),
+        ).fetchone()
+    return int(row["request_count"]) if row else 0
+
+
+def touch_api_key_last_used(api_key_id: int) -> None:
+    with conn() as c:
+        c.execute(
+            "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
+            (int(time.time()), api_key_id),
+        )
+
+
+# ── Webhook subscriptions ───────────────────────────────────────────────────
+
+
+def create_webhook_subscription(
+    *,
+    user_id: int,
+    url: str,
+    events: list,
+    secret: str,
+) -> int:
+    """Register a new outbound webhook. Caller owns secret rotation."""
+    import json as _json
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO webhook_subscriptions "
+            "(user_id, url, events, secret, created_at, is_active) "
+            "VALUES (?, ?, ?, ?, ?, 1)",
+            (user_id, url, _json.dumps(events or []), secret, int(time.time())),
+        )
+        return cur.lastrowid
+
+
+def list_webhooks_for_user(user_id: int) -> list:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM webhook_subscriptions "
+            "WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def list_all_webhooks(limit: int = 200) -> list:
+    """Admin-only: every webhook across all users, newest first."""
+    with conn() as c:
+        return c.execute(
+            "SELECT w.*, u.email AS owner_email, u.username AS owner_username "
+            "FROM webhook_subscriptions w "
+            "LEFT JOIN users u ON u.id = w.user_id "
+            "ORDER BY w.created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+def get_webhook_subscription(webhook_id: int):
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM webhook_subscriptions WHERE id = ?",
+            (webhook_id,),
+        ).fetchone()
+
+
+def delete_webhook_subscription(webhook_id: int, user_id: int) -> bool:
+    """Hard delete (cascades to deliveries). Gated on ownership."""
+    with conn() as c:
+        cur = c.execute(
+            "DELETE FROM webhook_subscriptions WHERE id = ? AND user_id = ?",
+            (webhook_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def deactivate_webhook(webhook_id: int) -> None:
+    """Used by the delivery worker after N consecutive failures."""
+    with conn() as c:
+        c.execute(
+            "UPDATE webhook_subscriptions SET is_active = 0 WHERE id = ?",
+            (webhook_id,),
+        )
+
+
+def list_active_webhooks_for_event(event_type: str) -> list:
+    """Every active subscription whose events list contains *event_type*.
+
+    sqlite has no JSON_CONTAINS; we filter in Python which is fine at the
+    expected scale (< a few thousand subscriptions per instance).
+    """
+    import json as _json
+    with conn() as c:
+        rows = c.execute(
+            "SELECT * FROM webhook_subscriptions WHERE is_active = 1"
+        ).fetchall()
+    out = []
+    for r in rows:
+        try:
+            events = _json.loads(r["events"] or "[]")
+        except (ValueError, TypeError):
+            continue
+        if event_type in events:
+            out.append(r)
+    return out
+
+
+def record_webhook_delivery(
+    *,
+    webhook_id: int,
+    event_type: str,
+    payload: str,
+    status_code,
+    attempts: int = 1,
+    error=None,
+) -> None:
+    with conn() as c:
+        c.execute(
+            "INSERT INTO webhook_deliveries "
+            "(webhook_id, event_type, payload, status_code, delivered_at, attempts, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (webhook_id, event_type, payload, status_code,
+             int(time.time()), attempts, error),
+        )
+
+
+def list_webhook_deliveries(webhook_id: int, limit: int = 20) -> list:
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM webhook_deliveries "
+            "WHERE webhook_id = ? "
+            "ORDER BY delivered_at DESC LIMIT ?",
+            (webhook_id, limit),
+        ).fetchall()
+
+
+def bump_webhook_failure(webhook_id: int) -> int:
+    """Increment consecutive_failures + cumulative failure_count.
+    Returns the post-increment consecutive count so the worker can decide
+    whether to deactivate."""
+    with conn() as c:
+        c.execute(
+            "UPDATE webhook_subscriptions "
+            "SET consecutive_failures = consecutive_failures + 1, "
+            "    failure_count = failure_count + 1 "
+            "WHERE id = ?",
+            (webhook_id,),
+        )
+        row = c.execute(
+            "SELECT consecutive_failures FROM webhook_subscriptions WHERE id = ?",
+            (webhook_id,),
+        ).fetchone()
+    return int(row["consecutive_failures"]) if row else 0
+
+
+def reset_webhook_failure(webhook_id: int) -> None:
+    """Zero the consecutive counter on a successful delivery + stamp time."""
+    with conn() as c:
+        c.execute(
+            "UPDATE webhook_subscriptions "
+            "SET consecutive_failures = 0, last_delivered_at = ? "
+            "WHERE id = ?",
+            (int(time.time()), webhook_id),
+        )

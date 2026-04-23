@@ -1086,6 +1086,285 @@ async def churn_dashboard(request: Request):
     )
 
 
+# ── Admin: /admin/sharing ────────────────────────────────────────────────
+#
+# Renders the share-loop dashboard: total shares by type, top-shared
+# markets + sources, top sharers by attributed conversions, referrer +
+# country breakdowns, and a daily time series for the chart card.
+#
+# Data helpers live in queries/sharing_metrics.py — imported lazily so
+# a partial schema tree (migrations 110-114 not yet applied) doesn't
+# break admin_routes.py at module load. If the module isn't available
+# we render a benign "migrations pending" panel instead of crashing.
+
+
+def _render_totals_table(rows: list[dict]) -> str:
+    """Three-row table: market / source / prediction × views + conversions.
+    Stable column order even with zero rows (same invariant
+    sharing_metrics.totals_by_type already guarantees on the data
+    side) so the card layout doesn't shift between empty and full
+    states."""
+    if not rows:
+        return (
+            '<div style="padding:24px;text-align:center;color:var(--text-muted);'
+            'font-size:13px">No share activity in this window.</div>'
+        )
+    body = []
+    for r in rows:
+        rate_label = f"{r['conversion_rate_pct']:.1f}%" if r["views"] else "—"
+        body.append(
+            "<tr>"
+            f"<td style=\"padding:8px 12px;text-transform:capitalize\">{html.escape(r['share_type'])}</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums\">{int(r['views']):,}</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums\">{int(r['conversions']):,}</td>"
+            f"<td style=\"padding:8px 12px;color:var(--text-muted);font-variant-numeric:tabular-nums\">{rate_label}</td>"
+            "</tr>"
+        )
+    return (
+        '<table style="width:100%;border-collapse:collapse">'
+        '<thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;'
+        'text-transform:uppercase;letter-spacing:0.05em">'
+        '<th style="padding:6px 12px">Type</th>'
+        '<th style="padding:6px 12px">Views</th>'
+        '<th style="padding:6px 12px">Conversions</th>'
+        '<th style="padding:6px 12px">Rate</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table>'
+    )
+
+
+def _render_items_table(rows: list[dict], *, key: str, label: str) -> str:
+    """Top-N table for shared_markets / shared_sources. ``key`` is the
+    dict column the row label comes from (e.g. 'market_slug')."""
+    if not rows:
+        return (
+            f'<div style="padding:24px;text-align:center;color:var(--text-muted);'
+            f'font-size:13px">No shared {label.lower()} yet in this window.</div>'
+        )
+    body = []
+    for r in rows:
+        body.append(
+            "<tr>"
+            f"<td style=\"padding:8px 12px\">{html.escape(str(r.get(key) or '—'))}</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums\">{int(r['views']):,}</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums;color:var(--text-muted)\">{int(r.get('distinct_shares', 0)):,}</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums\">{int(r.get('conversions', 0)):,}</td>"
+            "</tr>"
+        )
+    return (
+        '<table style="width:100%;border-collapse:collapse">'
+        '<thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;'
+        'text-transform:uppercase;letter-spacing:0.05em">'
+        f'<th style="padding:6px 12px">{html.escape(label)}</th>'
+        '<th style="padding:6px 12px">Views</th>'
+        '<th style="padding:6px 12px">Tokens</th>'
+        '<th style="padding:6px 12px">Conversions</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table>'
+    )
+
+
+def _render_sharers_table(rows: list[dict]) -> str:
+    if not rows:
+        return (
+            '<div style="padding:24px;text-align:center;color:var(--text-muted);'
+            'font-size:13px">No attributed conversions yet.</div>'
+        )
+    body = []
+    for r in rows:
+        who = html.escape(r.get("username") or r.get("email") or f"user#{r['user_id']}")
+        body.append(
+            "<tr>"
+            f"<td style=\"padding:8px 12px\">{who}</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums\">{int(r['conversions']):,}</td>"
+            "</tr>"
+        )
+    return (
+        '<table style="width:100%;border-collapse:collapse">'
+        '<thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;'
+        'text-transform:uppercase;letter-spacing:0.05em">'
+        '<th style="padding:6px 12px">User</th>'
+        '<th style="padding:6px 12px">Conversions</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table>'
+    )
+
+
+def _render_breakdown(rows: list[dict], *, key: str, label: str) -> str:
+    """Referrer + country breakdown renderers share a shape."""
+    if not rows:
+        return (
+            '<div style="padding:24px;text-align:center;color:var(--text-muted);'
+            'font-size:13px">No data in this window.</div>'
+        )
+    body = []
+    total_views = sum(int(r["views"]) for r in rows) or 1
+    for r in rows:
+        label_text = html.escape(str(r.get(key) or "—"))
+        views = int(r["views"])
+        pct = views / total_views * 100
+        body.append(
+            "<tr>"
+            f"<td style=\"padding:8px 12px\">{label_text}</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums\">{views:,}</td>"
+            f"<td style=\"padding:8px 12px;color:var(--text-muted);font-variant-numeric:tabular-nums\">{pct:.1f}%</td>"
+            f"<td style=\"padding:8px 12px;font-variant-numeric:tabular-nums\">{int(r.get('conversions', 0)):,}</td>"
+            "</tr>"
+        )
+    return (
+        '<table style="width:100%;border-collapse:collapse">'
+        '<thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;'
+        'text-transform:uppercase;letter-spacing:0.05em">'
+        f'<th style="padding:6px 12px">{html.escape(label)}</th>'
+        '<th style="padding:6px 12px">Views</th>'
+        '<th style="padding:6px 12px">Share</th>'
+        '<th style="padding:6px 12px">Conversions</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table>'
+    )
+
+
+def _render_sparkline(series: list[dict]) -> str:
+    """Inline SVG sparkline of daily totals. 320×60 viewbox, single
+    stroke path — no external chart library because this card is
+    admin-only and every KB counts on cold load. Empty series
+    renders a muted 'no data' line."""
+    totals = [int(r.get("total", 0)) for r in series]
+    if not totals or max(totals) == 0:
+        return (
+            '<div style="padding:24px;text-align:center;color:var(--text-muted);'
+            'font-size:13px">No views recorded in this window.</div>'
+        )
+    mx = max(totals)
+    w = 320
+    h = 60
+    step = w / max(1, (len(totals) - 1))
+    pts = []
+    for i, v in enumerate(totals):
+        x = i * step
+        y = h - (v / mx) * (h - 4) - 2
+        pts.append(f"{x:.1f},{y:.1f}")
+    poly = " ".join(pts)
+    last_label = totals[-1]
+    peak_label = mx
+    return (
+        f'<svg viewBox="0 0 {w} {h}" width="100%" height="{h}" '
+        'style="display:block;margin-bottom:8px">'
+        f'<polyline points="{poly}" fill="none" stroke="currentColor" stroke-width="1.5" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+        '</svg>'
+        '<div style="display:flex;justify-content:space-between;'
+        'color:var(--text-muted);font-size:11px;font-variant-numeric:tabular-nums">'
+        f'<span>peak {peak_label:,}/day</span>'
+        f'<span>today {last_label:,}</span>'
+        '</div>'
+    )
+
+
+async def sharing_dashboard(request: Request):
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+    if not isinstance(admin, dict):
+        return admin
+
+    # Window selector — default 30 days, clamped to [1, 90]. The query
+    # param is the one page-state control this dashboard needs; adding
+    # a full form would be a distraction from the numbers.
+    try:
+        days = int(request.query_params.get("days", "30"))
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(90, days))
+
+    # Lazy import: the module requires migrations 110-114. On a partial
+    # schema tree we render a guidance panel instead of a 500.
+    try:
+        from queries import sharing_metrics as sm
+    except Exception as exc:
+        log.warning("admin/sharing: queries.sharing_metrics import failed: %s", exc)
+        return _render_page(
+            "admin-sharing", request=request,
+            email=admin["email"],
+            username=admin.get("username", admin["email"]),
+            raw_nav_role=_role_badge(admin),
+            _is_admin=admin.get("is_admin"),
+            days=days,
+            raw_summary="<div style=\"padding:24px;color:var(--text-muted);"
+                        "font-size:13px\">Sharing metrics unavailable — migrations "
+                        "110-114 may not yet be applied on this host.</div>",
+            raw_sparkline="",
+            raw_totals="",
+            raw_top_markets="",
+            raw_top_sources="",
+            raw_top_sharers="",
+            raw_referrers="",
+            raw_countries="",
+        )
+
+    try:
+        overall = sm.overall_stats(days=days)
+        totals = sm.totals_by_type(days=days)
+        top_markets = sm.top_shared_markets(days=days, limit=10)
+        top_sources = sm.top_shared_sources(days=days, limit=10)
+        sharers = sm.top_sharers(days=days, limit=10)
+        referrers = sm.referrer_breakdown(days=days)
+        countries = sm.country_breakdown(days=days, limit=10)
+        series = sm.daily_timeseries(days=days)
+    except Exception:
+        log.exception("admin/sharing: query failure")
+        overall = {"window_days": days, "total_views": 0, "total_conversions": 0,
+                   "conversion_rate_pct": 0.0, "distinct_countries": 0}
+        totals = top_markets = top_sources = sharers = []
+        referrers = countries = series = []
+
+    rate_display = (
+        f"{overall['conversion_rate_pct']:.1f}%"
+        if overall["total_views"] else "—"
+    )
+    summary = (
+        '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px">'
+        f'<div><div style="font-size:22px;font-weight:600;font-variant-numeric:tabular-nums">'
+        f'{int(overall["total_views"]):,}</div>'
+        '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-top:2px">Total views</div></div>'
+        f'<div><div style="font-size:22px;font-weight:600;font-variant-numeric:tabular-nums">'
+        f'{int(overall["total_conversions"]):,}</div>'
+        '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-top:2px">Conversions</div></div>'
+        f'<div><div style="font-size:22px;font-weight:600;font-variant-numeric:tabular-nums">'
+        f'{rate_display}</div>'
+        '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-top:2px">Conversion rate</div></div>'
+        f'<div><div style="font-size:22px;font-weight:600;font-variant-numeric:tabular-nums">'
+        f'{int(overall["distinct_countries"]):,}</div>'
+        '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-top:2px">Countries</div></div>'
+        '</div>'
+    )
+
+    return _render_page(
+        "admin-sharing", request=request,
+        email=admin["email"],
+        username=admin.get("username", admin["email"]),
+        raw_nav_role=_role_badge(admin),
+        _is_admin=admin.get("is_admin"),
+        days=days,
+        raw_summary=summary,
+        raw_sparkline=_render_sparkline(series),
+        raw_totals=_render_totals_table(totals),
+        raw_top_markets=_render_items_table(
+            top_markets, key="market_slug", label="Market",
+        ),
+        raw_top_sources=_render_items_table(
+            top_sources, key="source_handle", label="Source",
+        ),
+        raw_top_sharers=_render_sharers_table(sharers),
+        raw_referrers=_render_breakdown(referrers, key="referrer", label="Referrer"),
+        raw_countries=_render_breakdown(countries, key="country", label="Country"),
+    )
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 
@@ -1097,6 +1376,14 @@ def register(app) -> None:
     """
     app.add_api_route(
         "/admin/churn", churn_dashboard,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
+    )
+
+    # Share-loop dashboard — totals, top items, sharers, referrers, country
+    # distribution. Data layer: queries/sharing_metrics.py; DB:
+    # share_metrics (migration 114) + shared_* tables (110-112).
+    app.add_api_route(
+        "/admin/sharing", sharing_dashboard,
         methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
     )
 

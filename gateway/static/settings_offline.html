@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Offline settings · narve.ai</title>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <style>
+    /* Monochrome. Shares design tokens with /status — no colored dots. */
+    .offline-wrap { max-width: 640px; margin: 0 auto; padding: 32px 24px 72px; }
+    .offline-header { border-bottom: 1px solid var(--border-subtle, #e5e7eb); padding-bottom: 16px; margin-bottom: 24px; }
+    .offline-eyebrow {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 0 0 4px;
+    }
+    .offline-title {
+      font-size: 22px;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+    .offline-lede {
+      font-size: 14px;
+      color: var(--text-secondary, #6b7280);
+      margin: 6px 0 0;
+      line-height: 1.55;
+    }
+
+    .offline-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border-ghost, #f3f4f6);
+    }
+    .offline-row:last-of-type { border-bottom: 0; }
+    .offline-row-main {
+      flex: 1;
+      min-width: 0;
+    }
+    .offline-row-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary, #111827);
+      margin: 0 0 2px;
+    }
+    .offline-row-hint {
+      font-size: 12px;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    /* Toggle — plain checkbox styled to monochrome switch. */
+    .offline-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 38px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid var(--border-default, #d1d5db);
+      background: var(--bg-surface, #fff);
+      position: relative;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .offline-toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--text-secondary, #6b7280);
+      transition: transform 0.15s, background 0.15s;
+    }
+    .offline-toggle:checked {
+      background: var(--text-primary, #111827);
+      border-color: var(--text-primary, #111827);
+    }
+    .offline-toggle:checked::after {
+      transform: translateX(16px);
+      background: var(--bg-surface, #fff);
+    }
+    .offline-toggle:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .offline-section {
+      padding: 24px 0;
+      border-top: 1px solid var(--border-subtle, #e5e7eb);
+    }
+    .offline-section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary, #9ca3af);
+      margin: 0 0 12px;
+      font-weight: 500;
+    }
+    .offline-storage {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      padding: 16px 0;
+    }
+    .offline-storage-value {
+      font-size: 24px;
+      font-weight: 500;
+      color: var(--text-primary, #111827);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
+    }
+    .offline-storage-label {
+      font-size: 12px;
+      color: var(--text-tertiary, #9ca3af);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .offline-btn {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--border-default, #d1d5db);
+      background: var(--bg-surface, #fff);
+      color: var(--text-primary, #111827);
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .offline-btn:hover { border-color: var(--text-primary, #111827); }
+    .offline-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .offline-btn--primary {
+      background: var(--text-primary, #111827);
+      color: var(--bg-surface, #fff);
+      border-color: var(--text-primary, #111827);
+    }
+    .offline-btn--primary:hover { opacity: 0.88; }
+
+    .offline-feedback {
+      font-size: 12px;
+      color: var(--text-secondary, #6b7280);
+      margin: 10px 0 0;
+      min-height: 1em;
+    }
+    .offline-note {
+      font-size: 12px;
+      color: var(--text-tertiary, #9ca3af);
+      margin-top: 8px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <main class="offline-wrap" aria-labelledby="offline-title">
+    <header class="offline-header">
+      <p class="offline-eyebrow">narve.ai · Settings</p>
+      <h1 class="offline-title" id="offline-title">Offline &amp; push</h1>
+      <p class="offline-lede">Keep key pages viewable without a connection and get push alerts when the site isn't open.</p>
+    </header>
+
+    <section aria-labelledby="toggles-head">
+      <h2 class="offline-section-title" id="toggles-head">Preferences</h2>
+
+      <div class="offline-row">
+        <div class="offline-row-main">
+          <p class="offline-row-label">Enable offline mode</p>
+          <p class="offline-row-hint">Registers the narve.ai service worker so cached pages stay viewable when your device has no connection.</p>
+        </div>
+        <input type="checkbox" class="offline-toggle" id="toggle-offline" aria-label="Enable offline mode">
+      </div>
+
+      <div class="offline-row">
+        <div class="offline-row-main">
+          <p class="offline-row-label">Enable push notifications</p>
+          <p class="offline-row-hint">Get alerts for market resolutions and high-confidence signals even when narve.ai isn't open.</p>
+        </div>
+        <input type="checkbox" class="offline-toggle" id="toggle-push" aria-label="Enable push notifications">
+      </div>
+
+      <p class="offline-feedback" id="toggle-feedback" aria-live="polite"></p>
+    </section>
+
+    <section class="offline-section" aria-labelledby="storage-head">
+      <h2 class="offline-section-title" id="storage-head">Storage used</h2>
+      <div class="offline-storage">
+        <span class="offline-storage-value" id="storage-value">&mdash;</span>
+        <span class="offline-storage-label">cached on this device</span>
+      </div>
+      <button type="button" class="offline-btn" id="btn-clear-cache">Clear cache</button>
+      <p class="offline-feedback" id="clear-feedback" aria-live="polite"></p>
+      <p class="offline-note">Clearing the cache removes every narve.ai asset stored on this device and forces a full re-download on your next visit. Queued offline predictions will still send.</p>
+    </section>
+
+    <section class="offline-section" aria-labelledby="test-head">
+      <h2 class="offline-section-title" id="test-head">Test push</h2>
+      <button type="button" class="offline-btn offline-btn--primary" id="btn-test-push">Send test notification</button>
+      <p class="offline-feedback" id="test-feedback" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <script>
+    (async function () {
+      const $ = function (id) { return document.getElementById(id); };
+      const fbToggle = $('toggle-feedback');
+      const fbClear = $('clear-feedback');
+      const fbTest = $('test-feedback');
+      const togOffline = $('toggle-offline');
+      const togPush = $('toggle-push');
+
+      // ── Offline (service worker) toggle ────────────────────────────
+      async function refreshOfflineToggle() {
+        if (!('serviceWorker' in navigator)) {
+          togOffline.checked = false;
+          togOffline.disabled = true;
+          return;
+        }
+        const reg = await navigator.serviceWorker.getRegistration('/');
+        togOffline.checked = !!reg;
+      }
+      togOffline.addEventListener('change', async function () {
+        fbToggle.textContent = '';
+        try {
+          if (togOffline.checked) {
+            if (!('serviceWorker' in navigator)) throw new Error('Service workers unsupported in this browser');
+            await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+            fbToggle.textContent = 'Offline mode enabled.';
+          } else {
+            const reg = await navigator.serviceWorker.getRegistration('/');
+            if (reg) await reg.unregister();
+            fbToggle.textContent = 'Offline mode disabled.';
+          }
+          await refreshStorage();
+        } catch (err) {
+          togOffline.checked = !togOffline.checked;
+          fbToggle.textContent = 'Could not update: ' + (err && err.message ? err.message : err);
+        }
+      });
+
+      // ── Push toggle ────────────────────────────────────────────────
+      async function refreshPushToggle() {
+        const narve = window.narve || {};
+        if (!narve.push || !narve.push.supported) {
+          togPush.checked = false;
+          togPush.disabled = true;
+          return;
+        }
+        try {
+          const status = await narve.push.status();
+          togPush.checked = status === 'subscribed';
+        } catch { togPush.checked = false; }
+      }
+      togPush.addEventListener('change', async function () {
+        fbToggle.textContent = '';
+        const narve = window.narve || {};
+        if (!narve.push) return;
+        try {
+          if (togPush.checked) {
+            await narve.push.enable();
+            fbToggle.textContent = 'Push notifications enabled.';
+          } else {
+            await narve.push.disable();
+            fbToggle.textContent = 'Push notifications disabled.';
+          }
+        } catch (err) {
+          togPush.checked = !togPush.checked;
+          fbToggle.textContent = 'Could not update: ' + (err && err.message ? err.message : err);
+        }
+      });
+
+      // ── Storage usage ──────────────────────────────────────────────
+      async function measureCacheBytes() {
+        if (!('caches' in window)) return 0;
+        let total = 0;
+        const names = (await caches.keys()).filter(function (n) { return n.indexOf('narve-v2') === 0; });
+        for (const name of names) {
+          const cache = await caches.open(name);
+          const keys = await cache.keys();
+          for (const req of keys) {
+            try {
+              const resp = await cache.match(req);
+              if (!resp) continue;
+              const buf = await resp.clone().arrayBuffer();
+              total += buf.byteLength;
+            } catch {}
+          }
+        }
+        return total;
+      }
+      function formatBytes(n) {
+        if (!n) return '0 KB';
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / (1024 * 1024)).toFixed(2) + ' MB';
+      }
+      async function refreshStorage() {
+        let bytes = null;
+        // Prefer navigator.storage.estimate — reports true on-disk usage
+        // across caches + IDB. Fall back to a manual cache-size sum.
+        try {
+          if (navigator.storage && navigator.storage.estimate) {
+            const est = await navigator.storage.estimate();
+            bytes = est.usage || 0;
+          }
+        } catch {}
+        if (bytes === null) bytes = await measureCacheBytes();
+        $('storage-value').textContent = formatBytes(bytes);
+      }
+
+      // ── Clear cache ────────────────────────────────────────────────
+      $('btn-clear-cache').addEventListener('click', async function () {
+        fbClear.textContent = 'Clearing\u2026';
+        try {
+          // Tell the SW to purge (so any in-flight responses it's about
+          // to write are aborted too).
+          if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' });
+          }
+          if ('caches' in window) {
+            const names = (await caches.keys()).filter(function (n) { return n.indexOf('narve-v2') === 0; });
+            await Promise.all(names.map(function (n) { return caches.delete(n); }));
+          }
+          fbClear.textContent = 'Cache cleared.';
+          await refreshStorage();
+        } catch (err) {
+          fbClear.textContent = 'Could not clear: ' + (err && err.message ? err.message : err);
+        }
+      });
+
+      // ── Test push ──────────────────────────────────────────────────
+      $('btn-test-push').addEventListener('click', async function () {
+        fbTest.textContent = 'Sending\u2026';
+        const narve = window.narve || {};
+        if (!narve.push || !narve.push.supported) {
+          fbTest.textContent = 'Push not supported in this browser.';
+          return;
+        }
+        try {
+          await narve.push.sendTest();
+          fbTest.textContent = 'Sent. Check your device.';
+        } catch (err) {
+          fbTest.textContent = 'Test failed: ' + (err && err.message ? err.message : err);
+        }
+      });
+
+      // Boot
+      await refreshOfflineToggle();
+      await refreshPushToggle();
+      await refreshStorage();
+    })();
+  </script>
+</body>
+</html>

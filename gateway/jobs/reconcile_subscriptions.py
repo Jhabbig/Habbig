@@ -122,6 +122,18 @@ async def reconcile_subscriptions() -> dict[str, Any]:
             except Exception as exc:
                 log.warning("reconcile write failed for user=%s: %s",
                             user_id, exc)
+            else:
+                # Drift → tier shifted — drop that user's cached feed + all
+                # tier-scoped best-bets pages. Cache import is deferred so
+                # the job still runs if the cache layer is unavailable.
+                try:
+                    from cache import ttl_invalidate
+                    ttl_invalidate.on_subscription_change(user_id)
+                except Exception:
+                    log.exception(
+                        "ttl_invalidate.on_subscription_change failed (user=%s)",
+                        user_id,
+                    )
 
     duration = round(time.monotonic() - start, 2)
     drift_ratio = (

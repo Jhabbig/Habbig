@@ -224,6 +224,16 @@ def set_user_intelligence_addon(user_id: int, active: bool, period_end: Optional
             "UPDATE users SET intelligence_addon_active = ?, intelligence_addon_period_end = ? WHERE id = ?",
             (1 if active else 0, period_end, user_id),
         )
+    # User's effective tier just shifted — drop cached per-user feed + all
+    # tier-scoped best-bets pages. Import is deferred so a plain script that
+    # only exercises this query helper doesn't pull the cache stack.
+    try:
+        from cache import ttl_invalidate
+        ttl_invalidate.on_subscription_change(user_id)
+    except Exception:  # pragma: no cover — cache layer is optional here
+        logging.getLogger(__name__).exception(
+            "ttl_invalidate.on_subscription_change failed (user=%s)", user_id,
+        )
 
 
 def get_user_subscription_tier(user_id: int) -> str:

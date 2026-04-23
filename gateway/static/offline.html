@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Offline — narve.ai</title>
+  <meta name="theme-color" content="#0d0d0d">
+  <!-- Standalone page. Inline critical CSS only — no external fetches,
+       or the page itself fails when the user is actually offline. -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --fg: #111;
+      --fg-muted: #6b7280;
+      --bg: #ffffff;
+      --surface: #f5f5f5;
+      --border: #e5e7eb;
+      --accent: #0d0d0d;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fg: #f5f5f5;
+        --fg-muted: #9ca3af;
+        --bg: #0d0d0d;
+        --surface: #171717;
+        --border: #262626;
+        --accent: #f5f5f5;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.55;
+      padding: 32px 24px;
+    }
+    .wrap {
+      max-width: 520px;
+      margin: 48px auto;
+    }
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+      margin: 0 0 6px;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin: 0 0 8px;
+    }
+    .lede {
+      font-size: 15px;
+      color: var(--fg-muted);
+      margin: 0 0 32px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 0 0 16px;
+    }
+    .card h2 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      margin: 0 0 12px;
+      font-weight: 500;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+    li:last-child { border-bottom: 0; }
+    li a {
+      color: var(--fg);
+      text-decoration: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+    }
+    li a:hover, li a:focus { color: var(--accent); text-decoration: underline; }
+    li .meta {
+      font-size: 11px;
+      color: var(--fg-muted);
+      flex: 0 0 auto;
+    }
+    .empty {
+      color: var(--fg-muted);
+      font-size: 14px;
+      padding: 6px 0;
+      margin: 0;
+    }
+    .retry {
+      margin-top: 24px;
+      display: inline-block;
+      padding: 10px 18px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--accent);
+      color: var(--bg);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .retry:hover { opacity: 0.88; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--fg-muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 20px;
+    }
+    .status-pill::before {
+      content: "";
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--fg-muted);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="status-pill" id="status-pill" role="status" aria-live="polite">Offline</div>
+    <p class="eyebrow">narve.ai</p>
+    <h1>You&rsquo;re offline.</h1>
+    <p class="lede">Live market data needs a connection, but these pages are still viewable from your device cache.</p>
+
+    <section class="card" aria-labelledby="cached-head">
+      <h2 id="cached-head">Available offline</h2>
+      <ul id="cached-pages">
+        <li class="empty" id="cached-empty">Scanning cache&hellip;</li>
+      </ul>
+    </section>
+
+    <button class="retry" id="retry-btn" type="button">Try again</button>
+  </main>
+
+  <script>
+    // Populate the "available offline" list from the narve-v2 SW cache.
+    // If the SW didn't precache anything (first visit while offline),
+    // we show an empty state instead of a broken page.
+    (async function () {
+      const list = document.getElementById('cached-pages');
+      const empty = document.getElementById('cached-empty');
+      if (!('caches' in window)) {
+        empty.textContent = 'Your browser does not support offline caching.';
+        return;
+      }
+      try {
+        const names = await caches.keys();
+        const narveCaches = names.filter(function (n) { return n.indexOf('narve-v2') === 0; });
+        const seen = new Set();
+        const items = [];
+        for (const name of narveCaches) {
+          const cache = await caches.open(name);
+          const keys = await cache.keys();
+          for (const req of keys) {
+            const u = new URL(req.url);
+            if (u.origin !== location.origin) continue;
+            // Surface pages, not assets.
+            if (
+              u.pathname === '/offline' ||
+              u.pathname === '/manifest.json' ||
+              u.pathname === '/favicon.ico' ||
+              u.pathname.indexOf('/_gateway_static/') === 0 ||
+              u.pathname.indexOf('/api/') === 0 ||
+              /\.(css|js|woff2|png|jpg|svg|gif|ico)$/i.test(u.pathname)
+            ) continue;
+            if (seen.has(u.pathname)) continue;
+            seen.add(u.pathname);
+            // Fetch the Response so we can extract a timestamp header.
+            let ts = '';
+            try {
+              const resp = await cache.match(req);
+              const dateHdr = resp && resp.headers.get('date');
+              if (dateHdr) ts = relativeTime(new Date(dateHdr));
+            } catch {}
+            items.push({ pathname: u.pathname, ts: ts });
+          }
+        }
+        items.sort(function (a, b) { return a.pathname.localeCompare(b.pathname); });
+        if (!items.length) {
+          empty.textContent = 'No cached pages yet. Browse narve.ai online and pages you visit will be available here.';
+          return;
+        }
+        list.innerHTML = '';
+        for (const it of items) {
+          const li = document.createElement('li');
+          const a = document.createElement('a');
+          a.href = it.pathname;
+          a.textContent = prettyName(it.pathname);
+          const meta = document.createElement('span');
+          meta.className = 'meta';
+          meta.textContent = it.ts || '';
+          a.appendChild(meta);
+          li.appendChild(a);
+          list.appendChild(li);
+        }
+      } catch (err) {
+        empty.textContent = 'Could not read offline cache.';
+      }
+    })();
+
+    function prettyName(path) {
+      if (path === '/' || path === '') return 'Home';
+      // Strip a single leading slash, title-case segments.
+      return path.replace(/^\//, '').split('/').filter(Boolean).map(function (s) {
+        return s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' ');
+      }).join(' \u2192 ') || path;
+    }
+
+    function relativeTime(d) {
+      const sec = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+      if (sec < 60) return 'moments ago';
+      if (sec < 3600) return Math.round(sec / 60) + ' min ago';
+      if (sec < 86400) return Math.round(sec / 3600) + ' h ago';
+      return Math.round(sec / 86400) + ' d ago';
+    }
+
+    // Try-again button: reload. If we're back online, fresh HTML wins.
+    document.getElementById('retry-btn').addEventListener('click', function () {
+      location.reload();
+    });
+
+    // Auto-reload when the browser reports a connection.
+    window.addEventListener('online', function () {
+      // Tiny delay to let the network stack settle.
+      setTimeout(function () { location.reload(); }, 400);
+    });
+  </script>
+</body>
+</html>

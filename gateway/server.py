@@ -1016,6 +1016,8 @@ _PUBLIC_PATHS = frozenset({
     "/api/status", "/api/status/subscribe", "/api/status/unsubscribe",
     # PWA: fetched by browsers/OS installers before any session exists
     "/manifest.json", "/sw.js",
+    # PWA offline shell (SW falls back here on cold-start network failure)
+    "/offline",
     # Public SEO content pages — see seo_routes.py
     "/about", "/how-it-works", "/methodology", "/faq",
     "/team", "/press", "/changelog", "/narve",
@@ -1923,6 +1925,70 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         lambda m: static_url(m.group(1)),
         page,
     )
+    # ── i18n — detect the display language and expose t(key) in templates.
+    # Priority: ?lang= > user pref > lang cookie > Accept-Language > 'en'.
+    # Fallback chain in translator guarantees a never-500 render even if the
+    # locale file is missing or malformed.
+    try:
+        from i18n import detect_language as _detect_language
+        from i18n import t as _i18n_t
+        from i18n import SUPPORTED as _I18N_SUPPORTED
+    except Exception:
+        _detect_language = None
+        _i18n_t = None
+        _I18N_SUPPORTED = ["en"]
+    if _detect_language is not None and request is not None:
+        try:
+            _lang = _detect_language(request)
+        except Exception:
+            _lang = "en"
+    else:
+        _lang = context.get("lang", "en")
+    context.setdefault("lang", _lang)
+
+    # Substitute {{ t("key") }} and {{ t("key", var=val) }} patterns in the
+    # template. We do this before the normal {{ key }} pass so translated
+    # strings can themselves contain placeholders that the context supplies.
+    if _i18n_t is not None:
+        def _t_sub(m: "re.Match") -> str:
+            raw = m.group(1).strip()
+            # raw looks like:  "nav.billing"  or  "feed.X_predictions", count=3
+            # Split first ',' outside the quoted key.
+            if raw.startswith('"') or raw.startswith("'"):
+                quote = raw[0]
+                end = raw.find(quote, 1)
+                if end == -1:
+                    return m.group(0)
+                key = raw[1:end]
+                rest = raw[end + 1:].lstrip(", ")
+            else:
+                # bare key form: t(nav.billing)
+                comma = raw.find(",")
+                key = raw if comma == -1 else raw[:comma].strip()
+                rest = "" if comma == -1 else raw[comma + 1:].strip()
+            kwargs: dict = {}
+            if rest:
+                # Minimal kwarg parser: k=value pairs, value is bare or
+                # quoted. Not a full expression parser — complex
+                # interpolation should happen in Python before render_page.
+                for pair in re.findall(
+                    r'([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*("[^"]*"|\'[^\']*\'|[^,]+)',
+                    rest,
+                ):
+                    k, v = pair
+                    v = v.strip()
+                    if (v.startswith('"') and v.endswith('"')) or (
+                        v.startswith("'") and v.endswith("'")
+                    ):
+                        v = v[1:-1]
+                    kwargs[k] = v
+            try:
+                return html.escape(_i18n_t(key, _lang, **kwargs))
+            except Exception:
+                return html.escape(key)
+
+        page = re.sub(r"\{\{\s*t\(([^)]*)\)\s*\}\}", _t_sub, page)
+
     # Auto-inject CSRF hidden field
     if request is not None:
         csrf_token = request.cookies.get(CSRF_COOKIE_NAME) or getattr(request.state, "csrf_token", None) or _generate_csrf_token()
@@ -1972,6 +2038,29 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         head_idx = lower.rfind("</head>")
         if head_idx != -1:
             page = page[:head_idx] + skel_injection + "\n" + page[head_idx:]
+
+    # ── i18n: set <html lang="..."> and expose window.LANG for client JS
+    #    (Intl.NumberFormat / Intl.DateTimeFormat read it for locale-aware
+    #    formatting). Templates that already hardcoded `lang="en"` get
+    #    overwritten so the user's switcher actually takes effect.
+    if _lang:
+        page = re.sub(
+            r'(<html\b[^>]*?)(\s+lang="[^"]*")?(\s*[^>]*>)',
+            lambda m: f'{m.group(1)} lang="{html.escape(_lang)}"{m.group(3)}',
+            page,
+            count=1,
+        )
+        window_lang_js = (
+            f'<script>window.LANG={html.escape(repr(_lang))};'
+            f'window.SUPPORTED_LANGS={html.escape(repr(list(_I18N_SUPPORTED)))}'
+            f';</script>'
+        )
+        if "window.LANG=" not in page:
+            body_idx = page.lower().find("<body")
+            if body_idx != -1:
+                gt = page.find(">", body_idx)
+                if gt != -1:
+                    page = page[: gt + 1] + window_lang_js + page[gt + 1:]
     # ⌘K command palette. Mounts itself on first keypress — single script
     # handles modal DOM, FTS search, click logging, command mode. Inject
     # into every rendered page so the hotkey is uniformly available.
@@ -5835,6 +5924,18 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("status_routes import failed: %s — continuing without it", _exc)
 
+# Community Takes — paid subscribers annotate markets, others vote.
+# Mounts /api/v1/markets/{slug}/takes, /api/v1/takes/*, /settings/takes,
+# /admin/moderation. Reload-safe for pytest module-cache reuse.
+try:
+    import take_routes  # noqa: F401,E402
+    import sys as _tr_sys
+    if "take_routes" in _tr_sys.modules:
+        import importlib as _tr_importlib
+        _tr_importlib.reload(_tr_sys.modules["take_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("take_routes import failed: %s — continuing without it", _exc)
+
 
 # Embed widgets (token-gated, domain-locked iframes for partner sites).
 # Must register BEFORE the catch-all below so /embed/{widget_id} and
@@ -5860,6 +5961,19 @@ try:
         _pr_importlib.reload(_pr_sys.modules["push_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("push_routes import failed: %s — continuing without it", _exc)
+
+
+# Offline shell + /settings/offline. Same reload-safe late-import pattern
+# as push_routes above. Must land before the catch-all so /offline and
+# /settings/offline hit our handlers.
+try:
+    import offline_routes  # noqa: F401,E402
+    import sys as _or_sys
+    if "offline_routes" in _or_sys.modules:
+        import importlib as _or_importlib
+        _or_importlib.reload(_or_sys.modules["offline_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("offline_routes import failed: %s — continuing without it", _exc)
 
 
 # Scheduled-job admin UI (/admin/jobs + /admin/api/jobs/*). Registers
@@ -5900,6 +6014,19 @@ try:
         _er_importlib.reload(_er_sys.modules["engagement_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("engagement_routes import failed: %s — continuing without it", _exc)
+
+
+# Public feedback + roadmap + admin triage (migration 130). Same
+# reload-safe side-effect pattern — must sit before the catch-all or
+# /feedback + /admin/feedback get swallowed as 404s.
+try:
+    import feedback_routes  # noqa: F401,E402
+    import sys as _fb_sys
+    if "feedback_routes" in _fb_sys.modules:
+        import importlib as _fb_importlib
+        _fb_importlib.reload(_fb_sys.modules["feedback_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("feedback_routes import failed: %s — continuing without it", _exc)
 
 
 # Private referral + leaderboard router. Must sit before the catch-all

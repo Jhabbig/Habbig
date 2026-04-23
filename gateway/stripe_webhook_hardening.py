@@ -302,6 +302,14 @@ def _update_subproduct_status(user_id: int, slug: str, status: str) -> None:
             "UPDATE users SET subproduct_subscriptions = ? WHERE id = ?",
             (json.dumps(blob, sort_keys=True), user_id),
         )
+    # Tier/add-on changed upstream — invalidate their cached feed + every
+    # tier-scoped best-bets page. Deferred import to keep the webhook path
+    # tolerant of a missing cache module in lightweight test harnesses.
+    try:
+        from cache import ttl_invalidate
+        ttl_invalidate.on_subscription_change(user_id)
+    except Exception:
+        log.exception("ttl_invalidate.on_subscription_change failed (user=%s)", user_id)
 
 
 def _lookup_subproduct_slug(sub_id: str) -> Optional[str]:

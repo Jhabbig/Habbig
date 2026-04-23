@@ -334,7 +334,8 @@
     }
   });
 
-  // Click target for nav search icon.
+  // Click target for nav search icon (pages that already inject one), plus
+  // our own self-mounted floating pill below for pages that don't.
   document.addEventListener('click', (e) => {
     const trigger = e.target.closest('[data-narve-search], .narve-search-trigger');
     if (trigger) {
@@ -342,6 +343,49 @@
       palette.open();
     }
   });
+
+  // Self-mounting floating trigger pill. Matches the notification-bell
+  // pattern — pages don't need to embed a specific <button>, we just
+  // draw one. Skipped on:
+  //   * the palette backdrop itself (would render inside)
+  //   * prerelease/gate pages (no session → search is useless)
+  //   * any page that already renders its own .narve-search-trigger
+  //     (caller opted for custom placement and we don't want two)
+  function mountPill() {
+    if (document.querySelector('.narve-search-trigger')) return;
+    const PUBLIC_PATHS = new Set([
+      '/', '/gate', '/login', '/register', '/token', '/signup',
+      '/forgot-password', '/reset-password',
+      '/terms', '/privacy', '/dpa', '/unsubscribe',
+      '/about', '/how-it-works', '/methodology', '/faq',
+      '/team', '/press', '/changelog', '/narve',
+    ]);
+    if (PUBLIC_PATHS.has(location.pathname)) return;
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'narve-search-trigger narve-cmdp-pill';
+    pill.setAttribute('aria-label', 'Search (⌘K)');
+    // Detect platform to show the right modifier glyph. navigator.platform
+    // is deprecated but the replacement (userAgentData.platform) isn't
+    // widely available yet, so fall through to legacy.
+    const isMac = /Mac|iPhone|iPad/i.test(
+      (navigator.userAgentData && navigator.userAgentData.platform) ||
+      navigator.platform || ''
+    );
+    const mod = isMac ? '⌘' : 'Ctrl';
+    pill.innerHTML = `
+      <span class="narve-cmdp-pill-icon" aria-hidden="true">⌕</span>
+      <span class="narve-cmdp-pill-label">Search</span>
+      <span class="narve-cmdp-pill-kbd" aria-hidden="true">${mod}K</span>`;
+    document.body.appendChild(pill);
+  }
+  // DOMContentLoaded already fires before this IIFE in the defer path,
+  // but guard both sides so repeated boot (pjax, test fixtures) is safe.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mountPill, { once: true });
+  } else {
+    mountPill();
+  }
 
   // Expose a tiny API for debugging + programmatic open.
   window.narveCmdPalette = {

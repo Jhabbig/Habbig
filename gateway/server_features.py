@@ -144,6 +144,76 @@ async def api_email_preferences(request: Request):
     return JSONResponse({"saved": True, "digest": digest, "marketing": marketing})
 
 
+# ── i18n: set the display language ────────────────────────────────────────
+
+
+@app.post("/api/set-language")
+async def api_set_language(request: Request):
+    """Switch the UI language for this user / browser.
+
+    Accepts the target locale via ``?lang=es`` query param OR a JSON body
+    ``{"lang": "es"}``. Validates against ``gateway.i18n.SUPPORTED`` — any
+    unsupported value is rejected with 400 so a typo in a hand-crafted
+    request doesn't silently leave the user on English.
+
+    Side effects:
+      * Sets the ``lang`` cookie (180 days, HttpOnly false so the client
+        JS widget can read it without a round-trip).
+      * If the session is authenticated, persists
+        ``users.preferred_language`` so the choice sticks across devices.
+
+    Anonymous users still get the cookie; it overrides Accept-Language on
+    subsequent renders.
+    """
+    from i18n import SUPPORTED as _I18N_SUPPORTED
+    from i18n import LANG_COOKIE_NAME as _LANG_COOKIE
+    from i18n import normalise_lang as _normalise_lang
+
+    # Accept ?lang= OR JSON body — whichever the caller prefers.
+    raw = request.query_params.get("lang", "").strip()
+    if not raw:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                raw = str(body.get("lang") or "").strip()
+        except Exception:
+            raw = ""
+
+    lang = _normalise_lang(raw)
+    if not lang or lang not in _I18N_SUPPORTED:
+        return JSONResponse(
+            {"error": "unsupported_language", "supported": list(_I18N_SUPPORTED)},
+            status_code=400,
+        )
+
+    user = current_user(request)
+    if user:
+        try:
+            with db.conn() as c:
+                c.execute(
+                    "UPDATE users SET preferred_language = ? WHERE id = ?",
+                    (lang, user["user_id"]),
+                )
+        except Exception as e:
+            # Persisting the preference is best-effort — if the column is
+            # missing (migration 125 hasn't run) we still want the cookie
+            # switch to succeed so the user gets their chosen language
+            # this session.
+            log.warning("set-language: persist failed: %s", e)
+
+    resp = JSONResponse({"ok": True, "lang": lang, "persisted": bool(user)})
+    resp.set_cookie(
+        key=_LANG_COOKIE,
+        value=lang,
+        max_age=60 * 60 * 24 * 180,  # 180 days
+        path="/",
+        samesite="lax",
+        httponly=False,
+        secure=os.environ.get("GATEWAY_COOKIE_SECURE", "0").lower() in ("1", "true"),
+    )
+    return resp
+
+
 # ── FEATURE 2: Password reset end-to-end ─────────────────────────────────
 
 

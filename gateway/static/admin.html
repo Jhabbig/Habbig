@@ -996,13 +996,20 @@ function loadSentry() {
     var list = document.getElementById('sentry-recent');
     list.innerHTML = '';
     if (!data.recent || !data.recent.length) {
-      list.innerHTML = '<div class="admin-row"><div class="admin-row-info">' + (data.error ? data.error : 'No errors in the last 24 hours.') + '</div></div>';
+      list.innerHTML = '<div class="admin-row"><div class="admin-row-info">' + escapeHtml(data.error || 'No errors in the last 24 hours.') + '</div></div>';
       return;
     }
     data.recent.forEach(function(err) {
       var row = document.createElement('div');
       row.className = 'admin-row';
-      row.innerHTML = '<div class="admin-row-info"><div class="admin-row-main">' + (err.title || 'Unknown') + '</div><div class="admin-row-meta"><span>' + (err.level || 'error') + '</span><span>' + (err.last_seen || '') + '</span></div></div><div class="admin-row-actions"><a href="' + (err.permalink || '#') + '" target="_blank" rel="noopener" class="btn btn-ghost">View</a></div>';
+      // Sentry titles/messages can reflect user input from error context;
+      // escape every field to keep the admin panel safe even if an attacker
+      // poisoned an event via a Sentry-reported crash.
+      var permalink = (err.permalink && /^https?:\/\//.test(err.permalink)) ? err.permalink : '#';
+      row.innerHTML =
+        '<div class="admin-row-info"><div class="admin-row-main">' + escapeHtml(err.title || 'Unknown') + '</div>' +
+        '<div class="admin-row-meta"><span>' + escapeHtml(err.level || 'error') + '</span><span>' + escapeHtml(err.last_seen || '') + '</span></div></div>' +
+        '<div class="admin-row-actions"><a href="' + escapeHtml(permalink) + '" target="_blank" rel="noopener" class="btn btn-ghost">View</a></div>';
       list.appendChild(row);
     });
   }).catch(function(){
@@ -1113,9 +1120,12 @@ function loadAnalyticsAll() {
     document.getElementById('an-signal').textContent = fmtNum(d.signal_runs);
     document.getElementById('an-cred').textContent = fmtNum(d.cred_refreshes);
     document.getElementById('an-bets').textContent = fmtNum(d.bets_placed);
-    document.getElementById('an-top-markets').innerHTML = (d.top_markets || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + m.count + '</span>';}).join('<br>') || '—';
-    document.getElementById('an-top-sources').innerHTML = (d.top_sources || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + m.count + '</span>';}).join('<br>') || '—';
-    document.getElementById('an-top-keywords').innerHTML = (d.top_keywords || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + m.count + '</span>';}).join('<br>') || '—';
+    // Counts are server-computed integers, but coerce + escape anyway so a
+    // compromised analytics job can't smuggle markup via a string `count`.
+    var fmtCount = function(n){ return escapeHtml(String(Number(n) | 0)); };
+    document.getElementById('an-top-markets').innerHTML = (d.top_markets || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + fmtCount(m.count) + '</span>';}).join('<br>') || '—';
+    document.getElementById('an-top-sources').innerHTML = (d.top_sources || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + fmtCount(m.count) + '</span>';}).join('<br>') || '—';
+    document.getElementById('an-top-keywords').innerHTML = (d.top_keywords || []).map(function(m){return escapeHtml(m.label) + ' <span style="color:var(--text-tertiary);float:right">' + fmtCount(m.count) + '</span>';}).join('<br>') || '—';
   });
 }
 
@@ -1139,8 +1149,8 @@ function drawUsersChart(series) {
       var y = h - pad - (d.count / maxY) * (h - pad * 2);
       return '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#f0f0f0"/>';
     }).join('') +
-    '<text x="' + pad + '" y="' + (h - 6) + '" font-size="10" fill="#909090">' + (series[0] && series[0].date || '') + '</text>' +
-    '<text x="' + (w - pad - 60) + '" y="' + (h - 6) + '" font-size="10" fill="#909090">' + (series[series.length - 1] && series[series.length - 1].date || '') + '</text>';
+    '<text x="' + pad + '" y="' + (h - 6) + '" font-size="10" fill="#909090">' + escapeHtml(series[0] && series[0].date || '') + '</text>' +
+    '<text x="' + (w - pad - 60) + '" y="' + (h - 6) + '" font-size="10" fill="#909090">' + escapeHtml(series[series.length - 1] && series[series.length - 1].date || '') + '</text>';
 }
 
 function fmtNum(n) {

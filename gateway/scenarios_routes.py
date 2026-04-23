@@ -380,39 +380,52 @@ border-top:1px solid var(--border-default);padding-top:14px;margin-top:32px}
 
 async def scenario_page(request: Request):
     user = _require_pro_user(request)
-    body = f"""<!DOCTYPE html><html><head>
+    body = f"""<!DOCTYPE html><html lang='en'><head>
 <meta charset='utf-8'><title>Scenario calculator — narve.ai</title>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
 <link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
 <style>{_common_styles()}
 .radio-row{{display:flex;gap:16px;margin-top:10px}}
-.radio-row label{{display:flex;gap:8px;align-items:center;cursor:pointer}}
+.radio-row label{{display:flex;gap:8px;align-items:center;cursor:pointer;
+min-height:44px}}
 .picker-results{{max-height:260px;overflow-y:auto;margin-top:8px;
 border:1px solid var(--border-default);border-radius:8px}}
-.picker-row{{padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border-default)}}
-.picker-row:hover{{background:var(--bg-surface)}}
+.picker-row{{padding:12px;cursor:pointer;border-bottom:1px solid var(--border-default);
+min-height:44px}}
+.picker-row:hover,.picker-row:focus{{background:var(--bg-surface);outline:none}}
+.picker-row[aria-selected=true]{{background:var(--bg-raised);
+border-left:3px solid var(--text-primary);padding-left:9px}}
 .picker-row:last-child{{border-bottom:0}}
+.btn:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible,
+.picker-row:focus-visible{{outline:2px solid var(--text-primary);outline-offset:2px}}
 </style></head><body>
 <h1>Scenario calculator</h1>
 <p class='meta'>If market X resolves a certain way, which of my markets move?</p>
 
 <div class='panel'>
-  <label class='small'>Pick an anchor market</label>
-  <input id='pick' type='search' placeholder='Search active markets…' autocomplete='off'>
-  <div class='picker-results' id='picker-results' hidden></div>
-  <div id='selected' style='margin-top:14px' hidden>
-    <strong id='sel-q'></strong> <span class='small'>current: <span id='sel-p'></span></span>
+  <label class='small' for='pick'>Pick an anchor market</label>
+  <input id='pick' type='search' placeholder='Search active markets…'
+         autocomplete='off' aria-autocomplete='list' aria-controls='picker-results'
+         aria-expanded='false'>
+  <div class='picker-results' id='picker-results' role='listbox' hidden></div>
+  <div id='selected' style='margin-top:14px' hidden aria-live='polite'>
+    <strong id='sel-q'></strong>
+    <span class='small'>current: <span id='sel-p'></span></span>
   </div>
 </div>
 
 <div class='panel' id='outcome-panel' hidden>
-  <div class='small'>Hypothetical outcome</div>
-  <div class='radio-row'>
-    <label><input type='radio' name='h' value='yes'> Resolves YES</label>
-    <label><input type='radio' name='h' value='no' checked> Resolves NO</label>
-  </div>
-  <div style='margin-top:14px;display:flex;gap:10px'>
-    <button class='btn' id='run-btn'>Run scenario</button>
-    <button class='btn secondary' id='save-btn' disabled>Save scenario</button>
+  <fieldset style='border:0;padding:0;margin:0'>
+    <legend class='small' style='padding:0;margin-bottom:6px'>Hypothetical outcome</legend>
+    <div class='radio-row' role='radiogroup' aria-label='Hypothetical outcome'>
+      <label><input type='radio' name='h' value='yes'> Resolves YES</label>
+      <label><input type='radio' name='h' value='no' checked> Resolves NO</label>
+    </div>
+  </fieldset>
+  <div style='margin-top:14px;display:flex;gap:10px;flex-wrap:wrap'>
+    <button class='btn' id='run-btn' type='button'>Run scenario</button>
+    <button class='btn secondary' id='save-btn' type='button' disabled
+            aria-label='Save this scenario to your list'>Save scenario</button>
     <a class='btn secondary' href='/tools/correlations'>Correlation matrix →</a>
   </div>
 </div>

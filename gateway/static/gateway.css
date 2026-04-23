@@ -1630,6 +1630,30 @@ textarea:focus-visible {
   outline-offset: 3px;
 }
 
+/* Offline banner — shown by narve-app.js when navigator.onLine goes false.
+ * Monochrome per design system (no amber/red); muted surface + subtle
+ * top border so it's legible without stealing attention. */
+.narve-offline-banner {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: calc(var(--z-overlay, 50) + 20);
+  padding: 8px 16px;
+  background: var(--bg-surface, #141414);
+  color: var(--text-secondary, #aaa);
+  border-bottom: 1px solid var(--border-default, #2a2a2a);
+  font-size: 12px;
+  text-align: center;
+  font-family: var(--font-ui);
+  letter-spacing: 0.01em;
+}
+@media (prefers-color-scheme: light) {
+  .narve-offline-banner {
+    background: #f5f5f5;
+    color: #374151;
+    border-bottom-color: #e5e7eb;
+  }
+}
+
 /* Screen-reader-only text. Use on icon-only buttons that need a visible
  * label for AT users but no visible text for sighted users. */
 .sr-only {
@@ -2182,4 +2206,238 @@ a.btn:focus-visible,
     padding: var(--space-3) var(--space-4) var(--space-5);
   }
   .page-title { font-size: 22px; }
+}
+
+/* ── Command palette (⌘K) ──────────────────────────────────────────────────
+   Monochrome, keyboard-first, Linear-ish. Backdrop blur + centered modal.
+   All layout is token-driven so the palette tracks the rest of the app when
+   tokens.css changes.
+*/
+
+.narve-cmdp-lock { overflow: hidden; }
+
+.narve-cmdp-backdrop {
+  position: fixed; inset: 0;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 13vh;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 1000;
+  font-family: var(--font-ui);
+}
+.narve-cmdp-backdrop.open { display: flex; }
+
+@keyframes narve-cmdp-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+.narve-cmdp {
+  width: min(640px, 94vw);
+  max-height: 70vh;
+  background: var(--bg-raised, #141414);
+  border: 1px solid var(--border-default, #2a2a2a);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text-primary, #fff);
+  animation: narve-cmdp-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .narve-cmdp { animation: none; }
+}
+
+.narve-cmdp-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary, #fff);
+  padding: 18px 22px;
+  font-size: 16px;
+  font-family: var(--font-ui);
+  border-bottom: 1px solid var(--border-subtle, #222);
+  caret-color: var(--text-primary, #fff);
+}
+.narve-cmdp-input::placeholder {
+  color: var(--text-tertiary, #777);
+  font-family: var(--font-ui);
+}
+
+.narve-cmdp-results {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 6px 0;
+  scrollbar-width: thin;
+}
+.narve-cmdp-results::-webkit-scrollbar { width: 8px; }
+.narve-cmdp-results::-webkit-scrollbar-thumb {
+  background: var(--border-default, #2a2a2a);
+  border-radius: 4px;
+}
+
+.narve-cmdp-group {
+  padding: 4px 0 6px;
+}
+.narve-cmdp-group-label {
+  padding: 10px 22px 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary, #777);
+}
+
+.narve-cmdp-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 22px;
+  cursor: pointer;
+  color: var(--text-secondary, #ccc);
+  font-size: 13.5px;
+  line-height: 1.3;
+}
+.narve-cmdp-row.selected,
+.narve-cmdp-row:focus {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  color: var(--text-primary, #fff);
+}
+.narve-cmdp-glyph {
+  color: var(--text-tertiary, #777);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: center;
+}
+.narve-cmdp-row.selected .narve-cmdp-glyph {
+  color: var(--text-primary, #fff);
+}
+.narve-cmdp-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.narve-cmdp-sub {
+  font-size: 11.5px;
+  color: var(--text-tertiary, #777);
+  font-family: var(--font-mono);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.narve-cmdp-hint {
+  padding: 24px 22px;
+  color: var(--text-tertiary, #777);
+  font-size: 13px;
+  text-align: center;
+}
+.narve-cmdp-error { color: #e46a6a; }
+
+.narve-cmdp-footer {
+  display: flex;
+  gap: 16px;
+  padding: 10px 22px;
+  border-top: 1px solid var(--border-subtle, #222);
+  font-size: 11px;
+  color: var(--text-tertiary, #777);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.narve-cmdp-footer kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-right: 4px;
+  border: 1px solid var(--border-default, #2a2a2a);
+  border-radius: 4px;
+  background: var(--bg-surface, #0a0a0a);
+  color: var(--text-secondary, #ccc);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* Tight-fit on narrow viewports — keeps the palette usable on mobile.  */
+@media (max-width: 480px) {
+  .narve-cmdp-backdrop { padding-top: 8vh; }
+  .narve-cmdp { max-height: 84vh; }
+  .narve-cmdp-sub { max-width: 140px; }
+}
+
+/* ── Palette trigger pill ──────────────────────────────────────────────────
+   Floating ⌘K button. Positioned bottom-left so it doesn't fight the
+   notification bell (top-right) or the impersonation banner (top).
+   Stays out of the way; one click / tap opens the palette.
+*/
+.narve-cmdp-pill {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 10px;
+  background: var(--bg-raised, #141414);
+  border: 1px solid var(--border-default, #2a2a2a);
+  border-radius: 9999px;
+  color: var(--text-secondary, #ccc);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  z-index: 900;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.narve-cmdp-pill:hover,
+.narve-cmdp-pill:focus-visible {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  border-color: var(--border-strong, #3a3a3a);
+  color: var(--text-primary, #fff);
+  outline: none;
+}
+.narve-cmdp-pill-icon {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-tertiary, #777);
+}
+.narve-cmdp-pill:hover .narve-cmdp-pill-icon {
+  color: var(--text-primary, #fff);
+}
+.narve-cmdp-pill-label {
+  /* Hidden on narrow screens — icon + kbd alone are still obvious. */
+  display: inline;
+}
+.narve-cmdp-pill-kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid var(--border-default, #2a2a2a);
+  border-radius: 4px;
+  background: var(--bg-surface, #0a0a0a);
+  color: var(--text-tertiary, #777);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+@media (max-width: 480px) {
+  .narve-cmdp-pill {
+    bottom: 16px;
+    left: auto;
+    right: 16px;
+    padding: 8px 10px;
+  }
+  .narve-cmdp-pill-label { display: none; }
+  .narve-cmdp-pill-kbd   { display: none; }
+}
+@media print {
+  .narve-cmdp-pill { display: none; }
 }

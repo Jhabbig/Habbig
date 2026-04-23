@@ -1,95 +1,161 @@
-/* narve.ai service worker — offline shell + push notifications.
+/* narve.ai service worker v2 — offline shell, 4 cache strategies,
+ * background sync for user predictions, push notifications.
  *
- * Versioning: bump SW_VERSION when any cached asset needs purging.
- * Clients will see the new worker on next navigation; `skipWaiting`
- * + `clients.claim` is deliberately *not* used so in-flight pages
- * keep their current assets until they reload.
+ * Versioning: bump CACHE_V when cached-asset shape needs purging. Old
+ * versions are evicted on `activate`. Clients see the new worker on
+ * next navigation; we deliberately don't `skipWaiting` / `clients.claim`
+ * so in-flight pages keep their current assets until they reload.
+ *
+ * Cache strategies:
+ *   1. /_gateway_static/*    → cache-first   (static bundle)
+ *   2. /api/status, /api/status/feed.xml, whitelisted API GETs → SWR
+ *   3. *.{png,jpg,webp,svg,gif,ico} → cache-first
+ *   4. HTML navigations       → network-first → cache → /offline
+ *
+ * Background sync: pending prediction POSTs queued in IndexedDB
+ * (`narve-offline-queue` → `predictions` store) are replayed when the
+ * `sync` event fires (tag `submit-prediction`). Browsers that lack
+ * Background Sync fall back to a replay on next sw `fetch` or on
+ * `message` with `{type:'FLUSH_QUEUE'}` from the page.
  */
 
-const SW_VERSION = 'narve-v1';
-const RUNTIME_CACHE = `${SW_VERSION}-runtime`;
-const STATIC_CACHE = `${SW_VERSION}-static`;
+const CACHE_V = 'narve-v2';
+const STATIC_CACHE = `${CACHE_V}-static`;
+const API_CACHE = `${CACHE_V}-api`;
+const IMG_CACHE = `${CACHE_V}-img`;
+const RUNTIME_CACHE = `${CACHE_V}-runtime`;
 
-// Precache the offline shell. These paths must stay aligned with the
-// public routes in server.py (/manifest.json, /favicon.ico) and the static
-// mount prefix (/_gateway_static/).
-const PRECACHE_URLS = [
+const OFFLINE_URL = '/offline';
+
+// Precache: offline shell + core static assets. Every entry is wrapped
+// in a per-URL .catch so one missing asset doesn't abort install.
+const STATIC_ASSETS = [
+  OFFLINE_URL,
   '/manifest.json',
   '/favicon.ico',
   '/_gateway_static/img/icon-192.png',
   '/_gateway_static/img/logo.png',
+  '/_gateway_static/gateway.css',
+  '/_gateway_static/narve-app.js',
+  '/_gateway_static/mobile-a11y.css',
 ];
 
+// API endpoints safe to cache (public / idempotent reads only). Any
+// GET matching one of these path prefixes uses stale-while-revalidate
+// so the page shows last-known data instantly and refreshes in the
+// background. Auth-sensitive paths (/api/admin, /api/billing) are
+// never cached.
+const CACHEABLE_API_PREFIXES = [
+  '/api/status',
+  '/api/markets',
+  '/api/signals',
+  '/api/feed',
+  '/api/best-bets',
+  '/api/predictions/public',
+  '/api/sources',
+];
+
+// Never cache — always network, never fall back to cache. Auth +
+// side-effecting paths. A stale cache here could leak to a logged-out
+// user after logout.
+const NEVER_CACHE_PREFIXES = [
+  '/api/auth',
+  '/api/admin',
+  '/api/billing',
+  '/auth/',
+  '/admin/',
+  '/billing/',
+  '/stripe/',
+];
+
+// IndexedDB queue for background sync.
+const IDB_DB = 'narve-offline-queue';
+const IDB_STORE = 'predictions';
+const IDB_VERSION = 1;
+
+// ── Install ──────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) =>
-      // Allow individual precache failures — a missing asset shouldn't
-      // block the SW from installing entirely.
-      Promise.all(
-        PRECACHE_URLS.map((url) =>
-          cache.add(url).catch(() => null)
-        )
-      )
-    )
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+    await Promise.all(
+      STATIC_ASSETS.map((url) =>
+        cache.add(url).catch((err) => {
+          console.warn('[sw] precache failed:', url, err);
+        }),
+      ),
+    );
+  })());
 });
 
+// ── Activate ─────────────────────────────────────────────────────────
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((names) =>
-      Promise.all(
-        names
-          .filter((n) => !n.startsWith(SW_VERSION))
-          .map((n) => caches.delete(n))
-      )
-    )
-  );
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(
+      names
+        .filter((n) => !n.startsWith(CACHE_V))
+        .map((n) => caches.delete(n)),
+    );
+  })());
 });
 
-// Router: decide strategy per request.
+// ── Fetch router ─────────────────────────────────────────────────────
 self.addEventListener('fetch', (event) => {
   const req = event.request;
 
-  // Only handle same-origin GETs. Cross-origin (Stripe, fonts CDN) and
-  // non-GET requests (POST form submits) pass straight through.
+  // POST /api/predictions: if it fails (offline), queue for background
+  // sync. Wrap only this specific path; every other POST passes straight
+  // through to the network.
+  if (req.method === 'POST' && new URL(req.url).pathname === '/api/predictions') {
+    event.respondWith(queuePredictionOnFailure(req));
+    return;
+  }
+
+  // Only cache same-origin GETs past this point.
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never cache dynamic/private endpoints. These must always hit the
-  // network to respect auth, CSRF, and freshness.
+  // Never-cache list: explicit bypass so stale auth / billing never
+  // render to a logged-out user.
+  if (NEVER_CACHE_PREFIXES.some((p) => url.pathname.startsWith(p))) {
+    return;
+  }
+
+  // Strategy 1: static bundle — cache-first, long-lived.
   if (
-    url.pathname.startsWith('/api/v1/') ||
-    url.pathname.startsWith('/auth/') ||
-    url.pathname.startsWith('/admin/') ||
-    url.pathname.startsWith('/billing/') ||
-    url.pathname.startsWith('/stripe/') ||
-    url.pathname === '/logout'
+    url.pathname.startsWith('/_gateway_static/') ||
+    url.pathname === '/manifest.json' ||
+    url.pathname === '/favicon.ico'
   ) {
-    return;
-  }
-
-  // Hashed static assets (/_gateway_static/*?v=…): cache-first, long-lived.
-  if (url.pathname.startsWith('/_gateway_static/')) {
     event.respondWith(cacheFirst(req, STATIC_CACHE));
     return;
   }
 
-  // Root-level static files we serve via explicit routes.
-  if (url.pathname === '/manifest.json' || url.pathname === '/favicon.ico') {
-    event.respondWith(cacheFirst(req, STATIC_CACHE));
+  // Strategy 3: images — cache-first.
+  if (/\.(webp|png|jpg|jpeg|svg|gif|ico|avif)$/i.test(url.pathname)) {
+    event.respondWith(cacheFirst(req, IMG_CACHE));
     return;
   }
 
-  // HTML navigations: network-first, fall back to cached shell if offline.
-  if (req.mode === 'navigate' || req.headers.get('accept')?.includes('text/html')) {
-    event.respondWith(networkFirst(req, RUNTIME_CACHE));
+  // Strategy 2: whitelisted API reads — stale-while-revalidate.
+  if (CACHEABLE_API_PREFIXES.some((p) => url.pathname.startsWith(p))) {
+    event.respondWith(staleWhileRevalidate(req, API_CACHE));
     return;
   }
 
-  // Everything else: stale-while-revalidate.
+  // Strategy 4: HTML navigations — network-first, cache fallback,
+  // /offline as last resort.
+  if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
+    event.respondWith(networkFirstWithOffline(req));
+    return;
+  }
+
+  // Default: stale-while-revalidate in runtime cache.
   event.respondWith(staleWhileRevalidate(req, RUNTIME_CACHE));
 });
+
+// ── Strategies ───────────────────────────────────────────────────────
 
 async function cacheFirst(request, cacheName) {
   const cache = await caches.open(cacheName);
@@ -104,25 +170,6 @@ async function cacheFirst(request, cacheName) {
   }
 }
 
-async function networkFirst(request, cacheName) {
-  const cache = await caches.open(cacheName);
-  try {
-    const fresh = await fetch(request);
-    if (fresh && fresh.status === 200) cache.put(request, fresh.clone());
-    return fresh;
-  } catch {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    // Offline shell fallback — try the dashboards page first, then a minimal 503.
-    const shell = await cache.match('/dashboards');
-    if (shell) return shell;
-    return new Response(
-      '<!doctype html><html><head><meta charset="utf-8"><title>Offline — narve.ai</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:-apple-system,Inter,sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0;padding:24px;text-align:center}h1{font-size:24px;margin:0 0 8px;font-weight:600}p{color:#888;margin:0;max-width:320px}</style></head><body><div><h1>You\u2019re offline</h1><p>narve.ai needs a connection to fetch fresh market data. Try again when you\u2019re back online.</p></div></body></html>',
-      { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-    );
-  }
-}
-
 async function staleWhileRevalidate(request, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
@@ -132,12 +179,179 @@ async function staleWhileRevalidate(request, cacheName) {
       return fresh;
     })
     .catch(() => cached);
+  // Return cached immediately if we have it; otherwise wait for network.
   return cached || networkPromise;
 }
 
+async function networkFirstWithOffline(request) {
+  const cache = await caches.open(RUNTIME_CACHE);
+  try {
+    const fresh = await fetch(request);
+    if (fresh && fresh.status === 200) cache.put(request, fresh.clone());
+    return fresh;
+  } catch {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    // Precached offline shell.
+    const staticCache = await caches.open(STATIC_CACHE);
+    const offline = await staticCache.match(OFFLINE_URL);
+    if (offline) return offline;
+    // Worst-case inline fallback.
+    return new Response(
+      '<!doctype html><meta charset="utf-8"><title>Offline</title>'
+      + '<body style="font-family:system-ui;padding:40px;text-align:center">'
+      + '<h1>You\u2019re offline</h1><p>Reconnect and refresh.</p></body>',
+      { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+    );
+  }
+}
+
+// ── Background sync: pending user predictions ───────────────────────
+
+async function queuePredictionOnFailure(request) {
+  // Try the network first. Only queue on genuine network failure, not
+  // on server errors — those are the server's problem to handle.
+  try {
+    const response = await fetch(request.clone());
+    return response;
+  } catch (netErr) {
+    // Read the request body before we walk away; Request objects are
+    // single-shot for body consumption.
+    let body = null;
+    try {
+      body = await request.clone().text();
+    } catch {}
+    const entry = {
+      url: request.url,
+      method: 'POST',
+      headers: Array.from(request.headers.entries()),
+      body,
+      queuedAt: Date.now(),
+    };
+    await idbPut(entry);
+
+    // Try to register a background sync. If the browser doesn't support
+    // it (Safari, older Firefox) the entry stays in IDB and gets
+    // replayed on the next successful fetch event or on manual
+    // FLUSH_QUEUE message.
+    try {
+      if ('sync' in self.registration) {
+        await self.registration.sync.register('submit-prediction');
+      }
+    } catch {}
+
+    return new Response(
+      JSON.stringify({
+        queued: true,
+        message: 'Offline. Your prediction will submit when you reconnect.',
+      }),
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+}
+
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'submit-prediction') {
+    event.waitUntil(flushPendingPredictions());
+  }
+});
+
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+  if (event.data === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+  // Pages can ask us to flush the queue (e.g. when they detect
+  // `navigator.onLine` went true). Useful on browsers without the
+  // Background Sync API.
+  if (event.data.type === 'FLUSH_QUEUE') {
+    event.waitUntil(flushPendingPredictions());
+  }
+  // Settings page → Clear cache button. Drops every narve-v2 cache on
+  // the SW side so a subsequent navigation refetches everything.
+  if (event.data.type === 'CLEAR_CACHE') {
+    event.waitUntil((async () => {
+      const names = await caches.keys();
+      await Promise.all(
+        names
+          .filter((n) => n.startsWith(CACHE_V))
+          .map((n) => caches.delete(n)),
+      );
+    })());
+  }
+});
+
+async function flushPendingPredictions() {
+  const entries = await idbAll();
+  for (const entry of entries) {
+    try {
+      const headers = new Headers(entry.headers || []);
+      const r = await fetch(entry.url, {
+        method: entry.method,
+        headers,
+        body: entry.body,
+        credentials: 'same-origin',
+      });
+      if (r.ok || (r.status >= 400 && r.status < 500)) {
+        // 4xx means the server refused on its own terms (validation etc.)
+        // — don't retry, drop it so we don't hammer forever.
+        await idbDelete(entry.id);
+      }
+      // 5xx / network failure: keep entry, next sync will retry.
+    } catch {
+      // Network still down — leave entry, retry next time.
+    }
+  }
+}
+
+// ── Minimal IndexedDB wrapper for the prediction queue ─────────────
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_DB, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbPut(value) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).add(value);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbAll() {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbDelete(id) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // ── Push notifications ──────────────────────────────────────────────
-// Server sends a JSON payload via Web Push. Shape:
-//   { title, body, url?, tag?, icon?, badge?, data? }
 self.addEventListener('push', (event) => {
   let payload = { title: 'narve.ai', body: 'New update', data: {} };
   if (event.data) {
@@ -158,20 +372,13 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const target = (event.notification.data && event.notification.data.url) || '/';
-  event.waitUntil(
-    (async () => {
-      const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-      for (const client of all) {
-        if (client.url.includes(new URL(target, self.location.origin).pathname) && 'focus' in client) {
-          return client.focus();
-        }
+  event.waitUntil((async () => {
+    const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of all) {
+      if (client.url.includes(new URL(target, self.location.origin).pathname) && 'focus' in client) {
+        return client.focus();
       }
-      if (clients.openWindow) return clients.openWindow(target);
-    })()
-  );
-});
-
-// Allow the app to trigger cache eviction without a hard reload.
-self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+    }
+    if (clients.openWindow) return clients.openWindow(target);
+  })());
 });

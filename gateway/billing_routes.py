@@ -50,6 +50,10 @@ from server import (
     PLAN_DEFS,
     TRADING_ADDON,
 )
+# In-memory cache invalidation. Tier/plan changes shift what the user sees in
+# their feed and what tier they map to for best_bets, so every subscription
+# mutation below calls through ttl_invalidate.on_subscription_change(uid).
+from cache import ttl_invalidate
 
 log = logging.getLogger("billing")
 
@@ -873,6 +877,7 @@ async def settings_billing_cancel(
             )
         _finalize_cancel_attempt(attempt_id_int, outcome="cancelled", reached_step=3)
         _queue_winback_emails(user["user_id"], user["email"])
+        ttl_invalidate.on_subscription_change(user["user_id"])
         log.info(
             "User %s cancelled subscription (attempt=%s)",
             user.get("username", user["email"]),
@@ -925,6 +930,7 @@ async def settings_billing_pause(
             (resume_ts, user["user_id"]),
         )
     _finalize_cancel_attempt(attempt_id_int, outcome="paused", reached_step=2, pause_days=pause_days)
+    ttl_invalidate.on_subscription_change(user["user_id"])
     log.info(
         "User %s paused subscription for %d days (attempt=%s)",
         user.get("username", user["email"]), pause_days, attempt_id_int,
@@ -951,6 +957,7 @@ async def settings_billing_resume(request: Request):
             "WHERE user_id = ? AND resumed_early_at IS NULL",
             (user["user_id"],),
         )
+    ttl_invalidate.on_subscription_change(user["user_id"])
     log.info("User %s resumed subscription early", user.get("username", user["email"]))
     return RedirectResponse("/settings/billing?saved=resumed", status_code=302)
 
@@ -969,6 +976,7 @@ async def settings_billing_resubscribe(request: Request):
             "AND (expires_at IS NULL OR expires_at > ?)",
             (user["user_id"], now),
         )
+    ttl_invalidate.on_subscription_change(user["user_id"])
     log.info("User %s resubscribed", user.get("username", user["email"]))
     return RedirectResponse("/settings/billing?saved=resubscribed", status_code=302)
 
@@ -983,6 +991,7 @@ async def settings_billing_addon_add(request: Request, addon: str = Form(...)):
         return RedirectResponse("/settings/billing", status_code=302)
     now = int(time.time())
     db.set_trading_addon(user["user_id"], True, period_end=now + 30 * 86400)
+    ttl_invalidate.on_subscription_change(user["user_id"])
     log.info("User %s added trading add-on", user.get("username", user["email"]))
     return RedirectResponse("/settings/billing?saved=addon_added", status_code=302)
 
@@ -996,6 +1005,7 @@ async def settings_billing_addon_cancel(request: Request, addon: str = Form(...)
     if addon != "trading":
         return RedirectResponse("/settings/billing", status_code=302)
     db.set_trading_addon(user["user_id"], False, None)
+    ttl_invalidate.on_subscription_change(user["user_id"])
     log.info("User %s removed trading add-on", user.get("username", user["email"]))
     return RedirectResponse("/settings/billing?saved=addon_removed", status_code=302)
 
