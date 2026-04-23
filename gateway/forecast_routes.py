@@ -58,6 +58,60 @@ DISCLAIMER = (
 # ── /api/v1/forecasts/compare/{market_slug} ─────────────────────────
 
 
+@app.get("/api/v1/forecasts/providers")
+async def api_forecasts_providers(request: Request):
+    """Static provider metadata — labels, dash patterns, upstream URLs.
+
+    Single source of truth so the market detail page's chart legend
+    doesn't hard-code labels or dash shapes in the template JS. Cheap
+    (static dict), public (any authenticated user).
+
+    ``dash`` is a Chart.js ``borderDash`` array (``[]`` = solid line).
+    Kept deliberately short so the legend is readable on mobile.
+    """
+    payload = {
+        "providers": [
+            {
+                "id": "narve",
+                "label": "narve.ai",
+                "dash": [],
+                "homepage": "https://narve.ai",
+            },
+            {
+                "id": "market",
+                "label": "Market",
+                "dash": [2, 2],
+                "homepage": None,
+            },
+            {
+                "id": "metaculus",
+                "label": "Metaculus",
+                "dash": [6, 4],
+                "homepage": "https://www.metaculus.com",
+            },
+            {
+                "id": "manifold",
+                "label": "Manifold",
+                "dash": [2, 6],
+                "homepage": "https://manifold.markets",
+            },
+            {
+                "id": "fivethirtyeight",
+                "label": "538",
+                "dash": [10, 3, 2, 3],
+                "homepage": "https://projects.fivethirtyeight.com",
+            },
+            {
+                "id": "silver_bulletin",
+                "label": "Silver Bulletin",
+                "dash": [4, 2, 4, 6],
+                "homepage": "https://www.natesilver.net",
+            },
+        ],
+    }
+    return JSONResponse(payload)
+
+
 @app.get("/api/v1/forecasts/compare/{market_slug}")
 async def api_forecasts_compare(
     market_slug: str, request: Request, window: str = "30d",

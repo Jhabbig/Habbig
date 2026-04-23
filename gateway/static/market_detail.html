@@ -8,6 +8,8 @@
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="stylesheet" href="/_gateway_static/css/share-button.css">
+  <script src="/_gateway_static/js/share-button.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -46,7 +48,15 @@
 
       <div class="page-header">
         <div class="page-subtitle" id="market-category" style="text-transform:uppercase;letter-spacing:0.08em;font-size:12px">{{ category }}</div>
-        <h1 class="page-title" id="market-question">{{ market_question }}</h1>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+          <h1 class="page-title" id="market-question" style="margin:0;flex:1 1 auto">{{ market_question }}</h1>
+          <button class="narve-share-btn"
+                  data-share-kind="market"
+                  data-share-slug="{{ market_slug }}"
+                  aria-label="Share this market as a public card">
+            Share
+          </button>
+        </div>
         <div class="page-subtitle">
           Market:
           <span id="market-yes-pct">—</span> YES
@@ -301,9 +311,12 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 <script>
 (function(){
-  /* Monochrome friendly dash pattern per provider. Chart.js 4 reads
-     ``borderDash`` from the dataset; order below = narve first (solid),
-     the market itself second (short dashes), then external providers. */
+  /* Provider label + dash pattern — fetched from /api/v1/forecasts/providers
+     on init so adding a 5th provider is a backend-only change. The maps
+     below are used until the fetch lands AND as a fallback if the endpoint
+      errors (e.g. during auth lapse or a transient 500). Monochrome dash
+     patterns only: narve solid, market short-dash, each external provider
+     a distinct long/short rhythm. */
   var DASH = {
     narve:           [],
     market:          [2, 2],
@@ -320,6 +333,32 @@
     fivethirtyeight: '538',
     silver_bulletin: 'Silver Bulletin'
   };
+  /* Ordered list used when walking providers for the latest-bars block.
+     Backend payload overrides this once fetched. */
+  var PROVIDER_ORDER = [
+    'narve', 'market', 'metaculus', 'manifold', 'fivethirtyeight', 'silver_bulletin'
+  ];
+
+  fetch('/api/v1/forecasts/providers')
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      if (!j || !Array.isArray(j.providers)) return;
+      /* Rebuild LABEL/DASH from the backend so the page picks up any
+         server-side additions/renames without a template change. */
+      var newLabel = {};
+      var newDash = {};
+      var newOrder = [];
+      j.providers.forEach(function(p){
+        if (!p || !p.id) return;
+        newLabel[p.id] = p.label || p.id;
+        newDash[p.id] = Array.isArray(p.dash) ? p.dash : [];
+        newOrder.push(p.id);
+      });
+      LABEL = newLabel;
+      DASH = newDash;
+      PROVIDER_ORDER = newOrder;
+    })
+    .catch(function(){ /* fall back to the hard-coded maps above */ });
 
   var section = document.getElementById('forecast-compare');
   if (!section) return;
@@ -338,10 +377,18 @@
     var bars = document.getElementById('fc-bars');
     if (!bars) return;
     var entries = [];
-    if (narveLatest !== null && narveLatest !== undefined) {
-      entries.push({ key: 'narve', probability: narveLatest });
-    }
-    ['metaculus', 'manifold', 'fivethirtyeight', 'silver_bulletin'].forEach(function(k){
+    /* Walk PROVIDER_ORDER so the bars stay in sync with the chart legend
+       and any backend-added providers surface here too. narve is special
+       (its value comes from the market snapshot, not latest[]); 'market'
+       is skipped in the bar layout because it is narve's own price. */
+    PROVIDER_ORDER.forEach(function(k){
+      if (k === 'narve') {
+        if (narveLatest !== null && narveLatest !== undefined) {
+          entries.push({ key: 'narve', probability: narveLatest });
+        }
+        return;
+      }
+      if (k === 'market') return;
       if (latest && latest[k] && typeof latest[k].probability === 'number') {
         entries.push({ key: k, probability: latest[k].probability });
       } else {
@@ -374,9 +421,11 @@
     });
     perProvider.narve = payload.narve_series || [];
 
-    var order = ['narve', 'metaculus', 'manifold', 'fivethirtyeight', 'silver_bulletin'];
     var datasets = [];
-    order.forEach(function(k){
+    /* Walk PROVIDER_ORDER so chart datasets stay aligned with the bars
+       block above + the backend source-of-truth. Skips providers with
+       no series data for the selected window. */
+    PROVIDER_ORDER.forEach(function(k){
       var rows = perProvider[k];
       if (!rows || rows.length === 0) return;
       datasets.push({

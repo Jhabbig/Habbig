@@ -358,6 +358,28 @@ class TestFiveThirtyEightWalker(unittest.TestCase):
         self.assertTrue(any("ohio" in i for i in ids))
 
 
+# ── /api/v1/forecasts/providers ──────────────────────────────────────
+
+
+class TestForecastsProvidersAPI(unittest.TestCase):
+    def test_shape(self):
+        r = client.get("/api/v1/forecasts/providers")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        ids = {p["id"] for p in body["providers"]}
+        # Every backend-supported provider surfaces here, plus the
+        # "market" row the chart uses for narve's own yes_price.
+        for expected in ("narve", "market", "metaculus", "manifold",
+                         "fivethirtyeight", "silver_bulletin"):
+            self.assertIn(expected, ids)
+        # narve is first so the chart renders it on top.
+        self.assertEqual(body["providers"][0]["id"], "narve")
+        # Every provider has a dash pattern (solid is [], not missing).
+        for p in body["providers"]:
+            self.assertIn("dash", p)
+            self.assertIsInstance(p["dash"], list)
+
+
 # ── /api/v1/forecasts/compare JSON shape ─────────────────────────────
 
 
