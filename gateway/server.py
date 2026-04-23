@@ -812,6 +812,12 @@ _CSRF_EXEMPT_POST_PREFIXES = (
     # token to the provided email. A forgery can't leak user data or take
     # over an account.
     "/api/invite/",
+    # Public developer API — Bearer-token auth, not session-cookie auth.
+    # CSRF is irrelevant here because a forged cross-origin request can't
+    # see or reuse the caller's Bearer header; the whole surface is
+    # already rate-limited per-key (see api_public/auth.py) and every key
+    # is revocable, so CSRF adds no additional guarantee.
+    "/api/public/v1/",
 )
 
 

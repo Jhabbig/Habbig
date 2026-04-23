@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feedback — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <style>
+    .fb-wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
+    .fb-crumbs { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
+    .fb-crumbs a { color: var(--text-muted); text-decoration: none; }
+    .fb-crumbs a:hover { color: var(--text-primary); }
+    .fb-card { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 28px; margin-bottom: 24px; }
+    .fb-section-title { font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 12px; }
+    .fb-comment-form textarea { width: 100%; padding: 10px 12px; font: inherit; font-size: 13px; background: var(--bg-base); border: 1px solid var(--border); border-radius: 6px; resize: vertical; min-height: 80px; color: var(--text-primary); box-sizing: border-box; }
+    .fb-comment-form textarea:focus { outline: none; border-color: var(--text-primary); }
+    .fb-comment-form button { margin-top: 8px; padding: 8px 16px; font-size: 12px; font-weight: 600; background: var(--cta-bg); color: var(--interactive-text); border: none; border-radius: 6px; cursor: pointer; }
+    .sb-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; text-decoration: none; }
+    .sb-btn-primary { background: var(--cta-bg); color: var(--interactive-text); }
+    .sb-btn-primary:hover { opacity: 0.92; }
+    .sb-btn-outline { background: transparent; color: var(--text-primary); border-color: var(--border); }
+    .sb-btn-outline:hover { background: var(--interactive-ghost); }
+  </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:24px;height:24px;filter:invert(1);border-radius:4px">
+      <span>narve.ai</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards">Dashboards</a>
+      <a href="/feedback" class="active">Feedback</a>
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      {{ raw_admin_link }}
+      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>{{ raw_nav_role }}
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+
+  <main class="gw-main">
+    <div class="fb-wrap">
+      <div class="fb-crumbs">
+        <a href="/feedback">Feedback</a> / #{{ feedback_id }}
+      </div>
+
+      <div class="fb-card">
+        {{ raw_detail }}
+      </div>
+
+      <div class="fb-card">
+        <h2 class="fb-section-title">Comments</h2>
+        {{ raw_comments }}
+
+        <form class="fb-comment-form" method="post" action="/api/feedback/{{ feedback_id }}/comment" style="margin-top:16px">
+          <textarea name="body" placeholder="Add a comment…" maxlength="2000" required></textarea>
+          <button type="submit">Post comment</button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <script src="/_gateway_static/feedback_button.js" defer></script>
+</body>
+</html>

@@ -464,12 +464,28 @@ async def api_feedback_submit(
         raise HTTPException(status_code=401, detail="Authentication required")
 
     type_clean = _sanitize_type(type)
-    title_clean = (title or "").strip()[:200]
-    body_clean = (body or "").strip()[:4000]
-    public_flag = 1 if (is_public or "0").lower() in ("1", "true", "yes", "on") else 0
 
-    if not title_clean or not body_clean:
-        raise HTTPException(status_code=400, detail="Title and details are required")
+    # Route title + body through the shared normaliser. This catches:
+    #   * NFC-normalises precomposed vs combining unicode (so "café"
+    #     looks the same regardless of source keyboard).
+    #   * Strips zero-width / BOM / bidi-control glyphs that would
+    #     otherwise let an attacker sneak extra codepoints past the
+    #     length cap.
+    #   * Rejects null bytes / C0 control chars with a clean 400
+    #     instead of a 500 from a downstream library.
+    # `required=True` on both fields keeps the "must have title+body"
+    # invariant; no longer need a separate empty-string check below.
+    from security.input_hygiene import clean_text
+    try:
+        title_clean = clean_text(
+            title, max_len=200, required=True, field="title",
+        )
+        body_clean = clean_text(
+            body, max_len=4000, required=True, field="body",
+        )
+    except HTTPException:
+        raise
+    public_flag = 1 if (is_public or "0").lower() in ("1", "true", "yes", "on") else 0
 
     with db.conn() as c:
         cur = c.execute(

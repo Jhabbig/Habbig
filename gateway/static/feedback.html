@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feedback & Roadmap — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <style>
+    .fb-wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 80px; }
+    .fb-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; gap: 16px; }
+    .fb-head h1 { margin: 0; font-family: var(--font-display); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .fb-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 28px; }
+    .fb-controls { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+    .fb-controls-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    .fb-controls-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .fb-chip { display: inline-block; padding: 6px 12px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 16px; font-size: 12px; font-weight: 500; color: var(--text-secondary); text-decoration: none; transition: all 0.12s; }
+    .fb-chip:hover { border-color: var(--text-primary); color: var(--text-primary); }
+    .fb-chip-active { background: var(--text-primary); color: var(--interactive-text, var(--bg-base)); border-color: var(--text-primary); }
+    .fb-list { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .fb-row:hover { background: var(--bg-overlay, rgba(255,255,255,0.03)); }
+    .fb-row:last-child { border-bottom: 0 !important; }
+    .fb-submit-bar { margin-top: 24px; text-align: center; }
+    .fb-submit-bar button { padding: 10px 20px; font-size: 13px; font-weight: 600; background: var(--cta-bg); color: var(--interactive-text); border: none; border-radius: 6px; cursor: pointer; }
+    .fb-submit-bar button:hover { opacity: 0.92; }
+  </style>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <header class="gw-header">
+    <div class="gw-brand">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:24px;height:24px;filter:invert(1);border-radius:4px">
+      <span>narve.ai</span>
+    </div>
+    <nav class="gw-nav">
+      <a href="/dashboards">Dashboards</a>
+      <a href="/feedback" class="active">Feedback</a>
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      {{ raw_admin_link }}
+      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>{{ raw_nav_role }}
+      <a href="/logout">Sign out</a>
+    </nav>
+  </header>
+
+  <main class="gw-main">
+    <div class="fb-wrap">
+      <div class="fb-head">
+        <div>
+          <h1>Feedback & Roadmap</h1>
+          <div class="fb-sub">Share bugs, ideas, and questions. Upvote what matters — we ship what gets traction.{{ raw_admin_passthrough }}</div>
+        </div>
+      </div>
+
+      <div class="fb-controls">
+        <div class="fb-controls-row">
+          <span class="fb-controls-label">Type</span>
+          {{ raw_type_nav }}
+        </div>
+        <div class="fb-controls-row">
+          <span class="fb-controls-label">Status</span>
+          {{ raw_status_nav }}
+        </div>
+        <div class="fb-controls-row">
+          <span class="fb-controls-label">Sort</span>
+          {{ raw_sort_nav }}
+        </div>
+      </div>
+
+      <div class="fb-list">
+        {{ raw_rows }}
+      </div>
+
+      <div class="fb-submit-bar">
+        <button type="button" onclick="window.__narveFeedback && window.__narveFeedback.open();">Submit feedback +</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="/_gateway_static/feedback_button.js" defer></script>
+</body>
+</html>

@@ -39,6 +39,11 @@ _BODY_INJECT = (
     '<a class="narve-skip-link" href="#main">Skip to main content</a>\n'
     '<script src="/_gateway_static/narve-app.js" defer></script>\n'
     '<script src="/_gateway_static/shortcuts.js" defer></script>\n'
+    # Floating 💬 Feedback button — the script itself suppresses on
+    # /token, /login, /admin, and /feedback so unauthed + redundant
+    # surfaces don't render the FAB. Mounting here gets us site-wide
+    # coverage without having to edit every template.
+    '<script src="/_gateway_static/feedback_button.js" defer></script>\n'
 )
 
 _VIEWPORT_RE = re.compile(br'<meta\s+name="viewport"[^>]*>', re.IGNORECASE)
