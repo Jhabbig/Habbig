@@ -66,16 +66,40 @@
 
       <div class="page-header">
         <h1 class="page-title">Saved predictions</h1>
-        <p class="page-subtitle">Predictions you're tracking. See which sources you trust most when markets resolve.</p>
-        <div class="filter-bar" style="margin-top:16px">
-          <button class="filter-btn active" data-filter="all">All</button>
-          <button class="filter-btn" data-filter="active">Active</button>
-          <button class="filter-btn" data-filter="correct">Resolved correct</button>
-          <button class="filter-btn" data-filter="incorrect">Resolved incorrect</button>
-        </div>
+        <p class="page-subtitle">
+          Predictions you're tracking. See which sources you trust most when markets resolve.
+        </p>
       </div>
 
       <div class="content-area">
+        <div class="stat-grid" id="saved-kpis" style="margin-bottom:16px">
+          <div class="stat-tile">
+            <div class="stat-label">Tracking</div>
+            <div class="stat-value" id="kpi-total">—</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">Active</div>
+            <div class="stat-value" id="kpi-active">—</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">Resolved correct</div>
+            <div class="stat-value" id="kpi-correct">—</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">Resolved incorrect</div>
+            <div class="stat-value" id="kpi-incorrect">—</div>
+          </div>
+        </div>
+
+        <div class="admin-filter-bar" role="toolbar" aria-label="Filter saved predictions">
+          <input type="search" id="saved-search" placeholder="Search prediction text or source…" aria-label="Search saved predictions">
+          <span class="filter-spacer"></span>
+          <button type="button" class="filter-chip active" data-filter="all">All</button>
+          <button type="button" class="filter-chip" data-filter="active">Active</button>
+          <button type="button" class="filter-chip" data-filter="correct">Correct</button>
+          <button type="button" class="filter-chip" data-filter="incorrect">Incorrect</button>
+        </div>
+
         <div id="saved-body">
           <div class="empty-state" id="saved-loading">
             <div class="empty-state-title">Loading…</div>
@@ -134,34 +158,37 @@
 
   function renderRows(items){
     if (!items.length){
-      body.innerHTML = '<div class="empty-state">'
-        + '<div class="empty-state-title">No saved predictions yet.</div>'
-        + '<div class="empty-state-body">When you find a prediction you want to track over time, tap the bookmark icon. Resolved ones will show up here with their outcomes so you can see which sources you trust most.</div>'
+      body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
+        + '<div class="empty-state-title" style="font-size:15px;font-weight:600;margin-bottom:6px">No saved predictions yet.</div>'
+        + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary);max-width:500px;margin:0 auto;line-height:1.5">'
+        + 'When you find a prediction you want to track over time, tap the bookmark icon. Resolved ones show up here with their outcomes so you can see which sources you trust most.'
+        + '</div>'
         + '</div>';
       return;
     }
-    var html = '<table class="db-table"><thead><tr>'
-      + '<th>Saved</th>'
+    var html = '<div class="admin-card"><table class="admin-table" id="saved-table"><thead><tr>'
+      + '<th style="width:14%">Saved</th>'
       + '<th>Prediction</th>'
-      + '<th>Source</th>'
-      + '<th>Credibility</th>'
-      + '<th>Status</th>'
-      + '<th>Notes</th>'
-      + '<th></th>'
+      + '<th style="width:14%">Source</th>'
+      + '<th class="num" style="width:9%">Credibility</th>'
+      + '<th style="width:10%">Status</th>'
+      + '<th style="width:14%">Notes</th>'
+      + '<th class="actions"></th>'
       + '</tr></thead><tbody>';
     items.forEach(function(it){
       var p = it.prediction;
-      html += '<tr data-pid="' + p.id + '">'
-        + '<td class="db-cell-data">' + esc(fmtDate(it.saved_at)) + '</td>'
-        + '<td class="db-cell-primary" title="' + esc(p.content) + '">' + esc(p.content) + '</td>'
-        + '<td class="db-cell-source"><span class="source-handle">@' + esc(p.source_handle) + '</span></td>'
-        + '<td>' + credScore(p.credibility) + '</td>'
+      html += '<tr data-pid="' + p.id + '" data-status="' + esc(rowStatus(p)) + '" data-search="' + esc((p.content + ' ' + p.source_handle).toLowerCase()) + '">'
+        + '<td class="num">' + esc(fmtDate(it.saved_at)) + '</td>'
+        + '<td title="' + esc(p.content) + '">' + esc(p.content) + '</td>'
+        + '<td><code>@' + esc(p.source_handle) + '</code></td>'
+        + '<td class="num">' + credScore(p.credibility) + '</td>'
         + '<td>' + statusLabel(p) + '</td>'
-        + '<td class="db-cell-data" style="max-width:200px">' + esc(it.notes || '') + '</td>'
-        + '<td><button class="btn-ghost unsave-btn" data-pid="' + p.id + '">Remove</button></td>'
+        + '<td style="max-width:200px;color:var(--text-tertiary)">' + esc(it.notes || '') + '</td>'
+        + '<td class="actions"><button class="btn-danger unsave-btn" data-pid="' + p.id + '"'
+        + ' style="font-size:12px;padding:5px 10px">Remove</button></td>'
         + '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     body.innerHTML = html;
 
     body.querySelectorAll('.unsave-btn').forEach(function(btn){
@@ -175,29 +202,77 @@
     });
   }
 
+  function rowStatus(p){
+    if (!p.resolved) return 'active';
+    return p.resolved_correct ? 'correct' : 'incorrect';
+  }
+
+  function updateKpis(items){
+    var total = items.length;
+    var correct = 0, incorrect = 0, active = 0;
+    items.forEach(function(it){
+      var s = rowStatus(it.prediction);
+      if (s === 'correct') correct += 1;
+      else if (s === 'incorrect') incorrect += 1;
+      else active += 1;
+    });
+    var set = function(id, v){ var el = document.getElementById(id); if (el) el.textContent = v; };
+    set('kpi-total', total);
+    set('kpi-active', active);
+    set('kpi-correct', correct);
+    set('kpi-incorrect', incorrect);
+  }
+
+  function applyClientFilter(){
+    var q = (document.getElementById('saved-search').value || '').trim().toLowerCase();
+    var rows = document.querySelectorAll('#saved-table tbody tr');
+    rows.forEach(function(row){
+      var statusMatch = (currentFilter === 'all') ||
+        (row.getAttribute('data-status') === currentFilter);
+      var searchMatch = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
+      row.style.display = (statusMatch && searchMatch) ? '' : 'none';
+    });
+  }
+
   function getCsrf(){
     var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
     return m ? decodeURIComponent(m[1]) : '';
   }
 
   function load(){
-    body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Loading…</div></div>';
-    fetch('/api/saved?resolved=' + encodeURIComponent(currentFilter))
+    body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center"><div class="empty-state-title" style="font-size:14px;color:var(--text-tertiary)">Loading…</div></div>';
+    /* Always fetch the full set; client-side filter handles status chips
+       + search. Avoids a round-trip on every chip click and keeps KPIs
+       honest (they count across the whole set, not the filtered slice). */
+    fetch('/api/saved?resolved=all')
       .then(function(r){ return r.json(); })
-      .then(function(d){ renderRows(d.items || []); })
+      .then(function(d){
+        var items = d.items || [];
+        updateKpis(items);
+        renderRows(items);
+        applyClientFilter();
+      })
       .catch(function(){
-        body.innerHTML = '<div class="empty-state"><div class="empty-state-title">Failed to load.</div><div class="empty-state-body">Refresh to retry.</div></div>';
+        body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
+          + '<div class="empty-state-title" style="font-size:15px;font-weight:600;margin-bottom:6px">Failed to load.</div>'
+          + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary)">Refresh to retry.</div>'
+          + '</div>';
       });
   }
 
-  document.querySelectorAll('.filter-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      document.querySelectorAll('.filter-btn').forEach(function(b){ b.classList.remove('active'); });
-      btn.classList.add('active');
-      currentFilter = btn.getAttribute('data-filter');
-      load();
+  document.querySelectorAll('.filter-chip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      document.querySelectorAll('.filter-chip').forEach(function(c){ c.classList.remove('active'); });
+      chip.classList.add('active');
+      currentFilter = chip.getAttribute('data-filter');
+      applyClientFilter();
     });
   });
+
+  var searchInput = document.getElementById('saved-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', applyClientFilter);
+  }
 
   load();
 })();
