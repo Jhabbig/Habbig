@@ -197,6 +197,7 @@ _SUBJECTS = {
     "incident_created": "New incident — narve.ai status",
     "incident_update": "Incident update — narve.ai status",
     "incident_resolved": "Incident resolved — narve.ai status",
+    "webhook_disabled": "Webhook disabled — narve.ai",
 }
 
 

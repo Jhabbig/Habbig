@@ -356,7 +356,7 @@
           <tr><td>Newsletter subscribers</td><td>Until unsubscribed + 30 days</td></tr>
           <tr><td>Marketing consent records</td><td>3 years after withdrawal</td></tr>
           <tr><td>Social-media posts we ingest</td><td>30 days raw content; derived credibility features retained indefinitely in de-identified form</td></tr>
-          <tr><td>Exported data bundles (<code>/settings/data-export</code>)</td><td>7 days after generation, then auto-expire</td></tr>
+          <tr><td>Exported data bundles (<code>/settings/privacy</code> → request export)</td><td>7 days after generation, then auto-expire</td></tr>
           <tr><td>Inactive accounts</td><td>Notified after 24 months of inactivity, then deleted after a further 30 days</td></tr>
           <tr><td>Deletion request fulfilment</td><td>Within 30 days of a verified request, subject to legal holds</td></tr>
         </tbody>
@@ -412,9 +412,10 @@
       </ul>
       <p>
         To exercise your rights email <a href="mailto:{{ privacy_email }}">{{ privacy_email }}</a>
-        or use <code>/settings/data-export</code> and <code>/settings/data-deletion</code>. We
-        respond within one calendar month (extensible by two months for complex requests); we will
-        verify your identity before acting. There is no fee unless your request is manifestly
+        or use the self-service controls in <code>/settings/privacy</code> (data export) and
+        <code>/settings → Delete account</code> (which calls <code>POST /account/delete</code>).
+        We respond within one calendar month (extensible by two months for complex requests); we
+        will verify your identity before acting. There is no fee unless your request is manifestly
         unfounded or excessive.
       </p>
 

@@ -346,7 +346,14 @@
     }
 
     const schema = SCHEMAS[scope];
-    const state = { filters: parseFromQuery(scope) };
+    const state = {
+      filters: parseFromQuery(scope),
+      // If the URL carries ?view_id=N, the panel will try to hydrate from
+      // /api/saved-views/{N} — lets pinned links + share tokens identify
+      // which named view is active (not just the filters).
+      viewId: Number(new URLSearchParams(window.location.search).get("view_id")) || null,
+      activeView: null,     // the hydrated row, once resolved
+    };
     let previewTimer = null;
     let countEl = null;
 
@@ -507,6 +514,60 @@
     // query params applied.
     schedulePreview();
 
+    // ── Hydration from saved view ────────────────────────────────
+    //
+    // Priority order:
+    //   1. URL has ?view_id=N             → GET /api/saved-views/{N}
+    //   2. URL has any filter params      → use them, skip default-view
+    //   3. User has a default for scope   → GET /api/saved-views/default
+    //   4. None of the above              → stay empty, render unfiltered
+
+    async function hydrateFromServer() {
+      if (state.viewId) {
+        try {
+          const r = await fetch(
+            "/api/saved-views/" + encodeURIComponent(state.viewId),
+            { credentials: "same-origin" });
+          if (r.ok) {
+            const body = await r.json();
+            if (body.view) {
+              state.activeView = body.view;
+              state.filters = body.view.filters || {};
+              renderBody();
+              schedulePreview();
+              return;
+            }
+          }
+          // 404/401 → silently fall through
+        } catch (_) { /* silent */ }
+      }
+
+      // If the URL already carried filter params, the user is intentionally
+      // overriding any default — skip default-view fetch.
+      if (Object.keys(state.filters).length > 0) return;
+
+      try {
+        const r = await fetch(
+          "/api/saved-views/default?scope=" + encodeURIComponent(scope),
+          { credentials: "same-origin" });
+        if (!r.ok) return;
+        const body = await r.json();
+        if (!body.view) return;
+        // Apply default filters + rewrite URL so reload is idempotent.
+        state.activeView = body.view;
+        state.filters = body.view.filters || {};
+        const qs = serialize(state.filters);
+        if (qs) {
+          const newUrl = window.location.pathname + "?" + qs;
+          history.replaceState(null, "", newUrl);
+        }
+        renderBody();
+        schedulePreview();
+      } catch (_) { /* silent */ }
+    }
+
+    hydrateFromServer();
+
     return self;
   }
 
@@ -585,6 +646,106 @@
     node.replaceWith(wrap);
   }
 
+  // ── Shared-view flash banner ─────────────────────────────────────
+  //
+  // /v/{token} sets a `narve_shared_view` cookie with JSON
+  // {id, name, scope} when a visitor follows a share link. This
+  // function reads that cookie once, renders a dismissible banner, and
+  // wires a "Save to my views" button that POSTs /clone on the shared
+  // view id. On save OR dismiss, the cookie is wiped so the banner
+  // doesn't reappear on every page load.
+  //
+  // Idempotent — calling this twice on the same page is a no-op the
+  // second time (a marker data-attribute prevents double-mounts).
+
+  function readSharedViewCookie() {
+    const m = document.cookie.match(/(?:^|;\s*)narve_shared_view=([^;]+)/);
+    if (!m) return null;
+    try {
+      return JSON.parse(decodeURIComponent(m[1]));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function wipeSharedViewCookie() {
+    document.cookie = "narve_shared_view=; Max-Age=0; Path=/";
+  }
+
+  function showSharedBanner() {
+    if (document.querySelector("[data-shared-banner]")) return;
+    const payload = readSharedViewCookie();
+    if (!payload || !payload.id) return;
+
+    const banner = el("div", {
+      "class": "shared-view-banner",
+      "data-shared-banner": "true",
+      "role": "status",
+      "aria-live": "polite",
+    });
+
+    const text = el("div", { "class": "shared-view-banner__text" },
+      el("span", { "class": "shared-view-banner__label" }, "Shared view"),
+      el("span", { "class": "shared-view-banner__name" },
+        "\u00a0" + (payload.name || "Unnamed")),
+      el("span", { "class": "shared-view-banner__scope" },
+        " · " + (payload.scope || "")),
+    );
+
+    const saveBtn = el("button", {
+      "type": "button",
+      "class": "shared-view-banner__btn shared-view-banner__btn--primary",
+    }, "Save to my views");
+    const dismissBtn = el("button", {
+      "type": "button",
+      "class": "shared-view-banner__btn shared-view-banner__btn--ghost",
+      "aria-label": "Dismiss",
+    }, "\u00d7");
+
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving…";
+      try {
+        const r = await fetch(
+          "/api/saved-views/" + encodeURIComponent(payload.id) + "/clone",
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: apiHeaders(true),
+            body: "{}",
+          });
+        if (r.ok) {
+          saveBtn.textContent = "Saved";
+          wipeSharedViewCookie();
+          setTimeout(() => banner.remove(), 1200);
+        } else if (r.status === 401) {
+          saveBtn.textContent = "Sign in to save";
+          saveBtn.disabled = false;
+        } else if (r.status === 403) {
+          saveBtn.textContent = "Subscription required";
+          saveBtn.disabled = false;
+        } else {
+          saveBtn.textContent = "Save failed — retry";
+          saveBtn.disabled = false;
+        }
+      } catch (_) {
+        saveBtn.textContent = "Save failed — retry";
+        saveBtn.disabled = false;
+      }
+    });
+
+    dismissBtn.addEventListener("click", () => {
+      wipeSharedViewCookie();
+      banner.remove();
+    });
+
+    banner.appendChild(text);
+    banner.appendChild(saveBtn);
+    banner.appendChild(dismissBtn);
+
+    document.body.appendChild(banner);
+  }
+
   // ── Public surface ───────────────────────────────────────────────
 
   window.NarveFilterPanel = {
@@ -599,6 +760,13 @@
       return Panel(node, options || {});
     },
     mountSidebar,
+    showSharedBanner,
     SCHEMAS,
   };
+
+  // Auto-show on any page that loads filter_panel.js — cheap check,
+  // costs one cookie read when no share flow is in progress.
+  document.addEventListener("DOMContentLoaded", () => {
+    try { showSharedBanner(); } catch (_) { /* silent */ }
+  });
 })(window);

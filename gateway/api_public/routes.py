@@ -50,15 +50,29 @@ def _rows(iterable) -> list[dict]:
 
 
 def _ok(request: Request, endpoint: str, payload):
-    """Final response wrapper: sign + JSONResponse.
+    """Final response wrapper: sign + attach rate-limit headers + JSONResponse.
 
-    Signing happens here rather than inside each handler so no endpoint
-    can accidentally skip it. Endpoint tag is the handler-level hint for
-    the forensic signer's provenance metadata.
+    Signing runs through sign_if_available (forensic attribution). Rate-
+    limit headers surface the caller's position in the current bucket so
+    clients can self-regulate without polling /usage. The 429 path in
+    auth.py surfaces the same four headers; mirroring them on 2xx keeps
+    client state machines simple.
     """
-    user_id = request.state.api_key["user_id"]
+    key = request.state.api_key
+    user_id = key["user_id"]
     signed = sign_if_available(user_id, payload, endpoint)
-    return JSONResponse(signed)
+
+    limit = int(key["rate_limit_hour"] or 0)
+    used = int(key["usage_this_hour"] or 0)
+    remaining = max(0, limit - used) if limit else 0
+    bucket_end = int(key["hour_bucket"]) + 3600
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Reset": str(bucket_end),
+        "X-Narve-Key-Prefix": key.get("key_prefix", ""),
+    }
+    return JSONResponse(signed, headers=headers)
 
 
 def _clamp(limit, default: int, hard_max: int) -> int:
@@ -268,6 +282,44 @@ async def v1_calendar(request: Request, limit: int = 100):
 
 
 # ── Write: POST /predictions ────────────────────────────────────────────
+
+
+@router.get("/predictions/{prediction_id}")
+async def v1_get_prediction(request: Request, prediction_id: int):
+    """Fetch one of the caller's own predictions. Also returns any
+    prediction that the owner explicitly marked `is_public=1`. Anyone
+    else's private prediction returns 404 — we deliberately don't leak
+    existence.
+
+    Pairs with POST /predictions so a client-side bot can round-trip:
+    create → fetch → (later) check resolution status.
+    """
+    verify_api_key(request)
+    key = request.state.api_key
+    try:
+        import queries.predictions as qp
+        row = qp.get_user_prediction(prediction_id)
+    except Exception as exc:
+        log.warning("public get_user_prediction failed id=%s: %s", prediction_id, exc)
+        row = None
+    if row is None:
+        raise HTTPException(404, "Prediction not found")
+
+    is_owner = row["user_id"] == key["user_id"]
+    if not is_owner and not row["is_public"]:
+        raise HTTPException(404, "Prediction not found")
+
+    payload = {
+        "prediction": {
+            k: row[k] for k in row.keys()
+        },
+        "is_owner": is_owner,
+    }
+    # Anonymise non-owner responses to respect the author's is_anonymous
+    # flag — the public-profile page does the same scrub.
+    if not is_owner and row["is_anonymous"]:
+        payload["prediction"]["user_id"] = None
+    return _ok(request, "public.get_prediction", payload)
 
 
 @router.post("/predictions", dependencies=[Depends(require_scope("write"))])

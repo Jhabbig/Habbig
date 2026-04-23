@@ -287,20 +287,21 @@ async def hub_bridge(channel: str, message: dict) -> None:
 
 
 def register_with_hub() -> None:
-    """Optional: hook us into the existing realtime hub so every internal
-    broadcast also fans out to external webhook subscribers. No-op if the
-    hub module isn't present or doesn't expose the expected API.
+    """Hook us into the realtime hub so every internal broadcast also fans
+    out to external webhook subscribers. No-op if the hub module isn't
+    present or hasn't exposed register_after_broadcast yet — it's fine
+    for a deploy to ship with only one half of this bridge.
     """
     try:
-        from realtime import hub as _hub
+        from realtime.hub import hub as _singleton
     except Exception:
         log.info("webhooks: realtime.hub not available — external fan-out inactive")
         return
-    if not hasattr(_hub, "register_after_broadcast"):
+    if not hasattr(_singleton, "register_after_broadcast"):
         log.info("webhooks: hub lacks register_after_broadcast — skipping bridge")
         return
     try:
-        _hub.register_after_broadcast(hub_bridge)
+        _singleton.register_after_broadcast(hub_bridge)
         log.info("webhooks: bridged into realtime hub")
     except Exception as exc:
         log.warning("webhooks: hub register failed: %s", exc)

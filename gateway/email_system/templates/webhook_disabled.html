@@ -1,0 +1,36 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">
+  Webhook auto-disabled
+</h1>
+<p style="margin:0 0 16px;color:#555;">
+  Hi {{ display_name }},
+</p>
+<p style="margin:0 0 16px;color:#555;">
+  One of your narve.ai webhook subscriptions has been automatically disabled
+  after {{ consecutive_failures }} consecutive delivery failures.
+</p>
+<p style="margin:0 0 16px;color:#555;">
+  Endpoint:
+  <code style="background:#f4f4f4;padding:2px 6px;border-radius:3px;font-size:13px;">{{ webhook_url }}</code>
+</p>
+<p style="margin:0 0 16px;color:#555;">
+  No further events will be delivered to this URL until you re-enable it
+  at
+  <a href="{{ app_url }}/settings/webhooks" style="color:#0d0d0d;text-decoration:underline;">
+    {{ app_url }}/settings/webhooks
+  </a>.
+</p>
+<p style="margin:0 0 16px;color:#555;">
+  Common causes:
+</p>
+<ul style="margin:0 0 16px 20px;color:#555;padding:0;">
+  <li>The endpoint returned non-2xx for every retry (30s, 5m, 30m, 1h, 4h).</li>
+  <li>DNS or TLS handshake failures.</li>
+  <li>Endpoint took longer than 10 seconds to respond.</li>
+</ul>
+<p style="margin:0 0 20px;color:#555;">
+  Once you've fixed the endpoint, delete this subscription and create a
+  new one — the signing secret is regenerated each time, so old retries
+  can't accidentally replay.
+</p>
+{% endblock %}

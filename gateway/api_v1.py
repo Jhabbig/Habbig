@@ -155,36 +155,96 @@ def _validate_key(request: Request) -> dict:
 
 @router.get("/sources")
 async def v1_list_sources(request: Request, limit: int = 100, offset: int = 0):
-    """All sources with credibility scores. Cached 120s keyed by page; flushed
-    on credibility recompute via ttl_invalidate.on_credibility_recompute."""
+    """All sources with credibility scores.
+
+    With no filter params → cached 120s keyed by page, flushed on
+    credibility recompute. With saved-views filter params
+    (``min_credibility``, ``max_credibility``, ``min_predictions``,
+    ``categories_active``, ``handles``) → bypasses the cache and runs
+    SQL directly against ``source_credibility`` (optionally joined to
+    ``source_category_credibility``). Malformed filters drop silently.
+    """
     _validate_key(request)
     limit = max(1, min(limit, 500))
-    page_num = offset // limit if limit else 0
-    cache_key = f"sources:sort_default:filter_none:page_{page_num}_size_{limit}"
 
-    def _compute() -> dict:
-        sources = db.list_all_source_credibilities()
-        page = sources[offset:offset + limit]
-        return {
-            "sources": [
-                {
-                    "handle": s["source_handle"],
-                    "global_credibility": s["global_credibility"],
-                    "accuracy_unlocked": bool(s["accuracy_unlocked"]),
-                    "decay_weighted_accuracy": s["decay_weighted_accuracy"],
-                    "total_predictions": s["total_predictions"],
-                    "correct_predictions": s["correct_predictions"],
-                    "categories_active": s["categories_active"],
-                }
-                for s in page
-            ],
-            "total": len(sources),
-            "limit": limit,
-            "offset": offset,
-        }
+    try:
+        import saved_views_schema as _sv
+        sv_filters = _sv.filters_from_query("sources", request.query_params)
+    except Exception:  # pragma: no cover
+        sv_filters = {}
 
-    payload = ttl_cache.get_or_compute(cache_key, _compute, DEFAULT_TTLS["sources"])
-    return JSONResponse(payload)
+    # Fast path — no filters, cached pagination.
+    if not sv_filters:
+        page_num = offset // limit if limit else 0
+        cache_key = f"sources:sort_default:filter_none:page_{page_num}_size_{limit}"
+
+        def _compute() -> dict:
+            sources = db.list_all_source_credibilities()
+            page = sources[offset:offset + limit]
+            return {
+                "sources": [
+                    {
+                        "handle": s["source_handle"],
+                        "global_credibility": s["global_credibility"],
+                        "accuracy_unlocked": bool(s["accuracy_unlocked"]),
+                        "decay_weighted_accuracy": s["decay_weighted_accuracy"],
+                        "total_predictions": s["total_predictions"],
+                        "correct_predictions": s["correct_predictions"],
+                        "categories_active": s["categories_active"],
+                    }
+                    for s in page
+                ],
+                "total": len(sources),
+                "limit": limit,
+                "offset": offset,
+            }
+
+        payload = ttl_cache.get_or_compute(cache_key, _compute, DEFAULT_TTLS["sources"])
+        return JSONResponse(payload)
+
+    # Filtered path — uncached, direct SQL.
+    try:
+        extra_where, extra_params, extra_joins, _ = _sv.build_where(
+            "sources", sv_filters,
+        )
+    except Exception:
+        extra_where, extra_params, extra_joins = "", [], []
+    join_sql = " ".join(extra_joins) if extra_joins else ""
+    # When a category join kicks in, the row set can duplicate per (source,
+    # category); DISTINCT collapses it before pagination.
+    distinct = "DISTINCT" if any("scc" in j for j in extra_joins) else ""
+    where_clause = (" WHERE 1=1 " + extra_where) if extra_where else ""
+
+    with db.conn() as c:
+        total_row = c.execute(
+            f"SELECT COUNT({distinct or '*'}{' sc.source_handle' if distinct else ''}) AS n "
+            f"FROM source_credibility sc {join_sql}{where_clause}",
+            tuple(extra_params),
+        ).fetchone()
+        rows = c.execute(
+            f"SELECT {distinct} sc.* FROM source_credibility sc {join_sql}{where_clause} "
+            f"ORDER BY sc.global_credibility DESC LIMIT ? OFFSET ?",
+            tuple(extra_params) + (limit, offset),
+        ).fetchall()
+
+    return JSONResponse({
+        "sources": [
+            {
+                "handle": s["source_handle"],
+                "global_credibility": s["global_credibility"],
+                "accuracy_unlocked": bool(s["accuracy_unlocked"]),
+                "decay_weighted_accuracy": s["decay_weighted_accuracy"],
+                "total_predictions": s["total_predictions"],
+                "correct_predictions": s["correct_predictions"],
+                "categories_active": s["categories_active"],
+            }
+            for s in rows
+        ],
+        "total": total_row["n"] if total_row else 0,
+        "limit": limit,
+        "offset": offset,
+        "filters_applied": sv_filters,
+    })
 
 
 @router.get("/sources/{handle}")
@@ -236,36 +296,66 @@ async def v1_list_predictions(
     source: Optional[str] = None,
     resolved: Optional[int] = None,
 ):
-    """Paginated predictions with optional filters."""
+    """Paginated predictions with optional filters.
+
+    Accepts the legacy ``category`` / ``source`` / ``resolved`` query params
+    (left in place for API consumers) AND the full saved-views filter set
+    (``categories``, ``sources``, ``posted_within``, ``resolution``,
+    ``source_cred_range``) parsed via saved_views_schema.filters_from_query.
+    When both the legacy single-value param and the plural saved-views
+    param are present, the saved-views param wins — simpler semantics than
+    merging two worlds. Malformed filter values are dropped, never 500.
+    """
     _validate_key(request)
     limit = max(1, min(limit, 500))
 
+    # Legacy single-value params first — backwards compat.
     where = []
     params: list = []
-    if category:
+    if category and "categories" not in request.query_params:
         where.append("p.category = ?")
         params.append(category)
-    if source:
+    if source and "sources" not in request.query_params:
         where.append("p.source_handle = ?")
         params.append(source)
-    if resolved is not None:
+    if resolved is not None and "resolution" not in request.query_params:
         where.append("p.resolved = ?")
         params.append(resolved)
 
+    # Saved-views filter schema — full filter set, scope=predictions.
+    try:
+        import saved_views_schema as _sv
+        sv_filters = _sv.filters_from_query("predictions", request.query_params)
+        extra_where, extra_params, extra_joins, _ = _sv.build_where(
+            "predictions", sv_filters,
+        )
+    except Exception:  # pragma: no cover — defensive, never 500
+        sv_filters, extra_where, extra_params, extra_joins = {}, "", [], []
+
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    if extra_where:
+        # extra_where starts with "AND ..." — splice correctly whether or not
+        # we already have a WHERE clause.
+        if where_sql:
+            where_sql += " " + extra_where
+        else:
+            where_sql = " WHERE 1=1 " + extra_where
+    extra_joins_sql = " ".join(extra_joins) if extra_joins else ""
 
     with db.conn() as c:
         total = c.execute(
-            f"SELECT COUNT(*) AS n FROM predictions p{where_sql}",
-            tuple(params),
+            f"SELECT COUNT(*) AS n FROM predictions p "
+            f"LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
+            f"{extra_joins_sql}{where_sql}",
+            tuple(params) + tuple(extra_params),
         ).fetchone()["n"]
 
         rows = c.execute(
             f"SELECT p.*, sc.global_credibility, sc.accuracy_unlocked "
             f"FROM predictions p "
             f"LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
-            f"{where_sql} ORDER BY p.extracted_at DESC LIMIT ? OFFSET ?",
-            tuple(params) + (limit, offset),
+            f"{extra_joins_sql}{where_sql} ORDER BY p.extracted_at DESC LIMIT ? OFFSET ?",
+            tuple(params) + tuple(extra_params) + (limit, offset),
         ).fetchall()
 
     return JSONResponse({
@@ -288,7 +378,83 @@ async def v1_list_predictions(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "filters_applied": sv_filters,  # Echoed back for client sanity.
     })
+
+
+@router.get("/markets/{slug:path}/consensus")
+async def v1_market_consensus(request: Request, slug: str):
+    """Credibility-weighted consensus probability for a single market.
+
+    Wraps ``queries.predictions.calculate_betyc_probability`` and caches the
+    response at ``credibility_consensus:{slug}`` with a 60s TTL. The
+    invalidation facade (``ttl_invalidate.on_new_prediction`` and
+    ``on_market_resolved``) already drops this key when predictions land or a
+    market settles, so the TTL is mostly a back-stop.
+
+    Response shape:
+
+        {
+          "slug": str,
+          "betyc_yes_probability": float | None,  # [0.05, 0.95] or null
+          "betyc_no_probability":  float | None,
+          "betyc_edge":            float | None,
+          "betyc_source_count":    int,
+          "betyc_confidence":      str,
+          "avg_source_credibility": float | None,
+          "cached_for_seconds":     int,
+        }
+
+    Returns 404 when no predictions exist for the slug (rather than an empty
+    consensus object) so clients can distinguish "no data" from "zero edge".
+    """
+    _validate_key(request)
+
+    def _compute() -> Optional[dict]:
+        preds = db.get_predictions_for_market(slug)
+        if not preds:
+            return None
+        pred_dicts = [
+            {
+                "source_handle": p["source_handle"],
+                "direction": p["direction"],
+                "predicted_probability": p["predicted_probability"],
+                "global_credibility": p["global_credibility"],
+                "category_credibility": (
+                    p["category_credibility"]
+                    if "category_credibility" in p.keys() else None
+                ),
+                "accuracy_unlocked": (
+                    bool(p["accuracy_unlocked"])
+                    if p["accuracy_unlocked"] is not None else False
+                ),
+            }
+            for p in preds
+        ]
+        result = db.calculate_betyc_probability(pred_dicts)
+        avg_cred = (
+            sum((d.get("global_credibility") or 0.5) for d in pred_dicts)
+            / max(len(pred_dicts), 1)
+        )
+        return {
+            "slug": slug,
+            "betyc_yes_probability": result.get("betyc_yes_probability"),
+            "betyc_no_probability": result.get("betyc_no_probability"),
+            "betyc_edge": result.get("betyc_edge"),
+            "betyc_source_count": result.get("betyc_source_count", 0),
+            "betyc_confidence": result.get("betyc_confidence", "Insufficient data"),
+            "avg_source_credibility": round(avg_cred, 4),
+            "cached_for_seconds": DEFAULT_TTLS["credibility_consensus"],
+        }
+
+    payload = ttl_cache.get_or_compute(
+        f"credibility_consensus:{slug}",
+        _compute,
+        DEFAULT_TTLS["credibility_consensus"],
+    )
+    if payload is None:
+        raise HTTPException(404, "No predictions exist for this market")
+    return JSONResponse(payload)
 
 
 @router.get("/markets/edge")

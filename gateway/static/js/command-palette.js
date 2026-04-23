@@ -77,6 +77,28 @@
     recent: 'Recent',
   };
 
+  // FTS snippet delimiters we tolerate in server responses. Anything else
+  // is escaped for safety. Server writes exactly <mark>…</mark>; narrowing
+  // the allowlist means an injection in the underlying text still can't
+  // produce arbitrary HTML.
+  const MARK_OPEN = '<mark>';
+  const MARK_CLOSE = '</mark>';
+
+  /** Render a server-provided highlight string. Escapes everything except
+   * the two <mark> tags we expect — keeps XSS closed even if a source's
+   * summary contains angle brackets.
+   */
+  function renderHighlight(raw) {
+    if (raw == null) return '';
+    // Escape then re-introduce the mark tags — cheaper than a proper
+    // whitelisting HTML parser and sufficient given the allowlist is
+    // exactly two static strings.
+    let out = esc(String(raw));
+    out = out.split(esc(MARK_OPEN)).join(MARK_OPEN);
+    out = out.split(esc(MARK_CLOSE)).join(MARK_CLOSE);
+    return out;
+  }
+
   class Palette {
     constructor() {
       this.root = null;
@@ -87,6 +109,11 @@
       this.sel = 0;
       this.queryId = null;   // last /api/search response's query_id
       this.lastQ = '';
+      // AbortController for the in-flight search. A fresh keystroke fires
+      // the new request AND cancels the previous one — cuts network load
+      // on slow connections and prevents late stale responses from ever
+      // hitting the reconciliation path.
+      this.ac = null;
       this.onSearchBound = debounce(this.doSearch.bind(this), DEBOUNCE_MS);
     }
 
@@ -205,12 +232,29 @@
         return;
       }
 
+      // Cancel any previous in-flight search. AbortError is swallowed in
+      // the catch below so it never renders as a visible error.
+      if (this.ac) {
+        try { this.ac.abort(); } catch { /* ignore */ }
+      }
+      this.ac = new AbortController();
+      const signal = this.ac.signal;
+
       try {
         const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
           credentials: 'same-origin',
           headers: { 'Accept': 'application/json' },
+          signal,
         });
-        if (!r.ok) throw new Error('search request failed: ' + r.status);
+        if (!r.ok) {
+          // 429 rate-limit → silent throttle message, don't kill palette
+          if (r.status === 429) {
+            this.list.innerHTML =
+              `<div class="narve-cmdp-hint">Typing too fast — slow down.</div>`;
+            return;
+          }
+          throw new Error('search request failed: ' + r.status);
+        }
         const data = await r.json();
         this.queryId = data.query_id || null;
         if (q !== this.lastQ) return;  // stale response
@@ -232,6 +276,8 @@
         }
         this.renderGroups(grouped);
       } catch (err) {
+        // AbortError is expected — a newer keystroke cancelled us.
+        if (err && err.name === 'AbortError') return;
         this.list.innerHTML =
           `<div class="narve-cmdp-hint narve-cmdp-error">Search failed. Try again.</div>`;
         console.warn('[cmdp] search error', err);

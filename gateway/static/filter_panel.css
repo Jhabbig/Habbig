@@ -396,3 +396,115 @@
   }
   .filter-panel.is-open { transform: translateY(0); }
 }
+
+/* ── Shared-view flash banner ──────────────────────────────────────────
+   Rendered by NarveFilterPanel.showSharedBanner() when the
+   `narve_shared_view` cookie is present (set by /v/{token}). Sticks to
+   the top-right corner so it doesn't collide with the command palette
+   or status bar; disappears on dismiss or Save.
+   ───────────────────────────────────────────────────────────────────── */
+
+.shared-view-banner {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  max-width: 420px;
+  padding: 12px 14px;
+  background: var(--bg-float);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 90;
+  font-size: 13px;
+  color: var(--text-primary);
+  animation: shared-view-banner-in 0.22s ease-out;
+}
+@keyframes shared-view-banner-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.shared-view-banner__text {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.shared-view-banner__label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.shared-view-banner__name {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.shared-view-banner__scope {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.shared-view-banner__btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dash-transition-fast), color var(--dash-transition-fast), border-color var(--dash-transition-fast);
+  flex-shrink: 0;
+}
+.shared-view-banner__btn:hover { border-color: var(--text-primary); }
+.shared-view-banner__btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+.shared-view-banner__btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.shared-view-banner__btn--primary {
+  background: var(--text-primary);
+  color: var(--interactive-text);
+  border-color: var(--text-primary);
+}
+.shared-view-banner__btn--primary:hover {
+  background: var(--interactive-hover);
+  border-color: var(--interactive-hover);
+}
+.shared-view-banner__btn--ghost {
+  padding: 6px 10px;
+  color: var(--text-tertiary);
+  border-color: transparent;
+  font-size: 16px;
+  line-height: 1;
+}
+.shared-view-banner__btn--ghost:hover {
+  color: var(--text-primary);
+  border-color: var(--border-ghost);
+}
+
+@media (max-width: 640px) {
+  .shared-view-banner {
+    left: 16px;
+    right: 16px;
+    top: auto;
+    bottom: 16px;
+    max-width: none;
+  }
+}

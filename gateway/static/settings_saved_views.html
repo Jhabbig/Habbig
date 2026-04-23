@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Saved views — narve.ai</title>
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <style>
+    .views-shell { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+    .views-tabs {
+      display: flex; gap: 4px; margin: 24px 0 16px;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .views-tab {
+      padding: 10px 16px; background: none; border: none;
+      color: var(--text-tertiary); font-size: 13px; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      font-family: inherit;
+    }
+    .views-tab:hover { color: var(--text-primary); }
+    .views-tab[aria-selected="true"] {
+      color: var(--text-primary); border-bottom-color: var(--text-primary);
+      font-weight: 500;
+    }
+    .views-table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .views-table th {
+      text-align: left; padding: 10px 12px;
+      font-size: 11px; font-weight: 600;
+      color: var(--text-tertiary);
+      letter-spacing: 0.08em; text-transform: uppercase;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .views-table td {
+      padding: 12px; border-bottom: 1px solid var(--border-ghost);
+      color: var(--text-primary); vertical-align: middle;
+    }
+    .views-name-input {
+      background: transparent; border: 1px solid transparent;
+      font-family: inherit; font-size: 14px; color: var(--text-primary);
+      padding: 4px 8px; border-radius: var(--radius-sm); width: 100%;
+    }
+    .views-name-input:hover { border-color: var(--border-subtle); }
+    .views-name-input:focus-visible {
+      outline: 2px solid var(--text-primary); outline-offset: 1px;
+      border-color: var(--text-primary);
+    }
+    .views-filter-summary {
+      font-size: 12px; color: var(--text-tertiary);
+      font-family: var(--font-mono, ui-monospace, monospace);
+      max-width: 340px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .views-actions { display: flex; gap: 4px; justify-content: flex-end; }
+    .views-actions button {
+      background: transparent; border: 1px solid var(--border-default);
+      color: var(--text-secondary); font-family: inherit; font-size: 11px;
+      padding: 4px 8px; border-radius: var(--radius-sm); cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .views-actions button:hover {
+      border-color: var(--text-primary); color: var(--text-primary);
+    }
+    .views-actions button.danger:hover { border-color: var(--text-primary); }
+    .views-empty {
+      text-align: center; padding: 48px 16px; color: var(--text-tertiary);
+      font-size: 13px;
+    }
+    .views-empty a { color: var(--text-primary); text-decoration: underline; }
+    .views-toast {
+      position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+      padding: 10px 16px; background: var(--bg-float);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius);
+      box-shadow: var(--shadow-md); font-size: 13px; color: var(--text-primary);
+      opacity: 0; transition: opacity 0.2s; pointer-events: none;
+    }
+    .views-toast.is-visible { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/predictions" class="nav-item">Predictions</a>
+        <a href="/saved" class="nav-item">Saved</a>
+        <a href="/billing" class="nav-item">Billing</a>
+        <a href="/settings" class="nav-item">Settings</a>
+        <a href="/settings/saved-views" class="nav-item active">Saved views</a>
+        {{ raw_admin_link }}
+      </nav>
+
+      <div id="pinned-views"></div>
+
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
+      </a>
+    </aside>
+
+    <div class="main-content">
+      <div class="breadcrumb">
+        <a href="/settings" class="breadcrumb-item">Settings</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Saved views</span>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Saved views</h1>
+        <p class="page-subtitle">
+          Named filter sets scoped to a tab. Pin to the sidebar for one-click
+          access. Make default so that scope opens filtered by default. Share
+          read-only with anyone via a token URL.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <div class="views-shell">
+          <div class="views-tabs" role="tablist" aria-label="View scope">
+            <button class="views-tab" role="tab" aria-selected="true"  data-scope="markets">Markets</button>
+            <button class="views-tab" role="tab" aria-selected="false" data-scope="feed">Feed</button>
+            <button class="views-tab" role="tab" aria-selected="false" data-scope="sources">Sources</button>
+            <button class="views-tab" role="tab" aria-selected="false" data-scope="predictions">Predictions</button>
+          </div>
+
+          <div id="views-body">
+            <div class="views-empty">Loading…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="views-toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      var avatars = document.querySelectorAll(".sidebar-user-avatar[data-username]");
+      avatars.forEach(function (a) {
+        var u = a.getAttribute("data-username");
+        a.textContent = u ? u.charAt(0).toUpperCase() : "?";
+      });
+    })();
+  </script>
+  <script src="/_gateway_static/filter_panel.js" defer></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      if (window.NarveFilterPanel && typeof window.NarveFilterPanel.mountSidebar === "function") {
+        window.NarveFilterPanel.mountSidebar();
+      }
+      boot();
+    });
+
+    var state = { scope: "markets", views: [] };
+    var toastTimer = null;
+
+    function toast(msg) {
+      var el = document.getElementById("toast");
+      el.textContent = msg;
+      el.classList.add("is-visible");
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { el.classList.remove("is-visible"); }, 2200);
+    }
+
+    function csrfHeaders(withBody) {
+      var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
+      var h = { "X-CSRF-Token": m ? decodeURIComponent(m[1]) : "" };
+      if (withBody) h["Content-Type"] = "application/json";
+      return h;
+    }
+
+    async function load() {
+      var r = await fetch("/api/saved-views?scope=" + encodeURIComponent(state.scope), {
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        document.getElementById("views-body").innerHTML =
+          '<div class="views-empty">Sign in to manage views.</div>';
+        return;
+      }
+      var data = await r.json();
+      state.views = data.views || [];
+      render();
+    }
+
+    function summariseFilters(filters) {
+      if (!filters || !Object.keys(filters).length) return "—";
+      var parts = [];
+      for (var k in filters) {
+        var v = filters[k];
+        if (Array.isArray(v)) parts.push(k + "=" + v.join("|"));
+        else parts.push(k + "=" + v);
+      }
+      return parts.join(" · ");
+    }
+
+    function render() {
+      var body = document.getElementById("views-body");
+      if (!state.views.length) {
+        body.innerHTML =
+          '<div class="views-empty">' +
+          'No views for this scope yet. Apply filters on the ' +
+          '<a href="' + scopeUrl(state.scope) + '">' + state.scope + ' tab</a> ' +
+          'and click "Save view".' +
+          '</div>';
+        return;
+      }
+      var rows = state.views.map(renderRow).join("");
+      body.innerHTML =
+        '<table class="views-table">' +
+        '<thead><tr>' +
+        '<th style="width:32%">Name</th>' +
+        '<th style="width:38%">Filters</th>' +
+        '<th style="width:10%">Default</th>' +
+        '<th style="width:10%">Pinned</th>' +
+        '<th style="width:10%">Actions</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>';
+      wireRowHandlers();
+    }
+
+    function scopeUrl(scope) {
+      return ({
+        markets: "/dashboards",
+        feed: "/signal-search",
+        sources: "/leaderboard",
+        predictions: "/predictions",
+      })[scope] || "/dashboards";
+    }
+
+    function renderRow(v) {
+      var summary = escapeHtml(summariseFilters(v.filters));
+      var name = escapeHtml(v.name);
+      return (
+        '<tr data-id="' + v.id + '">' +
+          '<td><input type="text" class="views-name-input" value="' + name + '" data-field="name"></td>' +
+          '<td><div class="views-filter-summary" title="' + summary + '">' + summary + '</div></td>' +
+          '<td><input type="checkbox" data-field="is_default" ' + (v.is_default ? "checked" : "") + '></td>' +
+          '<td><input type="checkbox" data-field="is_pinned" '  + (v.is_pinned  ? "checked" : "") + '></td>' +
+          '<td><div class="views-actions">' +
+            '<button data-action="copy">Copy link</button>' +
+            '<button data-action="delete" class="danger">Delete</button>' +
+          '</div></td>' +
+        '</tr>'
+      );
+    }
+
+    function wireRowHandlers() {
+      var rows = document.querySelectorAll("#views-body tr[data-id]");
+      rows.forEach(function (tr) {
+        var id = parseInt(tr.getAttribute("data-id"), 10);
+        tr.querySelector('[data-field="name"]').addEventListener("blur", function (e) {
+          patch(id, { name: e.target.value });
+        });
+        tr.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+          cb.addEventListener("change", function () {
+            var payload = {};
+            payload[cb.getAttribute("data-field")] = cb.checked;
+            patch(id, payload);
+          });
+        });
+        tr.querySelector('[data-action="copy"]').addEventListener("click", function () {
+          var v = state.views.find(function (x) { return x.id === id; });
+          if (!v) return;
+          var url = window.location.origin + "/v/" + v.share_token;
+          if (navigator.clipboard) navigator.clipboard.writeText(url);
+          toast("Share link copied");
+        });
+        tr.querySelector('[data-action="delete"]').addEventListener("click", async function () {
+          if (!confirm("Delete this view?")) return;
+          var r = await fetch("/api/saved-views/" + id, {
+            method: "DELETE", credentials: "same-origin",
+            headers: csrfHeaders(false),
+          });
+          if (r.ok) {
+            toast("Deleted");
+            load();
+          } else {
+            toast("Delete failed");
+          }
+        });
+      });
+    }
+
+    async function patch(id, payload) {
+      var r = await fetch("/api/saved-views/" + id, {
+        method: "PATCH", credentials: "same-origin",
+        headers: csrfHeaders(true), body: JSON.stringify(payload),
+      });
+      if (r.ok) {
+        toast("Saved");
+        var body = await r.json();
+        var idx = state.views.findIndex(function (v) { return v.id === id; });
+        if (idx >= 0) state.views[idx] = body.view;
+        // When flipping default, re-render so the other rows un-check.
+        if ("is_default" in payload) { load(); return; }
+      } else {
+        toast("Save failed");
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function boot() {
+      var tabs = document.querySelectorAll('.views-tab');
+      tabs.forEach(function (t) {
+        t.addEventListener("click", function () {
+          tabs.forEach(function (x) { x.setAttribute("aria-selected", "false"); });
+          t.setAttribute("aria-selected", "true");
+          state.scope = t.getAttribute("data-scope");
+          document.getElementById("views-body").innerHTML =
+            '<div class="views-empty">Loading…</div>';
+          load();
+        });
+      });
+      load();
+    }
+  </script>
+</body>
+</html>

@@ -471,6 +471,33 @@ def is_following(user_id: int, collection_id: int) -> bool:
     return row is not None
 
 
+def set_follow_notifications(
+    user_id: int, collection_id: int, notifications_on: bool,
+) -> bool:
+    """Toggle notifications_on for an existing follow row. Returns True if
+    the row was found and updated, False if the user isn't following."""
+    with db.conn() as c:
+        cur = c.execute(
+            "UPDATE collection_follows SET notifications_on = ? "
+            "WHERE user_id = ? AND collection_id = ?",
+            (1 if notifications_on else 0, user_id, collection_id),
+        )
+        return cur.rowcount > 0
+
+
+def list_public_by_owner(owner_user_id: int, *, limit: int = 20) -> list[dict]:
+    """Public collections authored by a given user — powers the
+    /profile page section and owner-page listings."""
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT * FROM collections "
+            "WHERE owner_user_id = ? AND visibility = 'public' "
+            "ORDER BY is_featured DESC, updated_at DESC LIMIT ?",
+            (owner_user_id, max(1, min(int(limit), 100))),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 def list_followers(
     collection_id: int, *, only_notifiable: bool = False,
 ) -> list[int]:

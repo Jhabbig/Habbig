@@ -514,5 +514,181 @@ class TestShareFlow(unittest.TestCase):
         self.assertEqual(cloned["filters"]["categories"], ["politics"])
 
 
+class TestSettingsPage(unittest.TestCase):
+    def test_redirects_when_unauthenticated(self):
+        c = _anon_client()
+        r = c.get("/settings/saved-views", follow_redirects=False)
+        # Dev bypass may return 200; otherwise 302 → /token. Both signal
+        # "route registered, not 404'd".
+        self.assertIn(r.status_code, (200, 302))
+
+    def test_renders_for_authed(self):
+        uid = _make_user()
+        c = _auth_client(uid)
+        r = c.get("/settings/saved-views")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Saved views", r.text)
+        # Scope tabs must all be present in the static HTML.
+        for scope in ("markets", "feed", "sources", "predictions"):
+            self.assertIn(f'data-scope="{scope}"', r.text)
+
+
+class TestFilterIntegrationPredictions(unittest.TestCase):
+    """Extended /api/v1/predictions with saved-views filter schema."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Create an API key for auth, plus a handful of predictions across
+        # categories / sources / timestamps so filter narrowing is testable.
+        import time as _time
+        cls.uid = _make_user()
+        from api_v1 import create_api_key
+        cls.raw_key, _ = create_api_key(cls.uid, name="test", tier="standard")
+
+        now = int(_time.time())
+        # Source credibility rows
+        with db.conn() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO source_credibility "
+                "(source_handle, global_credibility, accuracy_unlocked, total_predictions, correct_predictions, categories_active, last_computed_at) "
+                "VALUES (?, 0.82, 1, 30, 24, 2, ?)",
+                ("alice", now),
+            )
+            c.execute(
+                "INSERT OR IGNORE INTO source_credibility "
+                "(source_handle, global_credibility, accuracy_unlocked, total_predictions, correct_predictions, categories_active, last_computed_at) "
+                "VALUES (?, 0.52, 1, 20, 11, 1, ?)",
+                ("bob", now),
+            )
+            # Predictions — mix of politics/crypto, mix of sources, mix of age.
+            cls._pred_ids = []
+            for (src, cat, age, resolved) in [
+                ("alice", "politics", 3600, 0),
+                ("alice", "politics", 120, 0),
+                ("alice", "crypto",   3600, 1),
+                ("bob",   "crypto",   3600, 0),
+                ("bob",   "crypto",   3600, 1),
+                ("bob",   "sports",   86400 * 40, 1),  # old, so "posted_within=24h" excludes
+            ]:
+                cur = c.execute(
+                    "INSERT INTO predictions "
+                    "(source_handle, market_id, category, direction, predicted_probability, content, extracted_at, resolved, resolved_correct) "
+                    "VALUES (?, ?, ?, 'up', 0.6, 'x', ?, ?, NULL)",
+                    (src, "mkt", cat, now - age, resolved),
+                )
+                cls._pred_ids.append(cur.lastrowid)
+
+    def _get(self, query: str):
+        c = TestClient(server.app)
+        r = c.get(
+            "/api/v1/predictions" + query,
+            headers={"Authorization": f"Bearer {self.raw_key}"},
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def test_legacy_params_still_work(self):
+        body = self._get("?category=politics")
+        cats = {p["category"] for p in body["predictions"]}
+        # Legacy single-value path: only politics returned.
+        self.assertEqual(cats, {"politics"})
+
+    def test_saved_views_categories_list(self):
+        body = self._get("?categories=politics,crypto")
+        cats = {p["category"] for p in body["predictions"]}
+        self.assertEqual(cats, {"politics", "crypto"})
+        # Filters are echoed back so the client can cross-check.
+        self.assertEqual(
+            sorted(body["filters_applied"]["categories"]),
+            ["crypto", "politics"],
+        )
+
+    def test_saved_views_overrides_legacy_when_both_present(self):
+        # New categories param takes priority over legacy category.
+        body = self._get("?categories=politics&category=sports")
+        cats = {p["category"] for p in body["predictions"]}
+        self.assertEqual(cats, {"politics"})
+
+    def test_resolution_filter(self):
+        body = self._get("?resolution=resolved")
+        self.assertTrue(all(p["resolved"] for p in body["predictions"]))
+        body = self._get("?resolution=pending")
+        self.assertTrue(all(not p["resolved"] for p in body["predictions"]))
+
+    def test_source_cred_range_narrows(self):
+        body = self._get("?source_cred_range=0.8,1.0")
+        # Only alice (cred=0.82) should qualify.
+        handles = {p["source_handle"] for p in body["predictions"]}
+        self.assertTrue(handles.issubset({"alice"}))
+
+    def test_posted_within_excludes_old(self):
+        body = self._get("?posted_within=24h")
+        # bob's 40-day-old prediction must be filtered out.
+        self.assertFalse(any(
+            p["source_handle"] == "bob" and p["category"] == "sports"
+            for p in body["predictions"]))
+
+    def test_malformed_filter_does_not_500(self):
+        body = self._get("?min_edge=not-a-number&close_within=busted")
+        # The endpoint should still return 200 and drop the bad filters.
+        self.assertIn("predictions", body)
+
+    def test_bogus_filter_key_ignored(self):
+        body = self._get("?this_is_not_a_field=whatever")
+        # Should return results, not 500. filters_applied excludes unknown.
+        self.assertNotIn("this_is_not_a_field", body["filters_applied"])
+
+
+class TestFilterIntegrationSources(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import time as _time
+        cls.uid = _make_user()
+        from api_v1 import create_api_key
+        cls.raw_key, _ = create_api_key(cls.uid, name="t", tier="standard")
+
+        now = int(_time.time())
+        with db.conn() as c:
+            # Seed three sources at different credibilities + prediction counts.
+            for (h, cred, preds) in [("high1", 0.90, 200),
+                                     ("mid1",  0.55, 50),
+                                     ("low1",  0.20, 5)]:
+                c.execute(
+                    "INSERT OR IGNORE INTO source_credibility "
+                    "(source_handle, global_credibility, accuracy_unlocked, total_predictions, correct_predictions, categories_active, last_computed_at) "
+                    "VALUES (?, ?, 1, ?, 0, 1, ?)",
+                    (h, cred, preds, now),
+                )
+
+    def _get(self, query: str):
+        c = TestClient(server.app)
+        r = c.get(
+            "/api/v1/sources" + query,
+            headers={"Authorization": f"Bearer {self.raw_key}"},
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def test_min_credibility(self):
+        body = self._get("?min_credibility=0.8")
+        handles = {s["handle"] for s in body["sources"]}
+        # Only high1 (0.90) qualifies; mid1/low1 excluded.
+        self.assertIn("high1", handles)
+        self.assertNotIn("mid1", handles)
+        self.assertNotIn("low1", handles)
+
+    def test_min_predictions(self):
+        body = self._get("?min_predictions=100")
+        handles = {s["handle"] for s in body["sources"]}
+        self.assertIn("high1", handles)
+        self.assertNotIn("mid1", handles)
+
+    def test_filters_echoed(self):
+        body = self._get("?min_credibility=0.5&min_predictions=40")
+        self.assertIn("filters_applied", body)
+        self.assertAlmostEqual(body["filters_applied"]["min_credibility"], 0.5)
+        self.assertEqual(body["filters_applied"]["min_predictions"], 40)
+
+
 if __name__ == "__main__":
     unittest.main()

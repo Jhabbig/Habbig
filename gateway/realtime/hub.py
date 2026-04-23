@@ -58,6 +58,12 @@ class Hub:
 
         self._lock = asyncio.Lock()
 
+        # After-broadcast callbacks. Each callback gets (channel, message,
+        # sent_count) and is fired AFTER the WebSocket fan-out — so a slow
+        # webhook delivery never delays a WebSocket tick. Populated via
+        # ``register_after_broadcast``.
+        self._after_broadcast: list = []
+
     # ── Connection lifecycle ──────────────────────────────────────────
 
     async def register_connection(self, ws, *, user_id: int | None, ip: str | None) -> None:
@@ -138,6 +144,11 @@ class Hub:
             # Still tick for metrics — a broadcast with zero subscribers
             # is a common case and useful for debugging.
             self._tick(sent=0, dropped=0)
+            # After-broadcast callbacks still fire. Webhook subscribers care
+            # about the event regardless of whether any WebSocket clients
+            # are currently connected; a deserted channel is not the same
+            # as a cancelled event.
+            self._fire_after_broadcast(channel, message)
             return 0
 
         # Attach the channel + a sequence so clients can reconcile order
@@ -163,7 +174,34 @@ class Hub:
             for ws in dropped:
                 await self.unsubscribe_all(ws, reason="broadcast_send_failed")
         self._tick(sent=sent, dropped=len(dropped))
+
+        # Fire after-broadcast bridges (webhooks, etc.). Run each on its
+        # own task so one failing bridge never blocks the next. Exceptions
+        # are logged and swallowed — bridges are additive, never load-
+        # bearing for the WebSocket path.
+        for cb in self._after_broadcast:
+            try:
+                result = cb(channel, message)
+                if asyncio.iscoroutine(result):
+                    asyncio.create_task(_safe_bridge(cb.__qualname__, result))
+            except Exception as exc:
+                log.warning("after_broadcast callback %s raised: %s",
+                            getattr(cb, "__qualname__", cb), exc)
         return sent
+
+    # ── Bridge registration ───────────────────────────────────────────
+
+    def register_after_broadcast(self, callback) -> None:
+        """Add an after-broadcast callback.
+
+        ``callback(channel, message)`` is invoked AFTER every successful
+        broadcast. Sync callbacks run inline; coroutine callbacks are
+        scheduled as a task so the hub never awaits them. Used by
+        ``webhooks.register_with_hub()`` to fan internal events out to
+        external subscribers without coupling the hub to webhook state.
+        """
+        if callback not in self._after_broadcast:
+            self._after_broadcast.append(callback)
 
     # ── Metrics ───────────────────────────────────────────────────────
 
@@ -202,6 +240,14 @@ class Hub:
             "disconnect_reasons": dict(self.disconnect_reasons),
             "per_second": per_second,
         }
+
+
+async def _safe_bridge(name: str, coro) -> None:
+    """Run an after-broadcast coroutine with error isolation."""
+    try:
+        await coro
+    except Exception as exc:
+        log.warning("after_broadcast coroutine %s failed: %s", name, exc)
 
 
 # Module-level singleton.

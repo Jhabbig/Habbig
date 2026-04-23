@@ -376,6 +376,31 @@ async def api_unfollow(request: Request, id: int):
     return JSONResponse({"following": False})
 
 
+async def api_update_follow(request: Request, id: int):
+    """PATCH /api/collections/{id}/follow { notifications_on: bool }
+
+    Users can mute noisy boards without unfollowing. Returns 404 if the
+    caller isn't following, so the UI can correct a stale "following"
+    indicator without a separate round-trip.
+    """
+    user = _require_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if "notifications_on" not in body:
+        raise HTTPException(status_code=400, detail="notifications_on required")
+    ok = coll.set_follow_notifications(
+        user["user_id"], int(id), bool(body.get("notifications_on")),
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Not following this collection")
+    return JSONResponse({
+        "following": True,
+        "notifications_on": bool(body.get("notifications_on")),
+    })
+
+
 async def api_follows_me(request: Request):
     user = _require_user(request)
     return JSONResponse({"follows": coll.list_user_follows(user["user_id"])})
@@ -388,6 +413,182 @@ async def api_explore(request: Request):
         "most_followed": coll.most_followed_collections(20),
         "recent": coll.recently_updated_collections(20),
     })
+
+
+async def api_search_candidates(request: Request):
+    """Typeahead back-end for the "Add items" modal.
+
+    Query params:
+        q    required — search term (min 2 chars)
+        kind optional — "market" | "source" | "prediction" (default: all)
+        limit per-kind (default 8, max 20)
+
+    Returns ``{results: [{item_type, item_ref, title, subtitle}]}``
+    deduplicated by (item_type, item_ref). Search is case-insensitive
+    and scoped to what the typeahead needs to display a row — expensive
+    joins (credibility, volume) are avoided for latency.
+    """
+    user = _require_user(request)
+    q = (request.query_params.get("q") or "").strip()
+    kind = (request.query_params.get("kind") or "").strip().lower()
+    try:
+        limit = max(1, min(int(request.query_params.get("limit") or "8"), 20))
+    except ValueError:
+        limit = 8
+    if len(q) < 2:
+        return JSONResponse({"results": []})
+
+    results: list[dict] = []
+    like = f"%{q}%"
+
+    # Markets — served from the already-enriched unified-markets cache so
+    # we don't pay a Polymarket/Kalshi fetch on every keystroke.
+    if kind in ("", "market"):
+        try:
+            from backend.markets import unified_markets
+            cached = (unified_markets._get_cached("enriched_markets", 120)
+                      or unified_markets._get_cached("unified_markets", 300)
+                      or [])
+            q_lower = q.lower()
+            count = 0
+            for m in cached:
+                if count >= limit:
+                    break
+                if q_lower in (m.title or "").lower() or q_lower in (m.id or "").lower():
+                    results.append({
+                        "item_type": "market",
+                        "item_ref": m.id,
+                        "title": m.title,
+                        "subtitle": f"{(m.source or '').capitalize()} · {int((m.yes_price or 0) * 100)}% YES",
+                    })
+                    count += 1
+        except Exception as exc:
+            log.warning("search_candidates: markets failed: %s", exc)
+
+    # Sources — match handle prefix first, then substring.
+    if kind in ("", "source"):
+        try:
+            with db.conn() as c:
+                rows = c.execute(
+                    "SELECT source_handle, global_credibility, total_predictions "
+                    "FROM source_credibility "
+                    "WHERE source_handle LIKE ? OR source_handle LIKE ? "
+                    "ORDER BY global_credibility DESC LIMIT ?",
+                    (f"{q}%", like, limit),
+                ).fetchall()
+            for r in rows:
+                results.append({
+                    "item_type": "source",
+                    "item_ref": r["source_handle"],
+                    "title": f"@{r['source_handle']}",
+                    "subtitle": f"credibility {float(r['global_credibility'] or 0):.2f} · {r['total_predictions']} predictions",
+                })
+        except Exception as exc:
+            log.warning("search_candidates: sources failed: %s", exc)
+
+    # Predictions — content substring. Capped via LIMIT so an OR across
+    # 300k+ rows doesn't full-scan; relies on the predictions table's
+    # existing text index if present.
+    if kind in ("", "prediction"):
+        try:
+            with db.conn() as c:
+                rows = c.execute(
+                    "SELECT id, content, source_handle, category "
+                    "FROM predictions WHERE content LIKE ? "
+                    "ORDER BY extracted_at DESC LIMIT ?",
+                    (like, limit),
+                ).fetchall()
+            for r in rows:
+                snippet = (r["content"] or "")[:120]
+                results.append({
+                    "item_type": "prediction",
+                    "item_ref": str(r["id"]),
+                    "title": snippet,
+                    "subtitle": f"@{r['source_handle']} · {r['category']}",
+                })
+        except Exception as exc:
+            log.warning("search_candidates: predictions failed: %s", exc)
+
+    return JSONResponse({"results": results})
+
+
+# ── RSS feed for public collections ─────────────────────────────────────
+
+
+async def rss_feed(request: Request, handle: str, slug: str):
+    """Atom-style RSS feed — public collections only.
+
+    Each collection_item becomes a channel item with the item's title as
+    <title> and a link into narve.ai where the underlying market/source/
+    prediction lives. Private/shared collections 404 so feed readers
+    can't fingerprint private board names.
+    """
+    try:
+        row = coll.get_collection_by_slug(handle, slug, viewer_user_id=None)
+    except PermissionError:
+        raise HTTPException(status_code=404)
+    if not row or row["visibility"] != "public":
+        raise HTTPException(status_code=404)
+
+    items = _resolve_items(coll.list_items(row["id"]))
+    # updated_at is a unix timestamp (from collections.updated_at) — feed
+    # readers expect RFC822.
+    def _rfc822(ts: int) -> str:
+        import email.utils as eu
+        return eu.formatdate(timeval=int(ts or time.time()), localtime=False, usegmt=True)
+
+    site = "https://narve.ai"
+    feed_url = f"{site}/c/{handle}/{slug}.rss"
+    page_url = f"{site}/c/{handle}/{slug}"
+    title = row["title"]
+    desc = row["description"] or f"A narve.ai collection by @{handle}."
+
+    entries_xml = []
+    for it in items:
+        meta = it.get("meta") or {}
+        if it["item_type"] == "market":
+            link = meta.get("url") or f"{site}/collections/{row['id']}"
+            item_title = meta.get("title") or it["item_ref"]
+            item_desc = f"{(meta.get('source') or '').capitalize()} · {int((meta.get('yes_price') or 0)*100)}% YES"
+        elif it["item_type"] == "source":
+            link = f"{site}/sources/{it['item_ref']}"
+            item_title = f"@{it['item_ref']}"
+            cred = meta.get("global_credibility")
+            item_desc = f"Credibility {cred:.2f}" if cred else "Source profile"
+        else:
+            link = f"{site}/p/{it['item_ref']}"
+            item_title = (meta.get("content") or f"Prediction #{it['item_ref']}")[:160]
+            item_desc = f"Prediction by @{meta.get('source_handle') or 'unknown'}"
+        entries_xml.append(
+            "<item>"
+            f"<title>{_html.escape(item_title)}</title>"
+            f"<link>{_html.escape(link)}</link>"
+            f"<guid isPermaLink=\"false\">narve-coll-{row['id']}-item-{it['id']}</guid>"
+            f"<pubDate>{_rfc822(it.get('added_at') or 0)}</pubDate>"
+            f"<description>{_html.escape(item_desc)}</description>"
+            "</item>"
+        )
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">\n'
+        '  <channel>\n'
+        f'    <title>{_html.escape(title)} — narve.ai</title>\n'
+        f'    <link>{_html.escape(page_url)}</link>\n'
+        f'    <description>{_html.escape(desc)}</description>\n'
+        f'    <language>en</language>\n'
+        f'    <lastBuildDate>{_rfc822(row.get("updated_at") or 0)}</lastBuildDate>\n'
+        f'    <atom:link href="{_html.escape(feed_url)}" rel="self" type="application/rss+xml" />\n'
+        + "\n".join(f"    {e}" for e in entries_xml) + "\n"
+        '  </channel>\n'
+        '</rss>\n'
+    )
+    from fastapi.responses import Response
+    return Response(
+        content=xml,
+        media_type="application/rss+xml; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 # ── Admin ───────────────────────────────────────────────────────────────
@@ -676,6 +877,17 @@ async def page_collection_detail(request: Request, id: int):
             f'{"Following ✓" if is_following else "Follow"}</button>'
         )
 
+    # Share button — only makes sense once the board isn't private, and
+    # we always link to the SEO canonical /c/{handle}/{slug} so the link
+    # survives users changing their handle down the road.
+    share_btn = ""
+    if row["visibility"] in ("shared", "public"):
+        share_url = f"/c/{owner_handle}/{_html.escape(row['slug'])}"
+        share_btn = (
+            f'<button class="c-btn c-btn-ghost" id="c-share-btn" '
+            f'data-share-url="{share_url}" title="Copy link to clipboard">Share</button>'
+        )
+
     owner_actions = ""
     if is_owner:
         delete_btn = (
@@ -733,6 +945,7 @@ async def page_collection_detail(request: Request, id: int):
       </div>
     </div>
     <div class="c-actions">
+      {share_btn}
       {follow_block}
       {owner_actions}
     </div>
@@ -745,20 +958,12 @@ async def page_collection_detail(request: Request, id: int):
 
 <div id="c-add-modal" style="display:none;margin-top:18px;padding:16px;border:1px solid var(--border);border-radius:12px">
   <div class="c-form-field">
-    <label>Item type</label>
-    <select id="c-add-type">
-      <option value="market">Market (poly:slug or kalshi:ticker)</option>
-      <option value="source">Source (X/TS handle)</option>
-      <option value="prediction">Prediction id</option>
-    </select>
+    <label>Search markets, sources, predictions</label>
+    <input id="c-add-q" placeholder="Start typing…" autocomplete="off">
   </div>
-  <div class="c-form-field">
-    <label>Item reference</label>
-    <input id="c-add-ref" placeholder="e.g. poly:fed-rate-hold-april">
-  </div>
-  <div class="c-actions" style="justify-content:flex-end">
-    <button class="c-btn c-btn-ghost" id="c-add-cancel">Cancel</button>
-    <button class="c-btn" id="c-add-submit">Add</button>
+  <div id="c-add-results" style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+  <div class="c-actions" style="justify-content:flex-end;margin-top:10px">
+    <button class="c-btn c-btn-ghost" id="c-add-cancel">Close</button>
   </div>
 </div>
 
@@ -830,20 +1035,95 @@ async def page_collection_detail(request: Request, id: int):
   var addBtn = document.getElementById('c-add-btn');
   var addModal = document.getElementById('c-add-modal');
   var addCancel = document.getElementById('c-add-cancel');
-  var addSubmit = document.getElementById('c-add-submit');
+  var addQ = document.getElementById('c-add-q');
+  var addResults = document.getElementById('c-add-results');
   if (addBtn && addModal) {{
-    addBtn.addEventListener('click', function(){{ addModal.style.display = 'block'; }});
+    addBtn.addEventListener('click', function(){{
+      addModal.style.display = 'block';
+      if (addQ) addQ.focus();
+    }});
     addCancel.addEventListener('click', function(){{ addModal.style.display = 'none'; }});
-    addSubmit.addEventListener('click', async function(){{
-      var item_type = document.getElementById('c-add-type').value;
-      var item_ref = document.getElementById('c-add-ref').value.trim();
-      if (!item_ref) return;
-      try {{
-        await api('POST', '/api/collections/' + COLLECTION_ID + '/items', {{
-          item_type: item_type, item_ref: item_ref,
+
+    // Debounced typeahead — hits /api/collections/search, renders rows,
+    // each row is a button that POSTs directly to the items endpoint.
+    var searchTimer = null;
+    function escHtml(s){{
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){{
+        return ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c];
+      }});
+    }}
+    function renderResults(results){{
+      if (!results || !results.length) {{
+        addResults.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px;text-align:center">No matches. Try a different search.</div>';
+        return;
+      }}
+      addResults.innerHTML = results.map(function(r){{
+        return (
+          '<button type="button" class="hbc-row" data-type="' + escHtml(r.item_type) +
+          '" data-ref="' + escHtml(r.item_ref) + '" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;cursor:pointer;background:transparent;border:0;width:100%;text-align:left;color:inherit;font:inherit">' +
+          '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em">' + escHtml(r.item_type) + '</div>' +
+          '<div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(r.title) + '</div>' +
+          '<div style="font-size:11px;color:var(--muted)">' + escHtml(r.subtitle || '') + '</div>' +
+          '</div>' +
+          '<span style="color:var(--muted);font-size:18px">+</span>' +
+          '</button>'
+        );
+      }}).join('');
+      addResults.querySelectorAll('button[data-type]').forEach(function(btn){{
+        btn.addEventListener('click', async function(){{
+          btn.disabled = true;
+          try {{
+            await api('POST', '/api/collections/' + COLLECTION_ID + '/items', {{
+              item_type: btn.dataset.type,
+              item_ref: btn.dataset.ref,
+            }});
+            location.reload();
+          }} catch (e) {{
+            btn.disabled = false;
+            alert(e.message);
+          }}
         }});
-        location.reload();
-      }} catch (e) {{ alert(e.message); }}
+      }});
+    }}
+    if (addQ && addResults) {{
+      addQ.addEventListener('input', function(){{
+        clearTimeout(searchTimer);
+        var q = addQ.value.trim();
+        if (q.length < 2) {{
+          addResults.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px;text-align:center">Type at least 2 characters…</div>';
+          return;
+        }}
+        searchTimer = setTimeout(async function(){{
+          try {{
+            var data = await api('GET', '/api/collections/search?q=' + encodeURIComponent(q));
+            renderResults(data.results || []);
+          }} catch (e) {{
+            addResults.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px;text-align:center">Search failed.</div>';
+          }}
+        }}, 180);
+      }});
+    }}
+  }}
+
+  // Share button — copies the canonical URL to clipboard.
+  var shareBtn = document.getElementById('c-share-btn');
+  if (shareBtn) {{
+    shareBtn.addEventListener('click', async function(){{
+      var url = shareBtn.dataset.shareUrl || location.href;
+      try {{
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+          await navigator.clipboard.writeText(url);
+        }} else {{
+          // Fallback for http or older browsers — fall through to prompt.
+          window.prompt('Copy this link:', url);
+        }}
+        var orig = shareBtn.textContent;
+        shareBtn.textContent = 'Copied \u2713';
+        setTimeout(function(){{ shareBtn.textContent = orig; }}, 1400);
+      }} catch (e) {{
+        window.prompt('Copy this link:', url);
+      }}
     }});
   }}
 
@@ -967,12 +1247,41 @@ async def page_public(request: Request, handle: str, slug: str):
 <div class="c-wrap">
 <a href="/explore" class="c-back">← Explore</a>
 <div class="c-head" style="margin-top:14px">
-  <h1 class="c-title">{title_html}</h1>
-  <p class="c-sub">by @{owner_handle} · {row.get("item_count") or 0} items · {row.get("follower_count") or 0} followers</p>
+  <div class="c-bar">
+    <div>
+      <h1 class="c-title">{title_html}</h1>
+      <p class="c-sub">by @{owner_handle} · {row.get("item_count") or 0} items · {row.get("follower_count") or 0} followers</p>
+    </div>
+    <div class="c-actions">
+      <button class="c-btn c-btn-ghost" id="c-share-btn" data-share-url="{canonical}">Share</button>
+      {'<a class="c-btn c-btn-ghost" href="/c/' + owner_handle + '/' + _html.escape(slug) + '.rss" style="text-decoration:none">RSS</a>' if vis == "public" else ""}
+    </div>
+  </div>
   <p style="margin-top:16px;color:var(--muted);font-size:14px;line-height:1.55;max-width:640px">{desc_html}</p>
 </div>
 <div>{items_html}</div>
 </div>
+<script>
+(function(){{
+  var btn = document.getElementById('c-share-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async function(){{
+    var url = location.origin + btn.dataset.shareUrl;
+    try {{
+      if (navigator.clipboard && navigator.clipboard.writeText) {{
+        await navigator.clipboard.writeText(url);
+      }} else {{
+        window.prompt('Copy this link:', url);
+      }}
+      var orig = btn.textContent;
+      btn.textContent = 'Copied \u2713';
+      setTimeout(function(){{ btn.textContent = orig; }}, 1400);
+    }} catch (e) {{
+      window.prompt('Copy this link:', url);
+    }}
+  }});
+}})();
+</script>
 </body></html>"""
     return HTMLResponse(body)
 
@@ -1091,6 +1400,7 @@ def register(app) -> None:
     app.add_api_route("/api/collections/me", api_list_mine, methods=["GET"])
     app.add_api_route("/api/collections/follows/me", api_follows_me, methods=["GET"])
     app.add_api_route("/api/collections/explore", api_explore, methods=["GET"])
+    app.add_api_route("/api/collections/search", api_search_candidates, methods=["GET"])
     app.add_api_route("/api/collections/{id}", api_get, methods=["GET"])
     app.add_api_route("/api/collections/{id}", api_update, methods=["PATCH"])
     app.add_api_route("/api/collections/{id}", api_delete, methods=["DELETE"])
@@ -1100,6 +1410,7 @@ def register(app) -> None:
         "/api/collections/{id}/items/{item_id}", api_remove_item, methods=["DELETE"],
     )
     app.add_api_route("/api/collections/{id}/follow", api_follow, methods=["POST"])
+    app.add_api_route("/api/collections/{id}/follow", api_update_follow, methods=["PATCH"])
     app.add_api_route("/api/collections/{id}/follow", api_unfollow, methods=["DELETE"])
 
     # Admin
@@ -1113,6 +1424,8 @@ def register(app) -> None:
                       response_class=HTMLResponse, include_in_schema=False)
     app.add_api_route("/c/{handle}/{slug}", page_public, methods=["GET"],
                       response_class=HTMLResponse, include_in_schema=False)
+    app.add_api_route("/c/{handle}/{slug}.rss", rss_feed, methods=["GET"],
+                      include_in_schema=False)
     app.add_api_route("/explore", page_explore, methods=["GET"],
                       response_class=HTMLResponse, include_in_schema=False)
     app.add_api_route("/admin/collections", page_admin_collections, methods=["GET"],

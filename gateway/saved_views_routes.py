@@ -362,6 +362,37 @@ def _share_error_page(msg: str) -> str:
     )
 
 
+# ── /settings/saved-views page ─────────────────────────────────────────────
+
+
+async def page_settings(request: Request):
+    """Manage-views dashboard. Pure HTML shell; the table + toggles are
+    driven client-side by fetch calls to /api/saved-views.
+    """
+    import server
+    user = server.current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+
+    username = user.get("username") or (user.get("email") or "").split("@")[0]
+    role_badge = ""
+    if hasattr(server, "_role_badge"):
+        try:
+            role_badge = server._role_badge(user)
+        except Exception:
+            pass
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+
+    return server.render_page(
+        "settings_saved_views",
+        request=request,
+        username=username,
+        raw_nav_role=role_badge,
+        raw_admin_link=admin_link,
+        _is_admin=user.get("is_admin"),
+    )
+
+
 # ── Registration ───────────────────────────────────────────────────────────
 
 
@@ -376,3 +407,4 @@ def register(app) -> None:
     app.add_api_route("/api/saved-views/{id}",          api_delete,      methods=["DELETE"])
     app.add_api_route("/api/saved-views/{id}/clone",    api_clone,       methods=["POST"])
     app.add_api_route("/v/{token}",                     share_view,      methods=["GET"])
+    app.add_api_route("/settings/saved-views",          page_settings,   methods=["GET"])

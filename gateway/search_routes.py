@@ -29,9 +29,31 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
 from cache import ttl_cache
+try:
+    # Rate limiter lives in the security package; import via try so the
+    # module still loads under minimal test fixtures that stub the package.
+    from security.rate_limiter import rate_limit, get_client_ip
+except Exception:  # pragma: no cover
+    def rate_limit(**kwargs):  # type: ignore
+        def _wrap(fn):
+            return fn
+        return _wrap
+
+    def get_client_ip(request):  # type: ignore
+        return (request.headers.get("x-forwarded-for") or
+                request.client.host if request.client else "unknown")
 
 
 log = logging.getLogger("gateway.search_routes")
+
+
+# FTS5 snippet() delimiters — kept in a constant so the CSS selector
+# (.narve-mark / <mark>) and the SQL literal agree in one place.
+_MARK_OPEN = "<mark>"
+_MARK_CLOSE = "</mark>"
+# snippet(table, col, start, end, ellipsis, tokens). 15-token window is
+# enough for palette subtitles without blowing up the payload.
+_SNIPPET_TOKENS = 15
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -70,6 +92,24 @@ def _fts_prefix_query(q: str) -> str:
         return ""
     parts[-1] = parts[-1] + "*"
     return " ".join(parts)
+
+
+def _search_rate_key(request: Request) -> str:
+    """Rate-limit bucket: per-user for authed, per-IP for anon.
+
+    Anonymous hits can legitimately reach /api/search (public palette has
+    no gate); bucketing on IP keeps a noisy network from drowning the
+    authed fleet.
+    """
+    try:
+        import sys
+        srv = sys.modules.get("server")
+        user = srv.current_user(request) if srv else None
+        if user:
+            return f"search:user:{user['user_id']}"
+    except Exception:
+        pass
+    return f"search:ip:{get_client_ip(request)}"
 
 
 def _current_user(request: Request) -> Optional[dict]:
@@ -116,6 +156,10 @@ def _log_query(
 # ── Search endpoints ────────────────────────────────────────────────────────
 
 
+# Per-user / per-IP rate limit. 120/min is generous for palette typing
+# (debounced at 150ms ≈ 400/min max from one user) but cuts off scraping
+# by a few orders of magnitude.
+@rate_limit(limit=120, window_seconds=60, key_func=_search_rate_key)
 async def unified_search(request: Request):
     """Main palette endpoint. Returns mixed-type results ranked per FTS5 BM25.
 
@@ -153,16 +197,16 @@ async def unified_search(request: Request):
         with db.conn() as c:
             if "markets" in requested or types == "all":
                 try:
-                    # markets_fts is contentless (content='market_snapshots',
-                    # rowid-linked). Columns: market_slug, market_question,
-                    # category. Join back to market_snapshots by rowid so
-                    # we can SELECT unindexed columns.
+                    # markets_fts column order: 0=market_slug, 1=market_question,
+                    # 2=category (see db.init_db). snippet() on col 1 wraps
+                    # matched terms in <mark>…</mark> for palette rendering.
                     rows = c.execute(
-                        "SELECT ms.market_slug, ms.market_question, ms.category "
+                        "SELECT ms.market_slug, ms.market_question, ms.category, "
+                        f"       snippet(markets_fts, 1, ?, ?, '…', {_SNIPPET_TOKENS}) AS hl "
                         "FROM markets_fts f "
                         "JOIN market_snapshots ms ON ms.rowid = f.rowid "
                         "WHERE markets_fts MATCH ? ORDER BY rank LIMIT ?",
-                        (fts_q, limit),
+                        (_MARK_OPEN, _MARK_CLOSE, fts_q, limit),
                     ).fetchall()
                     seen_slugs: set[str] = set()
                     for r in rows:
@@ -174,6 +218,7 @@ async def unified_search(request: Request):
                             "type": "market",
                             "id": slug,
                             "title": r["market_question"] or slug,
+                            "title_html": r["hl"] or r["market_question"] or slug,
                             "subtitle": r["category"] or "",
                             "url": f"/markets/{slug}",
                         })
@@ -185,30 +230,37 @@ async def unified_search(request: Request):
                 # Dedupe by handle, prefer the summary row (richer subtitle).
                 source_by_handle: dict[str, dict] = {}
                 try:
+                    # source_summaries_fts: col 0=source_handle (UNINDEXED),
+                    # col 1=summary. Highlight the summary snippet.
                     rows = c.execute(
-                        "SELECT source_handle, summary FROM source_summaries_fts "
+                        "SELECT source_handle, summary, "
+                        f"       snippet(source_summaries_fts, 1, ?, ?, '…', {_SNIPPET_TOKENS}) AS hl "
+                        "FROM source_summaries_fts "
                         "WHERE source_summaries_fts MATCH ? ORDER BY rank LIMIT ?",
-                        (fts_q, limit),
+                        (_MARK_OPEN, _MARK_CLOSE, fts_q, limit),
                     ).fetchall()
                     for r in rows:
                         h = r["source_handle"]
-                        snippet = (r["summary"] or "")[:140]
                         source_by_handle[h] = {
                             "type": "source",
                             "id": h,
                             "title": f"@{h}",
-                            "subtitle": snippet,
+                            "subtitle": (r["summary"] or "")[:140],
+                            "subtitle_html": r["hl"] or "",
                             "url": f"/sources/{h}",
                         }
                 except sqlite3.Error as exc:
                     log.warning("source_summaries_fts search failed: %s", exc)
                 try:
+                    # sources_fts: col 0=source_handle (only column). Highlight
+                    # the handle itself — useful for "sbf" finding "@sbfwatch".
                     rows = c.execute(
-                        "SELECT sc.source_handle "
+                        "SELECT sc.source_handle, "
+                        f"       snippet(sources_fts, 0, ?, ?, '…', {_SNIPPET_TOKENS}) AS hl "
                         "FROM sources_fts f "
                         "JOIN source_credibility sc ON sc.rowid = f.rowid "
                         "WHERE sources_fts MATCH ? ORDER BY rank LIMIT ?",
-                        (fts_q, limit),
+                        (_MARK_OPEN, _MARK_CLOSE, fts_q, limit),
                     ).fetchall()
                     for r in rows:
                         h = r["source_handle"]
@@ -218,6 +270,7 @@ async def unified_search(request: Request):
                             "type": "source",
                             "id": h,
                             "title": f"@{h}",
+                            "title_html": f"@{r['hl']}" if r["hl"] else f"@{h}",
                             "subtitle": "",
                             "url": f"/sources/{h}",
                         }
@@ -227,14 +280,15 @@ async def unified_search(request: Request):
 
             if "predictions" in requested or types == "all":
                 try:
-                    # predictions_fts has content='predictions', rowid=id,
-                    # so we SELECT from the base table via the rowid join.
+                    # predictions_fts col 0=content. Highlight the matched
+                    # span of the prediction text.
                     rows = c.execute(
-                        "SELECT p.id, p.content, p.source_handle, p.category "
+                        "SELECT p.id, p.content, p.source_handle, p.category, "
+                        f"       snippet(predictions_fts, 0, ?, ?, '…', {_SNIPPET_TOKENS}) AS hl "
                         "FROM predictions_fts f "
                         "JOIN predictions p ON p.id = f.rowid "
                         "WHERE predictions_fts MATCH ? ORDER BY rank LIMIT ?",
-                        (fts_q, limit),
+                        (_MARK_OPEN, _MARK_CLOSE, fts_q, limit),
                     ).fetchall()
                     for r in rows:
                         text = (r["content"] or "")[:200]
@@ -242,6 +296,7 @@ async def unified_search(request: Request):
                             "type": "prediction",
                             "id": str(r["id"]),
                             "title": text,
+                            "title_html": r["hl"] or text,
                             "subtitle": f"@{r['source_handle']} · {r['category']}",
                             "url": f"/predictions/{r['id']}",
                         })
@@ -283,6 +338,10 @@ async def unified_search(request: Request):
     return JSONResponse(response_body)
 
 
+# Click logging gets its own bucket so mass-clicks can't burn the search
+# quota. 180/min is 3 per second which is absurd for a human but
+# plausible if a test harness clicks every row in a batch result.
+@rate_limit(limit=180, window_seconds=60, key_func=_search_rate_key)
 async def log_click(request: Request):
     """Log which result got clicked. POST body:
       {"query_id": int, "result_type": str, "result_id": str}

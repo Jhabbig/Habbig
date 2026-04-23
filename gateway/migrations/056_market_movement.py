@@ -18,6 +18,10 @@ revision = "056"
 down_revision = "055"
 
 
+def _existing_cols(c, table):
+    return {row["name"] for row in c.execute(f"PRAGMA table_info({table})")}
+
+
 def upgrade(c):
     c.execute("""
         CREATE TABLE IF NOT EXISTS market_movement_events (
@@ -33,6 +37,14 @@ def upgrade(c):
             notified_at          INTEGER
         )
     """)
+    # Defensive: an earlier schema version of this table shipped without
+    # `notified_at`. `CREATE TABLE IF NOT EXISTS` above is a no-op on a
+    # pre-existing table, so the index below would then fail with
+    # "no such column: notified_at". Add the column if it's missing.
+    cols = _existing_cols(c, "market_movement_events")
+    if "notified_at" not in cols:
+        c.execute("ALTER TABLE market_movement_events ADD COLUMN notified_at INTEGER")
+
     c.execute("CREATE INDEX IF NOT EXISTS idx_mm_events_slug_time ON market_movement_events(market_slug, detected_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_mm_events_type_time ON market_movement_events(event_type, detected_at DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_mm_events_notify ON market_movement_events(notified_at)")
