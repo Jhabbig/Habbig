@@ -93,22 +93,23 @@
     <span class="gate-logo-text">narve.ai</span>
   </a>
 
-  <div class="gate-card reveal-scale">
-    <div class="gate-heading">Access required</div>
+  <main id="main" class="gate-card reveal-scale">
+    <h1 class="gate-heading">Access required</h1>
     <form method="post" action="/gate" id="gate-form">
         {{ raw_csrf_field }}
+      <label for="gate-token" class="narve-sr-only">Access token</label>
       <input class="gate-input" type="password" name="token" id="gate-token" required autofocus
              placeholder="Enter access token" autocomplete="off">
       <button type="submit" class="gate-btn">Continue</button>
     </form>
-    <div class="gate-error" id="gate-error">{{ error }}</div>
+    <div class="gate-error" id="gate-error" role="alert">{{ error }}</div>
     <p style="font-size:11px;color:var(--text-tertiary);margin-top:18px;line-height:1.5">
       By entering, you agree to our
       <a href="/terms" style="color:var(--text-secondary);text-decoration:underline">Terms</a>
       and <a href="/privacy" style="color:var(--text-secondary);text-decoration:underline">Privacy Policy</a>.
       We use essential cookies only.
     </p>
-  </div>
+  </main>
 
 <script>
 (function() {

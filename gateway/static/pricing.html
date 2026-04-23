@@ -111,12 +111,32 @@
       <h1 class="pr-title">Simple, transparent pricing</h1>
       <p class="pr-sub">Buy now and level up your Polymarket trading. No setup fees. Cancel anytime.</p>
 
-      <div class="pr-toggle-wrap">
-        <span class="pr-toggle-label active" id="lbl-monthly" onclick="setInterval('monthly')">Monthly</span>
-        <div class="pr-toggle" id="interval-toggle" onclick="toggleInterval()">
-          <div class="pr-toggle-dot"></div>
-        </div>
-        <span class="pr-toggle-label" id="lbl-annual" onclick="setInterval('annual')">Annual</span>
+      <div class="pr-toggle-wrap" role="tablist" aria-label="Billing interval">
+        <button type="button"
+                class="pr-toggle-label active"
+                id="lbl-monthly"
+                onclick="setInterval('monthly')"
+                role="tab"
+                aria-selected="true"
+                aria-controls="pricing-cards"
+                style="background:transparent;border:none;font:inherit;color:inherit;cursor:pointer;padding:0">Monthly</button>
+        <button type="button"
+                class="pr-toggle"
+                id="interval-toggle"
+                onclick="toggleInterval()"
+                aria-label="Toggle between monthly and annual billing"
+                aria-pressed="false"
+                style="border:none;padding:0">
+          <span class="pr-toggle-dot" aria-hidden="true"></span>
+        </button>
+        <button type="button"
+                class="pr-toggle-label"
+                id="lbl-annual"
+                onclick="setInterval('annual')"
+                role="tab"
+                aria-selected="false"
+                aria-controls="pricing-cards"
+                style="background:transparent;border:none;font:inherit;color:inherit;cursor:pointer;padding:0">Annual</button>
       </div>
     </div>
 
@@ -254,45 +274,45 @@
     <h2 class="pr-faq-title">Frequently asked questions</h2>
     <div class="pr-faq stagger">
       <div class="pr-faq-item">
-        <div class="pr-faq-q" onclick="toggleFaq(this)">
+        <button type="button" class="pr-faq-q" onclick="toggleFaq(this)" aria-expanded="false" style="width:100%;background:transparent;border:none;text-align:left;font:inherit;color:inherit;cursor:pointer">
           How does the token system work?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-        </div>
+        </button>
         <div class="pr-faq-a"><p>When you subscribe, a unique access token is generated and emailed to you. You enter it on the app's first screen to create your account. Your token is linked permanently to your account and cannot be transferred.</p></div>
       </div>
       <div class="pr-faq-item">
-        <div class="pr-faq-q" onclick="toggleFaq(this)">
+        <button type="button" class="pr-faq-q" onclick="toggleFaq(this)" aria-expanded="false" style="width:100%;background:transparent;border:none;text-align:left;font:inherit;color:inherit;cursor:pointer">
           Can I switch between plans?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-        </div>
+        </button>
         <div class="pr-faq-a"><p>Yes. You can upgrade or downgrade at any time. Upgrades take effect immediately. Downgrades take effect at the end of your current billing period.</p></div>
       </div>
       <div class="pr-faq-item">
-        <div class="pr-faq-q" onclick="toggleFaq(this)">
+        <button type="button" class="pr-faq-q" onclick="toggleFaq(this)" aria-expanded="false" style="width:100%;background:transparent;border:none;text-align:left;font:inherit;color:inherit;cursor:pointer">
           Is there a free trial?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-        </div>
+        </button>
         <div class="pr-faq-a"><p>No. We don't offer free trials — the signal quality speaks for itself. You can cancel at any time before your next billing date.</p></div>
       </div>
       <div class="pr-faq-item">
-        <div class="pr-faq-q" onclick="toggleFaq(this)">
+        <button type="button" class="pr-faq-q" onclick="toggleFaq(this)" aria-expanded="false" style="width:100%;background:transparent;border:none;text-align:left;font:inherit;color:inherit;cursor:pointer">
           What's the difference between the data windows?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-        </div>
+        </button>
         <div class="pr-faq-a"><p>The data window determines how far back the feed and source history goes. Trader gives you 30 days of predictions and source tracking. Pro gives you 6 months, which is where the real credibility signal emerges — you can see how a source performed across multiple resolved markets over time.</p></div>
       </div>
       <div class="pr-faq-item">
-        <div class="pr-faq-q" onclick="toggleFaq(this)">
+        <button type="button" class="pr-faq-q" onclick="toggleFaq(this)" aria-expanded="false" style="width:100%;background:transparent;border:none;text-align:left;font:inherit;color:inherit;cursor:pointer">
           What is Enterprise pricing based on?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-        </div>
+        </button>
         <div class="pr-faq-a"><p>Enterprise is priced per use case — based on the number of users, data volume, API usage, and integration requirements. Fill in the enquiry form and we'll respond within 24–48 hours.</p></div>
       </div>
       <div class="pr-faq-item">
-        <div class="pr-faq-q" onclick="toggleFaq(this)">
+        <button type="button" class="pr-faq-q" onclick="toggleFaq(this)" aria-expanded="false" style="width:100%;background:transparent;border:none;text-align:left;font:inherit;color:inherit;cursor:pointer">
           Can I use this on desktop and mobile?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-        </div>
+        </button>
         <div class="pr-faq-a"><p>Yes. narve.ai is a web app that works on any device with a browser — desktop, tablet, or phone. No download required. Your subscription works everywhere you sign in.</p></div>
       </div>
     </div>
@@ -353,6 +373,9 @@ function updatePrices() {
 }
 
 function toggleFaq(el) {
+  // Flip aria-expanded for assistive tech.
+  var expanded = el.getAttribute('aria-expanded') === 'true';
+  el.setAttribute('aria-expanded', expanded ? 'false' : 'true');
   var item = el.parentElement;
   var wasOpen = item.classList.contains('open');
   // Close all

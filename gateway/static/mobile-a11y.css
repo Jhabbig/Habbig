@@ -18,6 +18,60 @@
 }
 :focus:not(:focus-visible) { outline: none; }
 
+/* Safety net — some legacy templates set ``:focus { outline: none; ... }``
+ * with a higher selector specificity than the global ``*:focus-visible``
+ * rule above, so keyboard focus on those elements lost its outline. Marking
+ * the outline + offset as ``!important`` inside :focus-visible guarantees
+ * the ring wins regardless of later rules while leaving mouse-only :focus
+ * styles (which are exempt from WCAG 2.4.11) intact.
+ */
+:focus-visible {
+  outline: 2px solid var(--text-primary) !important;
+  outline-offset: 2px !important;
+}
+
+/* ── Low-contrast text boosters (WCAG 1.4.3) ────────────────────────── */
+/*
+ * Some templates style secondary links with ``opacity: 0.55`` on top of
+ * ``color: inherit``, which axe-core rightfully flags as a contrast
+ * failure on the site-wide light background (ratio ≈ 3.0, below 4.5
+ * required for body text). The hover state already resets to opacity 1,
+ * so the visible-but-muted look is preserved: we just lift the resting
+ * opacity to a value that clears the WCAG threshold.
+ */
+.backlink,
+.legal-eyebrow,
+.status-item,
+.breadcrumb-item,
+.footer-nav,
+.footer-nav > a,
+.pr-back,
+.pr-faq-q,
+.pr-page > p,
+.landing-dash-price,
+.landing-pricing-card > div,
+.landing-pricing-card > a,
+.price-period {
+  opacity: 1 !important;
+  color: var(--text-secondary, #333) !important;
+}
+
+.pr-page > p.pr-sub,
+.landing-dash-desc {
+  /* Larger descriptive paragraphs — keep the muted look but on the
+   * secondary token so contrast stays ≥ 4.5:1 against both themes. */
+  color: var(--text-secondary, #333);
+}
+
+/* Prerelease footer — legal link row. The root rule hits the hero text
+ * but the <p>... Terms · Privacy ...</p> underneath uses --text-tertiary
+ * inline. Override on the body-scoped selector. */
+body > div:last-of-type a[href="/terms"],
+body > div:last-of-type a[href="/privacy"] {
+  color: var(--text-secondary, #333) !important;
+  opacity: 1 !important;
+}
+
 /* ── Skip link ─────────────────────────────────────────────────────── */
 .narve-skip-link {
   position: absolute;

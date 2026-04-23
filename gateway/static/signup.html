@@ -70,9 +70,9 @@
       <span>narve.ai</span>
     </a>
 
-    <div class="auth-card">
-      <div class="auth-title">Create your account</div>
-      <div class="auth-sub">No credit card required to sign up.</div>
+    <main id="main" class="auth-card">
+      <h1 class="auth-title">Create your account</h1>
+      <p class="auth-sub">No credit card required to sign up.</p>
 
       <form class="auth-form" method="post" action="/signup" id="signup-form">
         {{ raw_csrf_field }}
@@ -133,10 +133,10 @@
         </p>
       </form>
 
-      <div class="auth-error">{{ error }}</div>
+      <div class="auth-error" role="alert">{{ error }}</div>
 
       <div class="auth-footer"></div>
-    </div>
+    </main>
 
     <div class="auth-reassure">
       <strong>What happens next:</strong> you'll land on the dashboards hub

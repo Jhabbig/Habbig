@@ -80,16 +80,28 @@
       <p class="sub-desc">Select your plan and complete your purchase. You'll receive a unique access token immediately.</p>
 
       <!-- Plan selector -->
-      <div class="sub-plans">
-        <div class="sub-plan selected" id="plan-trader" onclick="selectPlan('trader')">
-          <div class="sub-plan-name">Trader</div>
-          <div class="sub-plan-price" id="price-trader">&pound;75 / $99<span>/mo</span></div>
-        </div>
-        <div class="sub-plan" id="plan-pro" onclick="selectPlan('pro')" style="position:relative">
-          <div class="sub-plan-popular">Popular</div>
-          <div class="sub-plan-name">Pro</div>
-          <div class="sub-plan-price" id="price-pro">&pound;180 / $229<span>/mo</span></div>
-        </div>
+      <div class="sub-plans" role="radiogroup" aria-label="Subscription plan">
+        <button type="button"
+                class="sub-plan selected"
+                id="plan-trader"
+                onclick="selectPlan('trader')"
+                role="radio"
+                aria-checked="true"
+                style="background:transparent;border:none;font:inherit;color:inherit;text-align:left;cursor:pointer;padding:0">
+          <span class="sub-plan-name">Trader</span>
+          <span class="sub-plan-price" id="price-trader">&pound;75 / $99<span>/mo</span></span>
+        </button>
+        <button type="button"
+                class="sub-plan"
+                id="plan-pro"
+                onclick="selectPlan('pro')"
+                role="radio"
+                aria-checked="false"
+                style="position:relative;background:transparent;border:none;font:inherit;color:inherit;text-align:left;cursor:pointer;padding:0">
+          <span class="sub-plan-popular">Popular</span>
+          <span class="sub-plan-name">Pro</span>
+          <span class="sub-plan-price" id="price-pro">&pound;180 / $229<span>/mo</span></span>
+        </button>
       </div>
 
       <!-- Interval toggle -->

@@ -1043,7 +1043,7 @@ function loadFeedback(filter) {
       row.dataset.status = item.status;
       var prio = item.priority ? '<span style="padding:2px 8px;border-radius:10px;background:var(--bg-raised);font-size:11px">' + item.priority + '</span>' : '';
       row.innerHTML =
-        '<div class="admin-row-info" onclick="this.querySelector(\'.feedback-body\').style.display=this.querySelector(\'.feedback-body\').style.display===\'none\'?\'block\':\'none\'" style="cursor:pointer">' +
+        '<button type="button" class="admin-row-info" aria-expanded="false" onclick="var b=this.querySelector(\'.feedback-body\');var open=b.style.display!==\'none\';b.style.display=open?\'none\':\'block\';this.setAttribute(\'aria-expanded\',String(!open))" style="cursor:pointer;background:transparent;border:none;text-align:left;width:100%;font:inherit;color:inherit;padding:0">' +
           '<div class="admin-row-main">' +
             '<strong>' + escapeHtml(item.type) + '</strong> ' + prio +
             ' <span style="color:var(--text-tertiary)">· ' + escapeHtml(item.user_email || 'anonymous') + ' · ' + escapeHtml(item.user_tier || 'none') + '</span>' +
@@ -1052,7 +1052,7 @@ function loadFeedback(filter) {
           '<div class="feedback-body" style="display:none;margin-top:10px;padding:12px;background:var(--bg-raised);border-radius:6px;white-space:pre-wrap;font-size:13px">' + escapeHtml(item.message || '') +
             (item.screenshot_url ? '<div style="margin-top:8px"><a href="' + escapeHtml(item.screenshot_url) + '" target="_blank">Screenshot</a></div>' : '') +
           '</div>' +
-        '</div>' +
+        '</button>' +
         '<div class="admin-row-actions">' +
           '<select onchange="updateFeedbackStatus(' + item.id + ', this.value)" style="padding:4px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-default);border-radius:4px">' +
             ['open','in_progress','resolved','closed'].map(function(s){return '<option value="'+s+'"'+(s===item.status?' selected':'')+'>'+s+'</option>';}).join('') +

@@ -2466,7 +2466,11 @@ a.btn:focus-visible,
   border: 1px solid var(--border-default, #2a2a2a);
   border-radius: 4px;
   background: var(--bg-surface, #0a0a0a);
-  color: var(--text-tertiary, #777);
+  /* WCAG 1.4.3 — kbd pill sits on --bg-surface; --text-tertiary (#858585)
+   * passed on plain white but failed on the surface tint. Use
+   * --text-secondary so the pill text stays ≥ 4.5:1 against the surface
+   * in both light + dark themes. */
+  color: var(--text-secondary, #333);
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.02em;
