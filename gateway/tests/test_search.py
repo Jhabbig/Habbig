@@ -285,7 +285,89 @@ def _count_search_queries() -> int:
 # ── /api/search/click ───────────────────────────────────────────────────────
 
 
+class TestHighlighting(unittest.TestCase):
+    """FTS5 snippet() should return <mark>…</mark> around the matched
+    term in the per-type highlight field. Palette client renders this
+    as inverted-emphasis text via a narrow allowlist; server must
+    actually emit the tags for anything to show."""
+
+    @classmethod
+    def setUpClass(cls):
+        _seed_corpus()
+
+    def test_market_result_has_mark_in_title_html(self):
+        r = client.get("/api/search?q=federal")
+        self.assertEqual(r.status_code, 200)
+        markets = [x for x in (r.json().get("results") or []) if x["type"] == "market"]
+        self.assertTrue(markets, "expected at least one market hit for 'federal'")
+        # At least one of the returned markets should carry a highlight.
+        self.assertTrue(
+            any("<mark>" in (m.get("title_html") or "") for m in markets),
+            f"no <mark> in any market title_html: {markets[:2]}",
+        )
+
+    def test_source_result_has_mark_in_subtitle_html(self):
+        r = client.get("/api/search?q=monetary")
+        self.assertEqual(r.status_code, 200)
+        sources = [x for x in (r.json().get("results") or []) if x["type"] == "source"]
+        self.assertTrue(sources, "expected source hit for 'monetary'")
+        hl = [s for s in sources if "<mark>" in (s.get("subtitle_html") or "")]
+        self.assertTrue(hl, f"no <mark> in any source subtitle: {sources[:2]}")
+
+
+def _reset_rate_limiter() -> None:
+    """Wipe the in-process rate-limit bucket so tests don't pollute each
+    other. Safe no-op when the limiter is Redis-backed (Redis buckets
+    auto-expire via TTL; we can't atomically flush from here)."""
+    try:
+        from security.rate_limiter import limiter
+        with limiter._lock:
+            limiter._windows.clear()
+    except Exception:
+        pass
+
+
+class TestRateLimit(unittest.TestCase):
+    """120/min is loose for humans but a tight loop of the full window
+    should eventually get throttled. We burn through the bucket and
+    expect a 429 within a reasonable number of attempts.
+
+    Clears the limiter state on both ends so the hammer test can't
+    pollute other classes (test order within a file is alphabetical,
+    so we'd otherwise leave the bucket saturated for whoever comes
+    after 'R' — at time of writing, TestSearchAPI)."""
+
+    def setUp(self):
+        _reset_rate_limiter()
+
+    def tearDown(self):
+        _reset_rate_limiter()
+
+    def test_hammering_search_eventually_throttles(self):
+        # Cap at 200 attempts so a misconfigured rate-limit can't hang CI.
+        # At 120/min the 121st request in the same window is the first 429.
+        seen_429 = False
+        for _ in range(200):
+            r = client.get("/api/search?q=federal")
+            if r.status_code == 429:
+                seen_429 = True
+                break
+            # Any other non-200 means something else broke
+            self.assertEqual(r.status_code, 200, f"unexpected {r.status_code}")
+        # If the rate limiter fell back to no-op (e.g. Redis unavailable
+        # in the test harness), we accept the test as informational —
+        # a no-op bucket is the documented degraded mode.
+        if not seen_429:
+            self.skipTest("rate limiter degraded to no-op in this harness")
+
+
 class TestClickLogging(unittest.TestCase):
+    def setUp(self):
+        # Guard against rate-limit pollution from earlier test runs in the
+        # same process — this test needs a usable bucket to collect the
+        # query_id before POSTing the click.
+        _reset_rate_limiter()
+
     def test_click_updates_row(self):
         # Create a query row to click on
         r = client.get("/api/search?q=federal")

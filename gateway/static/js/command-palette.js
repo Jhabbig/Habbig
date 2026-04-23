@@ -296,6 +296,15 @@
           flat.push(it);
           const glyph = TYPE_GLYPH[it.type] || '·';
           const optId = `narve-cmdp-opt-${idx}`;
+          // Prefer the server's FTS snippet (with <mark> around the
+          // matched span). Fall back to plain escaped text when no
+          // highlight is available (e.g. recent searches, / commands).
+          const titleHtml = it.title_html
+            ? renderHighlight(it.title_html)
+            : esc(it.title);
+          const subHtml = it.subtitle_html
+            ? renderHighlight(it.subtitle_html)
+            : esc(it.subtitle);
           // role=option + aria-selected tracks the currently-highlighted
           // result for assistive tech. aria-describedby points at the
           // group label so type context comes through.
@@ -303,8 +312,8 @@
                        id="${optId}" role="option" aria-selected="false"
                        aria-describedby="${groupId}">
             <span class="narve-cmdp-glyph" aria-hidden="true">${esc(glyph)}</span>
-            <span class="narve-cmdp-title">${esc(it.title)}</span>
-            <span class="narve-cmdp-sub">${esc(it.subtitle)}</span>
+            <span class="narve-cmdp-title">${titleHtml}</span>
+            <span class="narve-cmdp-sub">${subHtml}</span>
           </div>`;
         }).join('');
         const label = TYPE_LABEL[g.type] || g.type;

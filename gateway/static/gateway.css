@@ -1630,6 +1630,17 @@ textarea:focus-visible {
   outline-offset: 3px;
 }
 
+/* "Last updated X min ago (cached)" ribbon — rendered by
+ * narve.cached.renderRibbon() when a response was served from the SW
+ * cache. Muted so it reads as a subtitle, not an error. */
+.narve-cached-ribbon {
+  font-size: 11px;
+  color: var(--text-tertiary, #9ca3af);
+  margin: 0 0 8px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Offline banner — shown by narve-app.js when navigator.onLine goes false.
  * Monochrome per design system (no amber/red); muted surface + subtle
  * top border so it's legible without stealing attention. */
@@ -2333,6 +2344,24 @@ a.btn:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* FTS snippet() highlights — monochrome "matched term" emphasis. No
+   yellow highlighter; we're inverting the contrast to make the match
+   pop against the row's foreground without adding colour. */
+.narve-cmdp-title mark,
+.narve-cmdp-sub mark {
+  background: var(--text-primary, #fff);
+  color: var(--bg-base, #0a0a0a);
+  border-radius: 2px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+.narve-cmdp-row.selected .narve-cmdp-title mark,
+.narve-cmdp-row.selected .narve-cmdp-sub mark {
+  background: var(--bg-base, #0a0a0a);
+  color: var(--text-primary, #fff);
+  box-shadow: inset 0 0 0 1px var(--text-primary, #fff);
 }
 .narve-cmdp-sub {
   font-size: 11.5px;
