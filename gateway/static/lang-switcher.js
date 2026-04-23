@@ -77,17 +77,68 @@
     var trigger = container.querySelector(".lang-switcher");
     var menu = container.querySelector(".lang-switcher__menu");
 
+    // Menu option buttons — referenced by the keyboard handlers below so
+    // up/down/home/end can walk the list without re-querying each tick.
+    var options = Array.prototype.slice.call(
+      menu.querySelectorAll("button[data-lang]")
+    );
+
     function setOpen(open) {
       menu.dataset.open = open ? "true" : "false";
       trigger.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        // Focus the current selection if we have one, otherwise the first.
+        var target =
+          options.filter(function (o) { return o.getAttribute("aria-current") === "true"; })[0] ||
+          options[0];
+        if (target) target.focus();
+      } else {
+        // Return focus to the trigger so screen readers announce the close.
+        trigger.focus();
+      }
+    }
+
+    function focusOption(idx) {
+      if (!options.length) return;
+      var clamped = ((idx % options.length) + options.length) % options.length;
+      options[clamped].focus();
+    }
+
+    function currentOptionIndex() {
+      return options.indexOf(document.activeElement);
     }
 
     trigger.addEventListener("click", function (e) {
       e.stopPropagation();
       setOpen(menu.dataset.open !== "true");
     });
+
+    // Trigger-level keys: Enter / Space / ArrowDown / ArrowUp open the menu;
+    // Escape closes it.
     trigger.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") { setOpen(false); return; }
+      if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setOpen(true);
+      }
+    });
+
+    // Menu-level keys: Arrow walk, Home/End jump, Enter/Space select, Escape
+    // close, Tab closes and lets focus move out of the widget.
+    menu.addEventListener("keydown", function (e) {
+      var i = currentOptionIndex();
+      if (e.key === "Escape") { e.preventDefault(); setOpen(false); return; }
+      if (e.key === "Tab") { setOpen(false); return; }  // don't preventDefault — Tab should move on
+      if (e.key === "ArrowDown") { e.preventDefault(); focusOption(i + 1); return; }
+      if (e.key === "ArrowUp")   { e.preventDefault(); focusOption(i - 1); return; }
+      if (e.key === "Home")      { e.preventDefault(); focusOption(0); return; }
+      if (e.key === "End")       { e.preventDefault(); focusOption(options.length - 1); return; }
+      if (e.key === "Enter" || e.key === " ") {
+        if (document.activeElement && document.activeElement.matches("button[data-lang]")) {
+          e.preventDefault();
+          document.activeElement.click();
+        }
+      }
     });
 
     menu.addEventListener("click", function (e) {
@@ -97,6 +148,7 @@
       var lang = btn.dataset.lang;
       if (lang === current) { setOpen(false); return; }
       btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
       btn.textContent = "…";
       switchLang(lang).then(function () {
         // Persist the new lang into the URL so server-side detection
@@ -109,6 +161,7 @@
       }).catch(function (err) {
         console.warn("lang-switcher:", err);
         btn.disabled = false;
+        btn.removeAttribute("aria-busy");
       });
     });
 

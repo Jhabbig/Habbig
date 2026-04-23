@@ -1980,9 +1980,13 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
                 rest = "" if comma == -1 else raw[comma + 1:].strip()
             kwargs: dict = {}
             if rest:
-                # Minimal kwarg parser: k=value pairs, value is bare or
-                # quoted. Not a full expression parser — complex
-                # interpolation should happen in Python before render_page.
+                # Minimal kwarg parser: k=value pairs. Quoted values are
+                # literals; bare identifiers resolve against the render
+                # context dict so ``t("foo", count=dashboard_count)``
+                # actually passes the int, not the literal string.
+                # Numeric literals get cast. Everything else falls back
+                # to the raw token — better to show {name} than to 500
+                # the page.
                 for pair in re.findall(
                     r'([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*("[^"]*"|\'[^\']*\'|[^,]+)',
                     rest,
@@ -1992,8 +1996,17 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
                     if (v.startswith('"') and v.endswith('"')) or (
                         v.startswith("'") and v.endswith("'")
                     ):
-                        v = v[1:-1]
-                    kwargs[k] = v
+                        kwargs[k] = v[1:-1]
+                    elif v in context:
+                        kwargs[k] = context[v]
+                    else:
+                        try:
+                            kwargs[k] = int(v)
+                        except ValueError:
+                            try:
+                                kwargs[k] = float(v)
+                            except ValueError:
+                                kwargs[k] = v
             try:
                 return html.escape(_i18n_t(key, _lang, **kwargs))
             except Exception:
@@ -2045,6 +2058,7 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         '<link rel="stylesheet" href="/_gateway_static/states.css">\n'
         '<link rel="stylesheet" href="/_gateway_static/lang-switcher.css">\n'
         '<script src="/_gateway_static/skeletons.js" defer></script>\n'
+        '<script src="/_gateway_static/i18n-client.js" defer></script>\n'
         '<script src="/_gateway_static/lang-switcher.js" defer></script>'
     )
     if "skeletons.js" not in page:
@@ -2083,12 +2097,36 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
             f'window.SUPPORTED_LANGS={html.escape(repr(list(_I18N_SUPPORTED)))}'
             f';</script>'
         )
+        # Locale blob for client-side window.t(). We inline ONLY the current
+        # locale (not every language) so payload stays small. Resolving
+        # each entry through _resolve_locale_entry unwraps the
+        # {"text":...,"_machine":true} wrapper shape — the client only
+        # needs the display string.
+        try:
+            from i18n.translator import load_locale as _load_locale
+            from i18n.translator import _resolve as _resolve_locale_entry
+            _raw_locale = _load_locale(_lang)
+            _flat_locale = {}
+            for _k, _v in _raw_locale.items():
+                _resolved = _resolve_locale_entry(_v)
+                if _resolved is not None:
+                    _flat_locale[_k] = _resolved
+            _locale_json = json.dumps(_flat_locale, ensure_ascii=False, separators=(",", ":"))
+            # Minimal escape: only `</` inside a <script> needs breaking.
+            _locale_json_safe = _locale_json.replace("</", "<\\/")
+            locale_blob_tag = (
+                f'<script type="application/json" id="__NARVE_I18N__">'
+                f'{_locale_json_safe}'
+                f'</script>'
+            )
+        except Exception:
+            locale_blob_tag = ""
         if "window.LANG=" not in page:
             body_idx = page.lower().find("<body")
             if body_idx != -1:
                 gt = page.find(">", body_idx)
                 if gt != -1:
-                    page = page[: gt + 1] + window_lang_js + page[gt + 1:]
+                    page = page[: gt + 1] + window_lang_js + locale_blob_tag + page[gt + 1:]
     # ⌘K command palette. Mounts itself on first keypress — single script
     # handles modal DOM, FTS search, click logging, command mode. Inject
     # into every rendered page so the hotkey is uniformly available.
@@ -3559,6 +3597,57 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         role_badge = '<span class="profile-meta-item" style="background:var(--accent-light);color:var(--accent)">Admin</span>'
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     avatar = user.get("username", "?")[0].upper()
+
+    # User's public collections — shown as a section on the profile page
+    # so the owner has a canonical surface to point people at, separate
+    # from the /collections dashboard view they use for editing.
+    import html as _html
+    collections_html = ""
+    try:
+        from queries import collections as _coll
+        public_cols = _coll.list_public_by_owner(user["user_id"], limit=12)
+        if public_cols:
+            cards = []
+            for c in public_cols:
+                title = _html.escape(c.get("title") or "Untitled")
+                desc = _html.escape((c.get("description") or "").strip()[:120])
+                items = c.get("item_count") or 0
+                followers = c.get("follower_count") or 0
+                featured_chip = (
+                    '<span style="display:inline-block;padding:2px 8px;border-radius:999px;'
+                    'background:var(--text-primary);color:var(--bg-base);font-size:10px;'
+                    'text-transform:uppercase;letter-spacing:0.08em;margin-left:8px">Featured</span>'
+                    if c.get("is_featured") else ""
+                )
+                cards.append(
+                    f'<a href="/collections/{c["id"]}" '
+                    f'style="display:block;padding:16px;border:1px solid var(--border);'
+                    f'border-radius:10px;text-decoration:none;color:inherit;background:var(--bg-surface,var(--bg-base))">'
+                    f'<div style="font-weight:600;font-size:15px">{title}{featured_chip}</div>'
+                    f'<div style="color:var(--text-secondary,var(--text-muted));font-size:12px;'
+                    f'line-height:1.45;margin-top:6px;min-height:32px">{desc}</div>'
+                    f'<div style="color:var(--text-tertiary,var(--text-muted));font-size:11px;'
+                    f'text-transform:uppercase;letter-spacing:0.08em;margin-top:10px">'
+                    f'{items} items · {followers} followers</div>'
+                    f'</a>'
+                )
+            collections_html = (
+                '<div class="settings-card" style="margin-top:24px">'
+                '<div class="settings-section">'
+                '<div class="settings-section-title">Public collections</div>'
+                '<div class="settings-section-desc">'
+                'Boards you\'ve made public — anyone with the link can view them.'
+                '</div>'
+                '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:14px">'
+                + "".join(cards) +
+                '</div>'
+                '<div style="margin-top:14px"><a href="/collections" style="font-size:12px;color:var(--text-secondary)">Manage all collections →</a></div>'
+                '</div></div>'
+            )
+    except Exception:
+        # Collections module optional — profile still renders without it.
+        log.exception("profile: public collections section failed")
+
     return {
         "username": user.get("username", user["email"]),
         "email": user["email"],
@@ -3568,6 +3657,7 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         "raw_nav_role": _role_badge(user),
         "raw_admin_link": admin_link,
         "raw_banner": banner,
+        "raw_collections_section": collections_html,
         "_is_admin": user.get("is_admin"),
     }
 
@@ -4927,6 +5017,31 @@ try:
     _seo_routes.register(app)
 except Exception as _exc:  # pragma: no cover
     log.exception("seo_routes.register failed: %s", _exc)
+
+
+# ── Post-token-gate first-run experience ─────────────────────────────────
+#
+# /onboarding (5-step tour), /api/first-week/goals + goal-mark POSTs,
+# /api/feed/sample for empty-dashboard sample data, and /admin/onboarding
+# metrics page. Handlers live in onboarding_routes.py.
+
+try:
+    import onboarding_routes as _onboarding_routes  # noqa: E402
+    _onboarding_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("onboarding_routes.register failed: %s", _exc)
+
+
+# ── Scenario + correlation matrix (Pro) ──────────────────────────────────
+#
+# /tools/scenario, /tools/correlations, /api/scenario/* — conditional
+# probability + Pearson heatmap. Handlers in scenarios_routes.py.
+
+try:
+    import scenarios_routes as _scenarios_routes  # noqa: E402
+    _scenarios_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("scenarios_routes.register failed: %s", _exc)
 
 
 # ── Public developer API v1 + API-key + webhook settings pages ────────

@@ -30,10 +30,10 @@
       <span style="font-size:18px">narve.ai</span>
     </div>
     <nav class="landing-nav">
-      <a href="#features">Dashboards</a>
-      <a href="/pricing">Pricing</a>
-      <a href="/token" class="client-login-link">Sign In</a>
-      <button class="mobile-menu-toggle" onclick="document.getElementById('mobile-nav').classList.add('open')" aria-label="Open menu">
+      <a href="#features">{{ t("landing.nav.dashboards") }}</a>
+      <a href="/pricing">{{ t("landing.nav.pricing") }}</a>
+      <a href="/token" class="client-login-link">{{ t("nav.sign_in") }}</a>
+      <button class="mobile-menu-toggle" onclick="document.getElementById('mobile-nav').classList.add('open')" aria-label="{{ t('landing.nav.open_menu') }}">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
     </nav>
@@ -42,47 +42,40 @@
   <!-- Mobile menu -->
   <div id="mobile-nav" class="landing-nav-mobile-overlay" onclick="if(event.target===this)this.classList.remove('open')">
     <div class="landing-nav-mobile-panel">
-      <button class="mobile-close-btn" onclick="document.getElementById('mobile-nav').classList.remove('open')" aria-label="Close menu">
+      <button class="mobile-close-btn" onclick="document.getElementById('mobile-nav').classList.remove('open')" aria-label="{{ t('landing.nav.close_menu') }}">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
-      <a href="#features" onclick="document.getElementById('mobile-nav').classList.remove('open')">Dashboards</a>
-      <a href="/pricing" onclick="document.getElementById('mobile-nav').classList.remove('open')">Pricing</a>
-      <a href="/token" onclick="document.getElementById('mobile-nav').classList.remove('open')">Sign In</a>
+      <a href="#features" onclick="document.getElementById('mobile-nav').classList.remove('open')">{{ t("landing.nav.dashboards") }}</a>
+      <a href="/pricing" onclick="document.getElementById('mobile-nav').classList.remove('open')">{{ t("landing.nav.pricing") }}</a>
+      <a href="/token" onclick="document.getElementById('mobile-nav').classList.remove('open')">{{ t("nav.sign_in") }}</a>
     </div>
   </div>
 
   <section class="landing-hero">
     <div class="landing-hero-inner">
-      <div class="landing-eyebrow">{{ dashboard_count }} dashboards · one login · cancel anytime</div>
+      <div class="landing-eyebrow">{{ t("landing.hero.eyebrow", count=dashboard_count) }}</div>
       <h1 class="landing-headline">
-        The signals<br>
-        <span class="landing-gradient">markets don't show you.</span>
+        {{ t("landing.hero.headline_1") }}<br>
+        <span class="landing-gradient">{{ t("landing.hero.headline_2") }}</span>
       </h1>
-      <p class="landing-sub">
-        narve.ai turns raw Polymarket, crypto, stock, weather and geopolitical data
-        into focused dashboards you actually want to look at. Subscribe to the
-        ones that sharpen your edge. Ignore the rest.
-      </p>
+      <p class="landing-sub">{{ t("landing.hero.sub") }}</p>
       <div class="landing-cta-row">
-        <a href="/pricing" class="landing-primary-cta" style="color:var(--interactive-text) !important">Get Started</a>
-        <a href="/token" class="landing-secondary-cta">Log In</a>
+        <a href="/pricing" class="landing-primary-cta" style="color:var(--interactive-text) !important">{{ t("landing.hero.cta_primary") }}</a>
+        <a href="/token" class="landing-secondary-cta">{{ t("landing.hero.cta_login") }}</a>
 
       </div>
       <div class="landing-trust">
         <div class="landing-trust-dot"></div>
-        No free tier gimmicks. No ads. No data reselling.
+        {{ t("landing.hero.trust") }}
       </div>
     </div>
   </section>
 
   <section class="landing-section" id="features">
     <div class="landing-section-head reveal">
-      <div class="landing-eyebrow-sm">What's inside</div>
-      <h2 class="landing-section-title">Pick and mix dashboards</h2>
-      <p class="landing-section-sub">
-        Every card is a separate subscription. Start with one, add more when
-        you want them, cancel individually.
-      </p>
+      <div class="landing-eyebrow-sm">{{ t("landing.features.eyebrow") }}</div>
+      <h2 class="landing-section-title">{{ t("landing.features.title") }}</h2>
+      <p class="landing-section-sub">{{ t("landing.features.sub") }}</p>
     </div>
     <div class="landing-dash-grid stagger">
       {{ dashboard_cards }}
@@ -91,44 +84,44 @@
 
   <section class="landing-section landing-section-dark" id="pricing">
     <div class="landing-section-head reveal-fade">
-      <div class="landing-eyebrow-sm">Pricing</div>
-      <h2 class="landing-section-title">Level up your Polymarket trading today</h2>
+      <div class="landing-eyebrow-sm">{{ t("landing.pricing.eyebrow") }}</div>
+      <h2 class="landing-section-title">{{ t("landing.pricing.title") }}</h2>
     </div>
     <div class="landing-pricing-grid stagger" style="grid-template-columns:repeat(3,1fr);gap:20px">
       <!-- Trader -->
       <div class="landing-pricing-card" style="display:flex;flex-direction:column">
-        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Trader</div>
-        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For active traders getting started with signal intelligence</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">{{ t("landing.pricing.trader.name") }}</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">{{ t("landing.pricing.trader.desc") }}</div>
         <div style="font-size:36px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px"><span style="font-size:18px">&pound;</span>75 <span style="font-size:18px;font-weight:500;color:var(--text-muted)">/ $</span>99<span style="font-size:14px;font-weight:400;color:var(--text-muted)">/mo</span></div>
         <div style="height:1px;background:var(--border);margin:16px 0"></div>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">30-day data window &middot; 10 markets &middot; Global credibility scores &middot; Best bets (top 5) &middot; Probability % on all bets</div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">{{ t("landing.pricing.trader.features") }}</div>
         <!-- TODO: Replace /enquire redirect with Stripe checkout when payments configured -->
-        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='transparent'">Get Started</a>
+        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='transparent'">{{ t("landing.pricing.cta_get_started") }}</a>
       </div>
       <!-- Pro -->
       <div class="landing-pricing-card" style="display:flex;flex-direction:column;border-color:var(--accent);box-shadow:0 0 20px rgba(255,255,255,0.06);position:relative">
-        <div style="position:absolute;top:-11px;right:16px;background:var(--accent);color:var(--interactive-text);font-size:11px;font-weight:600;padding:4px 12px;border-radius:16px">Most Popular</div>
-        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Pro</div>
-        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For serious traders who want the full edge</div>
+        <div style="position:absolute;top:-11px;right:16px;background:var(--accent);color:var(--interactive-text);font-size:11px;font-weight:600;padding:4px 12px;border-radius:16px">{{ t("landing.pricing.most_popular") }}</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">{{ t("landing.pricing.pro.name") }}</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">{{ t("landing.pricing.pro.desc") }}</div>
         <div style="font-size:36px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px"><span style="font-size:18px">&pound;</span>180 <span style="font-size:18px;font-weight:500;color:var(--text-muted)">/ $</span>229<span style="font-size:14px;font-weight:400;color:var(--text-muted)">/mo</span></div>
         <div style="height:1px;background:var(--border);margin:16px 0"></div>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">Everything in Trader &middot; 6-month data &middot; Unlimited markets &middot; Full credibility &middot; Signal Search (AI) &middot; Push notifications</div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">{{ t("landing.pricing.pro.features") }}</div>
         <!-- TODO: Replace /enquire redirect with Stripe checkout when payments configured -->
-        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--interactive-text);background:var(--interactive-bg);text-decoration:none;margin-top:20px;transition:transform 0.1s" onmouseenter="this.style.transform='translateY(-1px)'" onmouseleave="this.style.transform='none'">Get Started</a>
+        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--interactive-text);background:var(--interactive-bg);text-decoration:none;margin-top:20px;transition:transform 0.1s" onmouseenter="this.style.transform='translateY(-1px)'" onmouseleave="this.style.transform='none'">{{ t("landing.pricing.cta_get_started") }}</a>
       </div>
       <!-- Enterprise -->
       <div class="landing-pricing-card" style="display:flex;flex-direction:column">
-        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Enterprise</div>
-        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">For funds, institutions, and custom use cases</div>
-        <div style="font-size:24px;font-weight:700;margin-bottom:4px">Custom pricing</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">{{ t("landing.pricing.enterprise.name") }}</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;min-height:36px">{{ t("landing.pricing.enterprise.desc") }}</div>
+        <div style="font-size:24px;font-weight:700;margin-bottom:4px">{{ t("landing.pricing.enterprise.price") }}</div>
         <div style="height:1px;background:var(--border);margin:16px 0"></div>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">Everything in Pro &middot; Full history &middot; API access &middot; Custom integrations &middot; Unlimited topics &middot; Trading included</div>
-        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='transparent'">Contact Us</a>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;flex:1">{{ t("landing.pricing.enterprise.features") }}</div>
+        <a href="/enquire" style="display:block;text-align:center;padding:12px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--accent);text-decoration:none;margin-top:20px;transition:background 0.15s" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='transparent'">{{ t("landing.pricing.cta_contact") }}</a>
       </div>
     </div>
-    <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:16px">Prices shown in GBP and USD. Charged in GBP. USD shown for reference.</div>
+    <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:16px">{{ t("landing.pricing.currency_note") }}</div>
     <div style="text-align:center;margin-top:32px">
-      <a href="/pricing" style="font-size:14px;font-weight:500;color:var(--accent);text-decoration:none">See full feature comparison &rarr;</a>
+      <a href="/pricing" style="font-size:14px;font-weight:500;color:var(--accent);text-decoration:none">{{ t("landing.pricing.compare_link") }}</a>
     </div>
   </section>
 
