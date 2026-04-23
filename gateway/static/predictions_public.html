@@ -5,27 +5,78 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ handle }} — narve.ai</title>
   <link rel="stylesheet" href="/_gateway_static/gateway.css?v=8">
-  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <div style="max-width:920px;margin:40px auto;padding:0 20px">
-    <a href="/" style="text-decoration:none;color:inherit;font-weight:600">narve.ai</a>
+  <!-- Public profile page — no sidebar because this is reachable without
+       auth (used for sharing a predictor's record). Keeps the chrome
+       minimal: top brand mark, page header, then the same stat + table
+       utilities used everywhere else. -->
+  <div style="max-width:960px;margin:0 auto;padding:40px 24px 80px">
 
-    <div class="page-header" style="margin-top:24px">
-      <div class="page-subtitle">Predictor</div>
-      <h1 class="page-title"><span id="handle-label">{{ handle }}</span></h1>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+      <a href="/" style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:8px;font-weight:600">
+        <img src="/_gateway_static/img/logo.png" alt="" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
+        narve.ai
+      </a>
+      <a href="/dashboards" style="font-size:13px;color:var(--text-tertiary);text-decoration:none">Dashboards →</a>
     </div>
 
-    <section id="stats-box" class="card" style="padding:20px;margin-bottom:20px">
-      <div class="empty-state"><div class="empty-state-title">Loading stats…</div></div>
-    </section>
-
-    <h2 style="margin-top:32px">Public predictions</h2>
-    <div id="preds-body">
-      <div class="empty-state"><div class="empty-state-title">Loading…</div></div>
+    <div class="breadcrumb" style="margin-bottom:8px">
+      <a href="/" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-item">Predictors</span>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-item current" id="crumb-handle">{{ handle }}</span>
     </div>
+
+    <div class="page-header">
+      <div class="page-subtitle" style="text-transform:uppercase;letter-spacing:0.08em;font-size:12px">Predictor</div>
+      <h1 class="page-title" id="handle-label">{{ handle }}</h1>
+      <p class="page-subtitle">
+        Public track record. Accuracy + Brier score shown once markets resolve.
+      </p>
+    </div>
+
+    <div class="stat-grid" id="stats-grid" style="margin-bottom:24px">
+      <div class="stat-tile">
+        <div class="stat-label">Total</div>
+        <div class="stat-value" id="s-total">—</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Resolved</div>
+        <div class="stat-value" id="s-resolved">—</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Accuracy</div>
+        <div class="stat-value" id="s-accuracy">—</div>
+        <div class="stat-trend">% of resolved correct</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Brier</div>
+        <div class="stat-value" id="s-brier">—</div>
+        <div class="stat-trend">lower is better</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Streak</div>
+        <div class="stat-value" id="s-streak">—</div>
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <h2>Public predictions</h2>
+        <span class="admin-section-count" id="public-count">loading</span>
+      </div>
+      <div id="preds-body">
+        <div class="admin-card">
+          <div class="empty-cell">Loading…</div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
 <script>
@@ -35,55 +86,71 @@
   function fmtDate(ts){ if (!ts) return '—'; return new Date(ts * 1000).toLocaleDateString(); }
   function fmtPct(x, d){ if (x === null || x === undefined) return '—'; return (x*100).toFixed(d||0)+'%'; }
 
+  function stateCell(p){
+    if (!p.resolved) return '<span style="color:var(--text-tertiary);font-size:11px;text-transform:uppercase;letter-spacing:0.06em">Active</span>';
+    return p.resolved_correct
+      ? '<span style="color:var(--text-primary);font-weight:600">\u2713</span>'
+      : '<span style="color:var(--text-tertiary)">\u2717</span>';
+  }
+
+  function set(id, v){ var el = document.getElementById(id); if (el) el.textContent = v; }
+
   fetch('/api/predictions/public/' + uid).then(function(r){
     if (!r.ok) throw new Error('not found');
     return r.json();
   }).then(function(d){
-    if (d.handle) document.getElementById('handle-label').textContent = d.handle;
-
-    var s = d.stats;
-    var sbox = document.getElementById('stats-box');
-    if (!s) {
-      sbox.innerHTML = '<div class="empty-state"><div class="empty-state-title">No stats yet.</div></div>';
-    } else {
-      sbox.innerHTML =
-        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px">'
-        + '<div><div class="stat-label">Total</div><div class="stat-value">' + (s.total_predictions || 0) + '</div></div>'
-        + '<div><div class="stat-label">Resolved</div><div class="stat-value">' + (s.resolved_predictions || 0) + '</div></div>'
-        + '<div><div class="stat-label">Accuracy</div><div class="stat-value">' + fmtPct(s.accuracy, 1) + '</div></div>'
-        + '<div><div class="stat-label">Brier</div><div class="stat-value">' + (s.avg_brier_score === null ? '—' : s.avg_brier_score.toFixed(3)) + '</div></div>'
-        + '<div><div class="stat-label">Streak</div><div class="stat-value">' + (s.current_streak || 0) + ' / best ' + (s.best_streak || 0) + '</div></div>'
-        + '</div>';
+    if (d.handle) {
+      set('handle-label', d.handle);
+      set('crumb-handle', d.handle);
     }
+
+    var s = d.stats || {};
+    set('s-total', s.total_predictions || 0);
+    set('s-resolved', s.resolved_predictions || 0);
+    document.getElementById('s-accuracy').textContent =
+      s.accuracy === null || s.accuracy === undefined ? '—' : fmtPct(s.accuracy, 1);
+    document.getElementById('s-brier').textContent =
+      s.avg_brier_score === null || s.avg_brier_score === undefined ? '—' : s.avg_brier_score.toFixed(3);
+    set('s-streak', (s.current_streak || 0) + ' / best ' + (s.best_streak || 0));
 
     var body = document.getElementById('preds-body');
-    if (!d.items || !d.items.length) {
-      body.innerHTML = '<div class="empty-state"><div class="empty-state-title">No public predictions yet.</div></div>';
+    var items = d.items || [];
+    set('public-count', items.length + (items.length === 1 ? ' prediction' : ' predictions'));
+
+    if (!items.length){
+      body.innerHTML = '<div class="admin-card"><div class="empty-cell">'
+        + 'No public predictions yet.</div></div>';
       return;
     }
-    var html = '<table class="db-table"><thead><tr>'
-      + '<th>State</th><th>Market</th><th>Call</th><th>When</th><th></th>'
+
+    var html = '<div class="admin-card"><table class="admin-table"><thead><tr>'
+      + '<th style="width:8%">State</th>'
+      + '<th>Market</th>'
+      + '<th style="width:18%">Call</th>'
+      + '<th class="num" style="width:11%">When</th>'
+      + '<th class="actions"></th>'
       + '</tr></thead><tbody>';
-    d.items.forEach(function(p){
+    items.forEach(function(p){
       var pct = Math.round((p.predicted_probability || 0) * 100);
-      var state = p.resolved
-        ? (p.resolved_correct ? '<span class="cred-score high">✓</span>' : '<span class="cred-score low">✗</span>')
-        : '<span class="cred-score unrated">Active</span>';
       html += '<tr>'
-        + '<td>' + state + '</td>'
-        + '<td class="db-cell-primary">' + esc(p.market_question || p.market_slug) + '</td>'
+        + '<td>' + stateCell(p) + '</td>'
+        + '<td>' + esc(p.market_question || p.market_slug) + '</td>'
         + '<td>' + esc(p.predicted_outcome) + ' (' + pct + '%)</td>'
-        + '<td class="db-cell-data">' + esc(fmtDate(p.created_at)) + '</td>'
-        + '<td><a class="btn-ghost" href="/predictions/' + p.id + '">View</a></td>'
+        + '<td class="num">' + esc(fmtDate(p.created_at)) + '</td>'
+        + '<td class="actions"><a class="btn-danger" '
+        + 'style="font-size:12px;padding:5px 10px;text-decoration:none" '
+        + 'href="/predictions/' + p.id + '">View</a></td>'
         + '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     body.innerHTML = html;
   }).catch(function(){
-    document.getElementById('stats-box').innerHTML = '<div class="empty-state"><div class="empty-state-title">Profile not available.</div></div>';
-    document.getElementById('preds-body').innerHTML = '';
+    document.getElementById('preds-body').innerHTML =
+      '<div class="admin-card"><div class="empty-cell">Profile not available.</div></div>';
+    set('public-count', '');
   });
 })();
 </script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
 </body>
 </html>
