@@ -16,11 +16,21 @@
     <div class="page-header" style="margin-top:24px">
       <div class="page-subtitle">Public prediction by <strong id="handle-label">{{ handle }}</strong></div>
       <h1 class="page-title" id="market-question">{{ market_question }}</h1>
+      <div style="margin-top:12px">
+        <button type="button"
+                data-add-to-collection
+                data-item-type="prediction"
+                data-item-ref="{{ pid }}"
+                style="padding:8px 14px;border:1px solid var(--border,#e5e5e5);border-radius:6px;background:transparent;color:inherit;font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:0.06em">
+          + Collection
+        </button>
+      </div>
     </div>
 
     <section class="card" id="pred-card" style="padding:20px;margin-top:16px">
       <div class="empty-state"><div class="empty-state-title">Loading…</div></div>
     </section>
+    <script src="/_gateway_static/collections_widget.js" defer></script>
 
     <p style="margin-top:24px"><a href="/predictions/public/" id="profile-link">View all of this user's public predictions →</a></p>
   </div>

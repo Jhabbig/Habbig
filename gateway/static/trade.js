@@ -793,10 +793,15 @@
         </button>
       </div>`}
 
-      <div style="margin-top:24px">
+      <div style="margin-top:24px;display:flex;gap:10px;flex-wrap:wrap">
         <a href="${esc(m.url)}" target="_blank" rel="noopener" class="hb-m-btn hb-m-btn-outline hb-m-btn-sm" style="text-decoration:none;display:inline-block">
           View on ${m.source === 'polymarket' ? 'Polymarket' : 'Kalshi'} &rarr;
         </a>
+        <button type="button" class="hb-m-btn hb-m-btn-outline hb-m-btn-sm"
+                data-add-to-collection
+                data-item-type="market"
+                data-item-ref="${esc(m.id)}"
+                title="Save this market to a collection">+ Collection</button>
       </div>
     `;
 
