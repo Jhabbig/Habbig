@@ -33,8 +33,11 @@
     .generate-form { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 24px; }
     .generate-form input { flex: 1; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: 14px; background: var(--bg-surface); color: var(--text-primary); }
     .generate-form input:focus { outline: none; border-color: var(--text-primary); box-shadow: 0 0 0 3px var(--interactive-ghost); }
-    .new-token-banner { background: var(--interactive-ghost); border: 1px solid var(--positive); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
-    .new-token-banner .token-mono { font-size: 15px; color: var(--positive); user-select: all; }
+    /* Monochrome just-generated-token banner. Strong outline + ghost
+       fill so it reads as "something just happened" without a colour
+       accent violating the design system. */
+    .new-token-banner { background: var(--interactive-ghost); border: 1px solid var(--text-primary); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
+    .new-token-banner .token-mono { font-size: 15px; color: var(--text-primary); user-select: all; font-weight: 600; }
     .quota-bar { width: 100%; height: 6px; background: var(--border-ghost); border-radius: 3px; margin-top: 8px; overflow: hidden; }
     .quota-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
   </style>
@@ -125,10 +128,14 @@
           <a class="admin-tab" href="/admin/flags" style="text-decoration:none;display:inline-flex;align-items:center">Flags</a>
           <a class="admin-tab" href="/admin/emails" style="text-decoration:none;display:inline-flex;align-items:center">Emails</a>
           <a class="admin-tab" href="/admin/impersonations" style="text-decoration:none;display:inline-flex;align-items:center">Impersonation</a>
+          <a class="admin-tab" href="/admin/affiliates" style="text-decoration:none;display:inline-flex;align-items:center">Affiliates</a>
+          <a class="admin-tab" href="/admin/equivalences" style="text-decoration:none;display:inline-flex;align-items:center">Equivalences</a>
+          <a class="admin-tab" href="/admin/incidents" style="text-decoration:none;display:inline-flex;align-items:center">Incidents</a>
           <a class="admin-tab" href="/admin/churn" style="text-decoration:none;display:inline-flex;align-items:center">Churn</a>
           <a class="admin-tab" href="/admin/audit-log" style="text-decoration:none;display:inline-flex;align-items:center">Audit</a>
           <a class="admin-tab" href="/admin/security/bulk-fetches" style="text-decoration:none;display:inline-flex;align-items:center">Bulk&nbsp;fetches</a>
           <a class="admin-tab" href="/admin/security/forensics" style="text-decoration:none;display:inline-flex;align-items:center">Forensics</a>
+          <a class="admin-tab" href="/dashboard/models" style="text-decoration:none;display:inline-flex;align-items:center">Models</a>
         </div>
 
         <!-- ======== TOKENS ======== -->
@@ -162,8 +169,8 @@
               <button type="submit" form="bulk-form" name="bulk_action" value="promote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Promote selected users to admin?')">Promote</button>
               <button type="submit" form="bulk-form" name="bulk_action" value="demote" class="btn btn-primary-outline" style="font-size:11px" onclick="return confirm('Demote selected users?')">Demote</button>
               <button type="submit" form="bulk-form" name="bulk_action" value="suspend" class="btn btn-danger" style="font-size:11px" onclick="return confirm('Suspend selected users?')">Suspend</button>
-              <button type="submit" form="bulk-form" name="bulk_action" value="unsuspend" class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)" onclick="return confirm('Unsuspend selected users?')">Unsuspend</button>
-              <button type="submit" form="bulk-form" name="bulk_action" value="delete" class="btn btn-danger" style="font-size:11px;background:var(--red);color:white;border-color:var(--red)" onclick="return confirm('PERMANENTLY DELETE selected users? This cannot be undone.')">Delete</button>
+              <button type="submit" form="bulk-form" name="bulk_action" value="unsuspend" class="btn-danger" style="font-size:11px;border-color:var(--border-strong)" onclick="return confirm('Unsuspend selected users?')">Unsuspend</button>
+              <button type="submit" form="bulk-form" name="bulk_action" value="delete" class="btn-danger" style="font-size:11px;border-color:var(--text-primary);font-weight:600" onclick="return confirm('PERMANENTLY DELETE selected users? This cannot be undone.')">Delete</button>
             </div>
           </div>
 
@@ -787,8 +794,10 @@ function _renderJobs(sched, status) {
   jobs.forEach(function(j) {
     var paused = j.paused;
     var badge = paused
-      ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(245,158,11,0.12);color:#f59e0b">Paused</span>'
-      : '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,0.12);color:#22c55e">Running</span>';
+      /* Monochrome status pills — Paused = ghosted, Running = strong
+         ink. No green/amber so the page stays strictly monochrome. */
+      ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--bg-raised);color:var(--text-tertiary);border:1px solid var(--border-subtle)">Paused</span>'
+      : '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--semantic-high-bg);color:var(--text-primary);border:1px solid var(--semantic-high-border);font-weight:600">Running</span>';
     html += '<div class="admin-row">'
       + '<div class="admin-row-info"><div class="admin-row-main">'
       + '<span style="font-weight:500;font-size:13px">' + j.id + '</span> ' + badge
@@ -851,7 +860,7 @@ function _renderSessions(sessions) {
   var html = '';
   sessions.forEach(function(s) {
     var badge = s.valid
-      ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,0.12);color:#22c55e">Valid</span>'
+      ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--semantic-high-bg);color:var(--text-primary);border:1px solid var(--semantic-high-border);font-weight:600">Valid</span>'
       : '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(239,68,68,0.12);color:#ef4444">Invalid</span>';
     html += '<div class="admin-row" style="padding:10px 16px">'
       + '<div class="admin-row-info"><div class="admin-row-main" style="margin-bottom:2px">'
