@@ -197,7 +197,7 @@
           toast('Added');
         } catch (e) {
           btn.disabled = false;
-          alert(e.message);
+          (window.narveToastError || window.alert)(e.message);
         }
       });
     });
@@ -218,7 +218,7 @@
           toast('Added to “' + title + '”');
         } catch (e) {
           form.querySelector('button').disabled = false;
-          alert(e.message);
+          (window.narveToastError || window.alert)(e.message);
         }
       });
     }

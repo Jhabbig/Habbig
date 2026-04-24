@@ -91,7 +91,7 @@
     function sendFeedback() {
       var msg = document.getElementById('fb-msg').value.trim();
       if (msg.length < 3) {
-        alert('Please enter a short description.');
+        (window.narveToastError || window.alert)('Please enter a short description.');
         return;
       }
       var sendBtn = document.getElementById('fb-send');
@@ -114,12 +114,12 @@
           sendBtn.textContent = 'Thanks!';
           setTimeout(closeModal, 900);
         } else {
-          r.text().then(function (t) { alert('Failed: ' + t); });
+          r.text().then(function (t) { (window.narveToastError || window.alert)('Failed: ' + t); });
         }
       }).catch(function () {
         sendBtn.disabled = false;
         sendBtn.textContent = 'Send feedback';
-        alert('Network error.');
+        (window.narveToastError || window.alert)('Network error.');
       });
     }
     function escapeHtml(s) {

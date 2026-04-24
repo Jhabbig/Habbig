@@ -1076,7 +1076,12 @@ _PUBLIC_PATHS = frozenset({
 # (/api/public/v1/*) uses Bearer-token auth and has no gate cookie, so
 # we whitelist the whole prefix rather than enumerate every endpoint.
 _PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/",
-                    "/predictions/public/", "/api/public/v1/")
+                    "/predictions/public/", "/api/public/v1/",
+                    # OG card endpoints need to be crawler-reachable so
+                    # Twitter / Slack / Discord can fetch social previews
+                    # for public URLs. No sensitive data — every card is
+                    # computed from already-public model output.
+                    "/og/")
 
 
 class GateMiddleware(BaseHTTPMiddleware):
@@ -6525,6 +6530,18 @@ try:
     app.include_router(_sharing_router)
 except Exception as _exc:  # pragma: no cover
     log.warning("routes_sharing import failed: %s — continuing without it", _exc)
+
+
+# Public OG card routes — /og/default, /og/pricing, /og/calendar,
+# /og/source/{handle}, /og/market/{slug}. Defensive import so a missing
+# Pillow / og_cards module doesn't block the rest of the mount graph;
+# the base template's og_image reference would then just 404 and
+# browsers fall back to no social preview.
+try:
+    import og_routes as _og_routes  # noqa: E402
+    _og_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.warning("og_routes import failed: %s — continuing without it", _exc)
 
 
 # Subproduct + portfolio + extension + bot routes. All registered via a

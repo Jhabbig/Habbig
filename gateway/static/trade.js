@@ -1578,24 +1578,25 @@
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
       });
+      const toastErr = window.narveToastError || window.alert;
       if (r.status === 429) {
         const data = await r.json().catch(() => ({}));
-        alert(data.error || 'Force-refresh limit reached (5 per day).');
+        toastErr(data.error || 'Force-refresh limit reached (5 per day).');
         return;
       }
       if (r.status === 403) {
-        alert('Pro tier required to refresh environmental analysis.');
+        toastErr('Pro tier required to refresh environmental analysis.');
         return;
       }
       if (!r.ok) {
-        alert(`Refresh failed (${r.status}).`);
+        toastErr(`Refresh failed (${r.status}).`);
         return;
       }
       // Reopen the detail panel to show the new analysis. The merge happens
       // inside GET /api/markets/unified/{id}.
       openDetail(marketId);
     } catch (e) {
-      alert('Network error during refresh.');
+      (window.narveToastError || window.alert)('Network error during refresh.');
     } finally {
       if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = 'Refresh analysis ↻'; }
     }
