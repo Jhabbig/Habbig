@@ -1,0 +1,169 @@
+/* Per-page CSS for static/prerelease.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); display: flex; flex-direction: column; justify-content: center; align-items: center; overflow-x: hidden; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Logo */
+    .pr-logo {
+      position: fixed;
+      top: 28px;
+      left: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      z-index: 10;
+    }
+    /* Black logo by default (light theme). Dark theme inverts it to white. */
+    .pr-logo-icon { width: 48px; height: 48px; border-radius: 6px; }
+    :root[data-theme="dark"] .pr-logo-icon { filter: invert(1); }
+    .pr-logo-text {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 1.5rem;
+      letter-spacing: -0.04em;
+      color: var(--text-primary);
+    }
+
+    /* Admin login */
+    .pr-admin {
+      position: fixed;
+      top: 32px;
+      right: 28px;
+      font-family: var(--font-ui);
+      font-size: 0.85rem;
+      font-weight: 400;
+      color: var(--text-tertiary);
+      text-decoration: none;
+      transition: color 0.2s ease;
+      z-index: 10;
+    }
+    .pr-admin:hover { color: var(--text-primary); }
+
+    /* Hero */
+    .pr-hero { text-align: center; padding: 32px; max-width: 720px; }
+    .pr-line1 {
+      font-family: var(--font-ui);
+      font-weight: 300;
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: var(--text-primary);
+      animation: fadeUp 0.8s ease-out 0.3s both;
+    }
+    .pr-line2 {
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: var(--text-primary);
+      margin-top: 0.05em;
+      animation: fadeUp 0.8s ease-out 0.8s both;
+    }
+    .pr-line2-start {
+      font-family: var(--font-ui);
+      font-weight: 300;
+    }
+    .pr-line2-end {
+      font-family: 'Fraunces', 'Lora', Georgia, serif;
+      font-style: italic;
+      font-weight: 400;
+    }
+    .pr-soon {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-weight: 400;
+      font-size: 1.05rem;
+      letter-spacing: 0.1em;
+      color: var(--text-tertiary);
+      margin-top: 3rem;
+      animation: fadeUp 0.8s ease-out 1.3s both;
+    }
+
+    /* Email signup */
+    .pr-signup {
+      margin-top: 2.5rem;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: center;
+      animation: fadeUp 0.8s ease-out 1.6s both;
+    }
+    .pr-input {
+      height: 52px;
+      padding: 0 20px;
+      border: 1px solid var(--border-default);
+      border-radius: 10px;
+      background: var(--interactive-ghost);
+      font-family: var(--font-ui);
+      font-size: 1rem;
+      color: var(--text-primary);
+      width: 320px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .pr-input:focus { border-color: var(--border-strong); box-shadow: 0 0 0 3px var(--interactive-ghost); }
+    .pr-input::placeholder { color: var(--text-tertiary); font-family: var(--font-display); font-style: italic; }
+    .pr-btn {
+      height: 52px;
+      padding: 0 28px;
+      background: var(--interactive-bg);
+      color: var(--interactive-text);
+      border: none;
+      border-radius: 10px;
+      font-family: var(--font-display);
+      font-style: italic;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .pr-btn:hover { background: var(--text-primary); }
+    .pr-error { font-size: 0.8rem; color: var(--text-secondary); margin-top: 10px; display: none; text-align: center; }
+    .pr-error.visible { display: block; }
+    .pr-success {
+      font-family: var(--font-ui);
+      font-weight: 400;
+      font-size: 0.85rem;
+      letter-spacing: 0.01em;
+      color: var(--text-secondary);
+      display: none;
+      margin-top: 2.5rem;
+      text-align: center;
+      max-width: 420px;
+    }
+    .pr-success.visible { display: block; }
+    /* When signup succeeds, collapse the hero copy so the success
+       card gets the whole viewport (esp. on mobile where everything
+       stacks and the headline + card otherwise overflow). */
+    .pr-hero:has(.pr-success.visible) .pr-line1,
+    .pr-hero:has(.pr-success.visible) .pr-line2,
+    .pr-hero:has(.pr-success.visible) .pr-soon { display: none; }
+    .pr-success-title { font-family: var(--font-ui); font-weight: 500; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 24px; }
+    .pr-position-block { padding: 24px 0; }
+    .pr-position-number { font-family: 'Fraunces', 'Lora', serif; font-style: italic; font-size: 5rem; line-height: 1; color: var(--text-primary); letter-spacing: -0.04em; }
+    .pr-position-label { font-size: 0.7rem; color: var(--text-tertiary); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 8px; }
+    .pr-ref-row { display: flex; align-items: center; gap: 8px; margin-top: 24px; padding: 10px 14px; background: var(--interactive-ghost); border: 1px solid var(--border-default); border-radius: 8px; }
+    .pr-ref-url { flex: 1; font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+    .pr-ref-copy { background: transparent; border: none; color: var(--text-tertiary); font-size: 0.75rem; cursor: pointer; padding: 4px 8px; font-family: inherit; }
+    .pr-ref-copy:hover { color: var(--text-primary); }
+    .pr-ref-hint { font-size: 0.72rem; color: var(--text-tertiary); line-height: 1.6; margin-top: 16px; }
+    .pr-share-row { display: flex; gap: 8px; margin-top: 18px; justify-content: center; }
+    .pr-share-btn { padding: 8px 16px; background: transparent; border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-secondary); font-size: 0.75rem; text-decoration: none; font-family: inherit; cursor: pointer; }
+    .pr-share-btn:hover { border-color: var(--text-primary); color: var(--text-primary); }
+
+    @media (max-width: 520px) {
+      .pr-signup { flex-direction: column; width: 100%; }
+      .pr-input { width: 100%; }
+      .pr-btn { width: 100%; }
+    }

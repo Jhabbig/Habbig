@@ -1,0 +1,19 @@
+/* Per-page CSS for static/settings_api_key_reveal.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.55; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
+    .head h1 { margin: 0 0 8px; font-size: 26px; font-weight: 600; }
+    .note { font-size: 13px; opacity: 0.6; margin: 6px 0 28px; line-height: 1.6; }
+    .alert { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.4); color: #fbbf24; border-radius: 8px; padding: 14px 18px; font-size: 13px; margin-bottom: 28px; line-height: 1.6; }
+    .key-card { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; padding: 22px 24px; margin-bottom: 28px; }
+    .raw-key { font-family: ui-monospace, Menlo, monospace; font-size: 14px; padding: 14px 18px; background: #000; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; margin: 12px 0; word-break: break-all; user-select: all; }
+    .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+    .btn { padding: 9px 16px; border-radius: 6px; border: 1px solid var(--border, rgba(255,255,255,0.15)); background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
+    .btn-primary { background: var(--accent, #fff); color: var(--bg, #0d0d0d); border: 0; font-weight: 600; }
+    .meta { font-size: 12px; opacity: 0.6; line-height: 1.55; margin-top: 14px; }
+    code { font-family: ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; font-size: 12px; }

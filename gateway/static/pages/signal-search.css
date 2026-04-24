@@ -1,0 +1,46 @@
+/* Per-page CSS for static/signal-search.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+.ss-container { max-width: 900px; margin: 0 auto; }
+    .ss-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+    .ss-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .ss-add-btn { padding: 10px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; background: var(--cta-bg); color: var(--interactive-text); border: none; cursor: pointer; }
+    .ss-topics { display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px; }
+    .ss-topic { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .ss-topic-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .ss-topic-name { font-size: 18px; font-weight: 600; }
+    .ss-topic-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 16px; margin-bottom: 16px; }
+    .ss-topic-actions { display: flex; gap: 8px; }
+    .ss-topic-actions button { padding: 6px 14px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); transition: all 0.15s; }
+    .ss-topic-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .ss-topic-actions .ss-pull { border-color: var(--accent); color: var(--accent); }
+    .ss-topic-actions .ss-delete { border-color: var(--red); color: var(--red); }
+    .ss-analysis { margin-top: 16px; padding: 16px; background: var(--surface-hover); border-radius: var(--radius-sm); }
+    .ss-analysis-toggle { font-size: 13px; color: var(--accent); cursor: pointer; font-weight: 500; }
+    .ss-analysis-body { display: none; margin-top: 12px; }
+    .ss-analysis-body.open { display: block; }
+    .ss-signal { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .ss-signal-bullish { background: var(--interactive-ghost); color: var(--positive); }
+    .ss-signal-bearish { background: var(--interactive-ghost); color: var(--text-secondary); }
+    .ss-signal-mixed { background: var(--interactive-ghost); color: var(--text-secondary); }
+    .ss-signal-unclear { background: var(--surface-hover); color: var(--text-muted); }
+    .ss-confidence { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
+    .ss-empty { text-align: center; padding: 64px 24px; color: var(--text-muted); }
+    .ss-empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
+
+    /* Modal */
+    .ss-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 999; align-items: center; justify-content: center; padding: 24px; }
+    .ss-modal-overlay.open { display: flex; }
+    .ss-modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; max-width: 480px; width: 100%; }
+    .ss-modal-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; }
+    .ss-modal label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin: 16px 0 6px; }
+    .ss-modal input, .ss-modal select { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--bg-overlay); color: var(--text-primary); }
+    .ss-modal input:focus, .ss-modal select:focus { outline: none; border-color: var(--accent); }
+    .ss-modal-actions { display: flex; gap: 12px; margin-top: 24px; }
+    .ss-modal-actions button { flex: 1; padding: 12px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer; }
+    .ss-modal-save { background: var(--cta-bg); color: var(--interactive-text); border: none; }
+    .ss-modal-cancel { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }

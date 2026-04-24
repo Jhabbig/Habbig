@@ -1,0 +1,46 @@
+/* Per-page CSS for static/audit_log.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); }
+    .admin-shell { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    .admin-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 24px; margin-bottom: 12px;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .admin-header h1 {
+      font-family: var(--font-display);
+      font-size: 22px; font-weight: 500; margin: 0;
+      letter-spacing: -0.01em;
+    }
+    .admin-nav { display: flex; gap: 12px; align-items: center; font-size: 13px; }
+    .admin-nav a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+    }
+    .admin-nav a:hover { color: var(--text-primary); background: var(--bg-overlay); }
+    .admin-nav a.active { color: var(--text-primary); background: var(--bg-overlay); }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 12px;
+      font-size: 11px; font-weight: 500;
+      background: var(--interactive-ghost); color: var(--text-primary);
+    }
+    .btn {
+      display: inline-block; padding: 8px 14px; border-radius: 6px;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      background: var(--bg-overlay); color: var(--text-primary);
+      border: 1px solid var(--border-default); text-decoration: none;
+    }
+    .btn:hover { background: var(--bg-float); }
+    a { color: var(--text-secondary); }
+    a:hover { color: var(--text-primary); }
+    table { background: var(--bg-base); }
+    table tr:hover { background: var(--bg-overlay); }
+    table td { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    summary::-webkit-details-marker { display: none; }

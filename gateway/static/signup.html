@@ -7,59 +7,7 @@
   <meta name="description" content="Create a narve.ai account. Invite required.">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
-  <style>
-    .auth-error:empty { display: none; }
-    .req-list { margin-top: 10px; display: none; }
-    .req-list.visible { display: block; }
-    .req-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      color: var(--text-tertiary);
-      padding: 3px 0;
-      transition: color 0.15s;
-    }
-    .req-item.met { color: var(--positive); }
-    .req-icon {
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      border: 1.5px solid var(--border-default);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: border-color 0.15s, background 0.15s;
-    }
-    .req-item.met .req-icon {
-      border-color: var(--positive);
-      background: var(--interactive-ghost);
-    }
-    .req-icon svg { width: 10px; height: 10px; opacity: 0; transition: opacity 0.15s; }
-    .req-item.met .req-icon svg { opacity: 1; }
-    .field-valid {
-      border-color: var(--positive) !important;
-      box-shadow: 0 0 0 3px var(--interactive-ghost) !important;
-    }
-    .field-invalid {
-      border-color: var(--text-secondary) !important;
-      box-shadow: 0 0 0 3px var(--interactive-ghost) !important;
-    }
-    .field-hint {
-      font-size: 11px;
-      margin-top: 6px;
-      display: none;
-    }
-    .field-hint.visible { display: block; }
-    .field-hint.valid { color: var(--positive); }
-    .field-hint.invalid { color: var(--text-secondary); }
-    .pw-wrap { position: relative; }
-    .pw-wrap input { padding-right: 44px; }
-    .pw-toggle { position: absolute; right: 10px; top: 14px; background: none; border: none; cursor: pointer; color: var(--text-tertiary); padding: 4px; line-height: 0; }
-    .pw-toggle:hover { color: var(--text-primary); }
-    .pw-toggle svg { width: 18px; height: 18px; }
-  </style>
+  <link rel="stylesheet" href="{{ static: pages/signup.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">

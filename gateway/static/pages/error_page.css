@@ -1,0 +1,126 @@
+/* Per-page CSS for static/error_page.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+:root {
+      color-scheme: light dark;
+      --fg: #111;
+      --fg-muted: #6b7280;
+      --fg-dim: #9ca3af;
+      --bg: #ffffff;
+      --surface: #f5f5f5;
+      --border: #e5e7eb;
+      --accent: #0d0d0d;
+      --accent-fg: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fg: #f5f5f5;
+        --fg-muted: #9ca3af;
+        --fg-dim: #6b7280;
+        --bg: #0d0d0d;
+        --surface: #141414;
+        --border: #262626;
+        --accent: #f5f5f5;
+        --accent-fg: #0d0d0d;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: 32px 24px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.55;
+    }
+    main {
+      max-width: 520px;
+      margin: 80px auto;
+    }
+    .err-status {
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      margin: 0 0 6px;
+      font-variant-numeric: tabular-nums;
+    }
+    .err-title {
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin: 0 0 12px;
+      line-height: 1.2;
+    }
+    .err-message {
+      font-size: 15px;
+      color: var(--fg-muted);
+      margin: 0 0 12px;
+      max-width: 440px;
+    }
+    .err-retry {
+      font-size: 13px;
+      color: var(--fg-muted);
+      margin: 0 0 8px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: inline-block;
+    }
+    .err-extra { font-size: 13px; color: var(--fg-muted); margin: 0 0 20px; }
+    .err-extra a { color: var(--fg); }
+    .err-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+    .err-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      background: var(--bg);
+      text-decoration: none;
+      transition: border-color 0.12s, background 0.12s;
+    }
+    .err-btn:hover { border-color: var(--fg); }
+    .err-btn:first-of-type {
+      background: var(--accent);
+      color: var(--accent-fg);
+      border-color: var(--accent);
+    }
+    .err-btn:first-of-type:hover { opacity: 0.88; }
+    .err-meta {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--fg-dim);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.02em;
+    }
+    .err-meta code {
+      color: var(--fg-muted);
+      background: var(--surface);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .err-support {
+      font-size: 11px;
+      color: var(--fg-dim);
+      margin-top: 6px;
+    }
+    .err-support a { color: inherit; }

@@ -9,36 +9,7 @@
   <link rel="stylesheet" href="{{ static: gateway.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
-  <style>
-    /* Only email-editor-specific styles — the two-column split layout,
-       code textareas, and the sandboxed iframe preview. Everything else
-       uses the shared gateway.css utilities. */
-    .ed-split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    @media (max-width: 900px) { .ed-split { grid-template-columns: 1fr; } }
-
-    textarea.body-editor { min-height: 360px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
-    textarea.text-editor { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
-
-    .chip-row { margin-bottom: 14px; line-height: 1.9; font-size: 11px; color: var(--text-tertiary); }
-
-    .preview-subject {
-      background: var(--bg-inset);
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-sm);
-      padding: 10px 14px;
-      font-size: 13px;
-      margin-bottom: 12px;
-    }
-    .preview-subject .lbl { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; font-weight: 500; }
-    .preview-frame {
-      background: #fff; color: #111;
-      border-radius: var(--radius-sm);
-      padding: 0;
-      min-height: 360px;
-      overflow: hidden;
-      border: 1px solid var(--border-default);
-    }
-  </style>
+  <link rel="stylesheet" href="{{ static: pages/admin-email-edit.css }}">
 </head>
 <body>
   <div class="app-shell">

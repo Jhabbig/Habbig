@@ -8,47 +8,7 @@
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
-  <style>
-    body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); }
-    .admin-shell { max-width: 1280px; margin: 0 auto; padding: 24px; }
-    .admin-header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 16px 24px; margin-bottom: 12px;
-      border-bottom: 1px solid var(--border-default);
-    }
-    .admin-header h1 {
-      font-family: var(--font-display);
-      font-size: 22px; font-weight: 500; margin: 0;
-      letter-spacing: -0.01em;
-    }
-    .admin-nav { display: flex; gap: 12px; align-items: center; font-size: 13px; }
-    .admin-nav a {
-      color: var(--text-secondary);
-      text-decoration: none;
-      padding: 6px 12px;
-      border-radius: 6px;
-    }
-    .admin-nav a:hover { color: var(--text-primary); background: var(--bg-overlay); }
-    .admin-nav a.active { color: var(--text-primary); background: var(--bg-overlay); }
-    .badge {
-      display: inline-block; padding: 2px 8px; border-radius: 12px;
-      font-size: 11px; font-weight: 500;
-      background: var(--interactive-ghost); color: var(--text-primary);
-    }
-    .btn {
-      display: inline-block; padding: 8px 14px; border-radius: 6px;
-      font-size: 12px; font-weight: 500; cursor: pointer;
-      background: var(--bg-overlay); color: var(--text-primary);
-      border: 1px solid var(--border-default); text-decoration: none;
-    }
-    .btn:hover { background: var(--bg-float); }
-    a { color: var(--text-secondary); }
-    a:hover { color: var(--text-primary); }
-    table { background: var(--bg-base); }
-    table tr:hover { background: var(--bg-overlay); }
-    table td { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
-    summary::-webkit-details-marker { display: none; }
-  </style>
+  <link rel="stylesheet" href="{{ static: pages/audit_log.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">

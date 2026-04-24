@@ -1,0 +1,69 @@
+/* Per-page CSS for static/leaderboard.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-ui); margin: 0; }
+    .lb-main { max-width: 880px; margin: 0 auto; padding: 48px 24px; }
+    .lb-h1 {
+      font-family: var(--font-display);
+      font-size: 28px; letter-spacing: -0.02em;
+      margin: 0 0 8px; font-weight: 500;
+    }
+    .lb-sub {
+      font-size: 13px; color: var(--text-secondary);
+      margin: 0 0 24px;
+    }
+    .lb-tabs {
+      display: flex; gap: 4px; margin-bottom: 20px;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .lb-tab {
+      padding: 10px 16px; background: none; border: none;
+      color: var(--text-tertiary); font-size: 13px; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      font-family: inherit;
+    }
+    .lb-tab:hover { color: var(--text-primary); }
+    .lb-tab.active {
+      color: var(--text-primary); border-bottom-color: var(--text-primary);
+      font-weight: 500;
+    }
+    .lb-table {
+      width: 100%; border-collapse: collapse; margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .lb-table th {
+      text-align: left; padding: 10px 12px;
+      font-size: 11px; font-weight: 600;
+      color: var(--text-tertiary);
+      letter-spacing: 0.08em; text-transform: uppercase;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .lb-table td {
+      padding: 12px; border-bottom: 1px solid var(--border-default);
+      color: var(--text-primary);
+    }
+    .lb-table tr.is-you td {
+      background: var(--bg-raised);
+      font-weight: 500;
+    }
+    .lb-rank { width: 48px; font-variant-numeric: tabular-nums; color: var(--text-tertiary); }
+    .lb-handle { color: var(--text-primary); font-weight: 500; }
+    .lb-numeric { font-variant-numeric: tabular-nums; text-align: right; }
+    .lb-accuracy { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+    .lb-empty { color: var(--text-tertiary); padding: 24px 0; font-size: 13px; text-align: center; }
+    .lb-foot {
+      font-size: 12px; color: var(--text-tertiary);
+      margin-top: 16px; line-height: 1.5;
+    }
+    .lb-foot a { color: var(--text-secondary); }
+    .lb-myrank {
+      padding: 10px 14px; border: 1px solid var(--border-default);
+      border-radius: var(--radius-md); margin-bottom: 14px;
+      font-size: 13px; color: var(--text-secondary);
+      background: var(--bg-surface);
+    }
+    .lb-myrank strong { color: var(--text-primary); }

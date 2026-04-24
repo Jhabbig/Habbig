@@ -1,0 +1,23 @@
+/* Per-page CSS for static/feedback.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+.fb-wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 80px; }
+    .fb-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; gap: 16px; }
+    .fb-head h1 { margin: 0; font-family: var(--font-display); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .fb-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 28px; }
+    .fb-controls { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+    .fb-controls-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    .fb-controls-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .fb-chip { display: inline-block; padding: 6px 12px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 16px; font-size: 12px; font-weight: 500; color: var(--text-secondary); text-decoration: none; transition: all 0.12s; }
+    .fb-chip:hover { border-color: var(--text-primary); color: var(--text-primary); }
+    .fb-chip-active { background: var(--text-primary); color: var(--interactive-text, var(--bg-base)); border-color: var(--text-primary); }
+    .fb-list { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .fb-row:hover { background: var(--bg-overlay, rgba(255,255,255,0.03)); }
+    .fb-row:last-child { border-bottom: 0 !important; }
+    .fb-submit-bar { margin-top: 24px; text-align: center; }
+    .fb-submit-bar button { padding: 10px 20px; font-size: 13px; font-weight: 600; background: var(--cta-bg); color: var(--interactive-text); border: none; border-radius: 6px; cursor: pointer; }
+    .fb-submit-bar button:hover { opacity: 0.92; }

@@ -278,6 +278,56 @@ class TestLandingTodoCleanup:
 # ── Emoji chrome scrub ───────────────────────────────────────────────
 
 
+class TestInlineStyleExtraction:
+    """After the foundation auto-migration, any non-trivial inline
+    <style> block in a page template should have been extracted into
+    static/pages/<name>.css. Small anti-FOUC / theme-init blocks
+    (<400 chars) are allowed to stay inline because their point IS to
+    run before the stylesheet loads."""
+
+    INLINE_KEEP_THRESHOLD = 400
+
+    def test_no_large_inline_styles(self):
+        import re
+        offenders = []
+        for p in sorted(glob.glob(str(STATIC_DIR / "*.html"))):
+            name = os.path.basename(p)
+            if name.startswith("_"):
+                continue
+            text = open(p).read()
+            for m in re.finditer(
+                r"<style(?![^>]*data-keep)[^>]*>(.*?)</style>",
+                text, re.DOTALL,
+            ):
+                body = m.group(1).strip()
+                if len(body) >= self.INLINE_KEEP_THRESHOLD:
+                    offenders.append(f"{name} ({len(body)} chars)")
+        assert not offenders, (
+            "Inline <style> block over "
+            f"{self.INLINE_KEEP_THRESHOLD} chars — extract into "
+            "static/pages/<name>.css:\n" + "\n".join(offenders)
+        )
+
+    def test_extracted_css_files_exist(self):
+        """Every page that emits <link ... pages/*.css> must have a
+        corresponding file on disk — a broken link would degrade
+        the page silently."""
+        import re
+        missing = []
+        for p in sorted(glob.glob(str(STATIC_DIR / "*.html"))):
+            text = open(p).read()
+            for m in re.finditer(
+                r'\{\{\s*static:\s*(pages/[^}\s]+)\s*\}\}', text,
+            ):
+                rel = m.group(1)
+                if not (STATIC_DIR / rel).exists():
+                    missing.append(f"{os.path.basename(p)} -> {rel}")
+        assert not missing, (
+            "Referenced per-page CSS missing on disk:\n"
+            + "\n".join(missing)
+        )
+
+
 class TestEmojiScrub:
     def test_no_emoji_in_page_chrome(self):
         """Only geometric-shape check/cross (U+2713 / U+2717) and the

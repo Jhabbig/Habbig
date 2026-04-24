@@ -1,0 +1,296 @@
+/* Per-page CSS for static/subproduct_landing.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+:root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      -webkit-font-smoothing: antialiased;
+    }
+    .shell { max-width: 1240px; margin: 0 auto; padding: 28px 32px 96px; }
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 72px;
+    }
+    .wordmark {
+      font-family: var(--font-display);
+      font-size: 20px;
+      letter-spacing: -0.04em;
+      color: var(--text-primary);
+      font-style: italic;
+    }
+    .wordmark-divider { opacity: 0.4; margin: 0 6px; font-style: normal; }
+    .wordmark-slug {
+      font-family: var(--font-ui);
+      font-style: normal;
+      font-weight: 500;
+      font-size: 14px;
+      letter-spacing: 0;
+      color: var(--text-secondary);
+      vertical-align: 4px;
+    }
+    .top-note {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-tertiary);
+    }
+    .top-note a { color: var(--text-secondary); text-decoration: none; }
+    .top-note a:hover { color: var(--text-primary); }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 72px;
+      align-items: center;
+      min-height: 62vh;
+    }
+    @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 40px; } }
+
+    .hero-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--text-tertiary);
+      margin: 0 0 20px;
+    }
+    h1 {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-weight: 400;
+      font-size: 76px;
+      line-height: 0.98;
+      letter-spacing: -0.035em;
+      margin: 0 0 28px;
+      color: var(--text-primary);
+    }
+    @media (max-width: 900px) { h1 { font-size: 54px; } }
+    @media (max-width: 480px) { h1 { font-size: 48px; } }
+    h1 br { display: inline; }
+
+    .sub {
+      max-width: 480px;
+      font-size: 16px;
+      line-height: 1.55;
+      color: var(--text-secondary);
+      margin: 0 0 40px;
+    }
+
+    .price-card {
+      max-width: 440px;
+      padding: 28px 32px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: 14px;
+    }
+    .price-card h2 {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 500;
+      margin: 0 0 12px;
+      letter-spacing: -0.01em;
+    }
+    .price-row {
+      display: flex; gap: 18px; align-items: baseline; margin-bottom: 20px;
+    }
+    .price-usd {
+      font-family: var(--font-display);
+      font-size: 36px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+    .price-gbp {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+    .cta {
+      display: inline-block;
+      padding: 13px 22px;
+      background: var(--text-primary);
+      color: var(--interactive-text);
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 14px;
+      text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+
+    /* "or" divider + bundle math block — separates single-product CTA
+       from the Pro bundle CTA so neither reads as the only option. */
+    .or-divider {
+      display: flex; align-items: center; gap: 12px;
+      margin: 22px 0 18px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--text-tertiary);
+    }
+    .or-divider::before, .or-divider::after {
+      content: ""; flex: 1; border-top: 1px solid var(--border-default);
+    }
+    .bundle-card {
+      padding: 16px 18px;
+      border: 1px dashed var(--border-default);
+      border-radius: 10px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+    .bundle-card strong { color: var(--text-primary); font-weight: 500; }
+    .bundle-card a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+    .bundle-math {
+      display: block;
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-tertiary);
+      letter-spacing: 0.02em;
+    }
+
+    /* ─────────────── Floating numbers ───────────────
+     * One base style, one position scheme (15 slots) — six per-slug
+     * animation classes control the rhythm. Monochrome throughout.
+     */
+    .numbers {
+      position: relative;
+      height: 460px;
+      pointer-events: none;
+    }
+    @media (max-width: 900px) { .numbers { height: 280px; } }
+    .numbers span {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 18px;
+      color: var(--text-secondary);
+      opacity: 0;
+      white-space: nowrap;
+      will-change: opacity, transform;
+    }
+    /* 15 positional slots covering the right-half pane. Size + position
+       tuned so the field feels scattered, not grid-aligned. */
+    .numbers span:nth-child(1)  { top:  3%; left: 10%; font-size: 30px; }
+    .numbers span:nth-child(2)  { top: 14%; left: 62%; }
+    .numbers span:nth-child(3)  { top: 22%; left:  4%; font-size: 22px; }
+    .numbers span:nth-child(4)  { top: 27%; left: 44%; }
+    .numbers span:nth-child(5)  { top: 33%; left: 78%; font-size: 24px; }
+    .numbers span:nth-child(6)  { top: 44%; left: 18%; }
+    .numbers span:nth-child(7)  { top: 48%; left: 56%; font-size: 26px; }
+    .numbers span:nth-child(8)  { top: 56%; left:  8%; }
+    .numbers span:nth-child(9)  { top: 61%; left: 82%; }
+    .numbers span:nth-child(10) { top: 68%; left: 34%; font-size: 22px; }
+    .numbers span:nth-child(11) { top: 74%; left: 64%; }
+    .numbers span:nth-child(12) { top: 82%; left: 16%; }
+    .numbers span:nth-child(13) { top: 86%; left: 72%; font-size: 20px; }
+    .numbers span:nth-child(14) { top: 90%; left: 44%; }
+    .numbers span:nth-child(15) { top: 94%; left: 90%; font-size: 16px; }
+
+    /* sports: flicker like a live odds screen. Fast on/off, short hold. */
+    .numbers.anim-flicker span {
+      animation: flicker 3.4s steps(12, end) infinite;
+    }
+    @keyframes flicker {
+      0%, 12%, 54%, 100% { opacity: 0; }
+      16%, 48%           { opacity: 0.9; }
+      50%, 53%           { opacity: 0.55; }
+    }
+
+    /* weather: slow atmospheric drift. Long fades, subtle vertical movement. */
+    .numbers.anim-drift span {
+      animation: drift 14s cubic-bezier(0.45, 0.0, 0.55, 1) infinite;
+    }
+    @keyframes drift {
+      0%, 100% { opacity: 0; transform: translateY(0px); }
+      15%, 85% { opacity: 0.7; }
+      50%      { opacity: 0.9; transform: translateY(-12px); }
+    }
+
+    /* world: tectonic. Very slow, irregular holds. No rhythmic pulse. */
+    .numbers.anim-tectonic span {
+      animation: tectonic 22s ease-in-out infinite;
+    }
+    @keyframes tectonic {
+      0%, 10%, 100% { opacity: 0; }
+      22%, 40%      { opacity: 0.75; }
+      55%, 72%      { opacity: 0.55; }
+      88%           { opacity: 0; }
+    }
+
+    /* crypto: frenetic. Small quick changes, never fully off. */
+    .numbers.anim-frenetic span {
+      animation: frenetic 1.8s steps(8, end) infinite;
+    }
+    @keyframes frenetic {
+      0%, 100% { opacity: 0.3; }
+      12%      { opacity: 0.95; }
+      24%      { opacity: 0.55; }
+      48%      { opacity: 0.88; }
+      72%      { opacity: 0.4; }
+    }
+
+    /* midterm: measured political cadence. Slow, even, predictable. */
+    .numbers.anim-measured span {
+      animation: measured 9s ease-in-out infinite;
+    }
+    @keyframes measured {
+      0%, 100% { opacity: 0; }
+      20%, 80% { opacity: 0.8; }
+      50%      { opacity: 0.95; }
+    }
+
+    /* traders: pulse when "trade executed". Sharp in, soft out. */
+    .numbers.anim-pulse span {
+      animation: pulse 5s cubic-bezier(0, 0.4, 0.2, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0; transform: scale(0.94); }
+      6%       { opacity: 1;   transform: scale(1.04); }
+      18%      { opacity: 0.7; transform: scale(1); }
+      45%      { opacity: 0.35; transform: scale(1); }
+    }
+
+    /* Stagger each span so they don't all fire at once. Keeps the field
+       lively regardless of which named animation is applied. */
+    .numbers span:nth-child(1)  { animation-delay:  0.0s; }
+    .numbers span:nth-child(2)  { animation-delay:  0.7s; }
+    .numbers span:nth-child(3)  { animation-delay:  1.4s; }
+    .numbers span:nth-child(4)  { animation-delay:  2.1s; }
+    .numbers span:nth-child(5)  { animation-delay:  2.8s; }
+    .numbers span:nth-child(6)  { animation-delay:  3.5s; }
+    .numbers span:nth-child(7)  { animation-delay:  4.2s; }
+    .numbers span:nth-child(8)  { animation-delay:  4.9s; }
+    .numbers span:nth-child(9)  { animation-delay:  5.6s; }
+    .numbers span:nth-child(10) { animation-delay:  6.3s; }
+    .numbers span:nth-child(11) { animation-delay:  7.0s; }
+    .numbers span:nth-child(12) { animation-delay:  7.7s; }
+    .numbers span:nth-child(13) { animation-delay:  8.4s; }
+    .numbers span:nth-child(14) { animation-delay:  9.1s; }
+    .numbers span:nth-child(15) { animation-delay:  9.8s; }
+
+    /* Reduced motion: freeze the field at low opacity — visible but still. */
+    @media (prefers-reduced-motion: reduce) {
+      .numbers span { animation: none !important; opacity: 0.5; }
+    }
+
+    .pills {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-top: 40px;
+    }
+    .pill {
+      padding: 8px 14px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      letter-spacing: 0.02em;
+    }

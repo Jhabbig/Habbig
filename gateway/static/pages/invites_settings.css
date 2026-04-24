@@ -1,0 +1,29 @@
+/* Per-page CSS for static/invites_settings.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-ui); margin: 0; min-height: 100vh; }
+    .inv-main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+    .inv-crumb { font-size: 12px; color: var(--text-tertiary); margin-bottom: 18px; letter-spacing: 0.02em; }
+    .inv-crumb a { color: var(--text-tertiary); text-decoration: none; }
+    .inv-crumb a:hover { color: var(--text-primary); }
+    .inv-h1 { font-family: var(--font-display); font-size: 28px; letter-spacing: -0.02em; margin: 0 0 32px; font-weight: 500; }
+    .inv-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 28px; margin-bottom: 24px; }
+    .inv-card h2 { font-size: 14px; font-weight: 500; letter-spacing: 0.02em; margin: 0 0 16px; color: var(--text-primary); }
+    .inv-balance { font-family: var(--font-display); font-size: 48px; line-height: 1; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
+    .inv-balance-sub { color: var(--text-tertiary); font-size: 13px; margin-bottom: 20px; }
+    .inv-quota { color: var(--text-secondary); font-size: 13px; margin-top: 12px; }
+    .inv-code-list { list-style: none; padding: 0; margin: 16px 0 0; }
+    .inv-code-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); margin-bottom: 8px; font-family: var(--font-mono, ui-monospace, "SF Mono", monospace); font-size: 13px; letter-spacing: 0.02em; }
+    .inv-code-item code { flex: 1; }
+    .inv-copy-btn { background: transparent; color: var(--text-tertiary); border: 1px solid var(--border-default); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 12px; cursor: pointer; letter-spacing: 0.02em; }
+    .inv-copy-btn:hover { color: var(--text-primary); border-color: var(--text-primary); }
+    .inv-copy-btn.copied { color: var(--text-primary); border-color: var(--text-primary); }
+    .inv-empty { color: var(--text-tertiary); font-size: 13px; padding: 16px; text-align: center; background: var(--bg-base); border-radius: var(--radius-md); border: 1px dashed var(--border-default); }
+    .inv-ref-link { display: flex; gap: 8px; align-items: center; padding: 12px 16px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+    .inv-ref-link code { flex: 1; font-family: var(--font-mono, ui-monospace, "SF Mono", monospace); font-size: 13px; word-break: break-all; }
+    .inv-footer-note { color: var(--text-tertiary); font-size: 13px; line-height: 1.6; margin-top: 16px; }
+    .inv-footer-note a { color: var(--text-primary); }

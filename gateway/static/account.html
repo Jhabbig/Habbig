@@ -10,57 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
-  <style>
-    body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
-    .acct-wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px 80px; }
-    .acct-header { margin-bottom: 40px; }
-    .acct-title { font-size: 24px; font-weight: 700; font-family: var(--font-display); letter-spacing: -0.03em; margin-bottom: 4px; }
-    .acct-subtitle { font-size: 14px; color: var(--text-tertiary); }
-
-    .acct-section { margin-bottom: 36px; }
-    .acct-section-title { font-size: 11px; font-weight: 600; font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); margin-bottom: 16px; }
-
-    .acct-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 12px; overflow: hidden; }
-    .acct-row { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border-subtle); }
-    .acct-row:last-child { border-bottom: none; }
-    .acct-row-label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
-    .acct-row-value { font-size: 13px; font-weight: 500; color: var(--text-primary); }
-    .acct-row-value.admin { color: var(--text-secondary); }
-
-    .sub-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); }
-    .sub-row:last-child { border-bottom: none; }
-    .sub-info { display: flex; align-items: center; gap: 10px; }
-    .sub-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .sub-name { font-size: 13px; font-weight: 500; }
-    .sub-meta { font-size: 12px; color: var(--text-tertiary); }
-    .sub-badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 4px; }
-    .sub-active { background: var(--interactive-ghost); color: var(--positive); }
-    .sub-expired { background: var(--interactive-ghost); color: var(--text-secondary); }
-    .sub-none { text-align: center; padding: 32px 20px; color: var(--border-strong); font-size: 13px; }
-    .sub-none a { color: var(--text-secondary); text-decoration: none; font-weight: 500; }
-    .sub-none a:hover { text-decoration: underline; }
-
-    .connect-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 24px; }
-    .connect-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-    .connect-icon { width: 36px; height: 36px; border-radius: 8px; background: var(--interactive-ghost); display: flex; align-items: center; justify-content: center; font-size: 18px; }
-    .connect-title { font-size: 14px; font-weight: 600; }
-    .connect-desc { font-size: 13px; color: var(--text-tertiary); line-height: 1.6; margin-bottom: 16px; }
-    .connect-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-tertiary); }
-    .connect-status-dot { width: 6px; height: 6px; border-radius: 50%; }
-    .connect-status-dot.on { background: var(--positive); }
-    .connect-status-dot.off { background: var(--text-tertiary); }
-    .connect-btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; background: var(--border-subtle); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: 8px; font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-decoration: none; margin-top: 12px; }
-    .connect-btn:hover { background: var(--bg-overlay); border-color: var(--border-strong); }
-
-    .acct-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 32px; }
-    .acct-link { display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-subtle); border-radius: 8px; font-size: 13px; font-weight: 500; text-decoration: none; transition: color 0.15s, border-color 0.15s; }
-    .acct-link:hover { color: var(--text-primary); border-color: var(--border-strong); }
-
-    @media (max-width: 640px) {
-      .acct-wrap { padding: 32px 16px 64px; }
-      .acct-title { font-size: 20px; }
-    }
-  </style>
+  <link rel="stylesheet" href="{{ static: pages/account.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">

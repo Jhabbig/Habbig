@@ -1,0 +1,23 @@
+/* Per-page CSS for static/faq.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 72px 24px 120px; }
+    .backlink { display: inline-block; opacity: 0.55; text-decoration: none; color: inherit; font-size: 13px; margin-bottom: 32px; }
+    .backlink:hover { opacity: 1; }
+    h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    .tagline { font-size: 18px; opacity: 0.7; margin: 0 0 48px; }
+    details { border-top: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 18px 0; }
+    details[open] summary::after { content: "−"; }
+    details:last-of-type { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); }
+    summary { font-size: 17px; font-weight: 600; list-style: none; cursor: pointer; position: relative; padding-right: 32px; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; position: absolute; right: 0; font-weight: 400; font-size: 22px; opacity: 0.55; }
+    details[open] > div { margin-top: 12px; opacity: 0.88; }
+    details p { margin: 0 0 12px; }
+    h2 { font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6; margin: 40px 0 10px; }
+    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; }

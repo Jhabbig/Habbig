@@ -1,0 +1,255 @@
+/* Per-page CSS for static/enquire.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+.enq-page {
+      min-height: 100vh;
+      background: var(--bg);
+      padding: 32px 24px 64px;
+    }
+    .enq-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      margin-bottom: 40px;
+      transition: color 0.15s;
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .enq-back:hover { color: var(--text-primary); text-decoration: none; }
+    .enq-back svg { width: 16px; height: 16px; }
+    .enq-container {
+      max-width: 560px;
+      margin: 0 auto;
+    }
+    .enq-header { margin-bottom: 40px; }
+    .enq-title {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+    .enq-subtitle {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .enq-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 16px;
+      padding: 6px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+    }
+    .enq-meta svg { width: 14px; height: 14px; }
+
+    /* Form */
+    .enq-form { display: flex; flex-direction: column; gap: 28px; }
+    .enq-field { position: relative; }
+    .enq-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .enq-input, .enq-select, .enq-textarea {
+      width: 100%;
+      padding: 14px 16px;
+      min-height: 48px;
+      background: var(--bg-overlay);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--text-primary);
+      transition: border-color 0.15s, box-shadow 0.15s;
+      outline: none;
+    }
+    .enq-input::placeholder, .enq-textarea::placeholder { color: var(--text-muted); }
+    .enq-input:focus, .enq-select:focus, .enq-textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-light);
+    }
+    .enq-input.field-error, .enq-select.field-error, .enq-textarea.field-error {
+      border-color: var(--red);
+      box-shadow: 0 0 0 3px var(--red-bg);
+    }
+
+    /* Select styling */
+    .enq-select-wrap { position: relative; }
+    .enq-select {
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+      padding-right: 44px;
+    }
+    .enq-select option { background: var(--bg-overlay); color: var(--text-primary); }
+    .enq-select-chevron {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--text-muted);
+    }
+    .enq-select-chevron svg { width: 16px; height: 16px; }
+
+    /* Textarea */
+    .enq-textarea {
+      min-height: 140px;
+      resize: vertical;
+      line-height: 1.6;
+    }
+    .enq-char-count {
+      position: absolute;
+      bottom: 12px;
+      right: 14px;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+      transition: color 0.15s;
+    }
+    .enq-char-count.warn { color: var(--accent); }
+    .enq-char-count.limit { color: var(--red); }
+
+    /* Inline errors */
+    .enq-error {
+      font-size: 12px;
+      color: var(--red);
+      margin-top: 6px;
+      display: none;
+    }
+    .enq-error.visible { display: block; }
+
+    /* API error banner */
+    .enq-api-error {
+      padding: 12px 16px;
+      background: var(--red-bg);
+      border: 1px solid var(--interactive-ghost);
+      border-radius: var(--radius-sm);
+      color: var(--red);
+      font-size: 13px;
+      line-height: 1.5;
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .enq-api-error.visible { display: flex; }
+    .enq-api-error-close {
+      background: none;
+      border: none;
+      color: var(--red);
+      cursor: pointer;
+      padding: 0;
+      margin-left: auto;
+      flex-shrink: 0;
+      min-width: 24px;
+      min-height: 24px;
+    }
+
+    /* Submit button */
+    .enq-submit {
+      width: 100%;
+      padding: 14px 24px;
+      min-height: 48px;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: var(--cta-bg);
+      color: var(--bg-base);
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.2s, opacity 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .enq-submit:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    .enq-submit:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none;
+    }
+    /* Pending state — animated dots replace the old rotating border ring
+       so every page uses the same loading vocabulary. */
+    .enq-submit.is-pending::after {
+      content: "";
+      display: inline-block;
+      width: 4px;
+      margin-left: 2px;
+      animation: enq-loading-dots 1.2s steps(4) infinite;
+    }
+    @keyframes enq-loading-dots {
+      0%, 20%  { content: "."; }
+      40%      { content: ".."; }
+      60%      { content: "..."; }
+      80%, 100%{ content: ""; }
+    }
+
+    /* Success state */
+    .enq-success {
+      display: none;
+      text-align: center;
+      padding: 60px 0;
+      animation: fadeIn 0.4s ease-out;
+    }
+    .enq-success.visible { display: block; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .enq-success-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: var(--green-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+    }
+    .enq-success-icon svg { width: 36px; height: 36px; color: var(--green); }
+    .enq-success-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+    .enq-success-body {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+    .enq-success-back {
+      color: var(--text-muted);
+      font-size: 13px;
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    .enq-success-back:hover { color: var(--text-primary); text-decoration: none; }
+
+    @media (max-width: 640px) {
+      .enq-title { font-size: 26px; }
+      .enq-page { padding: 20px 16px 48px; }
+    }

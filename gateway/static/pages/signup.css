@@ -1,0 +1,58 @@
+/* Per-page CSS for static/signup.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+.auth-error:empty { display: none; }
+    .req-list { margin-top: 10px; display: none; }
+    .req-list.visible { display: block; }
+    .req-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-tertiary);
+      padding: 3px 0;
+      transition: color 0.15s;
+    }
+    .req-item.met { color: var(--positive); }
+    .req-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border-default);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .req-item.met .req-icon {
+      border-color: var(--positive);
+      background: var(--interactive-ghost);
+    }
+    .req-icon svg { width: 10px; height: 10px; opacity: 0; transition: opacity 0.15s; }
+    .req-item.met .req-icon svg { opacity: 1; }
+    .field-valid {
+      border-color: var(--positive) !important;
+      box-shadow: 0 0 0 3px var(--interactive-ghost) !important;
+    }
+    .field-invalid {
+      border-color: var(--text-secondary) !important;
+      box-shadow: 0 0 0 3px var(--interactive-ghost) !important;
+    }
+    .field-hint {
+      font-size: 11px;
+      margin-top: 6px;
+      display: none;
+    }
+    .field-hint.visible { display: block; }
+    .field-hint.valid { color: var(--positive); }
+    .field-hint.invalid { color: var(--text-secondary); }
+    .pw-wrap { position: relative; }
+    .pw-wrap input { padding-right: 44px; }
+    .pw-toggle { position: absolute; right: 10px; top: 14px; background: none; border: none; cursor: pointer; color: var(--text-tertiary); padding: 4px; line-height: 0; }
+    .pw-toggle:hover { color: var(--text-primary); }
+    .pw-toggle svg { width: 18px; height: 18px; }

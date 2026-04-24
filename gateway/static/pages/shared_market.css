@@ -1,0 +1,19 @@
+/* Per-page CSS for static/shared_market.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-ui); margin: 0; min-height: 100vh; }
+    .share-main { max-width: 640px; margin: 0 auto; padding: 64px 24px; }
+    .share-brand { font-family: var(--font-display); font-weight: 500; font-size: 13px; color: var(--text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 32px; }
+    .share-question { font-family: var(--font-display); font-size: 32px; line-height: 1.25; letter-spacing: -0.02em; margin: 0 0 32px; font-weight: 500; color: var(--text-primary); }
+    .share-metric { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 32px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+    .metric-label { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+    .metric-value { font-family: var(--font-display); font-size: 36px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .share-meta { font-size: 12px; color: var(--text-tertiary); margin: 32px 0 48px; text-align: center; }
+    .share-cta { display: block; text-align: center; background: var(--text-primary); color: var(--bg-base); padding: 16px 24px; border-radius: var(--radius-md); text-decoration: none; font-weight: 500; letter-spacing: 0.01em; margin-bottom: 16px; }
+    .share-cta:hover { opacity: 0.88; }
+    .share-fineprint { text-align: center; font-size: 12px; color: var(--text-tertiary); }
+    .share-fineprint a { color: var(--text-primary); }

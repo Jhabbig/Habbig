@@ -8,34 +8,7 @@
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
-  <style>
-    body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); min-height: 100vh; }
-    .src-shell { max-width: 820px; margin: 0 auto; padding: 64px 24px 96px; }
-    .src-back { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); text-decoration: none; margin-bottom: 32px; }
-    .src-back:hover { color: var(--text-primary); }
-    .src-header { margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid var(--border-default); }
-    .src-eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 12px; }
-    .src-handle { font-family: var(--font-display); font-size: 48px; font-weight: 500; letter-spacing: -0.02em; margin: 0 0 16px; color: var(--text-primary); }
-    .src-lede { font-size: 15px; color: var(--text-secondary); line-height: 1.7; max-width: 640px; }
-    .src-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 24px; margin: 48px 0; }
-    .src-stat { }
-    .src-stat-value { font-family: var(--font-display); font-size: 40px; font-weight: 500; letter-spacing: -0.02em; color: var(--text-primary); margin-bottom: 8px; line-height: 1; }
-    .src-stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); }
-    .src-section { margin: 48px 0; }
-    .src-section h2 { font-family: var(--font-display); font-size: 22px; font-weight: 500; margin: 0 0 20px; color: var(--text-primary); letter-spacing: -0.01em; }
-    .src-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    .src-table th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); padding: 10px 12px; border-bottom: 1px solid var(--border-default); }
-    .src-table th.num, .src-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .src-table td { padding: 12px; border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); }
-    .src-table td.num { color: var(--text-primary); font-weight: 500; }
-    .src-table tbody tr:last-child td { border-bottom: none; }
-    .src-table td.muted { color: var(--text-tertiary); text-align: center; padding: 32px 12px; }
-    .src-footer { margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border-default); font-size: 12px; color: var(--text-tertiary); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
-    .src-footer a { color: var(--text-secondary); text-decoration: none; margin-right: 16px; }
-    .src-footer a:hover { color: var(--text-primary); }
-    .src-cta { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; padding: 10px 18px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 13px; font-weight: 500; color: var(--text-primary); text-decoration: none; transition: all .2s ease; }
-    .src-cta:hover { border-color: var(--text-primary); }
-  </style>
+  <link rel="stylesheet" href="{{ static: pages/source.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="{{ static: img/logo.png }}">
   <link rel="apple-touch-icon" href="{{ static: img/logo.png }}">

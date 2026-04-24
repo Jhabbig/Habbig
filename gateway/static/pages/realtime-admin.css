@@ -1,0 +1,39 @@
+/* Per-page CSS for static/realtime-admin.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+.rt-shell { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; color: var(--text-primary); }
+    .rt-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
+    .rt-title { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+    .rt-sub { font-size: 13px; color: var(--text-tertiary); }
+    .rt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+    .rt-dot.ok { background: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15); }
+    .rt-dot.stale { background: #f59e0b; }
+    .rt-dot.err { background: #ef4444; }
+    .rt-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .rt-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 20px; }
+    .rt-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 8px; }
+    .rt-value { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .rt-sub-value { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+    .rt-section { margin-top: 28px; }
+    .rt-section-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 12px; }
+    .rt-table { width: 100%; border-collapse: collapse; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); overflow: hidden; font-size: 13px; }
+    .rt-table th { text-align: left; padding: 12px 16px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); border-bottom: 1px solid var(--border-ghost); }
+    .rt-table td { padding: 12px 16px; border-top: 1px solid var(--border-ghost); font-variant-numeric: tabular-nums; }
+    .rt-table tr:first-child td { border-top: none; }
+    .rt-num { text-align: right; }
+    .rt-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .rt-empty { padding: 24px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+
+    .rt-spark { display: flex; align-items: flex-end; gap: 2px; height: 48px; margin-top: 12px; }
+    .rt-spark-bar { flex: 1; background: var(--text-primary); opacity: 0.18; min-height: 2px; border-radius: 1px; transition: height 0.2s, opacity 0.2s; }
+    .rt-spark-bar.hot { opacity: 0.9; }
+
+    .rt-pie-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .rt-pie-tag { display: inline-flex; align-items: center; padding: 6px 12px; background: var(--bg-overlay); border: 1px solid var(--border-default); border-radius: 100px; font-size: 12px; }
+    .rt-pie-tag strong { font-weight: 600; margin-right: 6px; font-variant-numeric: tabular-nums; }
+    .rt-pie-tag em { color: var(--text-tertiary); font-style: normal; font-size: 11px; }

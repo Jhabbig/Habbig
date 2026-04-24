@@ -1,0 +1,35 @@
+/* Per-page CSS for static/admin-email-edit.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+/* Only email-editor-specific styles — the two-column split layout,
+       code textareas, and the sandboxed iframe preview. Everything else
+       uses the shared gateway.css utilities. */
+    .ed-split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    @media (max-width: 900px) { .ed-split { grid-template-columns: 1fr; } }
+
+    textarea.body-editor { min-height: 360px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
+    textarea.text-editor { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
+
+    .chip-row { margin-bottom: 14px; line-height: 1.9; font-size: 11px; color: var(--text-tertiary); }
+
+    .preview-subject {
+      background: var(--bg-inset);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+    .preview-subject .lbl { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; font-weight: 500; }
+    .preview-frame {
+      background: #fff; color: #111;
+      border-radius: var(--radius-sm);
+      padding: 0;
+      min-height: 360px;
+      overflow: hidden;
+      border: 1px solid var(--border-default);
+    }

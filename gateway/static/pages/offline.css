@@ -1,0 +1,134 @@
+/* Per-page CSS for static/offline.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+:root {
+      color-scheme: light dark;
+      --fg: #111;
+      --fg-muted: #6b7280;
+      --bg: #ffffff;
+      --surface: #f5f5f5;
+      --border: #e5e7eb;
+      --accent: #0d0d0d;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fg: #f5f5f5;
+        --fg-muted: #9ca3af;
+        --bg: #0d0d0d;
+        --surface: #171717;
+        --border: #262626;
+        --accent: #f5f5f5;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.55;
+      padding: 32px 24px;
+    }
+    .wrap {
+      max-width: 520px;
+      margin: 48px auto;
+    }
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+      margin: 0 0 6px;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin: 0 0 8px;
+    }
+    .lede {
+      font-size: 15px;
+      color: var(--fg-muted);
+      margin: 0 0 32px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 0 0 16px;
+    }
+    .card h2 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      margin: 0 0 12px;
+      font-weight: 500;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+    li:last-child { border-bottom: 0; }
+    li a {
+      color: var(--fg);
+      text-decoration: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+    }
+    li a:hover, li a:focus { color: var(--accent); text-decoration: underline; }
+    li .meta {
+      font-size: 11px;
+      color: var(--fg-muted);
+      flex: 0 0 auto;
+    }
+    .empty {
+      color: var(--fg-muted);
+      font-size: 14px;
+      padding: 6px 0;
+      margin: 0;
+    }
+    .retry {
+      margin-top: 24px;
+      display: inline-block;
+      padding: 10px 18px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--accent);
+      color: var(--bg);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .retry:hover { opacity: 0.88; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--fg-muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 20px;
+    }
+    .status-pill::before {
+      content: "";
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--fg-muted);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }

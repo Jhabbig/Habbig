@@ -1,0 +1,25 @@
+/* Per-page CSS for static/invite.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+.auth-error:empty { display: none; }
+    .token-input {
+      letter-spacing: 0.06em;
+      font-family: var(--font-mono);
+      text-align: center;
+      font-size: 15px;
+    }
+    .gate-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background: var(--interactive-ghost);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+    }
+    .gate-icon svg { width: 26px; height: 26px; color: var(--text-primary); }

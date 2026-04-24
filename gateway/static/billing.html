@@ -9,24 +9,7 @@
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ static: scroll-animations.css }}">
-  <style>
-    .billing-plan-card { background: var(--bg-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 24px; margin-bottom: 24px; }
-    .billing-plan-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-    .billing-plan-name { font-size: 18px; font-weight: 600; color: var(--text-primary); }
-    .billing-plan-badge { font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 16px; }
-    .billing-plan-badge-active { background: var(--interactive-ghost); color: var(--text-primary); }
-    .billing-plan-badge-admin { background: var(--interactive-ghost); color: var(--text-primary); }
-    .billing-plan-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
-    .billing-plan-price { font-size: 28px; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono); margin-bottom: 4px; }
-    .billing-plan-period { font-size: 13px; color: var(--text-tertiary); margin-bottom: 16px; }
-    .billing-upgrade-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
-    .billing-upgrade-btn { padding: 10px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; text-decoration: none; transition: transform 0.1s, box-shadow 0.2s; display: inline-block; text-align: center; min-height: 44px; line-height: 24px; }
-    .billing-upgrade-primary { background: var(--interactive-bg); color: var(--interactive-text); border: none; }
-    .billing-upgrade-outline { background: transparent; border: 1px solid var(--text-primary); color: var(--text-primary); }
-    .billing-upgrade-danger { background: transparent; border: 1px solid var(--text-secondary); color: var(--text-secondary); }
-    .billing-upgrade-btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); text-decoration: none; }
-    .billing-dashboards-title { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--text-primary); margin: 32px 0 16px; }
-  </style>
+  <link rel="stylesheet" href="{{ static: pages/billing.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">

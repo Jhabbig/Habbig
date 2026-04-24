@@ -1,0 +1,111 @@
+/* Per-page CSS for static/poster.html — extracted from the
+ * previous inline <style> block by the foundation bundle
+ * auto-migration. Rules live here unchanged; if anything in
+ * this file should instead live in gateway.css or
+ * components.css, lift it in a follow-up pass — but do NOT
+ * rewrite selectors here without a visual QA pass. */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: #fafafa; color: #0d0d0d; font-family: 'Inter', -apple-system, sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(ellipse 120% 90% at 10% 15%, rgba(0,0,0,0.04), transparent),
+        radial-gradient(ellipse 100% 80% at 90% 80%, rgba(0,0,0,0.03), transparent),
+        radial-gradient(ellipse 90% 100% at 50% 50%, rgba(0,0,0,0.02), transparent);
+      animation: meshMove 40s ease-in-out infinite alternate;
+    }
+    @keyframes meshMove {
+      0% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(-30px, 20px) scale(1.05); }
+      66% { transform: translate(20px, -15px) scale(0.97); }
+      100% { transform: translate(-10px, 10px) scale(1.02); }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .p-hero { text-align: center; padding: 32px; max-width: 720px; }
+
+    .p-line1 {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: #0d0d0d;
+      animation: fadeUp 0.8s ease-out 0.3s both;
+    }
+    .p-line2 {
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: #0d0d0d;
+      margin-top: 0.05em;
+      animation: fadeUp 0.8s ease-out 0.8s both;
+    }
+    .p-line2-serif { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; font-weight: 400; }
+
+    .p-sub {
+      font-family: 'Inter', sans-serif;
+      font-weight: 400;
+      font-size: 1.05rem;
+      letter-spacing: 0.1em;
+      color: #999999;
+      margin-top: 3rem;
+      animation: fadeUp 0.8s ease-out 1.3s both;
+    }
+
+    .p-tagline {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      font-size: 1rem;
+      color: #666666;
+      margin-top: 1.5rem;
+      line-height: 1.6;
+      max-width: 420px;
+      animation: fadeUp 0.8s ease-out 1.6s both;
+    }
+
+    .p-logo-corner {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      animation: fadeUp 0.8s ease-out 1.9s both;
+    }
+    .p-logo-corner img { width: 32px; height: 32px; border-radius: 5px; }
+    .p-logo-corner span {
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 1rem;
+      letter-spacing: -0.04em;
+      color: #0d0d0d;
+    }
+
+    .p-download {
+      position: fixed;
+      top: 28px;
+      right: 28px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #0d0d0d;
+      background: none;
+      border: 1px solid #d4d4d4;
+      border-radius: 6px;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: background 0.15s;
+      z-index: 10;
+    }
+    .p-download:hover { background: #eeeeee; }
