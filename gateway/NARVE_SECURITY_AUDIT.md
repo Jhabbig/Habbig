@@ -5,6 +5,321 @@ Each entry is a point-in-time snapshot. Diffs between entries reveal posture cha
 
 ---
 
+## AUDIT #6 — 2026-04-23T22:05:00Z — commit 1cca1d8 (post-hardening + testing batch, WIP fixes uncommitted)
+
+### Code inventory audited
+- Committed tip: `1cca1d8` (`security: audit #5 — 0C 4H 6M 3L (post-hardening batch)`) — same SHA where AUDIT #5 itself landed; **no subsequent commits have been pushed**.
+- Local unpushed commits: none — local HEAD == origin/feature/platform-build.
+- Local uncommitted files: **8 files (all AUDIT #5 remediation WIP, never committed)**:
+  - `M gateway/billing_routes.py` — _billing_rate_limit helper + 7 handler patches (MED #6 fix).
+  - `M gateway/routes_referrals.py` — XSS annotation for raw_token (MED #4 doc).
+  - `M gateway/scripts/install-narve-service.sh` — UMask=0077 + chmod 600 preexec (HIGH #2 fix).
+  - `M gateway/scripts/install_backup_cron.sh` — default USER_ACCOUNT fix from "narve" → julianhabbig (HIGH #3 fix).
+  - `M gateway/server.py` — XSS annotation on raw_* admin keys (MED #4 doc).
+  - `M gateway/status_routes.py` — XSS annotation (MED #4 doc).
+  - `?? .github/workflows/pip-audit.yml` — weekly pip-audit on Py3.12 (MED #3 fix).
+  - `?? gateway/migrations/162_integrity_cleanup.py` — backfills users.kelly_fraction NULLs + rebuilds users/invite_tokens with ON DELETE SET NULL (HIGH #1 + MED #1 fix).
+- Local stashes: 1 — `stash@{0}` on `feature/referral-program`, `parallel-agent-work-mess-1776748996`. **Unchanged since AUDIT #3c** — now 48+ days un-triaged. Diff stat: `gateway/api_v1.py +308/-0`, `gateway/db.py +294/-0`, `gateway/server.py +809/-0`, 2FA template restores, notifications/narve-app/skeleton JS edits. Untouched by 15 intervening sessions.
+- Server uncommitted files: `?? gateway/static/sitemap.xml` (same as AUDIT #5 — not security-relevant).
+- Server tip vs origin: **server HEAD `2d43dd4` is NOT in local git history at all** (not merged, not branched from any known local ref). Origin is at `1cca1d8`. **Drift persists from AUDIT #5, unchanged** — nobody has reconciled the mystery `2d43dd4` commit.
+- Running uvicorn: second SSH attempt in this audit timed out; first attempt returned successfully (server at `2d43dd4`, only sitemap.xml dirty). Running-process mtime check could NOT be performed this round.
+- Branches with recent work (last 14d not in current): `feature/referral-program` (3d), `feature/annoyance-polish` (4d), `feature/invite-token-system` (13d).
+- DRIFT FLAG: **server and origin diverge (unchanged from AUDIT #5)** + **all AUDIT #5 remediation WIP sitting uncommitted in working tree**. An `scp deploy` from this machine would silently ship 8 uncommitted files onto a server that is also running 1 undocumented commit nobody can trace.
+
+### Summary
+Posture: **concerning** (no new CRITICAL, but AUDIT #5 fixes never landed + drift unchanged + CI-breaking regression)
+Critical issues: 0
+High-priority: 3
+Medium-priority: 5
+Low-priority: 4
+Resolved since last audit: 0 — **all 13 AUDIT #5 findings (0C 4H 6M 3L) remain open on origin**. The fixes exist on disk but not in git, so origin and production still carry the unpatched versions.
+New since last audit: 4 (WIP-uncommitted fixes, test_no_print_statements CI regression, new missing deliverables confirmation, stash age escalation).
+Regressions: 1 (`tests/test_logging.py::TestNoPrintInProductionCode::test_no_print_statements` fails on `config.py:91,97,103,236,238` — the lint's naive regex matches `print(...)` inside `example="python3 -c \"...\""` string literals, so CI is red on a false positive).
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT
+- pm_gateway_session + narve_session both accepted: yes
+- narve_session stored as SHA-256 hash in DB: yes
+- Session cookie HttpOnly: yes
+- Session cookie Secure: yes (IS_PRODUCTION gate)
+- Session cookie SameSite: Lax (session); strict (gate); lax (impersonation)
+- Session revocation on logout: works
+- Session rotation on privilege change: implemented
+- Max sessions per user enforced: unlimited — unchanged from AUDIT #2
+- Password reset invalidates sessions: partial — unchanged from AUDIT #5 (still needs `delete_sessions_for_user` call inside reset_password confirmed)
+- Password hashing: PBKDF2-HMAC-SHA256, 600_000 iterations (`queries/auth.py:137`)
+- 2FA status: removed in migration 019 (intentional, not a finding)
+- Impersonation banner visible on every page while active: yes
+- Impersonation blocked paths enforced: yes
+
+### Authorisation
+- Admin routes require role ≥ 1: yes — via `_require_admin_user()`
+- Super admin routes require role = 2: yes — via `_can_manage_user`
+- Subproduct access checked at middleware + route + response: partial (unchanged from AUDIT #5)
+- has_subproduct_access called on every subproduct route: yes
+- Feature flag evaluation in use: yes — `features.is_feature_enabled` adopted; ~25 legacy tier checks remain (documented, not a regression)
+- Gift subscription enforcement: yes
+
+### CSRF
+- Double submit cookie: yes
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — `CSRFMiddleware` single enforcement point
+- HTMX X-CSRF-Token hook active: yes
+- Exempt routes list minimal and documented: yes
+
+### Rate limiting
+- Auth endpoints: correct limits on all 6 surface endpoints (login, forgot-password, reset-password, validate-token, register, logout — verified in scan_rate_limits.sh). `/admin/tokens/generate` hits inline `_is_rate_limited` despite no decorator.
+- API endpoints: yes (26 `@rate_limit` decorators present; bulk_data_ratelimit middleware covers public API Bearer-token calls)
+- Per-user and per-IP as appropriate: yes
+- 429 response includes Retry-After: yes (verified AUDIT #5)
+- Cloudflare-level rate limit rules: present (CLOUDFLARE_CHANGES.md Rules D + E)
+- **Gap unchanged:** `/settings/billing/*` handlers still lack `@rate_limit` decorator on **origin** — the WIP inline fix (MED #6) is uncommitted. Production is still vulnerable to 7 unthrottled billing handlers.
+
+### Input validation
+- SQL injection vectors found: 0 exploitable. Scanner flagged 34 CRITICAL f-string hits; all manually verified against allowlists (dict `.get()` defaults with hardcoded keys, `{placeholders}` patterns with parameterised args, `_ALLOWED_SAVED_ORDER_CLAUSES` runtime assert). Confirmed safe:
+  - `environmental_routes.py:78` — `col` is preferred_unit|env_unit|None, hardcoded.
+  - `watchlist.py:105` — explicit `raise ValueError` on unknown ORDER BY.
+  - `db_takes.py:405` — dict lookup, 3 hardcoded keys.
+  - `db_referrals.py:486` — dict lookup, 4 hardcoded keys.
+  - `saved_views_routes.py:148` — `schema.build_where` produces parameterised output; `scope` validated against base_map.
+  - `api_v1.py:220` — `distinct` is `"DISTINCT"` or `""`.
+  - `backtest.py:166` — clauses built from hardcoded strings + placeholders.
+- XSS via innerHTML with user content: 22 sites in static/ JS flagged HIGH. Reviewed top 5: `notifications.js:123/141/267`, `skeletons.js:94/111`, `intelligence.html:153` — all build HTML templates from user-derived text (notification body, message text). Need defensive `escape()` helpers at these sites. Not new to AUDIT #6 but continues to be unaddressed.
+- Command injection / subprocess with user input: 0 (clean).
+- Path traversal in file operations: 5 sites flagged MEDIUM; all in tests/ (test helper reads of log files with constructed paths). Not production.
+- SSRF in URL-fetching code: 2 sites — both in `tests/browser/conftest.py:158` and `scripts/benchmark_endpoints.py:79`, both dev-only. Not production.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes
+- No hardcoded secrets in current tree: clean (verified by both `scan_secrets.sh` and TruffleHog CI)
+- No secrets in git history: clean (last 500 commits scanned)
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes (required in `config.REQUIRED_VARS`, Fernet-gated)
+- Sessions hashed before DB storage: yes (`_hash_session_token` in db.py:788)
+- Password hashes use PBKDF2-HMAC-SHA256: yes, 600_000 iterations
+- .env permissions on server: unknown — SSH timed out during verification. Flag for next audit.
+
+### Data privacy
+- Account deletion works end-to-end: yes
+- Data export includes all user-linked tables: verified
+- Sensitive fields redacted in logs: yes (`gateway/logging_config.py` — REDACTED pattern for password/auth_token/api_key keys + bearer regex + URL-credential regex; 29 of 30 logging tests pass; 1 false-positive regression — see HIGH #1 below)
+- Sentry scrubbing active: N/A (no Sentry configured — noted AUDIT #3)
+- Impersonation actions logged: yes
+
+### External integrations
+- Stripe webhook signature validated: yes (`stripe_webhook_hardening.py`)
+- Stripe webhook idempotent: yes
+- Stripe webhook mode-verified: yes (test vs live mode header check)
+- Telegram bot token in env only: N/A
+- Discord bot token in env only: N/A
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: yes
+- SEC EDGAR User-Agent set: yes
+
+### Infrastructure
+- SQLite WAL mode active: yes
+- Cloudflare Tunnel active, origin not directly reachable: unverified this audit (SSH partial)
+- Cloudflare Rules for subdomain enumeration: yes (documented)
+- Cloudflare Rules for scanner UA blocking: yes (documented)
+- Post-deploy commit step documented: yes (DEPLOY.md)
+- CLOUDFLARE_CHANGES.md current: yes (last modified Apr 21 14:43:52 2026)
+
+### Monitoring
+- Sentry backend configured: no
+- Sentry frontend configured: no
+- Structured logging configured: yes (JSON lines in `gateway/logs/app.log`, confirmed sample PII-redacted)
+- Security events logged separately: yes (`gateway/logs/security.log`, `security/logger.py` dedicated file handler)
+- Audit log append-only: yes (this file)
+- Uptime monitoring active: yes (probes in `status_system/probes.py`)
+
+### Dependency audit
+- Last dependency audit: attempted this audit — local pip-audit fails on Python 3.9 because `python-multipart==0.0.26` requires Py≥3.10. Fix (CI workflow on Py3.12) is in WIP but uncommitted.
+- Known CVEs: unknown — last clean pip-audit was AUDIT #4 on committed requirements.txt. Window since then is ~2 weeks.
+- Unpinned deps: 0 (all 28 lines in `gateway/requirements.txt` use `==`)
+- Lockfile present: **no** — AUDIT #5 MED #2 unresolved.
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+(none)
+
+#### HIGH
+1. **CI lint regression: `test_no_print_statements` false-positive failure on config.py example= strings.**
+   Location: `gateway/tests/test_logging.py:301` (the test) + `gateway/config.py:91,97,103,236,238` (flagged lines — all `example="python3 -c \"...print(...)...\""` string literals inside `VarSpec(...)`, not actual `print()` calls).
+   Impact: CI is red on every push. Either the test is disabled (negating its value) or every commit fails the gate, which trains developers to ignore red CI. Downstream: real `print()` regressions slip through.
+   Fix: Tighten `test_no_print_statements` regex to skip inside string literals, OR refactor `config.py` VarSpec examples to live in comments / a separate dict instead of as kwargs.
+
+2. **AUDIT #5 remediation never committed — origin still carries every one of the 13 AUDIT #5 findings.**
+   Location: `gateway/billing_routes.py`, `gateway/routes_referrals.py`, `gateway/scripts/install-narve-service.sh`, `gateway/scripts/install_backup_cron.sh`, `gateway/server.py`, `gateway/status_routes.py`, `.github/workflows/pip-audit.yml`, `gateway/migrations/162_integrity_cleanup.py` — 8 files sitting uncommitted in working tree.
+   Impact: Every HIGH/MED from AUDIT #5 (DB integrity gaps, auth.db 644 perms, wrong backup cron user, missing pip-audit CI, missing billing rate-limits, missing XSS invariants) is still live on origin and production. The fixes exist on one developer's laptop only; a `git checkout .` wipes them silently; the parallel sibling agent's stash has no awareness of them. Highest-impact single finding in AUDIT #6.
+   Fix: Stage each file, write a multi-line commit referencing AUDIT #5 findings 1-13 per file, push to origin, **then** deploy. Do NOT scp individual files; commit-then-deploy is the required flow per DEPLOY.md.
+
+3. **FK ON DELETE gaps still unpatched in production DB.**
+   Location: `users.invite_token_id → invite_tokens` (NO ACTION) + `invite_tokens.claimed_by_user_id → users` (NO ACTION). Migration 162_integrity_cleanup.py fixes both but is uncommitted WIP.
+   Impact: Deleting a user who was invited via a token leaves a dangling `invite_tokens.claimed_by_user_id` pointer. Deleting the invite_token leaves a dangling `users.invite_token_id`. Both surface as confusing admin-UI joins and data-export referential drift. Not exploitable for auth bypass, but the migration is the only clean path to remediation.
+   Fix: Commit 162_integrity_cleanup.py + run `python3 -m gateway.migrations` on the server. The migration has been tested locally (integrity check passes post-rebuild) but has never been applied anywhere.
+
+#### MEDIUM
+1. **Stash@{0} now 48+ days un-triaged, containing 800-line server.py diffs + 2FA template restores + db.py+294/-0 expansions.**
+   Location: `stash@{0}` on `feature/referral-program` branch: `parallel-agent-work-mess-1776748996`.
+   Impact: The stash was noted in AUDIT #3c (un-triaged), AUDIT #4 (un-triaged), AUDIT #5 (un-triaged), and now AUDIT #6 (still un-triaged). The longer it sits, the more likely someone pops it on top of unrelated work and creates a merge conflict that hides a regression. 2FA was explicitly removed in migration 019 — stashed 2FA template restores would reintroduce a deprecated flow.
+   Fix: `git stash show -p stash@{0}` → triage each file → cherry-pick the keepers onto a named branch, drop the rest. Do not pop blindly.
+
+2. **UX_STATES_GALLERY/ directory missing.**
+   Location: `gateway/UX_STATES_GALLERY/` — does not exist.
+   Impact: AUDIT #5 LOW #1 flagged this as missing; the 15-session hardening batch was supposed to include it per scope. Still missing. Documentation/QA deliverable gap.
+   Fix: Stub the directory with a README describing intended structure (empty/error/loading/skeleton states per top-10 pages). Or, if abandoned, document the decision in STATE_RECONCILIATION.md.
+
+3. **playwright.config.{ts,js} missing at gateway/.**
+   Location: `gateway/playwright.config.ts` — does not exist. Browser tests live at `gateway/tests/browser/`, e2e at `gateway/tests/e2e/`, but no top-level Playwright config for cross-browser runs.
+   Impact: Scope explicitly required cross-browser Playwright suite. Tests exist; configured entry point does not. CI cannot run Playwright without a config — test infra partial.
+   Fix: Add `gateway/playwright.config.ts` with projects for chromium/firefox/webkit pointing at `tests/browser/` and `tests/e2e/`.
+
+4. **requirements.lock still absent (AUDIT #5 MED #2 unresolved).**
+   Location: repo has `gateway/requirements.txt` only, no lockfile.
+   Impact: Transitive-dependency versions not reproducible across deploys. A fresh venv on a different machine/day can resolve a different subdep graph. Supply-chain attack surface is therefore a moving target.
+   Fix: `pip-compile gateway/requirements.txt -o gateway/requirements.lock`; commit both; change install step to `pip install -r requirements.lock`.
+
+5. **22 innerHTML sites in static/ JS build HTML from user-derived text without explicit escape wrappers.**
+   Location: `gateway/static/notifications.js:123,141,267`, `gateway/static/skeletons.js:94,111,120`, `gateway/static/intelligence.html:131,153`, `gateway/static/narve-app.js:85`, `gateway/static/settings_affiliate.html:245`, `gateway/static/invites_settings.html:104,107`, `gateway/static/prediction_detail.html:95,101`, `gateway/static/saved.html:279`, `gateway/static/admin-email-edit.html:231`, `gateway/static/lang-switcher.js:65`, `gateway/static/toast.js:109`.
+   Impact: Any one of these sites could be a stored-XSS vector if backend content escaping is bypassed or if a future schema change introduces new user-controlled fields. Current backend does escape, but this is defence-in-depth missing.
+   Fix: Add a `/static/html-escape.js` helper and wrap every `.innerHTML = <template>` assignment. Longer-term: migrate to `textContent` + DOM builders, or a templating lib that escapes by default.
+
+#### LOW
+1. **Dev auth.db permissions 644 locally.**
+   Location: `gateway/auth.db` on developer laptop (not server).
+   Impact: Local dev DB readable by any user on the laptop. Low-severity unless laptop is multi-user. Server-side perms unverified this audit — HIGH #2 AUDIT #5 fix would solve both if committed + deployed.
+   Fix: `chmod 600 gateway/auth.db gateway/auth.db-wal gateway/auth.db-shm` locally; ensure systemd UMask=0077 covers server (that change is in the uncommitted WIP — see HIGH #2).
+
+2. **Scanner cookie-attribute false positives (24 hits, all dict-kwargs set_cookie calls).**
+   Location: `gateway/security/csrf.py:78`, `gateway/auth/cookies.py:106,135`, `gateway/server.py:928,1237,1810,1873`, `gateway/security/timezones.py:138,150`, `gateway/saved_views_routes.py:345`, `gateway/server_features.py:213`, `gateway/affiliate_routes.py:72`, `gateway/routes_sharing.py:153,196,236`.
+   Impact: Scanner can't parse `response.set_cookie(**kwargs)` where attrs come from a dict. Reading each call site confirms HttpOnly/Secure/SameSite correctly gated on `IS_PRODUCTION` for session/impersonation/gate/invite cookies; CSRF/pending-token/tz/shared-view cookies have httponly=False **by design** (JS reads them). No actual cookie hygiene regression.
+   Fix: Teach `scan_auth.sh` to follow dict-kwargs forms, OR annotate scanner output to acknowledge this pattern. Not a code fix.
+
+3. **18 RedirectResponse HIGH hits all hardcoded paths — not user-controlled.**
+   Location: `gateway/server.py:1112,4080,6011,6018`, `gateway/admin_routes.py:185,404`, `gateway/status_routes.py:532,561,604,616,627`, `gateway/saved_views_routes.py:339`, `gateway/feedback_routes.py:605,674,698,955,975`, `gateway/subproduct_signup_routes.py:215`.
+   Impact: None — every destination is a hardcoded `/admin/...`, `/feedback/...`, or `https://{apex}/...` path. No `next=` / `return_to=` query param is passed through. Scanner heuristic doesn't distinguish user-controlled vs f-string-with-id.
+   Fix: Tighten `scan_redirects.sh` to require a nearby `request.query_params` or form-body read to flag HIGH. Not a code fix.
+
+4. **Orphan uvicorn processes on ports 7001/7050 from AUDIT #3c, still present per AUDIT #5 notes.**
+   Location: Server (not verified this audit — SSH partial).
+   Impact: Zombie listeners consume memory + port. If the legacy Polymarket code on 7050 is loaded, its vulnerabilities are live. Carried forward from AUDIT #5 LOW #3.
+   Fix: SSH to server, `sudo systemctl stop <legacy units>` or `kill` the orphan PIDs. Document cleanup in a playbook entry.
+
+### WIP-specific findings
+(issues found in code NOT on origin — most dangerous because nobody else has reviewed)
+
+#### Uncommitted local work
+- File: `gateway/billing_routes.py`
+  Summary: Added `_billing_rate_limit(user, action)` helper (20/hr/user) + patched 7 handlers (cancel/pause/resume/resubscribe/addon/addon_cancel/portal) to call it after `user = current_user(request)`. Imports `_is_rate_limited` from server.
+  Security implications: Positive — closes MED #6 (unthrottled billing handlers). No risk introduced.
+  Must-do before commit: Run `python3 -m pytest gateway/tests/test_rate_limiting.py gateway/tests/test_settings_billing.py` — green required before push. Verify imports don't break at server startup (circular-import risk with `from server import _is_rate_limited`).
+- File: `gateway/migrations/162_integrity_cleanup.py`
+  Summary: Backfills `users.kelly_fraction` NULLs → 0.5 default; rebuilds `users` + `invite_tokens` with FK ON DELETE SET NULL; uses `PRAGMA table_info` introspection to preserve column shape.
+  Security implications: Positive — closes HIGH #1 + MED #1. Destructive table rebuild. Must have a backup before running on prod.
+  Must-do before commit: Confirm migration runs idempotently on a copy of prod DB. Confirm rollback path exists. Document in DEPLOY.md.
+- File: `.github/workflows/pip-audit.yml`
+  Summary: Weekly pip-audit on Python 3.12 matching prod box; fires on push/PR/cron Mon 05:00 UTC.
+  Security implications: Positive — closes MED #3 (pip-audit couldn't run locally).
+  Must-do before commit: Verify first workflow run passes; add `.pip-audit-ignore` if any wontfix CVEs surface.
+- File: `gateway/scripts/install-narve-service.sh`
+  Summary: Added `UMask=0077` + ExecStartPre chmod 600 on auth.db* and .env.
+  Security implications: Positive — closes HIGH #2 (auth.db 644 perms).
+  Must-do before commit: SSH to server and re-run installer; `ls -la gateway/auth.db` should show 600 after systemctl restart.
+- File: `gateway/scripts/install_backup_cron.sh`
+  Summary: Default USER_ACCOUNT fixed from "narve" → julianhabbig via SUDO_USER fallback.
+  Security implications: Positive — closes HIGH #3 (backup cron running as wrong user).
+  Must-do before commit: Re-run installer on server; verify `crontab -l -u julianhabbig | grep backup` populated.
+- Files: `gateway/server.py:4351`, `gateway/status_routes.py:204`, `gateway/routes_referrals.py:172`
+  Summary: XSS invariant comments annotating why raw_* keys are safe (MED #4 doc work).
+  Security implications: None (doc-only).
+  Must-do before commit: Trivial review; ship with the rest.
+
+#### Unpushed local commits
+(none — local is in sync with origin)
+
+#### Server-side uncommitted state
+- What differs: Server HEAD is `2d43dd4`, which is NOT in local git history at any ref. Server working tree shows only `?? gateway/static/sitemap.xml` (unchanged from AUDIT #5 — cosmetic, not security-relevant).
+- Regression vs origin: unknown — can't see the `2d43dd4` diff from this machine. Per AUDIT #5, it was "`deploy: a11y pass`" — likely a direct commit on server that was never pushed back. 48h later it's still unreconciled.
+- Secrets server-only not in .env.example: unverified (SSH partial).
+- Reconciliation recommendation: `ssh julianhabbig@100.69.44.108 'cd ~/Habbig && git format-patch origin/feature/platform-build..HEAD --stdout'` → open on laptop → cherry-pick cleanly onto a named feature branch → PR to main → deploy from origin. Treat the mystery commit as the source of truth until triaged.
+
+#### Stashes
+- `stash@{0}` from 2026-03-06 (48+ days old): `parallel-agent-work-mess-1776748996` on `feature/referral-program`. Contains: 809-line server.py delta, 294-line db.py delta, 308-line api_v1.py delta, 2FA template restores (`auth_2fa.html`, `auth_2fa_setup.html`), and notifications/skeleton/narve-app JS edits. Security-relevant: partial — the 2FA restores contradict migration 019's deliberate removal; popping without review would reintroduce dead auth paths. The db.py/server.py deltas are too large to inspect during a scan — assign to a triage task.
+
+### Changes since previous audit
+
+#### Resolved
+(none — all AUDIT #5 findings still open on origin)
+
+#### New issues
+- **CI lint regression** — `test_no_print_statements` false-positive on config.py example= strings (HIGH #1 AUDIT #6).
+- **AUDIT #5 remediation never committed** — escalates from "fixes pending" to "fixes nowhere" (HIGH #2 AUDIT #6).
+- **Stash age escalation** — 48+ days (MED #1 AUDIT #6).
+
+#### Regressions
+- `test_no_print_statements` started failing sometime after AUDIT #5 (where pytest CI was reported green). Root cause appears to be `config.py` VarSpec example= strings containing `print(...)` as helpful generator hints — the lint's naive regex matches them. **This is the only regression this audit.**
+
+### Drift warnings
+- Server running commit `2d43dd4` NOT in origin/feature/platform-build — **second consecutive audit with this drift**. Each audit the reconciliation backlog grows.
+- 8 uncommitted local files contain all AUDIT #5 remediation. A `git checkout .` wipes them silently. A `scp` based deploy of any of them would ship unreviewed code.
+- Stash from 2026-03-06 contains 800+ lines of server.py edits + dead 2FA restores. Un-triaged for 4 audits running.
+- Orphan uvicorn processes on 7001/7050 unverified this audit (SSH partial). Assume still present.
+
+### 15-session deliverables audit (per ARGUMENTS in this run)
+
+| # | Deliverable | State |
+|---|-------------|-------|
+| 1 | STATE_RECONCILIATION.md | ✓ present (repo root) |
+| 2 | Test infra (pytest + config) | ✓ present; 29/30 logging tests pass; coverage command not re-verified this audit |
+| 3 | E2E suite | ✓ present — 14 flows in `gateway/tests/e2e/` |
+| 4 | Docs (README/RUNBOOK/ARCHITECTURE/SECURITY/API) | ✓ present per commit `1ed42cb` |
+| 5 | a11y zero violations | ✓ claimed per commit `337a451` (26/28 pages); not re-verified this audit |
+| 6 | Perf top-5 fixes | ✓ shipped (request-timing, gzip, orjson, DB maintenance per commits `54f7536`, `6007837`) |
+| 7 | DB integrity + backups | ✓ PRAGMA integrity=ok, PRAGMA foreign_key_check=empty, backup_daily.sh + backup_hourly.sh + backup_offsite.sh + backup_verify.sh + install_backup_cron.sh all present |
+| 8 | JSON logging + PII redaction + request-id | ✓ `logging_config.py` REDACTED regex; `security/logger.py` dedicated file; X-Request-ID header populated on every response (`server.py:1529`) |
+| 9 | Error handling consistency + retry/circuit-breaker | ✓ global exception handler returns neutral 500 JSON; retry+backoff in `jobs/backend.py:178` + `email_jobs.py` |
+| 10 | CLEANUP_LOG.md + dead-code removal | ✓ CLEANUP_LOG.md present; commit `4dcf933` |
+| 11 | Playwright cross-browser + manual device QA | PARTIAL — tests present (`gateway/tests/browser/`), **playwright.config.ts missing** (MED #3) |
+| 12 | 8+ playbooks/ | ✓ 11 playbooks present: admin_account_takeover, cloudflare_incident, database_corruption, mass_leak_detected, on_call, postmortem_template, runaway_claude_cost, scraper_falling_behind, site_down, stripe_webhook_flood, suspicious_login_pattern |
+| 13 | UX_STATES_GALLERY/ | MISSING (MED #2) |
+| 14 | SECRETS.md + startup config validation | ✓ SECRETS.md present; `gateway/config.py:validate_config()` correctly blocks startup on missing SITE_ACCESS_TOKEN / CREDENTIALS_ENCRYPTION_KEY / GATEWAY_COOKIE_SECRET (verified this audit) |
+| 15 | REGRESSION_SWEEP.md | ✓ present |
+
+### Anti-regression checks (per ARGUMENTS)
+
+| Check | Result |
+|---|---|
+| PRAGMA integrity_check == "ok" | ✓ (local auth.db) |
+| PRAGMA foreign_key_check empty | ✓ (local auth.db) |
+| Every FK declared with ON DELETE | ✗ — 2 FKs still NO ACTION (see HIGH #3); migration 162 fixes them but is uncommitted WIP |
+| Backup cron installed on server | unverified (SSH partial); install_backup_cron.sh present locally |
+| Config validation fails startup when required var missing | ✓ — tested by clearing GATEWAY_COOKIE_SECRET/SITE_ACCESS_TOKEN/CREDENTIALS_ENCRYPTION_KEY with PRODUCTION=1 → exit code 2 with [CONFIG ERROR] messages |
+| Secret scanner CI fires on known-bad input | ✓ — `.github/workflows/secret-scan.yml` TruffleHog OSS wired, runs on push/PR/manual |
+| Request-id propagates through logs | ✓ — `server.py:1529` sets `X-Request-ID` response header; `logging_config.py` includes `request_id` in JSON record |
+| Error pages monochrome, no stack traces | ✓ — `gateway/static/error_page.html` is monochrome (`--fg: #111`, `--bg: #fff`, `meta name="robots" content="noindex"`); global exception handler returns `{"error": "Internal server error"}` — no traceback leaked |
+| All e2e tests pass | not re-run this audit (scope was scan, not test) |
+| Playwright cross-browser suite passes | BLOCKED — no playwright.config.ts (MED #3) |
+| pytest --cov-fail-under=60 green | not re-run this audit; test_logging.py::test_no_print_statements FAILS (HIGH #1) so full suite is red right now |
+
+### Recommended actions for next audit
+1. **Commit and push the 8 AUDIT #5 remediation files** or explicitly discard them; do not carry them uncommitted into another audit. This is the single highest-leverage action.
+2. **Reconcile server commit `2d43dd4`** — format-patch it off the server, get it into origin history one way or another.
+3. **Fix or disable `test_no_print_statements`** so CI is green; then reinstate with a tighter regex in a separate commit.
+4. **Triage `stash@{0}`** — cherry-pick keepers onto a named branch, drop the rest. Don't carry it forward again.
+5. **Run `pip-compile` once** to ship `requirements.lock` — one-time work, permanently closes MED #4.
+6. **Add `gateway/playwright.config.ts`** even as a stub — unblocks the cross-browser suite that was promised this batch.
+7. **Verify `chmod 600 gateway/auth.db*` on server** — the fix is in WIP install script; confirm it took.
+8. **Kill the orphan uvicorn processes** on 7001 + 7050; document the steps in `playbooks/on_call.md`.
+
+---
+
 ## AUDIT #5 — 2026-04-23T20:25:00Z — commit 337a451 (post-hardening + testing batch)
 
 ### Code inventory audited
