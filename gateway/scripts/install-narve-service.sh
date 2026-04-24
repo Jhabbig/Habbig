@@ -92,6 +92,11 @@ Type=simple
 User=${USER_NAME}
 Group=${USER_NAME}
 WorkingDirectory=${GATEWAY_DIR}
+# Any file the uvicorn process creates (auth.db-wal/-shm, /tmp dumps,
+# export ZIPs) gets 0600 instead of the default 0644. AUDIT #5 HIGH #2
+# flagged auth.db as world-readable on disk; UMask at the unit level
+# means new files are born restrictive — no need to chmod after the fact.
+UMask=0077
 # All secrets MUST come from the EnvironmentFile below — never add
 # Environment=KEY=secret lines here (they leak via `systemctl show`,
 # journalctl, and the unit file itself which is world-readable).
@@ -101,6 +106,11 @@ EnvironmentFile=${ENV_FILE}
 Environment=PRODUCTION=1
 Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/bin/bash -c '/usr/bin/fuser -k 7000/tcp 2>/dev/null || true; sleep 1'
+# Tighten perms on the DB + env file on every start. Idempotent chmods
+# so a file created with an older umask gets corrected without a manual
+# runbook step. -f swallows errors when auth.db-wal/-shm don't exist
+# yet (first boot before any write).
+ExecStartPre=/bin/bash -c 'chmod 600 ${GATEWAY_DIR}/auth.db ${GATEWAY_DIR}/auth.db-wal ${GATEWAY_DIR}/auth.db-shm ${ENV_FILE} 2>/dev/null || true'
 ExecStart=/usr/bin/python3 -m uvicorn server:app --host 127.0.0.1 --port 7000
 Restart=on-failure
 RestartSec=5

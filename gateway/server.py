@@ -4342,6 +4342,13 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
         revenue_tab = ""
         revenue_content = '<div style="text-align:center;padding:48px 0;color:var(--text-muted)">Super admin access required.</div>'
 
+    # XSS invariant (AUDIT #5 MED #4): every `raw_*` key here is built
+    # server-side from either (a) a whitelist of static strings or
+    # (b) the output of a helper that html.escape's its inputs before
+    # joining. No untrusted request body, URL param, or DB column with
+    # user-controlled content lands here without escaping. If you add a
+    # new raw_ key below, uphold this — or drop the raw_ prefix so
+    # render_page escapes it for you.
     return {
         "raw_token_rows": "".join(token_rows) or '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No tokens yet.</div></div></div>',
         "raw_user_rows": "".join(user_rows),

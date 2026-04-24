@@ -196,6 +196,13 @@ def _assemble_status_context(request: Request) -> dict:
     overall = status_uptime.compute_overall_uptime_last_n_days(90)
     recent = status_db.list_recent_incidents(limit=20)
 
+    # XSS invariant (AUDIT #5 MED #4): each raw_* HTML string below is
+    # built by a local `_*_html()` helper that html.escape's every
+    # interpolated value (component name, incident title, message body).
+    # The status page has no user-input surface — content comes from
+    # the incidents table (admin-written) and the probes table (system-
+    # generated). If either ingestion path ever starts accepting free-
+    # form user content, re-verify the escape in the helper first.
     return {
         "status_message": system["message"],
         "status_level": system["status"],

@@ -12,8 +12,11 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-REPO="${REPO:-/home/narve/Habbig}"
-USER_ACCOUNT="${USER_ACCOUNT:-narve}"
+# Default user is the canonical prod account (julianhabbig on the
+# Tailscale-facing Ubuntu box). Override via env for staging chroots,
+# CI runs, or a future rename.
+USER_ACCOUNT="${USER_ACCOUNT:-${SUDO_USER:-julianhabbig}}"
+REPO="${REPO:-/home/${USER_ACCOUNT}/Habbig}"
 CRON_FILE=/etc/cron.d/narve-backup
 
 cat > "$CRON_FILE" <<EOF

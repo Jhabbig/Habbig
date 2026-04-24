@@ -169,6 +169,12 @@ async def api_invite_accept(code: str, request: Request):
             template="referral_invite",
             context={
                 "referrer_display_name": _display_name(referrer),
+                # raw_ prefix bypasses HTML escaping in the email template
+                # renderer (same convention as gateway render_page). Safe
+                # here because `token_str` is secrets.token_urlsafe(…) output
+                # — the character set is [A-Za-z0-9_-] only, so there's
+                # nothing to escape. AUDIT #5 MED #4 asked us to annotate
+                # every raw_* site; this is one of them.
                 "raw_token": token_str,
                 "app_url": _app_url(),
             },

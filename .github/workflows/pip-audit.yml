@@ -1,0 +1,54 @@
+name: pip-audit
+
+# Weekly dependency CVE check — runs on Python 3.12 to match the prod
+# Ubuntu box. AUDIT #5 flagged "CVE posture unknown" because the local
+# dev Python was 3.9 and some deps (e.g. python-multipart ≥ 0.0.21)
+# require 3.10+. Running in CI on 3.12 removes that blind spot.
+#
+# Fires on:
+#   - every push to main / feature/* (cheap; fails the PR on known CVE)
+#   - weekly cron on Mon 05:00 UTC (catches newly-disclosed CVEs even
+#     when there's no commit activity)
+#   - workflow_dispatch (manual, for audit runs)
+
+on:
+  push:
+    branches: [main, feature/*]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+
+      - name: Audit gateway/requirements.txt
+        # --strict: fail on any vulnerability, including known-but-unpatched.
+        #   If a finding is legitimately wontfix (e.g. unused transitive dep),
+        #   add it to .pip-audit-ignore below with a one-line justification.
+        # --desc: include the CVE description in the output so the PR
+        #   reviewer doesn't have to click through.
+        run: |
+          pip-audit \
+            --requirement gateway/requirements.txt \
+            --strict \
+            --desc on \
+            --ignore-vuln-cache

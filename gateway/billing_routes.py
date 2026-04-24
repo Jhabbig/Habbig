@@ -48,11 +48,37 @@ from server import (
     _role_badge,
     PLAN_DEFS,
     TRADING_ADDON,
+    _is_rate_limited,
 )
 # In-memory cache invalidation. Tier/plan changes shift what the user sees in
 # their feed and what tier they map to for best_bets, so every subscription
 # mutation below calls through ttl_invalidate.on_subscription_change(uid).
 from cache import ttl_invalidate
+
+
+# ── Per-user billing rate limit (AUDIT #5 MED #6) ─────────────────────────
+#
+# GlobalRateLimitMiddleware caps per-IP at 600/min and cancel/resubscribe
+# flows carry idempotency keys, but a compromised session cookie could
+# still bounce cancel → resubscribe → cancel to burn through win-back
+# emails or reissue addon seats. 20 mutations per rolling hour per user
+# is comfortably above legitimate usage (nobody cancels twelve times in
+# sixty minutes) and well below the noise floor for even a pathological
+# retry loop.
+
+def _billing_rate_limit(user, action: str = "") -> None:
+    """Raise 429 if *user* has exceeded 20 billing mutations in the last
+    hour. Call at the top of every billing mutation handler below. Cheap
+    in-memory bucket — same backend as the auth rate limits."""
+    if not user:
+        return
+    key = f"billing:{user['user_id']}:{action}" if action else f"billing:{user['user_id']}"
+    if _is_rate_limited(key, limit=20, window=3600):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many billing actions. Please wait an hour before trying again.",
+            headers={"Retry-After": "3600"},
+        )
 
 log = logging.getLogger("billing")
 
@@ -858,6 +884,7 @@ async def settings_billing_cancel(
     Any other value → treat as step 1.
     """
     user = current_user(request)
+    _billing_rate_limit(user, "cancel")
     if not user:
         return RedirectResponse("/token", status_code=302)
 
@@ -925,6 +952,7 @@ async def settings_billing_pause(
     the cancellation_attempt as outcome='paused'.
     """
     user = current_user(request)
+    _billing_rate_limit(user, "pause")
     if not user:
         return RedirectResponse("/token", status_code=302)
 
@@ -966,6 +994,7 @@ async def settings_billing_pause(
 async def settings_billing_resume(request: Request):
     """Resume a paused subscription early."""
     user = current_user(request)
+    _billing_rate_limit(user, "resume")
     if not user:
         return RedirectResponse("/token", status_code=302)
     with db.conn() as c:
@@ -987,6 +1016,7 @@ async def settings_billing_resume(request: Request):
 async def settings_billing_resubscribe(request: Request):
     """Reactivate cancelled subs that haven't yet expired."""
     user = current_user(request)
+    _billing_rate_limit(user, "resubscribe")
     if not user:
         return RedirectResponse("/token", status_code=302)
     now = int(time.time())
@@ -1014,6 +1044,7 @@ async def settings_billing_addon_add(request: Request, addon: str = Form(...)):
     design: the user chose to top up again.
     """
     user = current_user(request)
+    _billing_rate_limit(user, "addon")
     if not user:
         return RedirectResponse("/token", status_code=302)
     if addon != "trading":
@@ -1043,6 +1074,7 @@ async def settings_billing_addon_add(request: Request, addon: str = Form(...)):
 async def settings_billing_addon_cancel(request: Request, addon: str = Form(...)):
     """Remove an add-on."""
     user = current_user(request)
+    _billing_rate_limit(user, "addon_cancel")
     if not user:
         return RedirectResponse("/token", status_code=302)
     if addon != "trading":
@@ -1087,6 +1119,7 @@ async def api_billing_invoice_pdf(request: Request, invoice_id: str):
 async def api_billing_portal(request: Request):
     """Stripe Customer Portal — stubbed. Redirects to /enquire."""
     user = current_user(request)
+    _billing_rate_limit(user, "portal")
     if not user:
         return RedirectResponse("/token", status_code=302)
     log.info(
