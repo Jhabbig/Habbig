@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}" data-theme="{{ theme }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title }} · narve.ai</title>
+
+  <meta name="description" content="{{ meta_description }}">
+  {{ raw_robots }}
+  <link rel="canonical" href="{{ canonical_url }}">
+
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:title" content="{{ og_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:type" content="{{ og_type }}">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@narveai">
+  <meta name="twitter:title" content="{{ og_title }}">
+  <meta name="twitter:description" content="{{ meta_description }}">
+  <meta name="twitter:image" content="{{ og_image }}">
+
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+
+  <!-- Theme init — inline to stop a FOUC between the doctype and the
+       stylesheet load. Has to run synchronously so we resolve the
+       theme before the browser paints the body. -->
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"{{ theme }}";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","{{ theme }}");}})();</script>
+
+  {{ raw_schema_jsonld }}
+  {{ raw_page_head }}
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+
+  {{ raw_header }}
+
+  <main id="main">{{ raw_content }}</main>
+
+  {{ raw_footer }}
+
+  <div id="nv-toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="/_gateway_static/js/toast.js" defer></script>
+  <script src="/_gateway_static/theme.js?v=2" defer></script>
+  {{ raw_page_scripts }}
+</body>
+</html>

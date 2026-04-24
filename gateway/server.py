@@ -2268,6 +2268,164 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
     return HTMLResponse(page)
 
 
+# ── Canonical base-template wrapping (foundation bundle) ─────────────────────
+#
+# render_with_base() wraps a page body through static/_base.html so every
+# migrated page gets the same <head>, OG tags, canonical URL, skip-link,
+# toast region, and script loading order. Pages opt in by calling this
+# function instead of render_page; the two can coexist during the
+# 99-page migration so a regression in one migrated page doesn't break
+# the 94 still on the legacy path.
+#
+# The inner template is a fragment — ONLY the <main> body content, no
+# <head>, no <body>, no <!DOCTYPE>. Existing templates stay unchanged;
+# new templates follow the fragment convention. During migration, the
+# caller can pass raw_header / raw_footer inline if a page needs
+# surrounding chrome the base doesn't know about yet.
+
+
+def _default_lang_theme(request) -> tuple[str, str]:
+    """Best-effort lang + theme for the base template.
+
+    Both have a cookie + localStorage fallback in the inline theme-init
+    script — we just seed the SSR value so the first paint doesn't
+    flash. 'light' is the product default.
+    """
+    lang = "en"
+    theme = "light"
+    if request is not None:
+        lang = (request.query_params.get("lang") or
+                request.cookies.get("narve-lang") or
+                "en")
+        theme = (request.cookies.get("narve-theme") or
+                 request.cookies.get("betyc-theme") or
+                 "light")
+    return lang, theme
+
+
+def render_with_base(
+    template_name: str,
+    *,
+    request=None,
+    title: str = "narve.ai",
+    meta_description: str = (
+        "Prediction market intelligence for serious traders."
+    ),
+    og_title: Optional[str] = None,
+    og_type: str = "website",
+    og_image: str = "/og/default",
+    canonical_url: Optional[str] = None,
+    schema_jsonld: str = "",
+    page_head: str = "",
+    page_scripts: str = "",
+    header: str = "",
+    footer: str = "",
+    noindex: bool = False,
+    **context,
+) -> HTMLResponse:
+    """Render `template_name` as a page body, wrap through _base.html.
+
+    `template_name` should resolve to static/<name>.html containing
+    ONLY the body fragment. Legacy full-page templates should keep
+    calling `render_page()` and will be migrated one at a time.
+
+    Every keyword beyond the explicit set is forwarded into the inner
+    template's own {{ key }} substitution — same semantics as
+    render_page, including the raw_/static:/t() support.
+    """
+    # Resolve the inner body first so its own substitutions run.
+    inner_response = render_page(template_name, request=request, **context)
+    inner_body = inner_response.body.decode("utf-8") if inner_response.body else ""
+
+    lang, theme = _default_lang_theme(request)
+
+    if canonical_url is None:
+        base = os.environ.get("APP_URL", "https://narve.ai").rstrip("/")
+        path = request.url.path if request is not None else "/"
+        canonical_url = f"{base}{path}"
+
+    robots_meta = (
+        '<meta name="robots" content="noindex, nofollow">'
+        if noindex else ""
+    )
+
+    base_ctx = {
+        "title": title,
+        "meta_description": meta_description,
+        "og_title": og_title or title,
+        "og_type": og_type,
+        "og_image": og_image,
+        "canonical_url": canonical_url,
+        "lang": lang,
+        "theme": theme,
+        "raw_robots": robots_meta,
+        "raw_schema_jsonld": schema_jsonld,
+        "raw_page_head": page_head,
+        "raw_page_scripts": page_scripts,
+        "raw_header": header,
+        "raw_footer": footer,
+        "raw_content": inner_body,
+    }
+    # Re-use render_page for the base wrapping so {{ static: }} /
+    # {{ t(…) }} / raw_ semantics are consistent across the whole tree.
+    return render_page("_base", request=request, **base_ctx)
+
+
+def render_empty(
+    *,
+    title: str,
+    body: str,
+    actions: Optional[list[dict]] = None,
+    icon_svg: str = "",
+) -> str:
+    """Render the shared empty-state partial to an HTML string.
+
+    Callers: `actions=[{"label": "Browse sources", "href": "/sources",
+    "primary": True}, ...]`. Returns the HTML ready to drop into a page
+    template — pair with a `raw_empty_state` placeholder.
+    """
+    parts: list[str] = []
+    for action in (actions or []):
+        cls = "nv-empty__action"
+        if action.get("primary"):
+            cls += " nv-empty__action--primary"
+        href = html.escape(action.get("href", "#"))
+        label = html.escape(action.get("label", ""))
+        parts.append(f'<a class="{cls}" href="{href}">{label}</a>')
+    actions_html = "".join(parts)
+
+    ctx = {
+        "empty_title": title,
+        "empty_body": body,
+        "raw_empty_actions": actions_html,
+        "raw_icon_svg": icon_svg,
+    }
+
+    path = STATIC_DIR / "_partials" / "empty_state.html"
+    try:
+        page = path.read_text()
+    except FileNotFoundError:
+        # Fallback: inline the same structure so a missing partial on a
+        # half-deployed server never 500s. Matches the .nv-empty CSS
+        # class names so styling still applies.
+        return (
+            f'<div class="nv-empty" role="status">'
+            f'<h2 class="nv-empty__title">{html.escape(title)}</h2>'
+            f'<p class="nv-empty__body">{html.escape(body)}</p>'
+            f'<div class="nv-empty__actions">{actions_html}</div>'
+            f'</div>'
+        )
+    # Run the same raw_/escape substitution render_page uses.
+    raw_keys = {k for k in ctx if k.startswith("raw_")}
+    for key, value in ctx.items():
+        placeholder = "{{ " + key + " }}"
+        if key in raw_keys:
+            page = page.replace(placeholder, str(value))
+        else:
+            page = page.replace(placeholder, html.escape(str(value)))
+    return page
+
+
 def _role_badge(user: dict) -> str:
     """Return a small role badge span for the nav bar."""
     level = user.get("is_admin") or 0
