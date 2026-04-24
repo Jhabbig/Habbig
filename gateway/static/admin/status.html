@@ -1,0 +1,99 @@
+<!-- Converted from admin_status.html. Body-only — wrapped by admin_shell. -->
+<div style="max-width:1100px">
+
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-tile">
+              <div class="stat-label">Open incidents</div>
+              <div class="stat-value">{{ open_count }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Email subscribers</div>
+              <div class="stat-value">{{ total_subs }}</div>
+            </div>
+          </div>
+
+          <!-- Create incident -->
+          <div class="settings-card">
+            <div class="settings-section">
+              <div class="settings-section-title">Create incident</div>
+              <div class="settings-section-desc">
+                Goes live on /status immediately. Email subscribers get a notification
+                within a minute.
+              </div>
+
+              <form method="post" action="/admin/incidents">
+                {{ raw_csrf_field }}
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-title">Title</label>
+                  <div class="field-control">
+                    <input id="inc-title" type="text" name="title" required
+                           placeholder="e.g. Scraper service temporarily unavailable">
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-severity">Severity</label>
+                  <div class="field-control">
+                    <select id="inc-severity" name="severity">{{ raw_severity_options }}</select>
+                    <div class="field-helper">"Minor" = informational, "major" = degraded, "critical" = outage.</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-status">Status</label>
+                  <div class="field-control">
+                    <select id="inc-status" name="status">{{ raw_status_options }}</select>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <span class="field-label">Affected components</span>
+                  <div class="field-control" style="padding-top:4px">
+                    <div class="admin-checks">{{ raw_component_checkboxes }}</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="inc-desc">Description</label>
+                  <div class="field-control">
+                    <textarea id="inc-desc" name="description" placeholder="Initial investigation notes. Markdown OK."></textarea>
+                  </div>
+                </div>
+
+                <div class="save-bar">
+                  <button type="submit" class="btn btn-primary">Create incident</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Open -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Open incidents</h2>
+              <span class="admin-section-count">live on /status</span>
+            </div>
+            <div class="admin-card">{{ raw_open_incidents }}</div>
+          </div>
+
+          <!-- Recent -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Recent incidents</h2>
+              <span class="admin-section-count">last 90 days</span>
+            </div>
+            <div class="admin-card">{{ raw_all_incidents }}</div>
+          </div>
+
+          <!-- Subscribers -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Email subscribers</h2>
+              <span class="admin-section-count">notified on every update</span>
+            </div>
+            <div class="admin-card">{{ raw_subscriber_list }}</div>
+          </div>
+
+        </div>
+

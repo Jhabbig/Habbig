@@ -1,0 +1,32 @@
+<!-- Body-only content for /admin/churn. Wrapped by admin_shell.html via
+     render_admin_page(). Page title, breadcrumb, and H1 come from the
+     shell — don't add them here. -->
+<p class="admin-lede" style="color:var(--text-secondary);font-size:14px;line-height:1.6;margin:0 0 24px;max-width:720px">
+  Risk scores are recomputed nightly from <code>engagement_events</code>.
+  The cancellation funnel counts every attempt recorded by the 3-step
+  <code>/settings/billing</code> cancel flow.
+</p>
+
+<div class="adm-grid">
+  <div class="adm-card">
+    <h2 class="adm-card-title">Risk distribution</h2>
+    {{ raw_risk_pie }}
+  </div>
+
+  <div class="adm-card">
+    <h2 class="adm-card-title">Cancellation funnel</h2>
+    {{ raw_funnel }}
+  </div>
+
+  <div class="adm-card adm-card-full">
+    <h2 class="adm-card-title">Top 20 at-risk users</h2>
+    {{ raw_top_users }}
+  </div>
+
+  <div class="adm-card adm-card-full">
+    <h2 class="adm-card-title">Recent cancellation attempts</h2>
+    {{ raw_recent }}
+  </div>
+</div>
+
+<link rel="stylesheet" href="/_gateway_static/pages/admin-churn.css">

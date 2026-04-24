@@ -547,10 +547,13 @@ async def admin_affiliates_list(request: Request):
             f'</tr>'
         )
 
-    return render_page(
-        "admin_affiliates",
-        request=request,
-        _is_admin=True,
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/affiliates.html",
+        page_title="Affiliates",
+        active_route="affiliates",
+        breadcrumb=[("Admin", "/admin"), ("Affiliates", "/admin/affiliates")],
         total_affiliates=str(len(affiliates)),
         pending_payout_count=str(len(pending)),
         raw_affiliate_rows="\n".join(rows) or (

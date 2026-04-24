@@ -529,11 +529,13 @@ async def admin_moderation_page(request: Request):
     user = _require_admin(request)
     reports = db_takes.list_open_reports(limit=200)
     rows_html = _render_report_rows(reports)
-    return render_page(
-        "admin_moderation",
-        request=request,
-        raw_nav_role=server._role_badge(user) if hasattr(server, "_role_badge") else "",
-        username=user.get("email", "").split("@")[0],
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/moderation.html",
+        page_title="Moderation queue",
+        active_route="moderation",
+        breadcrumb=[("Admin", "/admin"), ("Moderation", "/admin/moderation")],
         open_report_count=str(len(reports)),
         raw_report_rows=rows_html,
     )

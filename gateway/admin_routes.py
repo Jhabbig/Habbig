@@ -216,13 +216,13 @@ async def impersonations_list(request: Request):
         )
 
     body = "".join(rows) or '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No impersonation sessions yet.</div></div></div>'
-    return _render_page(
-        "admin-impersonations",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/impersonations.html",
+        page_title="Impersonations",
+        active_route="impersonations",
+        breadcrumb=[("Admin", "/admin"), ("Impersonations", "/admin/impersonations")],
         raw_sessions=body,
     )
 
@@ -274,13 +274,17 @@ async def impersonation_detail(request: Request, session_id: int):
         f'<div class="stat-value">{int(s["action_count"] or 0)}</div></div>'
     )
 
-    return _render_page(
-        "admin-impersonation-detail",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/impersonation-detail.html",
+        page_title=f"Session #{session_id}",
+        active_route="impersonations",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Impersonations", "/admin/impersonations"),
+            (f"#{session_id}", None),
+        ],
         session_id=str(session_id),
         reason=s["reason"] or "",
         ip_address=s["ip_address"] or "",
@@ -366,13 +370,13 @@ async def flags_page(request: Request):
         )
 
     body = "".join(rows) or '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No flags yet. Create the first one below.</div></div></div>'
-    return _render_page(
-        "admin-flags",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/flags.html",
+        page_title="Feature flags",
+        active_route="flags",
+        breadcrumb=[("Admin", "/admin"), ("Feature flags", "/admin/flags")],
         raw_flag_rows=body,
     )
 
@@ -413,13 +417,17 @@ async def flag_edit_page(request: Request, key: str):
         raise HTTPException(status_code=404, detail="Flag not found")
     data = features.flag_to_dict(row)
 
-    return _render_page(
-        "admin-flag-edit",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/flag-edit.html",
+        page_title=f"Flag: {data['key']}",
+        active_route="flags",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Feature flags", "/admin/flags"),
+            (data["key"], None),
+        ],
         flag_key=data["key"],
         flag_name=data["name"],
         flag_description=data["description"],
@@ -567,13 +575,13 @@ async def emails_page(request: Request):
             f'</div>'
         )
 
-    return _render_page(
-        "admin-emails",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/emails.html",
+        page_title="Email templates",
+        active_route="emails",
+        breadcrumb=[("Admin", "/admin"), ("Email templates", "/admin/emails")],
         raw_template_rows="".join(rows),
     )
 
@@ -613,13 +621,17 @@ async def email_edit_page(request: Request, key: str):
         for v in variables
     )
 
-    return _render_page(
-        "admin-email-edit",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/email-edit.html",
+        page_title=f"Email: {key}",
+        active_route="emails",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Email templates", "/admin/emails"),
+            (key, None),
+        ],
         template_key=key,
         subject=subject,
         body_html_text=body_html_str,
@@ -1288,13 +1300,13 @@ async def churn_dashboard(request: Request):
             'No cancellation attempts recorded yet.</div>'
         )
 
-    return _render_page(
-        "admin-churn",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/churn.html",
+        page_title="Churn & retention",
+        active_route="churn",
+        breadcrumb=[("Admin", "/admin"), ("Churn", "/admin/churn")],
         raw_risk_pie=risk_pie_html,
         raw_top_users=top_html,
         raw_funnel=funnel_html,
@@ -1522,12 +1534,13 @@ async def sharing_dashboard(request: Request):
         from queries import sharing_metrics as sm
     except Exception as exc:
         log.warning("admin/sharing: queries.sharing_metrics import failed: %s", exc)
-        return _render_page(
-            "admin-sharing", request=request,
-            email=admin["email"],
-            username=admin.get("username", admin["email"]),
-            raw_nav_role=_role_badge(admin),
-            _is_admin=admin.get("is_admin"),
+        from admin_shell import render_admin_page
+        return render_admin_page(
+            request,
+            "admin/sharing.html",
+            page_title="Sharing metrics",
+            active_route="sharing",
+            breadcrumb=[("Admin", "/admin"), ("Sharing", "/admin/sharing")],
             days=days,
             raw_window_tabs=_render_window_tabs(days),
             raw_summary="<div style=\"padding:24px;color:var(--text-muted);"
@@ -1583,12 +1596,13 @@ async def sharing_dashboard(request: Request):
         '</div>'
     )
 
-    return _render_page(
-        "admin-sharing", request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/sharing.html",
+        page_title="Sharing metrics",
+        active_route="sharing",
+        breadcrumb=[("Admin", "/admin"), ("Sharing", "/admin/sharing")],
         days=days,
         raw_window_tabs=_render_window_tabs(days),
         raw_summary=summary,

@@ -1,0 +1,84 @@
+<!-- Converted from admin-flag-edit.html. Body-only — wrapped by admin_shell. -->
+<div style="max-width:820px">
+
+          <form method="post" action="/admin/flags/{{ flag_key }}">
+            {{ raw_csrf_field }}
+
+            <div class="settings-card">
+              <div class="settings-section">
+                <div class="field-row">
+                  <label class="field-label" for="flag-name">Name</label>
+                  <div class="field-control">
+                    <input id="flag-name" name="name" type="text" value="{{ flag_name }}">
+                    <div class="field-helper">Human-readable label shown in listings.</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="flag-desc">Description</label>
+                  <div class="field-control">
+                    <textarea id="flag-desc" name="description">{{ flag_description }}</textarea>
+                    <div class="field-helper">Optional context for other admins.</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <span class="field-label">Enabled globally</span>
+                  <label class="field-control" style="display:flex;align-items:center;gap:10px;padding-top:10px;cursor:pointer">
+                    <input id="flag-enabled" name="enabled_globally" type="checkbox" {{ raw_enabled_checked }}
+                           style="width:18px;height:18px;accent-color:var(--text-primary)">
+                    <span style="font-size:13px;color:var(--text-secondary)">
+                      Master switch — when off, the flag is off for everyone regardless of the rules below.
+                    </span>
+                  </label>
+                </div>
+
+                <div class="field-row">
+                  <span class="field-label">Enabled for tiers</span>
+                  <div class="field-control" style="padding-top:4px">
+                    {{ raw_tier_checkboxes }}
+                    <div class="field-helper">Users on these subscription tiers pass the tier check.</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="flag-rollout">Rollout %</label>
+                  <div class="field-control">
+                    <input id="flag-rollout" name="rollout_percentage" type="number" min="0" max="100" value="{{ rollout_percentage }}">
+                    <div class="field-helper">
+                      Gradual rollout bucket. Deterministic per-user (same user always falls in the same bucket),
+                      so the <em>% enabled</em> stays stable even across reloads.
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="flag-enabled-users">Enabled user IDs</label>
+                  <div class="field-control">
+                    <input id="flag-enabled-users" name="enabled_user_ids" type="text" value="{{ enabled_user_ids }}">
+                    <div class="field-helper">Comma-separated. Force-enabled regardless of tier or rollout.</div>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="field-label" for="flag-disabled-users">Disabled user IDs</label>
+                  <div class="field-control">
+                    <input id="flag-disabled-users" name="disabled_user_ids" type="text" value="{{ disabled_user_ids }}">
+                    <div class="field-helper">Comma-separated. Wins over tier, rollout, and global.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="save-bar">
+              <button class="btn-danger" type="submit"
+                      formaction="/admin/flags/{{ flag_key }}/delete" formmethod="post"
+                      onclick="return confirm('Delete flag {{ flag_key }}? Callers that reference it will fall back to disabled.')">
+                Delete flag
+              </button>
+              <button class="btn btn-primary" type="submit">Save changes</button>
+            </div>
+          </form>
+
+        </div>
+

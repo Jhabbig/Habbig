@@ -388,12 +388,13 @@ async def admin_status_page(request: Request):
     recent = status_db.list_recent_incidents(limit=30)
     subs = status_db.list_all_subscriptions()
 
-    return render_page(
-        "admin_status",
-        request=request,
-        username=user.get("username") or user.get("email", ""),
-        raw_nav_role=_role_badge(user),
-        _is_admin=user.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/status.html",
+        page_title="Status",
+        active_route="status",
+        breadcrumb=[("Admin", "/admin"), ("Status", "/admin/status")],
         raw_open_incidents=_admin_incident_rows(open_incidents, request),
         raw_all_incidents=_admin_incident_rows(recent, request, include_resolved=True),
         raw_subscriber_list=_admin_subscriber_rows(subs),

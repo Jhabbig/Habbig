@@ -1,0 +1,60 @@
+<!-- Converted from admin-sharing.html. Body-only — wrapped by admin_shell. -->
+<div class="adm-wrap">
+    <div class="adm-head">
+      <div>
+        <a class="adm-nav-back" href="/admin">← Admin</a>
+        </div>
+      <div class="adm-window" role="navigation" aria-label="Time window">
+        {{ raw_window_tabs }}
+      </div>
+    </div>
+
+    <p class="note">
+      Share-loop analytics: public views of <code>/s/{m,s,p}/{token}</code>
+      pages and attributed signups. Referer URLs are never stored — only
+      the coarse bucket (twitter / linkedin / slack / …) captured at
+      ingest time. Window: last {{ days }} days.
+    </p>
+
+    <div class="adm-card adm-card-full adm-summary-card">
+      {{ raw_summary }}
+    </div>
+
+    <div class="adm-grid">
+      <div class="adm-card">
+        <h2 class="adm-card-title">Daily views</h2>
+        {{ raw_sparkline }}
+      </div>
+
+      <div class="adm-card">
+        <h2 class="adm-card-title">By share type</h2>
+        {{ raw_totals }}
+      </div>
+
+      <div class="adm-card">
+        <h2 class="adm-card-title">Top shared markets</h2>
+        {{ raw_top_markets }}
+      </div>
+
+      <div class="adm-card">
+        <h2 class="adm-card-title">Top shared sources</h2>
+        {{ raw_top_sources }}
+      </div>
+
+      <div class="adm-card">
+        <h2 class="adm-card-title">Top sharers by conversions</h2>
+        {{ raw_top_sharers }}
+      </div>
+
+      <div class="adm-card">
+        <h2 class="adm-card-title">Referrer breakdown</h2>
+        {{ raw_referrers }}
+      </div>
+
+      <div class="adm-card">
+        <h2 class="adm-card-title">Country breakdown</h2>
+        {{ raw_countries }}
+      </div>
+    </div>
+  </div>
+

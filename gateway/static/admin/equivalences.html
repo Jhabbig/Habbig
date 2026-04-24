@@ -1,0 +1,78 @@
+<!-- Converted from admin_equivalences.html. Body-only — wrapped by admin_shell. -->
+<div style="max-width:1200px">
+
+          <!-- KPIs -->
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-tile">
+              <div class="stat-label">Total mappings</div>
+              <div class="stat-value">{{ total_mappings }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Admin overrides</div>
+              <div class="stat-value">{{ admin_overrides }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Low confidence</div>
+              <div class="stat-value">{{ low_confidence_count }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Rejected</div>
+              <div class="stat-value">{{ rejected_count }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Unmatched (active)</div>
+              <div class="stat-value">{{ unmatched_count }}</div>
+            </div>
+          </div>
+
+          <div id="action-message"></div>
+
+          <!-- Low-confidence queue -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Low-confidence matches</h2>
+              <span class="admin-section-count">confidence &lt; 0.70</span>
+            </div>
+            <div class="admin-card">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">narve market</th>
+                    <th>Provider</th>
+                    <th>Their ID</th>
+                    <th>Their question</th>
+                    <th class="num">Confidence</th>
+                    <th class="actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_low_conf_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Unmatched active markets -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Unmatched active markets</h2>
+              <span class="admin-section-count">no provider mapped</span>
+            </div>
+            <div class="admin-card">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">Market slug</th>
+                    <th>Question</th>
+                    <th>Category</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_unmatched_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+

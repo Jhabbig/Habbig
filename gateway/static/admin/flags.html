@@ -1,0 +1,45 @@
+<!-- /admin/flags — feature-flag list + create form. Wrapped by admin_shell. -->
+<p class="admin-lede" style="color:var(--text-secondary);font-size:14px;line-height:1.6;margin:0 0 24px;max-width:720px">
+  Toggle features on a per-user, per-tier, or global basis. Changes take
+  effect immediately — flags are checked at every request.
+</p>
+
+<div class="admin-section">
+  <div class="admin-section-head" style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+    <h2 class="admin-section-title">Existing flags</h2>
+    <span class="admin-section-count" style="font-size:12px;color:var(--text-tertiary)">tap a row to edit</span>
+  </div>
+  <div class="admin-card" style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+    {{ raw_flag_rows }}
+  </div>
+</div>
+
+<div class="admin-section">
+  <h2 class="admin-section-title">Create new flag</h2>
+  <p style="font-size:13px;color:var(--text-secondary);margin:0 0 16px;max-width:680px">
+    Keys are lowercase ASCII (letters, digits, dash, underscore).
+    Immutable once set — if you need to rename, delete and recreate.
+  </p>
+  <form method="post" action="/admin/flags" style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;padding:20px;max-width:680px">
+    {{ raw_csrf_field }}
+    <div style="margin-bottom:14px">
+      <label for="new-flag-key" style="display:block;font-size:12px;font-weight:500;margin-bottom:6px">Key</label>
+      <input id="new-flag-key" name="key" type="text" pattern="[a-z0-9_\-]{1,80}" required
+             placeholder="e.g. insider_signals"
+             style="width:100%;padding:8px 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text-primary);font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">
+      <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">Lowercase only. 1–80 chars.</div>
+    </div>
+    <div style="margin-bottom:14px">
+      <label for="new-flag-name" style="display:block;font-size:12px;font-weight:500;margin-bottom:6px">Name</label>
+      <input id="new-flag-name" name="name" type="text" placeholder="Human-readable label"
+             style="width:100%;padding:8px 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text-primary);font-size:13px">
+    </div>
+    <div style="margin-bottom:16px">
+      <label for="new-flag-desc" style="display:block;font-size:12px;font-weight:500;margin-bottom:6px">Description</label>
+      <textarea id="new-flag-desc" name="description" rows="2"
+                placeholder="Optional — what this flag gates"
+                style="width:100%;padding:8px 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text-primary);font-size:13px;font-family:inherit;resize:vertical"></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Create flag</button>
+  </form>
+</div>

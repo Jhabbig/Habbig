@@ -1,0 +1,90 @@
+<!-- Converted from admin-email-edit.html. Body-only — wrapped by admin_shell. -->
+<div style="max-width:1280px">
+
+          <form id="email-form" method="post" action="/admin/emails/{{ template_key }}">
+            {{ raw_csrf_field }}
+
+            <div class="ed-split">
+              <!-- Editor column -->
+              <div class="settings-card">
+                <div class="settings-section">
+                  <div class="settings-section-title">Editor</div>
+                  <div class="settings-section-desc">
+                    Insert any of these variables in the subject or body and they'll be
+                    replaced at send time.
+                  </div>
+
+                  <div class="chip-row">{{ raw_variable_chips }}</div>
+
+                  <label class="field-row" style="cursor:pointer;border-top:0;padding-top:0">
+                    <span class="field-label">Active</span>
+                    <span class="field-control" style="display:flex;align-items:center;gap:10px;padding-top:10px">
+                      <input id="is-active" name="is_active" type="checkbox" {{ is_active_checked }}
+                             style="width:18px;height:18px;accent-color:var(--text-primary)">
+                      <span style="font-size:13px;color:var(--text-secondary)">
+                        Use this template for live sends. Uncheck to save as a draft —
+                        sends keep using the previous version.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div class="field-row">
+                    <label class="field-label" for="subject">Subject</label>
+                    <div class="field-control">
+                      <input id="subject" name="subject" type="text" value="{{ subject }}">
+                    </div>
+                  </div>
+
+                  <div class="field-row">
+                    <label class="field-label" for="body_html">Body (HTML)</label>
+                    <div class="field-control">
+                      <textarea id="body_html" name="body_html" class="body-editor">{{ body_html_text }}</textarea>
+                    </div>
+                  </div>
+
+                  <div class="field-row">
+                    <label class="field-label" for="body_text">Plain-text fallback</label>
+                    <div class="field-control">
+                      <textarea id="body_text" name="body_text" class="text-editor">{{ body_text }}</textarea>
+                      <div class="field-helper">Shown by clients that refuse HTML. Optional.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Preview column -->
+              <div class="settings-card">
+                <div class="settings-section">
+                  <div class="settings-section-title">Live preview</div>
+                  <div class="settings-section-desc">
+                    What the email looks like with the variables substituted. Rendered inside
+                    a sandboxed iframe for safety.
+                  </div>
+
+                  <div class="preview-subject">
+                    <div class="lbl">Subject</div>
+                    <div id="preview-subject">—</div>
+                  </div>
+
+                  <div id="preview-html" class="preview-frame">Rendering…</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="save-bar">
+              <span class="save-bar-status" id="save-status"></span>
+              <button class="btn btn-primary" type="submit">Save template</button>
+            </div>
+          </form>
+
+          <!-- Reset form sits OUTSIDE the main form so Save and Reset can
+               never submit together (they share no CSRF/field state). -->
+          <form method="post" action="/admin/emails/{{ template_key }}/reset"
+                style="margin-top:10px;display:flex;justify-content:flex-end"
+                onsubmit="return confirm('Drop this custom template? Future sends will use the default from email_system/templates/.')">
+            {{ raw_csrf_field }}
+            <button class="btn-danger" type="submit">Reset to default</button>
+          </form>
+
+        </div>
+

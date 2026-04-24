@@ -1,0 +1,261 @@
+/* Admin shell — left rail + content body.
+ *
+ * Loaded on every /admin/* page by render_admin_page() via a
+ * <link rel="stylesheet"> in the rendered <head>. Not auto-loaded on
+ * non-admin pages so the surface stays lean.
+ */
+
+.admin-shell {
+  display: flex;
+  min-height: 100vh;
+  color: var(--text-primary);
+  background: var(--bg-base, var(--bg-void));
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────── */
+
+.admin-rail {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-default, var(--border-ghost));
+  padding: var(--space-5, 24px) var(--space-3, 12px);
+  background: var(--bg-raised, var(--bg-surface));
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.admin-rail__brand {
+  padding: 4px 12px 24px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-ghost, transparent);
+}
+.admin-rail__brand-link {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--text-primary);
+}
+.admin-rail__wordmark {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.admin-rail__wordmark-sub {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+.admin-nav__group {
+  margin-bottom: 20px;
+}
+.admin-nav__heading {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  padding: 4px 12px;
+  margin-bottom: 6px;
+}
+.admin-nav a {
+  display: block;
+  padding: 7px 12px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 13.5px;
+  line-height: 1.3;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.admin-nav a:hover {
+  color: var(--text-primary);
+  background: var(--interactive-ghost, rgba(0,0,0,0.04));
+}
+.admin-nav a[aria-current="page"] {
+  color: var(--text-primary);
+  background: var(--interactive-ghost, rgba(0,0,0,0.06));
+  font-weight: 500;
+}
+
+/* ── Body ─────────────────────────────────────────────────────────── */
+
+.admin-body {
+  flex: 1;
+  min-width: 0;
+  padding: 36px 48px 80px;
+  max-width: 1280px;
+  box-sizing: border-box;
+}
+
+.admin-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-ghost);
+}
+.admin-breadcrumb {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+.admin-breadcrumb ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admin-breadcrumb li + li::before {
+  content: "/";
+  margin-right: 6px;
+  color: var(--text-tertiary);
+}
+.admin-breadcrumb a {
+  color: var(--text-tertiary);
+  text-decoration: none;
+}
+.admin-breadcrumb a:hover { color: var(--text-secondary); }
+.admin-breadcrumb [aria-current="page"] { color: var(--text-secondary); }
+
+.admin-page-title {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--text-primary);
+}
+.admin-page-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.admin-page-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.admin-page-actions .btn:hover { border-color: var(--text-primary); }
+.admin-page-actions .btn-primary {
+  background: var(--text-primary);
+  color: var(--interactive-text);
+  border-color: var(--text-primary);
+}
+
+/* ── Mobile drawer ────────────────────────────────────────────────── */
+
+.admin-rail-toggle {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 101;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  color: var(--text-primary);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .admin-rail-toggle { display: inline-flex; }
+  .admin-rail {
+    position: fixed;
+    left: 0;
+    top: 0;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    z-index: 100;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.12);
+  }
+  .admin-rail--open { transform: translateX(0); }
+  .admin-body { padding: 64px 20px 60px; }
+  .admin-page-header { flex-direction: column; }
+  .admin-page-actions { width: 100%; }
+}
+
+/* ── Home dashboard tiles ─────────────────────────────────────────── */
+
+.admin-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 40px;
+}
+.admin-tile {
+  display: block;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 18px 20px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.12s ease;
+}
+.admin-tile:hover { border-color: var(--text-primary); }
+.admin-tile__label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  margin-bottom: 10px;
+}
+.admin-tile__value {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.admin-tile__delta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.admin-tile__delta.up { color: var(--green, #10b981); }
+.admin-tile__delta.down { color: var(--red, #ef4444); }
+
+/* ── Generic content helpers ──────────────────────────────────────── */
+
+.admin-section { margin-bottom: 32px; }
+.admin-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+.admin-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-default);
+  border-radius: 10px;
+}

@@ -1,0 +1,95 @@
+<!-- Admin shell layout. Wrapped around every admin page by
+     render_admin_page() in gateway/admin_shell.py.
+
+     Required substitutions (all caller-supplied):
+       {{ page_title }}            plain text, HTML-escaped
+       {{ raw_admin_content }}     the page's own body HTML (trusted)
+       {{ raw_breadcrumb }}        optional trail; builder wraps in <ol>
+       {{ raw_page_actions }}      optional right-aligned button row
+       {{ raw_active_route }}      data-route value the <nav> should mark
+                                   aria-current="page"
+-->
+<div class="admin-shell" data-active-route="{{ raw_active_route }}">
+  <button type="button"
+          class="admin-rail-toggle"
+          aria-label="Toggle admin menu"
+          aria-expanded="false"
+          aria-controls="admin-rail"
+          onclick="var r=document.getElementById('admin-rail');var open=r.classList.toggle('admin-rail--open');this.setAttribute('aria-expanded',String(open))">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+      <path d="M3 5h14M3 10h14M3 15h14"/>
+    </svg>
+  </button>
+
+  <aside id="admin-rail" class="admin-rail">
+    <div class="admin-rail__brand">
+      <a href="/admin" class="admin-rail__brand-link">
+        <span class="admin-rail__wordmark">narve.ai</span>
+        <span class="admin-rail__wordmark-sub">/ admin</span>
+      </a>
+    </div>
+
+    <nav class="admin-nav" aria-label="Admin sections">
+      <div class="admin-nav__group">
+        <div class="admin-nav__heading">Users</div>
+        <a href="/admin/users" data-route="users">Users</a>
+        <a href="/admin/impersonations" data-route="impersonations">Impersonations</a>
+        <a href="/admin/churn" data-route="churn">Churn</a>
+      </div>
+
+      <div class="admin-nav__group">
+        <div class="admin-nav__heading">Content</div>
+        <a href="/admin/moderation" data-route="moderation">Moderation queue</a>
+        <a href="/admin/equivalences" data-route="equivalences">Market equivalences</a>
+        <a href="/admin/sharing" data-route="sharing">Sharing metrics</a>
+        <a href="/admin/feedback" data-route="feedback">Feedback</a>
+      </div>
+
+      <div class="admin-nav__group">
+        <div class="admin-nav__heading">Billing</div>
+        <a href="/admin/affiliates" data-route="affiliates">Affiliates</a>
+        <a href="/admin/ai-usage" data-route="ai-usage">AI usage</a>
+      </div>
+
+      <div class="admin-nav__group">
+        <div class="admin-nav__heading">Ops</div>
+        <a href="/admin/status" data-route="status">Status</a>
+        <a href="/admin/webhooks" data-route="webhooks">Webhooks</a>
+        <a href="/admin/realtime" data-route="realtime">Realtime</a>
+      </div>
+
+      <div class="admin-nav__group">
+        <div class="admin-nav__heading">Security</div>
+        <a href="/admin/audit-log" data-route="audit">Audit log</a>
+        <a href="/admin/security/forensics" data-route="forensics">Forensics</a>
+        <a href="/admin/security/bulk-fetches" data-route="bulk">Bulk fetches</a>
+      </div>
+
+      <div class="admin-nav__group">
+        <div class="admin-nav__heading">Config</div>
+        <a href="/admin/flags" data-route="flags">Feature flags</a>
+        <a href="/admin/emails" data-route="emails">Email templates</a>
+      </div>
+    </nav>
+  </aside>
+
+  <section class="admin-body">
+    <header class="admin-page-header">
+      <div>
+        <nav class="admin-breadcrumb" aria-label="Breadcrumb">
+          {{ raw_breadcrumb }}
+        </nav>
+        <h1 class="admin-page-title">{{ page_title }}</h1>
+      </div>
+      <div class="admin-page-actions">
+        {{ raw_page_actions }}
+      </div>
+    </header>
+
+    <main id="main" class="admin-page-body">
+      {{ raw_admin_content }}
+    </main>
+  </section>
+</div>
+
+<script src="{{ static: js/admin-shell.js }}" defer></script>

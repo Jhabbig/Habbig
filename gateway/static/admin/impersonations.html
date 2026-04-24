@@ -1,0 +1,17 @@
+<!-- /admin/impersonations — session log. Wrapped by admin_shell. -->
+<p class="admin-lede" style="color:var(--text-secondary);font-size:14px;line-height:1.6;margin:0 0 24px;max-width:720px">
+  Every admin "view as" session is recorded, along with every request
+  made during it. Destructive actions (account deletion, billing
+  mutations, AI usage) are blocked and shown as <strong>BLOCKED</strong>
+  in the detail view.
+</p>
+
+<div class="admin-section">
+  <div class="admin-section-head" style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+    <h2 class="admin-section-title">Recent sessions</h2>
+    <span class="admin-section-count" style="font-size:12px;color:var(--text-tertiary)">tap to see per-request detail</span>
+  </div>
+  <div class="admin-card" style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;overflow:hidden">
+    {{ raw_sessions }}
+  </div>
+</div>

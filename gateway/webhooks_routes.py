@@ -322,13 +322,13 @@ async def admin_webhooks_page(request: Request):
             'No webhooks registered.</div></div></div>'
         )
 
-    return _render(
-        "admin_webhooks",
-        request=request,
-        email=admin["email"],
-        username=admin.get("username", admin["email"]),
-        raw_nav_role=_role_badge(admin),
-        _is_admin=admin.get("is_admin"),
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/webhooks.html",
+        page_title="Webhooks",
+        active_route="webhooks",
+        breadcrumb=[("Admin", "/admin"), ("Webhooks", "/admin/webhooks")],
         raw_webhook_rows="".join(row_html),
     )
 

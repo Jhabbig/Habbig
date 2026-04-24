@@ -1,0 +1,31 @@
+<!-- Converted from admin_moderation.html. Body-only — wrapped by admin_shell. -->
+<div class="page-header">
+        <p class="page-subtitle">
+          Open reports: <strong>{{ open_report_count }}</strong>.
+          Resolve oldest first.
+        </p>
+      </div>
+
+      <div class="content-area">
+        <section class="settings-card">
+          <div class="admin-card" style="padding:0;overflow-x:auto">
+            <table class="admin-table" style="width:100%">
+              <thead>
+                <tr>
+                  <th style="width:150px">Reported</th>
+                  <th style="width:170px">Reason</th>
+                  <th style="width:220px">Market</th>
+                  <th>Take preview</th>
+                  <th style="width:80px">Reporter</th>
+                  <th style="width:280px">Action</th>
+                </tr>
+              </thead>
+              <tbody id="mod-queue-body">
+                {{ raw_report_rows }}
+              </tbody>
+            </table>
+          </div>
+          <div id="mod-msg" style="margin-top:12px;font-size:13px"></div>
+        </section>
+      </div>
+

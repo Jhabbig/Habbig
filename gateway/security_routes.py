@@ -289,21 +289,35 @@ async def admin_bulk_fetches(request: Request) -> HTMLResponse:
             f'<td style="text-align:right">{row["rows_24h"]:,}</td>'
             f'<td>{badge}</td></tr>'
         )
-    return render_page(
-        "admin_security_bulk",
-        request=request,
-        email=admin["email"],
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/security-bulk.html",
+        page_title="Bulk fetches",
+        active_route="bulk",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Security", None),
+            ("Bulk fetches", "/admin/security/bulk-fetches"),
+        ],
         raw_rows="\n".join(rows_html) or '<tr><td colspan="4" style="opacity:0.6">No bulk fetches in the last 24h.</td></tr>',
     )
 
 
 async def admin_forensics_get(request: Request) -> HTMLResponse:
-    from server import _require_super_admin, render_page  # type: ignore
+    from server import _require_super_admin  # type: ignore
+    from admin_shell import render_admin_page
     admin = _require_super_admin(request)
-    return render_page(
-        "admin_security_forensics",
-        request=request,
-        email=admin["email"],
+    return render_admin_page(
+        request,
+        "admin/security-forensics.html",
+        page_title="Forensics",
+        active_route="forensics",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Security", None),
+            ("Forensics", "/admin/security/forensics"),
+        ],
         raw_result="",
     )
 
@@ -355,10 +369,17 @@ async def admin_forensics_analyze(
     except Exception:
         pass
 
-    return render_page(
-        "admin_security_forensics",
-        request=request,
-        email=admin["email"],
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/security-forensics.html",
+        page_title="Forensics",
+        active_route="forensics",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Security", None),
+            ("Forensics", "/admin/security/forensics"),
+        ],
         raw_result=_render_forensics_result(result),
     )
 

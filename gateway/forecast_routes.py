@@ -375,11 +375,13 @@ async def admin_equivalences(request: Request):
     low_conf = db_forecasts.list_low_confidence_equivalences(limit=200)
     unmatched = db_forecasts.list_unmatched_active_markets(limit=200)
 
-    return render_page(
-        "admin_equivalences",
-        request=request,
-        username=user.get("username") or user.get("email", ""),
-        raw_nav_role="",
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/equivalences.html",
+        page_title="Market equivalences",
+        active_route="equivalences",
+        breadcrumb=[("Admin", "/admin"), ("Equivalences", "/admin/equivalences")],
         total_mappings=summary["total"],
         admin_overrides=summary["admin_overrides"],
         low_confidence_count=summary["low_confidence"],

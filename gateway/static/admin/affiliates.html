@@ -1,0 +1,80 @@
+<!-- Converted from admin_affiliates.html. Body-only — wrapped by admin_shell. -->
+<div style="max-width:1200px">
+
+          <div id="global-message"></div>
+
+          <!-- KPIs -->
+          <div class="stat-grid" style="margin-bottom:24px">
+            <div class="stat-tile">
+              <div class="stat-label">Total affiliates</div>
+              <div class="stat-value">{{ total_affiliates }}</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Pending payouts</div>
+              <div class="stat-value">{{ pending_payout_count }}</div>
+              <div class="stat-trend">above £{{ payout_threshold_gbp }} threshold</div>
+            </div>
+          </div>
+
+          <!-- Pending payouts -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Pending payouts</h2>
+              <span class="admin-section-count">ready to wire</span>
+            </div>
+            <div class="admin-card">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">Affiliate</th>
+                    <th class="num">Pending</th>
+                    <th class="num">Unpaid</th>
+                    <th>Payout email</th>
+                    <th class="actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_payout_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- All affiliates -->
+          <div class="admin-section">
+            <div class="admin-section-head">
+              <h2>Active affiliates</h2>
+              <span class="admin-section-count">{{ total_affiliates }} total</span>
+            </div>
+
+            <div class="admin-filter-bar">
+              <input type="search" id="aff-search" placeholder="Filter by email, username, or code…" aria-label="Filter affiliates">
+              <span class="filter-spacer"></span>
+              <button type="button" class="filter-chip active" data-filter-tier="">All tiers</button>
+              <button type="button" class="filter-chip" data-filter-tier="partner">Partner</button>
+              <button type="button" class="filter-chip" data-filter-tier="premium_partner">Premium</button>
+              <button type="button" class="filter-chip" data-filter-tier="top_tier">Top tier</button>
+            </div>
+
+            <div class="admin-card">
+              <table class="admin-table" id="affiliates-table">
+                <thead>
+                  <tr>
+                    <th style="width:22%">User</th>
+                    <th>Tier</th>
+                    <th class="num">Rate</th>
+                    <th class="num">Conversions</th>
+                    <th class="num">Earned</th>
+                    <th>Status</th>
+                    <th>Code</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ raw_affiliate_rows }}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+

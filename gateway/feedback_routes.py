@@ -800,13 +800,13 @@ async def admin_feedback_page(request: Request):
         '</form>'
     )
 
-    return render_page(
-        "admin-feedback",
-        request=request,
-        username=user.get("username", user["email"]),
-        raw_nav_role=_role_badge(user),
-        _is_admin=True,
-        raw_admin_link='<a href="/admin">Admin</a>',
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/feedback.html",
+        page_title="Feedback triage",
+        active_route="feedback",
+        breadcrumb=[("Admin", "/admin"), ("Feedback", "/admin/feedback")],
         raw_rows="".join(rows_html) or (
             '<div style="padding:48px;text-align:center;color:var(--text-muted);font-size:13px">'
             'No feedback submitted yet.</div>'

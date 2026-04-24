@@ -1,0 +1,35 @@
+<!-- Converted from admin_security_bulk.html. Body-only — wrapped by admin_shell. -->
+<div class="adm-wrap">
+    <div class="adm-head">
+      <div>
+        <a class="adm-nav-back" href="/admin">← Admin</a>
+        </div>
+    </div>
+    <p class="adm-note">
+      Top 20 users by total rows returned from list endpoints in the
+      past 24 hours. The <strong>FLAGGED</strong> badge appears for any
+      user over 20,000 rows/day — consider manual review + a temporary
+      hold. Under 5,000 rows/hour is normal dashboard use; anything in
+      the tens-of-thousands range is scraping.
+    </p>
+    <div class="adm-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Email</th>
+            <th style="text-align:right">Rows (24 h)</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ raw_rows }}
+        </tbody>
+      </table>
+    </div>
+    <div class="small-links">
+      <a href="/admin/security/forensics">Forensics tool →</a>
+      <a href="/admin">← Admin home</a>
+    </div>
+  </div>
+

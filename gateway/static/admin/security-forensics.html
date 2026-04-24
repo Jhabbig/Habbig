@@ -1,0 +1,35 @@
+<!-- Converted from admin_security_forensics.html. Body-only — wrapped by admin_shell. -->
+<div class="adm-wrap">
+    <div class="adm-head">
+      <div>
+        <a class="adm-nav-back" href="/admin">← Admin</a>
+        </div>
+    </div>
+    <p class="adm-note">
+      Upload a suspected leak. The tool tries three recovery paths and
+      returns the highest-confidence match. Every use is audit-logged.
+      Super-admin only.
+    </p>
+    <form method="post" action="/admin/security/forensics/analyze" enctype="multipart/form-data">
+      {{ raw_csrf_field }}
+
+      <label for="screenshot">Screenshot (optional — runs OCR if Tesseract is available)</label>
+      <input type="file" id="screenshot" name="screenshot" accept="image/*">
+      <div class="hint">PNG / JPG / WebP. Look for the visible watermark (email + uid:N + sid:XXXX).</div>
+
+      <label for="text_blob">Leaked text (optional — matches sentinel fingerprints)</label>
+      <textarea id="text_blob" name="text_blob" placeholder="Paste the raw leaked text here — chat log, forum post, screenshot OCR output, anything."></textarea>
+      <div class="hint">We scan for sentinel prediction titles + ids, and any visible-watermark uid:N fragments.</div>
+
+      <label for="payload_json">Numeric payload (optional — JSON array of rows)</label>
+      <textarea id="payload_json" name="payload_json" placeholder='[{"probability": 0.8121, "credibility": 0.7231, ...}, ...]'></textarea>
+      <div class="hint">If you recovered a raw JSON dump, paste the list here and we'll score it against every user's forensic seed.</div>
+
+      <div class="actions">
+        <button class="btn-primary" type="submit">Analyse</button>
+      </div>
+    </form>
+
+    {{ raw_result }}
+  </div>
+
