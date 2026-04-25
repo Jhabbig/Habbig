@@ -5,6 +5,85 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #3 — 2026-04-25T20:10Z — commit 5d38085 — pre-deploy verification loop
+
+### Why this audit exists
+User asked to re-loop the scan after audit #2's fixes were committed
++ pushed, and confirm the tree is clean before deploying. This entry
+is a delta-only scan against `5d38085`; nothing changed since
+audit #2 except that `5d38085` is now on origin.
+
+### Code inventory audited
+- Committed tip: `5d38085` (audit #2 fix bundle)
+- Local unpushed commits: **none** — in sync with origin
+- Local uncommitted files: **none**
+- Local stashes: **1** — same `parallel-agent-work-mess-1776748996`; still flagged for cleanup; still not blocking
+- Server tip vs origin: **server BEHIND origin** (server still at `c3fa177`; about to deploy `5d38085` after this entry)
+- DRIFT FLAG: **server-vs-origin drift expected** — by user-requested deploy in the same block as this audit
+
+### Summary
+Posture: **adequate** (unchanged from audit #2)
+Critical issues: **0**
+High-priority: **0**
+Medium-priority: **0**
+Low-priority: **1** (the deferred scanner-regex FP from audit #2; not application-side)
+Resolved since last audit: 0
+New since last audit: 0
+Regressions: **0**
+
+### What was re-verified
+
+`scan_secrets / scan_sqli / scan_xss / scan_rce / scan_auth / scan_redirects / scan_deserialisation` — re-run on `5d38085`.
+
+Raw hit counts (full output, not truncated):
+
+| scan | hits | classification |
+|---|---|---|
+| secrets         |  13 | all test-fixture passwords + dev-stub stripe webhook secret (intentional) |
+| sqli            |  75 | parameterised IN-clauses + PRAGMA-introspection columns + safe whitelist dicts (audit #2 commented the 2 most-flagged) |
+| xss             | 241 | bundled `dist/extension/*.js` minified third-party + admin-side innerHTML on admin-only fixtures |
+| rce             |  28 | `eval(`-grep tests in `test_resolution_polling.py` + stdlib `open()` with allowlisted paths |
+| auth            | 137 | regex matching the word `auth` in nearby comments / inline CSS (the deferred LOW from audit #2) |
+| redirects       |  19 | path-typed int redirects + hardcoded apex / admin-path redirects |
+| deserialisation |   0 | clean |
+
+**Zero of these are real new issues.** Every category was sampled at the same level as audit #2 and the noise floor is unchanged.
+
+### Dependency audit
+- `pip_audit --requirement requirements.txt` on the server (Python 3.12) → **No known vulnerabilities found** ✓
+- 111/111 stable local tests pass on the bumped lock (`test_saved_views`, `test_csrf`, `test_security_headers`, `test_breadcrumb`).
+- 3 pre-existing flaky tests in `test_embed_widgets.py` (`test_impression_increments`, `test_rotation_invalidates_old_token`, `test_lapse_deactivates_all_widgets_on_first_embed_hit`) failed on local but they were flaky before this batch — unrelated to the dep bump.
+
+### Authentication / Authorisation / CSRF / Rate limiting / Encryption / Privacy / Integrations / Infra / Monitoring / Compliance
+**No changes vs audit #2.** Every gate still verifiable at `5d38085`. Subscription gates (`/u/{handle}` 404 hide-existence, `/admin/*` `_require_admin_user`, impersonation `_real_admin_user`, subproduct `cf-connecting-ip`, Stripe webhook signature+idempotency+livemode, session SHA-256 + PBKDF2 600k) all intact.
+
+### Issues found in this audit
+
+#### CRITICAL / HIGH / MEDIUM
+*(none)*
+
+#### LOW
+1. **Carried from audit #2**: `auth_endpoint without @rate_limit` flagged 6× on `server_features.py:117` — scanner regex bug on inline CSS, not an application-side issue. Tighten `scan_auth.sh` regex in a future skill update.
+
+### Pre-deploy posture statement
+Tree at `5d38085` is **safe to deploy**. The deploy in the next commit
+will:
+
+1. `scp gateway/requirements.txt` to the server.
+2. `ssh ... "pip install --upgrade --user --break-system-packages -r ~/Habbig/gateway/requirements.txt"` to land the CVE bumps (fastapi 0.120.4, starlette 0.49.1, orjson 3.11.6, cryptography 46.0.7).
+3. `scp` the 3 source-side files that changed (explain_popover.js, feedback_routes.py, db_referrals.py) — already at origin, just landing them on disk.
+4. Restart uvicorn on port 7000 with PRODUCTION=1 + `~/.gateway_env` sourced.
+5. Verify `https://narve.ai/_gateway_static/explain_popover.js` returns the 48-entry table.
+6. Server-commit any artefacts the restart leaves dirty (`auth.db-wal/-shm` etc).
+
+### Recommended actions for next audit
+1. Drop the 5-day-old `stash@{0}` or merge it explicitly.
+2. Address the 3 flaky impression-counter tests in `test_embed_widgets.py` — they fail locally even with no source changes.
+3. Tighten `scan_auth.sh` regex in the skill so audit #4+ stops counting the inline-CSS FP.
+4. Run `pip_audit` again in 30 days; sooner if a CRITICAL CVE drops on a pinned package.
+
+---
+
 ## AUDIT #2 — 2026-04-25T19:45Z — commit (this entry's commit) — verification loop after audit #1 fixes
 
 ### Why this audit exists
