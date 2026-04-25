@@ -1,0 +1,151 @@
+/* "What's new" widget — appears on the dashboard hub above the dash grid.
+ * Tokens follow the rest of gateway.css: --surface-raised / --border-ghost /
+ * --radius-md. Dark-mode falls through automatically because every colour
+ * here is a token. */
+
+.nv-changelog-widget {
+  background: var(--surface-raised, var(--bg-raised));
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-md, var(--radius));
+  padding: var(--space-4);
+  margin-bottom: var(--space-5);
+  /* Smooth open/close — height isn't animatable so we settle for
+     opacity + translate so the widget doesn't pop in jarringly. */
+  transition: opacity 0.15s ease;
+}
+
+.nv-changelog-widget header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+  gap: var(--space-2);
+}
+
+.nv-changelog-widget h3 {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  letter-spacing: -0.005em;
+}
+
+/* Unseen-count pill — only rendered when count > 0 (JS toggles `hidden`). */
+.nv-changelog-widget__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--text-primary);
+  color: var(--text-inverse, var(--bg-base));
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-changelog-widget__collapse {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0 var(--space-2);
+  font-size: 16px;
+  line-height: 1;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.nv-changelog-widget__collapse:hover,
+.nv-changelog-widget__collapse:focus-visible {
+  background: var(--interactive-ghost);
+  color: var(--text-primary);
+  border-color: var(--border-ghost);
+  outline: none;
+}
+
+.nv-changelog-widget__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nv-changelog-widget footer {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-ghost);
+}
+.nv-changelog-widget footer a {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.12s ease;
+}
+.nv-changelog-widget footer a:hover {
+  color: var(--text-primary);
+}
+
+/* ── Items ────────────────────────────────────────────────────────────── */
+
+.nv-changelog-item {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-ghost);
+  position: relative;
+  list-style: none;
+}
+.nv-changelog-item:last-child { border-bottom: none; }
+.nv-changelog-item:first-child { padding-top: 0; }
+
+.nv-changelog-item__date {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+}
+.nv-changelog-item__title {
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 4px 0 2px;
+  line-height: 1.4;
+  font-size: 13.5px;
+}
+.nv-changelog-item__body {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+/* Unseen dot — leading bullet that vanishes once /api/changelog/seen
+   marks the entry. Sits in the date row's left margin. */
+.nv-changelog-item--unseen .nv-changelog-item__date::before {
+  content: "●";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--text-primary);
+  font-size: 9px;
+  vertical-align: 2px;
+}
+
+/* ── Collapsed state ─────────────────────────────────────────────────── */
+
+.nv-changelog-widget[data-collapsed="true"] .nv-changelog-widget__list,
+.nv-changelog-widget[data-collapsed="true"] footer {
+  display: none;
+}
+.nv-changelog-widget[data-collapsed="true"] header {
+  margin-bottom: 0;
+}
+.nv-changelog-widget[data-collapsed="true"] .nv-changelog-widget__collapse::before {
+  content: "+";
+}
+.nv-changelog-widget[data-collapsed="true"] .nv-changelog-widget__collapse {
+  font-size: 0;
+}
+.nv-changelog-widget[data-collapsed="true"] .nv-changelog-widget__collapse::before {
+  font-size: 16px;
+}

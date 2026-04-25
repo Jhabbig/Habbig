@@ -1,0 +1,27 @@
+<!--
+  "What's new" widget. Drops onto any authenticated landing surface
+  (currently just /dashboards) and self-loads via changelog_widget.js.
+  Server doesn't have to interpolate anything — the client fetches
+  /api/changelog and renders the rows.
+-->
+<div class="nv-changelog-widget" data-changelog data-collapsed="false" hidden>
+  <header>
+    <h3>
+      What's new
+      <span class="nv-changelog-widget__badge" data-changelog-badge hidden>0</span>
+    </h3>
+    <button
+      type="button"
+      class="nv-changelog-widget__collapse"
+      aria-expanded="true"
+      aria-label="Collapse What's new"
+      data-changelog-collapse
+    >−</button>
+  </header>
+  <ul class="nv-changelog-widget__list" data-changelog-list>
+    <!-- skeletons or items injected by changelog_widget.js -->
+  </ul>
+  <footer>
+    <a href="/changelog">View all updates →</a>
+  </footer>
+</div>

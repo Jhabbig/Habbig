@@ -2157,9 +2157,11 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         '<link rel="stylesheet" href="/_gateway_static/skeletons.css">\n'
         '<link rel="stylesheet" href="/_gateway_static/states.css">\n'
         '<link rel="stylesheet" href="/_gateway_static/lang-switcher.css">\n'
+        '<link rel="stylesheet" href="/_gateway_static/changelog_widget.css">\n'
         '<script src="/_gateway_static/skeletons.js" defer></script>\n'
         '<script src="/_gateway_static/i18n-client.js" defer></script>\n'
-        '<script src="/_gateway_static/lang-switcher.js" defer></script>'
+        '<script src="/_gateway_static/lang-switcher.js" defer></script>\n'
+        '<script src="/_gateway_static/changelog_widget.js" defer></script>'
     )
     if "skeletons.js" not in page:
         lower = page.lower()
@@ -5272,6 +5274,19 @@ try:
     _admin_routes.register(app)
 except Exception as _exc:  # pragma: no cover
     log.exception("admin_routes.register failed: %s", _exc)
+
+
+# ── /api/changelog + /api/changelog/seen ────────────────────────────────
+#
+# Powers the "What's new" widget on /dashboards. Parses CHANGELOG.md
+# at the repo root, persists per-user "seen" state in changelog_seen
+# (migration 170).
+
+try:
+    import changelog_routes as _changelog_routes  # noqa: E402
+    _changelog_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("changelog_routes.register failed: %s", _exc)
 
 
 # ── Data export (GDPR) + user predictions ──────────────────────────────
