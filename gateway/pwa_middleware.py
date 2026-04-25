@@ -37,6 +37,21 @@ _PWA_HEAD = (
 
 _BODY_INJECT = (
     '<a class="narve-skip-link" href="#main">Skip to main content</a>\n'
+    # Mobile sidebar drawer affordances. The hamburger + backdrop are
+    # always rendered but CSS hides them whenever the page has no
+    # `.sidebar` (public landings) or the viewport is desktop-wide.
+    # narve-app.js wires the toggle handlers (click hamburger, click
+    # backdrop, Escape) to flip ``.sidebar.open``. The matching CSS
+    # in mobile-a11y.css is what actually slides the drawer in.
+    '<button type="button" class="narve-hamburger" data-narve-hamburger '
+    'aria-label="Open menu" aria-controls="narve-sidebar-drawer" aria-expanded="false">'
+    '<svg width="20" height="20" viewBox="0 0 24 24" stroke="currentColor" '
+    'stroke-width="2" fill="none" aria-hidden="true">'
+    '<line x1="3" y1="6" x2="21" y2="6"/>'
+    '<line x1="3" y1="12" x2="21" y2="12"/>'
+    '<line x1="3" y1="18" x2="21" y2="18"/>'
+    '</svg></button>\n'
+    '<div class="narve-sidebar-backdrop" data-narve-sidebar-backdrop hidden></div>\n'
     '<script src="/_gateway_static/narve-app.js" defer></script>\n'
     '<script src="/_gateway_static/shortcuts.js" defer></script>\n'
     # First-time discovery hint for the keyboard shortcut overlay. Loaded

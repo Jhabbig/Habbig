@@ -552,3 +552,290 @@ p a:hover, li a:hover, .page-subtitle a:hover {
   }
   .landing-pricing-card { width: 100% !important; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Mobile viewport pass — hamburger drawer, tap targets, table scrolling,
+ * 16px inputs, hover-only-on-hover, safe-area, bottom-sheet pattern.
+ *
+ * pwa_middleware injects a `.narve-hamburger` button + backdrop after
+ * <body>; this stylesheet decides when to show them and what the open
+ * state looks like. narve-app.js wires the toggle. Existing
+ * `gateway.css` already slides `.sidebar` at ≤768px — these rules sit
+ * on top of that to provide the missing UI affordance.
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* ── Hamburger button ──────────────────────────────────────────────── */
+.narve-hamburger {
+  /* Hidden by default. Becomes visible only on mobile when the page
+   * actually has a `.sidebar` (see :has() rule below). */
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: var(--z-modal, 9999);
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-float, var(--bg-base, #fff));
+  color: var(--text-primary);
+  border: 1px solid var(--border-default, rgba(0,0,0,0.12));
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.08));
+  cursor: pointer;
+  appearance: none;
+}
+.narve-hamburger svg { width: 20px; height: 20px; }
+.narve-hamburger:hover { background: var(--interactive-ghost, rgba(0,0,0,0.04)); }
+.narve-hamburger:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* ── Backdrop ──────────────────────────────────────────────────────── */
+.narve-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: calc(var(--z-modal, 9999) - 2);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.narve-sidebar-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Mobile breakpoint — show hamburger, lift sidebar, lock scroll ── */
+@media (max-width: 900px) {
+  /* Show the hamburger only on pages that actually have a sidebar.
+   * :has() is the cleanest way to express this without per-page
+   * markup. The fallback below covers older browsers. */
+  body:has(.sidebar, .narve-sidebar) .narve-hamburger {
+    display: inline-flex;
+  }
+
+  /* Sidebar drawer rules. gateway.css already does the slide at
+   * ≤768px — duplicate here at 900px to also cover tablets and to
+   * raise z-index to ensure it sits above page content + above the
+   * backdrop. */
+  .sidebar,
+  .narve-sidebar {
+    position: fixed !important;
+    top: 0; bottom: 0; left: 0;
+    width: min(280px, 85vw);
+    transform: translateX(-100%);
+    transition: transform 0.2s ease-out;
+    z-index: var(--z-modal, 9999);
+    background: var(--bg-surface, var(--bg-base, #fff));
+    border-right: 1px solid var(--border-default, rgba(0,0,0,0.12));
+    overflow-y: auto;
+  }
+  .sidebar.open,
+  .narve-sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* Lock body scroll while drawer is open. */
+  body.narve-drawer-open { overflow: hidden; }
+
+  /* Reclaim left margin so main content sits under the now-fixed sidebar. */
+  .main-content,
+  main.main-content,
+  .content-area {
+    margin-left: 0 !important;
+    /* 56px gives breathing room for the hamburger overlap at top-left. */
+    padding-top: max(56px, env(safe-area-inset-top)) !important;
+  }
+}
+
+/* Older Safari (no :has) fallback — show hamburger on every mobile
+ * page; harmless on pages without a sidebar (the JS short-circuits
+ * before hooking up handlers when no `.sidebar` exists). */
+@supports not selector(:has(*)) {
+  @media (max-width: 900px) {
+    .narve-hamburger { display: inline-flex; }
+  }
+}
+
+/* ── Tables — horizontal scroll wrapper ────────────────────────────── */
+.nv-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* Mask any overflow shadow so the scroll affordance is visible
+   * without a hard right edge. */
+  -webkit-mask-image: linear-gradient(to right, black 95%, transparent);
+          mask-image: linear-gradient(to right, black 95%, transparent);
+}
+.nv-table-wrap > table {
+  width: 100%;
+  /* Sub-pages with very wide tables can override this with their own
+   * min-width on the table element. */
+  min-width: max-content;
+}
+@media (max-width: 720px) {
+  /* Final safety net: any unwrapped <table> that ships in a template
+   * still gets a horizontal scroll affordance via its parent block. */
+  .content-area table:not(.responsive-table):not([data-responsive]) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ── Tap targets — minimum 44×44 on mobile ─────────────────────────── */
+/* Drop ``(pointer: coarse)`` — Playwright headless reports a fine
+ * pointer, so the audit never saw the rule fire even though real
+ * phones would honour it. The size floor is harmless on any
+ * mobile breakpoint regardless of input device. */
+@media (max-width: 900px) {
+  button:not(.icon-button):not([data-no-min]),
+  [role="button"]:not([data-no-min]),
+  a.btn, a.button, a.cta, a.card-cta,
+  input[type="submit"],
+  input[type="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  /* Icon-only buttons get the box treatment. */
+  .icon-button,
+  button[aria-label][class*="icon"],
+  [data-icon-only] {
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* Inline anchor tags still need touch room without bloating the
+   * visual layout — pad via pseudo to keep the visible size unchanged
+   * when ergonomics matter most (footers, breadcrumb separators). */
+  .footer-nav a,
+  .breadcrumb-item a {
+    position: relative;
+  }
+  .footer-nav a::before,
+  .breadcrumb-item a::before {
+    content: "";
+    position: absolute;
+    inset: -10px -8px;
+  }
+}
+
+/* ── Inputs ≥ 16px on mobile (defeats iOS auto-zoom) ───────────────── */
+@media (max-width: 900px) {
+  /* High-specificity selector so individual ``.foo-input`` /
+   * ``.bar-select`` rules with their own font-size don't override us.
+   * iOS zooms when the input is < 16px AND the page allows user-scaling. */
+  body input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="range"]),
+  body select,
+  body textarea,
+  body input.settings-input,
+  body select.settings-select,
+  body textarea.settings-textarea {
+    font-size: max(16px, var(--input-font-size, 1rem)) !important;
+  }
+}
+
+/* ── Hover styles only on devices that actually hover ──────────────── */
+/* Touch devices "stick" hover-state styles after a tap; gating on
+ * hover-capable + fine-pointer means a finger won't trigger the
+ * desktop hover look. We DON'T overwrite every existing :hover rule
+ * (would be unmaintainable) — instead we add a paired media-query
+ * for the canonical hover surfaces below. Per-component hover
+ * overrides should follow this same pattern going forward. */
+@media (hover: none) and (pointer: coarse) {
+  /* Cancel the most common "stuck hover" — link/button colour shifts. */
+  a:hover, button:hover, [role="button"]:hover {
+    background-color: revert;
+    color: revert;
+  }
+}
+
+/* ── Safe-area inset (iPhone home indicator + notch) ───────────────── */
+.bottom-bar,
+.modal-footer,
+.sticky-cta,
+.narve-feedback-fab,
+.narve-install-banner,
+.narve-bottom-sheet {
+  padding-bottom: max(var(--space-4, 16px), env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Bottom-sheet pattern for dropdowns / share menus on small screens ─ */
+@media (max-width: 640px) {
+  .nv-share__menu,
+  .dropdown-menu,
+  .nv-cmdk__menu,
+  .narve-bottom-sheet,
+  [data-narve-bottom-sheet] {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    border-radius: 14px 14px 0 0 !important;
+    padding: 16px !important;
+    padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)) !important;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+  }
+
+  /* Cmdk palette — full-screen on phones. */
+  .nv-cmdk__panel,
+  [data-cmdk-root] {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100dvh !important;
+    max-height: none !important;
+    border-radius: 0 !important;
+    transform: none !important;
+  }
+
+  /* Modal panels — near-fullscreen with safe-area gutters. */
+  .nv-modal__panel,
+  .narve-sc-panel,
+  [role="dialog"] > .panel {
+    width: calc(100% - 16px) !important;
+    max-width: none !important;
+    max-height: calc(100dvh - 32px) !important;
+  }
+}
+
+/* ── Horizontal-scroll guard ───────────────────────────────────────── */
+/* Belt-and-braces: prevent body-level horizontal scroll on every page.
+ * Anything that needs to overflow horizontally (charts, code blocks)
+ * should clip on its own container instead of pushing the page wide. */
+@media (max-width: 900px) {
+  html, body { max-width: 100%; overflow-x: clip; }
+  img, video, canvas, iframe, svg { max-width: 100%; height: auto; }
+}
+
+/* ── Sticky filter bars / tab nav: respect safe-area ───────────────── */
+@media (max-width: 900px) {
+  .filter-bar,
+  .admin-tabs,
+  .narve-tabs {
+    /* Replace any vendor-prefixed sticky with a real sticky that
+     * accounts for the iOS top inset. */
+    top: env(safe-area-inset-top, 0px);
+  }
+}
+
+
+/* ── gw-nav: marketing top nav — wraps or scrolls on small screens ── */
+@media (max-width: 720px) {
+  .gw-nav {
+    flex-wrap: wrap;
+    gap: 12px;
+    /* If wrapping isn't desired (single row), uncomment the next two
+     * lines to switch to a horizontal scroll instead. */
+    /* flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; */
+  }
+  .gw-nav a { font-size: 13px; }
+}

@@ -547,11 +547,82 @@
     } catch { /* best-effort */ }
   }
 
+  // ── 6.5. Mobile sidebar drawer ─────────────────────────────────────
+  // pwa_middleware injects a hamburger button + backdrop into <body>
+  // on every page. CSS hides both unless the page has a `.sidebar`
+  // AND the viewport is mobile (`max-width: 900px`). This block wires
+  // the toggle: click hamburger → open drawer; click backdrop or hit
+  // Escape → close. We also focus-trap inside the open drawer for
+  // keyboard users, matching the modal pattern below.
+  function initSidebarDrawer() {
+    const sidebar = document.querySelector('.sidebar, .narve-sidebar');
+    if (!sidebar) return;
+    if (!sidebar.id) sidebar.id = 'narve-sidebar-drawer';
+    const hamburger = document.querySelector('[data-narve-hamburger]');
+    const backdrop = document.querySelector('[data-narve-sidebar-backdrop]');
+    if (!hamburger || !backdrop) return;
+
+    let trapDispose = null;
+
+    function open() {
+      sidebar.classList.add('open');
+      backdrop.hidden = false;
+      // Force a reflow so the CSS transition picks up the class change
+      // before we add the visible-fade marker.
+      // eslint-disable-next-line no-unused-expressions
+      backdrop.offsetWidth;
+      backdrop.classList.add('open');
+      hamburger.setAttribute('aria-expanded', 'true');
+      document.body.classList.add('narve-drawer-open');
+      try { trapDispose = narve.trapFocus(sidebar); } catch {}
+    }
+
+    function close() {
+      sidebar.classList.remove('open');
+      backdrop.classList.remove('open');
+      hamburger.setAttribute('aria-expanded', 'false');
+      document.body.classList.remove('narve-drawer-open');
+      // Hide backdrop after the transition so it doesn't block hover
+      // on clicked-through elements during the slide-out.
+      setTimeout(() => {
+        if (!sidebar.classList.contains('open')) backdrop.hidden = true;
+      }, 220);
+      if (trapDispose) { trapDispose(); trapDispose = null; }
+    }
+
+    function toggle() {
+      if (sidebar.classList.contains('open')) close();
+      else open();
+    }
+
+    hamburger.addEventListener('click', (e) => { e.preventDefault(); toggle(); });
+    backdrop.addEventListener('click', close);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && sidebar.classList.contains('open')) close();
+    });
+    // Close on nav-link click so the drawer doesn't linger after route change.
+    sidebar.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href]');
+      if (link && sidebar.classList.contains('open')) close();
+    });
+    // Close if the viewport jumps from mobile back to desktop while
+    // the drawer is open.
+    const mql = window.matchMedia('(min-width: 901px)');
+    (mql.addEventListener || mql.addListener).call(mql, 'change', (ev) => {
+      if (ev.matches && sidebar.classList.contains('open')) close();
+    });
+
+    // Expose a small public API in case page-specific code wants to
+    // trigger the drawer (e.g. an in-page "Open menu" link).
+    narve.sidebar = { open, close, toggle };
+  }
+
   // ── 7. Boot ─────────────────────────────────────────────────────────
   function boot() {
     ensureMainLandmark();
     ensureLiveRegion();
     initOfflineBanner();
+    initSidebarDrawer();
     // Defer precache until after first paint so it doesn't compete
     // with critical-path fetches.
     if ('requestIdleCallback' in window) {

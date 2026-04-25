@@ -224,7 +224,7 @@ _JOBS_PAGE = """<!DOCTYPE html>
       </div>
       <div id="failing-summary" class="jobs-failing-summary" style="display:none"></div>
       <div class="content-area">
-        <table class="jobs-table">
+        <div class="nv-table-wrap"><table class="jobs-table">
           <thead>
             <tr>
               <th>Job</th>
