@@ -2158,10 +2158,12 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         '<link rel="stylesheet" href="/_gateway_static/states.css">\n'
         '<link rel="stylesheet" href="/_gateway_static/lang-switcher.css">\n'
         '<link rel="stylesheet" href="/_gateway_static/changelog_widget.css">\n'
+        '<link rel="stylesheet" href="/_gateway_static/explain_popover.css">\n'
         '<script src="/_gateway_static/skeletons.js" defer></script>\n'
         '<script src="/_gateway_static/i18n-client.js" defer></script>\n'
         '<script src="/_gateway_static/lang-switcher.js" defer></script>\n'
-        '<script src="/_gateway_static/changelog_widget.js" defer></script>'
+        '<script src="/_gateway_static/changelog_widget.js" defer></script>\n'
+        '<script src="/_gateway_static/explain_popover.js" defer></script>'
     )
     if "skeletons.js" not in page:
         lower = page.lower()

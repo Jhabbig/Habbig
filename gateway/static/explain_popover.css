@@ -1,0 +1,102 @@
+/* "What is this page?" popover — small ⓘ icon next to .page-title h1
+ * elements; click reveals a one-paragraph explanation.
+ *
+ * Tokens: --text-tertiary / --surface / --border-* / --radius-md.
+ * Dark mode falls through automatically.
+ */
+
+.nv-explain__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  padding: 0;
+  margin-left: var(--space-2, 8px);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  /* Heading-level vertical alignment without a magic number — translate
+     a hair so the circle reads as part of the headline rather than a
+     superscript. */
+  transform: translateY(-1px);
+}
+.nv-explain__trigger:hover,
+.nv-explain__trigger:focus-visible {
+  color: var(--text-secondary);
+  background: var(--interactive-ghost);
+  border-color: var(--border-ghost, var(--border-subtle));
+  outline: none;
+}
+.nv-explain__trigger[aria-expanded="true"] {
+  color: var(--text-primary);
+  background: var(--interactive-ghost);
+  border-color: var(--border-ghost, var(--border-subtle));
+}
+.nv-explain__trigger svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.nv-explain__popover {
+  position: absolute;
+  background: var(--bg-float, var(--surface, var(--bg-surface)));
+  border: 1px solid var(--border-default, var(--border-regular, var(--border)));
+  border-radius: var(--radius-md, var(--radius));
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  max-width: 380px;
+  z-index: 100;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.15));
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  /* Subtle entrance — matches the rest of gateway's micro-animations
+     (~120ms, ease-out). */
+  opacity: 0;
+  transform: translateY(-2px);
+  animation: nv-explain-in 120ms ease-out forwards;
+}
+@keyframes nv-explain-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.nv-explain__popover h4 {
+  margin: 0 0 var(--space-2, 8px);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.nv-explain__popover p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+/* Optional secondary link — e.g. "Read the full methodology →".
+   Rendered when an explanation entry includes a `link` field. */
+.nv-explain__popover a {
+  display: inline-block;
+  margin-top: var(--space-2, 8px);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.nv-explain__popover a:hover {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+}
+
+/* Print: hide entirely — popovers don't belong on paper. */
+@media print {
+  .nv-explain__trigger,
+  .nv-explain__popover { display: none !important; }
+}
