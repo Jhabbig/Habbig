@@ -1081,7 +1081,12 @@ _PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/",
                     # Twitter / Slack / Discord can fetch social previews
                     # for public URLs. No sensitive data — every card is
                     # computed from already-public model output.
-                    "/og/")
+                    "/og/",
+                    # Public-profile pages (/u/{handle}) are opt-in and
+                    # designed to be crawled. The handler returns 404 for
+                    # any user that hasn't opted in (existence-hide), so
+                    # exposure here is bounded to consenting users.
+                    "/u/")
 
 
 class GateMiddleware(BaseHTTPMiddleware):
