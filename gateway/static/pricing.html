@@ -13,6 +13,37 @@
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+  <link rel="canonical" href="https://narve.ai/pricing">
+  <!-- schema.org Product. Price floor matches the meta description above
+       (£75/month). The "lowPrice" + "highPrice" fields are intentionally
+       omitted because the public price ladder ends at the Pro tier; the
+       enterprise tier is gated behind /enquire and shouldn't show up in
+       Google's rich-result preview. AggregateOffer would imply a range
+       and confuse the snippet. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "narve.ai Pro",
+    "description": "Invite-only prediction market intelligence platform. Credibility-scored signals from sources actually calling Polymarket and Kalshi markets right.",
+    "brand": {"@type": "Brand", "name": "narve.ai"},
+    "url": "https://narve.ai/pricing",
+    "offers": {
+      "@type": "Offer",
+      "price": "75",
+      "priceCurrency": "GBP",
+      "availability": "https://schema.org/InStock",
+      "priceSpecification": {
+        "@type": "UnitPriceSpecification",
+        "price": "75",
+        "priceCurrency": "GBP",
+        "billingDuration": "P1M",
+        "unitCode": "MON"
+      },
+      "url": "https://narve.ai/pricing"
+    }
+  }
+  </script>
 </head>
 <body>
 <div class="pr-page">
@@ -151,7 +182,8 @@
     <!-- ===== COMPARISON TABLE ===== -->
     <h2 class="pr-comp-title">Feature comparison</h2>
     <div class="pr-comp-wrap reveal-fade">
-      <table class="pr-comp">
+      <div class="nv-table-wrap">
+        <table class="pr-comp">
         <thead>
           <tr>
             <th></th>
@@ -183,7 +215,8 @@
           <tr><td>Custom integrations</td><td class="pr-no">&times;</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td></tr>
           <tr><td>Dedicated support</td><td class="pr-no">&times;</td><td class="pr-no">&times;</td><td class="pr-yes">&check;</td></tr>
         </tbody>
-      </table>
+              </table>
+      </div>
     </div>
 
     <!-- ===== FAQ ===== -->

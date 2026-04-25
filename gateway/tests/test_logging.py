@@ -268,6 +268,13 @@ class TestNoPrintInProductionCode(unittest.TestCase):
         # i18n.auto_translate). Prints status + stderr warnings as
         # operator feedback; not part of the request-path surface.
         "i18n/auto_translate.py",
+        # Startup-validator module runs at import time, BEFORE
+        # configure_logging() has wired the JSON formatter. The prints
+        # are stderr writes for boot-misconfiguration messages + example
+        # commands embedded in error-message strings. Replacing with a
+        # logger here would fail-soft to no output during the very
+        # failure mode the validator is meant to surface.
+        "config.py",
     }
 
     def test_no_print_statements(self):
