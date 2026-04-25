@@ -39,6 +39,11 @@ _BODY_INJECT = (
     '<a class="narve-skip-link" href="#main">Skip to main content</a>\n'
     '<script src="/_gateway_static/narve-app.js" defer></script>\n'
     '<script src="/_gateway_static/shortcuts.js" defer></script>\n'
+    # First-time discovery hint for the keyboard shortcut overlay. Loaded
+    # AFTER shortcuts.js so window.narve.shortcuts is populated; the
+    # discovery module bails immediately if the user already dismissed
+    # the hint (localStorage flag).
+    '<script src="/_gateway_static/js/shortcuts-discovery.js" defer></script>\n'
     # Floating 💬 Feedback button — the script itself suppresses on
     # /token, /login, /admin, and /feedback so unauthed + redundant
     # surfaces don't render the FAB. Mounting here gets us site-wide

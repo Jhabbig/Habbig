@@ -232,6 +232,74 @@ body > div:last-of-type a[href="/privacy"] {
   font-size: 12px; color: var(--text-tertiary);
 }
 
+/* ── Discovery hint toast ──────────────────────────────────────────── */
+/* Bottom-right pill that appears once per browser session to surface
+ * the keyboard-shortcuts overlay for first-time users. Fades in on
+ * 30s idle or after the user mashes a printable key with no binding.
+ * Dismiss-forever flag is stored in localStorage (key
+ * "narve.shortcutHintDismissed"). */
+.narve-sc-hint {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9990;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  background: var(--bg-float, #ffffff);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  max-width: calc(100vw - 32px);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+.narve-sc-hint--open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.narve-sc-hint__body { white-space: nowrap; }
+.narve-sc-hint__body kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; padding: 1px 5px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px; font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-inset, var(--interactive-ghost));
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  margin: 0 2px;
+}
+.narve-sc-hint__actions {
+  display: flex; gap: 4px; align-items: center;
+}
+.narve-sc-hint__open,
+.narve-sc-hint__close {
+  appearance: none; background: transparent; border: 0;
+  font: inherit; color: var(--text-secondary);
+  padding: 6px 10px; border-radius: 999px; cursor: pointer;
+}
+.narve-sc-hint__open  { color: var(--text-primary); font-weight: 500; }
+.narve-sc-hint__close { font-size: 18px; line-height: 1; padding: 4px 10px; min-width: 32px; }
+.narve-sc-hint__open:hover,
+.narve-sc-hint__close:hover { background: var(--interactive-ghost, rgba(0,0,0,0.06)); color: var(--text-primary); }
+
+@media (max-width: 480px) {
+  .narve-sc-hint { left: 16px; right: 16px; bottom: 16px; }
+  .narve-sc-hint__body { white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .narve-sc-hint { transition: opacity 0.05s ease; transform: none; }
+}
+
 /* ── List selection (j/k) ──────────────────────────────────────────── */
 [data-shortcut-item][data-shortcut-selected] {
   outline: 2px solid var(--text-primary);

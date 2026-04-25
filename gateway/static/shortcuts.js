@@ -280,17 +280,24 @@
     },
   });
 
-  // Navigation shortcuts (g-then-X). Pages silently 404 if a route
-  // doesn't exist for this user — better than a JS error.
+  // Navigation shortcuts (Gmail-style g-then-X). Pages silently 404 if
+  // a route doesn't exist for this user — better than a JS error.
+  // ``g a`` (Admin) only registers when window.narve.isAdmin is truthy
+  // (the apex template sets this when render_page is given an admin user).
   function go(path) { return () => { window.location.href = path; }; }
-  register({ id: 'go-dashboards',   keys: 'g d', description: 'Go to Dashboards',    group: 'Navigation', handler: go('/dashboards') });
-  register({ id: 'go-intelligence', keys: 'g i', description: 'Go to Intelligence',  group: 'Navigation', handler: go('/intelligence') });
-  register({ id: 'go-search',       keys: 'g s', description: 'Go to Signal Search', group: 'Navigation', handler: go('/signal-search') });
-  register({ id: 'go-billing',      keys: 'g b', description: 'Go to Billing',       group: 'Navigation', handler: go('/billing') });
-  register({ id: 'go-settings',     keys: 'g t', description: 'Go to Settings',      group: 'Navigation', handler: go('/settings') });
-  register({ id: 'go-profile',      keys: 'g p', description: 'Go to Profile',       group: 'Navigation', handler: go('/profile') });
-  register({ id: 'go-saved',        keys: 'g v', description: 'Go to Saved',         group: 'Navigation', handler: go('/saved') });
-  register({ id: 'go-home',         keys: 'g h', description: 'Go to Home',          group: 'Navigation', handler: go('/') });
+  register({ id: 'go-feed',          keys: 'g f', description: 'Go to Feed',           group: 'Navigation', handler: go('/dashboards') });
+  register({ id: 'go-best-bets',     keys: 'g b', description: 'Go to Best Bets',      group: 'Navigation', handler: go('/best-bets') });
+  register({ id: 'go-markets',       keys: 'g m', description: 'Go to Markets',        group: 'Navigation', handler: go('/markets') });
+  register({ id: 'go-sources',       keys: 'g s', description: 'Go to Sources',        group: 'Navigation', handler: go('/sources') });
+  register({ id: 'go-intelligence',  keys: 'g i', description: 'Go to Intelligence',   group: 'Navigation', handler: go('/intelligence') });
+  register({ id: 'go-watchlist',     keys: 'g w', description: 'Go to Watchlist',      group: 'Navigation', handler: go('/watchlist') });
+  register({ id: 'go-predictions',   keys: 'g p', description: 'Go to Predictions',    group: 'Navigation', handler: go('/predictions') });
+  register({ id: 'go-notifications', keys: 'g n', description: 'Go to Notifications',  group: 'Navigation', handler: go('/notifications') });
+  register({ id: 'go-home',          keys: 'g h', description: 'Go to Home',           group: 'Navigation', handler: go('/') });
+  register({ id: 'go-settings',      keys: 'g t', description: 'Go to Settings',       group: 'Navigation', handler: go('/settings') });
+  if (narve.isAdmin) {
+    register({ id: 'go-admin',       keys: 'g a', description: 'Go to Admin',          group: 'Navigation', handler: go('/admin') });
+  }
 
   register({
     id: 'settings-comma',
@@ -374,6 +381,40 @@
       const el = document.querySelector('[data-shortcut-search]') ||
                  document.querySelector('input[type="search"]');
       if (el) { e.preventDefault(); el.focus(); el.select && el.select(); }
+    },
+  });
+
+  // ⌘Enter — submit the focused form. Works in chat composers and any
+  // <form> the user is typing in. Fires .submit() so HTMX/JS handlers
+  // run; falls back to clicking the form's submit button if .submit()
+  // is intercepted by validation.
+  register({
+    id: 'submit-cmd-enter',
+    keys: ['cmd+enter', 'ctrl+enter'],
+    description: 'Submit form / send message',
+    group: 'Forms',
+    handler: (event) => {
+      const target = event.target;
+      const form = (target && target.form) || target.closest && target.closest('form');
+      if (!form) return;
+      event.preventDefault();
+      const submitter = form.querySelector('button[type="submit"], input[type="submit"]');
+      if (submitter) submitter.click();
+      else form.requestSubmit ? form.requestSubmit() : form.submit();
+    },
+  });
+
+  // ⌘↑ — recall the last user message in a chat composer. Pages opt
+  // in by exposing window.narve.editLastChatMessage = fn; default no-op.
+  register({
+    id: 'chat-edit-last',
+    keys: ['cmd+up', 'ctrl+up'],
+    description: 'Edit last message',
+    group: 'Chat',
+    handler: () => {
+      if (typeof narve.editLastChatMessage === 'function') {
+        narve.editLastChatMessage();
+      }
     },
   });
 
