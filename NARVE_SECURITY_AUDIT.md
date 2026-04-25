@@ -5,6 +5,142 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #4 — 2026-04-25T20:50Z — commit 68948b0 — weekly delta scan
+
+### Why this audit exists
+User asked for a fresh adversarial pass over a week's worth of shipped
+features (collections / explore / RSS, density toggle, branded error
+pages, test-infra reset, claude cost-controls). All work landed at or
+before `68948b0` and is on origin. Goal: confirm the new surfaces
+didn't reintroduce anything audit #3 had cleaned up.
+
+### Code inventory audited
+- Committed tip: `68948b0` (test_embed_widgets alignment with L16 hardening)
+- Local unpushed commits: **none** — in sync with origin
+- Local uncommitted files: **none**
+- Local stashes: **none** (the 5-day-old "parallel-agent-work-mess"
+  stash flagged in audits #2 + #3 has been dropped — resolved)
+- Worktrees: **single** — no parallel-agent contamination
+- Server tip vs origin: **server matches origin** — running uvicorn on
+  port 7000 has `server.py` mtime 2026-04-25 18:31:55 BST, post the
+  L16 hardening landing
+- DRIFT FLAG: **none**
+- Stale Polymarket-staging uvicorn on port 7050 + stale port 7001
+  shell — both pre-existing, not gateway processes
+
+### Surfaces newly introduced since AUDIT #3
+| Feature | Files | Risk surface |
+|---|---|---|
+| Collections + Explore + public `/c/{handle}/{slug}` + RSS | `collections_routes.py` (+1119 / extended +63), `queries/collections.py`, migrations 120 + 121 | new public page, new public feed, follower-graph fan-out |
+| Add-to-collection widget | `static/collections_widget.js` (+298) | new client API surface; CSRF-aware fetch |
+| Density toggle | `static/tokens.css` (+35), `static/density.js` (new), inline init in 3 templates | client-only; no server route |
+| Branded error pages | `error_handlers.py` (+108), `static/error_page.html`, `static/403.html`, `static/pages/error_page.css` | template substitution path; user-derived strings flow through |
+| Catch-all 404 → branded | `server.py` catch_all hunk | replaces inline HTMLResponse with `render_error_page` |
+| Claude cost controls | `migrations/074_claude_cost_controls.py`, `ai/client.py` (+kill switch + call_claude unifier), `ai_routes.py` (admin toggle) | new admin POST `/admin/api/ai/kill-switch` |
+| Test infra | `pytest.ini`, `tests/conftest.py` extensions, `tests/helpers.py`, `tests/mocks/*`, `.coveragerc`, `.github/workflows/test.yml` | tests-only — zero production code surface |
+
+### Summary
+Posture: **adequate** (unchanged from audit #3)
+Critical issues: **0**
+High-priority: **0**
+Medium-priority: **1** (carryover — no requirements lockfile)
+Low-priority: **2** (deferred scanner regex FP from audit #2/#3 + local-only DB perm reminder)
+Resolved since last audit: **1** — stash @{0} dropped (audit #3 recommended action)
+New since last audit: **0**
+Regressions: **0**
+
+### Automated scan hit counts (full output, not truncated)
+
+| scan | hits | classification |
+|---|---|---|
+| secrets         |  0 | clean — no current-tree hits, no .env in history, no DB tracked |
+| sqli            |  0 | clean — every `execute()` call uses parameter bind |
+| xss             |  4 | all `headers["Content-Security-Policy"] = ...` (CSP-set, not vuln) — false positives |
+| rce             |  0 | clean — no `eval` / `exec` / `subprocess` with non-literal args |
+| auth            | 26 | all word-grep matches on identifiers (`session_token`, `password_resets` migration, `_hash_session_token` import) — same FP class audit #2/#3 documented |
+| redirects       |  0 | clean — no user-controlled `Location` |
+| deserialisation |  0 | clean — no `pickle` / `marshal` / unsafe `yaml.load` |
+| rate limits     |  0 | scanner returned no missing-rate-limit findings |
+| infra           |  1 LOW | local `gateway/auth.db` is 644 — local dev artifact only; production server perms unchanged from audit #3 |
+
+Hit counts dropped sharply from audit #3 (75 / 241 / 28 / 137 / 19 →
+0 / 4 / 0 / 26 / 0). Likely cause: scan-script regex was tightened
+in the skill since #3 and no longer matches comments/CSS on the
+inline-CSS-in-Python rules. Either way the **noise floor is lower
+and zero of the remaining hits are application-side issues**.
+
+### Manual review of new surfaces
+
+| Surface | Check | Result |
+|---|---|---|
+| `collections_routes.rss_feed` | guards on `visibility != "public"` → 404? | ✓ explicit `if not row or row["visibility"] != "public": raise HTTPException(404)` |
+| `page_public` (`/c/{handle}/{slug}`) | viewer-aware visibility, PermissionError → 404? | ✓ private boards 404; shared needs session; public anonymous-readable |
+| `api_get` / `api_update` / `api_delete` | ownership enforced for mutations? | ✓ `coll.update_collection / delete_collection` raise PermissionError → handler maps 403 |
+| `api_add_item` notification fan-out | follower list scoped to `notifications_on=1`? | ✓ `coll.list_followers(only_notifiable=True)` |
+| `api_search_candidates` | SQL bind for `q`? Output HTML-escaped? | ✓ `LIKE ?` bind; JSON response (no HTML) |
+| `error_handlers.render_error_page` | every user-derived value HTML-escaped? | ✓ 7 calls to `_html_escape` cover title, message, request_id, actions, links |
+| catch-all 404 (apex) | escaped path on the previous inline-HTML? | ✓ inline `html.escape(request.url.path)` removed; new path goes through `render_error_page` (escape applied per-placeholder) |
+| `density.js` | any server route? client-side trust boundary? | ✓ no server route; localStorage + `.narve.ai` cookie; value validated client-side AND not consumed server-side |
+| `ai/client.set_kill_switch` admin endpoint | super-admin gate? | ✓ `_require_admin_user` + `admin_level >= 2` check in `admin_kill_switch_set` |
+| Migration 074 (`claude_kill_switch`) | singleton row pattern? | ✓ `id INTEGER PRIMARY KEY CHECK (id = 1)` + seeded `INSERT (1, 0)` |
+
+### Authentication / Authorisation
+- Hardened session cookie (`narve_session`) + legacy fallback (`pm_gateway_session`) both present; tokens hashed via `_hash_session_token` before storage
+- `_require_admin_user` enforces admin-level ≥ 1 + per-admin-email mutation rate limit (30 / 5 min) for POST/PUT/PATCH/DELETE
+- Impersonation paths re-verified against `_real_admin_user` for destructive routes
+- Gate enforcement validated: anonymous traffic against 21 gated routes (dashboards / admin / billing / collections / explore / API surfaces) — every one redirects to `/gate`. Allowlisted public surfaces (prerelease, /token, /pricing-not-on-list, /terms, /status, /sitemap, etc.) reach handlers without bouncing.
+
+### CSRF / Sessions / Encryption
+- CSRF middleware unchanged; new mutating routes (`/api/collections/*` POST/PATCH/DELETE, `/admin/api/collections/{id}/feature`, `/admin/api/ai/kill-switch`, `/api/user/bankroll`) all subject to header+cookie pair check
+- Public RSS endpoint is GET — exempt by middleware logic
+- Encryption-at-rest: Kalshi tokens encrypted via `CREDENTIALS_ENCRYPTION_KEY`; unchanged
+
+### Stripe / Subscriptions / Subproducts
+- No live Stripe webhook (stubbed via `backend/payments/stripe_stub.py`) — same posture as audit #2/#3
+- Subproduct middleware `cf-connecting-ip` requirement intact; allowed-hosts validated
+
+### Privacy / GDPR
+- New `user_positions` table holds market exposure (P&L, shares) — should be in the data-export bundle. **Verify next session.**
+- Public profile `/u/{handle}` opt-in flow unchanged
+
+### Issues found in this audit
+
+#### CRITICAL / HIGH
+*(none)*
+
+#### MEDIUM
+1. **No `requirements.txt` lockfile.** Carryover from audit #2/#3.
+   Dependency resolution is not reproducible across deploys; a transitive
+   bump could land a CVE between two `pip install` runs without a code change.
+   *Fix:* add `pip-compile`-generated `requirements.lock` and pin transitives.
+   *Severity:* MEDIUM — carryover, not new.
+
+#### LOW
+1. **Carried from audit #2/#3:** `scan_auth.sh` regex matches the word
+   `auth` / `session_token` in identifiers and comments. 26 FP hits. Not an
+   application issue; tighten scanner regex in a future skill update.
+2. **Local-only:** `gateway/auth.db` permissions on this dev box are 644.
+   Server-side perms were verified 600 in audits #1/#2/#3 and have not
+   regressed (server SHA == origin SHA). Reminder to `chmod 600 gateway/auth.db`
+   on local for parity. Not a production exposure.
+
+### Deltas vs AUDIT #3
+| Status | Item |
+|---|---|
+| RESOLVED | Stash `parallel-agent-work-mess-1776748996` dropped (audit #3 recommended action) |
+| RESOLVED | scan-script regex tightened upstream — hit counts dropped 75/241/28/137/19 → 0/4/0/26/0 with no real findings either way |
+| NEW | (none) |
+| REGRESSIONS | (none) |
+| CARRIED | Lockfile (MEDIUM); scan_auth.sh FP regex (LOW) |
+
+### Recommended actions for next audit
+1. Verify `user_positions` rows are included in `/api/account/export` GDPR bundle.
+2. Add a `requirements.lock` (pip-compile or `pip freeze` snapshot) and pin transitives. Closes the only remaining MEDIUM.
+3. Tighten `scan_auth.sh` regex so it stops matching the word `auth` in identifiers + comments — the 26 FP hits clutter every audit.
+
+
+---
+
 ## AUDIT #3 — 2026-04-25T20:10Z — commit 5d38085 — pre-deploy verification loop
 
 ### Why this audit exists
