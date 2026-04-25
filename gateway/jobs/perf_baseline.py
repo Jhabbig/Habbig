@@ -74,56 +74,48 @@ _ALERT_MULTIPLIER = 1.20
 # (migration 080 etc.), not the middleware stack.
 
 def _build_probes() -> list[tuple[str, Callable[[], Any]]]:
+    """Return the canonical hot-read probes.
+
+    Resolution rule: every probe MUST be a function that lives on ``db``
+    (the canonical SQLite layer). The earlier ``queries.*`` shims were
+    listed by name but several of them have been renamed away from
+    list_recent_* during the queries/ decomposition, and probing a
+    moving target burns 30 calls per probe per night logging
+    AttributeError. Probes here track the set of read paths that route
+    handlers actually call — see PERFORMANCE_BASELINE.md for which
+    endpoints they back.
+    """
+    import db as _db
+
     probes: list[tuple[str, Callable[[], Any]]] = []
 
-    try:
-        from queries import markets as _markets
-        # Generic list-markets query — representative of /api/markets.
-        probes.append((
-            "queries.markets.list_recent_markets",
-            lambda: _markets.list_recent_markets(limit=50),
-        ))
-    except Exception:
-        pass
+    # /api/feed + /dashboards landing — the headline list view.
+    probes.append((
+        "db.list_recent_predictions",
+        lambda: _db.list_recent_predictions(limit=50),
+    ))
 
-    try:
-        from queries import sources as _sources
-        probes.append((
-            "queries.sources.list_sources_by_credibility",
-            lambda: _sources.list_sources_by_credibility(limit=50),
-        ))
-    except Exception:
-        pass
+    # Resolution job's primary scan — every cron tick walks this.
+    probes.append((
+        "db.get_unresolved_market_ids",
+        lambda: _db.get_unresolved_market_ids(),
+    ))
 
-    try:
-        from queries import predictions as _preds
-        probes.append((
-            "queries.predictions.list_recent",
-            lambda: _preds.list_recent(limit=50),
-        ))
-    except Exception:
-        pass
-
-    try:
-        # db.list_recent_predictions is the top-level shim that several
-        # routes still call directly — worth tracking alongside the
-        # decomposed queries module.
-        import db as _db
-        probes.append((
-            "db.list_recent_predictions",
-            lambda: _db.list_recent_predictions(limit=50),
-        ))
-    except Exception:
-        pass
-
-    try:
-        import db as _db
-        probes.append((
-            "db.get_unresolved_market_ids",
-            lambda: _db.get_unresolved_market_ids(),
-        ))
-    except Exception:
-        pass
+    # FTS5 endpoints — used by ⌘K and the global search box. A short
+    # query so we don't accidentally measure FTS planning cost on a
+    # 200-char input.
+    probes.append((
+        "db.search_predictions",
+        lambda: _db.search_predictions("fed", limit=10),
+    ))
+    probes.append((
+        "db.search_markets",
+        lambda: _db.search_markets("fed", limit=10),
+    ))
+    probes.append((
+        "db.search_sources",
+        lambda: _db.search_sources("fed", limit=10),
+    ))
 
     return probes
 
