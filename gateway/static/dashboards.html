@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="/_gateway_static/states.css">
   <link rel="stylesheet" href="/_gateway_static/skeletons.css">
   <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
   <!-- Sentry frontend (only loads if DSN present) -->
   <!-- requires server to substitute sentry_frontend_dsn; empty disables Sentry -->
   <script>
@@ -204,6 +204,7 @@
 <script src="/_gateway_static/scroll-animations.js" defer></script>
 <script src="/_gateway_static/user-features.js" defer></script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/density.js?v=1" defer></script>
 <script src="/_gateway_static/skeletons.js" defer></script>
 <script src="/_gateway_static/toast.js" defer></script>
 <script src="/_gateway_static/filter_panel.js" defer></script>

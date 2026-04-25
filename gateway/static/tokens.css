@@ -135,6 +135,24 @@
   --space-9:  96px;
   --space-10: 128px;
 
+  /* ── Density ─────────────────────────────────────────────
+     "Comfortable" defaults live here so untouched call sites
+     inherit the airy spacing automatically. The compact override
+     block is at the bottom of this file — setting
+     ``data-density="compact"`` on <html> tightens every surface
+     that opted into these vars (rows, cards, sections, page
+     chrome).
+
+     Only structural spacing belongs here. One-off decorative
+     paddings — tooltip arrows, pill badges, focus halos — should
+     stay hardcoded so they don't shift when the user flips the
+     toggle. */
+  --row-pad-y:   var(--space-3);  /* 12px */
+  --row-pad-x:   var(--space-4);  /* 16px */
+  --card-pad:    var(--space-4);  /* 16px */
+  --section-gap: var(--space-5);  /* 24px */
+  --page-pad:    var(--space-5);  /* 24px */
+
   /* ── Radii ──────────────────────────────────────────────── */
   --radius-xs:   4px;
   --radius-sm:   6px;
@@ -296,4 +314,21 @@
      are lightness-invariant — inherited from :root above.
      The back-compat aliases re-resolve automatically through their
      var() references. */
+}
+
+
+/* ============================================================
+   DENSITY — COMPACT OVERRIDE
+   ============================================================
+   Theme-agnostic: applies to both light + dark roots. Tightens
+   every var() the spec calls structural by ~⅓. Untouched
+   surfaces inherit the comfortable :root defaults, so opt-in is
+   per-rule (replace ``padding: 16px`` with
+   ``padding: var(--card-pad)`` and the rule gets density-aware). */
+:root[data-density="compact"] {
+  --row-pad-y:   var(--space-2);  /* 8px  */
+  --row-pad-x:   var(--space-3);  /* 12px */
+  --card-pad:    var(--space-3);  /* 12px */
+  --section-gap: var(--space-4);  /* 16px */
+  --page-pad:    var(--space-4);  /* 16px */
 }

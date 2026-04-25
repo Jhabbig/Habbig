@@ -2029,7 +2029,10 @@ label[for] + textarea {
 /* ── Main content ───────────────────────────────────────────────────── */
 .main-content {
   grid-area: main;
-  padding: var(--space-4) var(--space-6) var(--space-6);
+  /* Top stays --space-4 so the sticky breadcrumb has consistent
+     headroom; horizontal + bottom route through --page-pad so
+     toggling density tightens the whole shell at once. */
+  padding: var(--space-4) var(--page-pad) var(--page-pad);
   max-width: 100%;
   overflow-x: hidden;
 }
@@ -2066,7 +2069,9 @@ label[for] + textarea {
 .content-area {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  /* Density-aware vertical rhythm — --section-gap is the canonical
+     spacing between sibling sections inside a page. */
+  gap: var(--section-gap);
 }
 
 /* ── Status bar ─────────────────────────────────────────────────────── */

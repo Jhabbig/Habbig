@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
@@ -124,6 +124,57 @@
             </div>
           </form>
 
+          <!-- ── Appearance / Density ─────────────────────────────
+               Comfortable is the default. Compact tightens table-row
+               padding, card padding, section gaps, and page chrome —
+               same layout, ~⅓ less white space. Persists per-browser
+               via localStorage + a .narve.ai-domain cookie so
+               subdomains stay in sync. -->
+          <div class="settings-card" id="appearance-density">
+            <div class="settings-section">
+              <div class="settings-section-title">Density</div>
+              <div class="settings-section-desc">
+                How dense should table rows, cards, and section gaps
+                feel? Compact suits dense data work; Comfortable suits
+                reading. Switch any time — the change is instant.
+              </div>
+              <div role="radiogroup" aria-label="Display density"
+                   style="display:inline-flex;gap:0;margin-top:14px;
+                          border:1px solid var(--border-default,var(--border));
+                          border-radius:var(--radius-sm);overflow:hidden">
+                <button type="button" role="radio"
+                        data-density-value="comfortable"
+                        aria-checked="true"
+                        style="padding:8px 16px;background:transparent;
+                               color:inherit;border:0;cursor:pointer;
+                               font-family:inherit;font-size:13px;
+                               border-right:1px solid var(--border-default,var(--border))">
+                  Comfortable
+                </button>
+                <button type="button" role="radio"
+                        data-density-value="compact"
+                        aria-checked="false"
+                        style="padding:8px 16px;background:transparent;
+                               color:inherit;border:0;cursor:pointer;
+                               font-family:inherit;font-size:13px">
+                  Compact
+                </button>
+              </div>
+            </div>
+          </div>
+          <style>
+            /* Active-state styling for the radiogroup. Uses the same
+               --interactive-bg / --interactive-text the rest of the
+               app uses for primary buttons so theme switches still
+               render correctly. The selectors are scoped to
+               #appearance-density so they can't leak into other
+               radiogroups. */
+            #appearance-density [data-density-value][aria-checked="true"] {
+              background: var(--interactive-bg);
+              color: var(--interactive-text);
+            }
+          </style>
+
           {{ raw_market_connections }}
 
           {{ raw_billing_section }}
@@ -166,6 +217,7 @@
 {{ raw_sitemap }}
 <script src="/_gateway_static/user-features.js" defer></script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/density.js?v=1" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
 </body>
 </html>
