@@ -1,0 +1,226 @@
+/* Onboarding overlay tour + first-week goals widget.
+ *
+ * Token-only — every value either resolves through gateway/static/gateway.css
+ * (and tokens.css) or is a transparent computed alpha. No new colours. */
+
+/* ── Tour overlay ─────────────────────────────────────────────────── */
+
+.nv-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;        /* above .detail-panel (40), below toasts */
+  pointer-events: none; /* spotlight + backdrop control their own */
+}
+
+.nv-tour__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+  cursor: pointer;       /* clickable → skip */
+}
+
+.nv-tour__spotlight {
+  position: absolute;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  /* Donut: large outer shadow cuts a hole through the backdrop so the
+     spotlit area reads as "lit". Layering the spotlight ABOVE the
+     backdrop is what produces the cut-out effect. */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  pointer-events: none;  /* clicks pass through to the highlighted nav */
+  transition: top 0.25s ease, left 0.25s ease,
+              width 0.25s ease, height 0.25s ease;
+}
+
+.nv-tour__popover {
+  position: absolute;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 12px);
+  padding: var(--space-4);
+  max-width: 320px;
+  pointer-events: auto;
+  box-shadow: var(--shadow-lg);
+}
+
+.nv-tour__progress {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.nv-tour__step {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+}
+
+.nv-tour__popover h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.nv-tour__popover p {
+  margin: 0 0 var(--space-4);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.nv-tour__actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.nv-tour__skip,
+.nv-tour__next {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease,
+              border-color 0.15s ease;
+}
+
+.nv-tour__skip {
+  background: transparent;
+  color: var(--text-tertiary);
+  border: 1px solid transparent;
+}
+
+.nv-tour__skip:hover {
+  color: var(--text-primary);
+  background: var(--interactive-ghost);
+}
+
+.nv-tour__next {
+  background: var(--text-primary);
+  color: var(--interactive-text);
+  border: 1px solid var(--text-primary);
+}
+
+.nv-tour__next:hover {
+  background: var(--interactive-hover);
+}
+
+.nv-tour__skip:focus-visible,
+.nv-tour__next:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* Reduced-motion: kill the spotlight pan + the smooth scroll handled in
+   JS. Keep the visual but make state changes instantaneous. */
+@media (prefers-reduced-motion: reduce) {
+  .nv-tour__spotlight { transition: none; }
+}
+
+/* ── First-week goals widget ──────────────────────────────────────── */
+
+.nv-fwg {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.nv-fwg__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.nv-fwg__title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  flex: 1;
+}
+
+.nv-fwg__count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  margin-right: var(--space-2);
+}
+
+.nv-fwg__dismiss {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.nv-fwg__dismiss:hover { color: var(--text-primary); background: var(--interactive-ghost); }
+.nv-fwg__dismiss:focus-visible {
+  outline: 1px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+.nv-fwg__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nv-fwg__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: color 0.15s ease;
+}
+
+.nv-fwg__item--done {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+.nv-fwg__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border-default);
+  font-size: 10px;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.nv-fwg__item--done .nv-fwg__check {
+  background: var(--text-primary);
+  color: var(--interactive-text);
+  border-color: var(--text-primary);
+}
+
+.nv-fwg__label { line-height: 1.3; }

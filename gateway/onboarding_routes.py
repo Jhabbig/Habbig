@@ -606,6 +606,111 @@ async def dismiss_widget(request: Request):
     return JSONResponse({"dismissed": True})
 
 
+# ── Dashboard overlay tour ──────────────────────────────────────────────────
+#
+# After the user finishes the 5-step /onboarding flow and lands on
+# /dashboards for the first time, a 5-step spotlight tour walks them
+# through the main nav. The tour is one-shot: completing OR skipping it
+# stamps user_onboarding so it never replays.
+#
+# Gating logic in _tour_should_show:
+#   - user_onboarding.completed_at IS NOT NULL  (finished signup flow)
+#   - tour_completed_at IS NULL
+#   - tour_skipped = 0
+#   - migration 171 columns present (defensive — older DBs fall through
+#     to "false" rather than raising).
+
+
+def _row_get(row: Optional[dict], key: str, default: Any = None) -> Any:
+    if not row:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
+def _tour_should_show(conn: sqlite3.Connection, user_id: int) -> bool:
+    if not _table_exists(conn, "user_onboarding"):
+        return False
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(user_onboarding)")}
+    if "tour_completed_at" not in cols:
+        # Migration 171 not applied yet — fail closed; we won't pop a tour
+        # we can't track.
+        return False
+    row = conn.execute(
+        "SELECT completed_at, tour_completed_at, tour_skipped "
+        "FROM user_onboarding WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if not row:
+        return False
+    if not row["completed_at"]:
+        return False  # haven't finished the 5-step flow yet
+    if row["tour_completed_at"]:
+        return False
+    if int(row["tour_skipped"] or 0):
+        return False
+    return True
+
+
+async def tour_state(request: Request):
+    """Returns whether the dashboard overlay tour should auto-start."""
+    user = _require_user(request)
+    conn = _connect()
+    try:
+        return JSONResponse({
+            "should_show": _tour_should_show(conn, user["user_id"]),
+        })
+    finally:
+        conn.close()
+
+
+async def tour_complete(request: Request):
+    """Mark the tour finished. Idempotent — repeat calls keep the first ts."""
+    user = _require_user(request)
+    conn = _connect()
+    try:
+        _ensure_onboarding_row(conn, user["user_id"])
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(user_onboarding)")}
+        if "tour_completed_at" not in cols:
+            return JSONResponse({"ok": True, "noop": "migration_171_pending"})
+        conn.execute(
+            "UPDATE user_onboarding "
+            "SET tour_completed_at = COALESCE(tour_completed_at, ?) "
+            "WHERE user_id = ?",
+            (int(time.time()), user["user_id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return JSONResponse({"ok": True})
+
+
+async def tour_skip(request: Request):
+    """Mark the tour skipped. Same idempotency contract as tour_complete."""
+    user = _require_user(request)
+    conn = _connect()
+    try:
+        _ensure_onboarding_row(conn, user["user_id"])
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(user_onboarding)")}
+        if "tour_skipped" not in cols:
+            return JSONResponse({"ok": True, "noop": "migration_171_pending"})
+        conn.execute(
+            "UPDATE user_onboarding "
+            "SET tour_skipped = 1, "
+            "    tour_skipped_at = COALESCE(tour_skipped_at, ?) "
+            "WHERE user_id = ?",
+            (int(time.time()), user["user_id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return JSONResponse({"ok": True})
+
+
 # ── Admin metrics ───────────────────────────────────────────────────────────
 
 
@@ -809,6 +914,16 @@ def register(app) -> None:
     app.add_api_route("/api/first-week/goals", goals_state, methods=["GET"])
     app.add_api_route("/api/first-week/goals/{key}", mark_goal, methods=["POST"])
     app.add_api_route("/api/first-week/widget/dismiss", dismiss_widget, methods=["POST"])
+
+    # Aliases that match the spec's URL convention. Both shapes coexist
+    # so older clients (sample-feed loader, etc.) keep working.
+    app.add_api_route("/api/onboarding/goals", goals_state, methods=["GET"])
+    app.add_api_route("/api/onboarding/goals/{key}", mark_goal, methods=["POST"])
+
+    # Dashboard overlay tour.
+    app.add_api_route("/api/onboarding/tour-state", tour_state, methods=["GET"])
+    app.add_api_route("/api/onboarding/tour-complete", tour_complete, methods=["POST"])
+    app.add_api_route("/api/onboarding/tour-skip", tour_skip, methods=["POST"])
 
     # Sample feed for empty dashboards
     app.add_api_route("/api/feed/sample", sample_feed, methods=["GET"])
