@@ -78,6 +78,25 @@ def _unique_email(prefix: str = "user") -> str:
     return f"{prefix}{_user_counter['n']}@embed-test.example"
 
 
+def _err_text(resp) -> str:
+    """Pull the human-readable error string out of a FastAPI/Starlette
+    error response, regardless of envelope shape.
+
+    The old default envelope was ``{"detail": "..."}``; the centralised
+    ``error_handlers.http_exception_handler`` introduced a richer shape
+    ``{"error": "...", "message": "...", "request_id": "..."}`` and
+    drops ``detail``. Test assertions should read either, so the suite
+    survives one more envelope evolution without rewriting every check.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    return (body.get("detail") or body.get("message") or "").lower()
+
+
 def _make_user(email: str = "", username: str = "", *, paid: bool = True) -> int:
     email = email or _unique_email()
     username = username or email.split("@")[0].replace(".", "")
@@ -144,7 +163,7 @@ class TestAuthGates(unittest.TestCase):
             headers=_csrf_headers(),
         )
         self.assertEqual(r.status_code, 403)
-        self.assertIn("subscription", (r.json().get("detail") or "").lower())
+        self.assertIn("subscription", _err_text(r))
 
     def test_create_happy_path(self):
         uid = _make_user()
@@ -277,7 +296,7 @@ class TestLimit(unittest.TestCase):
             headers=_csrf_headers(),
         )
         self.assertEqual(r.status_code, 403)
-        self.assertIn("limit", (r.json().get("detail") or "").lower())
+        self.assertIn("limit", _err_text(r))
 
     def test_deactivating_frees_a_slot(self):
         uid = _make_user()
@@ -320,7 +339,7 @@ class TestEmbedRendering(unittest.TestCase):
             params={"token": "definitely-not-the-real-token"},
         )
         self.assertEqual(r.status_code, 200)  # iframe-safe error still renders
-        self.assertIn("Invalid token", r.text)
+        self.assertIn("Invalid or expired token", r.text)
         self.assertNotIn("narve.ai widget", r.text)
 
     def test_token_validation_accepts_real_token(self):
@@ -330,6 +349,11 @@ class TestEmbedRendering(unittest.TestCase):
         r = c.get(
             f"/embed/{w['widget_id']}",
             params={"token": w["embed_token"]},
+            # SECURITY (L16): widgets with a configured domain now require
+            # a matching Referer; missing Referer is treated as bypass risk
+            # since `<meta name="referrer" content="no-referrer">` would
+            # otherwise let phishing pages load the widget.
+            headers={"Referer": "https://real.example/some-page"},
         )
         self.assertEqual(r.status_code, 200)
         self.assertIn("narve.ai widget", r.text)
@@ -339,7 +363,12 @@ class TestEmbedRendering(unittest.TestCase):
         uid = _make_user()
         w = _create_widget(uid, domain="fa.example")
         c = _anon_client()
-        r = c.get(f"/embed/{w['widget_id']}", params={"token": w["embed_token"]})
+        r = c.get(
+            f"/embed/{w['widget_id']}",
+            params={"token": w["embed_token"]},
+            # SECURITY (L16): see comment in test_token_validation_accepts_real_token.
+            headers={"Referer": "https://fa.example/blog/post"},
+        )
         csp = r.headers.get("content-security-policy", "")
         self.assertIn("frame-ancestors", csp)
         self.assertIn("fa.example", csp)
@@ -369,15 +398,27 @@ class TestEmbedRendering(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("narve.ai widget", r.text)
 
-    def test_no_referer_still_allowed(self):
-        """Privacy extensions strip Referer; CSP frame-ancestors is the
-        browser-enforced gate. The server still serves the content."""
+    def test_no_referer_rejected_when_domain_configured(self):
+        """SECURITY (L16): widgets with a configured ``domain`` REQUIRE a
+        matching Referer.
+
+        Previously the server tolerated missing Referer on the assumption
+        that privacy extensions strip it and CSP frame-ancestors is the
+        browser-enforced defence. That allowed a token leaked to a
+        phishing page to load the widget by setting
+        ``<meta name="referrer" content="no-referrer">``. The fix
+        flipped the policy: missing Referer is now treated as a bypass
+        attempt and the widget refuses to render.
+
+        Open widgets (``domain == ""``) still tolerate missing Referer
+        — see ``test_open_widget_tolerates_missing_referer`` below."""
         uid = _make_user()
         w = _create_widget(uid, domain="noref.example")
         c = _anon_client()
         r = c.get(f"/embed/{w['widget_id']}", params={"token": w["embed_token"]})
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("narve.ai widget", r.text)
+        self.assertEqual(r.status_code, 200)  # error page is iframe-safe
+        self.assertIn("can only be embedded on noref.example", r.text)
+        self.assertNotIn("narve.ai widget", r.text)
 
     def test_nonexistent_widget_returns_error(self):
         c = _anon_client()
@@ -405,8 +446,13 @@ class TestImpressions(unittest.TestCase):
         w = _create_widget(uid, target="impr", domain="impressions.example")
         widget_id = w["widget_id"]
         anon = _anon_client()
+        # SECURITY (L16): widgets with a configured domain require a
+        # matching Referer; without it the handler short-circuits to the
+        # error page and never bumps the counter.
+        ref = {"Referer": "https://impressions.example/post"}
         for _ in range(3):
-            r = anon.get(f"/embed/{widget_id}", params={"token": w["embed_token"]})
+            r = anon.get(f"/embed/{widget_id}", params={"token": w["embed_token"]},
+                         headers=ref)
             self.assertEqual(r.status_code, 200)
         # Enqueue may succeed async or fall through to the inline increment
         # path; either way the counter must move.
@@ -420,8 +466,9 @@ class TestImpressions(unittest.TestCase):
         w = _create_widget(uid, target="noinc", domain="noinc.example")
         widget_id = w["widget_id"]
         anon = _anon_client()
+        ref = {"Referer": "https://noinc.example/post"}
         for _ in range(3):
-            anon.get(f"/embed/{widget_id}", params={"token": "garbage"})
+            anon.get(f"/embed/{widget_id}", params={"token": "garbage"}, headers=ref)
         row = db.get_embed_widget_by_widget_id(widget_id)
         self.assertEqual(row["impressions"], 0)
 
@@ -436,8 +483,12 @@ class TestRotation(unittest.TestCase):
         old_token = w["embed_token"]
 
         anon = _anon_client()
+        # SECURITY (L16): widget has a configured domain → Referer required
+        # on every render; tests that hit /embed must send a matching one.
+        ref = {"Referer": "https://rotate.example/article"}
         # Old token works before rotation.
-        r = anon.get(f"/embed/{widget_id}", params={"token": old_token})
+        r = anon.get(f"/embed/{widget_id}", params={"token": old_token},
+                     headers=ref)
         self.assertIn("narve.ai widget", r.text)
 
         # Rotate.
@@ -451,9 +502,11 @@ class TestRotation(unittest.TestCase):
         self.assertNotEqual(old_token, new_token)
 
         # Old token now rejected; new token works.
-        r_old = anon.get(f"/embed/{widget_id}", params={"token": old_token})
-        self.assertIn("Invalid token", r_old.text)
-        r_new = anon.get(f"/embed/{widget_id}", params={"token": new_token})
+        r_old = anon.get(f"/embed/{widget_id}", params={"token": old_token},
+                         headers=ref)
+        self.assertIn("Invalid or expired token", r_old.text)
+        r_new = anon.get(f"/embed/{widget_id}", params={"token": new_token},
+                         headers=ref)
         self.assertIn("narve.ai widget", r_new.text)
 
     def test_rotation_requires_login(self):
@@ -518,7 +571,14 @@ class TestSubscriptionLapse(unittest.TestCase):
         db.cancel_subscription(uid, "betyc")
         self.assertFalse(db.has_any_active_subscription(uid))
         anon = _anon_client()
-        r = anon.get(f"/embed/{w1['widget_id']}", params={"token": w1["embed_token"]})
+        # SECURITY (L16): widget has a configured domain → Referer required.
+        # The subscription check fires AFTER the Referer check, so without
+        # a Referer the test would short-circuit on the wrong branch.
+        r = anon.get(
+            f"/embed/{w1['widget_id']}",
+            params={"token": w1["embed_token"]},
+            headers={"Referer": "https://lapse1.example/page"},
+        )
         self.assertEqual(r.status_code, 200)
         self.assertIn("Subscription required", r.text)
         row1 = db.get_embed_widget_by_widget_id(w1["widget_id"])
