@@ -8,6 +8,7 @@
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="stylesheet" href="{{ static: pages/settings.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
@@ -162,18 +163,6 @@
               </div>
             </div>
           </div>
-          <style>
-            /* Active-state styling for the radiogroup. Uses the same
-               --interactive-bg / --interactive-text the rest of the
-               app uses for primary buttons so theme switches still
-               render correctly. The selectors are scoped to
-               #appearance-density so they can't leak into other
-               radiogroups. */
-            #appearance-density [data-density-value][aria-checked="true"] {
-              background: var(--interactive-bg);
-              color: var(--interactive-text);
-            }
-          </style>
 
           {{ raw_market_connections }}
 
@@ -219,5 +208,6 @@
 <script src="/_gateway_static/theme.js?v=2" defer></script>
 <script src="/_gateway_static/density.js?v=1" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
+  <script src="/_gateway_static/js/share_menu.js" defer></script>
 </body>
 </html>

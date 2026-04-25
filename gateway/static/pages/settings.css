@@ -1,0 +1,12 @@
+/* Per-page CSS for static/settings.html — extracted from a small
+ * inline <style> block by the foundation auto-migration. Active-
+ * state styling for the appearance-density radiogroup. Uses the
+ * same --interactive-bg / --interactive-text tokens as the rest of
+ * the app so theme switches still render correctly. The selectors
+ * stay scoped to #appearance-density so they can't leak into other
+ * radiogroups. */
+
+#appearance-density [data-density-value][aria-checked="true"] {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+}

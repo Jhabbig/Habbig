@@ -407,5 +407,56 @@ class TestCmdK:
         )
 
 
+class TestShareMenu:
+    """Generic share-menu component contract.
+
+    Coexists with the legacy single-action share-button.js (which
+    mints signed share tokens via /api/share/{kind}). Both ship.
+    """
+
+    def test_share_menu_js_present(self):
+        assert (STATIC_DIR / "js" / "share_menu.js").exists()
+
+    def test_share_menu_global_registered(self):
+        js = (STATIC_DIR / "js" / "share_menu.js").read_text()
+        assert "window.narveShareMenu" in js
+        assert "data-share" in js
+
+    def test_share_menu_loaded_on_dashboard_pages(self):
+        """Same anchor as cmdk: every gateway.css page must carry the
+        share-menu include so any data-share attribute renders a
+        menu without per-page wiring."""
+        offenders = []
+        for p in sorted(glob.glob(str(STATIC_DIR / "*.html"))):
+            name = os.path.basename(p)
+            if name.startswith("_") or name == "poster.html":
+                continue
+            text = open(p).read()
+            if "gateway.css" not in text:
+                continue
+            if "js/share_menu.js" not in text:
+                offenders.append(name)
+        assert not offenders, (
+            "gateway.css pages missing share_menu.js include:\n"
+            + "\n".join(offenders[:20])
+        )
+
+    def test_share_menu_wired_on_canonical_pages(self):
+        """Sanity: the three pages most often shared (market /
+        source / prediction detail) carry a [data-share] anchor."""
+        for name in ("market_detail.html", "source.html",
+                     "prediction_detail.html"):
+            text = (STATIC_DIR / name).read_text()
+            assert "data-share" in text, (
+                f"{name} missing the data-share menu anchor"
+            )
+
+    def test_components_css_carries_share_styles(self):
+        css = (STATIC_DIR / "components.css").read_text()
+        for cls in (".nv-share", ".nv-share__trigger", ".nv-share__menu",
+                    ".nv-share__item"):
+            assert cls in css, f"components.css missing: {cls}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

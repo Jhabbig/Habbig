@@ -53,12 +53,18 @@
         <div class="page-subtitle" id="market-category" style="text-transform:uppercase;letter-spacing:0.08em;font-size:12px">{{ category }}</div>
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
           <h1 class="page-title" id="market-question" style="margin:0;flex:1 1 auto">{{ market_question }}</h1>
-          <button class="narve-share-btn"
-                  data-share-kind="market"
-                  data-share-slug="{{ market_slug }}"
-                  aria-label="Share this market as a public card">
-            Share
-          </button>
+          <span style="display:inline-flex;gap:8px;align-items:center">
+            <span data-share
+                  data-share-url="https://narve.ai/market/{{ market_slug }}"
+                  data-share-title="{{ market_question }}"
+                  data-share-og="/og/market/{{ market_slug }}"></span>
+            <button class="narve-share-btn"
+                    data-share-kind="market"
+                    data-share-slug="{{ market_slug }}"
+                    aria-label="Share this market as a public card">
+              Share card
+            </button>
+          </span>
         </div>
         <div class="page-subtitle">
           Market:
@@ -541,5 +547,6 @@
 {{ raw_sitemap }}
 <script src="/_gateway_static/theme.js?v=2" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
+  <script src="/_gateway_static/js/share_menu.js" defer></script>
 </body>
 </html>

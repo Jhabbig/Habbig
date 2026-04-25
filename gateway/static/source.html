@@ -33,11 +33,15 @@
                 style="padding:10px 16px;border:1px solid var(--border,#e5e5e5);border-radius:6px;background:transparent;color:inherit;font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:0.06em">
           + Collection
         </button>
+        <span data-share
+              data-share-url="https://narve.ai/sources/{{ handle }}"
+              data-share-title="@{{ handle }} on narve.ai"
+              data-share-og="/og/source/{{ handle }}"></span>
         <button class="narve-share-btn"
                 data-share-kind="source"
                 data-share-handle="{{ handle }}"
                 aria-label="Share this source profile as a public card">
-          Share
+          Share card
         </button>
       </div>
     </header>
@@ -96,5 +100,6 @@
     </footer>
   </div>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
+  <script src="/_gateway_static/js/share_menu.js" defer></script>
 </body>
 </html>
