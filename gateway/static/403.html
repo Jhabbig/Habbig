@@ -10,42 +10,29 @@
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ static: pages/403.css }}">
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="stylesheet" href="{{ static: pages/error_page.css }}">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-<div class="denied-page">
-  <div class="denied-card">
-    <div class="denied-icon">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v.01M12 9v2m0-8a10 10 0 100 20 10 10 0 000-20z"/></svg>
-    </div>
-    <div class="denied-code">Error 403</div>
-    <h1 class="denied-title">You're Not an Admin</h1>
-    <p class="denied-body">This area is restricted to administrators only. You don't have permission to access this page.</p>
-    <div class="denied-countdown" id="countdown">5</div>
-    <div class="denied-redirect">Redirecting in <span id="countdown-text">5</span> seconds…</div>
-    <a href="/dashboards" class="denied-btn">Go to Dashboards Now</a>
-    <div class="denied-divider"></div>
-    <p class="denied-footer">If you believe this is a mistake, contact your administrator.</p>
+<!-- Audit flagged the previous version as over-decorated (icon +
+     countdown + auto-redirect). This iteration is monochrome and
+     intentional: code chip, italic title, short body, two buttons.
+     No auto-redirect — surprise navigation erodes trust more than it
+     helps when the user landed here by mistake. -->
+<main class="nv-error">
+  <p class="nv-error__code">Error · 403</p>
+  <h1 class="nv-error__title">You don't have access</h1>
+  <p class="nv-error__body">This area is restricted to administrators. If you think you should be able to see it, ping an admin.</p>
+  <div class="nv-error__actions">
+    <a href="/pricing">View pricing</a>
+    <a href="/dashboards">Back to dashboard</a>
   </div>
-</div>
-<script>
-(function() {
-  var seconds = 5;
-  var numEl = document.getElementById('countdown');
-  var textEl = document.getElementById('countdown-text');
-  var timer = setInterval(function() {
-    seconds--;
-    numEl.textContent = seconds;
-    textEl.textContent = seconds;
-    if (seconds <= 0) {
-      clearInterval(timer);
-      window.location.href = '/dashboards';
-    }
-  }, 1000);
-})();
-</script>
+  <p class="nv-error__support">
+    Trouble persists? Email <a href="mailto:support@narve.ai">support@narve.ai</a>.
+  </p>
+</main>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>

@@ -4,28 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>{{ title }} · narve.ai</title>
-  <meta name="description" content="Something went wrong. Our team has been notified.">
+  <meta name="description" content="{{ title }} on narve.ai.">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="robots" content="noindex">
-  <!-- Standalone page — inline CSS so it renders even when the SW has
-       evicted gateway.css. Monochrome per design system. No stack
-       traces, no implementation detail. The only machine-readable
-       piece is the request id, which support quotes. -->
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
+  <link rel="stylesheet" href="{{ static: tokens.css }}">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="stylesheet" href="{{ static: pages/error_page.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <main>
-    <p class="err-status">Error · {{ status }}</p>
-    <h1 class="err-title">{{ title }}</h1>
-    <p class="err-message">{{ message }}</p>
+  <main class="nv-error">
+    <p class="nv-error__code">Error · {{ status }}</p>
+    <h1 class="nv-error__title">{{ title }}</h1>
+    <p class="nv-error__body">{{ message }}</p>
     {{ retry_line }}
     {{ extra_line }}
-    <div class="err-actions">{{ actions }}</div>
-    <p class="err-meta">Request ID: <code>{{ request_id }}</code></p>
-    <p class="err-support">Quote this ID to <a href="mailto:support@narve.ai">support@narve.ai</a> if this keeps happening.</p>
+    {{ search_block }}
+    <div class="nv-error__actions">{{ actions }}</div>
+    {{ links_block }}
+    {{ meta_block }}
+    <p class="nv-error__support">
+      Quote your request ID to <a href="mailto:support@narve.ai">support@narve.ai</a> if this keeps happening.
+    </p>
   </main>
-  <script src="/_gateway_static/js/cmdk.js" defer></script>
-  <script src="/_gateway_static/js/share_menu.js" defer></script>
 </body>
 </html>

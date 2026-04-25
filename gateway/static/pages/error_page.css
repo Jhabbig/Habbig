@@ -124,3 +124,167 @@
       margin-top: 6px;
     }
     .err-support a { color: inherit; }
+
+/* ─────────────────────────────────────────────────────────────
+   .nv-error — the richer template (search + curated top-links).
+   Token-driven, density-aware. Fall back to inline values for
+   pages that load this file standalone (e.g. SW offline shell).
+   ───────────────────────────────────────────────────────────── */
+.nv-error {
+  max-width: 540px;
+  margin: 12vh auto;
+  padding: 0 var(--space-4, 16px);
+  text-align: center;
+  font-family: var(--font-ui);
+  color: var(--text-primary, #0d0d0d);
+}
+.nv-error__code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs, 11px);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, #858585);
+  margin: 0 0 var(--space-4, 16px);
+}
+.nv-error__title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--space-3, 12px);
+  color: var(--text-primary);
+}
+.nv-error__body {
+  font-size: var(--text-md, 16px);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-6, 32px);
+  line-height: 1.5;
+}
+.nv-error__retry {
+  font-size: var(--text-sm, 13px);
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-4, 16px);
+}
+.nv-error__extra {
+  font-size: var(--text-sm, 13px);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4, 16px);
+}
+.nv-error__extra a { color: inherit; text-decoration: underline; }
+
+/* Search box — only rendered for 404. */
+.nv-error__search {
+  display: flex;
+  gap: var(--space-2, 8px);
+  margin: var(--space-5, 24px) auto;
+  max-width: 380px;
+}
+.nv-error__search input {
+  flex: 1;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border: 1px solid var(--border-default, #cccccc);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-base, 14px);
+}
+.nv-error__search input:focus {
+  outline: none;
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--interactive-ghost);
+}
+.nv-error__search button {
+  padding: var(--space-2, 8px) var(--space-4, 16px);
+  border: 1px solid var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-base);
+  border-radius: var(--radius-sm, 6px);
+  font-family: inherit;
+  font-size: var(--text-sm, 13px);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nv-error__actions {
+  display: flex;
+  gap: var(--space-3, 12px);
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: var(--space-5, 24px) 0 var(--space-7, 48px);
+}
+.nv-error__actions a,
+.nv-error__actions .err-btn {
+  display: inline-block;
+  padding: var(--space-2, 8px) var(--space-4, 16px);
+  border: 1px solid var(--border-default, #cccccc);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: var(--text-sm, 13px);
+  font-weight: 500;
+  transition: border-color 0.12s, background 0.12s;
+}
+.nv-error__actions a:first-child,
+.nv-error__actions .err-btn:first-child {
+  background: var(--text-primary);
+  color: var(--bg-base);
+  border-color: var(--text-primary);
+}
+.nv-error__actions a:hover,
+.nv-error__actions .err-btn:hover {
+  border-color: var(--text-primary);
+}
+
+/* Curated "try these instead" — 404 only. */
+.nv-error__links {
+  text-align: left;
+  margin-top: var(--space-7, 48px);
+  padding-top: var(--space-5, 24px);
+  border-top: 1px solid var(--border-ghost, #ebebeb);
+}
+.nv-error__links h3 {
+  font-size: var(--text-xs, 11px);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  text-align: center;
+  margin: 0 0 var(--space-3, 12px);
+  font-weight: 600;
+}
+.nv-error__links ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2, 8px);
+}
+.nv-error__links a {
+  display: block;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border: 1px solid var(--border-ghost, #ebebeb);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: var(--text-sm, 13px);
+}
+.nv-error__links a:hover {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+/* Request ID + support footer — 5xx only for the meta block. */
+.nv-error__meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs, 11px);
+  color: var(--text-quaternary, #bbbbbb);
+  margin: var(--space-7, 48px) 0 var(--space-3, 12px);
+}
+.nv-error__support {
+  font-size: var(--text-xs, 11px);
+  color: var(--text-tertiary);
+  margin: var(--space-3, 12px) 0 0;
+}
+.nv-error__support a { color: inherit; text-decoration: underline; }

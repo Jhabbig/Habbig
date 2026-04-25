@@ -62,16 +62,16 @@ _STATUS_TO_SLUG: dict[int, str] = {
 
 _STATUS_TO_TITLE: dict[int, str] = {
     400: "Bad request",
-    401: "Sign in required",
+    401: "Sign in to continue",
     402: "Subscription required",
-    403: "No access",
-    404: "Page not found",
+    403: "You don't have access",
+    404: "Not found",
     409: "Already exists",
     422: "Check your input",
     429: "Slow down",
-    500: "Something went wrong",
+    500: "Something broke",
     502: "Upstream error",
-    503: "Temporarily unavailable",
+    503: "Temporarily down",
     504: "Upstream timeout",
 }
 
@@ -87,9 +87,23 @@ _STATUS_TO_MESSAGE: dict[int, str] = {
     429: "Too many requests. Try again in a moment.",
     500: "An unexpected error occurred. Please try again.",
     502: "One of our upstream services returned an error.",
-    503: "narve.ai is temporarily unavailable. Check /status for updates.",
+    503: "narve.ai is temporarily unavailable. Check /status for live updates.",
     504: "An upstream service took too long to respond.",
 }
+
+
+# ── 404-only curated top links ────────────────────────────────────────
+# Hand-picked destinations users are most likely to want when a URL
+# 404s. Order matters — these render top-to-bottom in the grid.
+
+_TOP_LINKS_404: list[tuple[str, str]] = [
+    ("Recent best bets", "/dashboard/best-bets"),
+    ("Top sources", "/dashboard/sources?sort=credibility"),
+    ("Latest predictions", "/dashboard/feed"),
+    ("Pricing", "/pricing"),
+    ("How it works", "/how-it-works"),
+    ("FAQ", "/faq"),
+]
 
 
 def slug_for_status(status: int) -> str:
@@ -181,12 +195,61 @@ def render_error_page(
     actions_html = _action_buttons_for_status(status)
     retry_line = ""
     if status == 429 and isinstance(retry_after, int) and retry_after > 0:
-        retry_line = f'<p class="err-retry">Try again in {retry_after} seconds.</p>'
+        retry_line = (
+            f'<p class="nv-error__retry">Try again in '
+            f'{int(retry_after)} seconds.</p>'
+        )
     extra_line = ""
     if status == 402:
-        extra_line = '<p class="err-extra"><a href="/billing">View pricing</a></p>'
-    if status == 503:
-        extra_line = '<p class="err-extra"><a href="/status">View status page</a></p>'
+        extra_line = (
+            '<p class="nv-error__extra">'
+            'narve.ai Pro bundles every subproduct plus the full platform — '
+            '<a href="/pricing">see pricing</a>.'
+            '</p>'
+        )
+    elif status == 503:
+        extra_line = (
+            '<p class="nv-error__extra">Live updates at '
+            '<a href="/status">/status</a>.</p>'
+        )
+
+    # 404 gets a search box — quickest way to get unstuck.
+    search_block = ""
+    if status == 404:
+        search_block = (
+            '<form class="nv-error__search" action="/search" method="get" '
+            'role="search">'
+            '<input type="search" name="q" '
+            'placeholder="Search markets, sources, predictions" '
+            'autocomplete="off" autofocus>'
+            '<button type="submit">Search</button>'
+            '</form>'
+        )
+
+    # Curated "try these instead" — only 404. Other statuses don't need
+    # the cognitive load: their actions block already points home.
+    links_block = ""
+    if status == 404 and _TOP_LINKS_404:
+        items = "\n".join(
+            f'  <li><a href="{_html_escape(href)}">{_html_escape(label)}</a></li>'
+            for label, href in _TOP_LINKS_404
+        )
+        links_block = (
+            '<div class="nv-error__links">'
+            '<h3>Try these instead</h3>'
+            f'<ul>\n{items}\n</ul>'
+            '</div>'
+        )
+
+    # Request ID is only useful when there's a server-side incident
+    # worth quoting in a support ticket — 5xx. Showing it for 404 / 403
+    # adds noise without action.
+    meta_block = ""
+    if status >= 500:
+        meta_block = (
+            '<p class="nv-error__meta">Request ID: '
+            f'<code>{_html_escape(request_id)}</code></p>'
+        )
 
     body = (
         tpl
@@ -197,6 +260,9 @@ def render_error_page(
         .replace("{{ actions }}", actions_html)
         .replace("{{ retry_line }}", retry_line)
         .replace("{{ extra_line }}", extra_line)
+        .replace("{{ search_block }}", search_block)
+        .replace("{{ links_block }}", links_block)
+        .replace("{{ meta_block }}", meta_block)
     )
     headers = {}
     if retry_after is not None:
@@ -209,22 +275,30 @@ def _action_buttons_for_status(status: int) -> str:
     consistent across the template."""
     buttons: list[tuple[str, str]] = []
     if status == 401:
-        buttons = [("/token", "Sign in"), ("/invite", "Request an invite")]
+        buttons = [("/login", "Sign in"), ("/enquire", "Request an invite")]
     elif status == 402:
-        buttons = [("/billing", "Upgrade"), ("/dashboards", "Back to dashboard")]
+        buttons = [("/pricing", "View pricing"),
+                   ("/dashboards", "Back to dashboard")]
     elif status == 403:
-        buttons = [("/dashboards", "Back to dashboard")]
+        # No emoji, no SVG icon — the audit flagged 403 as overdesigned.
+        # Two clean buttons, primary first.
+        buttons = [("/pricing", "View pricing"),
+                   ("/dashboards", "Back to dashboard")]
     elif status == 404:
-        buttons = [("/dashboards", "Go to dashboard"), ("/", "Go to homepage")]
+        buttons = [("/dashboards", "Dashboard"),
+                   ("/dashboard/markets", "Browse markets")]
     elif status == 429:
-        buttons = [("/dashboards", "Back to dashboard")]
+        # JS pseudo-link — the only sensible action when rate-limited is
+        # to wait + go back. Pages still load with JS off; href just
+        # becomes a no-op.
+        buttons = [("javascript:history.back()", "Back")]
     elif status == 500:
         buttons = [
             ("javascript:location.reload()", "Retry"),
-            ("/dashboards", "Go to dashboard"),
+            ("/dashboards", "Dashboard"),
         ]
     elif status == 503:
-        buttons = [("/status", "Check status"), ("/dashboards", "Back to dashboard")]
+        buttons = [("/status", "Status page")]
     else:
         buttons = [("/dashboards", "Back to dashboard")]
 

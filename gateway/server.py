@@ -6714,11 +6714,18 @@ for _mod_name in (
 async def catch_all(request: Request, full_path: str):
     sub = get_subdomain(request)
     if not sub:
-        # Apex fallthrough — 404 (escape the path to prevent reflected XSS).
-        return HTMLResponse(
-            f"<h1>Not found</h1><p>No such page at <code>{html.escape(request.url.path)}</code>.</p>",
-            status_code=404,
-        )
+        # Apex fallthrough — route through the branded error page so the
+        # 404 surface is consistent with every other 404 in the app
+        # (search box, curated top-links, JSON envelope for API callers).
+        from error_handlers import render_error_page, is_api_request, _json_envelope, get_request_id, slug_for_status
+        if is_api_request(request):
+            return _json_envelope(
+                status=404,
+                slug=slug_for_status(404),
+                message="Not found.",
+                request_id=get_request_id(request),
+            )
+        return render_error_page(request, status=404)
     return await proxy_request(request)
 
 
