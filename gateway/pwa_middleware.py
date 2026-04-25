@@ -16,9 +16,32 @@ Idempotent via sentinel comments so re-proxied responses don't double up.
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
+
+# Cache-bust query for the assets we inject. We compute it once at import
+# time from the file's mtime — a bytewise mtime change (any edit) bumps
+# the version automatically without anyone having to remember a
+# `?v=N` ratchet. Cloudflare keys its cache on the full URL incl. query
+# string, so a new value forces a fresh fetch on the next deploy.
+def _asset_version(rel_path: str) -> str:
+    try:
+        p = Path(__file__).parent / "static" / rel_path
+        return str(int(p.stat().st_mtime))
+    except OSError:
+        return "0"
+
+
+_MOBILE_A11Y_VER = _asset_version("mobile-a11y.css")
+_NARVE_APP_VER = _asset_version("narve-app.js")
+_SHORTCUTS_VER = _asset_version("shortcuts.js")
+_FEEDBACK_BTN_VER = _asset_version("feedback_button.js")
+_SHORTCUTS_DISC_VER = _asset_version("js/shortcuts-discovery.js")
 
 
 _PWA_HEAD = (
@@ -32,7 +55,7 @@ _PWA_HEAD = (
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n'
     '<meta name="mobile-web-app-capable" content="yes">\n'
     '<meta name="format-detection" content="telephone=no">\n'
-    '<link rel="stylesheet" href="/_gateway_static/mobile-a11y.css">\n'
+    f'<link rel="stylesheet" href="/_gateway_static/mobile-a11y.css?v={_MOBILE_A11Y_VER}">\n'
 )
 
 _BODY_INJECT = (
@@ -52,18 +75,18 @@ _BODY_INJECT = (
     '<line x1="3" y1="18" x2="21" y2="18"/>'
     '</svg></button>\n'
     '<div class="narve-sidebar-backdrop" data-narve-sidebar-backdrop hidden></div>\n'
-    '<script src="/_gateway_static/narve-app.js" defer></script>\n'
-    '<script src="/_gateway_static/shortcuts.js" defer></script>\n'
+    f'<script src="/_gateway_static/narve-app.js?v={_NARVE_APP_VER}" defer></script>\n'
+    f'<script src="/_gateway_static/shortcuts.js?v={_SHORTCUTS_VER}" defer></script>\n'
     # First-time discovery hint for the keyboard shortcut overlay. Loaded
     # AFTER shortcuts.js so window.narve.shortcuts is populated; the
     # discovery module bails immediately if the user already dismissed
     # the hint (localStorage flag).
-    '<script src="/_gateway_static/js/shortcuts-discovery.js" defer></script>\n'
+    f'<script src="/_gateway_static/js/shortcuts-discovery.js?v={_SHORTCUTS_DISC_VER}" defer></script>\n'
     # Floating 💬 Feedback button — the script itself suppresses on
     # /token, /login, /admin, and /feedback so unauthed + redundant
     # surfaces don't render the FAB. Mounting here gets us site-wide
     # coverage without having to edit every template.
-    '<script src="/_gateway_static/feedback_button.js" defer></script>\n'
+    f'<script src="/_gateway_static/feedback_button.js?v={_FEEDBACK_BTN_VER}" defer></script>\n'
 )
 
 _VIEWPORT_RE = re.compile(br'<meta\s+name="viewport"[^>]*>', re.IGNORECASE)
