@@ -199,7 +199,13 @@ async def settings_referrals_page(request: Request):
         return RedirectResponse("/token", status_code=302)
     # Lazy-assign the user's referral_code the first time they visit.
     dbr.ensure_user_referral_code(user["user_id"])
-    return _render_page("referrals", request)
+    return _render_page(
+        "referrals", request,
+        breadcrumb=[
+            ("narve.ai", "/dashboards"),
+            ("Referrals", None),
+        ],
+    )
 
 
 @router.get("/api/referrals/me")
@@ -265,7 +271,13 @@ async def leaderboard_page(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/token", status_code=302)
-    return _render_page("leaderboard", request)
+    return _render_page(
+        "leaderboard", request,
+        breadcrumb=[
+            ("narve.ai", "/dashboards"),
+            ("Leaderboard", None),
+        ],
+    )
 
 
 @router.get("/api/leaderboard")

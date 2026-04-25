@@ -2018,6 +2018,88 @@ def _inject_watermark_layer(page: str, request) -> str:
     return page
 
 
+import json as _json_breadcrumb
+
+
+def render_breadcrumb(items) -> str:
+    """Render a breadcrumb trail as a <nav class="nv-breadcrumb"><ol>...</ol></nav>.
+
+    `items` is an iterable of (label, href) pairs. The LAST item is
+    always rendered with aria-current="page" regardless of whether its
+    href is None — matches WAI-ARIA breadcrumb pattern + crawler
+    expectations. Intermediate items with href become anchors; intermediate
+    items without href fall back to a plain <li> with aria-current still
+    on the trailing crumb.
+    """
+    if not items:
+        return ""
+    items = list(items)
+    parts = ['<nav class="nv-breadcrumb" aria-label="Breadcrumb"><ol>']
+    last = len(items) - 1
+    for i, entry in enumerate(items):
+        try:
+            label, url = entry
+        except (TypeError, ValueError):
+            # Defensive: a stray string in the list must not 500 the page.
+            label, url = str(entry), None
+        is_last = (i == last)
+        safe_label = html.escape(str(label or ""))
+        if url and not is_last:
+            parts.append(
+                f'<li><a href="{html.escape(str(url))}">{safe_label}</a></li>'
+            )
+        else:
+            parts.append(
+                f'<li aria-current="page">{safe_label}</li>'
+            )
+    parts.append("</ol></nav>")
+    return "".join(parts)
+
+
+def render_breadcrumb_schema(items) -> str:
+    """Emit a schema.org BreadcrumbList JSON-LD <script> block for SEO.
+
+    Only items with a non-None href are included (search engines can't
+    do anything useful with a crumb that has no URL). Returns "" if no
+    items qualify so the caller can safely interpolate either way.
+    Relative URLs are absolutised against https://narve.ai.
+    """
+    if not items:
+        return ""
+    qualifying = []
+    for entry in items:
+        try:
+            label, url = entry
+        except (TypeError, ValueError):
+            continue
+        if not url:
+            continue
+        qualifying.append((str(label or ""), str(url)))
+    if not qualifying:
+        return ""
+    payload = {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": i + 1,
+                "name": label,
+                "item": (
+                    url if url.startswith(("http://", "https://"))
+                    else f"https://narve.ai{url if url.startswith('/') else '/' + url}"
+                ),
+            }
+            for i, (label, url) in enumerate(qualifying)
+        ],
+    }
+    return (
+        '<script type="application/ld+json">'
+        + _json_breadcrumb.dumps(payload, separators=(",", ":"), default=str)
+        + "</script>"
+    )
+
+
 def render_page(name: str, request=None, **context) -> HTMLResponse:
     """Tiny templating: load static/<name>.html and do {{ key }} substitution.
 
@@ -2129,6 +2211,21 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
         context["raw_role_badge"] = ""
     if "raw_sitemap" not in context:
         context["raw_sitemap"] = ""
+    # Breadcrumb auto-injection: caller passes `breadcrumb=[(label, href|None), ...]`
+    # and we render both the visible <nav> trail and the schema.org JSON-LD,
+    # exposing them as raw_ keys so templates can interpolate explicitly. The
+    # JSON-LD is also auto-injected into <head> later in this function when
+    # the template didn't place it inline.
+    _bc_items = context.pop("breadcrumb", None)
+    if _bc_items:
+        if "raw_breadcrumb" not in context:
+            context["raw_breadcrumb"] = render_breadcrumb(_bc_items)
+        if "raw_breadcrumb_schema" not in context:
+            context["raw_breadcrumb_schema"] = render_breadcrumb_schema(_bc_items)
+    if "raw_breadcrumb" not in context:
+        context["raw_breadcrumb"] = ""
+    if "raw_breadcrumb_schema" not in context:
+        context["raw_breadcrumb_schema"] = ""
     # Auto-inject sitemap if _user context has admin flag
     if context.get("_is_admin") and not context["raw_sitemap"]:
         context["raw_sitemap"] = _sitemap_html()
@@ -5392,7 +5489,13 @@ async def api_docs_page(request: Request):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/api/docs")
-    return render_page("api_docs", request=request)
+    return render_page(
+        "api_docs", request=request,
+        breadcrumb=[
+            ("narve.ai", "/dashboards"),
+            ("API docs", None),
+        ],
+    )
 
 
 # ── Topics (Pro-tier saved search topics) ──────────────────────────────

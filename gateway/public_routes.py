@@ -50,7 +50,13 @@ async def enquire_page(request: Request):
     sub = srv.get_subdomain(request)
     if sub:
         return await srv.proxy_request(request, "/enquire")
-    return srv.render_page("enquire", request=request)
+    return srv.render_page(
+        "enquire", request=request,
+        breadcrumb=[
+            ("narve.ai", "/"),
+            ("Enquire", None),
+        ],
+    )
 
 
 async def api_enquire(request: Request):
