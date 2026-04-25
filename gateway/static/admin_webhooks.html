@@ -7,6 +7,7 @@
   <meta name="description" content="Admin: webhook monitoring.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="stylesheet" href="{{ static: pages/admin_webhooks.css }}">
 </head>
@@ -21,5 +22,6 @@
     <p class="note">Every registered subscription across the platform. Use this to spot spammy URLs, stuck endpoints (high consecutive-failures), or test webhooks that drifted.</p>
     <div class="list">{{ raw_webhook_rows }}</div>
   </main>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
 </body>
 </html>

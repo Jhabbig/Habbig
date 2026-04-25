@@ -9,6 +9,7 @@
   <meta name="theme-color" content="#0d0d0d">
   <!-- Standalone page. Inline critical CSS only — no external fetches,
        or the page itself fails when the user is actually offline. -->
+  <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="stylesheet" href="{{ static: pages/offline.css }}">
 </head>
 <body>
@@ -121,5 +122,6 @@
       setTimeout(function () { location.reload(); }, 400);
     });
   </script>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
 </body>
 </html>

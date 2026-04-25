@@ -260,3 +260,189 @@
 .skip-link:focus {
   top: 0;
 }
+
+
+/* ── ⌘K command palette ──────────────────────────────────────────────
+ *
+ * The palette is rendered into <body> by js/cmdk.js the first time a
+ * user opens it (lazy mount — pages that never invoke it pay zero
+ * runtime cost). Selectors stay scoped to .nv-cmdk* so the palette
+ * never inherits page-level form/input styling. Monochrome,
+ * keyboard-first, with the same backdrop blur the modals already
+ * use across the product.
+ */
+
+.nv-cmdk {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;            /* above toasts (1000) and any sticky chrome */
+  display: none;
+}
+
+.nv-cmdk--open { display: block; }
+
+.nv-cmdk__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+}
+
+.nv-cmdk__panel {
+  position: absolute;
+  top: 14vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(640px, calc(100% - 32px));
+  background: var(--bg-surface, #141414);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+}
+
+.nv-cmdk__input {
+  width: 100%;
+  padding: 16px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary, #ffffff);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  border-bottom: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+}
+
+.nv-cmdk__input::placeholder {
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.4));
+}
+
+.nv-cmdk__results {
+  overflow-y: auto;
+  padding: 6px;
+  flex: 1 1 auto;
+}
+
+.nv-cmdk__group-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
+  padding: 12px 12px 6px;
+  font-weight: 500;
+}
+
+.nv-cmdk__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text-primary, #ffffff);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.nv-cmdk__row[aria-selected="true"],
+.nv-cmdk__row--active,
+.nv-cmdk__row:hover {
+  background: var(--border-strong, rgba(255, 255, 255, 0.06));
+}
+
+.nv-cmdk__row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-cmdk__row-title mark {
+  background: transparent;
+  color: var(--text-primary, #ffffff);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.nv-cmdk__row-subtitle {
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-left: 8px;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-cmdk__no-results,
+.nv-cmdk__hint {
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.6));
+  padding: 24px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.nv-cmdk__hint kbd {
+  background: var(--border-strong, rgba(255, 255, 255, 0.08));
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.nv-cmdk__hint-action {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  border-radius: 6px;
+  color: var(--text-primary, #ffffff);
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.nv-cmdk__footer {
+  display: flex;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  font-size: 11px;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.nv-cmdk__footer kbd {
+  background: var(--border-strong, rgba(255, 255, 255, 0.08));
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  margin-right: 4px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+}
+
+@media (max-width: 640px) {
+  /* On phones the palette wants to sit closer to the top so the
+   * thumb-reach zone matches the keyboard's "↩" key, and full-bleed
+   * margins so the long market questions don't truncate at 3 chars. */
+  .nv-cmdk__panel {
+    top: 4vh;
+    width: calc(100% - 16px);
+    max-height: 90vh;
+  }
+  .nv-cmdk__footer { gap: 10px; font-size: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-cmdk__backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}

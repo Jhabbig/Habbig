@@ -11,6 +11,7 @@
        evicted gateway.css. Monochrome per design system. No stack
        traces, no implementation detail. The only machine-readable
        piece is the request id, which support quotes. -->
+  <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="stylesheet" href="{{ static: pages/error_page.css }}">
 </head>
 <body>
@@ -24,5 +25,6 @@
     <p class="err-meta">Request ID: <code>{{ request_id }}</code></p>
     <p class="err-support">Quote this ID to <a href="mailto:support@narve.ai">support@narve.ai</a> if this keeps happening.</p>
   </main>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
 </body>
 </html>

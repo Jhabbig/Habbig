@@ -351,5 +351,61 @@ class TestEmojiScrub:
         )
 
 
+class TestCmdK:
+    """⌘K command palette — JS contract + integration sweep."""
+
+    def test_cmdk_js_present(self):
+        assert (STATIC_DIR / "js" / "cmdk.js").exists()
+
+    def test_cmdk_registers_global_and_hotkey(self):
+        """cmdk.js must register window.narveCmdK and bind ⌘K / Ctrl+K
+        globally — both are part of its public contract."""
+        js = (STATIC_DIR / "js" / "cmdk.js").read_text()
+        assert "window.narveCmdK" in js
+        assert "metaKey" in js and "ctrlKey" in js
+        assert '"k"' in js or "'k'" in js
+
+    def test_cmdk_uses_existing_search_endpoint(self):
+        js = (STATIC_DIR / "js" / "cmdk.js").read_text()
+        assert "/api/search" in js
+
+    def test_cmdk_loaded_on_dashboard_pages(self):
+        """Every page that loads gateway.css must also load cmdk.js so
+        ⌘K works everywhere a logged-in user might be looking. The
+        sweep skipped only poster.html (which has its own budget)."""
+        offenders = []
+        for p in sorted(glob.glob(str(STATIC_DIR / "*.html"))):
+            name = os.path.basename(p)
+            if name.startswith("_") or name == "poster.html":
+                continue
+            text = open(p).read()
+            if "gateway.css" not in text:
+                continue
+            if "js/cmdk.js" not in text:
+                offenders.append(name)
+        assert not offenders, (
+            "gateway.css pages missing cmdk.js include:\n"
+            + "\n".join(offenders[:20])
+        )
+
+    def test_components_css_loaded_with_cmdk(self):
+        """The palette's monochrome look comes from .nv-cmdk* selectors
+        in components.css. Pages with cmdk.js must also load it."""
+        offenders = []
+        for p in sorted(glob.glob(str(STATIC_DIR / "*.html"))):
+            name = os.path.basename(p)
+            if name.startswith("_") or name == "poster.html":
+                continue
+            text = open(p).read()
+            if "js/cmdk.js" not in text:
+                continue
+            if "components.css" not in text:
+                offenders.append(name)
+        assert not offenders, (
+            "Pages including cmdk.js without components.css:\n"
+            + "\n".join(offenders[:20])
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -8,6 +8,7 @@
   <meta name="keywords" content="narve methodology, prediction market credibility, bayesian scoring, brier score, timing score, prediction market math">
   <link rel="canonical" href="https://narve.ai/methodology">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
 
@@ -142,5 +143,6 @@ E[accuracy] = α_posterior / (α_posterior + β_posterior)</div>
     <h2>Source code</h2>
     <p>The scoring layer is in <code>gateway/credibility_engine/</code> of the narve codebase. The exact weights, decay constants, and category boundaries are in <code>config.json</code> at the repo root. Reach out via <a class="inline" href="/enquire">/enquire</a> if you'd like to reproduce specific calculations — we publish individual source scorecards on request for journalistic or academic use.</p>
   </main>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
 </body>
 </html>
