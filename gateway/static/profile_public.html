@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>@{{ handle }} · narve.ai</title>
+  <meta name="description" content="@{{ handle }} on narve.ai — {{ accuracy_pct }} accuracy across {{ resolved_count }} resolved predictions.">
+  {{ raw_canonical }}
+  {{ raw_og }}
+  {{ raw_jsonld }}
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: pages/profile-public.css }}">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+  <script src="/_gateway_static/js/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="profile-topbar">
+    <a href="/" class="profile-topbar__brand">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" width="22" height="22" style="border-radius:4px;filter:invert(1)">
+      <span>narve.ai</span>
+    </a>
+    <nav class="profile-topbar__nav" aria-label="Top">
+      <a href="/pricing">Pricing</a>
+      <a href="/login">Sign in</a>
+    </nav>
+  </header>
+
+  <main id="main" class="profile">
+    <section class="profile__header">
+      <img class="profile__avatar"
+           src="{{ avatar_url }}"
+           alt=""
+           width="120"
+           height="120"
+           loading="eager"
+           decoding="async">
+      <div class="profile__identity">
+        <h1 class="profile__handle">@{{ handle }}</h1>
+        <p class="profile__bio">{{ bio }}</p>
+        <div class="profile__meta">
+          Forecaster since {{ created_date }} · {{ follower_count }} followers
+        </div>
+      </div>
+      <div class="profile__actions">
+        {{ raw_follow_button }}
+      </div>
+    </section>
+
+    <section class="profile__stats" aria-label="Forecasting stats">
+      <div class="stat">
+        <div class="stat__value">{{ accuracy_pct }}</div>
+        <div class="stat__label">Accuracy</div>
+        <div class="stat__sub">{{ resolved_count }} resolved</div>
+      </div>
+      <div class="stat">
+        <div class="stat__value">{{ brier_score }}</div>
+        <div class="stat__label">Brier score</div>
+        <div class="stat__sub">lower is better</div>
+      </div>
+      <div class="stat">
+        <div class="stat__value">{{ current_streak }}</div>
+        <div class="stat__label">Current streak</div>
+        <div class="stat__sub">consecutive correct</div>
+      </div>
+      <div class="stat">
+        <div class="stat__value">{{ strongest_category_name }}</div>
+        <div class="stat__label">Strongest</div>
+        <div class="stat__sub">{{ strongest_category_accuracy }}</div>
+      </div>
+    </section>
+
+    <section class="profile__predictions">
+      <h2>Recent public predictions</h2>
+      <ul class="prediction-list" role="list">
+        {{ raw_prediction_rows }}
+      </ul>
+      {{ raw_pagination }}
+    </section>
+  </main>
+
+  <footer class="profile-footer">
+    <a href="/">narve.ai</a>
+    <a href="/pricing">Pricing</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+  </footer>
+</body>
+</html>

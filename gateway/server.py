@@ -2274,6 +2274,15 @@ def render_page(name: str, request=None, **context) -> HTMLResponse:
             page = re.sub(r"<title>[^<]*</title>\s*", "", page, count=1)
             _head_idx = page.lower().rfind("</head>")
             page = page[:_head_idx] + _seo_block + page[_head_idx:]
+    # Auto-inject the breadcrumb JSON-LD into <head> if the caller passed
+    # `breadcrumb=` but the template didn't interpolate
+    # `{{ raw_breadcrumb_schema }}`. We never inject twice — `application/ld+json`
+    # blocks are content-equivalent so a single block is enough for crawlers.
+    _bc_schema = context.get("raw_breadcrumb_schema") or ""
+    if _bc_schema and 'application/ld+json' in _bc_schema and _bc_schema not in page:
+        _head_idx = page.lower().rfind("</head>")
+        if _head_idx != -1:
+            page = page[:_head_idx] + _bc_schema + page[_head_idx:]
     return HTMLResponse(page)
 
 
@@ -5406,6 +5415,19 @@ try:
     _market_routes.register(app)
 except Exception as _exc:  # pragma: no cover
     log.exception("market_routes.register failed: %s", _exc)
+
+
+# ── Public profile (/u/{handle}) + opt-in settings + follow graph ──
+#
+# Routes live in profile_routes.py. /u/ is whitelisted in
+# _PUBLIC_PREFIXES so anonymous visitors and crawlers can reach
+# opted-in profile pages.
+
+try:
+    import profile_routes as _profile_routes  # noqa: E402
+    _profile_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("profile_routes.register failed: %s", _exc)
 
 
 # ── Public marketing + pre-release pages ───────────────────────────────

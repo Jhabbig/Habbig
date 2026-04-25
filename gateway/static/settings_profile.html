@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Public profile · narve.ai</title>
+  <meta name="description" content="Manage your public narve.ai profile.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="stylesheet" href="{{ static: pages/settings-profile.css }}">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
+        <span class="sidebar-logo-text">narve.ai</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-header">Navigation</div>
+        <a href="/dashboards" class="nav-item">Dashboards</a>
+        <a href="/billing" class="nav-item">Billing</a>
+        <a href="/settings" class="nav-item active">Settings</a>
+        {{ raw_admin_link }}
+      </nav>
+      <a href="/profile" class="sidebar-user" style="text-decoration:none">
+        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ avatar_letter }}</div>
+        <span class="sidebar-user-name">{{ username }}</span>
+        {{ raw_nav_role }}
+      </a>
+    </aside>
+
+    <main class="main-content" id="main">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/settings" class="breadcrumb-item" style="text-decoration:none;color:inherit">Settings</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Public profile</span>
+      </nav>
+
+      <header class="page-header">
+        <h1 class="page-title">Public profile</h1>
+        <p class="page-subtitle">
+          Publish a profile at <code>narve.ai/u/{handle}</code> showing your accuracy
+          and public predictions. Only resolved + public predictions appear; private
+          ones never surface.
+        </p>
+      </header>
+
+      <div class="content-area">
+        <div class="settings-card sp-card">
+
+          <div class="sp-row">
+            <img class="sp-avatar"
+                 src="{{ avatar_url }}"
+                 alt=""
+                 width="96"
+                 height="96"
+                 id="sp-avatar-img">
+            <div class="sp-avatar-controls">
+              <form id="sp-avatar-form" enctype="multipart/form-data">
+                {{ raw_csrf_field }}
+                <label class="btn btn-primary-outline" for="sp-avatar-input">Upload avatar</label>
+                <input type="file" id="sp-avatar-input" name="file" accept="image/jpeg,image/png,image/webp" hidden>
+                <button type="button" class="btn btn-ghost" id="sp-avatar-remove">Use Gravatar</button>
+              </form>
+              <p class="sp-avatar-hint">JPG, PNG, or WebP — max 2 MB. Square crop, 200×200.</p>
+              <p class="sp-avatar-status" id="sp-avatar-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+
+          <form id="sp-form" hx-post="/api/settings/profile" hx-swap="none">
+            {{ raw_csrf_field }}
+
+            <label class="field-row sp-toggle">
+              <span class="field-label">Enable public profile</span>
+              <span class="field-control">
+                <input type="checkbox" name="public_profile_enabled" id="sp-enabled" {{ checked_if_enabled }}>
+                <span class="field-helper">When off, /u/{handle} returns 404. Your data stays put.</span>
+              </span>
+            </label>
+
+            <label class="field-row">
+              <span class="field-label" for="sp-handle">Handle</span>
+              <span class="field-control">
+                <span class="sp-handle-prefix">narve.ai/u/</span>
+                <input id="sp-handle"
+                       name="profile_handle"
+                       type="text"
+                       value="{{ profile_handle }}"
+                       minlength="3"
+                       maxlength="20"
+                       pattern="[a-z0-9_]{3,20}"
+                       autocomplete="off"
+                       autocapitalize="off"
+                       spellcheck="false">
+                <span class="field-helper">Lowercase letters, digits, underscores. 3–20 chars.</span>
+                {{ raw_cooldown_msg }}
+              </span>
+            </label>
+
+            <label class="field-row">
+              <span class="field-label" for="sp-bio">Bio</span>
+              <span class="field-control">
+                <textarea id="sp-bio" name="profile_bio" rows="3" maxlength="200">{{ profile_bio }}</textarea>
+                <span class="field-helper">Up to 200 characters. <span id="sp-bio-count" aria-live="polite"></span></span>
+              </span>
+            </label>
+
+            <div class="save-bar">
+              <span class="save-bar-status" id="sp-status" role="status" aria-live="polite"></span>
+              <button class="btn btn-primary" type="submit">Save profile</button>
+            </div>
+          </form>
+
+          {{ raw_preview_link }}
+
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    function csrf() {
+      var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    // ── Save profile (works whether HTMX is loaded or not) ───────────
+    var form = document.getElementById('sp-form');
+    var statusEl = document.getElementById('sp-status');
+    form.addEventListener('submit', function (event) {
+      // If HTMX is loaded, let it handle the request — but we still need
+      // to surface server-side errors. HTMX exposes htmx:afterRequest.
+      if (window.htmx) return;
+      event.preventDefault();
+      statusEl.textContent = '';
+      var data = new FormData(form);
+      fetch('/api/settings/profile', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': csrf() },
+        body: data,
+      }).then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+      }).then(function (res) {
+        if (res.ok) {
+          statusEl.textContent = 'Saved.';
+          statusEl.style.color = 'var(--text-secondary)';
+        } else {
+          statusEl.textContent = res.body.message || 'Could not save.';
+          statusEl.style.color = 'var(--red, #ef4444)';
+        }
+      }).catch(function () {
+        statusEl.textContent = 'Network error.';
+        statusEl.style.color = 'var(--red, #ef4444)';
+      });
+    });
+    // HTMX path — surface error responses.
+    document.body.addEventListener('htmx:afterRequest', function (event) {
+      if (event.detail.elt !== form) return;
+      try {
+        var body = JSON.parse(event.detail.xhr.responseText);
+        if (event.detail.successful) {
+          statusEl.textContent = 'Saved.';
+          statusEl.style.color = 'var(--text-secondary)';
+        } else {
+          statusEl.textContent = (body && body.message) || 'Could not save.';
+          statusEl.style.color = 'var(--red, #ef4444)';
+        }
+      } catch (_) { /* non-JSON, ignore */ }
+    });
+
+    // ── Bio character count ─────────────────────────────────────────
+    var bio = document.getElementById('sp-bio');
+    var bioCount = document.getElementById('sp-bio-count');
+    function updateBioCount() {
+      var n = bio.value.length;
+      bioCount.textContent = n + '/200';
+    }
+    bio.addEventListener('input', updateBioCount);
+    updateBioCount();
+
+    // ── Avatar upload ───────────────────────────────────────────────
+    var input = document.getElementById('sp-avatar-input');
+    var img = document.getElementById('sp-avatar-img');
+    var status = document.getElementById('sp-avatar-status');
+    input.addEventListener('change', function () {
+      if (!input.files || !input.files[0]) return;
+      var file = input.files[0];
+      if (file.size > 2 * 1024 * 1024) {
+        status.textContent = 'Too large — max 2 MB.';
+        status.style.color = 'var(--red, #ef4444)';
+        return;
+      }
+      var fd = new FormData();
+      fd.append('file', file);
+      status.textContent = 'Uploading…';
+      status.style.color = 'var(--text-secondary)';
+      fetch('/api/settings/avatar', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': csrf() },
+        body: fd,
+      }).then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+      }).then(function (res) {
+        if (res.ok && res.body.avatar_url) {
+          img.src = res.body.avatar_url;
+          status.textContent = 'Saved.';
+        } else {
+          status.textContent = (res.body && res.body.message) || 'Upload failed.';
+          status.style.color = 'var(--red, #ef4444)';
+        }
+      }).catch(function () {
+        status.textContent = 'Network error.';
+        status.style.color = 'var(--red, #ef4444)';
+      });
+    });
+
+    document.getElementById('sp-avatar-remove').addEventListener('click', function () {
+      fetch('/api/settings/avatar', {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': csrf() },
+      }).then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+      }).then(function (res) {
+        if (res.ok && res.body.avatar_url) {
+          img.src = res.body.avatar_url;
+          status.textContent = 'Reverted to Gravatar.';
+          status.style.color = 'var(--text-secondary)';
+        }
+      });
+    });
+  })();
+  </script>
+</body>
+</html>
