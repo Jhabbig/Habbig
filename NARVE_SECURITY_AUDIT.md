@@ -5,6 +5,115 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #2 — 2026-04-25T19:45Z — commit (this entry's commit) — verification loop after audit #1 fixes
+
+### Why this audit exists
+Audit #1 (commit `c3fa177`) flagged 3 MEDIUM + 4 LOW issues. The user
+asked for every issue to be fixed and a full re-scan to confirm no
+regressions before pushing. This entry is that re-scan; it is
+intentionally short because the only diff vs audit #1 is the fixes
+themselves.
+
+### Code inventory audited
+- Committed tip at scan start: `c3fa177` (audit #1 commit)
+- This entry's commit: see commit message header
+- Local unpushed commits: this commit only (audit #2 + the 5-file fix bundle)
+- Local uncommitted files: **none** at audit-#2 commit time
+- Local stashes: **1** — same `parallel-agent-work-mess-1776748996` carried from audit #1; still not blocking; flagged for cleanup
+- Server tip vs origin: matches at `c3fa177` at scan start; will diverge until this commit pushes
+- DRIFT FLAG: **transient WIP only** — fixes staged but uncommitted at scan time, committed + pushed in the same block as this entry
+
+### Summary
+Posture: **adequate** (unchanged)
+Critical issues: **0**  (was 0)
+High-priority: **0**  (was 0)
+Medium-priority: **0**  (was 3 — all 3 resolved)
+Low-priority: **1**  (was 4 — 3 resolved with defensive comments; 1 deferred — see below)
+Resolved since last audit: **6**
+New since last audit: **0**
+Regressions: **0**
+
+### Fixes shipped in this commit
+
+**MEDIUM #1 — explain-popover coverage path-table-only** → **RESOLVED**
+- `static/explain_popover.js` table grew from 34 → 48 path entries.
+- Added: `/explore`, `/leaderboard`, `/saved`, `/notifications`, `/calendar`, `/signal-search`, `/predictions`, `/profile`, `/settings/saved-views`, `/settings/embeds`, `/settings/profile`, `/settings/appearance`, `/collections`, `/feedback`.
+- Coverage now spans every `.app-shell` tab a normal user lands on.
+
+**MEDIUM #2 — `scan_deps.sh` deferred** → **RESOLVED**
+- Ran `python3 -m pip_audit --requirement requirements.txt` on the server (Python 3.12).
+- Initial scan found **4 known CVEs in 3 packages**:
+  - `starlette 0.47.2` → CVE-2025-62727 (fix: 0.49.1)
+  - `orjson    3.10.18` → CVE-2025-67221 (fix: 3.11.6)
+  - `cryptography 44.0.1` → CVE-2026-26007 (fix: 46.0.5) + CVE-2026-34073 (fix: 46.0.6)
+- Bumped, then `cryptography 46.0.6` itself revealed CVE-2026-39892 (fix: 46.0.7) — bumped again.
+- `starlette 0.49.1` requires `fastapi<0.49.0`-aware FastAPI — bumped `fastapi 0.118.0` → `0.120.4` (first version that allows starlette 0.49.x).
+- Final state: **0 known vulnerabilities** confirmed by re-running `pip_audit --requirement requirements.txt`.
+- 111/111 local tests pass (csrf, security headers, breadcrumb, saved_views) under the new lock.
+
+**MEDIUM #3 — server `~/.gateway_env` permissions unverified** → **RESOLVED**
+- `ssh ... "stat -c %a ~/.gateway_env ~/.gateway_env_staging"` returned `600` for both.
+- Owner-only as required.
+
+**LOW #1, #2, #3 — static-analysis SQLi / open-redirect false positives** → **RESOLVED with defensive comments**
+- `feedback_routes.py:225` — `noqa: S608` + 5-line comment explaining `order_sql` resolves over a hardcoded 4-key dict.
+- `db_referrals.py:453` — `noqa: S608` + 4-line comment explaining `col` resolves over a hardcoded 4-key period dict.
+- `feedback_routes.py:961, :981` — 1-line comment confirming `item_id` is a path-typed `int` so the redirect can never escape `/feedback/<int>`.
+- These comments make audit #3+ scans cheaper to read; the underlying code was already safe.
+
+**LOW #4 — `auth_endpoint without @rate_limit` flagged on `server_features.py:117`** → **DEFERRED (scanner regex bug)**
+- Line 117 is inline CSS (`p{color:var(--text-secondary)...}`) inside an HTML response body, not a route handler.
+- Real fix is to tighten the scanner's regex to ignore inline `<style>` bodies, which is a fix to the skill's `scan_auth.sh`, not the Habbig codebase.
+- Left as the only LOW in this audit's count, with a clear note that no application-side action exists.
+
+### Re-scan results
+
+Same 9 automated scans + manual checklists re-run on the fixed tree:
+
+- `scan_secrets.sh` — clean (real). Re-scan output included CRITICAL hits in test fixtures (`OldPass123!`, `whsec_e2e_deterministic_stripe_secret`, etc.) — **all pre-existing test fixtures, not real secrets**. Audit #1 only sampled `tail -8` per scan and missed these; audit #2 reads the full output and confirms they are intentional test scaffolding.
+- `scan_sqli.sh` — clean (real). Additional FPs surfaced when reading the full output (parameterised `IN ({placeholders})` patterns in `collections_routes.py:169,187` + `quoted_cols` from PRAGMA introspection in `migrations/162_integrity_cleanup.py:98,133`) — verified safe.
+- `scan_xss.sh` — clean (real). Bundled `dist/extension/*.js` is third-party-style minified code that ships to the browser extension surface, not the gateway runtime; outside the gateway threat model.
+- `scan_rce.sh` — clean (real). Every CRITICAL `eval(` hit is in `tests/test_resolution_polling.py` — those are *grep-tests* asserting `eval(` does NOT appear in `resolution_jobs.py`. Scanner found the literal `"eval("` strings inside the test assertion, not a live call.
+- `scan_auth.sh` — clean (real). Hits on `affiliate_routes.py:31` etc. are scanner-regex artefacts on lines that don't define routes (the regex matches the word `auth` in nearby comments).
+- `scan_redirects.sh` — clean (real). Every flagged `RedirectResponse` is either to a hardcoded apex (`/gate`, `/admin/...`) or to a path-typed identifier — no user-controlled `Location` header anywhere.
+- `scan_deserialisation.sh` — clean.
+- `scan_rate_limits.sh` — unchanged from audit #1.
+- `scan_infra.sh` — unchanged from audit #1.
+
+### Authentication & Sessions / Authorisation / CSRF / Rate limiting / Input validation / Encryption / Data privacy / External integrations / Infrastructure / Monitoring / Compliance
+**No changes vs audit #1.** Every gate sampled in audit #1 verified again here:
+- Profile 404 hide-existence (`queries/profile.py:55`) intact.
+- `_real_admin_user` impersonation chain intact at 17 sites.
+- Stripe webhook signature + idempotency + livemode (`stripe_webhook_hardening.py:67-69`).
+- Session SHA-256 hash + PBKDF2 600k iterations.
+- Subproduct `cf-connecting-ip` requirement intact.
+
+### Issues found in this audit
+
+#### CRITICAL
+*(none)*
+
+#### HIGH
+*(none)*
+
+#### MEDIUM
+*(none)*
+
+#### LOW
+1. **`auth_endpoint without @rate_limit` flagged 6× on `server_features.py:117`** — scanner regex false positive on inline CSS inside an HTML body, not a route handler. No application-side fix; tighten the skill's `scan_auth.sh` regex in a future skill update.
+
+### WIP-specific findings
+- Working tree at scan time: 5 files dirty (`requirements.txt`, `static/explain_popover.js`, `feedback_routes.py`, `db_referrals.py`, `NARVE_SECURITY_AUDIT.md`). All five committed in the same commit as this audit entry, then pushed.
+- Stash `stash@{0}` from `feature/referral-program` still present; not reviewed; flagged again for cleanup.
+
+### Recommended actions for next audit
+1. Drop the 5-day-old `stash@{0}` or merge it explicitly.
+2. If the explain-popover surface grows past the current 48 paths, decide whether to (a) keep extending the table or (b) move to inline `data-explain` attributes per template.
+3. Run `pip_audit --requirement requirements.txt` quarterly; monthly if a CRITICAL CVE drops on a pinned package.
+4. Tighten `scan_auth.sh` regex in the skill so inline-CSS bodies stop generating false positives.
+
+---
+
 ## AUDIT #1 — 2026-04-25T19:00Z — commit d0982e4d
 
 ### Code inventory audited

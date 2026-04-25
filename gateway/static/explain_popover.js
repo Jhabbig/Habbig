@@ -180,6 +180,62 @@
       title: "Changelog",
       body: "Every user-visible change to narve.ai, newest first. Subscribe via the RSS link at the foot of the page.",
     },
+    "/explore": {
+      title: "Explore",
+      body: "Curated collections, featured sources, and recently-updated playlists from the community.",
+    },
+    "/leaderboard": {
+      title: "Leaderboard",
+      body: "Top-ranked subscribers and sources by prediction accuracy. Switch the period to see different windows.",
+    },
+    "/saved": {
+      title: "Saved predictions",
+      body: "Bookmark a prediction and we'll show its outcome here when the market resolves.",
+    },
+    "/notifications": {
+      title: "Notifications",
+      body: "Market resolutions, signal alerts, and anything else you've opted in for. Tap to jump to the source — it'll be marked read automatically.",
+    },
+    "/calendar": {
+      title: "Resolution calendar",
+      body: "Markets sorted by closing date. Use the filter chips to scope by category or expected close window.",
+    },
+    "/signal-search": {
+      title: "Signal Search",
+      body: "Topic-based monitoring across all tracked sources. Pull fresh signals into a topic to see what's moving.",
+    },
+    "/predictions": {
+      title: "Your predictions",
+      body: "Calls you've recorded against open markets. Brier score is lower-is-better; 0.0 is perfect, 0.25 is a coin flip.",
+    },
+    "/profile": {
+      title: "Your profile",
+      body: "Account details, subscription status, and the public-profile opt-in. Toggle that on to claim a /u/{handle} page.",
+    },
+    "/settings/saved-views": {
+      title: "Saved views",
+      body: "Named filter sets scoped to a tab. Pin to the sidebar for one-click access; share read-only with anyone via a token URL.",
+    },
+    "/settings/embeds": {
+      title: "Embed widgets",
+      body: "Generate token-gated, domain-locked iframes that render narve.ai data on your own site.",
+    },
+    "/settings/profile": {
+      title: "Public profile",
+      body: "Opt in to a /u/{handle} page. Pick a handle, choose what's visible, and your top public predictions show up there.",
+    },
+    "/settings/appearance": {
+      title: "Appearance",
+      body: "Theme + density. Compact tightens row padding and section gaps without changing the layout.",
+    },
+    "/collections": {
+      title: "Collections",
+      body: "Spotify-style playlists for markets, sources, and predictions. Make them private, share-by-link, or fully public.",
+    },
+    "/feedback": {
+      title: "Feedback",
+      body: "What other subscribers want, ranked by upvote. Add yours, comment on theirs.",
+    },
   };
 
   // ── DOM helpers ─────────────────────────────────────────────────────

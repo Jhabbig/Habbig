@@ -452,7 +452,10 @@ def get_leaderboard(
                AND ua.total_predictions > 0
              ORDER BY {col} DESC, ua.total_predictions DESC
              LIMIT ?
-            """,
+            """,  # noqa: S608 — `col` is the value of a hardcoded 4-key dict
+                  # ({"all","90d","30d","7d"}.get(period, "ua.accuracy_all_time"))
+                  # so the interpolation can only resolve to one of 4 literal
+                  # column-name strings. Audit #1 logged this as a known FP.
             (limit,),
         ).fetchall()
 
