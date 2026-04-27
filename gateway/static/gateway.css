@@ -2064,9 +2064,16 @@ label[for] + textarea {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.18s ease;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   flex-shrink: 0;
 }
+/* Two SVG icons inside the toggle: hamburger (bars) when the sidebar
+   is expanded, close (X) when collapsed. CSS swaps which is shown so
+   we don't need any JS beyond the existing toggle handler. */
+.sidebar-toggle__icon { display: none; }
+.sidebar-toggle__icon--bars { display: inline; }
+:root[data-sidebar="collapsed"] .sidebar-toggle__icon--bars { display: none; }
+:root[data-sidebar="collapsed"] .sidebar-toggle__icon--close { display: inline; }
 .sidebar-toggle:hover {
   background: var(--interactive-ghost);
   color: var(--text-primary);
@@ -2092,9 +2099,11 @@ label[for] + textarea {
   padding: 0 0 var(--space-3);
   justify-content: center;
 }
+/* Hide the logo image + wordmark in collapsed mode — only the
+   sandwich/close toggle remains, so the rail isn't trying to cram
+   a misformed mini-logo into 56 px. */
 :root[data-sidebar="collapsed"] .sidebar-logo-link {
-  justify-content: center;
-  flex: 0 0 auto;
+  display: none;
 }
 :root[data-sidebar="collapsed"] .sidebar-logo-text,
 :root[data-sidebar="collapsed"] .nav-item-label,
@@ -2112,7 +2121,9 @@ label[for] + textarea {
   padding: var(--space-3) 4px;
 }
 :root[data-sidebar="collapsed"] .sidebar-toggle {
-  transform: rotate(180deg);
+  /* No rotate now — we swap the SVG icons via display, so the toggle
+     button stays steady and just changes glyph. */
+  margin: 0 auto;
 }
 :root[data-sidebar="collapsed"] #pinned-views,
 :root[data-sidebar="collapsed"] #first-week-goals-mount {
@@ -2197,9 +2208,11 @@ label[for] + textarea {
 .main-content {
   grid-area: main;
   /* Top stays --space-4 so the sticky breadcrumb has consistent
-     headroom; horizontal + bottom route through --page-pad so
-     toggling density tightens the whole shell at once. */
-  padding: var(--space-4) var(--page-pad) var(--page-pad);
+     headroom; horizontal padding scales with viewport so content
+     never butts up against the sidebar (the previous --page-pad of
+     24 px was too tight on wide screens — content read as glued to
+     the rail). Bottom stays at --page-pad. */
+  padding: var(--space-4) clamp(28px, 4vw, 56px) var(--page-pad);
   max-width: 100%;
   overflow-x: hidden;
 }
