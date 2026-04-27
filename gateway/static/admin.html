@@ -233,7 +233,7 @@
             <!-- Scheduler jobs -->
             <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Scheduler Jobs</h3>
             <div class="admin-list" style="margin-bottom:24px" id="sc-jobs-list">
-              <div style="text-align:center;padding:24px;color:var(--text-tertiary);font-size:13px">No jobs loaded</div>
+              <div class="empty-state-row">No scheduled jobs.</div>
             </div>
 
             <!-- Keywords -->
@@ -258,13 +258,13 @@
             <!-- Recent runs -->
             <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Recent Runs</h3>
             <div class="admin-list" id="sc-runs-list">
-              <div style="text-align:center;padding:24px;color:var(--text-tertiary);font-size:13px">No runs loaded</div>
+              <div class="empty-state-row">No recent runs.</div>
             </div>
 
             <!-- Sessions -->
             <h3 style="font-size:14px;font-weight:600;margin:24px 0 12px">Sessions</h3>
             <div class="admin-list" id="sc-sessions-list">
-              <div style="text-align:center;padding:24px;color:var(--text-tertiary);font-size:13px">No sessions loaded</div>
+              <div class="empty-state-row">No active sessions.</div>
             </div>
           </div>
         </div>
@@ -553,7 +553,7 @@ function _levelColor(lvl) {
 function renderLiveRecords(records) {
   var content = document.getElementById('log-content');
   if (!records.length) {
-    content.innerHTML = '<div class="admin-row"><div class="admin-row-info">No records.</div></div>';
+    content.innerHTML = '<div class="admin-row"><div class="admin-row-info">No log records yet.</div></div>';
     return;
   }
   var html = '';
@@ -585,7 +585,7 @@ function renderLiveRecords(records) {
 function renderErrorGroups(groups) {
   var content = document.getElementById('log-content');
   if (!groups.length) {
-    content.innerHTML = '<div class="admin-row"><div class="admin-row-info">No errors in the ring buffer.</div></div>';
+    content.innerHTML = '<div class="admin-row"><div class="admin-row-info">No errors logged.</div></div>';
     return;
   }
   var html = '';
@@ -786,7 +786,7 @@ function _renderKeywords(kw) {
   ['twitter', 'truthsocial'].forEach(function(p) {
     var list = (kw && kw[p]) || [];
     var el = document.getElementById('sc-kw-' + p);
-    if (!list.length) { el.innerHTML = '<div style="padding:12px 16px;font-size:12px;color:var(--text-tertiary)">No keywords</div>'; return; }
+    if (!list.length) { el.innerHTML = '<div class="empty-state-row" style="padding:12px 16px;font-size:12px">No keywords yet.</div>'; return; }
     var html = '';
     list.forEach(function(k) {
       html += '<div class="admin-row" style="padding:8px 16px">'
@@ -823,7 +823,7 @@ function _renderRuns(runs) {
 
 function _renderSessions(sessions) {
   if (!sessions || !sessions.length) {
-    document.getElementById('sc-sessions-list').innerHTML = '<div style="padding:16px;font-size:12px;color:var(--text-tertiary);text-align:center">No sessions configured</div>';
+    document.getElementById('sc-sessions-list').innerHTML = '<div class="empty-state-row">No sessions configured.</div>';
     return;
   }
   var html = '';

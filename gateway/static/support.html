@@ -47,7 +47,7 @@
           <label class="sup-label" for="sup-message">Describe your issue</label>
           <textarea class="sup-textarea" id="sup-message" required placeholder="Please describe what happened, your username or email, and any relevant details..." minlength="10"></textarea>
         </div>
-        <button type="submit" class="sup-submit" id="sup-btn">Submit Ticket</button>
+        <button type="submit" class="sup-submit" id="sup-btn">Send ticket</button>
       </form>
 
       <div class="sup-success" id="sup-success">
@@ -77,7 +77,7 @@ function submitSupport(e) {
 
   errEl.classList.remove('visible');
   btn.disabled = true;
-  btn.textContent = 'Submitting...';
+  btn.textContent = 'Sending…';
 
   fetch('/api/support-ticket', {
     method: 'POST',
@@ -90,17 +90,17 @@ function submitSupport(e) {
       document.getElementById('sup-form').style.display = 'none';
       document.getElementById('sup-success').classList.add('visible');
     } else {
-      errEl.textContent = data.error || 'Something went wrong';
+      errEl.textContent = data.error || 'Could not send ticket — please try again.';
       errEl.classList.add('visible');
       btn.disabled = false;
-      btn.textContent = 'Submit Ticket';
+      btn.textContent = 'Send ticket';
     }
   })
   .catch(function() {
     errEl.textContent = 'Network error. Please try again.';
     errEl.classList.add('visible');
     btn.disabled = false;
-    btn.textContent = 'Submit Ticket';
+    btn.textContent = 'Send ticket';
   });
 }
 </script>
