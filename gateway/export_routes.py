@@ -396,12 +396,29 @@ async def privacy_settings_page(request: Request):
         prefs = _get_prefs(user["user_id"])
     except Exception:
         prefs = {"inactive_blur": True, "devtools_blur": True}
+    # Canonical sidebar so /settings/privacy looks like every other
+    # settings page (and gets the collapse toggle, theme-aware logo, etc.).
+    try:
+        from sidebar import render_sidebar as _render_sidebar
+        _admin_link = ""
+        if user.get("is_admin"):
+            _admin_link = '<a href="/admin">Admin</a>'
+        _sidebar_html = _render_sidebar(
+            request, active="settings",
+            username=user.get("username", user["email"]),
+            raw_admin_link=_admin_link,
+            raw_nav_role=_role_badge(user),
+        )
+    except Exception:
+        _sidebar_html = ""
+
     return _render(
         "settings_privacy",
         request=request,
         email=user["email"],
         username=user.get("username", user["email"]),
         raw_nav_role=_role_badge(user),
+        raw_sidebar=_sidebar_html,
         raw_export_rows=rows_html,
         raw_inactive_checked="checked" if prefs.get("inactive_blur") else "",
         raw_devtools_checked="checked" if prefs.get("devtools_blur") else "",

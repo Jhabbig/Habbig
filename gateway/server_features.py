@@ -37,6 +37,7 @@ from server import (
 from email_system.unsubscribe import UnsubscribeManager
 from jobs.email_jobs import enqueue_email
 from jobs import enqueue_job, get_worker_status, list_recent_jobs, retry_job
+from sidebar import render_sidebar
 
 # Dedicated security-channel logger (routes to logs/security.log).
 import logging as _logging
@@ -1100,12 +1101,21 @@ async def saved_page(request: Request):
         return RedirectResponse("/token", status_code=302)
     from server import _role_badge  # type: ignore
     admin_link = '<a href="/admin" class="nav-item">Admin</a>' if user.get("is_admin") else ""
+    nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
     return render_page(
         "saved",
         request=request,
         username=user.get("username", user["email"]),
         raw_admin_link=admin_link,
-        raw_nav_role=_role_badge(user),
+        raw_nav_role=nav_role,
+        raw_sidebar=_sidebar,
     )
 
 

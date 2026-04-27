@@ -36,87 +36,7 @@
   <div class="app-shell">
 
     <!-- ── Sidebar ──────────────────────────────────────────────── -->
-    <aside class="sidebar">
-      <div class="sidebar-logo">
-        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
-        <span class="sidebar-logo-text">narve.ai</span>
-      </div>
-
-      <nav class="sidebar-nav">
-        <div class="nav-section-header">Navigation</div>
-
-        <a href="/dashboards" class="nav-item active" data-tour="feed">
-          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="1.5" y="1.5" width="5" height="5" rx="1"/>
-            <rect x="9.5" y="1.5" width="5" height="5" rx="1"/>
-            <rect x="1.5" y="9.5" width="5" height="5" rx="1"/>
-            <rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
-          </svg>
-          Dashboards
-        </a>
-
-        <span class="sidebar-injected" data-icon="search" data-tour="best-bets">{{ raw_signal_search_link }}</span>
-        <span class="sidebar-injected" data-icon="bolt" data-tour="intelligence">{{ raw_intelligence_link }}</span>
-
-        <a href="/collections" class="nav-item" data-tour="watchlist">
-          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 4h10M3 8h10M3 12h6"/>
-          </svg>
-          Collections
-        </a>
-
-        <a href="/predictions" class="nav-item" data-tour="predictions">
-          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2.5 4h11M2.5 8h11M2.5 12h7"/>
-            <circle cx="12.5" cy="12" r="1.4"/>
-          </svg>
-          Your predictions
-        </a>
-
-        <a href="/explore" class="nav-item">
-          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="8" cy="8" r="6.5"/>
-            <path d="M10.5 5.5L9 9l-3.5 1.5L7 7z"/>
-          </svg>
-          Explore
-        </a>
-
-        <a href="/billing" class="nav-item">
-          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="1" y="3" width="14" height="10" rx="2"/>
-            <line x1="1" y1="7" x2="15" y2="7"/>
-          </svg>
-          Billing
-        </a>
-
-        <a href="/settings" class="nav-item">
-          <svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="8" cy="8" r="2.5"/>
-            <path d="M13.3 9.7a1.2 1.2 0 0 0 .2 1.3l.1.1a1.4 1.4 0 1 1-2 2l-.1-.1a1.2 1.2 0 0 0-1.3-.2 1.2 1.2 0 0 0-.7 1.1v.2a1.4 1.4 0 1 1-2.8 0v-.1a1.2 1.2 0 0 0-.8-1.1 1.2 1.2 0 0 0-1.3.2l-.1.1a1.4 1.4 0 1 1-2-2l.1-.1a1.2 1.2 0 0 0 .2-1.3 1.2 1.2 0 0 0-1.1-.7h-.2a1.4 1.4 0 1 1 0-2.8h.1a1.2 1.2 0 0 0 1.1-.8 1.2 1.2 0 0 0-.2-1.3l-.1-.1a1.4 1.4 0 1 1 2-2l.1.1a1.2 1.2 0 0 0 1.3.2h.1a1.2 1.2 0 0 0 .7-1.1v-.2a1.4 1.4 0 1 1 2.8 0v.1a1.2 1.2 0 0 0 .7 1.1 1.2 1.2 0 0 0 1.3-.2l.1-.1a1.4 1.4 0 1 1 2 2l-.1.1a1.2 1.2 0 0 0-.2 1.3v.1a1.2 1.2 0 0 0 1.1.7h.2a1.4 1.4 0 1 1 0 2.8h-.1a1.2 1.2 0 0 0-1.1.7z"/>
-          </svg>
-          Settings
-        </a>
-
-        <span class="sidebar-injected" data-icon="shield">{{ raw_admin_link }}</span>
-      </nav>
-
-      <!-- Pinned saved-view slot. filter_panel.js fetches /api/saved-views/pinned
-           and replaces this div with a rendered list; if the user has no pinned
-           views (or is signed out), the slot stays hidden. -->
-      <div id="pinned-views"></div>
-
-      <!-- First-week goals checklist. Hidden by default; first_week_goals.js
-           fetches /api/first-week/goals and only renders inside this mount
-           when the widget should be visible (first 14 days, not all done,
-           not user-dismissed). -->
-      <div id="first-week-goals-mount" style="display:none"></div>
-
-      <a href="/profile" class="sidebar-user" style="text-decoration:none">
-        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
-        <span class="sidebar-user-name">{{ username }}</span>
-        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
-      </a>
-    </aside>
+    {{ raw_sidebar }}
 
     <!-- ── Main content ─────────────────────────────────────────── -->
     <div class="main-content">
@@ -179,28 +99,6 @@
   </div>
 
 {{ raw_sitemap }}
-<script>
-(function(){
-  /* Avatar initial */
-  var av=document.querySelector('.sidebar-user-avatar[data-username]');
-  if(av){var u=av.getAttribute('data-username');av.textContent=u?u.charAt(0).toUpperCase():'?';}
-
-  /* Upgrade server-injected links (raw_admin_link, raw_signal_search_link, raw_intelligence_link) */
-  var icons={
-    shield:'<svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L2.5 4v4c0 3.5 2.3 5.7 5.5 6.5 3.2-.8 5.5-3 5.5-6.5V4L8 1.5z"/></svg>',
-    search:'<svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.5"/><line x1="10.2" y1="10.2" x2="14" y2="14"/></svg>',
-    bolt:'<svg class="nav-item-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1L3 9h5l-1 6 6-8H8z"/></svg>'
-  };
-  document.querySelectorAll('.sidebar-injected').forEach(function(wrap){
-    var a=wrap.querySelector('a');
-    if(!a){wrap.style.display='none';return;}
-    var iconKey=wrap.getAttribute('data-icon')||'';
-    a.className='nav-item';
-    if(icons[iconKey])a.insertAdjacentHTML('afterbegin',icons[iconKey]);
-    wrap.replaceWith(a);
-  });
-})();
-</script>
 <script src="/_gateway_static/scroll-animations.js" defer></script>
 <script src="/_gateway_static/user-features.js" defer></script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
@@ -227,5 +125,6 @@
 <script src="/_gateway_static/js/onboarding_tour.js?v=1" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>
+  <script src="/_gateway_static/analytics.js" defer></script>
 </body>
 </html>

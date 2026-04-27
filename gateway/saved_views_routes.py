@@ -388,12 +388,24 @@ async def page_settings(request: Request):
             pass
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
 
+    try:
+        from sidebar import render_sidebar as _render_sidebar
+        sidebar_html = _render_sidebar(
+            request, active="settings",
+            username=username,
+            raw_admin_link=admin_link,
+            raw_nav_role=role_badge,
+        )
+    except Exception:
+        sidebar_html = ""
+
     return server.render_page(
         "settings_saved_views",
         request=request,
         username=username,
         raw_nav_role=role_badge,
         raw_admin_link=admin_link,
+        raw_sidebar=sidebar_html,
         _is_admin=user.get("is_admin"),
     )
 

@@ -474,11 +474,26 @@ async def settings_takes_page(request: Request):
         if stats["avg_quality"] is not None else "—"
     )
 
+    _username = user.get("email", "").split("@")[0]
+    _role = server._role_badge(user) if hasattr(server, "_role_badge") else ""
+    _admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    try:
+        from sidebar import render_sidebar as _render_sidebar
+        _sidebar_html = _render_sidebar(
+            request, active="settings",
+            username=_username,
+            raw_admin_link=_admin_link,
+            raw_nav_role=_role,
+        )
+    except Exception:
+        _sidebar_html = ""
+
     return render_page(
         "settings_takes",
         request=request,
-        raw_nav_role=server._role_badge(user) if hasattr(server, "_role_badge") else "",
-        username=user.get("email", "").split("@")[0],
+        raw_nav_role=_role,
+        username=_username,
+        raw_sidebar=_sidebar_html,
         total_takes=str(stats["total"]),
         correct_count=str(stats["correct"]),
         incorrect_count=str(stats["incorrect"]),

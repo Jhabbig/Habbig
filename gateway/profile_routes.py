@@ -37,6 +37,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 import db
 from queries import profile as profile_q
 from queries import predictions as predictions_q
+from sidebar import render_sidebar
 
 
 log = logging.getLogger("gateway.profile_routes")
@@ -384,13 +385,23 @@ async def settings_profile_page(request: Request):
             f'Live at <a href="/u/{_html.escape(handle)}">narve.ai/u/{_html.escape(handle)}</a></p>'
         )
 
+    _username = user.get("username") or user.get("email", "").split("@")[0]
+    _admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    _nav_role = srv._role_badge(user) if hasattr(srv, "_role_badge") else ""
+    _sidebar = render_sidebar(
+        request,
+        active="settings",
+        username=_username,
+        raw_admin_link=_admin_link,
+        raw_nav_role=_nav_role,
+    )
     return srv.render_page(
         "settings_profile",
         request=request,
-        username=user.get("username") or user.get("email", "").split("@")[0],
+        username=_username,
         avatar_letter=(user.get("username") or user.get("email", "?"))[:1].upper(),
-        raw_admin_link='<a href="/admin">Admin</a>' if user.get("is_admin") else "",
-        raw_nav_role=srv._role_badge(user) if hasattr(srv, "_role_badge") else "",
+        raw_admin_link=_admin_link,
+        raw_nav_role=_nav_role,
         _is_admin=user.get("is_admin"),
         avatar_url=avatar_url,
         checked_if_enabled="checked" if enabled else "",
@@ -398,6 +409,7 @@ async def settings_profile_page(request: Request):
         profile_bio=bio,
         raw_cooldown_msg=cooldown_msg,
         raw_preview_link=preview_link,
+        raw_sidebar=_sidebar,
     )
 
 

@@ -431,7 +431,12 @@ async def flag_edit_page(request: Request, key: str):
         flag_key=data["key"],
         flag_name=data["name"],
         flag_description=data["description"],
-        enabled_checked="checked" if data["enabled_globally"] else "",
+        # Template uses {{ raw_enabled_checked }} so the substituter
+        # leaves the value as raw HTML attribute fragment ("checked" or
+        # empty). Without the raw_ prefix the placeholder never matched,
+        # the "Enabled globally" toggle never reflected state, and
+        # saving would silently flip every flag off.
+        raw_enabled_checked="checked" if data["enabled_globally"] else "",
         rollout_percentage=str(data["rollout_percentage"]),
         enabled_user_ids=", ".join(str(x) for x in data["enabled_for_user_ids"]),
         disabled_user_ids=", ".join(str(x) for x in data["disabled_for_user_ids"]),

@@ -14,24 +14,7 @@
 <body>
   <div class="app-shell">
 
-    <aside class="sidebar">
-      <div class="sidebar-logo">
-        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:20px;height:20px;filter:invert(1);border-radius:3px">
-        <span class="sidebar-logo-text">narve.ai</span>
-      </div>
-      <nav class="sidebar-nav">
-        <div class="nav-section-header">Navigation</div>
-        <a href="/dashboards" class="nav-item">Dashboards</a>
-        <a href="/dashboard/models" class="nav-item active">Models</a>
-        <a href="/settings" class="nav-item">Settings</a>
-        {{ raw_admin_link }}
-      </nav>
-      <a href="/profile" class="sidebar-user" style="text-decoration:none">
-        <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
-        <span class="sidebar-user-name">{{ username }}</span>
-        {{ raw_nav_role }}
-      </a>
-    </aside>
+    {{ raw_sidebar }}
 
     <div class="main-content">
       <div class="breadcrumb">
@@ -123,12 +106,6 @@
     </div>
   </div>
 
-<script>
-(function(){
-  var av = document.querySelector('.sidebar-user-avatar[data-username]');
-  if (av) { var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
-})();
-</script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>

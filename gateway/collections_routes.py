@@ -747,11 +747,51 @@ async def page_collections(request: Request):
     else:
         followed_cards = '<div class="c-empty">You\'re not following any collections. Head to /explore.</div>'
 
+    # Sidebar from the shared helper so /collections matches the rest of
+    # the app (dashboards, billing, settings, etc.). Without this, the page
+    # had no back-affordance — the user complaint that triggered this fix.
+    try:
+        from sidebar import render_sidebar as _render_sidebar
+        _admin_link = ""
+        try:
+            import server as _srv_mod
+            if user.get("is_admin"):
+                _admin_link = '<a href="/admin">Admin</a>'
+        except Exception:
+            pass
+        sidebar_html = _render_sidebar(
+            request,
+            active="collections",
+            username=user.get("username") or user.get("email") or "",
+            raw_admin_link=_admin_link,
+        )
+    except Exception:
+        sidebar_html = ""
+
     body = f"""<!DOCTYPE html><html><head>
 <meta charset='utf-8'><title>Collections — narve.ai</title>
 <link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
+<link rel='stylesheet' href='/_gateway_static/components.css'>
+<script>(function(){{try{{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}}catch(e){{document.documentElement.setAttribute("data-theme","light");}}}})();</script>
 {_PAGE_CSS}
+<style>
+/* Collections wraps in the shared app-shell so the sidebar appears on
+   the left and the existing .c-* page styles continue to work. */
+.c-page-body {{ padding: 24px 32px; max-width: 1200px; margin: 0 auto; }}
+.c-breadcrumb {{ font-size: 12px; color: var(--text-tertiary); margin-bottom: 16px; display: flex; gap: 6px; align-items: center; }}
+.c-breadcrumb a {{ color: var(--text-secondary); text-decoration: none; }}
+.c-breadcrumb a:hover {{ color: var(--text-primary); text-decoration: underline; }}
+</style>
 </head><body>
+<div class="app-shell">
+{sidebar_html}
+<main class="main-content">
+<div class="c-page-body">
+<nav class="c-breadcrumb" aria-label="Breadcrumb">
+  <a href="/dashboards">Dashboards</a>
+  <span aria-hidden="true">/</span>
+  <span aria-current="page">Collections</span>
+</nav>
 <div class="c-wrap">
 <div class="c-head">
   <div class="c-bar">
@@ -857,6 +897,9 @@ async def page_collections(request: Request):
   }});
 }})();
 </script>
+</div>
+</main>
+</div>
 </body></html>"""
     return HTMLResponse(body)
 
@@ -966,6 +1009,22 @@ async def page_collection_detail(request: Request, id: int):
     share_url = f"/c/{_html.escape(owner_handle)}/{_html.escape(row['slug'])}"
     og_url = share_url if vis == "public" else f"/collections/{row['id']}"
 
+    # Sidebar via shared helper, same as list page above.
+    try:
+        from sidebar import render_sidebar as _render_sidebar
+        _admin_link_d = ""
+        if (viewer or {}).get("is_admin"):
+            _admin_link_d = '<a href="/admin">Admin</a>'
+        sidebar_html = _render_sidebar(
+            request,
+            active="collections",
+            username=(viewer or {}).get("username")
+                     or (viewer or {}).get("email") or "",
+            raw_admin_link=_admin_link_d,
+        )
+    except Exception:
+        sidebar_html = ""
+
     body = f"""<!DOCTYPE html><html><head>
 <meta charset='utf-8'>
 <title>{title_html} — narve.ai Collections</title>
@@ -975,8 +1034,27 @@ async def page_collection_detail(request: Request, id: int):
 <meta property="og:url" content="{og_url}">
 <meta property="og:type" content="website">
 <link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
+<link rel='stylesheet' href='/_gateway_static/components.css'>
+<script>(function(){{try{{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}}catch(e){{document.documentElement.setAttribute("data-theme","light");}}}})();</script>
 {_PAGE_CSS}
+<style>
+.c-page-body {{ padding: 24px 32px; max-width: 1200px; margin: 0 auto; }}
+.c-breadcrumb {{ font-size: 12px; color: var(--text-tertiary); margin-bottom: 16px; display: flex; gap: 6px; align-items: center; }}
+.c-breadcrumb a {{ color: var(--text-secondary); text-decoration: none; }}
+.c-breadcrumb a:hover {{ color: var(--text-primary); text-decoration: underline; }}
+</style>
 </head><body>
+<div class="app-shell">
+{sidebar_html}
+<main class="main-content">
+<div class="c-page-body">
+<nav class="c-breadcrumb" aria-label="Breadcrumb">
+  <a href="/dashboards">Dashboards</a>
+  <span aria-hidden="true">/</span>
+  <a href="/collections">Collections</a>
+  <span aria-hidden="true">/</span>
+  <span aria-current="page">{title_html}</span>
+</nav>
 <div class="c-wrap">
 <a href="/collections" class="c-back">← Collections</a>
 <div class="c-head" style="margin-top:14px">
@@ -1220,6 +1298,9 @@ async def page_collection_detail(request: Request, id: int):
   }}
 }})();
 </script>
+</div>
+</div>
+</main>
 </div>
 </body></html>"""
     return HTMLResponse(body)
