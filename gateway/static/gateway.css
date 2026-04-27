@@ -2269,9 +2269,16 @@ label[for] + textarea {
   flex-direction: column;
   gap: var(--section-gap);
   background: var(--surface);
-  border: 1px solid var(--border-strong, var(--border-default));
-  border-radius: 12px;
+  /* Bumped from 1 px var(--border-strong) (#b0b0b0) to 2 px solid
+     var(--text-primary) — nearly-black border that's impossible to
+     miss. The frame should clearly read as a defined viewport, not
+     a subtle separator. */
+  border: 2px solid var(--text-primary, #111);
+  border-radius: 14px;
   padding: clamp(20px, 2.5vw, 32px);
+  /* Outer shadow gives the frame depth — feels like a panel
+     floating above the page bg instead of merging with it. */
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
 }
 /* Pages that intentionally render full-width grids (the dashboards
    tile grid, the landing-page hero) opt out via .content-area--bare. */
