@@ -90,6 +90,18 @@
   max-width: 1280px;
   box-sizing: border-box;
 }
+/* Page frame for admin content — admin/*.html templates wrap the
+   main body in <div class="admin-content"> (or .admin-section) below
+   the page header, so this rule frames everything beneath the
+   breadcrumb/title without putting a frame around the title itself. */
+.admin-content,
+.admin-section.admin-section--framed,
+.admin-body > .page-frame {
+  background: var(--bg-surface, var(--surface));
+  border: 1px solid var(--border-strong, var(--border-default));
+  border-radius: 12px;
+  padding: clamp(20px, 2.5vw, 32px);
+}
 
 .admin-page-header {
   display: flex;

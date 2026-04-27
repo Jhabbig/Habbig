@@ -2256,8 +2256,15 @@ label[for] + textarea {
    sections floating loose against the page bg. The .settings-card /
    .admin-card / .dash-card children inside still have their own
    borders — that's the intended nested-card look (rail → page frame
-   → individual cards). */
-.content-area {
+   → individual cards).
+
+   Same treatment is also applied to .ss-container (signal-search),
+   .admin-body's direct content wrapper, and any other page-content
+   shell — the goal is ONE coherent framed window per page no matter
+   which template generation it came from. */
+.content-area,
+.ss-container > .ss-frame,
+.page-frame {
   display: flex;
   flex-direction: column;
   gap: var(--section-gap);
