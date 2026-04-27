@@ -261,10 +261,21 @@ def render_sidebar(
             class="sidebar-toggle"
             aria-label="Toggle sidebar"
             aria-expanded="true">
-      <svg viewBox="0 0 16 16" width="14" height="14" fill="none"
-           stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
-           stroke-linejoin="round" aria-hidden="true">
-        <path d="M10 3 5 8l5 5"/>
+      <!-- Hamburger (sandwich) shown when expanded — click to collapse.
+           Three horizontal lines, the universal "menu / collapse me"
+           affordance. Hidden when collapsed. -->
+      <svg class="sidebar-toggle__icon sidebar-toggle__icon--bars"
+           viewBox="0 0 16 16" width="14" height="14" fill="none"
+           stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+           aria-hidden="true">
+        <path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>
+      </svg>
+      <!-- Close (X) shown when collapsed — click to expand. -->
+      <svg class="sidebar-toggle__icon sidebar-toggle__icon--close"
+           viewBox="0 0 16 16" width="14" height="14" fill="none"
+           stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+           aria-hidden="true">
+        <path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>
       </svg>
     </button>
   </div>
