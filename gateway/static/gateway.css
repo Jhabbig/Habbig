@@ -2017,33 +2017,35 @@ label[for] + textarea {
   flex: 1;
   min-width: 0;
 }
-/* Logo image: source asset is white-on-transparent. In light theme we
-   invert it to black so it reads on a light surface; in dark theme we
-   leave it alone so it stays white. The filter chain is set per theme
-   via the [data-theme] selectors near the top of this file. */
+/* Logo image: source asset is a white square with a black brand mark.
+   Per spec: stay white for the white theme (no filter — asset shows
+   as-is, the white edges blend into the light surface and only the
+   black brand mark reads), invert for the dark theme (white square
+   flips to black + brand mark flips to white, again the chip blends
+   into the dark surface and only the mark reads). The result is a
+   theme-adaptive monogram with no visible "chip" rectangle in either
+   mode. */
 .sidebar-logo-img {
   width: 22px;
   height: 22px;
   border-radius: 4px;
   flex-shrink: 0;
-  filter: var(--logo-filter, invert(1));
-}
-[data-theme="dark"] .sidebar-logo-img {
   filter: var(--logo-filter, none);
 }
+[data-theme="dark"] .sidebar-logo-img {
+  filter: var(--logo-filter, invert(1));
+}
 
-/* Generic brand-logo class for everywhere outside the sidebar (header
-   bars on legacy pages, gate, forgot-password, invite, landing, etc.).
-   Same theme-aware filter chain as .sidebar-logo-img — replaces a few
-   dozen inline `style="...filter:invert(1)..."` blocks that were
-   theme-blind and turned the logo invisible in dark mode. */
+/* Generic brand-logo class — same chain as .sidebar-logo-img so the
+   logo behaves identically in headers, auth flows, gate, landing,
+   etc. */
 .brand-logo {
   border-radius: 4px;
   flex-shrink: 0;
-  filter: var(--logo-filter, invert(1));
+  filter: var(--logo-filter, none);
 }
 [data-theme="dark"] .brand-logo {
-  filter: var(--logo-filter, none);
+  filter: var(--logo-filter, invert(1));
 }
 .sidebar-logo-text {
   font-weight: 600;
@@ -2249,12 +2251,28 @@ label[for] + textarea {
   max-width: 640px;
   line-height: 1.6;
 }
+/* Page-level content frame. Every page that uses the canonical
+   .content-area now has a visibly bordered viewport instead of
+   sections floating loose against the page bg. The .settings-card /
+   .admin-card / .dash-card children inside still have their own
+   borders — that's the intended nested-card look (rail → page frame
+   → individual cards). */
 .content-area {
   display: flex;
   flex-direction: column;
-  /* Density-aware vertical rhythm — --section-gap is the canonical
-     spacing between sibling sections inside a page. */
   gap: var(--section-gap);
+  background: var(--surface);
+  border: 1px solid var(--border-strong, var(--border-default));
+  border-radius: 12px;
+  padding: clamp(20px, 2.5vw, 32px);
+}
+/* Pages that intentionally render full-width grids (the dashboards
+   tile grid, the landing-page hero) opt out via .content-area--bare. */
+.content-area--bare {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
 }
 
 /* ── Status bar ─────────────────────────────────────────────────────── */
