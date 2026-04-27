@@ -1312,3 +1312,83 @@ def reset_webhook_failure(webhook_id: int) -> None:
             "WHERE id = ?",
             (int(time.time()), webhook_id),
         )
+
+
+# ── System secrets (admin-rotatable, Fernet-encrypted at rest) ─────────
+
+
+def set_system_secret(key: str, value: str, *, admin_user_id: int | None) -> None:
+    """Encrypt + UPSERT a system secret. Empty string clears it.
+
+    Encryption uses the same Fernet helper that backs Kalshi/Polymarket
+    credentials so we don't grow a second key-management surface.
+    """
+    if not key:
+        raise ValueError("system_secret key required")
+    if value == "" or value is None:
+        delete_system_secret(key)
+        return
+    from backend.markets.encryption import encrypt_token
+    enc = encrypt_token(value)
+    with conn() as c:
+        c.execute(
+            "INSERT INTO system_secrets (key, value_enc, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET "
+            "  value_enc = excluded.value_enc, "
+            "  updated_at = excluded.updated_at, "
+            "  updated_by = excluded.updated_by",
+            (key, enc, int(time.time()), admin_user_id),
+        )
+
+
+def get_system_secret(key: str) -> str | None:
+    """Decrypt + return a system secret value, or None if unset."""
+    with conn() as c:
+        row = c.execute(
+            "SELECT value_enc FROM system_secrets WHERE key = ?", (key,),
+        ).fetchone()
+    if not row:
+        return None
+    from backend.markets.encryption import decrypt_token
+    try:
+        return decrypt_token(row["value_enc"])
+    except Exception:
+        return None
+
+
+def system_secret_meta(key: str) -> dict | None:
+    """Return ``{set_at, set_by, length}`` (no plaintext) for an admin UI.
+
+    Used by the Signal Search admin panel to render "set 14 days ago"
+    plus the (truncated) value length, without ever exposing the secret
+    itself in a server response.
+    """
+    with conn() as c:
+        row = c.execute(
+            "SELECT s.value_enc, s.updated_at, s.updated_by, u.username "
+            "FROM system_secrets s LEFT JOIN users u ON u.id = s.updated_by "
+            "WHERE s.key = ?",
+            (key,),
+        ).fetchone()
+    if not row:
+        return None
+    # Decrypt only to compute length — never returned to caller.
+    from backend.markets.encryption import decrypt_token
+    try:
+        plain = decrypt_token(row["value_enc"])
+        length = len(plain) if plain else 0
+    except Exception:
+        length = 0
+    return {
+        "set_at": int(row["updated_at"]) if row["updated_at"] else None,
+        "set_by_username": row["username"],
+        "length": length,
+    }
+
+
+def delete_system_secret(key: str) -> bool:
+    """Wipe a system secret. Returns True if a row was deleted."""
+    with conn() as c:
+        cur = c.execute("DELETE FROM system_secrets WHERE key = ?", (key,))
+    return cur.rowcount > 0

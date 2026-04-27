@@ -21,21 +21,32 @@
 
     <main class="main-content" id="main" tabindex="-1" role="main">
     <div class="ss-container">
-      <div class="ss-header">
-        <div>
-          <h1 class="ss-title">Signal Search</h1>
-          <p style="font-size:13px;color:var(--text-secondary);margin-top:4px">Save topics, auto-pull X posts, extract predictions with AI analysis.</p>
-        </div>
-        <button class="ss-add-btn" onclick="openModal()">+ Add Topic</button>
-      </div>
 
-      <div id="topics-container" class="ss-topics">
-        <div class="ss-empty" id="empty-state">
-          <div class="ss-empty-icon">&#x1F50D;</div>
-          <div style="font-size:16px;font-weight:600;margin-bottom:8px">No topics yet</div>
-          <div style="font-size:13px">Add your first topic to start tracking predictions from X.</div>
+      <header class="page-header">
+        <h1 class="page-title">Signal Search</h1>
+        <p class="page-subtitle">Save topics, auto-pull X posts, extract predictions with AI analysis.</p>
+      </header>
+
+      <section class="ss-card">
+        <div class="ss-card-head">
+          <div>
+            <h2 class="ss-card-title">Your topics</h2>
+            <p class="ss-card-subtitle">Up to 10 saved topics. Each runs on its own pull schedule.</p>
+          </div>
+          <button class="ss-add-btn" onclick="openModal()" type="button">+ Add Topic</button>
         </div>
-      </div>
+
+        <div id="topics-container" class="ss-topics">
+          <div class="ss-empty" id="empty-state">
+            <div class="ss-empty-icon">&#x1F50D;</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px">No topics yet</div>
+            <div style="font-size:13px">Add your first topic to start tracking predictions from X.</div>
+          </div>
+        </div>
+      </section>
+
+      {{ raw_admin_x_token_panel }}
+
     </div>
     </main>
 
