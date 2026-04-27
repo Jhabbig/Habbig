@@ -35,6 +35,7 @@ import db
 import notifications
 import server  # for ``app`` + ``_require_authenticated``
 from security.rate_limiter import rate_limit
+from sidebar import render_sidebar
 
 
 log = logging.getLogger("notification_routes")
@@ -277,11 +278,21 @@ async def notifications_page(request: Request):
     username = user.get("username") or (user.get("email") or "").split("@")[0] or "user"
     avatar_letter = (username[:1] or "?").upper()
     admin_link = '<a href="/admin" class="nav-item">Admin</a>' if user.get("is_admin") else ""
+    nav_role = server._role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="",
+        username=username,
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
     return server.render_page(
         "notifications",
         request=request,
         username=username,
         avatar_letter=avatar_letter,
         raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
         _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
     )

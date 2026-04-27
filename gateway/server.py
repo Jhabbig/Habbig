@@ -39,6 +39,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
+from sidebar import render_sidebar
 
 # Declarative rate-limit decorator used by a few admin/log endpoints. Lives
 # in security/rate_limiter.py so it can be shared across modules. Falls back
@@ -1056,6 +1057,10 @@ _PUBLIC_PATHS = frozenset({
     "/unsubscribe",
     # Public API endpoints called from the prerelease page
     "/api/newsletter", "/api/newsletter/position",
+    # Anonymous analytics beacon (POST) — fires from landing/dashboards
+    # before any session exists. See analytics.js + the
+    # /api/analytics/event handler near _hash_ip.
+    "/api/analytics/event",
     "/sitemap.xml", "/robots.txt",
     "/favicon.ico",
     "/.well-known/security.txt",
@@ -3442,21 +3447,29 @@ async def my_dashboards(request: Request):
                 open_url = f"http://localhost:{cfg['target']}"
             else:
                 open_url = f"https://{cfg['subdomain']}.{apex}"
-            cta = f'<a class="card-cta cta-open" href="{open_url}" target="_blank">Open →</a>'
+            card_href = open_url
+            card_attrs = ' target="_blank" rel="noopener"'
+            card_class = "dash-card"
+            action_label = "Open ↗"
         else:
-            cta = f'<a class="card-cta cta-sub" href="/billing?dashboard={key}" style="background:var(--accent);color:white;border-color:var(--accent)">Unlock</a>'
+            card_href = f"/billing?dashboard={key}"
+            card_attrs = ""
+            card_class = "dash-card dash-card--locked"
+            action_label = "Unlock →"
 
         cards_html.append(f"""
-        <div class="dash-card" style="--accent: {cfg['accent']}">
+        <a class="{card_class}" href="{card_href}"{card_attrs} style="--accent: {cfg['accent']}">
           <div class="dash-card-head">
-            <div class="dash-accent-dot"></div>
+            <span class="dash-accent-dot" aria-hidden="true"></span>
             {active_badge}
           </div>
-          <div class="dash-card-title">{cfg['display_name']}</div>
-          <div class="dash-card-desc">{cfg['description']}</div>
-          <div class="dash-card-price">&pound;{cfg['monthly_cents']/100:.0f}/mo &middot; &pound;{cfg['annual_cents']/100:.0f}/yr</div>
-          <div class="dash-card-foot">{cta}</div>
-        </div>
+          <h3 class="dash-card-title">{cfg['display_name']}</h3>
+          <p class="dash-card-desc">{cfg['description']}</p>
+          <div class="dash-card-foot">
+            <span class="dash-card-price">&pound;{cfg['monthly_cents']/100:.0f}/mo &middot; &pound;{cfg['annual_cents']/100:.0f}/yr</span>
+            <span class="dash-card-action">{action_label}</span>
+          </div>
+        </a>
         """)
 
     # Credits badge
@@ -3480,6 +3493,15 @@ async def my_dashboards(request: Request):
     signal_link = ""
     if pinfo["plan"] == "pro" or is_admin_user:
         signal_link = '<a href="/signal-search">Signal Search</a>'
+    nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="dashboards",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_signal_search_link=signal_link,
+        raw_nav_role=nav_role,
+    )
     return render_page(
         "dashboards", request=request,
         email=user["email"], username=user.get("username", user["email"]),
@@ -3487,7 +3509,8 @@ async def my_dashboards(request: Request):
         raw_credits_badge=credits_badge,
         raw_signal_search_link=signal_link,
         raw_admin_link=admin_link,
-        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+        raw_nav_role=nav_role, _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
     )
 
 
@@ -3768,6 +3791,14 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         access_desc = "Subscribe to a plan above to unlock dashboards."
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="billing",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
     return render_page(
         "billing", request=request,
         email=user["email"], username=user.get("username", user["email"]),
@@ -3775,7 +3806,8 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         raw_access_desc=access_desc,
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
-        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+        raw_nav_role=nav_role, _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
     )
 
 
@@ -3938,6 +3970,14 @@ async def preview_page(request: Request, dashboard_key: str):
     savings_pct = round((1 - cfg["annual_cents"] / monthly_total) * 100) if monthly_total > 0 else 0
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
 
     return render_page(
         "preview", request=request,
@@ -3952,7 +3992,8 @@ async def preview_page(request: Request, dashboard_key: str):
         raw_features_html="".join(features_html_parts),
         raw_includes_html="".join(includes_html_parts),
         raw_admin_link=admin_link,
-        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+        raw_nav_role=nav_role, _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
     )
 
 
@@ -4021,17 +4062,26 @@ def _profile_context(user: dict, banner: str = "") -> dict:
         # Collections module optional — profile still renders without it.
         log.exception("profile: public collections section failed")
 
+    nav_role = _role_badge(user)
+    sidebar_html = render_sidebar(
+        None,
+        active="",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
     return {
         "username": user.get("username", user["email"]),
         "email": user["email"],
         "avatar_letter": avatar,
         "joined": joined,
         "raw_role_badge": role_badge,
-        "raw_nav_role": _role_badge(user),
+        "raw_nav_role": nav_role,
         "raw_admin_link": admin_link,
         "raw_banner": banner,
         "raw_collections_section": collections_html,
         "_is_admin": user.get("is_admin"),
+        "raw_sidebar": sidebar_html,
     }
 
 
@@ -4220,6 +4270,115 @@ def _hash_ip(raw_ip: str) -> str:
         return ""
     import hashlib as _h
     return _h.sha256(f"{_IP_HASH_SALT}:{raw_ip}".encode()).hexdigest()
+
+
+# Master switch for server-side analytics. Defaults to enabled; flip to
+# "false"/"0" to keep the endpoint live (and 204) but skip DB writes.
+_ANALYTICS_ENABLED = os.environ.get("ANALYTICS_ENABLED", "true").strip().lower() not in {
+    "0", "false", "no", "off", ""
+}
+
+# event_type guard: ≤ 64 chars, alphanumeric + underscore. Mirrors the
+# slice() in static/analytics.js but enforces the charset server-side so a
+# malicious client cannot inject odd payloads into our reporting tables.
+_ANALYTICS_EVENT_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+
+
+@app.post("/api/analytics/event")
+async def api_analytics_event(request: Request):
+    """Record a single anonymous analytics event.
+
+    Public endpoint — landing/dashboards visitors are typically not
+    signed in. We resolve user_id best-effort from the session cookie so
+    authenticated traffic gets attributed when possible.
+
+    Analytics MUST NEVER 500: we wrap every step in try/except and return
+    204 on internal failure. Validation errors (bad event_type, malformed
+    JSON) still return 400 because those are caller bugs we want surfaced.
+    """
+    # Hard cap on body size — sendBeacon payloads from analytics.js are
+    # small (a few hundred bytes); anything larger is abuse.
+    try:
+        raw = await request.body()
+    except Exception:
+        return Response(status_code=204)
+    if len(raw) > 4096:
+        return Response(status_code=400)
+
+    try:
+        payload = json.loads(raw or b"{}")
+        if not isinstance(payload, dict):
+            return Response(status_code=400)
+    except (ValueError, _JSONDecodeError):
+        return Response(status_code=400)
+
+    event_type = str(payload.get("event_type") or "").strip()
+    if not _ANALYTICS_EVENT_RE.match(event_type):
+        return Response(status_code=400)
+
+    # Honour the kill switch AFTER validating shape so misbehaving clients
+    # still get a clear 400 in dev when ANALYTICS_ENABLED is off.
+    if not _ANALYTICS_ENABLED:
+        return Response(status_code=204)
+
+    try:
+        page = (str(payload.get("page") or "") or None)
+        if page is not None:
+            page = page[:512]
+        referrer = (str(payload.get("referrer") or "") or None)
+        if referrer is not None:
+            referrer = referrer[:512]
+        ua_cat = (str(payload.get("user_agent_category") or "") or None)
+        if ua_cat is not None:
+            ua_cat = ua_cat[:32]
+        session_id = payload.get("session_id")
+        if session_id is not None:
+            session_id = str(session_id)[:128]
+        properties = payload.get("properties")
+        if properties is not None and not isinstance(properties, dict):
+            properties = None
+
+        # Best-effort user_id from the session cookie. Stays None for
+        # anonymous landing visitors — that's the common case.
+        user_id: Optional[int] = None
+        try:
+            user = current_user(request)
+            if user:
+                user_id = user.get("user_id")
+        except Exception:
+            user_id = None
+
+        # Hash the client IP via the salted helper. Honour
+        # X-Forwarded-For when behind the Cloudflare/Tunnel front so the
+        # hash reflects the visitor, not the loopback proxy.
+        raw_ip = ""
+        try:
+            xff = request.headers.get("x-forwarded-for") or ""
+            if xff:
+                raw_ip = xff.split(",", 1)[0].strip()
+            if not raw_ip:
+                raw_ip = (request.client.host if request.client else "") or ""
+        except Exception:
+            raw_ip = ""
+        ip_hash = _hash_ip(raw_ip)
+
+        db.record_analytics_event(
+            event_type=event_type,
+            user_id=user_id,
+            session_id=session_id,
+            page=page,
+            referrer=referrer,
+            ip_hash=ip_hash,
+            user_agent_category=ua_cat,
+            properties=properties,
+        )
+    except Exception:
+        # Analytics MUST NEVER 500. Log and swallow so beacon callers
+        # don't see a failure that might trigger client-side retries.
+        log.warning("analytics.event_record_failed", exc_info=True)
+        return Response(status_code=204)
+
+    return Response(status_code=204)
 
 
 def _lookup_reset(token: str):
@@ -6077,6 +6236,14 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         "env_unit_flights": "selected" if _env_unit == "flights" else "",
     }
 
+    nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="settings",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
     return render_page(
         "settings", request=request,
         email=user["email"], username=user.get("username", user["email"]),
@@ -6086,8 +6253,9 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         raw_billing_section=billing_html,
         raw_security_section=sessions_html,
         raw_admin_link=admin_link,
-        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+        raw_nav_role=nav_role, _is_admin=user.get("is_admin"),
         env_show_checked=env_show_checked,
+        raw_sidebar=_sidebar,
         **env_unit_flags,
     )
 

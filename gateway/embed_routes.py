@@ -35,6 +35,7 @@ from server import (
     _role_badge,
     EMBED_CSP_DEFAULT,
 )
+from sidebar import render_sidebar
 
 
 log = logging.getLogger("embed_routes")
@@ -492,6 +493,13 @@ async def settings_embeds_page(request: Request):
     username = user["username"] or (user["email"] or "").split("@")[0]
     role_badge = _role_badge(user)
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    _sidebar = render_sidebar(
+        request,
+        active="settings",
+        username=username,
+        raw_admin_link=admin_link,
+        raw_nav_role=role_badge,
+    )
     return render_page(
         "settings_embeds",
         request=request,
@@ -500,6 +508,7 @@ async def settings_embeds_page(request: Request):
         raw_admin_link=admin_link,
         raw_role_badge=role_badge,
         _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
     )
 
 

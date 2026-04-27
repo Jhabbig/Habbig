@@ -17,28 +17,7 @@
 <body>
   <div class="app-shell">
 
-    <aside class="sidebar">
-      <div class="sidebar-logo">
-        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
-        <span class="sidebar-logo-text">narve.ai</span>
-      </div>
-
-      <nav class="sidebar-nav">
-        <div class="nav-section-header">Navigation</div>
-        <a href="/dashboards" class="nav-item">Dashboards</a>
-        <a href="/saved" class="nav-item">Saved</a>
-        <a href="/predictions" class="nav-item">Your predictions</a>
-        <a href="/billing" class="nav-item">Billing</a>
-        <a href="/settings" class="nav-item">Settings</a>
-        {{ raw_admin_link }}
-      </nav>
-
-      <a href="/profile" class="sidebar-user" style="text-decoration:none">
-        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
-        <span class="sidebar-user-name">{{ username }}</span>
-        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
-      </a>
-    </aside>
+    {{ raw_sidebar }}
 
     <div class="main-content">
       <div class="breadcrumb">
@@ -205,9 +184,6 @@
 
 <script>
 (function(){
-  var av = document.querySelector('.sidebar-user-avatar[data-username]');
-  if (av) { var u = av.getAttribute('data-username'); av.textContent = u ? u.charAt(0).toUpperCase() : '?'; }
-
   var slug = {{ raw_slug_json }};
   var marketYesPrice = {{ raw_market_yes_json }};
   var marketQuestion = {{ raw_market_question_json }};

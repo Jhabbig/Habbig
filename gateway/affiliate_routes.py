@@ -45,6 +45,7 @@ from server import (  # noqa: E402 — late import, matches server_features patt
     _is_rate_limited,
     log,
 )
+from sidebar import render_sidebar
 
 
 # ── Configuration ─────────────────────────────────────────────────────
@@ -306,6 +307,23 @@ async def affiliate_dashboard(request: Request):
     convs = da.list_affiliate_conversions(aff["id"], limit=50)
     summary = da.sum_affiliate_commissions(aff["id"])
     ctx = _affiliate_dashboard_context(request, aff, links, convs, summary)
+    _username = user.get("username") or user.get("email", "")
+    _admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    try:
+        from server import _role_badge as _rb
+        _nav_role = _rb(user)
+    except Exception:
+        _nav_role = ""
+    ctx["raw_sidebar"] = render_sidebar(
+        request,
+        active="settings",
+        username=_username,
+        raw_admin_link=_admin_link,
+        raw_nav_role=_nav_role,
+    )
+    ctx.setdefault("username", _username)
+    ctx.setdefault("raw_admin_link", _admin_link)
+    ctx.setdefault("raw_nav_role", _nav_role)
     return render_page("settings_affiliate", request=request, **ctx)
 
 

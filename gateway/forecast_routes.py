@@ -40,6 +40,7 @@ import db_forecasts
 import server
 from server import app, render_page, current_user, log as _root_log  # noqa: F401
 from external_forecasts.base import PROVIDERS
+from sidebar import render_sidebar
 
 
 log = logging.getLogger("forecast_routes")
@@ -215,20 +216,30 @@ async def dashboard_models(request: Request):
 
     rows_html = _render_divergence_rows(summary["per_provider"], brier)
 
+    _username = user.get("username") or user.get("email", "")
+    _admin_link = (
+        '<a href="/admin" class="nav-item">Admin</a>' if user.get("is_admin") else ""
+    )
+    _sidebar = render_sidebar(
+        request,
+        active="settings",
+        username=_username,
+        raw_admin_link=_admin_link,
+        raw_nav_role="",
+    )
     return render_page(
         "dashboard_models",
         request=request,
-        username=user.get("username") or user.get("email", ""),
+        username=_username,
         raw_nav_role="",
-        raw_admin_link=(
-            '<a href="/admin" class="nav-item">Admin</a>' if user.get("is_admin") else ""
-        ),
+        raw_admin_link=_admin_link,
         total_markets=summary["total_markets"],
         total_snapshots=summary["total_snapshots"],
         resolved_markets_scored=sum(s["markets"] for s in brier.values()),
         disclaimer=DISCLAIMER,
         raw_divergence_rows=rows_html,
         window_days=30,
+        raw_sidebar=_sidebar,
     )
 
 

@@ -25,6 +25,7 @@ from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
+from sidebar import render_sidebar
 
 
 log = logging.getLogger("gateway.user_prediction_routes")
@@ -326,17 +327,28 @@ async def predictions_history_page(request: Request):
         for lbl, val in summary_parts
     )
 
+    nav_role = _role_badge(user)
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    _sidebar = render_sidebar(
+        request,
+        active="predictions",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
     return _render(
         "predictions_history",
         request=request,
         email=user["email"],
         username=user.get("username", user["email"]),
-        raw_nav_role=_role_badge(user),
+        raw_nav_role=nav_role,
+        raw_admin_link=admin_link,
         raw_summary_cards=summary_html,
         raw_prediction_rows=_build_prediction_rows_html(rows) or
             '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">'
             'No predictions yet. Visit any market to log one.'
             '</div></div></div>',
+        raw_sidebar=_sidebar,
     )
 
 

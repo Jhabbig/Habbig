@@ -16,31 +16,7 @@
 <body>
   <div class="app-shell">
 
-    <aside class="sidebar">
-      <div class="sidebar-logo">
-        <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:22px;height:22px;filter:invert(1);border-radius:4px">
-        <span class="sidebar-logo-text">narve.ai</span>
-      </div>
-
-      <nav class="sidebar-nav">
-        <div class="nav-section-header">Navigation</div>
-        <a href="/dashboards" class="nav-item">Dashboards</a>
-        <a href="/predictions" class="nav-item">Predictions</a>
-        <a href="/saved" class="nav-item">Saved</a>
-        <a href="/billing" class="nav-item">Billing</a>
-        <a href="/settings" class="nav-item">Settings</a>
-        <a href="/settings/saved-views" class="nav-item active">Saved views</a>
-        {{ raw_admin_link }}
-      </nav>
-
-      <div id="pinned-views"></div>
-
-      <a href="/profile" class="sidebar-user" style="text-decoration:none">
-        <div class="sidebar-user-avatar" data-username="{{ username }}"></div>
-        <span class="sidebar-user-name">{{ username }}</span>
-        <span class="sidebar-user-tier">{{ raw_nav_role }}</span>
-      </a>
-    </aside>
+    {{ raw_sidebar }}
 
     <div class="main-content">
       <div class="breadcrumb">

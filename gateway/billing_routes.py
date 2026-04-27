@@ -54,6 +54,7 @@ from server import (
 # their feed and what tier they map to for best_bets, so every subscription
 # mutation below calls through ttl_invalidate.on_subscription_change(uid).
 from cache import ttl_invalidate
+from sidebar import render_sidebar
 
 
 # ── Per-user billing rate limit (AUDIT #5 MED #6) ─────────────────────────
@@ -604,6 +605,14 @@ async def settings_billing_page(request: Request):
         card_expiry = "Managed by Stripe"
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="settings",
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        raw_nav_role=nav_role,
+    )
 
     return render_page(
         "settings_billing", request=request,
@@ -623,7 +632,8 @@ async def settings_billing_page(request: Request):
         monthly_active=("active" if current_interval == "monthly" else ""),
         annual_active=("active" if current_interval == "annual" else ""),
         raw_admin_link=admin_link,
-        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+        raw_nav_role=nav_role, _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
     )
 
 
