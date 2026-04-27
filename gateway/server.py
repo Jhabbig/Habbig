@@ -6649,12 +6649,72 @@ async def signal_search_page(request: Request):
         )
     except Exception:
         sidebar_html = ""
+
+    # Super-admin only: X bearer token panel. Hidden entirely for
+    # non-admins (empty string) so the form / endpoint don't leak a
+    # signal that an admin surface exists. Metadata is fetched
+    # server-side once so the page doesn't have to make an extra
+    # round-trip on first paint.
+    admin_x_panel = ""
+    if user.get("is_admin"):
+        try:
+            meta = db.system_secret_meta("signal_search.x_bearer") or {}
+        except Exception:
+            meta = {}
+        if meta.get("set_at"):
+            import datetime as _dt
+            ago = int(time.time()) - int(meta["set_at"])
+            days = max(1, ago // 86400) if ago >= 86400 else 0
+            if days >= 1:
+                state_when = f"{days} day{'s' if days != 1 else ''} ago"
+            else:
+                hrs = max(1, ago // 3600)
+                state_when = f"{hrs} hour{'s' if hrs != 1 else ''} ago"
+            who = html.escape(meta.get("set_by_username") or "system")
+            length = int(meta.get("length") or 0)
+            state = (
+                f'Token set {state_when} by <code>{who}</code> '
+                f'(length {length})'
+            )
+        else:
+            state = "No token configured."
+        # Inline JS so it sits next to the markup it controls.
+        admin_x_panel = (
+            '<section class="ss-admin-card" id="ss-admin-x">'
+            '<span class="ss-admin-badge">Super-admin</span>'
+            '<h2 class="ss-card-title">X (Twitter) bearer token</h2>'
+            '<p class="ss-card-subtitle" style="margin:4px 0 14px">'
+            'Used by the auto-pull worker to fetch posts. Encrypted at rest. '
+            'Rotating here takes effect on the next pull cycle.</p>'
+            f'<p class="ss-admin-state" id="ss-admin-x-state">{state}</p>'
+            '<form class="ss-admin-form" id="ss-admin-x-form" autocomplete="off">'
+            '<input type="password" id="ss-admin-x-input" name="token" '
+            'placeholder="Paste new bearer token…" '
+            'autocomplete="new-password" spellcheck="false">'
+            '<button type="submit" class="primary">Save</button>'
+            '<button type="button" class="danger" id="ss-admin-x-clear">Clear</button>'
+            '</form>'
+            '<p class="ss-admin-status" id="ss-admin-x-status" role="status" aria-live="polite"></p>'
+            '<script>(function(){'
+            'function csrf(){var m=document.cookie.match(/(?:^|;\\s*)_csrf=([^;]*)/);return m?decodeURIComponent(m[1]):"";}'
+            'var f=document.getElementById("ss-admin-x-form");'
+            'var inp=document.getElementById("ss-admin-x-input");'
+            'var st=document.getElementById("ss-admin-x-status");'
+            'var sd=document.getElementById("ss-admin-x-state");'
+            'function refresh(){fetch("/api/admin/signal-search/x-token",{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){if(!j.set){sd.textContent="No token configured.";return;}var t=new Date((j.set_at||0)*1000);sd.textContent="Token set "+t.toLocaleString()+" (length "+(j.length||0)+")";});}'
+            'f.addEventListener("submit",function(e){e.preventDefault();st.textContent="Saving…";var fd=new FormData(); fd.append("token",inp.value); fetch("/api/admin/signal-search/x-token",{method:"POST",credentials:"same-origin",headers:{"X-CSRF-Token":csrf()},body:fd}).then(function(r){return r.json().then(function(j){return {ok:r.ok,body:j};});}).then(function(res){if(res.ok){st.textContent="Saved.";st.style.color="var(--text-secondary)";inp.value="";refresh();}else{st.textContent=(res.body&&res.body.error)||"Save failed.";st.style.color="var(--red,#ef4444)";}}).catch(function(){st.textContent="Network error.";st.style.color="var(--red,#ef4444)";});});'
+            'document.getElementById("ss-admin-x-clear").addEventListener("click",function(){if(!confirm("Clear the X bearer token? Auto-pull will fail until a new one is set."))return;fetch("/api/admin/signal-search/x-token",{method:"DELETE",credentials:"same-origin",headers:{"X-CSRF-Token":csrf()}}).then(function(r){return r.json();}).then(function(){st.textContent="Cleared.";st.style.color="var(--text-secondary)";refresh();});});'
+            '})();</script>'
+            '</section>'
+        )
+
     return render_page(
         "signal-search",
         username=username,
         raw_admin_link=admin_link,
         raw_nav_role=role_badge,
         raw_sidebar=sidebar_html,
+        raw_admin_x_token_panel=admin_x_panel,
         _is_admin=user.get("is_admin"),
     )
 

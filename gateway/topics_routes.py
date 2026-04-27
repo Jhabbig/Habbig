@@ -165,6 +165,94 @@ async def api_topic_analysis(request: Request, topic_id: int):
     })
 
 
+# ── Super-admin: X (Twitter) bearer token ─────────────────────────────
+#
+# The auto-pull machinery will eventually need an X bearer token to
+# scrape posts. Rather than baking it into the env (forces an SSH +
+# restart to rotate), we store it Fernet-encrypted in
+# ``system_secrets`` keyed as ``signal_search.x_bearer`` and let a
+# super-admin set / rotate / clear it from the UI.
+#
+# All three endpoints are admin-only via ``_require_admin_user``;
+# anonymous + non-admin requests get the same 404 the rest of /admin/
+# returns so we don't even leak that the endpoint exists.
+
+_X_BEARER_KEY = "signal_search.x_bearer"
+
+
+def _require_admin(request: Request):
+    srv = _srv()
+    user = srv.current_user(request)
+    if not user or not user.get("is_admin"):
+        raise HTTPException(status_code=404, detail="Not found")
+    return user
+
+
+async def api_admin_x_token_get(request: Request):
+    """Return metadata about the stored X bearer token. Never the value.
+
+    Frontend uses this to render "Token set 14 days ago by alice
+    (length 96)" so the admin can audit without seeing the secret.
+    """
+    _require_admin(request)
+    meta = db.system_secret_meta(_X_BEARER_KEY)
+    if not meta:
+        return JSONResponse({"set": False})
+    return JSONResponse({"set": True, **meta})
+
+
+async def api_admin_x_token_set(request: Request):
+    """Save / rotate the X bearer token (admin only, CSRF-required)."""
+    admin = _require_admin(request)
+    srv = _srv()
+    # Reuse the global CSRF check so this endpoint is protected the
+    # same way every other state-changing form is.
+    if hasattr(srv, "_check_csrf"):
+        try:
+            srv._check_csrf(request)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    form = await request.form()
+    token = (form.get("token") or "").strip()
+    if not token:
+        return JSONResponse(
+            {"error": "Token cannot be empty. Use DELETE to clear."},
+            status_code=400,
+        )
+    if len(token) > 4096:
+        return JSONResponse(
+            {"error": "Token suspiciously long (>4 KB) — refusing."},
+            status_code=400,
+        )
+    db.set_system_secret(
+        _X_BEARER_KEY, token, admin_user_id=admin["user_id"],
+    )
+    log.info(
+        "signal_search.x_bearer rotated by admin %s (len=%d)",
+        admin["user_id"], len(token),
+    )
+    return JSONResponse({"ok": True, **(db.system_secret_meta(_X_BEARER_KEY) or {})})
+
+
+async def api_admin_x_token_delete(request: Request):
+    """Wipe the X bearer token. Admin only."""
+    admin = _require_admin(request)
+    srv = _srv()
+    if hasattr(srv, "_check_csrf"):
+        try:
+            srv._check_csrf(request)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    deleted = db.delete_system_secret(_X_BEARER_KEY)
+    if deleted:
+        log.info("signal_search.x_bearer cleared by admin %s", admin["user_id"])
+    return JSONResponse({"ok": True, "cleared": deleted})
+
+
 def register(app) -> None:
     """Wire all topic routes into the given FastAPI app."""
     app.add_api_route("/api/topics", api_list_topics, methods=["GET"])
@@ -173,3 +261,6 @@ def register(app) -> None:
     app.add_api_route("/api/topics/{topic_id}/pull", api_topic_pull, methods=["POST"])
     app.add_api_route("/api/topics/{topic_id}/predictions", api_topic_predictions, methods=["GET"])
     app.add_api_route("/api/topics/{topic_id}/analysis", api_topic_analysis, methods=["GET"])
+    app.add_api_route("/api/admin/signal-search/x-token", api_admin_x_token_get, methods=["GET"])
+    app.add_api_route("/api/admin/signal-search/x-token", api_admin_x_token_set, methods=["POST"])
+    app.add_api_route("/api/admin/signal-search/x-token", api_admin_x_token_delete, methods=["DELETE"])
