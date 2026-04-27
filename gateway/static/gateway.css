@@ -387,6 +387,41 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
   transition: gap 0.15s ease;
 }
 
+/* ── Unified empty-state row ───────────────────────────────────────
+ * Single utility for the dozen-plus places that say "No X yet" in
+ * lists / tables / admin panels. Replaces inline
+ *   style="text-align:center;padding:24px;color:var(--text-tertiary);font-size:13px"
+ * blocks scattered across admin.html, predictions.html, saved.html,
+ * signal-search.html, etc. Two flavors:
+ *   .empty-state-row  — dense, fits inside a card / list (24 px
+ *                       padding, 13 px text)
+ *   .empty-state      — full-bleed, illustrated, used on standalone
+ *                       pages (already declared elsewhere with the
+ *                       icon glyph + title/body)
+ * Both share the same monochrome treatment so the voice feels one.
+ */
+.empty-state-row {
+  text-align: center;
+  padding: 24px 16px;
+  color: var(--text-tertiary, var(--text-muted));
+  font-size: 13px;
+  line-height: 1.5;
+}
+.empty-state-row__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+.empty-state-row__body {
+  font-size: 13px;
+  margin: 0;
+}
+.empty-state-row__cta {
+  margin-top: 14px;
+  display: inline-block;
+}
+
 .dash-card:hover .dash-card-action {
   gap: 6px;
 }
