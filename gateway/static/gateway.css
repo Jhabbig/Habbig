@@ -276,7 +276,10 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border: 1px solid var(--border);
+  /* Bumped from --border (= --border-default #cccccc) to --border-strong
+     (#b0b0b0 light / #383838 dark) so cards have a clearly visible
+     edge instead of fading into the page. */
+  border: 1px solid var(--border-strong, var(--border));
   border-radius: var(--radius);
   padding: 22px 22px 18px;
   box-shadow: var(--shadow-sm);
@@ -956,7 +959,7 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
 
 .settings-card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong, var(--border));
   border-radius: var(--radius);
   padding: 32px;
   box-shadow: var(--shadow-sm);
@@ -1073,7 +1076,9 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
   gap: 24px;
   align-items: start;
   padding: 18px 0;
-  border-top: 1px solid var(--border-ghost);
+  /* Bumped from --border-ghost (#ebebeb) to --border-subtle (#e0e0e0)
+     so the row separator is actually visible against the card bg. */
+  border-top: 1px solid var(--border-subtle, var(--border-ghost));
 }
 .field-row:first-child { border-top: 0; padding-top: 0; }
 .field-row .field-label {
@@ -1177,7 +1182,7 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
      </div> */
 .admin-card {
   background: var(--bg-surface);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-strong, var(--border-default));
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
@@ -1984,7 +1989,10 @@ label[for] + textarea {
   gap: var(--space-2);
   padding: var(--space-5) var(--space-3);
   background: var(--bg-surface);
-  border-right: 1px solid var(--border-subtle);
+  /* Bumped from --border-subtle (#e0e0e0) to --border-default (#cccccc)
+     so the sidebar clearly separates from the main content area
+     instead of melting into the page on light theme. */
+  border-right: 1px solid var(--border-default, var(--border-subtle));
   min-height: 100vh;
   min-height: 100dvh;
   position: sticky;
@@ -2209,7 +2217,10 @@ label[for] + textarea {
 .page-header {
   margin-bottom: var(--space-5);
   padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border-ghost);
+  /* Bumped to --border-default so the title block clearly separates
+     from the page body — the previous --border-ghost was effectively
+     invisible on a near-white surface. */
+  border-bottom: 1px solid var(--border-default, var(--border-ghost));
 }
 .page-title {
   font-size: 28px;
