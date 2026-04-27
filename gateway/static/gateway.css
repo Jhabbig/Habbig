@@ -2209,12 +2209,12 @@ label[for] + textarea {
 /* ── Main content ───────────────────────────────────────────────────── */
 .main-content {
   grid-area: main;
-  /* Top stays --space-4 so the sticky breadcrumb has consistent
-     headroom; horizontal padding scales with viewport so content
-     never butts up against the sidebar (the previous --page-pad of
-     24 px was too tight on wide screens — content read as glued to
-     the rail). Bottom stays at --page-pad. */
-  padding: var(--space-4) clamp(28px, 4vw, 56px) var(--page-pad);
+  /* Bumped horizontal padding from clamp(28-56) to clamp(40-96) so
+     content has real breathing room from the sidebar rail. The 12 px
+     gap that screenshots showed was way too tight; on wide screens
+     we now get ~96 px on each side, which lets the framed page-body
+     stand on its own with proper margins. */
+  padding: var(--space-4) clamp(40px, 5vw, 96px) var(--page-pad);
   max-width: 100%;
   overflow-x: hidden;
 }
@@ -2269,13 +2269,14 @@ label[for] + textarea {
   flex-direction: column;
   gap: var(--section-gap);
   background: var(--surface);
-  /* Bumped from 1 px var(--border-strong) (#b0b0b0) to 2 px solid
-     var(--text-primary) — nearly-black border that's impossible to
-     miss. The frame should clearly read as a defined viewport, not
-     a subtle separator. */
+  /* 2 px near-black border so the frame clearly reads as a defined
+     viewport, not a subtle separator. */
   border: 2px solid var(--text-primary, #111);
   border-radius: 14px;
   padding: clamp(20px, 2.5vw, 32px);
+  /* Defensive: if main-content's padding gets overridden somewhere,
+     the frame still keeps a real margin from any neighbour. */
+  margin: var(--space-3) 0 var(--space-5);
   /* Outer shadow gives the frame depth — feels like a panel
      floating above the page bg instead of merging with it. */
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
