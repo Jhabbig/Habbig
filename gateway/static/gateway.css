@@ -2211,8 +2211,11 @@ label[for] + textarea {
   grid-area: main;
   /* !important to defeat any per-page override that was making the
      content butt up against the sidebar. Padding is clamp(48-120)
-     horizontally so wide screens get up to 120 px of gutter. */
+     horizontally so wide screens get up to 120 px of gutter.
+     Top border adds a visible "ceiling" so the content area reads
+     as a defined region instead of bleeding off into the chrome. */
   padding: var(--space-4) clamp(48px, 6vw, 120px) var(--page-pad) !important;
+  border-top: 2px solid var(--text-primary, #111);
   max-width: 100%;
   overflow-x: hidden;
 }
@@ -2270,22 +2273,10 @@ label[for] + textarea {
   border: 2px solid var(--text-primary, #111);
   border-radius: 14px;
   padding: clamp(20px, 2.5vw, 32px);
-  /* Cap the frame width so on a wide monitor it doesn't stretch
-     out endlessly — auto margins center it, so even if main-content
-     padding fails the frame still sits inboard with whitespace on
-     each side. Plus a real top/bottom margin from neighbours. */
-  max-width: 1180px;
-  margin: var(--space-3) auto var(--space-5);
+  /* Frame fills the padded main-content (left-aligned, NOT centered).
+     Just keeps a top + bottom margin from neighbouring blocks. */
+  margin: var(--space-3) 0 var(--space-5);
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
-}
-/* Same width cap on the page-header so it lines up with the frame
-   below — without it the breadcrumb + title would sit edge-aligned
-   against the (much-wider) main-content while the frame is centered. */
-.main-content > .breadcrumb,
-.main-content > .page-header {
-  max-width: 1180px;
-  margin-left: auto;
-  margin-right: auto;
 }
 /* Pages that intentionally render full-width grids (the dashboards
    tile grid, the landing-page hero) opt out via .content-area--bare. */
