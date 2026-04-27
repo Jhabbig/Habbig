@@ -19,6 +19,7 @@
       z-index: 10;
     }
     .gate-logo-icon { width: 28px; height: 28px; filter: invert(1); border-radius: 4px; }
+    [data-theme="dark"] .gate-logo-icon { filter: none; }
     .gate-logo-text {
       font-family: var(--font-ui);
       font-weight: 500;

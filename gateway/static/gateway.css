@@ -2023,6 +2023,20 @@ label[for] + textarea {
 [data-theme="dark"] .sidebar-logo-img {
   filter: var(--logo-filter, none);
 }
+
+/* Generic brand-logo class for everywhere outside the sidebar (header
+   bars on legacy pages, gate, forgot-password, invite, landing, etc.).
+   Same theme-aware filter chain as .sidebar-logo-img — replaces a few
+   dozen inline `style="...filter:invert(1)..."` blocks that were
+   theme-blind and turned the logo invisible in dark mode. */
+.brand-logo {
+  border-radius: 4px;
+  flex-shrink: 0;
+  filter: var(--logo-filter, invert(1));
+}
+[data-theme="dark"] .brand-logo {
+  filter: var(--logo-filter, none);
+}
 .sidebar-logo-text {
   font-weight: 600;
   font-size: 14px;
