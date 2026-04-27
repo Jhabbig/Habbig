@@ -6631,11 +6631,31 @@ async def signal_search_page(request: Request):
     except Exception:
         pass
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    role_badge = _role_badge(user)
+    username = user.get("username", user["email"])
+    # Always inject the Signal Search nav item with class="active" so the
+    # current page highlights and the user can still see where they are
+    # in the sidebar. The upgradeInjected JS preserves existing classes
+    # while adding nav-item, so 'active' survives the upgrade.
+    signal_link = '<a href="/signal-search" class="active" aria-current="page">Signal Search</a>'
+    try:
+        from sidebar import render_sidebar as _render_sidebar
+        sidebar_html = _render_sidebar(
+            request, active="signal-search",
+            username=username,
+            raw_admin_link=admin_link,
+            raw_signal_search_link=signal_link,
+            raw_nav_role=role_badge,
+        )
+    except Exception:
+        sidebar_html = ""
     return render_page(
         "signal-search",
-        username=user.get("username", user["email"]),
+        username=username,
         raw_admin_link=admin_link,
-        raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"),
+        raw_nav_role=role_badge,
+        raw_sidebar=sidebar_html,
+        _is_admin=user.get("is_admin"),
     )
 
 
