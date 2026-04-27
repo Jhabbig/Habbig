@@ -15,23 +15,11 @@
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <header class="gw-header">
-    <div class="gw-brand">
-      <img src="/_gateway_static/img/logo.png" alt="narve.ai" style="width:24px;height:24px;filter:invert(1);border-radius:4px">
-      <span>narve.ai</span>
-    </div>
-    <nav class="gw-nav">
-      <a href="/dashboards">Dashboards</a>
-      <a href="/signal-search" class="active">Signal Search</a>
-      <a href="/billing">Billing</a>
-      <a href="/settings">Settings</a>
-      {{ raw_admin_link }}
-      <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>{{ raw_nav_role }}
-      <a href="/logout">Sign out</a>
-    </nav>
-  </header>
+  <div class="app-shell">
 
-  <main class="gw-main">
+    {{ raw_sidebar }}
+
+    <main class="main-content" id="main" tabindex="-1" role="main">
     <div class="ss-container">
       <div class="ss-header">
         <div>
@@ -49,7 +37,9 @@
         </div>
       </div>
     </div>
-  </main>
+    </main>
+
+  </div>
 
   <!-- Add Topic Modal -->
   <div class="ss-modal-overlay" id="add-modal" onclick="if(event.target===this)closeModal()">
