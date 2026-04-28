@@ -2209,13 +2209,10 @@ label[for] + textarea {
 /* ── Main content ───────────────────────────────────────────────────── */
 .main-content {
   grid-area: main;
-  /* !important to defeat any per-page override that was making the
-     content butt up against the sidebar. Padding is clamp(48-120)
-     horizontally so wide screens get up to 120 px of gutter.
-     Top border adds a visible "ceiling" so the content area reads
-     as a defined region instead of bleeding off into the chrome. */
-  padding: var(--space-4) clamp(48px, 6vw, 120px) var(--page-pad) !important;
-  border-top: 2px solid var(--text-primary, #111);
+  /* Original tight gutter — no inflated horizontal padding, no top
+     border. Content sits flush with the rail divider; the framed
+     .content-area inside provides its own visual structure. */
+  padding: var(--space-4) var(--page-pad) var(--page-pad);
   max-width: 100%;
   overflow-x: hidden;
 }
