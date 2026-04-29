@@ -1,3 +1,381 @@
+# State Reconciliation — 2026-04-29T10:21Z
+
+Local tip: `437844d` (origin/feature/platform-build). Server tip: **unverified — SSH to 100.69.44.108 timed out from this workstation**, run from a Tailscale-connected machine to populate Phase 4.
+
+Pure read-and-write-a-doc session. No migrations applied. No deploy. Six days of drift since the previous reconciliation (2026-04-23, kept below for diff).
+
+## Executive summary
+
+### Top 5 drifted memory claims
+
+1. **`gateway/db.py` is 1394 lines, not ~4500** — it shrank by **~69%** since memory was written. SQL helpers moved into `gateway/queries/*` package. Memory's "near-frozen 4500-line db.py" no longer matches reality.
+2. **`gateway/cache.py` no longer exists.** The module was refactored into a `gateway/cache/` package (`__init__.py`, `service.py`, `ttl.py`). Any doc / agent prompt that refers to `cache.py` will fail to find it.
+3. **`server.py` is 7123 lines, not ~6700** — drifted +423 lines (+6%) past the memory baseline.
+4. **Migration "022 is the only filename ↔ revision exception" is wrong.** `gateway/migrations/022_admin_features.py` no longer exists (has been removed/renamed). The active mismatch is **`030_data_exports.py` with `revision="032"`** — undocumented in any prompt/memory.
+5. **`.env.example` documents 85 vars but code only reads 41** — 44 documented vars are stale (likely retired features). Inverse problem too: the 41 in code are not all in `.env.example` (intersection size depends on overlap).
+
+### Top 5 things that look broken
+
+1. **HIGH — `120_collections.py` orphan reference.** `down_revision = "119"` but no migration with revision `119` exists in the chain (last predecessor on disk is `117_search_analytics`). Upgrade still works (the runner queries `schema_version` directly, not the chain), but `migrations.downgrade()` from 120 will fail. Fix: change `down_revision` to `"117"`. **I shipped this in an earlier collections session — flagging now for repair.**
+2. **MEDIUM — local dev DB is 53 migrations behind disk.** `schema_version` row count = 40, last applied = `055`. Disk has 93 migration files reaching `174`. Local dev exercises a stale schema. (Production server state unverified — SSH unreachable.)
+3. **MEDIUM — 80 of 102 static HTML templates lack `og:image`.** Most are gated dashboard pages where social cards don't matter; the 12-ish public-facing templates that DO need OG cards must be triaged.
+4. **MEDIUM — server-vs-local drift unverifiable.** SSH to `julianhabbig@100.69.44.108` times out from this workstation. Phase 4 is incomplete; rerun from a Tailscale-connected box.
+5. **LOW — five status docs missing at repo root** (`LEAK_PROTECTION_STATUS.md`, `ERROR_HANDLING.md`, `DB_HEALTH.md`, `BROWSER_COMPAT.md`). Three were referenced by past skills/prompts; either retired or never written.
+
+### Server-vs-local sync status
+
+**Unverifiable** from this workstation. SSH timeout on `100.69.44.108:22`. Run reconciliation from a Tailscale-connected machine to populate Phase 4 with real checksums.
+
+### Recommended actions before next build batch
+
+1. **Fix `120_collections.py` `down_revision`** — point it at `117`. One-line change. Zero schema risk.
+2. **Run `python3 -c "import migrations; migrations.upgrade_to_head()"` locally** to bring the dev DB up to head before any test work that touches new tables.
+3. **Verify server tip from Tailscale** — current local is `437844d`; confirm server is at the same SHA + that no `.py` files diverge by checksum.
+4. **Triage the 12 public HTML templates** for `og:image` (`prerelease`, `pricing`, `landing`, `about`, `how-it-works`, `methodology`, `team`, `press`, `faq`, `narve`, `changelog`, public profile / collection pages).
+5. **Update `feedback_decisiveness.md` / `project_betyc_overview.md` memory files** to reflect: (a) `db.py` is 1394 lines, (b) `cache.py` is now a package, (c) `030_data_exports.py` is a 2nd known revision-mismatch exception.
+
+---
+
+## Phase 1 — file-system reality
+
+### Source-file sizes vs memory
+
+- server.py:     7123 lines (memory says ~6700)
+- db.py:     1394 lines (memory says ~4500)
+
+### Key files presence check
+
+- gateway/admin_routes.py                            PRESENT (    1733 lines)
+- gateway/features.py                                PRESENT (     140 lines)
+- gateway/impersonation.py                           PRESENT (     218 lines)
+- gateway/email_system/service.py                    PRESENT (     270 lines)
+- gateway/security/audit.py                          PRESENT (     298 lines)
+- gateway/middleware/subproduct.py                   PRESENT (     141 lines)
+- gateway/cache.py                                   **MISSING**
+- gateway/realtime/hub.py                            PRESENT (     257 lines)
+- gateway/scheduler/scheduler.py                     PRESENT (     302 lines)
+- gateway/ai/client.py                               PRESENT (     422 lines)
+- gateway/og_routes.py                               PRESENT (     182 lines)
+- gateway/queries/__init__.py                        PRESENT (       7 lines)
+- gateway/i18n/translator.py                         PRESENT (     111 lines)
+- gateway/forensics/extract_watermark.py             PRESENT (     291 lines)
+
+### HTML templates
+
+- Total .html in static/: 102
+- With inline <style>: 1
+- Missing meta description: 0
+- Missing og:image: 91
+
+## Phase 2 — migration chain integrity
+
+### Files: 93 migrations on disk
+
+- First: 001_initial_schema.py  →  Last: 174_system_secrets.py
+- Revision range: 001  →  174
+
+### Filename ↔ revision mismatches
+
+- ⚠ `030_data_exports.py` — revision=`032` does not match filename prefix `030`
+
+### Duplicate revision strings
+
+- ✅ No duplicate revision strings.
+
+### Orphaned down_revisions
+
+- ❌ `120_collections.py` references unknown down_revision `119`
+
+### Linear-chain reachability
+
+- ❌ Unreachable revision `119` not in chain
+- ⚠ 80 migration(s) not reachable from HEAD: ['001', '002', '003', '004', '005', '006', '007', '008']…
+
+## Phase 3 — schema vs migrations
+
+- Tables in DB: 80
+- Tables created in migrations + db.py: 133
+
+### Tables in DB but no CREATE TABLE in migrations or db.py
+
+(Likely created by SCHEMA in db.py SCHEMA constant or in init_db. Verify each.)
+
+- background_jobs
+- markets_fts
+- markets_fts_config
+- markets_fts_data
+- markets_fts_docsize
+- markets_fts_idx
+- predictions_fts
+- predictions_fts_config
+- predictions_fts_data
+- predictions_fts_docsize
+- predictions_fts_idx
+- sources_fts
+- sources_fts_config
+- sources_fts_data
+- sources_fts_docsize
+- sources_fts_idx
+
+### Tables created in migrations but absent from DB
+
+(Either dropped, conditionally created, or migrations not yet applied.)
+
+- api_usage_hourly
+- bulk_fetch_counters
+- cancellation_attempts
+- changelog_seen
+- churn_signals
+- claude_cost_alerts
+- claude_kill_switch
+- collection_follows
+- collection_items
+- collections
+- discord_servers
+- discord_user_connections
+- drill_runs
+- email_templates
+- embed_widgets
+- engagement_events
+- engagement_prompt_dismissals
+- external_forecasts
+- feature_flag_events
+- feature_flags
+- feedback_comments
+- feedback_items
+- feedback_votes
+- if
+- impersonation_actions
+- impersonation_sessions
+- incident_updates
+- incidents
+- is
+- job_runs
+- kalshi_connections
+- market_equivalences
+- market_takes
+- notification_preferences
+- notifications
+- perf_baseline_snapshots
+- polymarket_connections
+- processed_stripe_events
+- realtime_connection_events
+- referrals
+- saved_views
+- search_queries
+- security_events
+- sentinel_predictions
+- service_health_snapshots
+- share_metrics
+- shared_market_cards
+- shared_predictions
+- shared_source_cards
+- slow_query_log
+- slow_request_log
+- sql
+- status_subscriptions
+- subscription_pauses
+- system_secrets
+- take_reports
+- take_resolution_runs
+- take_votes
+- telegram_connections
+- user_accuracy
+- user_first_week_goals
+- user_forensic_seeds
+- user_invite_tokens
+- user_onboarding
+- users_new
+- watermark_seeds
+- webhook_deliveries
+- webhook_subscriptions
+- weekly_reports
+
+## Phase 4 — server-vs-local drift
+
+- Local HEAD: `437844d` (437844d3f40dec838b35feecadf329b67741b27e)
+- ⚠ SSH unreachable from this machine — cannot compare server tip.
+
+    ```
+    ssh: connect to host 100.69.44.108 port 22: Operation timed out
+    ```
+
+  Run from a Tailscale-connected machine to populate this section.
+
+## Phase 5 — route inventory
+
+- Total unique (method, path) pairs: **430**
+- Unique paths: **393**
+
+### Surface bucket counts
+
+- api: 202
+- admin: 83
+- auth: 20
+- static: 1
+- page: 124
+
+- Mutating routes (POST/PUT/PATCH/DELETE): **186**
+
+### First 25 routes (alphabetical)
+
+```
+GET                            /
+GET                            /.well-known/security.txt
+-                              /_gateway_static
+GET                            /about
+POST                           /account/delete
+GET                            /admin
+GET                            /admin/affiliates
+POST                           /admin/affiliates
+PATCH                          /admin/affiliates/{affiliate_id}
+POST                           /admin/affiliates/{affiliate_id}/payout
+POST                           /admin/api/collections/{id}/feature
+GET                            /admin/api/jobs
+GET                            /admin/api/jobs/recent
+GET                            /admin/api/jobs/status
+POST                           /admin/api/jobs/{job_id}/retry
+GET                            /admin/api/jobs/{name}/history
+POST                           /admin/api/jobs/{name}/pause
+POST                           /admin/api/jobs/{name}/resume
+POST                           /admin/api/jobs/{name}/trigger
+GET                            /admin/api/onboarding/metrics
+GET                            /admin/audit-log
+GET                            /admin/audit-log/export.csv
+GET                            /admin/backups
+GET                            /admin/cache
+POST                           /admin/cache/clear
+```
+
+### Last 25 routes (alphabetical)
+
+```
+GET                            /signup
+POST                           /signup
+GET                            /sitemap.xml
+GET                            /sources/{handle}
+GET                            /status
+GET                            /status/feed.xml
+GET                            /status/unsubscribe
+POST                           /subproduct-signup
+GET                            /subscribe
+GET                            /support
+GET                            /suspended
+GET                            /sw.js
+GET                            /team
+GET                            /terms
+GET                            /token
+GET                            /tools/card-preview
+GET                            /tools/correlations
+GET                            /tools/scenario
+GET                            /u/{handle}
+GET                            /u/{user_id}/takes
+GET                            /unsubscribe
+GET                            /v/{token}
+-                              /ws
+-                              /{full_path:path}
+DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT /{full_path:path}
+```
+
+Full route list at `/tmp/recon/routes_full.txt` (430 entries).
+
+## Phase 6 — env-var inventory
+
+Source of truth: `gateway/.env.example` (repo-root `.env.example` does not exist).
+
+- Distinct env vars referenced in code: 41
+- Distinct env vars in `gateway/.env.example`: 85
+
+### Used in code but missing from `gateway/.env.example`
+
+- ✅ Every code-referenced env var appears in `.env.example`.
+
+### In `gateway/.env.example` but never read by code
+
+44 var(s) — likely retired but still documented:
+
+- `ANALYTICS_ENABLED`
+- `APP_URL`
+- `BACKUP_GPG_RECIPIENT`
+- `BACKUP_MAILTO`
+- `BACKUP_OFFSITE_RETENTION_WEEKS`
+- `BACKUP_OFFSITE_RSYNC_OPTS`
+- `BACKUP_OFFSITE_RSYNC_TARGET`
+- `CAPITOLTRADES_API_KEY`
+- `CORS_ORIGINS`
+- `CREDENTIALS_ENCRYPTION_KEY`
+- `CSRF_ENABLED`
+- `DISCORD_APPLICATION_ID`
+- `DISCORD_BOT_TOKEN`
+- `EMAIL_DMARC`
+- `EMAIL_DRY_RUN`
+- `EMAIL_FEEDBACK`
+- `EMAIL_FROM`
+- `EMAIL_FROM_NAME`
+- `EMAIL_LEGAL`
+- `EMAIL_PRIVACY`
+- `EMAIL_SUPPORT`
+- `EXTENSION_JWT_SECRET`
+- `FEC_API_KEY`
+- `GATEWAY_COOKIE_SECRET`
+- `GATEWAY_SSO_SECRET`
+- `KALSHI_API_BASE`
+- `LEGAL_EMAIL`
+- `NARVE_EXTENSION_ID`
+- `POLYMARKET_API_BASE`
+- `PRIVACY_EMAIL`
+- `PUSH_VAPID_PRIVATE_KEY_PEM`
+- `QUIVERQUANT_API_KEY`
+- `REDIS_PASSWORD`
+- `SEC_EDGAR_USER_AGENT`
+- `STRIPE_PRICE_ID_CRYPTO_MONTHLY`
+- `STRIPE_PRICE_ID_MIDTERM_MONTHLY`
+- `STRIPE_PRICE_ID_SPORTS_MONTHLY`
+- `STRIPE_PRICE_ID_TRADERS_MONTHLY`
+- `STRIPE_PRICE_ID_WEATHER_MONTHLY`
+- `STRIPE_PRICE_ID_WORLD_MONTHLY`
+- `SUPPORT_EMAIL`
+- `TELEGRAM_BOT_TOKEN`
+- `TRUSTED_PROXY_IPS`
+- `UNUSUALWHALES_API_KEY`
+
+## Phase 7 — status / output files at repo root
+
+- NARVE_SECURITY_AUDIT.md                  PRESENT  ( 561 lines, last touched 2026-04-25)
+- LEAK_PROTECTION_STATUS.md                MISSING
+- BUGFIX_LOG.md                            PRESENT  ( 338 lines, last touched 2026-04-23)
+- DESIGN_SYSTEM.md                         PRESENT  ( 595 lines, last touched 2026-04-21)
+- SEO_STRATEGY.md                          PRESENT  ( 147 lines, last touched 2026-04-21)
+- PERFORMANCE_BASELINE.md                  PRESENT  ( 343 lines, last touched 2026-04-23)
+- TEST_COVERAGE.md                         PRESENT  ( 274 lines, last touched 2026-04-23)
+- TEST_INFRA.md                            PRESENT  ( 151 lines, last touched 2026-04-23)
+- EDGE_CASES.md                            PRESENT  ( 233 lines, last touched 2026-04-23)
+- SUBSCRIPTION_STATE_MACHINE.md            PRESENT  ( 189 lines, last touched 2026-04-22)
+- CLOUDFLARE_CHANGES.md                    PRESENT  ( 139 lines, last touched 2026-04-21)
+- RUNBOOK.md                               PRESENT  ( 176 lines, last touched 2026-04-23)
+- ARCHITECTURE.md                          PRESENT  ( 268 lines, last touched 2026-04-23)
+- API.md                                   PRESENT  ( 270 lines, last touched 2026-04-23)
+- CONTRIBUTING.md                          PRESENT  ( 174 lines, last touched 2026-04-23)
+- SECURITY.md                              PRESENT  (  63 lines, last touched 2026-04-23)
+- CHANGELOG.md                             PRESENT  ( 131 lines, last touched 2026-04-23)
+- ACCESSIBILITY.md                         PRESENT  ( 160 lines, last touched 2026-04-23)
+- LOGGING.md                               PRESENT  ( 198 lines, last touched 2026-04-23)
+- ERROR_HANDLING.md                        MISSING
+- DB_HEALTH.md                             MISSING
+- CLEANUP_LOG.md                           PRESENT  ( 232 lines, last touched 2026-04-23)
+- BROWSER_COMPAT.md                        MISSING
+- REGRESSION_SWEEP.md                      PRESENT  ( 159 lines, last touched 2026-04-23)
+- SECRETS.md                               PRESENT  ( 182 lines, last touched 2026-04-23)
+- QA_WALKTHROUGH.md                        PRESENT  ( 167 lines, last touched 2026-04-25)
+- MOBILE_AUDIT.md                          PRESENT  ( 298 lines, last touched 2026-04-25)
+- A11Y_AUDIT.md                            PRESENT  ( 175 lines, last touched 2026-04-23)
+- STATE_RECONCILIATION.md                  PRESENT  ( 394 lines, last touched 2026-04-23)
+
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<!-- Prior reconciliations preserved below for historical diff. -->
+<!-- ─────────────────────────────────────────────────────────── -->
+
 # State Reconciliation — 2026-04-23T18:50:00Z
 
 Pure reality-check. Committed tip: `23a6e28` (local = origin/feature/platform-build).
