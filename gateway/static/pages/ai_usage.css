@@ -17,17 +17,17 @@ body { background: var(--bg-void); color: var(--text-primary); font-family: var(
       font-size: 22px; font-weight: 500; margin: 0;
       letter-spacing: -0.01em;
     }
-    .admin-nav { display: flex; gap: 12px; align-items: center; font-size: 13px; }
+    .admin-nav { display: flex; gap: 12px; align-items: center; font-size: var(--text-sm); }
     .admin-nav a {
       color: var(--text-secondary);
       text-decoration: none;
       padding: 6px 12px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
     }
     .admin-nav a:hover { color: var(--text-primary); background: var(--bg-overlay); }
     .admin-nav a.active { color: var(--text-primary); background: var(--bg-overlay); }
     .btn {
-      display: inline-block; padding: 8px 14px; border-radius: 6px;
+      display: inline-block; padding: 8px 14px; border-radius: var(--radius-sm);
       font-size: 12px; font-weight: 500; cursor: pointer;
       background: var(--bg-overlay); color: var(--text-primary);
       border: 1px solid var(--border-default); text-decoration: none;
@@ -39,5 +39,5 @@ body { background: var(--bg-void); color: var(--text-primary); font-family: var(
     table td { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
     .stat-card { padding: 16px 20px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 10px; }
-    .stat-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+    .stat-label { font-size: var(--text-xs); color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
     .stat-value { font-family: var(--font-display); font-size: 26px; font-weight: 500; }

@@ -18,16 +18,16 @@ body { background: var(--bg-base); min-height: 100vh; display: flex; align-items
     .step-title { font-family: var(--font-display); font-size: 34px; font-weight: 500; letter-spacing: -0.02em; margin: 0 0 12px; color: var(--text-primary); }
     .step-sub { font-size: 15px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 36px; }
     .feature-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 22px 24px; margin-bottom: 14px; }
-    .feature-card h3 { font-size: 14px; font-weight: 600; margin: 0 0 6px; color: var(--text-primary); }
-    .feature-card p { font-size: 13px; color: var(--text-secondary); margin: 0; line-height: 1.6; }
+    .feature-card h3 { font-size: var(--text-base); font-weight: 600; margin: 0 0 6px; color: var(--text-primary); }
+    .feature-card p { font-size: var(--text-sm); color: var(--text-secondary); margin: 0; line-height: 1.6; }
     .cat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 28px; }
     .cat-item { display: flex; align-items: center; gap: 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 16px 18px; cursor: pointer; transition: all 0.15s var(--ease-out); }
     .cat-item:hover { border-color: var(--text-tertiary); }
     .cat-item.selected { border-color: var(--text-primary); background: var(--bg-raised); }
     .cat-item input { margin: 0; accent-color: var(--text-primary); }
-    .cat-item span { font-size: 14px; color: var(--text-primary); }
+    .cat-item span { font-size: var(--text-base); color: var(--text-primary); }
     .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); margin-bottom: 12px; }
-    .toggle-row-label { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+    .toggle-row-label { font-size: var(--text-base); font-weight: 500; color: var(--text-primary); }
     .toggle-row-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
     .toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
     .toggle input { opacity: 0; width: 0; height: 0; }
@@ -36,15 +36,15 @@ body { background: var(--bg-base); min-height: 100vh; display: flex; align-items
     .toggle input:checked + .toggle-slider { background: var(--text-primary); }
     .toggle input:checked + .toggle-slider:before { transform: translateX(18px); background: var(--bg-base); }
     .thresholds { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
-    .thresholds label { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 4px; }
-    .thresholds select { width: 100%; padding: 10px; background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: 13px; }
+    .thresholds label { font-size: var(--text-xs); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 4px; }
+    .thresholds select { width: 100%; padding: 10px; background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: var(--text-sm); }
     .btn-row { display: flex; justify-content: space-between; align-items: center; margin-top: 32px; gap: 12px; }
     .btn-row .btn { min-width: 130px; }
-    .btn-primary { background: var(--text-primary); color: var(--interactive-text); border: 1px solid var(--text-primary); padding: 12px 24px; border-radius: var(--radius-md); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; font-family: inherit; }
+    .btn-primary { background: var(--text-primary); color: var(--interactive-text); border: 1px solid var(--text-primary); padding: 12px 24px; border-radius: var(--radius-md); font-size: var(--text-base); font-weight: 500; cursor: pointer; transition: all 0.15s; font-family: inherit; }
     .btn-primary:hover { background: var(--interactive-hover); }
-    .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-default); padding: 12px 24px; border-radius: var(--radius-md); font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; }
+    .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-default); padding: 12px 24px; border-radius: var(--radius-md); font-size: var(--text-base); font-weight: 500; cursor: pointer; font-family: inherit; }
     .btn-ghost:hover { color: var(--text-primary); border-color: var(--text-primary); }
-    .btn-skip { background: none; border: none; color: var(--text-tertiary); font-size: 13px; cursor: pointer; margin-left: auto; font-family: inherit; }
+    .btn-skip { background: none; border: none; color: var(--text-tertiary); font-size: var(--text-sm); cursor: pointer; margin-left: auto; font-family: inherit; }
     .btn-skip:hover { color: var(--text-secondary); }
     .done-check { width: 80px; height: 80px; margin: 24px auto 36px; border: 2px solid var(--text-primary); border-radius: 50%; display: flex; align-items: center; justify-content: center; animation: pop 600ms var(--ease-out); }
     .done-check svg { width: 40px; height: 40px; stroke: var(--text-primary); fill: none; stroke-width: 2; stroke-dasharray: 48; stroke-dashoffset: 48; animation: draw 500ms 200ms var(--ease-out) forwards; }

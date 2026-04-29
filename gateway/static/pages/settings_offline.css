@@ -22,7 +22,7 @@
       letter-spacing: -0.01em;
     }
     .offline-lede {
-      font-size: 14px;
+      font-size: var(--text-base);
       color: var(--text-secondary, #6b7280);
       margin: 6px 0 0;
       line-height: 1.55;
@@ -42,7 +42,7 @@
       min-width: 0;
     }
     .offline-row-label {
-      font-size: 14px;
+      font-size: var(--text-base);
       font-weight: 500;
       color: var(--text-primary, #111827);
       margin: 0 0 2px;
@@ -60,7 +60,7 @@
       -webkit-appearance: none;
       width: 38px;
       height: 22px;
-      border-radius: 999px;
+      border-radius: var(--radius-full);
       border: 1px solid var(--border-default, #d1d5db);
       background: var(--bg-surface, #fff);
       position: relative;
@@ -95,7 +95,7 @@
       border-top: 1px solid var(--border-subtle, #e5e7eb);
     }
     .offline-section-title {
-      font-size: 11px;
+      font-size: var(--text-xs);
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--text-tertiary, #9ca3af);
@@ -109,7 +109,7 @@
       padding: 16px 0;
     }
     .offline-storage-value {
-      font-size: 24px;
+      font-size: var(--text-2xl);
       font-weight: 500;
       color: var(--text-primary, #111827);
       font-variant-numeric: tabular-nums;
@@ -123,9 +123,9 @@
     }
     .offline-btn {
       padding: 8px 16px;
-      font-size: 13px;
+      font-size: var(--text-sm);
       font-weight: 500;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       border: 1px solid var(--border-default, #d1d5db);
       background: var(--bg-surface, #fff);
       color: var(--text-primary, #111827);

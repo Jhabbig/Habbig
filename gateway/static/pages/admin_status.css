@@ -15,7 +15,7 @@
       margin-top: 4px;
     }
     .admin-check {
-      font-size: 13px;
+      font-size: var(--text-sm);
       display: flex;
       align-items: center;
       gap: 6px;
@@ -43,7 +43,7 @@
       margin-bottom: 6px;
     }
     .admin-incident p {
-      font-size: 14px;
+      font-size: var(--text-base);
       color: var(--text-secondary);
       margin: 0 0 10px;
       line-height: 1.5;
@@ -60,7 +60,7 @@
       flex: 1;
       min-width: 180px;
       padding: 6px 10px;
-      font-size: 13px;
+      font-size: var(--text-sm);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-sm);
       background: var(--bg-base);
@@ -68,7 +68,7 @@
     }
     .admin-inline select {
       padding: 6px 10px;
-      font-size: 13px;
+      font-size: var(--text-sm);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-sm);
       background: var(--bg-base);
@@ -76,7 +76,7 @@
     }
     .admin-inline button {
       padding: 6px 12px;
-      font-size: 13px;
+      font-size: var(--text-sm);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-sm);
       background: var(--bg-base);
@@ -90,7 +90,7 @@
     .admin-subs {
       width: 100%;
       border-collapse: collapse;
-      font-size: 13px;
+      font-size: var(--text-sm);
     }
     .admin-subs th, .admin-subs td {
       padding: 10px 14px;
@@ -98,7 +98,7 @@
       border-bottom: 1px solid var(--border-ghost);
     }
     .admin-subs th {
-      font-size: 11px;
+      font-size: var(--text-xs);
       text-transform: uppercase;
       color: var(--text-tertiary);
       letter-spacing: 0.06em;
@@ -108,7 +108,7 @@
     .admin-subs tr:last-child td { border-bottom: 0; }
 
     .status-empty {
-      font-size: 13px;
+      font-size: var(--text-sm);
       color: var(--text-tertiary);
       padding: 20px 18px;
       text-align: center;

@@ -7,11 +7,11 @@
 
 .sub-page { min-height: 100vh; background: var(--bg); padding: 32px 24px 80px; }
     .sub-container { max-width: 480px; margin: 0 auto; }
-    .sub-back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; font-weight: 500; text-decoration: none; min-height: 44px; margin-bottom: 32px; }
+    .sub-back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: var(--text-sm); font-weight: 500; text-decoration: none; min-height: 44px; margin-bottom: 32px; }
     .sub-back:hover { color: var(--text-primary); text-decoration: none; }
     .sub-back svg { width: 16px; height: 16px; }
     .sub-title { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; letter-spacing: -0.02em; }
-    .sub-desc { font-size: 14px; color: var(--text-secondary); margin-bottom: 32px; line-height: 1.6; }
+    .sub-desc { font-size: var(--text-base); color: var(--text-secondary); margin-bottom: 32px; line-height: 1.6; }
     .sub-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; margin-bottom: 20px; }
 
     /* Plan selector */
@@ -19,24 +19,24 @@
     .sub-plan { background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-sm); padding: 20px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; position: relative; }
     .sub-plan:hover { border-color: var(--text-muted); }
     .sub-plan.selected { border-color: var(--accent); box-shadow: 0 0 16px var(--interactive-ghost); }
-    .sub-plan-name { font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
-    .sub-plan-price { font-size: 24px; font-weight: 700; color: var(--text-primary); }
-    .sub-plan-price span { font-size: 13px; font-weight: 400; color: var(--text-muted); }
-    .sub-plan-popular { position: absolute; top: -10px; right: 12px; background: var(--accent); color: var(--bg-base); font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 12px; }
+    .sub-plan-name { font-size: var(--text-md); font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+    .sub-plan-price { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); }
+    .sub-plan-price span { font-size: var(--text-sm); font-weight: 400; color: var(--text-muted); }
+    .sub-plan-popular { position: absolute; top: -10px; right: 12px; background: var(--accent); color: var(--bg-base); font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: var(--radius-lg); }
 
     /* Interval toggle */
     .sub-interval { display: flex; background: var(--surface-hover); border-radius: var(--radius-sm); padding: 3px; margin-bottom: 24px; }
-    .sub-interval-btn { flex: 1; padding: 10px; text-align: center; font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer; border-radius: 8px; transition: all 0.2s; border: none; background: none; font-family: inherit; min-height: 44px; }
+    .sub-interval-btn { flex: 1; padding: 10px; text-align: center; font-size: var(--text-sm); font-weight: 500; color: var(--text-muted); cursor: pointer; border-radius: var(--radius-md); transition: all 0.2s; border: none; background: none; font-family: inherit; min-height: 44px; }
     .sub-interval-btn.active { background: var(--accent); color: var(--bg-base); }
 
     /* Form */
-    .sub-label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; margin-top: 16px; }
-    .sub-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: var(--bg-overlay); color: var(--text-primary); transition: border-color 0.15s; outline: none; }
+    .sub-label { display: block; font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; margin-top: 16px; }
+    .sub-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: var(--text-base); background: var(--bg-overlay); color: var(--text-primary); transition: border-color 0.15s; outline: none; }
     .sub-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
 
     /* Summary */
     .sub-summary { background: var(--surface-hover); border-radius: var(--radius-sm); padding: 16px; margin: 24px 0; }
-    .sub-summary-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-secondary); padding: 4px 0; }
+    .sub-summary-row { display: flex; justify-content: space-between; font-size: var(--text-sm); color: var(--text-secondary); padding: 4px 0; }
     .sub-summary-total { font-weight: 600; color: var(--text-primary); font-size: 15px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
 
     /* Submit */
@@ -50,11 +50,11 @@
     .sub-token-icon { width: 64px; height: 64px; border-radius: 50%; background: var(--green-bg); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
     .sub-token-icon svg { width: 32px; height: 32px; color: var(--green); }
     .sub-token-heading { font-size: 22px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
-    .sub-token-sub { font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.6; }
+    .sub-token-sub { font-size: var(--text-base); color: var(--text-secondary); margin-bottom: 24px; line-height: 1.6; }
     .sub-token-warning { background: var(--interactive-ghost); border: 1px solid var(--interactive-ghost-hover); border-radius: var(--radius-sm); padding: 16px; margin-bottom: 24px; }
-    .sub-token-warning-title { font-size: 14px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
-    .sub-token-warning-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-    .sub-token-display { background: var(--bg-overlay); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px; margin-bottom: 16px; font-family: var(--font-mono); font-size: 18px; color: var(--accent); letter-spacing: 0.04em; user-select: all; word-break: break-all; }
-    .sub-token-copy { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border-radius: var(--radius-sm); background: var(--accent); color: var(--bg-base); border: none; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 24px; min-height: 44px; }
-    .sub-token-next { display: block; color: var(--text-muted); font-size: 13px; text-decoration: none; margin-top: 16px; }
+    .sub-token-warning-title { font-size: var(--text-base); font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .sub-token-warning-text { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.5; }
+    .sub-token-display { background: var(--bg-overlay); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px; margin-bottom: 16px; font-family: var(--font-mono); font-size: var(--text-lg); color: var(--accent); letter-spacing: 0.04em; user-select: all; word-break: break-all; }
+    .sub-token-copy { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border-radius: var(--radius-sm); background: var(--accent); color: var(--bg-base); border: none; font-family: inherit; font-size: var(--text-sm); font-weight: 600; cursor: pointer; margin-bottom: 24px; min-height: 44px; }
+    .sub-token-next { display: block; color: var(--text-muted); font-size: var(--text-sm); text-decoration: none; margin-top: 16px; }
     .sub-token-next:hover { color: var(--text-primary); text-decoration: none; }

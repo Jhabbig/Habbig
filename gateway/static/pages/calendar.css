@@ -7,32 +7,32 @@
 
 body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); min-height: 100vh; }
     .cal-shell { max-width: 880px; margin: 0 auto; padding: 56px 24px 96px; }
-    .cal-back { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); text-decoration: none; margin-bottom: 28px; }
+    .cal-back { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--text-secondary); text-decoration: none; margin-bottom: 28px; }
     .cal-back:hover { color: var(--text-primary); }
     .cal-header { margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid var(--border-default); }
-    .cal-eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 12px; }
+    .cal-eyebrow { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-tertiary); margin-bottom: 12px; }
     .cal-title { font-family: var(--font-display); font-size: 42px; font-weight: 500; letter-spacing: -0.02em; margin: 0 0 16px; color: var(--text-primary); }
     .cal-lede { font-size: 15px; color: var(--text-secondary); line-height: 1.7; max-width: 640px; }
     .cal-count { font-size: 12px; color: var(--text-tertiary); margin-top: 16px; font-variant-numeric: tabular-nums; }
 
     .cal-day { margin-bottom: 40px; }
-    .cal-day h2 { font-family: var(--font-display); font-size: 18px; font-weight: 500; margin: 0 0 16px; color: var(--text-primary); letter-spacing: -0.005em; padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
+    .cal-day h2 { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 500; margin: 0 0 16px; color: var(--text-primary); letter-spacing: -0.005em; padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
     .cal-row { padding: 18px 0; border-bottom: 1px solid var(--border-subtle); }
     .cal-row:last-child { border-bottom: none; }
-    .cal-question { font-size: 16px; font-weight: 500; margin: 0 0 8px; color: var(--text-primary); line-height: 1.4; }
-    .cal-meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--text-secondary); align-items: center; }
+    .cal-question { font-size: var(--text-md); font-weight: 500; margin: 0 0 8px; color: var(--text-primary); line-height: 1.4; }
+    .cal-meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: var(--text-sm); color: var(--text-secondary); align-items: center; }
     .cal-meta strong { color: var(--text-primary); font-weight: 500; }
-    .cal-edge { display: inline-block; padding: 3px 8px; border-radius: 10px; background: var(--accent-light, rgba(0,0,0,0.06)); color: var(--text-primary); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+    .cal-edge { display: inline-block; padding: 3px 8px; border-radius: 10px; background: var(--accent-light, rgba(0,0,0,0.06)); color: var(--text-primary); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.02em; }
     .cal-locked { font-style: italic; color: var(--text-tertiary); }
-    .cal-platform, .cal-category { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); }
+    .cal-platform, .cal-category { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); }
     .cal-link { display: inline-block; margin-top: 8px; font-size: 12px; color: var(--text-secondary); text-decoration: none; }
     .cal-link:hover { color: var(--text-primary); text-decoration: underline; }
-    .cal-empty { color: var(--text-tertiary); font-size: 14px; padding: 32px 0; text-align: center; }
+    .cal-empty { color: var(--text-tertiary); font-size: var(--text-base); padding: 32px 0; text-align: center; }
 
-    .cal-cta { margin: 48px 0; padding: 24px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--surface, rgba(255,255,255,0.02)); }
-    .cal-cta h3 { font-family: var(--font-display); font-size: 18px; font-weight: 500; margin: 0 0 8px; color: var(--text-primary); }
-    .cal-cta p { font-size: 14px; color: var(--text-secondary); margin: 0 0 16px; line-height: 1.6; }
-    .cal-cta a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 13px; font-weight: 500; color: var(--text-primary); text-decoration: none; transition: all .2s ease; }
+    .cal-cta { margin: 48px 0; padding: 24px; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--surface, rgba(255,255,255,0.02)); }
+    .cal-cta h3 { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 500; margin: 0 0 8px; color: var(--text-primary); }
+    .cal-cta p { font-size: var(--text-base); color: var(--text-secondary); margin: 0 0 16px; line-height: 1.6; }
+    .cal-cta a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border: 1px solid var(--border-default); border-radius: var(--radius-full); font-size: var(--text-sm); font-weight: 500; color: var(--text-primary); text-decoration: none; transition: all .2s ease; }
     .cal-cta a:hover { border-color: var(--text-primary); }
 
     .cal-footer { margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border-default); font-size: 12px; color: var(--text-tertiary); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }

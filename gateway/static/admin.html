@@ -596,7 +596,7 @@ function renderErrorGroups(groups) {
       '<div class="admin-row" style="align-items:flex-start">' +
         '<div class="admin-row-info">' +
           '<div style="display:flex;gap:8px;align-items:center">' +
-            '<span style="color:#ef4444;font-weight:700">×' + g.count + '</span>' +
+            '<span style="color:var(--text-primary);font-weight:700">×' + g.count + '</span>' +
             '<span style="color:var(--text-secondary)">[' + _escape(g.service || '') + ']</span>' +
             '<span style="color:var(--text-tertiary)">' + _escape(g.logger || '') + '</span>' +
           '</div>' +
@@ -830,7 +830,7 @@ function _renderSessions(sessions) {
   sessions.forEach(function(s) {
     var badge = s.valid
       ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--semantic-high-bg);color:var(--text-primary);border:1px solid var(--semantic-high-border);font-weight:600">Valid</span>'
-      : '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(239,68,68,0.12);color:#ef4444">Invalid</span>';
+      : '<span style="font-size:11px;padding:2px 8px;border-radius:var(--radius-full);background:var(--bg-inset);color:var(--text-primary);border:1px solid var(--border-strong);font-weight:600">Invalid</span>';
     html += '<div class="admin-row" style="padding:10px 16px">'
       + '<div class="admin-row-info"><div class="admin-row-main" style="margin-bottom:2px">'
       + '<span style="font-size:13px;font-weight:500;text-transform:capitalize">' + s.platform + '</span> ' + badge
@@ -922,9 +922,17 @@ function refreshJobs() {
       return;
     }
     list.innerHTML = jobs.map(function(j) {
-      var statusColor = { queued: '#aaa', running: '#8cf', complete: '#0d0', failed: '#f44' }[j.status] || '#999';
+      // Status differentiated through weight + token surface, never colour
+      // (narve design system rule — no red/green/yellow signalling).
+      var statusColor = {
+        queued:   'var(--text-tertiary)',
+        running:  'var(--text-secondary)',
+        complete: 'var(--text-secondary)',
+        failed:   'var(--text-primary)',
+      }[j.status] || 'var(--text-tertiary)';
+      var statusWeight = j.status === 'failed' ? '700' : '500';
       var duration = j.duration_ms ? (j.duration_ms + 'ms') : '—';
-      var error = j.error ? ('<div style="color:#f66;font-size:11px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all">' +
+      var error = j.error ? ('<div style="color:var(--text-primary);font-size:11px;margin-top:4px;font-family:var(--font-mono);background:var(--bg-inset);padding:6px 10px;border-radius:var(--radius-sm);border-left:2px solid var(--text-primary);white-space:pre-wrap;word-break:break-all">' +
         (j.error.length > 240 ? j.error.slice(0, 240) + '…' : j.error) + '</div>') : '';
       var retryBtn = j.status === 'failed'
         ? '<button onclick="retryJob(' + j.id + ')" class="btn btn-primary-outline" style="font-size:11px">Retry</button>'
@@ -932,7 +940,7 @@ function refreshJobs() {
       return '<div class="admin-row">' +
         '<div class="admin-row-info">' +
           '<div class="admin-row-main"><strong>' + (j.name || '') + '</strong> ' +
-            '<span style="color:' + statusColor + ';font-weight:600">· ' + j.status + '</span>' +
+            '<span style="color:' + statusColor + ';font-weight:' + statusWeight + '">· ' + j.status + '</span>' +
           '</div>' +
           '<div class="admin-row-meta">' +
             '<span>' + (j.enqueued_at_human || '') + '</span>' +

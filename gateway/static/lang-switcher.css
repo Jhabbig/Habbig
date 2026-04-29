@@ -33,7 +33,7 @@
 }
 
 .lang-switcher__flag {
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1;
   flex-shrink: 0;
 }
@@ -80,9 +80,9 @@
   padding: 8px 10px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-family: inherit;
   text-align: left;
   cursor: pointer;

@@ -6,7 +6,7 @@
  * rewrite selectors here without a visual QA pass. */
 
 .admin-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: 32px; }
-    .admin-tab { padding: 12px 24px; font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; background: none; border-top: none; border-left: none; border-right: none; }
+    .admin-tab { padding: 12px 24px; font-size: var(--text-base); font-weight: 500; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; background: none; border-top: none; border-left: none; border-right: none; }
     .admin-tab:hover { color: var(--text-primary); }
     .admin-tab.active { color: var(--text-primary); border-bottom-color: var(--text-primary); }
     .admin-panel { display: none; }
@@ -22,14 +22,14 @@
     .admin-row-actions { display: flex; gap: 8px; margin-left: 16px; flex-shrink: 0; }
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
     .stat-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px; }
-    .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-tertiary); margin-bottom: 8px; }
+    .stat-label { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-tertiary); margin-bottom: 8px; }
     .stat-value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
     .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; }
-    .filter-btn { padding: 6px 14px; font-size: 12px; font-weight: 500; border-radius: 20px; border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
+    .filter-btn { padding: 6px 14px; font-size: 12px; font-weight: 500; border-radius: var(--radius-xl); border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
     .filter-btn:hover { border-color: var(--text-primary); color: var(--text-primary); }
     .filter-btn.active { background: var(--text-primary); color: var(--interactive-text); border-color: var(--text-primary); }
     .generate-form { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 24px; }
-    .generate-form input { flex: 1; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: 14px; background: var(--bg-surface); color: var(--text-primary); }
+    .generate-form input { flex: 1; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: var(--text-base); background: var(--bg-surface); color: var(--text-primary); }
     .generate-form input:focus { outline: none; border-color: var(--text-primary); box-shadow: 0 0 0 3px var(--interactive-ghost); }
     /* Monochrome just-generated-token banner. Strong outline + ghost
        fill so it reads as "something just happened" without a colour

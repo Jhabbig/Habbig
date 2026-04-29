@@ -68,7 +68,7 @@
 .nv-explain__popover h4 {
   margin: 0 0 var(--space-2, 8px);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
   letter-spacing: -0.005em;
 }

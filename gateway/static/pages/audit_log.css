@@ -17,22 +17,22 @@ body { background: var(--bg-void); color: var(--text-primary); font-family: var(
       font-size: 22px; font-weight: 500; margin: 0;
       letter-spacing: -0.01em;
     }
-    .admin-nav { display: flex; gap: 12px; align-items: center; font-size: 13px; }
+    .admin-nav { display: flex; gap: 12px; align-items: center; font-size: var(--text-sm); }
     .admin-nav a {
       color: var(--text-secondary);
       text-decoration: none;
       padding: 6px 12px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
     }
     .admin-nav a:hover { color: var(--text-primary); background: var(--bg-overlay); }
     .admin-nav a.active { color: var(--text-primary); background: var(--bg-overlay); }
     .badge {
-      display: inline-block; padding: 2px 8px; border-radius: 12px;
-      font-size: 11px; font-weight: 500;
+      display: inline-block; padding: 2px 8px; border-radius: var(--radius-lg);
+      font-size: var(--text-xs); font-weight: 500;
       background: var(--interactive-ghost); color: var(--text-primary);
     }
     .btn {
-      display: inline-block; padding: 8px 14px; border-radius: 6px;
+      display: inline-block; padding: 8px 14px; border-radius: var(--radius-sm);
       font-size: 12px; font-weight: 500; cursor: pointer;
       background: var(--bg-overlay); color: var(--text-primary);
       border: 1px solid var(--border-default); text-decoration: none;

@@ -51,7 +51,7 @@
       font-variant-numeric: tabular-nums;
     }
     .err-title {
-      font-size: 32px;
+      font-size: var(--text-3xl);
       font-weight: 600;
       letter-spacing: -0.01em;
       margin: 0 0 12px;
@@ -64,16 +64,16 @@
       max-width: 440px;
     }
     .err-retry {
-      font-size: 13px;
+      font-size: var(--text-sm);
       color: var(--fg-muted);
       margin: 0 0 8px;
       padding: 10px 12px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       display: inline-block;
     }
-    .err-extra { font-size: 13px; color: var(--fg-muted); margin: 0 0 20px; }
+    .err-extra { font-size: var(--text-sm); color: var(--fg-muted); margin: 0 0 20px; }
     .err-extra a { color: var(--fg); }
     .err-actions {
       display: flex;
@@ -86,9 +86,9 @@
       align-items: center;
       justify-content: center;
       padding: 10px 18px;
-      font-size: 14px;
+      font-size: var(--text-base);
       font-weight: 500;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       border: 1px solid var(--border);
       color: var(--fg);
       background: var(--bg);
@@ -106,7 +106,7 @@
       margin-top: 40px;
       padding-top: 20px;
       border-top: 1px solid var(--border);
-      font-size: 11px;
+      font-size: var(--text-xs);
       color: var(--fg-dim);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       letter-spacing: 0.02em;
@@ -115,11 +115,11 @@
       color: var(--fg-muted);
       background: var(--surface);
       padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 11px;
+      border-radius: var(--radius-xs);
+      font-size: var(--text-xs);
     }
     .err-support {
-      font-size: 11px;
+      font-size: var(--text-xs);
       color: var(--fg-dim);
       margin-top: 6px;
     }

@@ -42,8 +42,8 @@ body[data-theme="dark"] .skeleton {
 .skeleton-text-sm { height: 11px; border-radius: 3px; }
 .skeleton-text-lg { height: 18px; border-radius: 3px; }
 .skeleton-circle  { border-radius: 50%; }
-.skeleton-badge   { height: 20px; border-radius: 9999px; width: 60px; }
-.skeleton-bar     { height: 4px; border-radius: 9999px; }
+.skeleton-badge   { height: 20px; border-radius: var(--radius-full); width: 60px; }
+.skeleton-bar     { height: 4px; border-radius: var(--radius-full); }
 
 .skeleton-card {
   background: var(--bg-surface);
@@ -88,7 +88,7 @@ body[data-theme="dark"] .skeleton {
   padding: 24px;
   text-align: center;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   border: 1px dashed var(--border-default);
   border-radius: var(--radius-sm);
 }
@@ -98,7 +98,7 @@ body[data-theme="dark"] .skeleton {
   border: 1px solid var(--border-default);
   color: var(--text-primary);
   padding: 4px 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;

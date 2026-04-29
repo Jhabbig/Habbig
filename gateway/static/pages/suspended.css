@@ -9,10 +9,10 @@
     .sus-card { max-width: 440px; width: 100%; text-align: center; }
     .sus-icon { width: 80px; height: 80px; border-radius: 50%; background: var(--interactive-ghost); display: flex; align-items: center; justify-content: center; margin: 0 auto 28px; }
     .sus-icon svg { width: 40px; height: 40px; color: var(--red); }
-    .sus-code { font-size: 13px; font-weight: 600; color: var(--red); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px; }
+    .sus-code { font-size: var(--text-sm); font-weight: 600; color: var(--red); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px; }
     .sus-title { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; letter-spacing: -0.02em; }
     .sus-body { font-size: 15px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 32px; }
-    .sus-btn { display: inline-block; padding: 13px 28px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; text-decoration: none; border: 1px solid var(--border); color: var(--text-primary); background: var(--surface); transition: border-color 0.15s, background 0.15s; min-height: 44px; }
+    .sus-btn { display: inline-block; padding: 13px 28px; border-radius: var(--radius-sm); font-size: var(--text-base); font-weight: 600; text-decoration: none; border: 1px solid var(--border); color: var(--text-primary); background: var(--surface); transition: border-color 0.15s, background 0.15s; min-height: 44px; }
     .sus-btn:hover { border-color: var(--accent); background: var(--accent-light); color: var(--accent); text-decoration: none; }
     .sus-divider { height: 1px; background: var(--border); margin: 32px 0; }
     .sus-footer { font-size: 12px; color: var(--text-muted); }

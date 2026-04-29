@@ -50,7 +50,7 @@
   padding: 0 6px 0 0;
   color: var(--text-tertiary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 .sp-card .field-control input[type="text"] {
@@ -62,7 +62,7 @@
   font: inherit;
   padding: 10px 12px;
   border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text-primary);
   resize: vertical;
@@ -75,7 +75,7 @@
 }
 .settings-preview {
   margin: 16px 0 0;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
 .settings-preview a {

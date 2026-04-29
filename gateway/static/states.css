@@ -39,7 +39,7 @@
   margin-bottom: var(--space-2);
 }
 .error-state__body {
-  font-size: 14px;
+  font-size: var(--text-base);
   max-width: 340px;
   margin-bottom: var(--space-4);
   line-height: 1.55;
@@ -58,7 +58,7 @@
   gap: 6px;
   padding: 8px 14px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   text-decoration: none;
   cursor: pointer;
@@ -82,7 +82,7 @@
   background: var(--surface-raised, var(--bg-raised));
   border-left: 2px solid var(--text-tertiary);
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: var(--text-base);
   color: var(--text-secondary);
   line-height: 1.55;
 }
@@ -105,7 +105,7 @@
 
 /* BEM canonical form (new code) */
 .empty-state__title {
-  font-size: 20px;
+  font-size: var(--text-xl);
   color: var(--text-primary);
   margin-bottom: var(--space-3);
   letter-spacing: -0.01em;
@@ -113,7 +113,7 @@
 .empty-state__body {
   max-width: 400px;
   margin: 0 auto var(--space-5);
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.6;
 }
 .empty-state__cta {
@@ -124,7 +124,7 @@
   border-radius: var(--radius-sm);
   background: var(--interactive-bg);
   color: var(--interactive-text);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   text-decoration: none;
   border: 1px solid var(--interactive-bg);
@@ -138,7 +138,7 @@
 /* Back-compat: legacy single-dash class names used by predictions.html,
    saved.html, intelligence.html. Map 1:1 onto the BEM rules. */
 .empty-state-title {
-  font-size: 20px;
+  font-size: var(--text-xl);
   color: var(--text-primary);
   margin-bottom: var(--space-3);
   letter-spacing: -0.01em;
@@ -146,7 +146,7 @@
 .empty-state-body {
   max-width: 400px;
   margin: 0 auto var(--space-5);
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.6;
 }
 
@@ -166,7 +166,7 @@
 }
 .empty-state--inline .empty-state__body,
 .empty-state--inline .empty-state-body {
-  font-size: 13px;
+  font-size: var(--text-sm);
   margin-bottom: 0;
 }
 
@@ -181,7 +181,7 @@
   border-radius: var(--radius-sm);
   text-align: center;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 [data-empty-hint]:empty::after {
   content: attr(data-empty-hint);
@@ -192,7 +192,7 @@
 
 .loading-text {
   color: var(--text-tertiary);
-  font-size: 14px;
+  font-size: var(--text-base);
   padding: var(--space-5);
   text-align: center;
 }
@@ -311,7 +311,7 @@ textarea[disabled],
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--text-base);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .field__input:focus-visible,
@@ -356,7 +356,7 @@ textarea[disabled],
   border-radius: var(--radius-sm);
 }
 .progress__title {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-primary);
 }
@@ -364,7 +364,7 @@ textarea[disabled],
   width: 100%;
   height: 6px;
   background: var(--bg-raised);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   overflow: hidden;
 }
 .progress__fill {
@@ -375,7 +375,7 @@ textarea[disabled],
 .progress__meta {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -419,7 +419,7 @@ textarea[disabled],
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.4;
   min-width: 220px;
   max-width: 420px;
@@ -448,7 +448,7 @@ textarea[disabled],
   color: var(--text-tertiary);
   cursor: pointer;
   font-family: inherit;
-  font-size: 16px;
+  font-size: var(--text-md);
   line-height: 1;
   padding: 0 4px;
   flex-shrink: 0;
@@ -493,7 +493,7 @@ textarea[disabled],
 }
 .empty-state--compact .empty-state-title,
 .empty-state--compact .empty-state__title {
-  font-size: 14px;
+  font-size: var(--text-base);
   margin-bottom: 4px;
 }
 .empty-state__cta-row {

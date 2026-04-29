@@ -14,14 +14,14 @@
     textarea.body-editor { min-height: 360px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
     textarea.text-editor { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
 
-    .chip-row { margin-bottom: 14px; line-height: 1.9; font-size: 11px; color: var(--text-tertiary); }
+    .chip-row { margin-bottom: 14px; line-height: 1.9; font-size: var(--text-xs); color: var(--text-tertiary); }
 
     .preview-subject {
       background: var(--bg-inset);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-sm);
       padding: 10px 14px;
-      font-size: 13px;
+      font-size: var(--text-sm);
       margin-bottom: 12px;
     }
     .preview-subject .lbl { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; font-weight: 500; }

@@ -83,8 +83,8 @@ body > div:last-of-type a[href="/privacy"] {
   color: var(--interactive-text);
   text-decoration: none;
   font-weight: 600;
-  font-size: 14px;
-  border-radius: 6px;
+  font-size: var(--text-base);
+  border-radius: var(--radius-sm);
   transition: top 0.15s ease;
 }
 .narve-skip-link:focus,
@@ -121,9 +121,9 @@ body > div:last-of-type a[href="/privacy"] {
   background: var(--bg-float, #fff);
   color: var(--text-primary);
   border: 1px solid var(--border-default);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg, 0 10px 30px rgba(0,0,0,0.15));
-  font-size: 14px;
+  font-size: var(--text-base);
   max-width: calc(100vw - 32px);
 }
 .narve-install-banner__text { flex: 1; min-width: 0; }
@@ -133,8 +133,8 @@ body > div:last-of-type a[href="/privacy"] {
   background: transparent;
   color: var(--text-primary);
   padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   min-height: 36px;
@@ -179,19 +179,19 @@ body > div:last-of-type a[href="/privacy"] {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-ghost);
 }
-.narve-sc-title { font-size: 16px; font-weight: 600; margin: 0; }
+.narve-sc-title { font-size: var(--text-md); font-weight: 600; margin: 0; }
 .narve-sc-close {
   appearance: none; background: transparent; border: 0;
   color: var(--text-secondary);
-  font-size: 24px; line-height: 1;
-  padding: 4px 10px; cursor: pointer; border-radius: 6px;
+  font-size: var(--text-2xl); line-height: 1;
+  padding: 4px 10px; cursor: pointer; border-radius: var(--radius-sm);
   min-width: 44px; min-height: 44px;
 }
 .narve-sc-close:hover { background: var(--interactive-ghost); color: var(--text-primary); }
 .narve-sc-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
 .narve-sc-section + .narve-sc-section { margin-top: 20px; }
 .narve-sc-heading {
-  font-size: 11px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-tertiary); margin: 0 0 10px;
 }
@@ -201,7 +201,7 @@ body > div:last-of-type a[href="/privacy"] {
 }
 .narve-sc-row {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; padding: 8px 10px; border-radius: 8px;
+  gap: 16px; padding: 8px 10px; border-radius: var(--radius-md);
 }
 .narve-sc-row:hover { background: var(--bg-inset); }
 .narve-sc-keys {
@@ -209,7 +209,7 @@ body > div:last-of-type a[href="/privacy"] {
   flex-wrap: wrap; justify-content: flex-end;
 }
 .narve-sc-desc {
-  margin: 0; color: var(--text-secondary); font-size: 14px;
+  margin: 0; color: var(--text-secondary); font-size: var(--text-base);
   flex: 1; min-width: 0;
 }
 .narve-sc-row kbd {
@@ -221,10 +221,10 @@ body > div:last-of-type a[href="/privacy"] {
   background: var(--bg-inset);
   border: 1px solid var(--border-default);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .narve-sc-then, .narve-sc-or {
-  font-size: 11px; color: var(--text-tertiary); margin: 0 2px;
+  font-size: var(--text-xs); color: var(--text-tertiary); margin: 0 2px;
 }
 .narve-sc-footer {
   padding: 12px 20px;
@@ -250,9 +250,9 @@ body > div:last-of-type a[href="/privacy"] {
   background: var(--bg-float, #ffffff);
   color: var(--text-primary);
   border: 1px solid var(--border-default);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  font-size: 13px;
+  font-size: var(--text-sm);
   max-width: calc(100vw - 32px);
   opacity: 0;
   transform: translateY(8px);
@@ -269,12 +269,12 @@ body > div:last-of-type a[href="/privacy"] {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; padding: 1px 5px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 11px; font-weight: 500;
+  font-size: var(--text-xs); font-weight: 500;
   color: var(--text-primary);
   background: var(--bg-inset, var(--interactive-ghost));
   border: 1px solid var(--border-default);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   margin: 0 2px;
 }
 .narve-sc-hint__actions {
@@ -284,10 +284,10 @@ body > div:last-of-type a[href="/privacy"] {
 .narve-sc-hint__close {
   appearance: none; background: transparent; border: 0;
   font: inherit; color: var(--text-secondary);
-  padding: 6px 10px; border-radius: 999px; cursor: pointer;
+  padding: 6px 10px; border-radius: var(--radius-full); cursor: pointer;
 }
 .narve-sc-hint__open  { color: var(--text-primary); font-weight: 500; }
-.narve-sc-hint__close { font-size: 18px; line-height: 1; padding: 4px 10px; min-width: 32px; }
+.narve-sc-hint__close { font-size: var(--text-lg); line-height: 1; padding: 4px 10px; min-width: 32px; }
 .narve-sc-hint__open:hover,
 .narve-sc-hint__close:hover { background: var(--interactive-ghost, rgba(0,0,0,0.06)); color: var(--text-primary); }
 
@@ -357,7 +357,7 @@ body > div:last-of-type a[href="/privacy"] {
   table.responsive-table tr,
   table[data-responsive="cards"] tr {
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     padding: 12px;
     margin-bottom: 10px;
     background: var(--bg-surface);
@@ -523,7 +523,7 @@ p a:hover, li a:hover, .page-subtitle a:hover {
   .intel-input-shell textarea {
     /* min-height comfortable on mobile; font-size ≥16 to defeat iOS zoom */
     min-height: 44px !important;
-    font-size: 16px !important;
+    font-size: var(--text-md) !important;
   }
   .suggested { grid-template-columns: 1fr !important; }
 
@@ -837,5 +837,5 @@ p a:hover, li a:hover, .page-subtitle a:hover {
      * lines to switch to a horizontal scroll instead. */
     /* flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; */
   }
-  .gw-nav a { font-size: 13px; }
+  .gw-nav a { font-size: var(--text-sm); }
 }

@@ -25,7 +25,7 @@
       z-index: 10;
     }
     /* Black logo by default (light theme). Dark theme inverts it to white. */
-    .pr-logo-icon { width: 48px; height: 48px; border-radius: 6px; }
+    .pr-logo-icon { width: 48px; height: 48px; border-radius: var(--radius-sm); }
     :root[data-theme="dark"] .pr-logo-icon { filter: invert(1); }
     .pr-logo-text {
       font-family: var(--font-ui);
@@ -74,7 +74,7 @@
       font-weight: 300;
     }
     .pr-line2-end {
-      font-family: 'Fraunces', 'Lora', Georgia, serif;
+      font-family: var(--font-display);
       font-style: italic;
       font-weight: 400;
     }
@@ -151,15 +151,15 @@
     .pr-hero:has(.pr-success.visible) .pr-soon { display: none; }
     .pr-success-title { font-family: var(--font-ui); font-weight: 500; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 24px; }
     .pr-position-block { padding: 24px 0; }
-    .pr-position-number { font-family: 'Fraunces', 'Lora', serif; font-style: italic; font-size: 5rem; line-height: 1; color: var(--text-primary); letter-spacing: -0.04em; }
+    .pr-position-number { font-family: var(--font-display); font-style: italic; font-size: 5rem; line-height: 1; color: var(--text-primary); letter-spacing: -0.04em; }
     .pr-position-label { font-size: 0.7rem; color: var(--text-tertiary); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 8px; }
-    .pr-ref-row { display: flex; align-items: center; gap: 8px; margin-top: 24px; padding: 10px 14px; background: var(--interactive-ghost); border: 1px solid var(--border-default); border-radius: 8px; }
+    .pr-ref-row { display: flex; align-items: center; gap: 8px; margin-top: 24px; padding: 10px 14px; background: var(--interactive-ghost); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
     .pr-ref-url { flex: 1; font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
     .pr-ref-copy { background: transparent; border: none; color: var(--text-tertiary); font-size: 0.75rem; cursor: pointer; padding: 4px 8px; font-family: inherit; }
     .pr-ref-copy:hover { color: var(--text-primary); }
     .pr-ref-hint { font-size: 0.72rem; color: var(--text-tertiary); line-height: 1.6; margin-top: 16px; }
     .pr-share-row { display: flex; gap: 8px; margin-top: 18px; justify-content: center; }
-    .pr-share-btn { padding: 8px 16px; background: transparent; border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-secondary); font-size: 0.75rem; text-decoration: none; font-family: inherit; cursor: pointer; }
+    .pr-share-btn { padding: 8px 16px; background: transparent; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 0.75rem; text-decoration: none; font-family: inherit; cursor: pointer; }
     .pr-share-btn:hover { border-color: var(--text-primary); color: var(--text-primary); }
 
     @media (max-width: 520px) {

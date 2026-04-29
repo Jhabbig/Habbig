@@ -36,7 +36,7 @@
   border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.12));
   border-radius: 10px;
   padding: 12px 16px;
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.45;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   opacity: 0;
@@ -68,7 +68,7 @@
   border: none;
   color: var(--text-primary, #ffffff);
   font-weight: 500;
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
   padding: 0;
   text-decoration: underline;
@@ -105,7 +105,7 @@
 .nv-empty__icon svg { width: 100%; height: 100%; display: block; }
 
 .nv-empty__title {
-  font-size: 16px;
+  font-size: var(--text-md);
   font-weight: 500;
   color: var(--text-primary, #ffffff);
   margin: 0 0 8px;
@@ -113,7 +113,7 @@
 }
 
 .nv-empty__body {
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.55;
   max-width: 440px;
   margin: 0 auto 20px;
@@ -130,10 +130,10 @@
   display: inline-flex;
   align-items: center;
   padding: 8px 16px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   text-decoration: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.12));
   color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   background: transparent;
@@ -176,7 +176,7 @@
   );
   background-size: 200% 100%;
   animation: nv-skel-shimmer 1.6s ease-in-out infinite;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 @keyframes nv-skel-shimmer {
@@ -253,7 +253,7 @@
   padding: 8px 12px;
   z-index: 10000;
   text-decoration: none;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
@@ -329,7 +329,7 @@
 }
 
 .nv-cmdk__group-header {
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
@@ -342,11 +342,11 @@
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   text-decoration: none;
   color: var(--text-primary, #ffffff);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.4;
 }
 
@@ -386,17 +386,17 @@
 .nv-cmdk__hint {
   color: var(--text-tertiary, rgba(255, 255, 255, 0.6));
   padding: 24px 16px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.6;
   text-align: center;
 }
 
 .nv-cmdk__hint kbd {
   background: var(--border-strong, rgba(255, 255, 255, 0.08));
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 2px 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .nv-cmdk__hint-action {
@@ -404,7 +404,7 @@
   margin-top: 12px;
   padding: 6px 14px;
   border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary, #ffffff);
   text-decoration: none;
   font-size: 12px;
@@ -415,7 +415,7 @@
   gap: 16px;
   padding: 10px 16px;
   border-top: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
   flex-shrink: 0;
   flex-wrap: wrap;
@@ -468,10 +468,10 @@
   background: transparent;
   border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.12));
   padding: 6px 10px 6px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-family: inherit;
   line-height: 1;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
@@ -514,11 +514,11 @@
   background: none;
   border: none;
   color: var(--text-primary, #ffffff);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-family: inherit;
   cursor: pointer;
   text-decoration: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   line-height: 1.4;
 }
 
@@ -533,5 +533,5 @@
    * larger tap target. Keep the dropdown shape — it slides under the
    * trigger as expected. */
   .nv-share__trigger { padding: 8px 12px; }
-  .nv-share__item { padding: 10px 14px; font-size: 14px; }
+  .nv-share__item { padding: 10px 14px; font-size: var(--text-base); }
 }
