@@ -21,7 +21,10 @@ Both tables are additive — nothing existing is touched. Safe to re-run.
 """
 
 revision = "120"
-down_revision = "119"
+# 118 + 119 were never created (parallel-branch reservation gaps); the
+# real predecessor on disk is 117_search_analytics. Repointing the
+# pointer so `migrations.downgrade()` from 120 doesn't fail.
+down_revision = "117"
 
 
 def _table_exists(c, name: str) -> bool:
