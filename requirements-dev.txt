@@ -1,0 +1,15 @@
+# Dev-only deps. Production install (`pip install -r gateway/requirements.txt`)
+# never sees this file. CI loads both. Local dev:
+#
+#   pip install --user -r requirements-dev.txt
+#   python3 -m playwright install chromium    # download the browser binary
+#
+# Playwright pinned to the 1.42 line because the breaking 1.50+ rename of
+# context routing API hasn't been audited against our routes yet.
+
+playwright>=1.42,<1.50
+pytest-playwright>=0.4,<0.6
+
+# Lighthouse runs through `npx lighthouse` so no Python pin needed —
+# but document it here so a fresh laptop knows what to install:
+#   npm install -g lighthouse@>=11

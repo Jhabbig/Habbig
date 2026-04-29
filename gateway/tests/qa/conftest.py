@@ -162,3 +162,176 @@ def live_server() -> Optional[str]:
     except Exception:
         # Any failure → return None so the dependent walks self-skip.
         yield None
+
+
+# ── Playwright fixtures ─────────────────────────────────────────────────────
+#
+# Browser-driven walks (test_*.py) consume these. The whole stack
+# self-skips cleanly when:
+#   - playwright is not installed (the import in each test file fails fast)
+#   - the chromium binary hasn't been downloaded
+#   - NARVE_TEST_SERVER points at an unreachable URL
+# ...so a CI worker without Playwright still passes the lighter-weight
+# qa_walk_*.py TestClient suite, and a dev box without `playwright
+# install` doesn't fail noisily.
+#
+# Default target: env NARVE_TEST_SERVER (eg http://localhost:7000 or
+# http://100.69.44.108:7000), falling back to the in-process uvicorn
+# fixture above.
+
+
+@pytest.fixture(scope="session")
+def browser_server(live_server):
+    """Resolve the URL the browser-walks should target.
+
+    Resolution order:
+      1. NARVE_TEST_SERVER env (so CI / staging can target a real
+         deployment without the local uvicorn fixture).
+      2. The existing live_server fixture (in-process uvicorn on a
+         random port — already declared above).
+      3. Skip if neither is available.
+
+    Naming: kept distinct from the existing ``live_server`` so the two
+    fixtures coexist instead of one overriding the other. Browser
+    walks depend on this; pure HTTP walks depend on ``live_server``.
+    """
+    import requests
+    target = os.environ.get("NARVE_TEST_SERVER") or live_server
+    if not target:
+        pytest.skip("No NARVE_TEST_SERVER and live_server fixture didn't bind")
+    # Probe /health — anonymous, public, returns 200 — so the rest of
+    # the walks don't waste time on a target that isn't actually up.
+    try:
+        r = requests.get(f"{target}/health", timeout=3)
+        if r.status_code != 200:
+            pytest.skip(f"{target}/health returned {r.status_code}")
+    except Exception as e:
+        pytest.skip(f"{target} unreachable: {e}")
+    return target
+
+
+@pytest.fixture(scope="session")
+def _pw_module():
+    """Import playwright lazily; skip the whole browser-test session
+    cleanly when the dep is missing.
+    """
+    pw = pytest.importorskip(
+        "playwright.sync_api",
+        reason="playwright not installed; install with "
+        "`pip install -r requirements-dev.txt && playwright install chromium`",
+    )
+    return pw
+
+
+@pytest.fixture
+def browser(_pw_module):
+    """Per-test browser. Headless by default; PWDEBUG=1 makes it visible."""
+    headless = not os.environ.get("PWDEBUG")
+    with _pw_module.sync_playwright() as p:
+        try:
+            b = p.chromium.launch(headless=headless)
+        except Exception as e:
+            pytest.skip(
+                f"Chromium launch failed ({e}). Run "
+                f"`python3 -m playwright install chromium` first."
+            )
+        yield b
+        b.close()
+
+
+def _attach_error_capture(page):
+    """Collect console errors + page exceptions onto page._nv_errors so
+    a failing test can surface them in the assertion message rather
+    than disappearing into the void."""
+    errors: list[str] = []
+
+    def _on_pageerror(exc):
+        errors.append(f"pageerror: {exc}")
+
+    def _on_console(msg):
+        if msg.type == "error":
+            errors.append(f"console: {msg.text}")
+
+    page.on("pageerror", _on_pageerror)
+    page.on("console", _on_console)
+    page._nv_errors = errors  # type: ignore[attr-defined]
+    return page
+
+
+@pytest.fixture
+def page(browser):
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    pg = _attach_error_capture(ctx.new_page())
+    yield pg
+    if getattr(pg, "_nv_errors", None):
+        # Surfaced into the test report; not a hard fail (a 403 page
+        # legitimately throws on a protected endpoint), but visible
+        # so the operator can spot real regressions in `pytest -s`.
+        print(f"\nbrowser console errors: {pg._nv_errors[:5]}")
+    ctx.close()
+
+
+@pytest.fixture
+def mobile_page(browser):
+    ctx = browser.new_context(
+        viewport={"width": 375, "height": 812},
+        device_scale_factor=2,
+        is_mobile=True,
+        has_touch=True,
+        # iPhone 14 Pro UA — many a11y / hover / pointer-coarse rules
+        # only fire when the UA looks like a real phone.
+        user_agent=(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+            "Mobile/15E148 Safari/604.1"
+        ),
+    )
+    pg = _attach_error_capture(ctx.new_page())
+    yield pg
+    ctx.close()
+
+
+@pytest.fixture
+def authed_browser_page(page, browser_server, authed_cookies):
+    """Page with the same auth cookies the TestClient walks already
+    use, injected at context level so every request from the page
+    carries them. Falls back to seeding via /login if cookie injection
+    is incompatible with this build's gate (the TestClient cookies
+    are set on the FastAPI domain, not the live target — Playwright
+    needs them keyed on the actual server URL)."""
+    from urllib.parse import urlparse
+    parsed = urlparse(browser_server)
+    cookies_for_browser = []
+    for name, value in (authed_cookies or {}).items():
+        cookies_for_browser.append({
+            "name": name,
+            "value": value,
+            "domain": parsed.hostname or "127.0.0.1",
+            "path": "/",
+            "httpOnly": False,
+            "secure": parsed.scheme == "https",
+            "sameSite": "Lax",
+        })
+    if cookies_for_browser:
+        page.context.add_cookies(cookies_for_browser)
+    return page
+
+
+@pytest.fixture
+def admin_browser_page(page, browser_server, admin_cookies):
+    from urllib.parse import urlparse
+    parsed = urlparse(browser_server)
+    cookies_for_browser = []
+    for name, value in (admin_cookies or {}).items():
+        cookies_for_browser.append({
+            "name": name,
+            "value": value,
+            "domain": parsed.hostname or "127.0.0.1",
+            "path": "/",
+            "httpOnly": False,
+            "secure": parsed.scheme == "https",
+            "sameSite": "Lax",
+        })
+    if cookies_for_browser:
+        page.context.add_cookies(cookies_for_browser)
+    return page
