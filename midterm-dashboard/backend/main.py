@@ -1628,10 +1628,47 @@ async def premium_detailed_comparison(race_key: str, request: Request):
 
 
 @app.get("/premium/campaign-finance/{state_abbr}")
-async def premium_campaign_finance(state_abbr: str, request: Request):
-    """FEC fundraising data placeholder."""
-    user = await require_tier(request, "premium")
-    return {"state": state_abbr, "finance": [], "note": "FEC integration coming soon"}
+async def premium_campaign_finance(
+    state_abbr: str,
+    request: Request,
+    cycle: int = 2026,
+):
+    """FEC campaign finance totals for a state's federal races (Senate + House)."""
+    await require_tier(request, "premium")
+    from data_sources.fec import fetch_race_financials
+
+    state_upper = state_abbr.upper()
+    senate, house = await asyncio.gather(
+        fetch_race_financials(
+            state.http_session, state_upper, "senate", cycle=cycle, max_results=25
+        ),
+        fetch_race_financials(
+            state.http_session, state_upper, "house", cycle=cycle, max_results=100
+        ),
+    )
+
+    house_by_district: dict[str, list] = {}
+    for cand in house:
+        d = cand.get("district") or "00"
+        try:
+            d_key = f"{int(str(d).lstrip('0') or '0'):02d}"
+        except (ValueError, TypeError):
+            d_key = str(d)
+        house_by_district.setdefault(d_key, []).append(cand)
+    for cands in house_by_district.values():
+        cands.sort(key=lambda c: c.get("receipts") or 0, reverse=True)
+
+    return {
+        "state": state_upper,
+        "cycle": cycle,
+        "senate": senate,
+        "house_by_district": house_by_district,
+        "totals": {
+            "senate_candidates": len(senate),
+            "house_candidates": len(house),
+            "districts": len(house_by_district),
+        },
+    }
 
 
 # ===================================================================
