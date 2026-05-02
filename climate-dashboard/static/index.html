@@ -209,8 +209,8 @@
 </head>
 <body>
 <header>
-  <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v2</span></h1>
-  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa · NSIDC sea ice (Arctic + Antarctic) · OISST · ENSO · backtest</div>
+  <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v3</span></h1>
+  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ · NSIDC sea ice · OISST · ENSO · backtest</div>
 </header>
 <main>
 
@@ -239,6 +239,7 @@
   Temperature anomaly: <a href="https://data.giss.nasa.gov/gistemp/" target="_blank">NASA GISTEMP v4</a>
   (baseline 1951–1980).
   CO₂: <a href="https://gml.noaa.gov/ccgg/trends/" target="_blank">NOAA GML Mauna Loa</a>.
+  Methane (CH₄): <a href="https://gml.noaa.gov/ccgg/trends_ch4/" target="_blank">NOAA GML globally-averaged CH₄</a>.
   Sea ice: <a href="https://nsidc.org/arcticseaicenews/" target="_blank">NSIDC G02135</a>.
   SST: <a href="https://climatereanalyzer.org/clim/sst_daily/" target="_blank">Climate Reanalyzer / NOAA OISST 2.1</a>.
   ENSO: <a href="https://origin.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/ONI_v5.php" target="_blank">NOAA CPC ONI</a>.
@@ -303,6 +304,7 @@ async function loadCards() {
   const tempData = await getJSON("/api/temperature");
   const co2Data = await getJSON("/api/co2");
   const seaData = await getJSON("/api/sea-ice");
+  const ch4Data = await getJSON("/api/methane");
 
   const cards = [];
 
@@ -356,6 +358,32 @@ async function loadCards() {
         <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppm ?? 0, 2)} ppm</b></div>
         ${threshHtml}
         ${sparkline(sparkVals, 260, 56, "#fbbf24")}
+      </div>
+    `);
+  }
+
+  // Methane card (CH₄)
+  if (s?.methane?.latest) {
+    const l = s.methane.latest;
+    const p = s.methane.projection;
+    const sparkVals = (ch4Data?.monthly || []).slice(-120).map(m => m.ppb);
+    const thr = s.methane.thresholds;
+    const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
+    const threshHtml = liveThr.length ? `
+      <div class="thresholds">
+        ${liveThr.map(t => {
+          const hot = t.p_at_or_above >= 0.5;
+          return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppb} <b>${pct(t.p_at_or_above)}</b></span>`;
+        }).join("")}
+      </div>` : "";
+    cards.push(`
+      <div class="card">
+        <h3>Atmospheric methane (CH₄)</h3>
+        <div class="big">${fmt(l.ppb, 0)} <span style="font-size:14px;color:var(--text-2)">ppb</span></div>
+        <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppb_per_year ?? 0, 1)} ppb/yr · σ=${fmt(p?.residual_std_ppb ?? 0, 1)}</div>
+        <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppb ?? 0, 1)} ppb</b></div>
+        ${threshHtml}
+        ${sparkline(sparkVals, 260, 56, "#a78bfa")}
       </div>
     `);
   }
@@ -538,6 +566,15 @@ async function loadBacktest() {
       <td class="num"><span class="${errCls(r.error_ppm / 5)}">${r.error_ppm >= 0 ? '+' : ''}${fmt(r.error_ppm, 2)} ppm</span></td>
     </tr>
   `).join("");
+  const ch4Rows = (b.methane || []).map(r => `
+    <tr>
+      <td>CH₄ year-end ppb</td>
+      <td class="num">${r.year}</td>
+      <td class="num">${fmt(r.projected_year_end_ppb, 1)}</td>
+      <td class="num">${fmt(r.actual_dec_ppb, 1)}</td>
+      <td class="num"><span class="${errCls(r.error_ppb / 10)}">${r.error_ppb >= 0 ? '+' : ''}${fmt(r.error_ppb, 1)} ppb</span></td>
+    </tr>
+  `).join("");
   root.innerHTML = `
     <table>
       <thead>
@@ -549,10 +586,10 @@ async function loadBacktest() {
           <th class="num">Error</th>
         </tr>
       </thead>
-      <tbody>${tempRows}${co2Rows}</tbody>
+      <tbody>${tempRows}${co2Rows}${ch4Rows}</tbody>
     </table>
     <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);line-height:1.5">
-      <b>Method:</b> ${b.method?.gistemp || ""} ${b.method?.co2 || ""}
+      <b>Method:</b> ${b.method?.gistemp || ""} ${b.method?.co2 || ""} ${b.method?.methane || ""}
     </div>
   `;
 }

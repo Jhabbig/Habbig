@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Polymarket Climate Change Dashboard — Flask backend (v2).
+"""Polymarket Climate Change Dashboard — Flask backend (v3).
 
 Long-horizon climate markets: warmest year on record, Arctic + Antarctic sea
-ice extent, global mean temperature anomaly, atmospheric CO2, sea surface
-temperature, ENSO regime.
+ice extent, global mean temperature anomaly, atmospheric CO2 + CH4, sea
+surface temperature, ENSO regime.
 
 Data sources:
   - NASA GISTEMP v4 (monthly global land+ocean anomaly vs 1951-1980 baseline)
   - NOAA GML Mauna Loa atmospheric CO2 (monthly mean)
+  - NOAA GML globally-averaged methane CH4 (monthly mean)        [v3]
   - NSIDC Sea Ice Index G02135 v4.0 (daily Arctic + Antarctic extent)
   - Climate Reanalyzer / NOAA OISST (daily global SST)
   - NOAA CPC ONI (Oceanic Nino Index — ENSO state)
@@ -70,6 +71,7 @@ _TTL_DEFAULT = 60 * 60  # 1h
 _TTL: dict[str, int] = {
     "gistemp": 60 * 60 * 12,        # GISTEMP updates monthly, refresh twice a day
     "co2": 60 * 60 * 12,            # NOAA Mauna Loa updates monthly
+    "methane": 60 * 60 * 12,        # NOAA GML CH4 updates monthly
     "sea_ice": 60 * 60 * 6,         # NSIDC updates daily
     "sst": 60 * 60 * 3,             # OISST daily
     "oni": 60 * 60 * 12,            # CPC ONI updates monthly
@@ -317,6 +319,142 @@ def fetch_co2() -> Optional[dict]:
     }
     cache_set("co2", out)
     return out
+
+
+# ─── NOAA GML methane (CH4) ────────────────────────────────────────────────────
+
+# NOAA's monthly globally-averaged CH4 mole fraction in dry air, nanomol/mol (ppb).
+CH4_MONTHLY_URL = "https://gml.noaa.gov/webdata/ccgg/trends/ch4/ch4_mm_gl.csv"
+
+
+def fetch_methane() -> Optional[dict]:
+    """Monthly globally-averaged methane (CH4) in ppb. Same shape as CO2."""
+    cached = cache_get("methane")
+    if cached is not None:
+        return cached
+    r = _http_get(CH4_MONTHLY_URL, timeout=30)
+    if not r:
+        return None
+    series: list[dict] = []
+    for line in r.text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 4:
+            continue
+        try:
+            year = int(parts[0])
+            month = int(parts[1])
+            decimal_date = float(parts[2])
+            ppb_avg = float(parts[3])
+        except ValueError:
+            continue
+        if ppb_avg < 0:
+            continue
+        series.append({
+            "year": year, "month": month,
+            "decimal_date": round(decimal_date, 4),
+            "ppb": round(ppb_avg, 2),
+        })
+    if not series:
+        return None
+    out = {
+        "source": "NOAA GML globally-averaged CH4 (ch4_mm_gl)",
+        "units": "ppb",
+        "monthly": series,
+        "latest": series[-1],
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+    cache_set("methane", out)
+    return out
+
+
+def methane_year_end_projection(ch4: dict) -> Optional[dict]:
+    """24-month linear regression on globally-averaged CH4, evaluated at year-end."""
+    if not ch4 or not ch4.get("monthly"):
+        return None
+    series = ch4["monthly"]
+    cur_year = max(s["year"] for s in series)
+    tail = series[-24:]
+    if len(tail) < 6:
+        return None
+    xs = [s["decimal_date"] for s in tail]
+    ys = [s["ppb"] for s in tail]
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    den = sum((xs[i] - mx) ** 2 for i in range(n))
+    if den == 0:
+        return None
+    slope = num / den  # ppb per year
+    intercept = my - slope * mx
+    projected = intercept + slope * (cur_year + 1.0)
+    resid = [ys[i] - (intercept + slope * xs[i]) for i in range(n)]
+    sigma = math.sqrt(sum(r * r for r in resid) / n) if n > 0 else 5.0
+    sigma = max(sigma, 2.0)  # CH4 is noisier than CO2 — minimum 2 ppb σ
+    return {
+        "current_year": cur_year,
+        "latest_ppb": series[-1]["ppb"],
+        "ppb_per_year": round(slope, 2),
+        "projected_year_end_ppb": round(projected, 2),
+        "residual_std_ppb": round(sigma, 2),
+    }
+
+
+def methane_threshold_probs(ch4_proj: Optional[dict],
+                             thresholds_ppb: tuple[float, ...] = (1930, 1940, 1950, 1960, 1970, 1980, 1990, 2000)) -> Optional[dict]:
+    """P(year-end CH4 ≥ T) under N(projection, residual_std)."""
+    if not ch4_proj:
+        return None
+    mu = ch4_proj.get("projected_year_end_ppb")
+    sigma = ch4_proj.get("residual_std_ppb") or 5.0
+    if mu is None:
+        return None
+    out = []
+    for t in thresholds_ppb:
+        p = 1.0 - _normal_cdf((t - mu) / sigma)
+        out.append({"threshold_ppb": t, "p_at_or_above": round(p, 3)})
+    return {"thresholds": out, "mu_ppb": mu, "sigma_ppb": sigma}
+
+
+def methane_backtest(ch4: Optional[dict], n_years: int = 5) -> list[dict]:
+    """As-of-June projection vs December actual for the last n_years."""
+    if not ch4 or not ch4.get("monthly"):
+        return []
+    series = ch4["monthly"]
+    cur_year = max(s["year"] for s in series)
+    rows: list[dict] = []
+    for target_year in range(cur_year - n_years, cur_year):
+        mid = [s for s in series if s["year"] == target_year and s["month"] == 6]
+        actual = [s for s in series if s["year"] == target_year and s["month"] == 12]
+        if not mid or not actual:
+            continue
+        cutoff = mid[-1]["decimal_date"]
+        tail = [s for s in series if s["decimal_date"] <= cutoff][-24:]
+        if len(tail) < 12:
+            continue
+        xs = [s["decimal_date"] for s in tail]
+        ys = [s["ppb"] for s in tail]
+        n = len(xs)
+        mx = sum(xs) / n
+        my = sum(ys) / n
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+        den = sum((xs[i] - mx) ** 2 for i in range(n))
+        if den == 0:
+            continue
+        slope = num / den
+        intercept = my - slope * mx
+        projected = intercept + slope * (target_year + 1.0)
+        rows.append({
+            "year": target_year,
+            "as_of": "Jun",
+            "projected_year_end_ppb": round(projected, 2),
+            "actual_dec_ppb": round(actual[-1]["ppb"], 2),
+            "error_ppb": round(projected - actual[-1]["ppb"], 2),
+        })
+    return rows
 
 
 # ─── NSIDC Arctic sea ice extent ──────────────────────────────────────────────
@@ -864,11 +1002,40 @@ def _co2_threshold_market_p(question: str, proj: dict) -> Optional[float]:
     return None
 
 
+def _methane_threshold_market_p(question: str, proj: dict) -> Optional[float]:
+    """For markets like 'Will atmospheric methane exceed 1950 ppb in 2026?'
+
+    Methane thresholds in markets are typically expressed in ppb (3-4 digits)
+    or occasionally ppm (1.9-2.0 with 'ppm' explicit). We accept both.
+    """
+    mu = proj.get("projected_year_end_ppb")
+    sigma = max(proj.get("residual_std_ppb") or 5.0, 2.0)
+    if mu is None:
+        return None
+    q = question.lower()
+    # ppb pattern (4-digit threshold)
+    m = re.search(r"(?:exceed[a-z]*|above|over|more than|at least|reach[a-z]*)\s*(\d{4}(?:\.\d+)?)\s*ppb", q)
+    if m:
+        thr = float(m.group(1))
+        return 1.0 - _normal_cdf((thr - mu) / sigma)
+    m = re.search(r"(?:below|under|less than)\s*(\d{4}(?:\.\d+)?)\s*ppb", q)
+    if m:
+        thr = float(m.group(1))
+        return _normal_cdf((thr - mu) / sigma)
+    # ppm pattern — convert to ppb (1.95 ppm == 1950 ppb)
+    m = re.search(r"(?:exceed[a-z]*|above|over|more than|at least)\s*([12](?:\.\d{1,3})?)\s*ppm", q)
+    if m and "methane" in q:
+        thr = float(m.group(1)) * 1000.0
+        return 1.0 - _normal_cdf((thr - mu) / sigma)
+    return None
+
+
 def edges_for_markets(markets: list[dict],
                        gistemp_proj: Optional[dict],
                        co2_proj: Optional[dict],
                        arctic_proj: Optional[dict] = None,
-                       antarctic_proj: Optional[dict] = None) -> list[dict]:
+                       antarctic_proj: Optional[dict] = None,
+                       methane_proj: Optional[dict] = None) -> list[dict]:
     """Attach a model probability + edge to markets where we can score them."""
     out = []
     for m in markets:
@@ -931,6 +1098,15 @@ def edges_for_markets(markets: list[dict],
                              f"σ={co2_proj['residual_std_ppm']} ppm), "
                              f"+{co2_proj['ppm_per_year']}/yr")
 
+        # 6) Methane (CH4) threshold markets
+        if model_p is None and methane_proj and ("methane" in tl or "ch4" in tl or "ppb" in tl):
+            p = _methane_threshold_market_p(title, methane_proj)
+            if p is not None:
+                model_p = max(0.0, min(1.0, p))
+                rationale = (f"N(μ={methane_proj['projected_year_end_ppb']} ppb, "
+                             f"σ={methane_proj['residual_std_ppb']} ppb), "
+                             f"+{methane_proj['ppb_per_year']}/yr")
+
         if implied is not None and model_p is not None:
             edge = round((model_p - implied) * 100, 1)
         else:
@@ -964,20 +1140,24 @@ def api_markets():
     gist = fetch_gistemp()
     co2 = fetch_co2()
     sea = fetch_sea_ice()
+    ch4 = fetch_methane()
     gp = annual_record_pace_projection(gist) if gist else None
     cp = co2_year_end_projection(co2) if co2 else None
     ap = arctic_min_projection(sea) if sea else None
     aap = antarctic_min_projection(sea) if sea else None
-    enriched = edges_for_markets(markets, gp, cp, ap, aap)
+    mp = methane_year_end_projection(ch4) if ch4 else None
+    enriched = edges_for_markets(markets, gp, cp, ap, aap, mp)
     return jsonify({
         "markets": enriched,
         "count": len(enriched),
         "gistemp_projection": gp,
         "co2_projection": cp,
+        "methane_projection": mp,
         "arctic_min_projection": ap,
         "antarctic_min_projection": aap,
         "temperature_thresholds": temperature_threshold_probs(gp),
         "co2_thresholds": co2_threshold_probs(cp),
+        "methane_thresholds": methane_threshold_probs(mp),
     })
 
 
@@ -997,6 +1177,16 @@ def api_co2():
         return jsonify({"error": "CO2 fetch failed"}), 503
     proj = co2_year_end_projection(c)
     return jsonify({**c, "projection": proj})
+
+
+@app.route("/api/methane")
+def api_methane():
+    m = fetch_methane()
+    if not m:
+        return jsonify({"error": "Methane fetch failed"}), 503
+    proj = methane_year_end_projection(m)
+    thresholds = methane_threshold_probs(proj)
+    return jsonify({**m, "projection": proj, "thresholds": thresholds})
 
 
 @app.route("/api/sea-ice")
@@ -1041,10 +1231,12 @@ def api_summary():
     c = fetch_co2()
     s = fetch_sea_ice()
     o = fetch_oni()
+    ch4 = fetch_methane()
     gp = annual_record_pace_projection(g) if g else None
     cp = co2_year_end_projection(c) if c else None
     ap = arctic_min_projection(s) if s else None
     aap = antarctic_min_projection(s) if s else None
+    mp = methane_year_end_projection(ch4) if ch4 else None
     return jsonify({
         "gistemp": {
             "latest_annual": g["annual"][-1] if g and g.get("annual") else None,
@@ -1055,6 +1247,11 @@ def api_summary():
             "latest": c["latest"] if c else None,
             "projection": cp,
             "thresholds": co2_threshold_probs(cp),
+        },
+        "methane": {
+            "latest": ch4["latest"] if ch4 else None,
+            "projection": mp,
+            "thresholds": methane_threshold_probs(mp),
         },
         "sea_ice": {
             "record_check": sea_ice_record_check(s) if s else None,
@@ -1074,12 +1271,15 @@ def api_backtest():
     """Recent-history projection-vs-actual for our temperature & CO₂ models."""
     g = fetch_gistemp()
     c = fetch_co2()
+    ch4 = fetch_methane()
     return jsonify({
         "gistemp": gistemp_backtest(g) if g else [],
         "co2": co2_backtest(c) if c else [],
+        "methane": methane_backtest(ch4) if ch4 else [],
         "method": {
             "gistemp": "Replays the YTD-anomaly + historical-drift model 'as of June' for each year, scored vs the actual J-D mean.",
             "co2": "Refits the 24-month linear regression at June of each year, scored vs the actual December reading.",
+            "methane": "Same June-cutoff 24-month regression as CO₂, scored vs the actual December reading.",
         },
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
