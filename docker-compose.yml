@@ -35,6 +35,8 @@ services:
         condition: service_healthy
       world:
         condition: service_healthy
+      whale:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -122,6 +124,21 @@ services:
       timeout: 5s
       retries: 3
 
+  whale:
+    build: ./whale-dashboard
+    expose:
+      - "8053"
+    env_file: ./gateway/.env.production
+    volumes:
+      - whale-data:/app/backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8053/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   gateway-data:
   crypto-data:
+  whale-data:
