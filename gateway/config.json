@@ -87,6 +87,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
+    },
+    "centralbank": {
+      "subdomain": "cb",
+      "target": 7060,
+      "display_name": "Central Bank Tracker",
+      "description": "Fed, ECB, BoE rates · implied path · Polymarket FOMC edge",
+      "accent": "#14b8a6",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
     }
   }
 }

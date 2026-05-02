@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Central Bank Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --grid: #30363d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--grid); display: flex;
+           align-items: baseline; gap: 16px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 24px; display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 1200px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+           padding: 20px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--muted);
+              text-transform: uppercase; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--grid); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px;
+           font-weight: 600; letter-spacing: 0.03em; }
+  .badge.imminent { background: #f85149; color: #fff; }
+  .badge.soon { background: #d29922; color: #0e1117; }
+  .badge.later { background: #30363d; color: var(--muted); }
+  .implied-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                  gap: 16px; margin-bottom: 16px; }
+  .stat { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px;
+          padding: 12px; }
+  .stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                 letter-spacing: 0.05em; }
+  .stat .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
+                 margin-top: 4px; }
+  .stat .value.cut { color: #56d364; }
+  .stat .value.hike { color: #f85149; }
+  .probbar { display: flex; height: 28px; border-radius: 4px; overflow: hidden;
+             border: 1px solid var(--grid); }
+  .probbar .seg { display: flex; align-items: center; justify-content: center;
+                  font-size: 11px; font-weight: 600; color: #0e1117; min-width: 0; }
+  .probbar .seg.cut  { background: #56d364; }
+  .probbar .seg.hold { background: #8b949e; color: #0e1117; }
+  .probbar .seg.hike { background: #f85149; color: #fff; }
+  .footnote { color: var(--muted); font-size: 11px; margin-top: 12px; }
+  .edge-pos { color: #56d364; font-weight: 600; }
+  .edge-neg { color: #f85149; font-weight: 600; }
+  .edge-flat { color: var(--muted); }
+  .dir-buy  { background: #56d364; color: #0e1117; padding: 2px 6px; border-radius: 3px;
+              font-size: 11px; font-weight: 700; }
+  .dir-sell { background: #f85149; color: #fff; padding: 2px 6px; border-radius: 3px;
+              font-size: 11px; font-weight: 700; }
+  .dir-none { color: var(--muted); }
+  .q { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .q a { color: var(--accent); text-decoration: none; }
+  .q a:hover { text-decoration: underline; }
+  .stance-row { display: grid; grid-template-columns: 180px 100px 1fr; gap: 16px;
+                align-items: center; padding: 10px 0; border-bottom: 1px solid var(--grid); }
+  .stance-row:last-child { border-bottom: 0; }
+  .stance-name { font-weight: 600; }
+  .stance-name .when { display: block; color: var(--muted); font-size: 11px; font-weight: 400;
+                       margin-top: 2px; }
+  .stance-bucket { text-align: center; padding: 4px 8px; border-radius: 3px; font-size: 11px;
+                   font-weight: 700; letter-spacing: 0.05em; }
+  .stance-bucket.HAWKISH { background: #f85149; color: #fff; }
+  .stance-bucket.NEUTRAL { background: #30363d; color: var(--muted); }
+  .stance-bucket.DOVISH  { background: #56d364; color: #0e1117; }
+  .stance-bucket.UNKNOWN { background: #21262d; color: var(--muted); }
+  .stance-meta { font-size: 12px; color: var(--muted); }
+  .stance-meta a { color: var(--accent); text-decoration: none; }
+  .stance-meta a:hover { text-decoration: underline; }
+  .matches { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .matches .chip { padding: 2px 6px; border-radius: 3px; font-size: 11px;
+                   background: #21262d; color: var(--fg); font-family: ui-monospace, monospace; }
+  .matches .chip.hawk { color: #ff9b8a; }
+  .matches .chip.dove { color: #91d499; }
+  .stance-axis { position: relative; height: 6px; background: linear-gradient(to right,
+                 #56d364 0%, #56d364 35%, #30363d 35%, #30363d 65%, #f85149 65%, #f85149 100%);
+                 border-radius: 3px; margin-top: 6px; }
+  .stance-axis .marker { position: absolute; top: -4px; width: 12px; height: 14px;
+                         background: var(--fg); border-radius: 2px; transform: translateX(-50%); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; }
+  .legend .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 6px;
+                    vertical-align: middle; border-radius: 2px; }
+  svg { width: 100%; height: 360px; display: block; }
+  .err { color: #f85149; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Central Bank Tracker</h1>
+  <span class="meta" id="meta">loading…</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>Policy rate history</h2>
+    <div class="legend" id="legend"></div>
+    <svg id="chart" viewBox="0 0 800 360" preserveAspectRatio="none"></svg>
+  </section>
+  <section class="panel">
+    <h2>Latest readings</h2>
+    <table>
+      <thead><tr><th>Central bank</th><th>Series</th><th class="num">Rate</th><th class="num">As of</th></tr></thead>
+      <tbody id="latest"></tbody>
+    </table>
+  </section>
+  <section class="panel" id="implied-panel">
+    <h2>Next FOMC — market-implied move</h2>
+    <div id="implied-body">loading…</div>
+  </section>
+  <section class="panel" id="edge-panel">
+    <h2>Polymarket edge — implied vs market price</h2>
+    <div id="edge-body">loading…</div>
+  </section>
+  <section class="panel" id="stance-panel">
+    <h2>Statement stance — latest press releases</h2>
+    <div id="stance-body">loading…</div>
+  </section>
+  <section class="panel">
+    <h2>Decision calendar — next 90 days</h2>
+    <table>
+      <thead><tr><th>Central bank</th><th>Meeting</th><th class="num">Date</th><th class="num">In</th></tr></thead>
+      <tbody id="calendar"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+// Inline SVG line chart — Chart.js can be vendored later if we want axes/tooltips.
+// Palette is Bloomberg-ish: distinct hues that survive on dark bg.
+const COLORS = ["#58a6ff", "#f0883e", "#56d364", "#d2a8ff", "#ff7b72"];
+
+async function load() {
+  const meta = document.getElementById("meta");
+  // Fire all requests in parallel — one shouldn't block the others.
+  const [ratesR, calR, impR, edgeR, stanceR] = await Promise.allSettled([
+    fetch("/api/rates").then(r => r.ok ? r.json() : Promise.reject(new Error("rates HTTP " + r.status))),
+    fetch("/api/calendar").then(r => r.ok ? r.json() : Promise.reject(new Error("cal HTTP " + r.status))),
+    fetch("/api/implied").then(r => r.ok ? r.json() : Promise.reject(new Error("imp HTTP " + r.status))),
+    fetch("/api/edge").then(r => r.ok ? r.json() : Promise.reject(new Error("edge HTTP " + r.status))),
+    fetch("/api/stance").then(r => r.ok ? r.json() : Promise.reject(new Error("stance HTTP " + r.status))),
+  ]);
+
+  if (ratesR.status === "fulfilled") {
+    render(ratesR.value);
+    const ts = new Date(ratesR.value.fetched_at * 1000).toISOString().replace("T", " ").slice(0, 16);
+    meta.textContent = "data fetched " + ts + " UTC";
+  } else {
+    meta.innerHTML = '<span class="err">rates load failed: ' + ratesR.reason.message + "</span>";
+  }
+
+  if (calR.status === "fulfilled") {
+    renderCalendar(calR.value);
+  } else {
+    document.getElementById("calendar").innerHTML =
+      `<tr><td colspan="4" class="err">calendar load failed: ${escapeHtml(calR.reason.message)}</td></tr>`;
+  }
+
+  if (impR.status === "fulfilled") {
+    renderImplied(impR.value);
+  } else {
+    document.getElementById("implied-body").innerHTML =
+      `<span class="err">implied-path load failed: ${escapeHtml(impR.reason.message)}</span>`;
+  }
+
+  if (edgeR.status === "fulfilled") {
+    renderEdge(edgeR.value);
+  } else {
+    document.getElementById("edge-body").innerHTML =
+      `<span class="err">edge load failed: ${escapeHtml(edgeR.reason.message)}</span>`;
+  }
+
+  if (stanceR.status === "fulfilled") {
+    renderStance(stanceR.value);
+  } else {
+    document.getElementById("stance-body").innerHTML =
+      `<span class="err">stance load failed: ${escapeHtml(stanceR.reason.message)}</span>`;
+  }
+}
+
+function renderStance(d) {
+  const body = document.getElementById("stance-body");
+  if (!d.rows || !d.rows.length) {
+    body.innerHTML = '<div class="footnote">No statements available.</div>';
+    return;
+  }
+  // Position marker along [-3, +3] norm-score axis (clamped). 50% = neutral.
+  const posPct = s => {
+    const clamped = Math.max(-3, Math.min(3, s));
+    return ((clamped + 3) / 6) * 100;
+  };
+  body.innerHTML = d.rows.map(r => {
+    const bucket = r.bucket || "UNKNOWN";
+    const when = r.published ? r.published.slice(0, 10) : "—";
+    const titleHtml = r.title
+      ? (r.link ? `<a href="${escapeHtml(r.link)}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>`
+                : escapeHtml(r.title))
+      : `<span class="err">${escapeHtml(r.error || "no statement")}</span>`;
+    let axis = "";
+    if (typeof r.norm_score === "number") {
+      axis = `<div class="stance-axis"><div class="marker" style="left:${posPct(r.norm_score)}%"></div></div>`;
+    }
+    const chips = (r.matches || []).slice(0, 6).map(m => {
+      const cls = m.weight > 0 ? "hawk" : "dove";
+      const sign = m.weight > 0 ? "+" : "";
+      const c = m.count > 1 ? ` ×${m.count}` : "";
+      return `<span class="chip ${cls}" title="weight ${sign}${m.weight}${c}">${escapeHtml(m.phrase)}${c}</span>`;
+    }).join("");
+    return `<div class="stance-row">
+      <div class="stance-name">${escapeHtml(r.cb_name)}<span class="when">${escapeHtml(when)}</span></div>
+      <div class="stance-bucket ${bucket}">${bucket}</div>
+      <div>
+        <div class="stance-meta">${titleHtml}
+          ${typeof r.norm_score === "number" ? ` · score ${r.norm_score >= 0 ? "+" : ""}${r.norm_score.toFixed(2)}` : ""}
+        </div>
+        ${axis}
+        <div class="matches">${chips}</div>
+      </div>
+    </div>`;
+  }).join("") + `
+    <div class="footnote">
+      Score = Σ(weight × count) / sentence_count, computed on the RSS summary
+      (≈ first paragraph of each press release). Hawkish ≥ +0.3, Dovish ≤ −0.3.
+      Click a title for the full statement. Phrases below show what triggered the score.
+    </div>`;
+}
+
+function renderEdge(d) {
+  const body = document.getElementById("edge-body");
+  const errs = (d.errors || []).map(e => `<div class="footnote err">${escapeHtml(e)}</div>`).join("");
+  if (!d.rows || !d.rows.length) {
+    body.innerHTML = errs || '<div class="footnote">No matching Polymarket markets in the FOMC window.</div>';
+    return;
+  }
+  const rows = d.rows.map(r => {
+    const known = r.edge_pp !== null && r.edge_pp !== undefined;
+    let eppFmt, eClass, impliedFmt;
+    if (known) {
+      eppFmt = (r.edge_pp > 0 ? "+" : "") + r.edge_pp.toFixed(1) + " pp";
+      eClass = r.edge_pp > d.edge_threshold_pp ? "edge-pos"
+             : r.edge_pp < -d.edge_threshold_pp ? "edge-neg" : "edge-flat";
+      impliedFmt = (r.implied_prob * 100).toFixed(1) + "%";
+    } else {
+      eppFmt = "—"; eClass = "edge-flat"; impliedFmt = "—";
+    }
+    let dirHtml = '<span class="dir-none">—</span>';
+    if (r.direction === "BUY YES")  dirHtml = '<span class="dir-buy">BUY YES</span>';
+    if (r.direction === "SELL YES") dirHtml = '<span class="dir-sell">SELL YES</span>';
+    const qCell = r.url
+      ? `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.question)}</a>`
+      : escapeHtml(r.question);
+    const vol = r.volume_24h ? "$" + Math.round(r.volume_24h).toLocaleString() : "—";
+    return `<tr>
+      <td><code>${escapeHtml(r.outcome_bucket)}</code></td>
+      <td class="q" title="${escapeHtml(r.question)}">${qCell}</td>
+      <td class="num">${(r.polymarket_price * 100).toFixed(1)}%</td>
+      <td class="num">${impliedFmt}</td>
+      <td class="num ${eClass}">${eppFmt}</td>
+      <td>${dirHtml}</td>
+      <td class="num">${vol}</td>
+    </tr>`;
+  }).join("");
+  body.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Bucket</th><th>Market</th>
+        <th class="num">Poly</th><th class="num">Implied</th><th class="num">Edge</th>
+        <th>Signal</th><th class="num">24h vol</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="footnote">
+      Edge = implied − market price. Signal threshold ±${d.edge_threshold_pp} pp.
+      <strong>Not investment advice.</strong> Validate against CME's own FedWatch numbers
+      and consider Polymarket bid-ask + gas before trading.
+    </div>
+    ${errs}
+  `;
+}
+
+function renderImplied(d) {
+  const body = document.getElementById("implied-body");
+  if (d.error && d.implied_post_rate == null) {
+    body.innerHTML = `<span class="err">${escapeHtml(d.error)}</span>` +
+      `<div class="footnote">Contract: <code>${escapeHtml(d.contract_symbol || "?")}</code> · ` +
+      `current rate: ${d.current_rate ?? "?"}%</div>`;
+    return;
+  }
+  const dir = d.delta_bps < -1 ? "cut" : d.delta_bps > 1 ? "hike" : "hold";
+  const dirClass = dir === "hold" ? "" : dir;
+  const sign = d.delta_bps > 0 ? "+" : "";
+  const probs = d.probabilities || {};
+  // Order: cuts → hold → hikes (left to right, dovish to hawkish)
+  const order = Object.keys(probs).sort((a, b) => {
+    const v = k => k.startsWith("cut") ? -parseInt(k.slice(3)) : k === "hold" ? 0 : parseInt(k.slice(4));
+    return v(a) - v(b);
+  });
+  const segs = order.map(k => {
+    const pct = (probs[k] * 100).toFixed(0);
+    const cls = k.startsWith("cut") ? "cut" : k === "hold" ? "hold" : "hike";
+    const txt = pct >= 8 ? `${k.toUpperCase()} ${pct}%` : "";
+    return `<div class="seg ${cls}" style="flex:${probs[k]}" title="${k} ${pct}%">${txt}</div>`;
+  }).join("");
+
+  body.innerHTML = `
+    <div class="implied-grid">
+      <div class="stat"><div class="label">Meeting</div>
+        <div class="value">${escapeHtml(d.meeting.decision_date)}</div></div>
+      <div class="stat"><div class="label">Current rate</div>
+        <div class="value">${d.current_rate.toFixed(2)}%</div></div>
+      <div class="stat"><div class="label">Implied post-rate</div>
+        <div class="value">${d.implied_post_rate.toFixed(2)}%</div></div>
+      <div class="stat"><div class="label">Implied move</div>
+        <div class="value ${dirClass}">${sign}${d.delta_bps.toFixed(0)} bp</div></div>
+    </div>
+    <div class="probbar">${segs}</div>
+    <div class="footnote">Contract <code>${escapeHtml(d.contract_symbol)}</code> @ ${d.contract_price} ·
+      method: ${escapeHtml(d.method || "")}</div>
+  `;
+}
+
+function renderCalendar(data) {
+  const tbody = document.getElementById("calendar");
+  if (!data.meetings || !data.meetings.length) {
+    tbody.innerHTML = '<tr><td colspan="4">No meetings in window.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.meetings.map(m => {
+    let cls = "later", txt;
+    if (m.days_until <= 1) { cls = "imminent"; txt = m.days_until === 0 ? "today" : "tomorrow"; }
+    else if (m.days_until <= 14) { cls = "soon"; txt = m.days_until + "d"; }
+    else { txt = m.days_until + "d"; }
+    return `<tr>
+      <td>${escapeHtml(m.cb_name)}</td>
+      <td>${escapeHtml(m.label)}</td>
+      <td class="num">${escapeHtml(m.decision_date)}</td>
+      <td class="num"><span class="badge ${cls}">${txt}</span></td>
+    </tr>`;
+  }).join("");
+}
+
+function render(data) {
+  const series = data.series.filter(s => s.points && s.points.length);
+  if (!series.length) {
+    document.getElementById("chart").innerHTML =
+      '<text x="400" y="180" fill="#8b949e" text-anchor="middle">no data</text>';
+    return;
+  }
+
+  // Clip to last ~10y so the recent shape is legible.
+  const cutoff = new Date();
+  cutoff.setFullYear(cutoff.getFullYear() - 10);
+  const cutoffMs = cutoff.getTime();
+
+  const filtered = series.map(s => ({
+    ...s,
+    points: s.points
+      .map(p => ({ t: Date.parse(p.date), r: p.rate }))
+      .filter(p => p.t >= cutoffMs),
+  })).filter(s => s.points.length);
+
+  const allT = filtered.flatMap(s => s.points.map(p => p.t));
+  const allR = filtered.flatMap(s => s.points.map(p => p.r));
+  const tMin = Math.min(...allT), tMax = Math.max(...allT);
+  const rMin = Math.min(0, Math.min(...allR));
+  const rMax = Math.max(...allR) * 1.1 || 1;
+
+  const W = 800, H = 360, padL = 40, padR = 12, padT = 12, padB = 28;
+  const xScale = t => padL + ((t - tMin) / (tMax - tMin || 1)) * (W - padL - padR);
+  const yScale = r => H - padB - ((r - rMin) / (rMax - rMin || 1)) * (H - padT - padB);
+
+  const parts = [];
+  // y gridlines + labels
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const r = rMin + (rMax - rMin) * (i / ySteps);
+    const y = yScale(r);
+    parts.push(`<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="#30363d" stroke-dasharray="2,3"/>`);
+    parts.push(`<text x="${padL - 6}" y="${y + 4}" fill="#8b949e" font-size="11" text-anchor="end">${r.toFixed(1)}%</text>`);
+  }
+  // x year ticks
+  const startYr = new Date(tMin).getUTCFullYear();
+  const endYr = new Date(tMax).getUTCFullYear();
+  for (let y = startYr; y <= endYr; y++) {
+    const t = Date.UTC(y, 0, 1);
+    if (t < tMin || t > tMax) continue;
+    const x = xScale(t);
+    parts.push(`<line x1="${x}" x2="${x}" y1="${padT}" y2="${H - padB}" stroke="#30363d" stroke-dasharray="2,3"/>`);
+    parts.push(`<text x="${x}" y="${H - padB + 16}" fill="#8b949e" font-size="11" text-anchor="middle">${y}</text>`);
+  }
+  // series
+  filtered.forEach((s, i) => {
+    const color = COLORS[i % COLORS.length];
+    const d = s.points.map((p, j) =>
+      (j === 0 ? "M" : "L") + xScale(p.t).toFixed(1) + "," + yScale(p.r).toFixed(1)
+    ).join(" ");
+    parts.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"/>`);
+  });
+
+  document.getElementById("chart").innerHTML = parts.join("");
+
+  // legend
+  document.getElementById("legend").innerHTML = filtered.map((s, i) =>
+    `<span><span class="swatch" style="background:${COLORS[i % COLORS.length]}"></span>${escapeHtml(s.label)}</span>`
+  ).join("");
+
+  // latest table
+  document.getElementById("latest").innerHTML = data.series.map(s => {
+    const latest = s.latest;
+    const rate = latest ? latest[1].toFixed(2) + "%" : "—";
+    const date = latest ? latest[0] : "—";
+    return `<tr><td>${escapeHtml(s.label)}</td><td><code>${escapeHtml(s.series_id)}</code></td>` +
+           `<td class="num">${rate}</td><td class="num">${date}</td></tr>`;
+  }).join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[c]);
+}
+
+load();
+</script>
+</body>
+</html>
