@@ -38,6 +38,8 @@ def _asset_version(rel_path: str) -> str:
 
 
 _MOBILE_A11Y_VER = _asset_version("mobile-a11y.css")
+_NARVE_POLISH_VER = _asset_version("narve-polish.css")
+_NARVE_REDESIGN_VER = _asset_version("narve-redesign.css")
 _NARVE_APP_VER = _asset_version("narve-app.js")
 _SHORTCUTS_VER = _asset_version("shortcuts.js")
 _FEEDBACK_BTN_VER = _asset_version("feedback_button.js")
@@ -56,6 +58,13 @@ _PWA_HEAD = (
     '<meta name="mobile-web-app-capable" content="yes">\n'
     '<meta name="format-detection" content="telephone=no">\n'
     f'<link rel="stylesheet" href="/_gateway_static/mobile-a11y.css?v={_MOBILE_A11Y_VER}">\n'
+    # narve-polish: site-wide refinement layer (motion + focus rhythm).
+    f'<link rel="stylesheet" href="/_gateway_static/narve-polish.css?v={_NARVE_POLISH_VER}">\n'
+    # narve-redesign: substantive visual refresh — page-header type,
+    # hub cards, sidebar density, hero scale, table chrome, auth
+    # funnel, long-form pages. Loaded LAST so it wins on selector
+    # specificity. See narve-redesign.css head comment.
+    f'<link rel="stylesheet" href="/_gateway_static/narve-redesign.css?v={_NARVE_REDESIGN_VER}">\n'
 )
 
 _BODY_INJECT = (

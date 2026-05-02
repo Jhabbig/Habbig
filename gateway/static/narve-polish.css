@@ -1,0 +1,286 @@
+/* narve-polish.css — site-wide refinement layer.
+ *
+ * Loaded LAST (after gateway.css → components.css → mobile-a11y.css)
+ * via pwa_middleware. Adds zero new components; refines existing
+ * chrome via:
+ *   - one canonical easing curve everywhere
+ *   - tighter focus rings
+ *   - silk hover states (lift-free; opacity / border / surface only)
+ *   - silky page entry fade
+ *   - rhythm tweaks for page-header, hero, hub card, sidebar nav
+ *   - auth-card focus-within emphasis
+ *   - reduced-motion respect (scrub all transitions to 0.01ms)
+ *
+ * Strict rules (per narve-design skill):
+ *   - tokens only, no raw hex / px
+ *   - monochrome — no colour for state; weight + surface + border
+ *   - motion: opacity, transform-translate, width / height / border /
+ *     background only. No bounces. No springs.
+ *   - durations from --duration-fast / --duration-base / --duration-slow
+ *   - one curve: var(--ease-canonical)
+ */
+
+/* ─── Canonical curve token (defined here so older pages pick it up
+       even before tokens.css adds it for real) ─────────────────────── */
+:root {
+  --ease-canonical: cubic-bezier(0.2, 0, 0, 1);
+}
+
+
+/* ═══ 1. Global timing — every transition gets the same curve ═══ */
+*,
+*::before,
+*::after {
+  transition-timing-function: var(--ease-canonical);
+  animation-timing-function: var(--ease-canonical);
+}
+
+
+/* ═══ 2. Page entry — single silky fade on first paint ═══ */
+html {
+  animation: narve-page-enter var(--duration-slow, 0.4s) var(--ease-canonical) both;
+}
+@keyframes narve-page-enter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+
+/* ═══ 3. Page header — tighter type rhythm ═══ */
+.page-header {
+  margin-bottom: var(--space-8, 32px);
+}
+.page-title {
+  /* Inter ss01 + cv11 give confident tabular numerals + classic sans
+   * forms — the same setting marketing CSS uses for the wordmark.
+   * font-feature-settings cascades, so it's safe to declare globally. */
+  font-feature-settings: "ss01", "cv11";
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.page-subtitle {
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  margin-top: var(--space-2);
+  max-width: 640px;
+  line-height: 1.5;
+}
+
+
+/* ═══ 4. Hub card — refined hover (no lift, no shadow growth) ═══ */
+.dash-card {
+  transition: border-color var(--duration-base, 0.2s) var(--ease-canonical),
+              background var(--duration-base, 0.2s) var(--ease-canonical);
+}
+.dash-card::before {
+  /* gateway.css already paints a 3px accent bar via ::before on hover-
+   * able devices — animate its height for a subtle thickness response. */
+  transition: height var(--duration-base, 0.2s) var(--ease-canonical);
+}
+@media (hover: hover) and (pointer: fine) {
+  .dash-card:hover {
+    border-color: var(--text-primary);
+  }
+  .dash-card:hover::before {
+    height: 4px;
+  }
+}
+.dash-card:active {
+  transform: translateY(1px);
+}
+
+
+/* ═══ 5. Subproduct landing — premium hero rhythm ═══ */
+.shell .hero h1,
+.shell .hero-grid h1,
+.subproduct-shell h1.hero {
+  /* Tighten the Instrument Serif italic; it sits more confidently on
+   * narrow line-spacing with negative tracking. */
+  font-feature-settings: "salt", "ss01";
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+.shell .hero-label,
+.subproduct-shell .eyebrow {
+  letter-spacing: 0.16em;
+  font-weight: 600;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.shell .price-card {
+  transition: border-color var(--duration-base, 0.2s) var(--ease-canonical);
+}
+@media (hover: hover) {
+  .shell .price-card:hover {
+    border-color: var(--text-primary);
+  }
+}
+
+
+/* ═══ 6. Buttons + CTAs — uniform polish, no scaffolding ═══ */
+button:not([disabled]),
+.btn, a.btn, a.cta, a.card-cta, .nv-button, .nv-cta {
+  transition: background var(--duration-fast, 0.12s) var(--ease-canonical),
+              border-color var(--duration-fast, 0.12s) var(--ease-canonical),
+              color var(--duration-fast, 0.12s) var(--ease-canonical),
+              opacity var(--duration-fast, 0.12s) var(--ease-canonical);
+}
+button:active:not([disabled]),
+.btn:active:not([disabled]),
+a.btn:active, a.cta:active, a.card-cta:active,
+.nv-button:active, .nv-cta:active {
+  transform: translateY(1px);
+}
+
+
+/* ═══ 7. Focus rings — uniform, brand-correct, AA-safe ═══ */
+:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+/* Inputs already have their own focused border; suppress the default
+ * outline on textual inputs since the border-colour shift carries the
+ * focus signal. Keep the outline on buttons / links. */
+input:focus-visible:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]),
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--interactive-ghost);
+}
+
+
+/* ═══ 8. Auth funnel — silk focus on cards ═══ */
+.gate-card,
+.auth-card,
+.token-card,
+.signup-card,
+.login-card {
+  transition: border-color var(--duration-base, 0.2s) var(--ease-canonical);
+}
+.gate-card:focus-within,
+.auth-card:focus-within,
+.token-card:focus-within,
+.signup-card:focus-within,
+.login-card:focus-within {
+  border-color: var(--text-primary);
+}
+
+
+/* ═══ 9. Sidebar — silkier active + hover state ═══ */
+.nav-item,
+.sidebar a,
+.narve-sidebar a {
+  transition: background var(--duration-fast, 0.12s) var(--ease-canonical),
+              color var(--duration-fast, 0.12s) var(--ease-canonical);
+}
+.nav-item.active,
+.sidebar a.active,
+.narve-sidebar a.active {
+  background: var(--bg-inset);
+  color: var(--text-primary);
+}
+
+
+/* ═══ 10. Tables / feed rows — refined hover ═══ */
+.admin-row,
+.feed-row,
+tbody tr {
+  transition: background var(--duration-fast, 0.12s) var(--ease-canonical);
+}
+@media (hover: hover) {
+  .admin-row:hover,
+  .feed-row:hover,
+  tbody tr:hover {
+    background: var(--bg-inset);
+  }
+}
+
+
+/* ═══ 11. Wordmark — confident type ═══ */
+.wordmark {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+.wordmark-divider,
+.wordmark-slash {
+  color: var(--text-tertiary);
+  font-style: normal;
+}
+.wordmark-slug,
+.wordmark-sub {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 0.9em;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+}
+
+
+/* ═══ 12. Numerals — tabular, monospaced where they matter ═══ */
+.tabular,
+[data-tabular="1"],
+.dash-card-price,
+.feed-row-price,
+.metric-value,
+td.numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+
+/* ═══ 13. Skeleton + empty-state polish ═══ */
+.nv-skel--loading {
+  animation: narve-skel-pulse 1.6s var(--ease-canonical) infinite;
+}
+@keyframes narve-skel-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.85; }
+}
+
+
+/* ═══ 14. Print rules — tasteful fallback ═══ */
+@media print {
+  html { animation: none; }
+  *, *::before, *::after {
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+}
+
+
+/* ═══ 15. Reduced-motion — respect every user preference ═══ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+  html { animation: none; }
+}
+
+
+/* ═══ 16. Touch — never get a stuck hover state ═══ */
+@media (hover: none) and (pointer: coarse) {
+  .dash-card:hover,
+  .admin-row:hover,
+  .feed-row:hover,
+  tbody tr:hover,
+  .nav-item:hover,
+  .sidebar a:hover,
+  .narve-sidebar a:hover,
+  .shell .price-card:hover,
+  button:hover,
+  .btn:hover, a.btn:hover, a.cta:hover, a.card-cta:hover {
+    background: revert;
+    border-color: revert;
+    color: revert;
+  }
+}

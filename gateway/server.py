@@ -3472,21 +3472,36 @@ async def my_dashboards(request: Request):
         </a>
         """)
 
-    # Credits badge
+    # Credits badge — monochrome per narve-design skill: no green/amber
+    # status hue, no absolute positioning. The new layout puts the badge
+    # inline as `.page-actions` inside the flex `.page-header`, which
+    # narve-redesign.css aligns to the right on desktop and stacks below
+    # the title on mobile so it never overlaps Instrument Serif copy.
     credits_badge = ""
     if is_admin_user:
-        credits_badge = '<div style="position:absolute;top:0;right:0;background:var(--accent-light);color:var(--accent);font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">All Access</div>'
+        credits_badge = '<div class="page-actions"><span class="plan-badge">All Access</span></div>'
     elif pinfo["plan"] == "pro":
-        credits_badge = '<div style="position:absolute;top:0;right:0;background:var(--green-bg);color:var(--green);font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">Pro — All Unlocked</div>'
+        credits_badge = '<div class="page-actions"><span class="plan-badge">Pro · All Unlocked</span></div>'
     elif pinfo["plan"] == "trader":
         used = pinfo["active_count"]
         total = PLAN_DEFS["trader"]["credits"]
         remaining = total - used
-        badge_color = "var(--green)" if remaining > 0 else "var(--amber)"
-        badge_bg = "var(--green-bg)" if remaining > 0 else "rgba(245,158,11,0.10)"
-        credits_badge = f'<div style="position:absolute;top:0;right:0;background:{badge_bg};color:{badge_color};font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">Trader — {remaining}/{total} credits left</div>'
+        # Differentiation through weight, not hue: depleted credits get
+        # `data-state="depleted"` which narve-redesign promotes to bold
+        # primary text on a sturdier border.
+        state_attr = ' data-state="depleted"' if remaining <= 0 else ''
+        credits_badge = (
+            f'<div class="page-actions">'
+            f'<span class="plan-badge"{state_attr}>Trader · {remaining}/{total} credits</span>'
+            f'</div>'
+        )
     else:
-        credits_badge = '<div style="position:absolute;top:0;right:0;background:var(--surface-hover);color:var(--text-muted);font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px">No plan — <a href="/billing" style="color:var(--accent)">Subscribe</a></div>'
+        credits_badge = (
+            '<div class="page-actions">'
+            '<span class="plan-badge plan-badge--noplan">No plan · '
+            '<a href="/billing">Subscribe</a></span>'
+            '</div>'
+        )
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     # Signal Search link for Pro users
