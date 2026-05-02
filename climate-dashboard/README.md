@@ -1,10 +1,15 @@
-# Climate Change Dashboard (v2)
+# Climate Change Dashboard (v3)
 
 Long-horizon climate prediction markets with model-derived edges.
 
 Listens on `:7052`. Subdomain: `climate.narve.ai` (registered in `gateway/config.json`).
 
-## What's new in v2
+## What's new in v3
+
+- **Atmospheric methane (CH₄)** — adds NOAA GML globally-averaged monthly methane (`ch4_mm_gl.csv`, ppb). Backend follows the same shape as CO₂: 24-month linear regression with residual std, threshold probability table, year-end backtest. New endpoints `/api/methane` and methane block in `/api/summary` + `/api/backtest`. Methane card on the front page, threshold pills (1930 / 1940 / 1950 / … ppb), and a methane row in the model-performance table.
+- **Methane market matcher** — handles "above N ppb / below N ppb" plus "above 1.95 ppm" (CH₄ markets are sometimes priced in either unit).
+
+## What was added in v2
 
 - **Antarctic sea-ice min projection** — same 25-year linear-trend / residual-std normal-CDF approach as Arctic; scores antarctic-min markets when they appear.
 - **Proper CO₂ threshold model** — the v1 hack returned a flat 85/15. v2 returns the regression's residual std and uses a normal CDF to score "above N ppm" markets.
@@ -19,6 +24,7 @@ Listens on `:7052`. Subdomain: `climate.narve.ai` (registered in `gateway/config
 | --- | --- | --- |
 | Global temperature anomaly | NASA GISTEMP v4 (`GLB.Ts+dSST.csv`) | monthly |
 | Atmospheric CO₂ | NOAA GML Mauna Loa (`co2_mm_mlo.csv`) | monthly |
+| Atmospheric CH₄ | NOAA GML globally-averaged (`ch4_mm_gl.csv`) | monthly |
 | Arctic + Antarctic sea ice extent | NSIDC Sea Ice Index G02135 v3.0 | daily |
 | Global SST 60°S–60°N | NOAA OISST 2.1 via Climate Reanalyzer JSON | daily |
 | ENSO state | NOAA CPC Oceanic Niño Index (`oni.data`) | monthly |
@@ -49,6 +55,7 @@ python3 server.py
 - `GET /api/markets` — climate markets with model edges (Arctic + Antarctic sea ice, year-end record, anomaly threshold, CO₂ threshold)
 - `GET /api/temperature` — full GISTEMP series + projection
 - `GET /api/co2` — full Mauna Loa series + projection (with residual std)
+- `GET /api/methane` — full NOAA GML CH₄ series + projection + threshold probabilities
 - `GET /api/sea-ice` — Arctic + Antarctic recent series + record check
 - `GET /api/sst` — Climate Reanalyzer JSON (whole multi-year structure)
 - `GET /api/regime` — ONI + ENSO state
