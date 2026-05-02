@@ -27,9 +27,15 @@ jobs:
           polymarket_weather_dashboard/
           sports-dashboard/
           world-state-dashboard/
+          climate-dashboard/
 
   docker-build:
     runs-on: ubuntu-latest
+    env:
+      # Compose interpolates ${REDIS_PASSWORD:?...} at parse time, so the build
+      # step needs *some* value. The password is only read at runtime by redis,
+      # not during the build.
+      REDIS_PASSWORD: ci-build
     steps:
       - uses: actions/checkout@v4
       - name: Build all images

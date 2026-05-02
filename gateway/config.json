@@ -75,6 +75,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "price_1TJXujQq4pCmZ517lvI0RcLS",
       "stripe_price_annual": "price_1TJXukQq4pCmZ517ma0Q8iMP"
+    },
+    "climate": {
+      "subdomain": "climate",
+      "target": 7052,
+      "display_name": "Climate Change",
+      "description": "Long-horizon climate markets — GISTEMP, CO₂, sea ice, SST, ENSO",
+      "accent": "#34d399",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": null,
+      "stripe_price_annual": null
     }
   }
 }
