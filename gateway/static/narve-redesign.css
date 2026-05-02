@@ -989,3 +989,118 @@ body .plan-badge a:hover {
 body .plan-badge--noplan {
   border-style: dashed;
 }
+
+
+/* ════════════════════════════════════════════════════════════════════
+ * UNIVERSAL FRAME — every page, all four sides.
+ *
+ * Rule of the rule: every served HTML document, regardless of which
+ * shell it uses (.app-shell / .src-shell / .c-wrap / .landing-body /
+ * bare main), must show a visible border + padding on top, bottom,
+ * left, right. Power users open this app daily — frames give every
+ * page a consistent silhouette.
+ *
+ * Strategy:
+ *   1. body gets perimeter padding so nothing sits flush against the
+ *      viewport edge.
+ *   2. The first structural child of body — whichever shell it is —
+ *      gets a border on all four sides + min-height so the frame
+ *      reaches the bottom of the viewport even on short pages.
+ *   3. ``!important`` on the frame so older page-specific rules
+ *      can't accidentally strip a side off in compact mode.
+ *   4. Density-aware via the var(--page-pad-*) tokens so compact
+ *      mode tightens, not breaks, the frame.
+ *
+ * Pages that genuinely need a full-bleed canvas (currently none —
+ * landing already opts in) can carry .page-frame--off on their
+ * top-level wrapper to disable. Audit before adding the class.
+ * ════════════════════════════════════════════════════════════════════ */
+
+body {
+  /* Perimeter padding — every viewport edge breathes. Density flips
+     the value via [data-density]. */
+  padding: var(--page-pad, 24px) !important;
+  background: var(--bg-base);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+/* The four canonical top-level wrappers — every narve template uses
+   one of these. Frame on all four sides, generous internal padding. */
+body > .app-shell,
+body > .src-shell,
+body > .c-wrap,
+body > main:not([class*="page-frame--off"]),
+body > article,
+body > .landing-body {
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-md, 10px) !important;
+  background: var(--bg-surface, var(--surface, var(--bg-base))) !important;
+  padding: var(--space-6, 32px) var(--space-6, 32px) !important;
+  min-height: calc(100vh - 96px);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* App-shell uses CSS grid for sidebar + main + status — the frame
+   needs to wrap the grid, not break it. Override only the layout-
+   conflicting bits. */
+body > .app-shell {
+  /* Padding handled by the grid's children; perimeter padding only
+     here so the grid fills the frame edge-to-edge. */
+  padding: 0 !important;
+  overflow: visible;
+}
+
+/* For app-shell pages, push the frame inward via main-content padding
+   so dashboards still get a proper internal margin. */
+body > .app-shell > .main-content {
+  padding: var(--space-5, 24px) var(--space-6, 32px) !important;
+  border-left: 1px solid var(--border-default);
+}
+
+/* Compact density tightens but never kills the frame. */
+[data-density="compact"] body {
+  padding: var(--space-3, 12px) var(--space-3, 12px) !important;
+}
+[data-density="compact"] body > .app-shell,
+[data-density="compact"] body > .src-shell,
+[data-density="compact"] body > .c-wrap,
+[data-density="compact"] body > main,
+[data-density="compact"] body > .landing-body {
+  padding: var(--space-4, 16px) var(--space-4, 16px) !important;
+}
+[data-density="compact"] body > .app-shell > .main-content {
+  padding: var(--space-4, 16px) var(--space-4, 16px) !important;
+}
+
+/* Mobile (narrow viewport) — frame stays but tightens to keep content
+   readable. Sidebar collapses on app-shell so we re-bleed the main. */
+@media (max-width: 720px) {
+  body {
+    padding: var(--space-3, 12px) var(--space-3, 12px) !important;
+  }
+  body > .app-shell,
+  body > .src-shell,
+  body > .c-wrap,
+  body > main,
+  body > .landing-body {
+    padding: var(--space-4, 16px) var(--space-3, 12px) !important;
+    border-radius: var(--radius-sm, 6px) !important;
+  }
+  body > .app-shell > .main-content {
+    padding: var(--space-3, 12px) var(--space-3, 12px) !important;
+    border-left: 0;
+  }
+}
+
+/* Pages with their own opinionated layout (auth funnel, error pages,
+   landing hero) opt out cleanly. */
+body > main.nv-error,
+body > .auth-canvas,
+body > .gate-canvas,
+body[data-no-frame] > * {
+  border: 0 !important;
+  background: transparent !important;
+  min-height: auto;
+}
