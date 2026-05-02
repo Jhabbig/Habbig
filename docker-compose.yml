@@ -35,6 +35,8 @@ services:
         condition: service_healthy
       world:
         condition: service_healthy
+      climate:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -118,6 +120,18 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7050/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  climate:
+    build: ./climate-dashboard
+    expose:
+      - "7052"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7052/api/health',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
