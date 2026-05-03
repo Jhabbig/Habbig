@@ -100,8 +100,87 @@
     color: var(--green);
     border-bottom-color: var(--green);
   }
+  .tab-btn.insider.active {
+    color: var(--gold);
+    border-bottom-color: var(--gold);
+  }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
+
+  /* ─── Insider feed: venue badges, side colors, delta cells ─── */
+  .insider-toolbar {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    margin-bottom: 14px;
+  }
+  .insider-toolbar select, .insider-toolbar input[type="number"] {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-size: 13px;
+  }
+  .insider-toolbar label { color: var(--text-dim); font-size: 12px; }
+  .watch-btn {
+    background: transparent; color: var(--gold);
+    border: 1px solid var(--gold); border-radius: 4px;
+    padding: 1px 6px; font-size: 10px; cursor: pointer;
+    margin-left: 6px; vertical-align: middle;
+  }
+  .watch-btn:hover { background: var(--gold); color: #000; }
+  .watch-chip {
+    display: inline-block; background: #2a2a2a;
+    border: 1px solid var(--gold); border-radius: 12px;
+    padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 12px;
+    color: var(--text);
+  }
+  .insider-info {
+    background: rgba(251, 191, 36, 0.06);
+    border: 1px solid rgba(251, 191, 36, 0.18);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;
+    color: var(--text-dim); font-size: 13px; line-height: 1.55;
+  }
+  .insider-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  .insider-table th, .insider-table td {
+    text-align: left; padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .insider-table th {
+    color: var(--text-dim); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    background: var(--panel);
+    position: sticky; top: 0;
+  }
+  .insider-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .venue-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  }
+  .venue-badge.sec_form4   { background: rgba(129,140,248,0.15); color: var(--brand); }
+  .venue-badge.congress_ptr{ background: rgba(251,191,36,0.15);  color: var(--gold); }
+  .venue-badge.polymarket  { background: rgba(52,211,153,0.15);  color: var(--green); }
+  .venue-badge.kalshi      { background: rgba(192,198,209,0.15); color: var(--silver); }
+  .venue-badge.\31 3f      { background: rgba(255,255,255,0.06); color: var(--text-dim); }
+  .side-cell { font-weight: 600; }
+  .side-cell.buy        { color: var(--green); }
+  .side-cell.sell       { color: var(--red); }
+  .side-cell.option_buy { color: var(--green); font-style: italic; }
+  .side-cell.option_sell{ color: var(--red);   font-style: italic; }
+  .side-cell.exchange, .side-cell.gift, .side-cell.other { color: var(--text-dim); }
+  .delta-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .delta-cell.up   { color: var(--green); }
+  .delta-cell.down { color: var(--red); }
+  .delta-cell.flat { color: var(--text-dim); }
+  .market-cell {
+    max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .market-cell a { color: var(--text); text-decoration: none; }
+  .market-cell a:hover { text-decoration: underline; color: var(--brand); }
+  .insider-meta {
+    color: var(--text-dim); font-size: 12px; margin-bottom: 10px;
+    display: flex; gap: 16px; flex-wrap: wrap;
+  }
 
   /* Volume / PnL toggle on Top Traders */
   .rank-toggle-bar {
@@ -1063,6 +1142,18 @@
   .unit-btn:hover:not(.active) {
     color: var(--text);
   }
+
+  /* ──────────────────────────────────────────────────────────────────
+     Hide the cross-venue insider tabs. The frontend wires up:
+       /api/insider-events, /api/cross-venue-suspicious,
+       /api/actor-leaderboard, /api/enforcement/*, /api/watchlist
+     but server.py doesn't currently serve those routes (the supporting
+     congress_ptr.py + insider_events.py source files are missing from
+     the production deploy — only .pyc remains). Showing tabs that load
+     empty or 401 looks broken in front of investors, so we hide them
+     until the backend is wired up. To re-enable: delete this rule.
+     ────────────────────────────────────────────────────────────────── */
+  .tab-btn.insider { display: none !important; }
 </style>
 </head>
 <body>
@@ -1112,6 +1203,11 @@
   <button class="tab-btn sus" onclick="switchTab('retroactive')" data-i18n="tab.retroactive">Repeat Winners</button>
   <button class="tab-btn sus" onclick="switchTab('ml')" data-i18n="tab.ml">ML Rankings</button>
   <button class="tab-btn sus" onclick="switchTab('clusters')" data-i18n="tab.clusters">Sybil Clusters</button>
+  <button class="tab-btn insider" onclick="switchTab('insiders')" data-i18n="tab.insiders">Insiders</button>
+  <button class="tab-btn insider" onclick="switchTab('crossvenue')" data-i18n="tab.crossvenue">Cross-Venue</button>
+  <button class="tab-btn insider" onclick="switchTab('leaderboard')" data-i18n="tab.leaderboard">Top Insiders</button>
+  <button class="tab-btn insider" onclick="switchTab('xvsuspicious')" data-i18n="tab.xvsuspicious">Suspicious X-V</button>
+  <button class="tab-btn insider" onclick="switchTab('enforcement')" data-i18n="tab.enforcement">Enforcement</button>
 </div>
 
 <div class="tab-bar" id="tab-bar-kalshi" style="display:none;">
@@ -1224,6 +1320,183 @@
       <div class="loading">Loading clusters...</div>
     </div>
     <div id="cluster-list-container"></div>
+  </div>
+
+  <!-- ─── Insiders: unified event feed across SEC + Congress + PM/Kalshi ─── -->
+  <div class="tab-panel" id="panel-insiders">
+    <div class="insider-info">
+      <strong style="color:var(--gold);">Unified insider feed.</strong>
+      Every disclosure we ingest, in one stream: SEC Form 4 (corporate
+      officers, T+2), Congressional STOCK Act PTRs (Pelosi et al, lagged up
+      to 45 days), and the smart-money / suspicious flow already detected on
+      Polymarket. Filter by venue, time window, or ticker — or jump to the
+      <strong>Cross-Venue</strong> tab to see which ones moved a prediction
+      market in the 24h <em>before</em> the disclosure.
+    </div>
+    <div class="insider-toolbar">
+      <label>Venue</label>
+      <select id="insider-venue">
+        <option value="">All venues</option>
+        <option value="sec_form4">SEC Form 4</option>
+        <option value="congress_ptr">Congress PTR</option>
+        <option value="polymarket">Polymarket</option>
+        <option value="kalshi">Kalshi</option>
+      </select>
+      <label>Window (hours)</label>
+      <input type="number" id="insider-hours" value="168" min="1" max="2160" step="24" />
+      <label>Limit</label>
+      <input type="number" id="insider-limit" value="100" min="10" max="500" step="10" />
+      <button class="rank-btn" onclick="loadInsiders()">Reload</button>
+      <button class="rank-btn" onclick="toggleWatchlistPanel()" id="watchlist-toggle-btn" style="background:var(--gold); color:#000;">Watchlist <span id="watchlist-unread-badge" style="display:none; background:#000; color:var(--gold); padding:1px 6px; border-radius:8px; font-weight:bold; margin-left:4px;">0</span></button>
+      <span class="rank-hint" id="insider-summary"></span>
+    </div>
+    <div id="watchlist-panel" style="display:none; background:#1a1a1a; border:1px solid var(--gold); border-radius:6px; padding:12px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <strong style="color:var(--gold);">Your watchlist</strong>
+        <div>
+          <button class="rank-btn" onclick="loadInbox()">Show alerts</button>
+          <button class="rank-btn" onclick="markAllInboxRead()">Mark all read</button>
+        </div>
+      </div>
+      <div id="watchlist-watches" style="font-size:12px; color:var(--text-dim);">Loading…</div>
+      <div id="watchlist-inbox" style="margin-top:10px;"></div>
+    </div>
+    <div id="insider-table-container">
+      <div class="loading">Loading insider events...</div>
+    </div>
+  </div>
+
+  <!-- ─── Cross-Venue: insider event ↔ Polymarket market price moves ─── -->
+  <div class="tab-panel" id="panel-crossvenue">
+    <div class="insider-info">
+      <strong style="color:var(--gold);">Cross-venue correlation engine.</strong>
+      For every insider event with a ticker, we look up matching Polymarket
+      markets and measure the price move in the 24h <em>before</em> disclosure
+      (potential leakage / front-running) and the 24h <em>after</em> (drift).
+      Rows are ranked by |Δ_pre|. Whether a move is leakage, reporting lag,
+      or just noise is for you to judge — the engine just surfaces the
+      candidates worth a second look.
+    </div>
+    <div class="insider-toolbar">
+      <label>Min |Δ_pre|</label>
+      <input type="number" id="cv-min-delta" value="0.05" min="0" max="1" step="0.01" />
+      <label>Venue</label>
+      <select id="cv-venue">
+        <option value="">All venues</option>
+        <option value="sec_form4">SEC Form 4</option>
+        <option value="congress_ptr">Congress PTR</option>
+      </select>
+      <label>Limit</label>
+      <input type="number" id="cv-limit" value="50" min="10" max="200" step="10" />
+      <button class="rank-btn" onclick="loadCrossVenue()">Reload</button>
+      <span class="rank-hint" id="cv-summary"></span>
+    </div>
+    <div id="crossvenue-table-container">
+      <div class="loading">Loading cross-venue correlations...</div>
+    </div>
+  </div>
+
+  <!-- ─── Top Insiders: leakage leaderboard ─── -->
+  <div class="tab-panel" id="panel-leaderboard">
+    <div class="insider-info">
+      <strong style="color:var(--gold);">Who actually has an edge?</strong>
+      Each actor's <em>leakage score</em> = average |Δ_pre| × ln(1 + matches),
+      so it rewards both magnitude AND consistency. The percentile rank
+      shows where they sit within the population of actors with at least
+      3 matched cross-venue events. <strong>P95+ is "worth watching closely."</strong>
+      Clicking any actor opens their full profile.
+    </div>
+    <div class="insider-toolbar">
+      <label>Venue</label>
+      <select id="lb-venue">
+        <option value="">All venues</option>
+        <option value="sec_form4">SEC Form 4</option>
+        <option value="congress_ptr">Congress PTR</option>
+        <option value="polymarket">Polymarket</option>
+        <option value="kalshi">Kalshi</option>
+      </select>
+      <label>Min matches</label>
+      <input type="number" id="lb-min-matches" value="3" min="1" max="100" step="1" />
+      <label>Limit</label>
+      <input type="number" id="lb-limit" value="50" min="10" max="500" step="10" />
+      <button class="rank-btn" onclick="loadLeaderboard()">Reload</button>
+      <span class="rank-hint" id="lb-summary"></span>
+    </div>
+    <div id="leaderboard-container">
+      <div class="loading">Loading actor leaderboard...</div>
+    </div>
+  </div>
+
+  <!-- ─── Cross-venue Suspicious: scored insider events across all venues ─── -->
+  <div class="tab-panel" id="panel-xvsuspicious">
+    <div class="insider-info">
+      <strong style="color:var(--gold);">Cross-venue suspicion scoring.</strong>
+      Every insider event in the unified store gets a 0-100 score on six
+      composable signals: out-of-pattern size, inactive→active gaps, big
+      pre-disclosure PM moves, ticker-cluster trading, defendant flags,
+      and large absolute size. Hover the score badge to see which signals
+      fired. <strong>50+ is a credible "look at this" candidate.</strong>
+    </div>
+    <div class="insider-toolbar">
+      <label>Min score</label>
+      <input type="number" id="xv-min-score" value="40" min="0" max="100" step="5" />
+      <label>Venue</label>
+      <select id="xv-venue">
+        <option value="">All venues</option>
+        <option value="sec_form4">SEC Form 4</option>
+        <option value="congress_ptr">Congress PTR</option>
+        <option value="polymarket">Polymarket</option>
+        <option value="kalshi">Kalshi</option>
+      </select>
+      <label>Limit</label>
+      <input type="number" id="xv-limit" value="50" min="10" max="500" step="10" />
+      <button class="rank-btn" onclick="loadXVSuspicious()">Reload</button>
+      <span class="rank-hint" id="xv-summary"></span>
+    </div>
+    <div id="xvsuspicious-container">
+      <div class="loading">Loading cross-venue suspicious events...</div>
+    </div>
+  </div>
+
+  <!-- ─── Enforcement: SEC litigation archive + active defendants ─── -->
+  <div class="tab-panel" id="panel-enforcement">
+    <div class="insider-info">
+      <strong style="color:var(--gold);">SEC enforcement archive.</strong>
+      Every Litigation Release pulled from sec.gov, with insider-trading-related
+      cases flagged. The "<strong>Active defendants</strong>" view shows the
+      subset whose linked actor is still filing trades — i.e., people who got
+      busted and haven't stopped. (Most insider-trading defendants are barred
+      from securities, so the active-defendant list is naturally small.)
+      Future ingesters will add UK FCA, BaFin, ASIC, etc.
+    </div>
+    <div class="insider-toolbar">
+      <button class="rank-btn" onclick="loadEnforcement('archive')" id="enf-tab-archive" style="background:var(--gold); color:#000;">All cases</button>
+      <button class="rank-btn" onclick="loadEnforcement('active')" id="enf-tab-active">Active defendants</button>
+      <label style="margin-left:14px;">Insider-trading only</label>
+      <input type="checkbox" id="enf-insider-only" checked onchange="loadEnforcement(_enfCurrentView)" />
+      <label>Limit</label>
+      <input type="number" id="enf-limit" value="100" min="10" max="500" step="10" onchange="loadEnforcement(_enfCurrentView)" />
+      <span class="rank-hint" id="enf-summary"></span>
+    </div>
+    <div id="enforcement-container">
+      <div class="loading">Loading enforcement archive...</div>
+    </div>
+  </div>
+
+  <!-- ─── Actor profile modal ─── -->
+  <div id="actor-profile-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9999; overflow-y:auto; padding:30px;">
+    <div style="max-width:1100px; margin:0 auto; background:#111; border:1px solid var(--gold); border-radius:8px; padding:24px; min-height:400px;">
+      <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:16px;">
+        <div>
+          <h2 id="actor-profile-name" style="margin:0; color:var(--gold);">Loading…</h2>
+          <div id="actor-profile-meta" style="color:var(--text-dim); font-size:13px; margin-top:4px;"></div>
+        </div>
+        <button onclick="closeActorProfile()" style="background:transparent; border:1px solid var(--text-dim); color:var(--text-dim); padding:6px 14px; border-radius:6px; cursor:pointer;">✕ Close</button>
+      </div>
+      <div id="actor-profile-body">
+        <div class="loading">Loading actor profile…</div>
+      </div>
+    </div>
   </div>
 
   <!-- ─── KALSHI · My Portfolio ─── -->
@@ -1457,7 +1730,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   // Determine which button corresponds to this tab by index
-  const tabIndex = { 'traders': 0, 'quality': 1, 'smart': 2, 'suspicious': 3, 'retroactive': 4, 'ml': 5, 'clusters': 6 };
+  const tabIndex = { 'traders': 0, 'quality': 1, 'smart': 2, 'suspicious': 3, 'retroactive': 4, 'ml': 5, 'clusters': 6, 'insiders': 7, 'crossvenue': 8, 'leaderboard': 9, 'xvsuspicious': 10, 'enforcement': 11 };
   const btns = document.querySelectorAll('.tab-bar .tab-btn');
   const idx = tabIndex[tab];
   if (idx != null && btns[idx]) btns[idx].classList.add('active');
@@ -1480,6 +1753,21 @@ function switchTab(tab) {
   } else if (tab === 'clusters') {
     document.getElementById('panel-clusters').classList.add('active');
     loadClusters();
+  } else if (tab === 'insiders') {
+    document.getElementById('panel-insiders').classList.add('active');
+    loadInsiders();
+  } else if (tab === 'crossvenue') {
+    document.getElementById('panel-crossvenue').classList.add('active');
+    loadCrossVenue();
+  } else if (tab === 'leaderboard') {
+    document.getElementById('panel-leaderboard').classList.add('active');
+    loadLeaderboard();
+  } else if (tab === 'xvsuspicious') {
+    document.getElementById('panel-xvsuspicious').classList.add('active');
+    loadXVSuspicious();
+  } else if (tab === 'enforcement') {
+    document.getElementById('panel-enforcement').classList.add('active');
+    loadEnforcement();
   } else {
     document.getElementById('panel-traders').classList.add('active');
   }
@@ -2385,6 +2673,754 @@ async function loadClusters() {
     statsEl.innerHTML = `<div class="err">Failed to load clusters: ${escapeHtml(e.message)}</div>`;
   }
 }
+
+// ─── Insiders feed (SEC + Congress + PM/Kalshi unified) ───
+let _insidersLoading = false;
+
+function fmtTs(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+       + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtSize(low, high) {
+  if (low == null && high == null) return "—";
+  if (high == null) return ">" + fmtMoney(low);
+  if (low === high) return fmtMoney(low);
+  return fmtMoney(low) + "–" + fmtMoney(high);
+}
+
+function venueBadge(venue) {
+  const labels = { sec_form4: "SEC", congress_ptr: "CONGRESS", polymarket: "POLY", kalshi: "KALSHI", "13f": "13F" };
+  return `<span class="venue-badge ${escapeHtml(venue)}">${escapeHtml(labels[venue] || venue)}</span>`;
+}
+
+function deltaCell(d) {
+  if (d == null) return '<span class="delta-cell flat">—</span>';
+  const cls = Math.abs(d) < 0.01 ? "flat" : (d > 0 ? "up" : "down");
+  const arrow = d > 0 ? "▲" : (d < 0 ? "▼" : "·");
+  const pct = (d * 100).toFixed(1);
+  return `<span class="delta-cell ${cls}">${arrow} ${pct}¢</span>`;
+}
+
+// ─── Watchlist + alert inbox ───────────────────────────────────────
+let _watchlistOpen = false;
+let _watchlistRefreshTimer = null;
+
+function toggleWatchlistPanel() {
+  const p = document.getElementById("watchlist-panel");
+  _watchlistOpen = !_watchlistOpen;
+  p.style.display = _watchlistOpen ? "block" : "none";
+  if (_watchlistOpen) loadWatchlist();
+}
+
+async function loadWatchlist() {
+  const watchesEl = document.getElementById("watchlist-watches");
+  watchesEl.innerHTML = "Loading…";
+  try {
+    const r = await fetch("/api/watchlist");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const watches = data.watches || [];
+    const summary = data.summary || {};
+    updateUnreadBadge(summary.you ? summary.you.unread : 0);
+    if (!watches.length) {
+      watchesEl.innerHTML = '<em>No watches yet. Click "+ Watch" next to any actor in the table below.</em>';
+      return;
+    }
+    watchesEl.innerHTML = watches.map(w => {
+      const lbl = w.label || w.actor_id;
+      return `<span class="watch-chip">
+        ${escapeHtml(lbl)}
+        <a href="#" onclick="removeWatch('${jsAttrEscape(w.actor_id)}'); return false;" style="color:#f55; margin-left:6px;" title="Stop watching">×</a>
+      </span>`;
+    }).join(" ");
+  } catch (e) {
+    watchesEl.innerHTML = `<span class="err">Failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function addWatch(actorId, label) {
+  if (!actorId) return;
+  try {
+    const r = await fetch("/api/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor_id: actorId, label }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (data.added) {
+      // Open the panel + refresh chips
+      if (!_watchlistOpen) toggleWatchlistPanel();
+      else loadWatchlist();
+    } else {
+      alert("Already watching " + label);
+    }
+  } catch (e) {
+    alert("Failed to add watch: " + e.message);
+  }
+}
+
+async function removeWatch(actorId) {
+  try {
+    const r = await fetch(`/api/watchlist?actor_id=${encodeURIComponent(actorId)}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    loadWatchlist();
+  } catch (e) {
+    alert("Failed to remove watch: " + e.message);
+  }
+}
+
+async function loadInbox() {
+  const inboxEl = document.getElementById("watchlist-inbox");
+  inboxEl.innerHTML = '<div class="loading">Loading inbox…</div>';
+  try {
+    const r = await fetch("/api/watchlist/inbox?limit=50");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const items = data.inbox || [];
+    updateUnreadBadge(data.unread_count || 0);
+    if (!items.length) {
+      inboxEl.innerHTML = '<em style="color:var(--text-dim);">No alerts yet. We\'ll fan out as soon as a watched actor files something.</em>';
+      return;
+    }
+    const rows = items.map(i => {
+      const unread = !i.read_at;
+      return `<tr style="${unread ? "background:#2a1f00;" : ""}">
+        <td style="white-space:nowrap;">${fmtTs(i.alerted_at)}</td>
+        <td>${venueBadge(i.venue)}</td>
+        <td><strong>${escapeHtml(i.actor_label || i.watched_actor_id)}</strong></td>
+        <td><strong>${escapeHtml(i.symbol || "—")}</strong></td>
+        <td class="side-cell ${escapeHtml(i.side || "other")}">${escapeHtml((i.side || "—").toUpperCase())}</td>
+        <td>${fmtSize(i.size_usd_low, i.size_usd_high)}</td>
+        <td style="color:var(--text-dim);">${escapeHtml(i.symbol_name || "")}</td>
+        <td>${i.raw_url ? `<a href="${escapeHtml(i.raw_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-dim);">↗</a>` : ""}</td>
+      </tr>`;
+    }).join("");
+    inboxEl.innerHTML = `
+      <table class="insider-table" style="width:100%; font-size:12px;">
+        <thead><tr><th>When</th><th>Venue</th><th>Actor</th><th>Symbol</th><th>Side</th><th>Size</th><th>Description</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (e) {
+    inboxEl.innerHTML = `<span class="err">Inbox failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function markAllInboxRead() {
+  try {
+    await fetch("/api/watchlist/inbox/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    loadInbox();
+  } catch (e) {
+    alert("Failed: " + e.message);
+  }
+}
+
+function updateUnreadBadge(n) {
+  const badge = document.getElementById("watchlist-unread-badge");
+  if (!badge) return;
+  if (n && n > 0) {
+    badge.textContent = n > 99 ? "99+" : String(n);
+    badge.style.display = "inline-block";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+// Background refresh of unread count (every 60s while page is open)
+async function refreshUnreadBadge() {
+  try {
+    const r = await fetch("/api/watchlist");
+    if (!r.ok) return;
+    const data = await r.json();
+    const n = data.summary && data.summary.you ? data.summary.you.unread : 0;
+    updateUnreadBadge(n);
+  } catch {}
+}
+if (!_watchlistRefreshTimer) {
+  // First check after 5s, then every 60s
+  setTimeout(refreshUnreadBadge, 5000);
+  _watchlistRefreshTimer = setInterval(refreshUnreadBadge, 60000);
+}
+
+async function loadInsiders() {
+  if (_insidersLoading) return;
+  _insidersLoading = true;
+  const container = document.getElementById("insider-table-container");
+  const summaryEl = document.getElementById("insider-summary");
+  const venue = document.getElementById("insider-venue").value;
+  const hours = parseInt(document.getElementById("insider-hours").value, 10) || 168;
+  const limit = parseInt(document.getElementById("insider-limit").value, 10) || 100;
+
+  container.innerHTML = '<div class="loading">Loading insider events...</div>';
+
+  try {
+    const params = new URLSearchParams({ since_hours: hours, limit });
+    if (venue) params.set("venue", venue);
+    const r = await fetch(`/api/insider-events?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const events = data.events || [];
+    const summary = data.summary || {};
+
+    const venueCounts = Object.entries(summary.by_venue || {})
+      .map(([v, n]) => `${v}: ${n.toLocaleString()}`).join("  ·  ");
+    const lastForm4 = data.form4_last_ingest && data.form4_last_ingest.ran_at
+      ? `Form 4 last ingest ${fmtAgo(data.form4_last_ingest.ran_at)}` : "Form 4 not yet run";
+    summaryEl.innerHTML = `<strong>${(summary.total_events || 0).toLocaleString()}</strong> total · ${escapeHtml(venueCounts)} · ${escapeHtml(lastForm4)}`;
+
+    if (!events.length) {
+      container.innerHTML = '<div class="empty" style="padding:20px;">No insider events in this window. Background ingesters may still be warming up — give it a few minutes after first boot.</div>';
+      _insidersLoading = false;
+      return;
+    }
+
+    const rows = events.map(e => {
+      const ts = e.ts_filed || e.ts_executed;
+      const symbol = e.symbol || "—";
+      const sym = symbol !== "—"
+        ? `<a href="#" onclick="filterInsidersBySymbol('${jsAttrEscape(symbol)}'); return false;" style="color:var(--brand);">${escapeHtml(symbol)}</a>`
+        : "—";
+      const sourceLink = e.raw_url
+        ? `<a href="${escapeHtml(e.raw_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-dim);">↗</a>`
+        : "";
+      const role = e.actor_role ? `<div style="font-size:11px;color:var(--text-dim);">${escapeHtml(e.actor_role)}</div>` : "";
+      const watchBtn = e.actor_id
+        ? `<button class="watch-btn" onclick="addWatch('${jsAttrEscape(e.actor_id)}','${jsAttrEscape(e.actor_label || e.actor_id)}'); return false;" title="Watch this actor">+ Watch</button>`
+        : "";
+      const susp = e.suspicion ? ` ${_suspicionBadge(e.suspicion.score, e.suspicion.reasons)}` : "";
+      return `<tr>
+        <td style="white-space:nowrap;">${fmtTs(ts)}</td>
+        <td>${venueBadge(e.venue)}</td>
+        <td>
+          <div style="font-weight:600;">${e.actor_id ? `<a href="#" onclick="openActorProfile('${jsAttrEscape(e.actor_id)}'); return false;" style="color:var(--gold);">${escapeHtml(e.actor_label || e.actor_id)}</a>` : escapeHtml(e.actor_label || "—")} ${watchBtn}${susp}</div>
+          ${role}
+        </td>
+        <td>${sym}</td>
+        <td class="side-cell ${escapeHtml(e.side || "other")}">${escapeHtml((e.side || "—").toUpperCase())}</td>
+        <td style="white-space:nowrap;">${fmtSize(e.size_usd_low, e.size_usd_high)}</td>
+        <td style="color:var(--text-dim); max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(e.symbol_name || "")}">${escapeHtml(e.symbol_name || "")}</td>
+        <td>${sourceLink}</td>
+      </tr>`;
+    }).join("");
+
+    container.innerHTML = `
+      <div class="insider-meta">
+        <span>Showing <strong>${events.length}</strong> events · last ${hours}h${venue ? ` · venue <strong>${escapeHtml(venue)}</strong>` : ""}</span>
+      </div>
+      <div class="sus-table-wrap">
+        <table class="insider-table">
+          <thead><tr>
+            <th>When</th><th>Venue</th><th>Actor</th><th>Symbol</th>
+            <th>Side</th><th>Size</th><th>Description</th><th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = `<div class="err">Failed to load insider events: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    _insidersLoading = false;
+  }
+}
+
+function filterInsidersBySymbol(sym) {
+  // Quick filter: clear venue, set hours wide, fetch by-symbol endpoint
+  const container = document.getElementById("insider-table-container");
+  container.innerHTML = '<div class="loading">Loading events for ' + escapeHtml(sym) + '...</div>';
+  fetch(`/api/insider-events/by-symbol?symbol=${encodeURIComponent(sym)}&limit=200`)
+    .then(r => r.json())
+    .then(data => {
+      const events = data.events || [];
+      if (!events.length) {
+        container.innerHTML = `<div class="empty" style="padding:20px;">No events recorded for <strong>${escapeHtml(sym)}</strong>.</div>`;
+        return;
+      }
+      // Re-use the same row renderer by stashing into the global response shape
+      const fakeEvent = { events, summary: {}, form4_last_ingest: { ran_at: null } };
+      // Just re-render inline — simpler than threading through loadInsiders
+      const rows = events.map(e => {
+        const ts = e.ts_filed || e.ts_executed;
+        const role = e.actor_role ? `<div style="font-size:11px;color:var(--text-dim);">${escapeHtml(e.actor_role)}</div>` : "";
+        const sourceLink = e.raw_url ? `<a href="${escapeHtml(e.raw_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-dim);">↗</a>` : "";
+        return `<tr>
+          <td style="white-space:nowrap;">${fmtTs(ts)}</td>
+          <td>${venueBadge(e.venue)}</td>
+          <td><div style="font-weight:600;">${e.actor_id ? `<a href="#" onclick="openActorProfile('${jsAttrEscape(e.actor_id)}'); return false;" style="color:var(--gold);">${escapeHtml(e.actor_label || e.actor_id)}</a>` : escapeHtml(e.actor_label || "—")}</div>${role}</td>
+          <td><strong>${escapeHtml(e.symbol || "—")}</strong></td>
+          <td class="side-cell ${escapeHtml(e.side || "other")}">${escapeHtml((e.side || "—").toUpperCase())}</td>
+          <td style="white-space:nowrap;">${fmtSize(e.size_usd_low, e.size_usd_high)}</td>
+          <td style="color:var(--text-dim);">${escapeHtml(e.symbol_name || "")}</td>
+          <td>${sourceLink}</td>
+        </tr>`;
+      }).join("");
+      container.innerHTML = `
+        <div class="insider-meta">
+          <span><strong>${events.length}</strong> events for <strong>${escapeHtml(sym)}</strong></span>
+          <span><a href="#" onclick="loadInsiders(); return false;" style="color:var(--brand);">← back to feed</a></span>
+        </div>
+        <div class="sus-table-wrap">
+          <table class="insider-table">
+            <thead><tr><th>When</th><th>Venue</th><th>Actor</th><th>Symbol</th><th>Side</th><th>Size</th><th>Description</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    })
+    .catch(err => {
+      container.innerHTML = `<div class="err">Failed: ${escapeHtml(err.message)}</div>`;
+    });
+}
+
+// ─── Cross-Venue correlation feed ───
+let _crossvenueLoading = false;
+
+async function loadCrossVenue() {
+  if (_crossvenueLoading) return;
+  _crossvenueLoading = true;
+  const container = document.getElementById("crossvenue-table-container");
+  const summaryEl = document.getElementById("cv-summary");
+  const minDelta = parseFloat(document.getElementById("cv-min-delta").value) || 0.05;
+  const venue = document.getElementById("cv-venue").value;
+  const limit = parseInt(document.getElementById("cv-limit").value, 10) || 50;
+
+  container.innerHTML = '<div class="loading">Loading cross-venue correlations...</div>';
+
+  try {
+    const params = new URLSearchParams({ min_abs_delta: minDelta, limit });
+    if (venue) params.set("venue", venue);
+    const r = await fetch(`/api/insider-correlations?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const corrs = data.correlations || [];
+    const summary = data.summary || {};
+    const lastPass = data.last_pass || {};
+
+    summaryEl.innerHTML = `
+      <strong>${(summary.total_correlations || 0).toLocaleString()}</strong> correlations stored ·
+      avg |Δ_pre| <strong>${((summary.avg_abs_delta_pre || 0) * 100).toFixed(1)}¢</strong> ·
+      ${lastPass.ran_at ? `last pass ${fmtAgo(lastPass.ran_at)}` : "engine not yet run"}
+    `;
+
+    if (!corrs.length) {
+      container.innerHTML = `
+        <div class="empty" style="padding:20px;">
+          No correlations found at |Δ_pre| ≥ <strong>${(minDelta * 100).toFixed(1)}¢</strong>.
+          Try lowering the threshold, or wait for more events to be ingested.
+          The engine runs hourly in the background.
+        </div>`;
+      _crossvenueLoading = false;
+      return;
+    }
+
+    const rows = corrs.map(c => {
+      const sourceLink = c.raw_url
+        ? `<a href="${escapeHtml(c.raw_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-dim);">↗</a>`
+        : "";
+      const marketLink = c.market_slug
+        ? `<a href="https://polymarket.com/event/${escapeHtml(c.market_slug)}" target="_blank" rel="noopener noreferrer">${escapeHtml(c.market_question || c.market_slug)}</a>`
+        : escapeHtml(c.market_question || "—");
+      return `<tr>
+        <td style="white-space:nowrap;">${fmtTs(c.ts_disclosure)}</td>
+        <td>${venueBadge(c.venue)}</td>
+        <td>
+          <div style="font-weight:600;">${c.actor_id ? `<a href="#" onclick="openActorProfile('${jsAttrEscape(c.actor_id)}'); return false;" style="color:var(--gold);">${escapeHtml(c.actor_label || c.actor_id)}</a>` : escapeHtml(c.actor_label || "—")}</div>
+          <div style="font-size:11px;color:var(--text-dim);">${escapeHtml(c.actor_role || "")}</div>
+        </td>
+        <td class="side-cell ${escapeHtml(c.side || "other")}">${escapeHtml((c.side || "—").toUpperCase())} <strong style="color:var(--text);">${escapeHtml(c.ticker || "")}</strong></td>
+        <td style="white-space:nowrap;">${fmtSize(c.size_usd_low, c.size_usd_high)}</td>
+        <td class="market-cell" title="${escapeHtml(c.market_question || "")}">${marketLink}</td>
+        <td style="color:var(--text-dim); font-variant-numeric:tabular-nums;">${(c.price_24h_before * 100).toFixed(1)}¢</td>
+        <td style="color:var(--text); font-variant-numeric:tabular-nums; font-weight:600;">${(c.price_at_disclosure * 100).toFixed(1)}¢</td>
+        <td>${deltaCell(c.delta_pre)}</td>
+        <td>${deltaCell(c.delta_post)}</td>
+        <td>${sourceLink}</td>
+      </tr>`;
+    }).join("");
+
+    container.innerHTML = `
+      <div class="insider-meta">
+        <span>Sorted by |Δ_pre| · threshold <strong>${(minDelta * 100).toFixed(1)}¢</strong></span>
+      </div>
+      <div class="sus-table-wrap">
+        <table class="insider-table">
+          <thead><tr>
+            <th>Disclosed</th><th>Venue</th><th>Actor</th><th>Trade</th><th>Size</th>
+            <th>Market</th><th>P −24h</th><th>P @ disc</th>
+            <th title="Move in 24h before disclosure">Δ pre</th>
+            <th title="Move in 24h after disclosure">Δ post</th><th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = `<div class="err">Failed to load cross-venue correlations: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    _crossvenueLoading = false;
+  }
+}
+
+// ─── Top Insiders leaderboard ─────────────────────────────────────
+let _leaderboardLoading = false;
+
+async function loadLeaderboard() {
+  if (_leaderboardLoading) return;
+  _leaderboardLoading = true;
+  const container = document.getElementById("leaderboard-container");
+  const summaryEl = document.getElementById("lb-summary");
+  const venue = document.getElementById("lb-venue").value;
+  const minMatches = parseInt(document.getElementById("lb-min-matches").value, 10) || 3;
+  const limit = parseInt(document.getElementById("lb-limit").value, 10) || 50;
+
+  container.innerHTML = '<div class="loading">Loading actor leaderboard...</div>';
+  try {
+    const params = new URLSearchParams({ min_matches: minMatches, limit });
+    if (venue) params.set("venue", venue);
+    const r = await fetch(`/api/actor-leaderboard?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const actors = data.actors || [];
+    const summary = data.summary || {};
+    const lastRefresh = data.last_refresh && data.last_refresh.ran_at
+      ? `recomputed ${fmtAgo(data.last_refresh.ran_at)}` : "not yet computed";
+    summaryEl.innerHTML = `<strong>${(summary.qualifying_for_percentile || 0).toLocaleString()}</strong> ranked actors · ${escapeHtml(lastRefresh)}`;
+
+    if (!actors.length) {
+      container.innerHTML = `<div class="empty" style="padding:20px;">No actors meet the threshold yet (need ≥ ${minMatches} cross-venue matches). The correlation engine populates this gradually as it processes events. Try lowering the threshold.</div>`;
+      _leaderboardLoading = false;
+      return;
+    }
+
+    const rows = actors.map((a, i) => {
+      const rank = i + 1;
+      const pctile = a.leakage_percentile;
+      const pctileColor = pctile >= 90 ? '#ff6b6b' : pctile >= 70 ? '#ffa500' : pctile >= 40 ? '#999' : '#666';
+      const tickers = (a.top_tickers || []).slice(0, 3).map(t => `<code>${escapeHtml(t.symbol)}</code>×${t.count}`).join(' ');
+      return `<tr>
+        <td style="text-align:right; color:var(--text-dim);">#${rank}</td>
+        <td><strong style="color:${pctileColor};">P${pctile != null ? pctile : '—'}</strong></td>
+        <td><a href="#" onclick="openActorProfile('${jsAttrEscape(a.actor_id)}'); return false;" style="color:var(--gold); font-weight:600;">${escapeHtml(a.actor_label || a.actor_id)}</a>
+            <div style="font-size:11px; color:var(--text-dim);">${escapeHtml(a.actor_role || '')}</div></td>
+        <td>${venueBadge(a.venue_primary)}</td>
+        <td style="text-align:right;"><strong>${(a.leakage_score || 0).toFixed(4)}</strong></td>
+        <td style="text-align:right;">${(a.avg_abs_delta_pre || 0).toFixed(3)}</td>
+        <td style="text-align:right;">${(a.max_abs_delta_pre || 0).toFixed(3)}</td>
+        <td style="text-align:right;">${a.cross_venue_matches}</td>
+        <td style="text-align:right; color:var(--text-dim);">${a.tradeable_events}</td>
+        <td style="font-size:11px;">${tickers || '<span style="color:var(--text-dim);">—</span>'}</td>
+      </tr>`;
+    }).join("");
+
+    container.innerHTML = `
+      <div class="insider-meta">Showing top <strong>${actors.length}</strong> by leakage score${venue ? ` · venue <strong>${escapeHtml(venue)}</strong>` : ""}</div>
+      <div class="sus-table-wrap">
+        <table class="insider-table">
+          <thead><tr>
+            <th>#</th><th title="Percentile rank within actors with ≥ min_matches">Pct</th>
+            <th>Actor</th><th>Venue</th>
+            <th title="avg |Δ_pre| × ln(1+matches)">Score</th>
+            <th title="Average |Δ_pre| across their matched events">Avg |Δ|</th>
+            <th title="Max |Δ_pre| (single event)">Max |Δ|</th>
+            <th title="Events with a matched Polymarket market">Matches</th>
+            <th title="All events with a symbol (not all match a PM market)">Tradeable</th>
+            <th>Top tickers</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = `<div class="err">Failed to load leaderboard: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    _leaderboardLoading = false;
+  }
+}
+
+// ─── Cross-venue Suspicious feed ───────────────────────────────────
+let _xvLoading = false;
+
+function _suspicionBadge(score, reasons) {
+  if (!score) return "";
+  const tip = (reasons || []).map(r => `${r.code} (+${r.weight})`).join("; ") || "";
+  const color = score >= 50 ? '#ff5050' : score >= 30 ? '#ffa500' : '#888';
+  return `<span class="suspicion-badge" style="background:${color}; color:#000; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:bold; cursor:help;" title="${escapeHtml(tip)}">⚠ ${score}</span>`;
+}
+
+async function loadXVSuspicious() {
+  if (_xvLoading) return;
+  _xvLoading = true;
+  const container = document.getElementById("xvsuspicious-container");
+  const summaryEl = document.getElementById("xv-summary");
+  const min = parseInt(document.getElementById("xv-min-score").value, 10) || 40;
+  const venue = document.getElementById("xv-venue").value;
+  const limit = parseInt(document.getElementById("xv-limit").value, 10) || 50;
+  container.innerHTML = '<div class="loading">Scoring events...</div>';
+  try {
+    const params = new URLSearchParams({ min_score: min, limit });
+    if (venue) params.set("venue", venue);
+    const r = await fetch(`/api/cross-venue-suspicious?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const events = data.events || [];
+    const summary = data.summary || {};
+    const lastPass = data.last_pass && data.last_pass.ran_at
+      ? `recomputed ${fmtAgo(data.last_pass.ran_at)}` : "not yet computed";
+    summaryEl.innerHTML = `<strong>${(summary.nonzero_scores || 0).toLocaleString()}</strong> nonzero scores (${summary.high_scores_50plus || 0} ≥50) · ${escapeHtml(lastPass)}`;
+    if (!events.length) {
+      container.innerHTML = `<div class="empty" style="padding:20px;">No events at score ≥ ${min}. Try lowering the threshold.</div>`;
+      _xvLoading = false; return;
+    }
+    const rows = events.map(e => {
+      const ts = e.ts_filed || e.ts_executed;
+      const reasonsLbl = (e.reasons || []).map(r => `<code style="background:#222; padding:1px 4px; border-radius:3px; font-size:10px;">${escapeHtml(r.code)}</code>`).join(" ");
+      return `<tr>
+        <td style="white-space:nowrap;">${fmtTs(ts)}</td>
+        <td>${_suspicionBadge(e.score, e.reasons)}</td>
+        <td>${venueBadge(e.venue)}</td>
+        <td>${e.actor_id ? `<a href="#" onclick="openActorProfile('${jsAttrEscape(e.actor_id)}'); return false;" style="color:var(--gold);">${escapeHtml(e.actor_label || e.actor_id)}</a>` : escapeHtml(e.actor_label || "—")}</td>
+        <td><strong>${escapeHtml(e.symbol || "—")}</strong></td>
+        <td class="side-cell ${escapeHtml(e.side || "other")}">${escapeHtml((e.side || "—").toUpperCase())}</td>
+        <td>${fmtSize(e.size_usd_low, e.size_usd_high)}</td>
+        <td>${reasonsLbl}</td>
+        <td>${e.raw_url ? `<a href="${escapeHtml(e.raw_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-dim);">↗</a>` : ""}</td>
+      </tr>`;
+    }).join("");
+    container.innerHTML = `
+      <div class="insider-meta">Showing <strong>${events.length}</strong> events · score ≥ ${min}${venue ? ` · ${escapeHtml(venue)}` : ""}</div>
+      <div class="sus-table-wrap">
+        <table class="insider-table">
+          <thead><tr><th>When</th><th>Score</th><th>Venue</th><th>Actor</th><th>Symbol</th><th>Side</th><th>Size</th><th>Reasons</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    container.innerHTML = `<div class="err">Failed: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    _xvLoading = false;
+  }
+}
+
+// ─── Enforcement archive + active-defendants view ──────────────────
+let _enfLoading = false;
+let _enfCurrentView = 'archive';
+
+function _enfTabStyle(active) {
+  // toggle the visual selection on the two view buttons
+  const a = document.getElementById('enf-tab-archive');
+  const b = document.getElementById('enf-tab-active');
+  if (a && b) {
+    a.style.background = active === 'archive' ? 'var(--gold)' : '';
+    a.style.color      = active === 'archive' ? '#000' : '';
+    b.style.background = active === 'active' ? 'var(--gold)' : '';
+    b.style.color      = active === 'active' ? '#000' : '';
+  }
+}
+
+async function loadEnforcement(view) {
+  if (view) _enfCurrentView = view;
+  if (_enfLoading) return;
+  _enfLoading = true;
+  _enfTabStyle(_enfCurrentView);
+  const container = document.getElementById("enforcement-container");
+  const summaryEl = document.getElementById("enf-summary");
+  const insiderOnly = document.getElementById("enf-insider-only").checked;
+  const limit = parseInt(document.getElementById("enf-limit").value, 10) || 100;
+  container.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    if (_enfCurrentView === 'active') {
+      const r = await fetch(`/api/enforcement/active-defendants?limit=${limit}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const items = data.defendants || [];
+      const sum = data.summary || {};
+      summaryEl.innerHTML = `<strong>${items.length}</strong> active defendants · ${sum.unique_linked_actors || 0} unique actors linked across all cases · ${sum.links_created || 0} total links from ${sum.attempted || 0} cases attempted`;
+      if (!items.length) {
+        container.innerHTML = `<div class="empty" style="padding:20px;">
+          <strong>No matched active defendants yet.</strong>
+          The matcher only links SEC LR defendants by name to current Form 4
+          / Congress actors. Most insider-trading defendants are barred from
+          securities, so this list is naturally small. Browse the full archive
+          via the "All cases" tab.
+        </div>`;
+        _enfLoading = false; return;
+      }
+      const rows = items.map(d => `<tr>
+        <td style="white-space:nowrap;">${fmtTs(d.case_filed_date)}</td>
+        <td><a href="${escapeHtml(d.source_url || '#')}" target="_blank" rel="noopener noreferrer" style="color:var(--gold);">${escapeHtml(d.case_id)}</a></td>
+        <td>${escapeHtml(d.defendant_name)}</td>
+        <td>→ <a href="#" onclick="openActorProfile('${jsAttrEscape(d.actor_id)}'); return false;" style="color:var(--gold);">${escapeHtml(d.actor_label || d.actor_id)}</a></td>
+        <td>${escapeHtml(d.actor_role || '')}</td>
+        <td><span title="last event timestamp">${fmtTs(d.last_event_ts)}</span></td>
+        <td style="text-align:right;">${d.event_count || 0}</td>
+        <td style="text-align:right;">${d.leakage_percentile != null ? 'P' + d.leakage_percentile : '—'}</td>
+        <td><code style="font-size:10px; color:var(--text-dim);">${(d.match_confidence || 0).toFixed(2)} ${escapeHtml(d.match_method || '')}</code></td>
+      </tr>`).join("");
+      container.innerHTML = `<div class="sus-table-wrap"><table class="insider-table">
+        <thead><tr><th>Case filed</th><th>Case</th><th>Defendant name</th><th>Linked actor</th><th>Role</th><th>Last event</th><th>Events</th><th>Leak rank</th><th>Match</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    } else {
+      // 'archive' view
+      const r = await fetch(`/api/enforcement/cases?insider_only=${insiderOnly}&limit=${limit}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const items = data.cases || [];
+      const sum = data.summary || {};
+      summaryEl.innerHTML = `<strong>${(sum.total_cases || 0).toLocaleString()}</strong> cases ingested · <strong style="color:var(--gold);">${(sum.insider_flagged || 0).toLocaleString()}</strong> flagged insider · ${sum.enriched || 0} bodies enriched`;
+      if (!items.length) {
+        container.innerHTML = `<div class="empty" style="padding:20px;">No cases yet. The ingester runs hourly; first batch lands ~1 min after server start.</div>`;
+        _enfLoading = false; return;
+      }
+      const rows = items.map(c => {
+        const defs = (c.defendants || []).slice(0, 5).map(d => escapeHtml(d)).join(", ") || escapeHtml(c.title || "—");
+        const more = (c.defendants || []).length > 5 ? ` <span style="color:var(--text-dim); font-size:11px;">(+${c.defendants.length - 5} more)</span>` : '';
+        const flag = c.is_insider_related === 1 ? '<span style="background:#fb1; color:#000; padding:1px 6px; border-radius:8px; font-size:10px;">INSIDER</span>' : c.is_insider_related === 0 ? '' : '<span style="color:var(--text-dim); font-size:10px;">unenriched</span>';
+        const summaryShort = (c.summary || '').slice(0, 110);
+        return `<tr>
+          <td style="white-space:nowrap;">${fmtTs(c.filed_date)}</td>
+          <td><a href="${escapeHtml(c.source_url || '#')}" target="_blank" rel="noopener noreferrer" style="color:var(--gold);">${escapeHtml(c.case_id)}</a></td>
+          <td><span class="venue-badge sec_form4" style="font-size:10px;">${escapeHtml(c.regulator)}</span> ${flag}</td>
+          <td>${defs}${more}</td>
+          <td style="font-size:11px; color:var(--text-dim); max-width:480px;">${escapeHtml(summaryShort)}${c.summary && c.summary.length > 110 ? '…' : ''}</td>
+        </tr>`;
+      }).join("");
+      container.innerHTML = `<div class="sus-table-wrap"><table class="insider-table">
+        <thead><tr><th>Filed</th><th>Case</th><th>Regulator</th><th>Defendant(s)</th><th>Summary</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    }
+  } catch (e) {
+    container.innerHTML = `<div class="err">Failed: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    _enfLoading = false;
+  }
+}
+
+// ─── Actor profile modal (clicked from anywhere) ───────────────────
+async function openActorProfile(actorId) {
+  const modal = document.getElementById("actor-profile-modal");
+  const nameEl = document.getElementById("actor-profile-name");
+  const metaEl = document.getElementById("actor-profile-meta");
+  const bodyEl = document.getElementById("actor-profile-body");
+  modal.style.display = "block";
+  document.body.style.overflow = "hidden";
+  nameEl.textContent = "Loading…";
+  metaEl.textContent = actorId;
+  bodyEl.innerHTML = '<div class="loading">Loading actor profile…</div>';
+
+  try {
+    const r = await fetch(`/api/actor-profile?actor_id=${encodeURIComponent(actorId)}&event_limit=100`);
+    if (!r.ok) {
+      if (r.status === 404) throw new Error("Actor not found");
+      throw new Error(`HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    const score = data.score;
+    const events = data.recent_events || [];
+    const corrs = data.top_correlations || [];
+
+    nameEl.textContent = (score && score.actor_label) || (events[0] && events[0].actor_label) || actorId;
+    const role = (score && score.actor_role) || (events[0] && events[0].actor_role) || '';
+    const venue = (score && score.venue_primary) || (events[0] && events[0].venue) || '';
+    metaEl.innerHTML = `${escapeHtml(role)} · primary venue ${venueBadge(venue)} · <code style="font-size:11px;">${escapeHtml(actorId)}</code>`;
+
+    // Score panel + watch button
+    const scorePanel = score ? `
+      <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; margin-bottom:20px; background:#1a1a1a; padding:14px; border-radius:6px; border:1px solid var(--border);">
+        <div><div style="font-size:11px; color:var(--text-dim);">Leakage percentile</div>
+             <div style="font-size:22px; color:var(--gold); font-weight:bold;">P${score.leakage_percentile != null ? score.leakage_percentile : '—'}</div></div>
+        <div><div style="font-size:11px; color:var(--text-dim);">Leakage score</div>
+             <div style="font-size:18px; font-weight:600;">${(score.leakage_score || 0).toFixed(4)}</div></div>
+        <div><div style="font-size:11px; color:var(--text-dim);">Avg |Δ_pre|</div>
+             <div style="font-size:18px;">${(score.avg_abs_delta_pre || 0).toFixed(3)}</div></div>
+        <div><div style="font-size:11px; color:var(--text-dim);">Cross-venue matches</div>
+             <div style="font-size:18px;">${score.cross_venue_matches}</div></div>
+        <div><div style="font-size:11px; color:var(--text-dim);">Total events</div>
+             <div style="font-size:18px;">${score.total_events} <span style="font-size:11px; color:var(--text-dim);">(${score.tradeable_events} tradeable)</span></div></div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <button class="rank-btn" style="background:var(--gold); color:#000;" onclick="addWatch('${jsAttrEscape(actorId)}','${jsAttrEscape(score.actor_label || actorId)}')">+ Watch this actor</button>
+      </div>
+    ` : `<div style="color:var(--text-dim); margin-bottom:14px;">No correlation score yet (need ≥ 3 matches).</div>`;
+
+    // Top tickers strip
+    const topTickers = (score && score.top_tickers || []).map(t =>
+      `<span class="watch-chip"><code>${escapeHtml(t.symbol)}</code> · ${t.count} txs</span>`
+    ).join(' ');
+
+    // Top |Δ_pre| moves
+    const corrRows = corrs.slice(0, 15).map(c => {
+      const dPre = c.delta_pre || 0;
+      const dPost = c.delta_post || 0;
+      const dPreClass = dPre > 0.01 ? "delta-cell up" : dPre < -0.01 ? "delta-cell down" : "delta-cell flat";
+      const dPostClass = dPost > 0.01 ? "delta-cell up" : dPost < -0.01 ? "delta-cell down" : "delta-cell flat";
+      return `<tr>
+        <td style="white-space:nowrap;">${fmtTs(c.ts_disclosure)}</td>
+        <td><strong>${escapeHtml(c.ticker || '—')}</strong></td>
+        <td class="side-cell ${escapeHtml(c.side || 'other')}">${escapeHtml((c.side || '—').toUpperCase())}</td>
+        <td>${fmtSize(c.size_usd_low, c.size_usd_high)}</td>
+        <td>${(c.price_at_disclosure || 0).toFixed(3)}</td>
+        <td class="${dPreClass}">${dPre >= 0 ? '+' : ''}${dPre.toFixed(3)}</td>
+        <td class="${dPostClass}">${dPost >= 0 ? '+' : ''}${dPost.toFixed(3)}</td>
+        <td style="font-size:11px; color:var(--text-dim); max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(c.market_question || '')}">${escapeHtml((c.market_question || '').slice(0, 60))}</td>
+      </tr>`;
+    }).join("");
+
+    // Recent events list (compact)
+    const evRows = events.slice(0, 30).map(e => {
+      const ts = e.ts_executed || e.ts_filed;
+      return `<tr>
+        <td style="white-space:nowrap;">${fmtTs(ts)}</td>
+        <td>${venueBadge(e.venue)}</td>
+        <td><strong>${escapeHtml(e.symbol || '—')}</strong></td>
+        <td class="side-cell ${escapeHtml(e.side || 'other')}">${escapeHtml((e.side || '—').toUpperCase())}</td>
+        <td>${fmtSize(e.size_usd_low, e.size_usd_high)}</td>
+        <td style="color:var(--text-dim); max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(e.symbol_name || '')}">${escapeHtml((e.symbol_name || '').slice(0, 60))}</td>
+        <td>${e.raw_url ? `<a href="${escapeHtml(e.raw_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-dim);">↗</a>` : ''}</td>
+      </tr>`;
+    }).join("");
+
+    bodyEl.innerHTML = `
+      ${scorePanel}
+      ${topTickers ? `<div style="margin-bottom:18px;"><div style="font-size:11px; color:var(--text-dim); margin-bottom:6px;">TOP TICKERS</div>${topTickers}</div>` : ''}
+      ${corrs.length ? `
+        <h3 style="color:var(--gold); margin-top:24px;">Top cross-venue moves (${corrs.length})</h3>
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:8px;">Their trades, ranked by |Δ_pre| of the matching Polymarket market</div>
+        <div class="sus-table-wrap"><table class="insider-table">
+          <thead><tr><th>Disclosed</th><th>Ticker</th><th>Side</th><th>Size</th><th>P @ disc</th><th>Δ pre</th><th>Δ post</th><th>Market</th></tr></thead>
+          <tbody>${corrRows}</tbody>
+        </table></div>
+      ` : ''}
+      <h3 style="color:var(--gold); margin-top:24px;">Recent events (${events.length})</h3>
+      <div class="sus-table-wrap"><table class="insider-table">
+        <thead><tr><th>When</th><th>Venue</th><th>Symbol</th><th>Side</th><th>Size</th><th>Description</th><th></th></tr></thead>
+        <tbody>${evRows}</tbody>
+      </table></div>
+    `;
+  } catch (e) {
+    bodyEl.innerHTML = `<div class="err">Failed to load profile: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function closeActorProfile() {
+  document.getElementById("actor-profile-modal").style.display = "none";
+  document.body.style.overflow = "";
+}
+
+// ESC closes the actor modal
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const m = document.getElementById("actor-profile-modal");
+    if (m && m.style.display === "block") closeActorProfile();
+  }
+});
 
 // ─── Wallet drill-down modal ───
 function openWalletModal(address, displayName) {
