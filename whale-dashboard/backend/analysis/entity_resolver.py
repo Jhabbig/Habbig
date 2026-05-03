@@ -54,6 +54,34 @@ class ResolveResult:
     created: bool
 
 
+_UNKNOWN_SLUG = "_unknown_filer"
+_UNKNOWN_NAME = "Unknown / unmapped filer"
+
+
+def _get_or_create_unknown(conn) -> int:
+    """Return the id of the catch-all entity for unmapped 13D filers.
+
+    We bucket all auto-resolved filers under this single row instead of
+    creating a real entity per filer — that kept blowing the entities
+    table up to 500+ rows of one-off small activists, which then
+    polluted the /api/whales list. The original sub_name + cik are still
+    preserved in cik_map for forensic lookup.
+    """
+    row = conn.execute(
+        "SELECT id FROM entities WHERE slug=?", (_UNKNOWN_SLUG,)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    # First call — create the bucket.
+    return upsert_entity(
+        slug=_UNKNOWN_SLUG,
+        parent_name=_UNKNOWN_NAME,
+        entity_type=None,
+        description="Auto-created — bucket for 13D filers not in the seed list. "
+                    "Look up the real filer via cik_map.sub_name.",
+    )
+
+
 def resolve(cik: int, filer_name: str, authority: str = "13F") -> ResolveResult:
     """Map a CIK + filer name to an entity_id.
 
@@ -71,7 +99,8 @@ def resolve(cik: int, filer_name: str, authority: str = "13F") -> ResolveResult:
         # Path 2: fuzzy match against known entities/sub-names.
         norm_filer = _normalize(filer_name)
         candidates = conn.execute(
-            "SELECT id, parent_name FROM entities"
+            "SELECT id, parent_name FROM entities WHERE slug != ?",
+            (_UNKNOWN_SLUG,),
         ).fetchall()
         sub_names = conn.execute(
             "SELECT entity_id, sub_name FROM cik_map"
@@ -95,14 +124,10 @@ def resolve(cik: int, filer_name: str, authority: str = "13F") -> ResolveResult:
                     filing_authority=authority, confidence=best_score)
             return ResolveResult(best_id, best_score, False)
 
-    # Path 3: new entity (low confidence — needs manual review later).
-    slug = re.sub(r"[^a-z0-9]+", "_", _normalize(filer_name)).strip("_")[:60]
-    if not slug:
-        slug = f"cik_{cik}"
-    entity_id = upsert_entity(slug=slug, parent_name=filer_name, entity_type=None,
-                              description="Auto-created — review and merge if duplicate.")
-    map_cik(cik=cik, entity_id=entity_id, sub_name=filer_name,
-            filing_authority=authority, confidence=0.5)
-    logger.info("entity_resolver: auto-created entity slug=%s cik=%d (low confidence)",
-                slug, cik)
-    return ResolveResult(entity_id, 0.5, True)
+        # Path 3: bucket under "unknown" so we don't pollute the entities table.
+        # cik_map still preserves the real filer_name in sub_name for lookup.
+        unknown_id = _get_or_create_unknown(conn)
+
+    map_cik(cik=cik, entity_id=unknown_id, sub_name=filer_name,
+            filing_authority=authority, confidence=0.0)
+    return ResolveResult(unknown_id, 0.0, False)

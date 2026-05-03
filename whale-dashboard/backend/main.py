@@ -240,11 +240,20 @@ async def root():
 
 
 @app.get("/api/whales")
-async def list_whales(request: Request) -> JSONResponse:
+async def list_whales(request: Request,
+                      include_unverified: bool = False) -> JSONResponse:
+    """List tracked entities. Defaults to curated/high-confidence only;
+    pass ?include_unverified=true to surface auto-created 13D filers
+    (useful for the admin "manual review and merge" flow)."""
     await require_auth(request)
+    # Auto-created 13D filers get description="Auto-created — review and
+    # merge if duplicate." We hide those by default — the public dashboard
+    # should show the 17 curated mega-funds, not 500+ small activists.
+    where_clause = ("WHERE COALESCE(e.description, '') NOT LIKE 'Auto-created%'"
+                    if not include_unverified else "")
     with get_conn() as conn:
         rows = conn.execute(
-            """SELECT e.id, e.slug, e.parent_name, e.entity_type, e.description,
+            f"""SELECT e.id, e.slug, e.parent_name, e.entity_type, e.description,
                       e.last_aum_usd,
                       (SELECT COUNT(*) FROM cik_map WHERE entity_id=e.id) AS n_ciks,
                       (SELECT MAX(quarter_end) FROM filings_13f f
@@ -259,7 +268,8 @@ async def list_whales(request: Request) -> JSONResponse:
                                               WHERE c2.entity_id=e.id)
                       ) AS latest_book_usd
                  FROM entities e
-                ORDER BY e.parent_name"""
+                 {where_clause}
+                ORDER BY e.last_aum_usd DESC NULLS LAST, e.parent_name"""
         ).fetchall()
     return JSONResponse([dict(r) for r in rows])
 
@@ -556,6 +566,12 @@ async def admin_ingest(kind: str, request: Request) -> JSONResponse:
         return JSONResponse(await resolve_unmapped_cusips_via_openfigi(
             max_cusips=max_cusips
         ))
+    if kind == "13d_backfill":
+        # Re-fetch body for activist_filings rows that have NULL
+        # intent_summary (these were ingested before the body-URL fix).
+        from data_sources.edgar_13d import backfill_bodies
+        limit = int(request.query_params.get("limit", "50"))
+        return JSONResponse(await backfill_bodies(limit=limit))
     if kind == "polymarket":
         return JSONResponse(await _polymarket_cycle())
     if kind == "cot":

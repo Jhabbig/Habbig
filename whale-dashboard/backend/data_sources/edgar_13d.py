@@ -59,17 +59,20 @@ _ENTRY_RE = re.compile(r"<entry>(.*?)</entry>", re.DOTALL | re.IGNORECASE)
 _ACC_TAG_RE = re.compile(r"<accession-number>(\d{10}-\d{2}-\d{6})</accession-number>",
                          re.IGNORECASE)
 _FILING_HREF_RE = re.compile(r"<filing-href>([^<]+)</filing-href>", re.IGNORECASE)
+_FILING_DATE_RE = re.compile(r"<filing-date>([0-9-]{10})</filing-date>", re.IGNORECASE)
 _CATEGORY_RE = re.compile(r'<category[^>]*term="([^"]+)"')
 
 
 async def list_13d_for_issuer(session: aiohttp.ClientSession,
                               issuer_cik: int,
-                              count: int = 40) -> List[Tuple[str, str, str]]:
-    """Return (accession, schedule, index_url) for recent 13D/G filings.
+                              count: int = 40) -> List[Tuple[str, str, str, Optional[str]]]:
+    """Return (accession, schedule, index_url, filed_date_iso) for recent
+    13D/G filings.
 
     `schedule` is one of "13D", "13G", "13D/A", "13G/A".
+    `filed_date_iso` is yyyy-mm-dd from the atom <filing-date>; None if absent.
     """
-    out: List[Tuple[str, str, str]] = []
+    out: List[Tuple[str, str, str, Optional[str]]] = []
     seen: set[str] = set()
     # The atom feed accepts type=SC%2013D or type=SC%2013G. We query both.
     for type_query, schedule_label in [("SC%2013D", "13D"), ("SC%2013G", "13G")]:
@@ -93,10 +96,12 @@ async def list_13d_for_issuer(session: aiohttp.ClientSession,
             href_m = _FILING_HREF_RE.search(entry)
             href = href_m.group(1).strip() if href_m else ""
             cat_m = _CATEGORY_RE.search(entry)
+            date_m = _FILING_DATE_RE.search(entry)
+            filed = date_m.group(1) if date_m else None
             seen.add(acc)
             # Use atom category term when available — preserves 13D/A vs 13D.
             schedule = (cat_m.group(1) if cat_m else schedule_label).replace("SC ", "")
-            out.append((acc, schedule, href))
+            out.append((acc, schedule, href, filed))
     return out
 
 
@@ -299,7 +304,7 @@ async def ingest_issuer_13d(session: aiohttp.ClientSession,
     """Ingest recent 13D/G filings for one issuer. Returns rows inserted."""
     refs = await list_13d_for_issuer(session, issuer_cik)
     inserted = 0
-    for accession, schedule, _href in refs:
+    for accession, schedule, _href, atom_filed_date in refs:
         with get_conn() as conn:
             already = conn.execute(
                 "SELECT 1 FROM activist_filings WHERE accession=?", (accession,)
@@ -327,10 +332,9 @@ async def ingest_issuer_13d(session: aiohttp.ClientSession,
                     logger.exception("13d: body parse failed accession=%s", accession)
 
             entity = resolve_entity(filer_cik, filer_name, authority="13D")
-            # Filed date approximated from accession (YY in middle): use today
-            # as fetched_at fallback; for proper filed_date we'd need the atom
-            # entry's <updated> timestamp. v1: use current date.
-            filed_date = datetime.now(timezone.utc).date().isoformat()
+            # Use the real filed date from the atom feed if present; otherwise
+            # fall back to today (won't happen for any well-formed atom entry).
+            filed_date = atom_filed_date or datetime.now(timezone.utc).date().isoformat()
 
             if _persist(accession=accession, schedule=schedule,
                         filer_cik=filer_cik, filer_name=filer_name,
@@ -347,6 +351,94 @@ async def ingest_issuer_13d(session: aiohttp.ClientSession,
             (datetime.now(timezone.utc).isoformat(), issuer_cik),
         )
     return inserted
+
+
+async def backfill_bodies(limit: int = 100) -> dict:
+    """Re-fetch body for activist_filings rows that have NULL intent_summary
+    AND NULL ownership_pct (i.e. nothing parsed from the body).
+
+    The early ingester had a body-URL bug that wrote NULL for every field
+    derived from the body (intent_summary, ownership_pct, shares_owned).
+    This function walks rows from newest filed_date and refills them.
+
+    13G filings legitimately don't have an Item 4 (Purpose of Transaction)
+    section — passive declarations don't need one — so we treat them as
+    refilled if we got ownership_pct or shares_owned even without prose,
+    and tag intent_class='passive' since that's the schedule's definition.
+    """
+    started = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, accession, filer_cik, target_cik, schedule
+                 FROM activist_filings
+                WHERE intent_summary IS NULL
+                  AND ownership_pct IS NULL
+                ORDER BY filed_date DESC, id DESC
+                LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    if not rows:
+        return {"refilled": 0, "checked": 0, "started_at": started}
+
+    refilled = 0
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for r in rows:
+            try:
+                # Try issuer-rooted then filer-rooted (same logic as ingest)
+                body_url = await find_13d_body_url(
+                    session, int(r["target_cik"]), r["accession"]
+                )
+                if not body_url and r["filer_cik"]:
+                    body_url = await find_13d_body_url(
+                        session, int(r["filer_cik"]), r["accession"]
+                    )
+                if not body_url:
+                    continue
+                body = await _get_text(session, body_url)
+                parsed = parse_13d_body(body)
+                # Refill if we got ANY field from the body — pct, shares,
+                # or the prose summary. Passive 13Gs often only give pct.
+                got_anything = any([
+                    parsed.get("intent_summary"),
+                    parsed.get("ownership_pct") is not None,
+                    parsed.get("shares_owned") is not None,
+                ])
+                if not got_anything:
+                    continue
+                # 13G is passive by schedule definition — auto-label so the
+                # intent classifier doesn't have to fight an empty body.
+                schedule = (r["schedule"] or "").upper()
+                auto_class = "passive" if schedule.startswith("13G") else None
+                auto_score = 1.0 if auto_class else None
+                with get_conn() as conn:
+                    conn.execute(
+                        """UPDATE activist_filings
+                              SET intent_summary=COALESCE(?, intent_summary),
+                                  ownership_pct=COALESCE(?, ownership_pct),
+                                  shares_owned=COALESCE(?, shares_owned),
+                                  event_date=COALESCE(?, event_date),
+                                  intent_class=COALESCE(intent_class, ?),
+                                  intent_score=COALESCE(intent_score, ?)
+                            WHERE id=?""",
+                        (parsed.get("intent_summary"),
+                         parsed.get("ownership_pct"),
+                         parsed.get("shares_owned"),
+                         parsed.get("event_date"),
+                         auto_class, auto_score,
+                         r["id"]),
+                    )
+                refilled += 1
+            except aiohttp.ClientResponseError as e:
+                if e.status == 429:
+                    # Rate-limited; back off and stop this batch.
+                    logger.warning("13d backfill: 429, stopping batch at %d", refilled)
+                    break
+                logger.warning("13d backfill: HTTP %d on %s", e.status, r["accession"])
+            except Exception:
+                logger.exception("13d backfill: failed on %s", r["accession"])
+    logger.info("13d backfill: refilled %d of %d checked", refilled, len(rows))
+    return {"refilled": refilled, "checked": len(rows), "started_at": started}
 
 
 async def ingest_watchlist(limit: Optional[int] = None) -> dict:
