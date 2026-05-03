@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from analysis import edge as edge_analysis
 from analysis import stance as stance_analysis
-from ingestion import decision_calendar, fred_client, implied_path
+from ingestion import decision_calendar, fred_client, implied_path, kalshi_client
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -38,12 +38,13 @@ if not _sso_secret and not _DEV_MODE:
 
 @app.middleware("http")
 async def security_and_auth(request: Request, call_next):
-    if _sso_secret:
-        client_secret = request.headers.get("x-gateway-secret", "")
-        if not hmac.compare_digest(client_secret, _sso_secret):
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    elif not _DEV_MODE:
-        return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+    if request.url.path != "/healthz":
+        if _sso_secret:
+            client_secret = request.headers.get("x-gateway-secret", "")
+            if not hmac.compare_digest(client_secret, _sso_secret):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        elif not _DEV_MODE:
+            return JSONResponse({"error": "Service misconfigured"}, status_code=503)
 
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -89,6 +90,26 @@ async def api_edge() -> JSONResponse:
     return JSONResponse(edge_analysis.compute())
 
 
+@app.get("/api/kalshi")
+async def api_kalshi(force: bool = False) -> JSONResponse:
+    """Raw Kalshi FOMC markets — useful for debugging the cross-venue join."""
+    from datetime import date as _date, datetime as _dt, timezone as _tz
+    today = _dt.now(_tz.utc).date()
+    cal = decision_calendar.upcoming(today, horizon_days=120)
+    fomc = next((m for m in cal if m["cb"] == "US"), None)
+    if not fomc:
+        return JSONResponse({"meeting": None, "markets": []})
+    md = _date.fromisoformat(fomc["decision_date"])
+    rates = fred_client.get_cached_rates()
+    dff = next((s for s in rates["series"] if s["series_id"] == "DFF"), None)
+    rate = dff["latest"][1] if dff and dff["latest"] else None
+    return JSONResponse({
+        "meeting": fomc,
+        "current_rate": rate,
+        "markets": kalshi_client.get_cached_for_meeting(md, rate, force=force),
+    })
+
+
 @app.get("/api/stance")
 async def api_stance() -> JSONResponse:
     return JSONResponse(stance_analysis.compute())
@@ -101,4 +122,4 @@ async def healthz() -> dict:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "7060")))
+    uvicorn.run(app, host=os.environ.get("BIND_HOST", "0.0.0.0"), port=int(os.environ.get("PORT", "7060")))

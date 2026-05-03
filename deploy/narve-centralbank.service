@@ -1,0 +1,32 @@
+[Unit]
+Description=Narve Central Bank Dashboard (port 7060)
+After=network.target
+
+[Service]
+# Required env vars: PORT (defaults to 7060 if unset)
+# Loads the shared gateway .env so the dashboard can verify X-Gateway-Secret
+# on incoming proxied requests.
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/centralbank-dashboard
+Environment=PORT=7060
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 7060
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/centralbank-dashboard
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

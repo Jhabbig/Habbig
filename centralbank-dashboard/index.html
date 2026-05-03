@@ -63,6 +63,18 @@
   .q { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .q a { color: var(--accent); text-decoration: none; }
   .q a:hover { text-decoration: underline; }
+  .dir-arb  { background: #d29922; color: #0e1117; padding: 2px 6px; border-radius: 3px;
+              font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .edge-table { font-size: 12px; }
+  .edge-table th { font-size: 11px; }
+  .edge-table .q { max-width: 280px; }
+  .trade-cell { white-space: nowrap; display: flex; gap: 4px; }
+  .trade-btn { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px;
+               font-weight: 600; text-decoration: none; background: var(--accent); color: #0e1117;
+               border: 1px solid var(--accent); transition: filter 0.1s; }
+  .trade-btn:hover { filter: brightness(1.15); text-decoration: none; }
+  .trade-btn-disabled { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px;
+                        color: var(--muted); border: 1px solid var(--grid); background: #0e1117; }
   .stance-row { display: grid; grid-template-columns: 180px 100px 1fr; gap: 16px;
                 align-items: center; padding: 10px 0; border-bottom: 1px solid var(--grid); }
   .stance-row:last-child { border-bottom: 0; }
@@ -238,50 +250,68 @@ function renderEdge(d) {
   const body = document.getElementById("edge-body");
   const errs = (d.errors || []).map(e => `<div class="footnote err">${escapeHtml(e)}</div>`).join("");
   if (!d.rows || !d.rows.length) {
-    body.innerHTML = errs || '<div class="footnote">No matching Polymarket markets in the FOMC window.</div>';
+    body.innerHTML = errs || '<div class="footnote">No matching markets in the FOMC window.</div>';
     return;
   }
+  const fmtPrice = p => (p === null || p === undefined) ? '—' : (p * 100).toFixed(1) + '%';
+  const fmtPp = (pp, threshold) => {
+    if (pp === null || pp === undefined) return {txt: '—', cls: 'edge-flat'};
+    const sign = pp > 0 ? '+' : '';
+    const cls = pp > threshold ? 'edge-pos' : pp < -threshold ? 'edge-neg' : 'edge-flat';
+    return {txt: sign + pp.toFixed(1) + ' pp', cls};
+  };
+  const dirSpan = dir => {
+    if (!dir || dir === '—') return '<span class="dir-none">—</span>';
+    if (dir.startsWith('BUY '))  return `<span class="dir-buy">${escapeHtml(dir)}</span>`;
+    if (dir.startsWith('SELL ')) return `<span class="dir-sell">${escapeHtml(dir)}</span>`;
+    return `<span class="dir-arb">${escapeHtml(dir)}</span>`;
+  };
+  const tradeBtn = (url, label) => url
+    ? `<a class="trade-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener">Trade ${label} →</a>`
+    : `<span class="trade-btn-disabled" title="No market on ${label}">— ${label}</span>`;
+
   const rows = d.rows.map(r => {
-    const known = r.edge_pp !== null && r.edge_pp !== undefined;
-    let eppFmt, eClass, impliedFmt;
-    if (known) {
-      eppFmt = (r.edge_pp > 0 ? "+" : "") + r.edge_pp.toFixed(1) + " pp";
-      eClass = r.edge_pp > d.edge_threshold_pp ? "edge-pos"
-             : r.edge_pp < -d.edge_threshold_pp ? "edge-neg" : "edge-flat";
-      impliedFmt = (r.implied_prob * 100).toFixed(1) + "%";
-    } else {
-      eppFmt = "—"; eClass = "edge-flat"; impliedFmt = "—";
-    }
-    let dirHtml = '<span class="dir-none">—</span>';
-    if (r.direction === "BUY YES")  dirHtml = '<span class="dir-buy">BUY YES</span>';
-    if (r.direction === "SELL YES") dirHtml = '<span class="dir-sell">SELL YES</span>';
-    const qCell = r.url
-      ? `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.question)}</a>`
-      : escapeHtml(r.question);
-    const vol = r.volume_24h ? "$" + Math.round(r.volume_24h).toLocaleString() : "—";
+    const epoly  = fmtPp(r.edge_poly_pp,    d.edge_threshold_pp);
+    const ekal   = fmtPp(r.edge_kalshi_pp,  d.edge_threshold_pp);
+    const arb    = fmtPp(r.arb_spread_pp,   d.edge_threshold_pp);
     return `<tr>
       <td><code>${escapeHtml(r.outcome_bucket)}</code></td>
-      <td class="q" title="${escapeHtml(r.question)}">${qCell}</td>
-      <td class="num">${(r.polymarket_price * 100).toFixed(1)}%</td>
-      <td class="num">${impliedFmt}</td>
-      <td class="num ${eClass}">${eppFmt}</td>
-      <td>${dirHtml}</td>
-      <td class="num">${vol}</td>
+      <td class="q" title="${escapeHtml(r.question)}">${escapeHtml(r.question)}</td>
+      <td class="num">${fmtPrice(r.polymarket_price)}</td>
+      <td class="num">${fmtPrice(r.kalshi_price)}</td>
+      <td class="num">${fmtPrice(r.implied_prob)}</td>
+      <td class="num ${epoly.cls}">${epoly.txt}</td>
+      <td class="num ${ekal.cls}">${ekal.txt}</td>
+      <td class="num ${arb.cls}">${arb.txt}</td>
+      <td>${dirSpan(r.direction_arb)}</td>
+      <td class="trade-cell">${tradeBtn(r.polymarket_url, 'Poly')}${tradeBtn(r.kalshi_url, 'Kalshi')}</td>
     </tr>`;
   }).join("");
+
   body.innerHTML = `
-    <table>
+    <table class="edge-table">
       <thead><tr>
-        <th>Bucket</th><th>Market</th>
-        <th class="num">Poly</th><th class="num">Implied</th><th class="num">Edge</th>
-        <th>Signal</th><th class="num">24h vol</th>
+        <th>Bucket</th>
+        <th>Question</th>
+        <th class="num" title="Polymarket YES price">Poly</th>
+        <th class="num" title="Kalshi YES price">Kalshi</th>
+        <th class="num" title="Our model-implied probability (CME-style from ZQ futures)">Implied</th>
+        <th class="num" title="Implied − Polymarket. Positive = Poly underprices.">Edge Poly</th>
+        <th class="num" title="Implied − Kalshi. Positive = Kalshi underprices.">Edge Kalshi</th>
+        <th class="num" title="Polymarket − Kalshi. The cross-venue arbitrage spread.">Arb (P−K)</th>
+        <th>Arb signal</th>
+        <th>Trade</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="footnote">
-      Edge = implied − market price. Signal threshold ±${d.edge_threshold_pp} pp.
-      <strong>Not investment advice.</strong> Validate against CME's own FedWatch numbers
-      and consider Polymarket bid-ask + gas before trading.
+      <strong>Edges</strong> = our model-implied probability − each venue's YES price.
+      <strong>Arb (P−K)</strong> = Polymarket YES − Kalshi YES on the same outcome — when
+      |spread| > ${d.edge_threshold_pp} pp, the same question is mispriced between the two
+      venues. <strong>Trade buttons deep-link to your own account on each venue</strong> —
+      we don't place orders for you (Phase 2). <strong>Not investment advice.</strong>
+      Validate against CME's own FedWatch numbers and consider each venue's bid-ask spread
+      and fees before acting on any signal.
     </div>
     ${errs}
   `;

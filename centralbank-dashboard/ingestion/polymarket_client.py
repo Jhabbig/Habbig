@@ -25,6 +25,8 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from threading import Lock
 
+from . import outcome_classifier
+
 log = logging.getLogger(__name__)
 
 GAMMA = "https://gamma-api.polymarket.com"
@@ -33,42 +35,16 @@ _UA = "centralbank-dashboard/0.1"
 _FED_RX = re.compile(r"\b(fed|fomc|federal reserve|federal funds)\b", re.I)
 _RATE_RX = re.compile(r"\b(rate|decision|cut|hike|hold|unchanged|no change|bps|bp|basis points?)\b", re.I)
 
-# Verbs cover common inflections — Polymarket questions phrase moves many ways:
-# "cut by 25 bps", "raises rates 25bps", "Fed cutting 50 basis points", "hiked 25bp".
-_CUT_VERB = r"(?:cut|cuts|cutting|decrease|decreases|decreased|reduce|reduces|reduced|lower|lowers|lowered)"
-_HIKE_VERB = r"(?:hike|hikes|hiked|hiking|increase|increases|increased|raise|raises|raised|raising)"
-_VERB = f"(?:{_CUT_VERB}|{_HIKE_VERB})"
-_BPS = r"(?:bps|bp|basis\s*points?)"
-
-_VERB_BPS_RX = re.compile(rf"({_VERB})\b[^.\n]{{0,40}}?(\d{{2,3}})\s*{_BPS}", re.I)
-_BPS_VERB_RX = re.compile(rf"(\d{{2,3}})\s*{_BPS}[^.\n]{{0,30}}?({_VERB})", re.I)
-_HOLD_RX = re.compile(r"\b(hold|no change|unchanged|leave (?:rates? )?(?:the same|alone))\b", re.I)
-
-_CUT_RX = re.compile(_CUT_VERB, re.I)
-
 _CACHE: dict = {"data": None, "fetched_at": 0.0, "key": None}
 _CACHE_TTL = 5 * 60  # 5 min
 _lock = Lock()
 
 
 def classify_outcome(question: str) -> str | None:
-    """Map a market question to a bucket label, or None if not a clean match.
-
-    Hold matching takes priority: "Will the Fed hold rates steady" wouldn't
-    match a verb+bps pattern but is unambiguously a hold.
-    """
-    q = question or ""
-    if _HOLD_RX.search(q):
-        return "hold"
-    m = _VERB_BPS_RX.search(q)
-    if m:
-        verb, bps = m.group(1), int(m.group(2))
-        return f"{'cut' if _CUT_RX.fullmatch(verb) else 'hike'}{bps}"
-    m = _BPS_VERB_RX.search(q)
-    if m:
-        bps, verb = int(m.group(1)), m.group(2)
-        return f"{'cut' if _CUT_RX.fullmatch(verb) else 'hike'}{bps}"
-    return None
+    """Backwards-compatible delta-only classifier. New code should call
+    :func:`outcome_classifier.classify` directly so it can pass the current
+    rate and pick up Kalshi-style level questions."""
+    return outcome_classifier.classify_delta(question or "")
 
 
 def _is_fed_market(question: str) -> bool:

@@ -17,9 +17,33 @@ Port: **7060**.
 | v0.2 | **Market-implied next-FOMC move** — current rate, implied post-rate, delta in bps, probability bar (cut25 / hold / hike25) | Yahoo Finance ZQ futures + CME-style math |
 | v0.3 | **Statement stance ladder** — hawkish ↔ dovish per CB based on rule-based scoring of the latest press release, with matched phrases shown inline | Fed / ECB / BoE RSS feeds + body-text fetch |
 | v0.4 | **Polymarket edge** — table of FOMC markets with edge = implied − Polymarket price, sorted by |edge|, BUY YES / SELL YES signals at ±3 pp | Polymarket Gamma API |
+| v0.5 | **Cross-venue arbitrage + Trade buttons** — Kalshi YES price beside Polymarket YES on the same FOMC outcome. `Arb (P−K)` column flags spreads >3 pp. One-click **Trade Poly →** and **Trade Kalshi →** deep-links so users place orders with their own accounts on each venue. | Kalshi Trade API v2 (read-only public endpoint) |
 
 All views graceful-degrade when their data source is unreachable (the panel
 shows an inline error; other panels keep working).
+
+## Trading model
+
+The dashboard is **read-only** for trading. It surfaces the price discrepancies
+and signals; users execute trades themselves via the deep-link buttons:
+
+  * **Trade Poly →** opens the matched Polymarket market in a new tab.
+  * **Trade Kalshi →** opens the matched Kalshi event page (groups all rate
+    buckets so users see the full ladder before placing an order).
+
+This was a deliberate v0.5 choice — full in-app order placement requires:
+
+  - Per-user Kalshi API key + RSA private key storage (keyed on gateway DB)
+  - RSA-PSS request signing on every order (standard Kalshi auth)
+  - Order management (place, cancel, status, fills)
+  - Position + balance views
+  - Confirmation flow + audit log
+  - Probably paper-trading toggle for new users
+
+That's a security-heavy multi-day project — flagged as **Phase 2** in the
+roadmap. The deep-link approach delivers ~80% of the user value for ~5% of
+the build cost, and keeps every order an explicit user click on the venue's
+own UI.
 
 ## Endpoints
 
@@ -29,7 +53,8 @@ shows an inline error; other panels keep working).
 | `GET /api/rates` | 6 h | Cached FRED policy rates |
 | `GET /api/calendar?horizon_days=90` | — | Upcoming CB meetings |
 | `GET /api/implied?force=…` | 30 min | Next-FOMC implied move + probabilities |
-| `GET /api/edge` | 5 min (markets) | Polymarket FOMC markets ranked by mispricing vs implied |
+| `GET /api/edge` | 5 min (markets) | Cross-venue table: bucket × {Poly, Kalshi, Implied} + edges + arb spreads + trade-out URLs |
+| `GET /api/kalshi` | 5 min | Raw Kalshi FOMC market list (debug-friendly) |
 | `GET /api/stance` | 1 h | Stance ladder per CB |
 | `GET /healthz` | — | Liveness probe |
 
@@ -55,29 +80,33 @@ Smoke-test individual modules:
 python3 -m ingestion.fred_client          # FRED policy rates
 python3 -m ingestion.decision_calendar    # 2026 meeting dates
 python3 -m ingestion.implied_path         # ZQ futures + implied move
-python3 -m ingestion.polymarket_client    # classifier on canned questions
+python3 -m ingestion.outcome_classifier   # 15 fixtures across Poly + Kalshi phrasings
+python3 -m ingestion.polymarket_client    # Polymarket FOMC market fetch
+python3 -m ingestion.kalshi_client        # live Kalshi FOMC fetch
 python3 -m ingestion.cb_statements        # CB RSS pulls
 python3 -m analysis.stance_scorer         # scorer fixtures
 python3 -m analysis.stance                # full stance ladder
-python3 -m analysis.edge                  # full edge view
+python3 -m analysis.edge                  # full cross-venue edge view
 ```
 
 ## Files
 
 ```
 centralbank-dashboard/
-├── server.py                       FastAPI + gateway-SSO middleware + 6 routes
+├── server.py                       FastAPI + gateway-SSO middleware + 7 routes
 ├── ingestion/
 │   ├── fred_client.py              Policy-rate CSV pull (Fed / ECB / BoE)
 │   ├── decision_calendar.py        Hand-curated 2026 FOMC/ECB/BoE meetings
 │   ├── implied_path.py             ZQ futures + CME-style implied-rate math
-│   ├── polymarket_client.py        Gamma API fetch + rule-based outcome classifier
+│   ├── outcome_classifier.py       Shared rule-based bucket classifier (Poly + Kalshi)
+│   ├── polymarket_client.py        Gamma API fetch; delegates to outcome_classifier
+│   ├── kalshi_client.py            Kalshi /trade-api/v2 public read; deep-link builder
 │   └── cb_statements.py            RSS feeds + HTML body fetcher (Fed/ECB/BoE)
 ├── analysis/
 │   ├── stance_keywords.py          Hawkish/dovish phrase dictionary (extend here)
 │   ├── stance_scorer.py            Phrase-match scorer with sentence normalization
 │   ├── stance.py                   Composes scraper + scorer into the ladder API
-│   └── edge.py                     Joins implied probs + Polymarket prices into edge
+│   └── edge.py                     Cross-venue join: Implied × Polymarket × Kalshi → edges + arb
 ├── index.html                      Single-file UI: SVG chart + 4 panels, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7060
 ├── requirements.txt                fastapi, uvicorn, defusedxml
@@ -148,12 +177,13 @@ Polymarket's own bid-ask plus our modelling slack live below that.
 | v0.2 | ✓ done | Implied next-FOMC move from ZQ futures |
 | v0.3 | ✓ done | Statement scraper + stance scorer + ladder |
 | v0.4 | ✓ done | Polymarket edge table |
-| v0.5 | open  | Statement diff viewer (compare two press releases side-by-side) |
-| v0.6 | open  | Extend implied path to ECB (€STR OIS) and BoE (SONIA OIS) |
-| v0.7 | open  | Auto-scrape annual CB calendar pages so meeting dates refresh |
-| v0.8 | open  | ECB-specific phrases in `stance_keywords.py` (current dictionary skews Fed/BoE) |
-| v0.9 | open  | BoJ — needs direct BoJ stats API (FRED proxies are noisy) |
-| v1.0 | open  | Wire into `gateway/config.json` for subdomain routing once subscription model is decided |
+| v0.5 | ✓ done | Kalshi cross-venue arbitrage panel + Trade-on-Poly/Kalshi deep-links |
+| v0.6 | open  | Statement diff viewer (compare two press releases side-by-side) |
+| v0.7 | open  | Extend implied path to ECB (€STR OIS) and BoE (SONIA OIS) |
+| v0.8 | open  | Auto-scrape annual CB calendar pages so meeting dates refresh |
+| v0.9 | open  | ECB-specific phrases in `stance_keywords.py` (current dictionary skews Fed/BoE) |
+| v1.0 | open  | BoJ — needs direct BoJ stats API (FRED proxies are noisy) |
+| **Phase 2** | open | **In-app trade execution** on Kalshi: per-user API key + RSA-PSS request signing, order management (place/cancel/status), positions + balance views, paper-trading toggle, audit log. Security-heavy multi-day project — gated until Phase 1 (this dashboard) has paying users to justify the build. |
 
 ## Env vars
 
