@@ -698,6 +698,17 @@ async def audit_sensitive_actions(request: Request, call_next):
 
 
 # ===================================================================
+# HEALTH
+# ===================================================================
+# Registered before any catch-all so /healthz never gets shadowed by
+# the SPA mount further down.
+
+@app.get("/healthz")
+async def healthz() -> dict:
+    return {"ok": True}
+
+
+# ===================================================================
 # AUTH ENDPOINTS
 # ===================================================================
 # Registration, login, and logout are handled by the gateway.
@@ -1879,7 +1890,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "main:app",
-        host="127.0.0.1",
+        host=os.environ.get("BIND_HOST", "127.0.0.1"),
         port=PORT,
         reload=bool(os.getenv("DEV")),
         log_level="info",

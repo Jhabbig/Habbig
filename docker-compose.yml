@@ -1,4 +1,13 @@
 services:
+  # ─────────────────────────────────────────────────────────────────
+  # Shared YAML anchors so each dashboard's healthcheck stays one line.
+  # `*urllib_healthcheck_<port>_<path>` is _not_ how anchors work — the
+  # urllib command literally needs the URL inlined, so each service
+  # spells out its own `test:` below. The reusable bits are the
+  # interval/timeout/retries/start_period block (`*hc_intervals`) and
+  # the BIND_HOST env (`*bind_all`) used by every dashboard.
+  # ─────────────────────────────────────────────────────────────────
+
   redis:
     image: redis:7-alpine
     command: redis-server --requirepass "${REDIS_PASSWORD:?Set REDIS_PASSWORD env var}"
@@ -8,16 +17,27 @@ services:
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD env var}", "ping"]
       interval: 10s
+      timeout: 3s
       retries: 3
+      start_period: 10s
 
   gateway:
     build: ./gateway
     ports:
       - "127.0.0.1:7000:7000"
     env_file: ./gateway/.env
+    environment:
+      # Resolve dashboards by docker-compose service name instead of 127.0.0.1.
+      DASHBOARD_HOST_TEMPLATE: "{key}"
     volumes:
       - gateway-data:/app/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7000/healthz',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       redis:
         condition: service_healthy
@@ -27,13 +47,15 @@ services:
         condition: service_healthy
       midterm:
         condition: service_healthy
-      top-traders:
+      top_traders:
         condition: service_healthy
       weather:
         condition: service_healthy
       sports:
         condition: service_healthy
       world:
+        condition: service_healthy
+      voters:
         condition: service_healthy
       climate:
         condition: service_healthy
@@ -45,111 +67,158 @@ services:
     expose:
       - "8000"
     env_file: ./crypto-dashboard/.env
+    environment:
+      BIND_HOST: "0.0.0.0"
     volumes:
       - crypto-data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 90s    # crypto loads ML ensembles on startup
 
   stock:
     build: ./stock-dashboard
     expose:
       - "8050"
     env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8050/"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8050/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 60s
 
   midterm:
     build: ./midterm-dashboard
     expose:
       - "8051"
     env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8051/"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8051/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 90s    # midterm hydrates polling DB on startup
 
-  top-traders:
+  # Service name uses underscores to match the gateway/config.json key
+  # `top_traders`. The build context still points at the hyphenated dir.
+  top_traders:
     build: ./top-traders-dashboard
     expose:
       - "8052"
     env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8052/"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8052/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 60s
 
   weather:
     build: ./polymarket_weather_dashboard
     expose:
       - "5050"
     env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5050/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 60s
 
   sports:
     build: ./sports-dashboard
     expose:
       - "8888"
     env_file: ./sports-dashboard/.env
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8888/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 60s
 
   world:
     build: ./world-state-dashboard
     expose:
       - "7050"
     env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7050/"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7050/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 60s
 
   climate:
     build: ./climate-dashboard
     expose:
       - "7052"
     env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7052/api/health',timeout=4).status==200 else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7052/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 60s
 
   centralbank:
     build: ./centralbank-dashboard
     expose:
       - "7060"
     env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7060/healthz"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7060/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 60s
+
+  voters:
+    build: ./voters-dashboard
+    expose:
+      - "7051"
+    env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
+    volumes:
+      - voters-data:/app/data/cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7051/healthz',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
 volumes:
   gateway-data:
   crypto-data:
+  voters-data:

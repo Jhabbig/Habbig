@@ -939,6 +939,11 @@ def serialize_asset(ticker):
 # All auth is handled by the gateway. These just redirect.
 
 
+@app.get("/healthz")
+async def healthz() -> dict:
+    return {"ok": True}
+
+
 @app.get("/login")
 async def login_page():
     return RedirectResponse("https://narve.ai/login", status_code=302)
@@ -1886,8 +1891,24 @@ async def get_weather_status(request: Request):
 
 @app.get("/weather")
 async def weather_dashboard(request: Request):
-    """Redirect to standalone Weather Dashboard on port 5050."""
-    return RedirectResponse("http://localhost:5050", status_code=302)
+    """Redirect to the Weather Dashboard.
+
+    Builds the destination from the live request host so it works in every
+    environment:
+      - Production: crypto.narve.ai → weather.narve.ai
+      - Local dev:  crypto.localhost:7000 → weather.localhost:7000
+    The hardcoded http://localhost:5050 form was broken for any remote user.
+    """
+    host = request.headers.get("host", "")
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme or "http")
+    # crypto.<domain>[:port] → strip the leading "crypto."
+    if host.startswith("crypto."):
+        target_host = "weather." + host[len("crypto."):]
+    else:
+        # Direct localhost:8000 dev access — fall back to the gateway-style
+        # localhost subdomain that the dev gateway routes.
+        target_host = "weather.localhost:7000"
+    return RedirectResponse(f"{scheme}://{target_host}/", status_code=302)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4757,4 +4778,4 @@ async def share_snapshot(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host=os.environ.get("BIND_HOST", "127.0.0.1"), port=8000)

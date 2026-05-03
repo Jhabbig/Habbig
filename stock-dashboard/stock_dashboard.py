@@ -1651,6 +1651,14 @@ def build_svg_chart(balances, state=None):
 
 class DashboardHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
+        # /healthz bypasses SSO so docker healthchecks can probe without the secret.
+        if self.path == "/healthz":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok": true}')
+            return
+
         # Authenticate via gateway SSO header (reject if secret not configured unless DEV_MODE)
         # Auth check applies to ALL endpoints (including /api/state)
         if _sso_secret:
@@ -1706,9 +1714,13 @@ def main():
     parser.add_argument("--port", type=int, default=DASHBOARD_PORT)
     args = parser.parse_args()
 
-    # Never bind to all interfaces when PRODUCTION=1, even if DEV_MODE leaks through
+    # Never bind to all interfaces when PRODUCTION=1, even if DEV_MODE leaks through.
+    # `BIND_HOST` is honored when explicitly set (e.g. docker-compose sets
+    # 0.0.0.0 because the container itself is the network boundary); otherwise
+    # we keep the safer default that only listens on loopback in production.
     _is_prod = os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes", "on")
-    bind_host = "127.0.0.1" if _is_prod else ("0.0.0.0" if _DEV_MODE else "127.0.0.1")
+    _default_bind = "127.0.0.1" if _is_prod else ("0.0.0.0" if _DEV_MODE else "127.0.0.1")
+    bind_host = os.environ.get("BIND_HOST", _default_bind)
     server = HTTPServer((bind_host, args.port), DashboardHandler)
     print(f"StockSignal dashboard running at http://{bind_host}:{args.port}")
 

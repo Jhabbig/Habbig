@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Monitor — 3D Globe</title>
+<link rel="icon" type="image/png" href="/static/favicon.png">
+
+<!-- CesiumJS — the 3 MB bundle is only fetched when you visit this page. -->
+<link href="https://cdn.jsdelivr.net/npm/cesium@1.141.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.141.0/Build/Cesium/Cesium.js"></script>
+
+<style>
+:root {
+  --bg-0: #050505; --bg-1: #111; --bg-2: #161616;
+  --border: #1f1f1f; --border-light: #262626;
+  --text-0: #e6e6e6; --text-1: #888; --text-2: #555;
+  --green: #4ade80; --orange: #fb923c; --blue: #60a5fa;
+  --mono: 'SF Mono','Cascadia Code','Fira Code','JetBrains Mono',Monaco,Consolas,monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--mono); background: var(--bg-0); color: var(--text-0);
+  font-size: 12px; overflow: hidden;
+}
+
+.header {
+  height: 40px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; background: rgba(10,10,10,0.85); border-bottom: 1px solid var(--border);
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100; backdrop-filter: blur(6px);
+}
+.header h1 { font-size: 13px; font-weight: 500; letter-spacing: 0.06em; }
+.header h1 .accent { color: var(--green); }
+.header h1 .sub { color: var(--text-1); }
+.header .right { display:flex; gap: 12px; align-items: center; color: var(--text-1); font-size: 11px; }
+.header a, .header button {
+  color: var(--text-0); text-decoration: none; background: var(--bg-2);
+  border: 1px solid var(--border); padding: 4px 10px; cursor: pointer;
+  font-family: var(--mono); font-size: 11px;
+}
+.header a:hover, .header button:hover { border-color: var(--green); color: var(--green); }
+
+#cesiumContainer { position: absolute; top: 40px; left: 0; right: 0; bottom: 0; }
+
+/* ── Layer panel (left rail) ──────────────────────────────────────────── */
+.layer-panel {
+  position: fixed; top: 50px; left: 12px; z-index: 90;
+  width: 240px; max-height: calc(100vh - 70px);
+  background: rgba(10,10,10,0.88); border: 1px solid var(--border);
+  font-size: 11px; backdrop-filter: blur(6px);
+  display: flex; flex-direction: column;
+}
+.lp-header {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.10em; color: var(--text-1);
+  cursor: pointer; user-select: none;
+}
+.lp-header .count { color: var(--green); }
+.lp-header .toggle { color: var(--text-2); font-size: 9px; }
+.lp-body { overflow-y: auto; padding: 4px 0; flex: 1; }
+.layer-panel.collapsed .lp-body { display: none; }
+.layer-panel.collapsed { max-height: none; }
+
+.lp-section { padding: 6px 12px 8px; border-bottom: 1px solid var(--bg-2); }
+.lp-section:last-child { border-bottom: none; }
+.lp-section-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-2); margin-bottom: 4px;
+}
+.lp-section label {
+  display: flex; align-items: center; gap: 6px; padding: 3px 0;
+  cursor: pointer; user-select: none; color: var(--text-1);
+}
+.lp-section label:hover { color: var(--text-0); }
+.lp-section label input { accent-color: var(--green); flex-shrink: 0; }
+.lp-section label .dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0; box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
+}
+.lp-section label .name { flex: 1; }
+.lp-section label .badge { color: var(--text-2); font-size: 9px; }
+
+/* ── HUD (bottom-left counts) ──────────────────────────────────────────── */
+.hud {
+  position: fixed; bottom: 12px; right: 12px; z-index: 50;
+  background: rgba(10,10,10,0.88); border: 1px solid var(--border);
+  padding: 8px 12px; backdrop-filter: blur(6px);
+  font-size: 10px; color: var(--text-1); max-width: 260px;
+}
+.hud .stat { display: flex; justify-content: space-between; gap: 12px; }
+.hud .stat .v { color: var(--text-0); }
+.hud .title { color: var(--green); margin-bottom: 4px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; }
+
+#loading {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-0); z-index: 200; color: var(--text-1);
+  font-size: 12px; flex-direction: column; gap: 16px;
+}
+#loading .spinner {
+  width: 32px; height: 32px; border: 2px solid var(--border-light);
+  border-top-color: var(--green); border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Cesium widget overrides for dark theme */
+.cesium-viewer-bottom { display: none !important; }
+.cesium-credit-textContainer { display: none !important; }
+.cesium-viewer-toolbar { top: 50px !important; right: 270px !important; }
+.cesium-button { background: rgba(20,20,20,0.85) !important; border-color: var(--border) !important; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1><span class="accent">●</span> World Monitor / <span class="sub">3D globe (cesium)</span></h1>
+  <div class="right">
+    <a href="/">← live dashboard</a>
+    <a href="/history">history</a>
+  </div>
+</header>
+
+<div id="loading"><div class="spinner"></div><div id="loading-msg">loading cesium…</div></div>
+
+<div id="cesiumContainer"></div>
+
+<aside class="layer-panel" id="layer-panel">
+  <div class="lp-header" id="lp-header">
+    <span>Layers <span class="count" id="lp-count">0</span></span>
+    <span class="toggle">▼</span>
+  </div>
+  <div class="lp-body" id="lp-body"></div>
+</aside>
+
+<div class="hud" id="hud" style="display:none">
+  <div class="title">Globe state</div>
+  <div class="stat"><span>imagery</span><span class="v">ESRI World</span></div>
+  <div class="stat"><span>active layers</span><span class="v" id="hud-active">—</span></div>
+  <div class="stat"><span>features</span><span class="v" id="hud-features">—</span></div>
+</div>
+
+<script>
+'use strict';
+window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.141.0/Build/Cesium/';
+
+// ── Layer registry ─────────────────────────────────────────────────────────
+// Single source of truth for every layer. Adding a new layer = one entry here.
+//   group:   panel section header
+//   id:      DOM-stable identifier
+//   label:   human-readable name
+//   kind:    'borders' | 'point' | 'line' | 'polygon'
+//   source:  key on /api/all response (or special 'borders')
+//   color:   hex string for paint
+//   size:    point size multiplier (point only)
+//   coords:  field on each item containing waypoints (line only)
+//   default: true = on at first paint
+// Yesterday's date for GIBS — today's tiles often aren't processed yet.
+const _GIBS_TIME = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+const LAYERS = [
+  // Borders sit alone — special-cased loader
+  { group: 'Boundaries', id: 'borders', label: 'Country borders', kind: 'borders', color: '#4ade80', default: true },
+
+  // ─ NASA GIBS satellite imagery ─ daily, free, no auth, EPSG:4326 ─
+  // These are imagery layers (not features). They stack on top of the ESRI base.
+  { group: 'Satellite imagery (NASA GIBS)', id: 'modis-true', label: 'MODIS Terra true color',
+    kind: 'gibs', color: '#fff', layer: 'MODIS_Terra_CorrectedReflectance_TrueColor',
+    matrixSet: '250m', maxLevel: 9, format: 'jpg', alpha: 0.85 },
+  { group: 'Satellite imagery (NASA GIBS)', id: 'viirs-true', label: 'VIIRS true color (sharper)',
+    kind: 'gibs', color: '#fff', layer: 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
+    matrixSet: '250m', maxLevel: 9, format: 'jpg', alpha: 0.85 },
+  { group: 'Satellite imagery (NASA GIBS)', id: 'sst', label: 'Sea surface temperature',
+    kind: 'gibs', color: '#60a5fa', layer: 'GHRSST_L4_MUR_Sea_Surface_Temperature',
+    matrixSet: '1km', maxLevel: 7, format: 'png', alpha: 0.7 },
+  { group: 'Satellite imagery (NASA GIBS)', id: 'sea-ice', label: 'Sea ice concentration',
+    kind: 'gibs', color: '#bae6fd', layer: 'AMSRU2_Sea_Ice_Concentration_12km',
+    matrixSet: '2km', maxLevel: 6, format: 'png', alpha: 0.85 },
+  { group: 'Satellite imagery (NASA GIBS)', id: 'aerosol', label: 'Aerosol optical depth',
+    kind: 'gibs', color: '#a78bfa', layer: 'MODIS_Combined_Value_Added_AOD',
+    matrixSet: '2km', maxLevel: 6, format: 'png', alpha: 0.7 },
+  { group: 'Satellite imagery (NASA GIBS)', id: 'fires-modis', label: 'Fires (MODIS, last 24h)',
+    kind: 'gibs', color: '#f97316', layer: 'MODIS_Combined_Thermal_Anomalies_All',
+    matrixSet: '1km', maxLevel: 7, format: 'png', alpha: 0.9 },
+
+  // Conflict & security
+  { group: 'Conflict & security', id: 'hotspots',     label: 'Conflict hotspots', kind: 'point', source: 'hotspots',  color: '#fb923c', size: 1.0, default: true },
+  { group: 'Conflict & security', id: 'militias',     label: 'Militias',          kind: 'point', source: 'militias',  color: '#a855f7', size: 0.9 },
+  { group: 'Conflict & security', id: 'aptgroups',    label: 'APT groups',        kind: 'point', source: 'apt_groups', color: '#a855f7', size: 0.9 },
+  { group: 'Conflict & security', id: 'cyber',        label: 'Cyber advisories',  kind: 'point', source: 'cyber_advisories', color: '#8b5cf6', size: 0.8 },
+  { group: 'Conflict & security', id: 'sanctions',    label: 'Sanctions pressure',kind: 'point', source: 'sanctions_pressure', color: '#f87171', size: 1.1 },
+  { group: 'Conflict & security', id: 'gpsjamming',   label: 'GPS jamming',       kind: 'point', source: 'gps_jamming',  color: '#facc15', size: 1.0 },
+  { group: 'Conflict & security', id: 'sirens',       label: 'Sirens (IL)',       kind: 'point', source: 'israel_sirens',color: '#ef4444', size: 0.7 },
+
+  // Military & intel
+  { group: 'Military & intel', id: 'bases',     label: 'Military bases',  kind: 'point', source: 'bases',    color: '#60a5fa', size: 0.7, default: true },
+  { group: 'Military & intel', id: 'nukes',     label: 'Nuclear arsenals',kind: 'point', source: 'nuclear',  color: '#f59e0b', size: 1.0 },
+  { group: 'Military & intel', id: 'reactors',  label: 'Nuclear reactors',kind: 'point', source: 'reactors', color: '#84cc16', size: 0.7 },
+  { group: 'Military & intel', id: 'facilities',label: 'Nuclear facilities', kind: 'point', source: 'facilities', color: '#a3e635', size: 0.7 },
+  { group: 'Military & intel', id: 'spaceports',label: 'Spaceports',      kind: 'point', source: 'spaceports', color: '#e879f9', size: 0.9 },
+  { group: 'Military & intel', id: 'intel',     label: 'Intel hotspots',  kind: 'point', source: 'intel_hotspots', color: '#e879f9', size: 0.9 },
+
+  // Infrastructure
+  { group: 'Infrastructure', id: 'cables',         label: 'Undersea cables', kind: 'line',  source: 'undersea_cables', color: '#38bdf8', width: 2, coords: 'waypoints' },
+  { group: 'Infrastructure', id: 'pipelines',      label: 'Oil/gas pipelines',kind: 'line', source: 'pipelines',       color: '#fb923c', width: 2, coords: 'waypoints' },
+  { group: 'Infrastructure', id: 'shipping',       label: 'Shipping routes', kind: 'line',  source: 'shipping_routes', color: '#60a5fa', width: 1.6, coords: 'waypoints' },
+  { group: 'Infrastructure', id: 'tradeRoutes',    label: 'Trade routes',    kind: 'line',  source: 'trade_routes',    color: '#fde68a', width: 1.6, coords: 'waypoints' },
+  { group: 'Infrastructure', id: 'datacenters',    label: 'Data centers',    kind: 'point', source: 'data_centers',    color: '#34d399', size: 0.7 },
+  { group: 'Infrastructure', id: 'aidatacenters',  label: 'AI datacenters',  kind: 'point', source: 'ai_datacenters',  color: '#22d3ee', size: 0.8 },
+  { group: 'Infrastructure', id: 'industrial',     label: 'Industrial centers',kind: 'point',source:'industrial_centers',color:'#f472b6', size: 0.7 },
+  { group: 'Infrastructure', id: 'chokepoints',    label: 'Strategic chokepoints', kind: 'point', source: 'chokepoints', color: '#fbbf24', size: 1.1 },
+  { group: 'Infrastructure', id: 'capitals',       label: 'Capital cities',  kind: 'point', source: 'capitals', color: '#fde047', size: 0.6 },
+
+  // Finance & economy
+  { group: 'Finance & economy', id: 'exchanges',  label: 'Stock exchanges', kind: 'point', source: 'stock_exchanges', color: '#facc15', size: 0.9 },
+  { group: 'Finance & economy', id: 'banks',      label: 'Central banks',   kind: 'point', source: 'central_banks',   color: '#fde047', size: 0.7 },
+  { group: 'Finance & economy', id: 'finance',    label: 'Financial centers',kind: 'point',source: 'financial_centers',color: '#fde047', size: 1.0 },
+  { group: 'Finance & economy', id: 'commodity',  label: 'Commodity hubs',  kind: 'point', source: 'commodity_hubs',  color: '#fbbf24', size: 0.8 },
+  { group: 'Finance & economy', id: 'mining',     label: 'Mining sites',    kind: 'point', source: 'mining_sites',    color: '#92400e', size: 0.7 },
+  { group: 'Finance & economy', id: 'techhqs',    label: 'Tech HQs',        kind: 'point', source: 'tech_hqs',        color: '#06b6d4', size: 0.7 },
+  { group: 'Finance & economy', id: 'startuphubs',label: 'Startup hubs',    kind: 'point', source: 'startup_hubs',    color: '#0ea5e9', size: 0.7 },
+
+  // Hazards & events
+  { group: 'Hazards & events', id: 'earthquakes', label: 'Earthquakes',     kind: 'point', source: 'earthquakes',  color: '#dc2626', size: 0.7 },
+  { group: 'Hazards & events', id: 'wildfires',   label: 'Wildfires',       kind: 'point', source: 'wildfires',    color: '#f97316', size: 0.6 },
+  { group: 'Hazards & events', id: 'firmsfires',  label: 'FIRMS fires',     kind: 'point', source: 'firms_fires',  color: '#f97316', size: 0.5 },
+  { group: 'Hazards & events', id: 'volcanoes',   label: 'Active volcanoes',kind: 'point', source: 'volcanoes',    color: '#ef4444', size: 0.9 },
+  { group: 'Hazards & events', id: 'diseases',    label: 'Disease outbreaks',kind: 'point',source: 'diseases',     color: '#ec4899', size: 0.9 },
+  { group: 'Hazards & events', id: 'protests',    label: 'Protest events',  kind: 'point', source: 'protests',     color: '#d946ef', size: 0.7 },
+  { group: 'Hazards & events', id: 'climate',     label: 'Climate anomalies',kind: 'point',source: 'climate_anomalies', color: '#fb923c', size: 1.0 },
+  { group: 'Hazards & events', id: 'airquality',  label: 'Air quality',     kind: 'point', source: 'air_quality',  color: '#7c3aed', size: 0.7 },
+  { group: 'Hazards & events', id: 'supplychain', label: 'Supply chain',    kind: 'point', source: 'supply_chain', color: '#f59e0b', size: 1.0 },
+  { group: 'Hazards & events', id: 'displacement',label: 'Displacement',    kind: 'point', source: 'displacement_flows', color: '#fbbf24', size: 0.9, coords: 'origin' },
+];
+
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  viewer: null,
+  data: {},
+  /** id → Cesium DataSource */
+  sources: {},
+  /** id → Cesium ImageryLayer (separate stack from data sources) */
+  imageryLayers: {},
+  /** id → number of features it actually contains */
+  counts: {},
+};
+
+// ── Bootstrap ──────────────────────────────────────────────────────────────
+(async function init() {
+  const setMsg = (m) => { const el = document.getElementById('loading-msg'); if (el) el.textContent = m; };
+
+  if (typeof Cesium === 'undefined') {
+    setMsg('cesium failed to load — check network / CSP');
+    return;
+  }
+
+  setMsg('initializing globe…');
+
+  const imageryProvider = await Cesium.ArcGisMapServerImageryProvider.fromUrl(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
+  );
+
+  const viewer = new Cesium.Viewer('cesiumContainer', {
+    baseLayer: Cesium.ImageryLayer.fromProviderAsync(Promise.resolve(imageryProvider)),
+    baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
+    navigationHelpButton: false, animation: false, timeline: false,
+    fullscreenButton: true, vrButton: false, infoBox: true, selectionIndicator: true,
+    scene3DOnly: true, shouldAnimate: true,
+  });
+  state.viewer = viewer;
+
+  // No-token mode: ellipsoid (no terrain), but everything else works.
+  viewer.scene.globe.depthTestAgainstTerrain = false;
+
+  // ── Atmosphere & lighting ───────────────────────────────────────────────
+  viewer.scene.globe.enableLighting = true;
+  viewer.scene.skyAtmosphere.show = true;
+  viewer.scene.skyAtmosphere.brightnessShift = 0.05;
+  viewer.scene.skyAtmosphere.hueShift = -0.02;
+  viewer.scene.skyAtmosphere.saturationShift = 0.1;
+  viewer.scene.fog.enabled = true;
+  viewer.scene.fog.density = 1e-4;
+  viewer.scene.skyBox.show = true;
+  viewer.scene.sun.show = true;
+  viewer.scene.moon.show = true;
+  viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#04060d');
+
+  viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(40, 20, 18000000) });
+
+  // Hide loading once first imagery tile renders
+  const onTileLoad = viewer.scene.globe.tileLoadProgressEvent.addEventListener((qLen) => {
+    if (qLen <= 1) {
+      const el = document.getElementById('loading'); if (el) el.style.display = 'none';
+      document.getElementById('hud').style.display = '';
+      onTileLoad();
+    }
+  });
+
+  // Safety: hide loader after 8s no matter what
+  setTimeout(() => { const el = document.getElementById('loading'); if (el) el.style.display = 'none'; document.getElementById('hud').style.display = ''; }, 8000);
+
+  // ── Build the layer panel UI from LAYERS ────────────────────────────────
+  buildLayerPanel();
+
+  // ── Pull data once and create every layer's DataSource (hidden by default) ──
+  setMsg('loading world state…');
+  try {
+    const r = await fetch('/api/all');
+    state.data = await r.json();
+  } catch (e) {
+    setMsg('failed to load world state: ' + e);
+    return;
+  }
+
+  // Borders: vendored static GeoJSON
+  await createBorders();
+
+  // Every other layer
+  for (const cfg of LAYERS) {
+    if (cfg.kind === 'borders') continue;
+    try {
+      if (cfg.kind === 'point') createPointLayer(cfg);
+      else if (cfg.kind === 'line') createLineLayer(cfg);
+      else if (cfg.kind === 'gibs') createGibsLayer(cfg);
+    } catch (e) {
+      console.warn('layer create failed:', cfg.id, e);
+    }
+  }
+
+  // Apply default visibility + counts to UI
+  for (const cfg of LAYERS) {
+    const ds = state.sources[cfg.id];
+    const il = state.imageryLayers[cfg.id];
+    const cb = document.querySelector(`input[data-layer="${cfg.id}"]`);
+    const visible = cfg.default === true;
+    if (ds) ds.show = visible;
+    if (il) il.show = visible;
+    if (cb) cb.checked = visible;
+    updateBadge(cfg.id);
+  }
+  updateGlobalCounts();
+})();
+
+// ── Layer creators ──────────────────────────────────────────────────────────
+async function createBorders() {
+  const cfg = LAYERS.find(l => l.id === 'borders');
+  try {
+    const ds = await Cesium.GeoJsonDataSource.load('/static/countries.geojson', {
+      stroke: Cesium.Color.fromCssColorString('rgba(74,222,128,0.65)'),
+      fill:   Cesium.Color.fromCssColorString('rgba(74,222,128,0.04)'),
+      strokeWidth: 1,
+      clampToGround: true,
+    });
+    state.viewer.dataSources.add(ds);
+    state.sources.borders = ds;
+    state.counts.borders = ds.entities.values.length;
+  } catch (e) { console.warn('borders load failed', e); state.counts.borders = 0; }
+}
+
+function createPointLayer(cfg) {
+  const ds = new Cesium.CustomDataSource(cfg.id);
+  const items = state.data[cfg.source];
+  if (!Array.isArray(items)) {
+    state.viewer.dataSources.add(ds);
+    state.sources[cfg.id] = ds;
+    state.counts[cfg.id] = 0;
+    return;
+  }
+  const color = Cesium.Color.fromCssColorString(cfg.color);
+  let added = 0;
+  for (const it of items) {
+    let lng, lat;
+    if (cfg.coords === 'origin' && Array.isArray(it.origin) && it.origin.length >= 2) {
+      [lng, lat] = it.origin;
+    } else {
+      lng = it.lng ?? it.lon ?? it.longitude;
+      lat = it.lat ?? it.latitude;
+    }
+    if (typeof lng !== 'number' || typeof lat !== 'number') continue;
+    ds.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(lng, lat),
+      point: {
+        pixelSize: 6 * (cfg.size || 1),
+        color,
+        outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,0.4)'),
+        outlineWidth: 1,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+      },
+      description: buildDescription(it),
+    });
+    added++;
+  }
+  state.viewer.dataSources.add(ds);
+  state.sources[cfg.id] = ds;
+  state.counts[cfg.id] = added;
+}
+
+function createGibsLayer(cfg) {
+  // NASA GIBS WMTS — date-stamped daily imagery, free, no auth.
+  const fmt = cfg.format === 'jpg' ? 'image/jpeg' : 'image/png';
+  const provider = new Cesium.WebMapTileServiceImageryProvider({
+    url: `https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/${cfg.layer}/default/${_GIBS_TIME}/${cfg.matrixSet}/{TileMatrix}/{TileRow}/{TileCol}.${cfg.format}`,
+    layer: cfg.layer,
+    style: 'default',
+    tileMatrixSetID: cfg.matrixSet,
+    maximumLevel: cfg.maxLevel,
+    format: fmt,
+    tilingScheme: new Cesium.GeographicTilingScheme(),
+  });
+  const layer = state.viewer.imageryLayers.addImageryProvider(provider);
+  layer.alpha = cfg.alpha ?? 0.7;
+  layer.show = false;  // default off; init() flips per cfg.default
+  state.imageryLayers[cfg.id] = layer;
+  state.counts[cfg.id] = 1;  // it's one tile layer; show "1" in the badge
+}
+
+function createLineLayer(cfg) {
+  const ds = new Cesium.CustomDataSource(cfg.id);
+  const items = state.data[cfg.source];
+  if (!Array.isArray(items)) {
+    state.viewer.dataSources.add(ds);
+    state.sources[cfg.id] = ds;
+    state.counts[cfg.id] = 0;
+    return;
+  }
+  const color = Cesium.Color.fromCssColorString(cfg.color);
+  let added = 0;
+  for (const it of items) {
+    const wpts = it[cfg.coords] || it.coordinates || it.path;
+    if (!Array.isArray(wpts) || wpts.length < 2) continue;
+    const flat = [];
+    for (const p of wpts) {
+      if (Array.isArray(p) && p.length >= 2) flat.push(p[0], p[1]);
+      else if (p && typeof p.lng === 'number') flat.push(p.lng, p.lat);
+    }
+    if (flat.length < 4) continue;
+    ds.entities.add({
+      polyline: {
+        positions: Cesium.Cartesian3.fromDegreesArray(flat),
+        width: cfg.width || 2,
+        material: color,
+        clampToGround: false,
+        arcType: Cesium.ArcType.GEODESIC,
+      },
+      description: buildDescription(it),
+    });
+    added++;
+  }
+  state.viewer.dataSources.add(ds);
+  state.sources[cfg.id] = ds;
+  state.counts[cfg.id] = added;
+}
+
+// ── UI ──────────────────────────────────────────────────────────────────────
+function buildLayerPanel() {
+  const body = document.getElementById('lp-body');
+  // Group layers by their `group` field, preserving insertion order
+  const groups = new Map();
+  for (const cfg of LAYERS) {
+    if (!groups.has(cfg.group)) groups.set(cfg.group, []);
+    groups.get(cfg.group).push(cfg);
+  }
+  for (const [groupName, cfgs] of groups) {
+    const sec = document.createElement('div');
+    sec.className = 'lp-section';
+    const t = document.createElement('div');
+    t.className = 'lp-section-title';
+    t.textContent = groupName;
+    sec.appendChild(t);
+    for (const cfg of cfgs) {
+      const lbl = document.createElement('label');
+      lbl.innerHTML = `
+        <input type="checkbox" data-layer="${cfg.id}">
+        <span class="dot" style="background:${cfg.color}"></span>
+        <span class="name">${cfg.label}</span>
+        <span class="badge" id="badge-${cfg.id}"></span>`;
+      sec.appendChild(lbl);
+    }
+    body.appendChild(sec);
+  }
+  // Wire toggles
+  body.querySelectorAll('input[data-layer]').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const id = e.target.dataset.layer;
+      const ds = state.sources[id];
+      const il = state.imageryLayers[id];
+      if (ds) ds.show = e.target.checked;
+      if (il) il.show = e.target.checked;
+      updateGlobalCounts();
+    });
+  });
+  // Collapse toggle
+  document.getElementById('lp-header').addEventListener('click', () => {
+    document.getElementById('layer-panel').classList.toggle('collapsed');
+  });
+}
+
+function updateBadge(id) {
+  const el = document.getElementById('badge-' + id);
+  if (el) el.textContent = state.counts[id] != null ? state.counts[id].toLocaleString() : '';
+}
+
+function updateGlobalCounts() {
+  let activeLayers = 0, totalFeatures = 0;
+  for (const cfg of LAYERS) {
+    const ds = state.sources[cfg.id];
+    const il = state.imageryLayers[cfg.id];
+    const isShown = (ds && ds.show) || (il && il.show);
+    if (isShown) {
+      activeLayers++;
+      totalFeatures += state.counts[cfg.id] || 0;
+    }
+  }
+  document.getElementById('lp-count').textContent = activeLayers + '/' + LAYERS.length;
+  document.getElementById('hud-active').textContent = activeLayers;
+  document.getElementById('hud-features').textContent = totalFeatures.toLocaleString();
+}
+
+function buildDescription(it) {
+  const rows = Object.entries(it)
+    .filter(([k]) => !['waypoints','coordinates','path','origin','destination'].includes(k))
+    .map(([k, v]) => {
+      if (typeof v === 'object' && v !== null) return null;
+      return `<tr><td style="padding:2px 8px;color:#888">${k}</td><td style="padding:2px 8px;color:#eee">${String(v).slice(0, 200)}</td></tr>`;
+    })
+    .filter(Boolean)
+    .join('');
+  return `<table style="font-family:monospace;font-size:11px;border-collapse:collapse">${rows}</table>`;
+}
+</script>
+
+</body>
+</html>

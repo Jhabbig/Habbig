@@ -1,0 +1,1894 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>World Health</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --grid: #30363d;
+    --good: #56d364;
+    --bad: #f85149;
+    --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); overflow: hidden; }
+  #globe { position: fixed; inset: 0; }
+
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    padding: 10px 18px; background: rgba(14, 17, 23, 0.85);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--grid);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+  header .meta { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                 letter-spacing: 0.08em; }
+  header select, header input {
+    background: var(--panel); color: var(--fg); border: 1px solid var(--grid);
+    border-radius: 4px; padding: 6px 10px; font-size: 13px;
+  }
+  header select { min-width: 240px; }
+  header input { min-width: 180px; }
+  header label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                 letter-spacing: 0.08em; margin-right: 6px; }
+
+  /* Tab bar */
+  .tabs { display: flex; gap: 2px; }
+  .tab {
+    background: transparent; color: var(--muted); border: 1px solid var(--grid);
+    border-radius: 4px; padding: 6px 12px; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em; cursor: pointer;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+  /* Hide controls that aren't relevant to a tab */
+  body.tab-globe       .only-outbreaks, body.tab-globe   .only-em, body.tab-globe   .only-markets, body.tab-globe   .only-hai,
+  body.tab-outbreaks   .only-globe,     body.tab-outbreaks .only-em, body.tab-outbreaks .only-markets, body.tab-outbreaks .only-hai,
+  body.tab-h5n1        .only-globe,     body.tab-h5n1     .only-outbreaks, body.tab-h5n1 .only-em, body.tab-h5n1 .only-markets, body.tab-h5n1 .only-hai,
+  body.tab-em          .only-globe,     body.tab-em       .only-outbreaks, body.tab-em .only-markets, body.tab-em .only-hai,
+  body.tab-pheic       .only-globe,     body.tab-pheic    .only-outbreaks, body.tab-pheic .only-em, body.tab-pheic .only-markets, body.tab-pheic .only-hai,
+  body.tab-atlas       .only-hai,
+  body.tab-markets     .only-hai,
+  body.tab-pheic       #legend, body.tab-pheic #panel,
+  body.tab-markets     .only-globe,     body.tab-markets  .only-outbreaks, body.tab-markets .only-em,
+  body.tab-markets     #legend, body.tab-markets #panel, body.tab-markets #pheicPanel,
+  body.tab-markets     #feedPanel, body.tab-markets #emChart,
+  body.tab-markets     #globe,
+  body.tab-atlas       .only-globe, body.tab-atlas .only-outbreaks, body.tab-atlas .only-em,
+  body.tab-atlas       .only-markets, body.tab-atlas #legend, body.tab-atlas #panel,
+  body.tab-atlas       #pheicPanel, body.tab-atlas #feedPanel, body.tab-atlas #emChart,
+  body.tab-atlas       #globe,
+  body.tab-hai         .only-globe, body.tab-hai .only-outbreaks, body.tab-hai .only-em,
+  body.tab-hai         .only-markets,
+  body.tab-hai         #pheicPanel, body.tab-hai #feedPanel, body.tab-hai #emChart,
+  body.tab-shortages   .only-globe, body.tab-shortages .only-outbreaks, body.tab-shortages .only-em,
+  body.tab-shortages   .only-markets, body.tab-shortages .only-hai,
+  body.tab-shortages   #legend, body.tab-shortages #panel, body.tab-shortages #pheicPanel,
+  body.tab-shortages   #feedPanel, body.tab-shortages #emChart, body.tab-shortages #cAurisPanel,
+  body.tab-shortages   #globe
+    { display: none !important; }
+
+  /* Legend */
+  #legend {
+    position: fixed; bottom: 16px; left: 16px; z-index: 10;
+    background: rgba(22, 27, 34, 0.92); border: 1px solid var(--grid);
+    border-radius: 6px; padding: 12px 14px; min-width: 280px; max-width: 320px;
+    backdrop-filter: blur(6px);
+  }
+  #legend .title { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                   letter-spacing: 0.08em; margin-bottom: 8px; }
+  #legend .name { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  #legend .bar { height: 10px; border-radius: 2px; margin-bottom: 4px; }
+  #legend .ticks { display: flex; justify-content: space-between; color: var(--muted);
+                   font-size: 11px; font-variant-numeric: tabular-nums; }
+  #legend .desc { color: var(--muted); font-size: 11px; margin-top: 8px;
+                  max-width: 280px; line-height: 1.4; }
+  #legend .src { color: var(--muted); font-size: 10px; margin-top: 6px;
+                 text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* Side panel */
+  #panel, #pheicPanel {
+    position: fixed; top: 60px; right: 16px; bottom: 16px; width: 380px; z-index: 10;
+    background: rgba(22, 27, 34, 0.95); border: 1px solid var(--grid);
+    border-radius: 8px; padding: 16px; overflow-y: auto;
+    backdrop-filter: blur(8px); display: none;
+  }
+  #panel.open, #pheicPanel.open { display: block; }
+  #pheicPanel { width: 480px; }
+  #panel .close, #pheicPanel .close {
+    float: right; cursor: pointer; color: var(--muted); font-size: 18px;
+    line-height: 1; padding: 2px 6px; border-radius: 3px;
+  }
+  #panel .close:hover, #pheicPanel .close:hover { background: var(--grid); color: var(--fg); }
+  #panel h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  #panel .region { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  #panel .group { margin-top: 16px; }
+  #panel .group h3 { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                     letter-spacing: 0.08em; margin: 0 0 8px; font-weight: 600; }
+  #panel .row { display: flex; justify-content: space-between; align-items: baseline;
+                padding: 5px 0; border-bottom: 1px solid var(--grid); gap: 12px; }
+  #panel .row:last-child { border-bottom: 0; }
+  #panel .row .label { color: var(--muted); font-size: 12px; flex: 1;
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #panel .row .value { font-size: 13px; font-variant-numeric: tabular-nums;
+                       font-weight: 600; }
+  #panel .row .year { color: var(--muted); font-size: 10px; margin-left: 6px; }
+  #panel .row .na { color: var(--muted); font-style: italic; }
+
+  /* Outbreak feed (left panel for outbreaks tab) */
+  #feedPanel {
+    position: fixed; top: 60px; left: 16px; bottom: 16px; width: 360px; z-index: 10;
+    background: rgba(22, 27, 34, 0.95); border: 1px solid var(--grid);
+    border-radius: 8px; padding: 16px; overflow-y: auto;
+    backdrop-filter: blur(8px); display: none;
+  }
+  body.tab-outbreaks #feedPanel, body.tab-h5n1 #feedPanel { display: block; }
+  body.tab-outbreaks #legend, body.tab-h5n1 #legend, body.tab-em #legend { left: 392px; }
+  #feedPanel h2 { margin: 0 0 4px; font-size: 14px; }
+  #feedPanel .meta { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                     letter-spacing: 0.06em; margin-bottom: 12px; }
+  #feedPanel .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+                      margin-bottom: 14px; }
+  #feedPanel .stat { background: rgba(14,17,23,0.6); border: 1px solid var(--grid);
+                     border-radius: 4px; padding: 8px 10px; }
+  #feedPanel .stat .lab { color: var(--muted); font-size: 10px; text-transform: uppercase;
+                          letter-spacing: 0.06em; }
+  #feedPanel .stat .val { font-size: 18px; font-weight: 600;
+                          font-variant-numeric: tabular-nums; }
+  #feedPanel .item { padding: 10px 0; border-bottom: 1px solid var(--grid); cursor: pointer; }
+  #feedPanel .item:hover { background: rgba(48,54,61,0.3); }
+  #feedPanel .item .disease { font-size: 13px; font-weight: 600; }
+  #feedPanel .item .country { color: var(--muted); font-size: 12px; margin-left: 4px; }
+  #feedPanel .item .when { color: var(--muted); font-size: 10px; text-transform: uppercase;
+                            letter-spacing: 0.06em; margin-top: 2px; }
+  #feedPanel .item .summary { color: var(--muted); font-size: 11px; margin-top: 4px;
+                              line-height: 1.4; }
+  #feedPanel .badge { display: inline-block; padding: 1px 5px; border-radius: 3px;
+                      font-size: 9px; font-weight: 700; text-transform: uppercase;
+                      letter-spacing: 0.05em; }
+  #feedPanel .badge.global   { background: var(--accent);  color: var(--bg); }
+  #feedPanel .badge.regional { background: var(--warn);    color: var(--bg); }
+  #feedPanel .badge.multi    { background: #d29922; color: var(--bg); }
+
+  /* PHEIC list */
+  #pheicPanel .pheic { padding: 12px 0; border-bottom: 1px solid var(--grid); }
+  #pheicPanel .pheic:last-child { border-bottom: 0; }
+  #pheicPanel .pheic .name { font-size: 14px; font-weight: 600; }
+  #pheicPanel .pheic .dates { color: var(--muted); font-size: 11px;
+                              text-transform: uppercase; letter-spacing: 0.06em;
+                              margin-top: 2px; }
+  #pheicPanel .pheic .short { font-size: 12px; margin-top: 6px; }
+  #pheicPanel .pheic .notes { color: var(--muted); font-size: 11px; margin-top: 6px;
+                              line-height: 1.5; }
+  #pheicPanel .badge.active { background: var(--bad); color: #fff; padding: 2px 6px;
+                              border-radius: 3px; font-size: 10px; font-weight: 700;
+                              text-transform: uppercase; letter-spacing: 0.06em;
+                              margin-left: 8px; }
+
+  /* Markets tab: full-page table */
+  #marketsView { position: fixed; top: 60px; left: 0; right: 0; bottom: 0; z-index: 5;
+                 background: var(--bg); padding: 20px; overflow-y: auto; display: none; }
+  body.tab-markets #marketsView { display: block; }
+  .markets-stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .markets-stats .stat { background: var(--panel); border: 1px solid var(--grid);
+                         border-radius: 6px; padding: 10px 14px; min-width: 140px; }
+  .markets-stats .stat .lab { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                              letter-spacing: 0.06em; }
+  .markets-stats .stat .val { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
+                              margin-top: 2px; }
+  .markets-controls { display: flex; gap: 12px; align-items: center; margin-bottom: 16px;
+                      flex-wrap: wrap; }
+  .markets-controls input { background: var(--panel); color: var(--fg); border: 1px solid var(--grid);
+                            border-radius: 4px; padding: 6px 10px; font-size: 13px; min-width: 280px; }
+  .source-toggle { display: inline-flex; gap: 0; }
+  .source-toggle button { background: var(--panel); color: var(--muted); border: 1px solid var(--grid);
+                          padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+                          text-transform: uppercase; letter-spacing: 0.06em; }
+  .source-toggle button:first-child { border-radius: 4px 0 0 4px; }
+  .source-toggle button:last-child  { border-radius: 0 4px 4px 0; }
+  .source-toggle button.poly.on    { background: #2a6cdc; color: #fff; border-color: #2a6cdc; }
+  .source-toggle button.kalshi.on  { background: #00d97e; color: #0e1117; border-color: #00d97e; }
+  .source-toggle button.manifold.on{ background: #c85bd0; color: #fff; border-color: #c85bd0; }
+
+  table.markets { width: 100%; border-collapse: collapse; }
+  table.markets th { color: var(--muted); font-weight: 500; font-size: 11px;
+                     text-transform: uppercase; letter-spacing: 0.06em;
+                     text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--grid);
+                     position: sticky; top: 0; background: var(--bg); cursor: pointer; }
+  table.markets th.num { text-align: right; }
+  table.markets td { padding: 10px 12px; border-bottom: 1px solid var(--grid); font-size: 13px; }
+  table.markets td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.markets tr:hover td { background: rgba(48,54,61,0.25); }
+  table.markets .src-badge { display: inline-block; padding: 2px 6px; border-radius: 3px;
+                              font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+                              text-transform: uppercase; }
+  table.markets .src-poly    { background: #2a6cdc; color: #fff; }
+  table.markets .src-kalshi  { background: #00d97e; color: #0e1117; }
+  table.markets .src-manifold{ background: #c85bd0; color: #fff; }
+  table.markets a { color: var(--accent); text-decoration: none; }
+  table.markets a:hover { text-decoration: underline; }
+  .prob-bar { display: inline-block; width: 60px; height: 8px; background: var(--grid);
+              border-radius: 2px; vertical-align: middle; margin-left: 6px; position: relative; }
+  .prob-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+
+  .matches { background: var(--panel); border: 1px solid var(--grid); border-radius: 6px;
+             padding: 14px; margin: 16px 0 24px; }
+  .matches h3 { margin: 0 0 10px; font-size: 13px; }
+  .match { display: grid; grid-template-columns: 1fr 60px 1fr 80px; gap: 10px;
+           align-items: center; padding: 8px 0; border-bottom: 1px solid var(--grid); }
+  .match:last-child { border-bottom: 0; }
+  .match .q { font-size: 12px; }
+  .match .q .src-badge { margin-right: 6px; }
+  .match .vs { color: var(--muted); font-size: 11px; text-transform: uppercase; text-align: center; }
+  .match .spread { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .match .spread.high { color: var(--bad); }
+  .match .spread.med  { color: var(--warn); }
+
+  /* Shortages tab */
+  #shortagesView { position: fixed; top: 60px; left: 0; right: 0; bottom: 0; z-index: 5;
+                   background: var(--bg); padding: 20px; overflow-y: auto; display: none; }
+  body.tab-shortages #shortagesView { display: block; }
+  .sh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+  .sh-card { background: var(--panel); border: 1px solid var(--grid); border-radius: 6px;
+             padding: 14px 18px; }
+  .sh-card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase;
+                color: var(--muted); letter-spacing: 0.06em; font-weight: 600; }
+  .sh-card .stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr));
+                     gap: 8px; }
+  .sh-card .stat { background: rgba(14,17,23,0.5); border: 1px solid var(--grid);
+                    border-radius: 4px; padding: 8px 10px; }
+  .sh-card .stat .lab { color: var(--muted); font-size: 10px; text-transform: uppercase;
+                         letter-spacing: 0.06em; }
+  .sh-card .stat .val { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
+                         margin-top: 2px; }
+
+  .leader-row { display: grid; grid-template-columns: 50px 1fr auto; gap: 10px;
+                 align-items: center; padding: 8px 0; border-bottom: 1px solid var(--grid);
+                 font-size: 13px; }
+  .leader-row:last-child { border-bottom: 0; }
+  .leader-row .score-pill { display: inline-block; padding: 3px 8px; border-radius: 3px;
+                              font-weight: 700; font-size: 11px; text-align: center; min-width: 36px;
+                              font-variant-numeric: tabular-nums; }
+  .leader-row .score-pill.r0, .leader-row .score-pill.r1, .leader-row .score-pill.r2  { background: var(--good); color: var(--bg); }
+  .leader-row .score-pill.r3, .leader-row .score-pill.r4, .leader-row .score-pill.r5  { background: var(--warn); color: var(--bg); }
+  .leader-row .score-pill.r6, .leader-row .score-pill.r7  { background: #ff8b3d; color: var(--bg); }
+  .leader-row .score-pill.r8, .leader-row .score-pill.r9, .leader-row .score-pill.r10 { background: var(--bad); color: #fff; }
+  .leader-row .name { font-weight: 600; }
+  .leader-row .meta { color: var(--muted); font-size: 11px; }
+  .leader-row .name .badge-shortage { background: var(--bad); color: #fff; padding: 1px 5px;
+                                        border-radius: 2px; font-size: 9px; font-weight: 700;
+                                        text-transform: uppercase; letter-spacing: 0.05em;
+                                        margin-left: 6px; }
+
+  table.shortages { width: 100%; border-collapse: collapse; }
+  table.shortages th { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--grid);
+                        color: var(--muted); font-weight: 500; font-size: 11px;
+                        text-transform: uppercase; letter-spacing: 0.06em;
+                        position: sticky; top: 0; background: var(--bg); }
+  table.shortages td { padding: 8px 12px; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  table.shortages tr:hover td { background: rgba(48,54,61,0.2); }
+  table.shortages td.score { font-variant-numeric: tabular-nums; font-weight: 600; }
+  table.shortages td.score.high { color: var(--bad); }
+  table.shortages td.score.med  { color: var(--warn); }
+  table.shortages td.score.low  { color: var(--good); }
+  table.shortages td.dim { color: var(--muted); }
+
+  /* HAI tab — C. auris callout panel */
+  #cAurisPanel { position: fixed; bottom: 16px; right: 16px; z-index: 10;
+                 background: rgba(22,27,34,0.95); border: 1px solid var(--grid);
+                 border-radius: 8px; padding: 14px 18px; width: 360px;
+                 backdrop-filter: blur(8px); display: none; }
+  body.tab-hai #cAurisPanel { display: block; }
+  #cAurisPanel h3 { margin: 0 0 4px; font-size: 13px; }
+  #cAurisPanel .meta { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                        letter-spacing: 0.06em; margin-bottom: 10px; }
+  #cAurisPanel .row { display: flex; justify-content: space-between; padding: 4px 0;
+                       border-bottom: 1px solid var(--grid); font-size: 12px; }
+  #cAurisPanel .row:last-child { border-bottom: 0; }
+  #cAurisPanel .row .pct { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #cAurisPanel .row .pct.high { color: var(--bad); }
+  #cAurisPanel .row .pct.med  { color: var(--warn); }
+  #cAurisPanel .row .pct.low  { color: var(--good); }
+  #cAurisPanel .footer { color: var(--muted); font-size: 10px; margin-top: 8px;
+                          text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* Atlas tab */
+  #atlasView { position: fixed; top: 60px; left: 0; right: 0; bottom: 0; z-index: 5;
+               background: var(--bg); display: none;
+               grid-template-columns: 360px 1fr; }
+  body.tab-atlas #atlasView { display: grid; }
+
+  #atlasList { border-right: 1px solid var(--grid); overflow: hidden;
+               display: flex; flex-direction: column; }
+  #atlasList .head { padding: 14px 16px; border-bottom: 1px solid var(--grid); }
+  #atlasList .head input { width: 100%; background: var(--panel); color: var(--fg);
+                            border: 1px solid var(--grid); border-radius: 4px;
+                            padding: 7px 10px; font-size: 13px; }
+  #atlasList .head select { width: 100%; margin-top: 8px; background: var(--panel);
+                             color: var(--fg); border: 1px solid var(--grid);
+                             border-radius: 4px; padding: 6px 10px; font-size: 12px; }
+  #atlasList .head .count { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                             letter-spacing: 0.06em; margin-top: 8px; }
+  #atlasList .scroll { overflow-y: auto; flex: 1; }
+  #atlasList .item { display: flex; align-items: center; gap: 8px; padding: 9px 16px;
+                     border-bottom: 1px solid var(--grid); cursor: pointer; font-size: 13px; }
+  #atlasList .item:hover { background: rgba(48,54,61,0.4); }
+  #atlasList .item.active { background: var(--accent); color: var(--bg); }
+  #atlasList .item .emoji { font-size: 14px; flex-shrink: 0; }
+  #atlasList .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #atlasList .item .meta { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  #atlasList .item.active .meta { color: rgba(14,17,23,0.7); }
+  #atlasList .item .who-dot { width: 6px; height: 6px; border-radius: 50%;
+                               background: var(--good); flex-shrink: 0; }
+  #atlasList .item.no-who .who-dot { background: var(--grid); }
+
+  #atlasDetail { overflow-y: auto; padding: 28px 36px; }
+  #atlasDetail .empty { color: var(--muted); padding: 60px 0; text-align: center;
+                         font-size: 13px; }
+  #atlasDetail h2 { margin: 0 0 4px; font-size: 26px; font-weight: 600; }
+  #atlasDetail .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px;
+                       display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #atlasDetail .sub .badge { background: var(--panel); border: 1px solid var(--grid);
+                              padding: 2px 8px; border-radius: 3px; font-size: 11px;
+                              text-transform: uppercase; letter-spacing: 0.06em; }
+  #atlasDetail .sub .badge.who { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+  #atlasDetail .sub a { color: var(--accent); text-decoration: none; }
+  #atlasDetail .keyFacts { background: var(--panel); border: 1px solid var(--grid);
+                             border-radius: 6px; padding: 14px 18px; margin-bottom: 24px; }
+  #atlasDetail .keyFacts h3 { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                                letter-spacing: 0.06em; margin: 0 0 8px; font-weight: 600; }
+  #atlasDetail .keyFacts ul { margin: 0; padding-left: 18px; }
+  #atlasDetail .keyFacts li { font-size: 13px; line-height: 1.5; margin-bottom: 4px; }
+  #atlasDetail .section { margin-bottom: 22px; }
+  #atlasDetail .section h3 { font-size: 13px; text-transform: uppercase; color: var(--muted);
+                              letter-spacing: 0.06em; margin: 0 0 8px; font-weight: 600; }
+  #atlasDetail .section p { margin: 0; font-size: 14px; line-height: 1.6;
+                              color: var(--fg); max-width: 780px; }
+  #atlasDetail .meds { display: grid; gap: 8px; max-width: 780px; }
+  #atlasDetail .med { background: var(--panel); border: 1px solid var(--grid);
+                       border-radius: 6px; padding: 10px 14px; }
+  #atlasDetail .med .top { display: flex; align-items: baseline; gap: 10px; }
+  #atlasDetail .med .role { font-size: 10px; font-weight: 700; text-transform: uppercase;
+                             letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px;
+                             background: var(--grid); color: var(--fg); }
+  #atlasDetail .med .role.first-line  { background: #1f6feb; color: #fff; }
+  #atlasDetail .med .role.alternative { background: var(--warn); color: var(--bg); }
+  #atlasDetail .med .role.adjunct     { background: #6e7681; color: #fff; }
+  #atlasDetail .med .role.vaccine     { background: var(--good); color: var(--bg); }
+  #atlasDetail .med .role.prophylaxis { background: #c85bd0; color: #fff; }
+  #atlasDetail .med .generic { font-weight: 600; font-size: 14px; }
+  #atlasDetail .med .notes { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  #atlasDetail .med .brands { font-size: 11px; color: var(--accent); margin-top: 6px; }
+  #atlasDetail .med { cursor: pointer; }
+  #atlasDetail .med:hover { border-color: var(--accent); }
+  #atlasDetail .med .chain { display: none; margin-top: 10px; padding-top: 10px;
+                              border-top: 1px solid var(--grid); }
+  #atlasDetail .med.open .chain { display: block; }
+  #atlasDetail .med .chain .row { display: flex; justify-content: space-between;
+                                    padding: 4px 0; font-size: 12px;
+                                    border-bottom: 1px solid var(--grid); }
+  #atlasDetail .med .chain .row:last-child { border-bottom: 0; }
+  #atlasDetail .med .chain .row .lab { color: var(--muted); }
+  #atlasDetail .med .chain .row .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #atlasDetail .med .score { display: inline-block; padding: 2px 6px; border-radius: 3px;
+                               font-size: 10px; font-weight: 700; text-transform: uppercase;
+                               letter-spacing: 0.06em; margin-left: 8px; }
+  #atlasDetail .med .score.resilient { background: var(--good); color: var(--bg); }
+  #atlasDetail .med .score.watch     { background: var(--warn); color: var(--bg); }
+  #atlasDetail .med .score.fragile   { background: #ff8b3d; color: var(--bg); }
+  #atlasDetail .med .score.atrisk    { background: var(--bad); color: #fff; }
+  #atlasDetail .med .flags { font-size: 11px; color: var(--muted); margin-top: 6px;
+                              line-height: 1.4; }
+  #atlasDetail .med .flags li { margin-bottom: 2px; }
+  #atlasDetail .med .mfr-list { font-size: 11px; color: var(--muted); margin-top: 6px;
+                                 max-width: 100%; line-height: 1.4; }
+  #atlasDetail .med .shortage-banner { background: var(--bad); color: #fff; padding: 4px 8px;
+                                         border-radius: 3px; font-size: 11px; font-weight: 700;
+                                         margin-top: 6px; display: inline-block; text-transform: uppercase;
+                                         letter-spacing: 0.06em; }
+  #atlasDetail .extra { margin-top: 24px; max-width: 780px; }
+  #atlasDetail .extra summary { cursor: pointer; color: var(--muted); font-size: 12px;
+                                  text-transform: uppercase; letter-spacing: 0.06em; }
+  #atlasDetail .extra .item { padding: 10px 0; border-bottom: 1px solid var(--grid);
+                                font-size: 13px; line-height: 1.5; }
+  #atlasDetail .extra .item .h { font-weight: 600; margin-bottom: 4px; }
+
+  /* Excess-mortality chart */
+  #emChart { position: fixed; bottom: 16px; right: 16px; z-index: 10;
+             background: rgba(22,27,34,0.95); border: 1px solid var(--grid);
+             border-radius: 8px; padding: 14px; width: 420px; height: 200px;
+             backdrop-filter: blur(8px); display: none; }
+  body.tab-em #emChart.show { display: block; }
+  #emChart .title { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  #emChart .meta { color: var(--muted); font-size: 10px; text-transform: uppercase;
+                   letter-spacing: 0.06em; margin-bottom: 8px; }
+
+  /* Status spinner */
+  #status {
+    position: fixed; top: 60px; left: 16px; z-index: 10; color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    background: rgba(22, 27, 34, 0.85); border: 1px solid var(--grid);
+    border-radius: 4px; padding: 4px 8px; display: none;
+  }
+  #status.show { display: block; }
+  .spinner {
+    display: inline-block; width: 10px; height: 10px; border: 2px solid var(--grid);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Search results dropdown */
+  #searchResults {
+    position: absolute; background: var(--panel); border: 1px solid var(--grid);
+    border-radius: 4px; max-height: 280px; overflow-y: auto; min-width: 200px;
+    z-index: 20; display: none;
+  }
+  #searchResults.open { display: block; }
+  #searchResults .item { padding: 6px 12px; cursor: pointer; font-size: 13px;
+                          border-bottom: 1px solid var(--grid); }
+  #searchResults .item:last-child { border-bottom: 0; }
+  #searchResults .item:hover, #searchResults .item.active { background: var(--grid); }
+  #searchResults .iso { color: var(--muted); font-size: 11px; margin-left: 6px;
+                         font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body class="tab-globe">
+
+<div id="globe"></div>
+
+<header>
+  <h1>World Health</h1>
+  <span class="meta">v0.2 · WHO + WB + DON</span>
+  <div class="tabs">
+    <button class="tab active" data-tab="globe">Globe</button>
+    <button class="tab" data-tab="outbreaks">Outbreaks</button>
+    <button class="tab" data-tab="h5n1">H5N1</button>
+    <button class="tab" data-tab="em">Excess Mortality</button>
+    <button class="tab" data-tab="pheic">PHEICs</button>
+    <button class="tab" data-tab="markets">Markets</button>
+    <button class="tab" data-tab="atlas">Atlas</button>
+    <button class="tab" data-tab="hai">HAI / AMR</button>
+    <button class="tab" data-tab="shortages">Shortages</button>
+  </div>
+  <span style="flex:1"></span>
+  <span class="only-globe">
+    <label for="metric">Metric</label>
+    <select id="metric"></select>
+  </span>
+  <span class="only-outbreaks">
+    <label for="diseaseFilter">Disease</label>
+    <select id="diseaseFilter"><option value="">All diseases</option></select>
+  </span>
+  <span class="only-hai">
+    <label for="haiIndicator">Indicator</label>
+    <select id="haiIndicator"></select>
+  </span>
+  <label for="search">Country</label>
+  <span style="position: relative;">
+    <input id="search" placeholder="Search country…" autocomplete="off">
+    <div id="searchResults"></div>
+  </span>
+</header>
+
+<div id="status"><span class="spinner"></span><span id="statusText">Loading…</span></div>
+
+<div id="legend">
+  <div class="title">Current layer</div>
+  <div class="name" id="legendName">—</div>
+  <div class="bar" id="legendBar"></div>
+  <div class="ticks">
+    <span id="legendLow">—</span>
+    <span id="legendMid">—</span>
+    <span id="legendHigh">—</span>
+  </div>
+  <div class="desc" id="legendDesc"></div>
+  <div class="src" id="legendSrc"></div>
+</div>
+
+<!-- Right side: country profile -->
+<div id="panel">
+  <span class="close" onclick="closePanel()">×</span>
+  <h2 id="panelName">—</h2>
+  <div class="region" id="panelRegion">—</div>
+  <div id="panelMetrics"></div>
+</div>
+
+<!-- Right side: PHEIC list (separate panel, only on PHEIC tab) -->
+<div id="pheicPanel">
+  <h2 id="pheicTitle" style="margin-bottom:4px">Public Health Emergencies of International Concern</h2>
+  <div class="region" id="pheicMeta">All declarations under IHR (2005)</div>
+  <div id="pheicList"></div>
+</div>
+
+<!-- Left side: outbreak / H5N1 feed -->
+<div id="feedPanel">
+  <h2 id="feedTitle">Outbreak radar</h2>
+  <div class="meta" id="feedMeta">WHO Disease Outbreak News</div>
+  <div class="stats" id="feedStats"></div>
+  <div id="feedList"></div>
+</div>
+
+<!-- Markets tab: full-page table -->
+<div id="marketsView">
+  <div class="markets-stats" id="marketsStats"></div>
+  <div class="markets-controls">
+    <input id="marketSearch" placeholder="Filter by question text…" autocomplete="off">
+    <div class="source-toggle">
+      <button class="poly on"     data-src="polymarket">Polymarket</button>
+      <button class="kalshi on"   data-src="kalshi">Kalshi</button>
+      <button class="manifold on" data-src="manifold">Manifold</button>
+    </div>
+    <span class="meta" id="marketsRefreshed" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em"></span>
+  </div>
+  <div class="matches" id="matchesPanel"></div>
+  <table class="markets" id="marketsTable">
+    <thead>
+      <tr>
+        <th data-sort="source">Source</th>
+        <th data-sort="question">Question</th>
+        <th class="num" data-sort="probability">Yes price</th>
+        <th class="num" data-sort="volume">Volume</th>
+        <th data-sort="close_time">Close</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="marketsBody"></tbody>
+  </table>
+</div>
+
+<!-- Shortages tab: leaderboards + active FDA shortages -->
+<div id="shortagesView">
+  <div class="sh-grid">
+    <div class="sh-card">
+      <h3>Treatment-supply landscape</h3>
+      <div class="stats" id="shStatsLeft"></div>
+    </div>
+    <div class="sh-card">
+      <h3>Active FDA shortages — top categories</h3>
+      <div id="shStatsRight" style="font-size: 12px; line-height: 1.8;"></div>
+    </div>
+  </div>
+  <div class="sh-grid">
+    <div class="sh-card">
+      <h3>Most fragile essential medicines</h3>
+      <div id="shFragileDrugs"></div>
+    </div>
+    <div class="sh-card">
+      <h3>Most vulnerable diseases (by treatment supply)</h3>
+      <div id="shVulnDiseases"></div>
+    </div>
+  </div>
+  <div class="sh-card">
+    <h3>Active FDA shortages (1,140 entries) — EML matches highlighted</h3>
+    <table class="shortages" id="shTable">
+      <thead><tr>
+        <th>Score</th>
+        <th>Generic</th>
+        <th>Brand</th>
+        <th>Company</th>
+        <th>Form</th>
+        <th>Reason</th>
+        <th>Updated</th>
+      </tr></thead>
+      <tbody id="shTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- HAI tab: C. auris US-state callout (bottom-right, only visible on HAI tab) -->
+<div id="cAurisPanel">
+  <h3 id="cAurisTitle">Candida auris (US ARPSP)</h3>
+  <div class="meta" id="cAurisMeta">—</div>
+  <div id="cAurisRows"></div>
+  <div class="footer">Source: CDC Antibiotic Resistance Patient Safety Atlas</div>
+</div>
+
+<!-- Atlas tab: split view (sidebar list + detail) -->
+<div id="atlasView">
+  <aside id="atlasList">
+    <div class="head">
+      <input id="atlasSearch" placeholder="Search 400+ diseases…" autocomplete="off">
+      <select id="atlasCategory">
+        <option value="">All categories</option>
+      </select>
+      <div class="count" id="atlasCount">—</div>
+    </div>
+    <div class="scroll" id="atlasScroll"></div>
+  </aside>
+  <main id="atlasDetail">
+    <div class="empty">Select a disease from the list.</div>
+  </main>
+</div>
+
+<!-- Excess mortality chart (bottom-right, only on EM tab + a country selected) -->
+<div id="emChart">
+  <div class="title" id="emTitle">—</div>
+  <div class="meta" id="emMeta">—</div>
+  <canvas id="emCanvas" width="392" height="140"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/globe.gl@2.32.4/dist/globe.gl.min.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  metrics: [],
+  metricsById: {},
+  countries: [],
+  countriesByIso: {},
+  layer: null,                  // current metric layer payload
+  selectedMetricId: 'life_expectancy',
+  countriesGeo: null,
+  tab: 'globe',
+  outbreaks: null,              // {items, pins, disease_summary, ...}
+  h5n1: null,
+  emLayer: null,                // {by_iso3, ...}
+  pheics: null,
+  markets: null,                // {markets, by_source, counts, cross_venue_matches}
+  marketSources: { polymarket: true, kalshi: true, manifold: true },
+  marketSort: { col: 'volume', desc: true },
+  marketFilter: '',
+  diseaseFilter: '',
+  atlas: null,                  // {diseases, stats}
+  atlasFilter: '',
+  atlasCategory: '',
+  atlasSelected: null,
+  hai: null,                    // {indicators, c_auris}
+  haiLayer: null,               // {by_iso3, p10/50/90, indicator}
+  haiIndicator: 'amr_mrsa',
+  shortages: null,              // {counts, fragile_drugs, vulnerable_diseases}
+  shortagesActive: null,        // {items: [...]}
+  shortagesOverview: null,      // {by_category, by_reason, latest_updates}
+  vulnIndex: null,              // {slug: {score, rating}}
+};
+
+// ── Color scaling ──────────────────────────────────────────────────────────
+function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+function lerpColor(c1, c2, t) {
+  return [c1[0]+(c2[0]-c1[0])*t, c1[1]+(c2[1]-c1[1])*t, c1[2]+(c2[2]-c1[2])*t];
+}
+function rgbToCss([r,g,b]) { return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`; }
+const RAMPS = {
+  higher_is_better: [[248,81,73],[210,153,34],[86,211,100]],
+  lower_is_better:  [[86,211,100],[210,153,34],[248,81,73]],
+  neutral:          [[88,166,255],[126,231,255],[211,82,255]],
+};
+function rampColor(direction, t) {
+  const stops = RAMPS[direction] || RAMPS.neutral;
+  t = clamp01(t);
+  if (t <= 0.5) return rgbToCss(lerpColor(stops[0], stops[1], t * 2));
+  return rgbToCss(lerpColor(stops[1], stops[2], (t - 0.5) * 2));
+}
+function valueToT(value, lo, hi) {
+  if (value === null || value === undefined) return null;
+  if (lo === null || hi === null || lo === hi) return 0.5;
+  return clamp01((value - lo) / (hi - lo));
+}
+
+// ── Number formatting ──────────────────────────────────────────────────────
+function fmt(value, decimals) {
+  if (value === null || value === undefined) return '—';
+  if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(2) + 'B';
+  if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(2) + 'M';
+  if (Math.abs(value) >= 1e4) return Math.round(value).toLocaleString();
+  return value.toFixed(decimals ?? 1);
+}
+function fmtAge(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const days = Math.round((Date.now() - d.getTime()) / 86400000);
+  if (days < 1) return 'today';
+  if (days < 7) return days + 'd ago';
+  if (days < 30) return Math.round(days/7) + 'w ago';
+  if (days < 365) return Math.round(days/30) + 'mo ago';
+  return Math.round(days/365) + 'y ago';
+}
+
+// ── Globe setup ────────────────────────────────────────────────────────────
+let world = null;
+function initGlobe() {
+  world = Globe()(document.getElementById('globe'))
+    .globeImageUrl('https://cdn.jsdelivr.net/npm/three-globe@2.31.0/example/img/earth-night.jpg')
+    .backgroundColor('#0e1117')
+    .showAtmosphere(true)
+    .atmosphereColor('#58a6ff')
+    .atmosphereAltitude(0.18)
+    .polygonAltitude(0.008)
+    .polygonStrokeColor(() => 'rgba(48, 54, 61, 0.6)')
+    .polygonSideColor(() => 'rgba(0, 0, 0, 0.15)');
+
+  world.controls().autoRotate = true;
+  world.controls().autoRotateSpeed = 0.35;
+
+  world
+    .onPolygonHover(hover => world.polygonAltitude(d => d === hover ? 0.025 : 0.008))
+    .onPolygonClick(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      if (!iso) return;
+      if (state.tab === 'em') {
+        showExcessChart(iso);
+      } else {
+        openCountryPanel(iso);
+      }
+    })
+    .onPointClick(p => {
+      if (p?.iso3) openOutbreakCountry(p.iso3);
+    });
+}
+
+// ── Polygon coloring per tab ───────────────────────────────────────────────
+function applyMetricLayer() {
+  if (!world || !state.countriesGeo || !state.layer) return;
+  const layer = state.layer;
+  const m = layer.metric;
+  world
+    .polygonsData(state.countriesGeo.features)
+    .pointsData([])
+    .polygonCapColor(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const e = layer.by_iso3[iso];
+      if (!e || e.value === null) return 'rgba(48, 54, 61, 0.55)';
+      const t = valueToT(e.value, layer.p10, layer.p90);
+      return rampColor(m.direction, t);
+    })
+    .polygonLabel(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const name = state.countriesByIso[iso] || d?.properties?.ADMIN || iso;
+      const e = layer.by_iso3[iso];
+      const valueStr = e ? `${fmt(e.value, m.decimals)} ${m.unit}` : 'no data';
+      const yearStr = e?.year ? ` (${e.year})` : '';
+      return `<div style="background:rgba(22,27,34,0.95);border:1px solid #30363d;border-radius:4px;padding:6px 10px;font-size:12px;color:#e6edf3">
+        <div style="font-weight:600;margin-bottom:2px">${name}</div>
+        <div style="color:#8b949e;font-size:11px">${m.name}</div>
+        <div style="margin-top:4px">${valueStr}<span style="color:#8b949e">${yearStr}</span></div>
+      </div>`;
+    });
+
+  document.getElementById('legendName').textContent = m.name;
+  document.getElementById('legendDesc').textContent = m.description || '';
+  document.getElementById('legendSrc').textContent =
+    `Source: ${m.source.replace('_',' ').toUpperCase()} · ${m.source_code} · ${layer.n} countries`;
+  const bar = document.getElementById('legendBar');
+  let s = []; for (let i=0;i<10;i++) s.push(rampColor(m.direction, i/9) + ` ${(i/9)*100}%`);
+  bar.style.background = `linear-gradient(to right, ${s.join(', ')})`;
+  document.getElementById('legendLow').textContent  = `${fmt(layer.p10, m.decimals)} ${m.unit}`;
+  document.getElementById('legendMid').textContent  = `${fmt(layer.p50, m.decimals)} ${m.unit}`;
+  document.getElementById('legendHigh').textContent = `${fmt(layer.p90, m.decimals)} ${m.unit}`;
+}
+
+function applyOutbreakLayer() {
+  if (!world || !state.countriesGeo || !state.outbreaks) return;
+  const pins = state.outbreaks.pins;
+  const filter = state.diseaseFilter;
+  // Dim country fill — pins do the talking.
+  world
+    .polygonsData(state.countriesGeo.features)
+    .polygonCapColor(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const p = pins[iso];
+      if (!p) return 'rgba(40, 45, 52, 0.55)';
+      if (filter && !p.diseases.includes(filter)) return 'rgba(40,45,52,0.55)';
+      // Tint country if it has outbreaks
+      const t = p.severity;
+      return rampColor('lower_is_better', 1 - t * 0.5);
+    })
+    .polygonLabel(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const name = state.countriesByIso[iso] || d?.properties?.ADMIN || iso;
+      const p = pins[iso];
+      if (!p) return `<div style="background:rgba(22,27,34,0.95);border:1px solid #30363d;border-radius:4px;padding:6px 10px;font-size:12px;color:#e6edf3">
+        <div style="font-weight:600">${name}</div>
+        <div style="color:#8b949e;font-size:11px">No active DON</div></div>`;
+      return `<div style="background:rgba(22,27,34,0.95);border:1px solid #30363d;border-radius:4px;padding:6px 10px;font-size:12px;color:#e6edf3">
+        <div style="font-weight:600">${name}</div>
+        <div style="color:#8b949e;font-size:11px">${p.count} outbreak ${p.count===1?'item':'items'} · last: ${p.last_disease}</div>
+        <div style="color:#8b949e;font-size:11px">${fmtAge(p.last_published)}</div></div>`;
+    });
+
+  // Compute pin lat/lng from country centroids.
+  const points = [];
+  for (const [iso, p] of Object.entries(pins)) {
+    if (filter && !p.diseases.includes(filter)) continue;
+    const center = featureCenterByIso(iso);
+    if (!center) continue;
+    points.push({
+      lat: center.lat, lng: center.lng, iso3: iso,
+      severity: p.severity, count: p.count,
+      label: `${p.country}: ${p.last_disease} (${p.count})`,
+    });
+  }
+  world
+    .pointsData(points)
+    .pointAltitude(d => 0.01 + d.severity * 0.06)
+    .pointRadius(d => 0.25 + d.severity * 0.55)
+    .pointColor(d => `rgba(248, 81, 73, ${0.6 + d.severity * 0.4})`)
+    .pointLabel(d => d.label);
+
+  // Legend
+  document.getElementById('legendName').textContent = 'Outbreak severity';
+  document.getElementById('legendDesc').textContent =
+    'Red pins = countries with active WHO Disease Outbreak News. Pin size + brightness reflect a 90-day severity score (recency × count).';
+  document.getElementById('legendSrc').textContent =
+    `Source: WHO DON · ${state.outbreaks.total_items} items · ${Object.keys(pins).length} countries`;
+  document.getElementById('legendBar').style.background =
+    'linear-gradient(to right, rgba(248,81,73,0.4), rgba(248,81,73,1))';
+  document.getElementById('legendLow').textContent  = 'low';
+  document.getElementById('legendMid').textContent  = '';
+  document.getElementById('legendHigh').textContent = 'high';
+}
+
+function applyExcessMortalityLayer() {
+  if (!world || !state.countriesGeo || !state.emLayer) return;
+  const layer = state.emLayer;
+  const values = Object.values(layer.by_iso3).map(v => v.value).filter(v => v !== null);
+  values.sort((a,b)=>a-b);
+  const lo = values[Math.floor(values.length*0.10)] ?? 0;
+  const hi = values[Math.floor(values.length*0.90)] ?? 1;
+  const mid = values[Math.floor(values.length*0.50)] ?? 0;
+  state.emLayer._scale = {lo, mid, hi};
+
+  world
+    .polygonsData(state.countriesGeo.features)
+    .pointsData([])
+    .polygonCapColor(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const e = layer.by_iso3[iso];
+      if (!e) return 'rgba(48,54,61,0.55)';
+      const t = valueToT(e.value, lo, hi);
+      // negative excess = green, positive = red
+      return rampColor('lower_is_better', t);
+    })
+    .polygonLabel(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const name = state.countriesByIso[iso] || d?.properties?.ADMIN || iso;
+      const e = layer.by_iso3[iso];
+      if (!e) return `<div style="background:rgba(22,27,34,0.95);border:1px solid #30363d;border-radius:4px;padding:6px 10px;font-size:12px;color:#e6edf3"><div style="font-weight:600">${name}</div><div style="color:#8b949e;font-size:11px">no excess-mortality data</div></div>`;
+      return `<div style="background:rgba(22,27,34,0.95);border:1px solid #30363d;border-radius:4px;padding:6px 10px;font-size:12px;color:#e6edf3">
+        <div style="font-weight:600">${name}</div>
+        <div style="color:#8b949e;font-size:11px">Cumulative excess deaths since 2020</div>
+        <div style="margin-top:3px"><b>${Math.round(e.value).toLocaleString()}</b> per million</div>
+        <div style="color:#8b949e;font-size:11px">as of ${e.date}</div></div>`;
+    });
+
+  document.getElementById('legendName').textContent = 'Cumulative excess mortality (since 2020)';
+  document.getElementById('legendDesc').textContent =
+    'Cumulative excess deaths per million population, projected against the 2015-2019 baseline. Click a country to see the monthly P-score time series.';
+  document.getElementById('legendSrc').textContent =
+    `Source: OWID via github.com/owid/covid-19-data · ${Object.keys(layer.by_iso3).length} countries`;
+  document.getElementById('legendBar').style.background =
+    `linear-gradient(to right, ${RAMPS.lower_is_better.map(c => rgbToCss(c)).join(', ')})`;
+  document.getElementById('legendLow').textContent  = `${Math.round(lo)} /M`;
+  document.getElementById('legendMid').textContent  = `${Math.round(mid)} /M`;
+  document.getElementById('legendHigh').textContent = `${Math.round(hi)} /M`;
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(tab) {
+  state.tab = tab;
+  document.body.className = 'tab-' + tab;
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('pheicPanel').classList.remove('open');
+  document.getElementById('emChart').classList.remove('show');
+  if (tab === 'globe')      applyMetricLayer();
+  if (tab === 'outbreaks')  ensureOutbreaks().then(applyOutbreakLayer).then(renderOutbreakFeed);
+  if (tab === 'h5n1')       ensureH5N1().then(applyOutbreakLayer).then(renderH5N1Feed);
+  if (tab === 'em')         ensureExcessMortality().then(applyExcessMortalityLayer);
+  if (tab === 'pheic')      ensurePheics().then(renderPheics);
+  if (tab === 'markets')    ensureMarkets().then(renderMarkets);
+  if (tab === 'atlas')      ensureAtlas().then(() => ensureVulnIndex()).then(renderAtlas);
+  if (tab === 'hai')        ensureHAI().then(() => loadHaiLayer(state.haiIndicator)).then(renderCAuris);
+  if (tab === 'shortages')  ensureShortages().then(renderShortages);
+}
+
+// ── Data loaders ───────────────────────────────────────────────────────────
+function showStatus(t) { document.getElementById('statusText').textContent = t; document.getElementById('status').classList.add('show'); }
+function hideStatus()  { document.getElementById('status').classList.remove('show'); }
+
+async function loadMetric(metricId) {
+  showStatus(`Loading ${state.metricsById[metricId]?.name || metricId}…`);
+  try {
+    const resp = await fetch(`/api/globe/${encodeURIComponent(metricId)}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    state.layer = await resp.json();
+    state.selectedMetricId = metricId;
+    if (state.tab === 'globe') applyMetricLayer();
+  } catch (e) {
+    console.error('loadMetric', e); showStatus('Failed'); setTimeout(hideStatus, 2000); return;
+  }
+  hideStatus();
+}
+
+async function ensureOutbreaks() {
+  if (state.outbreaks) return;
+  showStatus('Loading outbreak feed…');
+  try {
+    const r = await fetch('/api/outbreaks');
+    state.outbreaks = await r.json();
+    // Populate disease filter once
+    const sel = document.getElementById('diseaseFilter');
+    if (sel.options.length <= 1) {
+      for (const d of state.outbreaks.disease_summary) {
+        const o = document.createElement('option');
+        o.value = d.disease;
+        o.textContent = `${d.disease} (${d.count})`;
+        sel.appendChild(o);
+      }
+    }
+  } finally { hideStatus(); }
+}
+
+async function ensureH5N1() {
+  if (state.h5n1) return;
+  showStatus('Loading H5N1 surveillance…');
+  try {
+    // Reuse outbreaks pins but filter to H5
+    if (!state.outbreaks) await ensureOutbreaks();
+    const r = await fetch('/api/h5n1');
+    state.h5n1 = await r.json();
+  } finally { hideStatus(); }
+}
+
+async function ensureExcessMortality() {
+  if (state.emLayer) return;
+  showStatus('Loading excess mortality…');
+  try {
+    const r = await fetch('/api/excess_mortality');
+    state.emLayer = await r.json();
+  } finally { hideStatus(); }
+}
+
+async function ensurePheics() {
+  if (state.pheics) return;
+  showStatus('Loading PHEIC history…');
+  try {
+    const r = await fetch('/api/pheic');
+    state.pheics = await r.json();
+  } finally { hideStatus(); }
+}
+
+async function ensureMarkets() {
+  if (state.markets) return;
+  showStatus('Loading prediction markets…');
+  try {
+    const r = await fetch('/api/markets');
+    state.markets = await r.json();
+  } finally { hideStatus(); }
+}
+
+async function ensureAtlas() {
+  if (state.atlas) return;
+  showStatus('Loading disease atlas…');
+  try {
+    const r = await fetch('/api/diseases');
+    state.atlas = await r.json();
+  } finally { hideStatus(); }
+}
+
+async function ensureShortages() {
+  if (state.shortages && state.shortagesActive && state.shortagesOverview) return;
+  showStatus('Building treatment-supply rollup (45-90s on cold cache)…');
+  try {
+    const [v, a, o] = await Promise.all([
+      fetch('/api/vulnerability').then(r => r.json()),
+      fetch('/api/shortages/active').then(r => r.json()),
+      fetch('/api/shortages').then(r => r.json()),
+    ]);
+    state.shortages = v;
+    state.shortagesActive = a;
+    state.shortagesOverview = o;
+  } finally { hideStatus(); }
+}
+
+async function ensureVulnIndex() {
+  if (state.vulnIndex) return;
+  try {
+    const r = await fetch('/api/vulnerability/index');
+    state.vulnIndex = await r.json();
+  } catch (e) {
+    state.vulnIndex = {};
+  }
+}
+
+async function ensureHAI() {
+  if (state.hai) return;
+  showStatus('Loading antimicrobial-resistance data…');
+  try {
+    const r = await fetch('/api/hai');
+    state.hai = await r.json();
+    // Populate indicator selector
+    const sel = document.getElementById('haiIndicator');
+    if (sel.options.length === 0) {
+      for (const ind of state.hai.indicators) {
+        const opt = document.createElement('option');
+        opt.value = ind.id;
+        opt.textContent = `${ind.name}  (${ind.countries_reporting} countries)`;
+        sel.appendChild(opt);
+      }
+      sel.value = state.haiIndicator;
+    }
+  } finally { hideStatus(); }
+}
+
+async function loadHaiLayer(indicatorId) {
+  showStatus('Loading globe layer…');
+  try {
+    const r = await fetch(`/api/hai/globe/${encodeURIComponent(indicatorId)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    state.haiLayer = await r.json();
+    state.haiIndicator = indicatorId;
+    if (state.tab === 'hai') applyHaiLayer();
+  } finally { hideStatus(); }
+}
+
+function applyHaiLayer() {
+  if (!world || !state.countriesGeo || !state.haiLayer) return;
+  const layer = state.haiLayer;
+  const ind = layer.indicator;
+
+  world
+    .polygonsData(state.countriesGeo.features)
+    .pointsData([])
+    .polygonCapColor(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const e = layer.by_iso3[iso];
+      if (!e || e.value === null) return 'rgba(48,54,61,0.5)';
+      const t = valueToT(e.value, layer.p10, layer.p90);
+      return rampColor('lower_is_better', t);  // higher AMR = redder
+    })
+    .polygonLabel(d => {
+      const iso = d?.properties?.ISO_A3 || d?.properties?.ADM0_A3;
+      const name = state.countriesByIso[iso] || d?.properties?.ADMIN || iso;
+      const e = layer.by_iso3[iso];
+      const valueStr = e ? `<b>${e.value.toFixed(1)}%</b> (${e.year})` : 'no data';
+      return `<div style="background:rgba(22,27,34,0.95);border:1px solid #30363d;border-radius:4px;padding:6px 10px;font-size:12px;color:#e6edf3">
+        <div style="font-weight:600;margin-bottom:2px">${name}</div>
+        <div style="color:#8b949e;font-size:11px">${ind.pathogen} · ${ind.antibiotic}</div>
+        <div style="margin-top:3px">${valueStr}</div></div>`;
+    });
+
+  // Legend
+  document.getElementById('legendName').textContent = ind.name;
+  document.getElementById('legendDesc').textContent = ind.description;
+  document.getElementById('legendSrc').textContent =
+    `Source: ${ind.source} · ${layer.n} countries reporting`;
+  const bar = document.getElementById('legendBar');
+  let stops = []; for (let i=0;i<10;i++) stops.push(rampColor('lower_is_better', i/9) + ` ${(i/9)*100}%`);
+  bar.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
+  document.getElementById('legendLow').textContent  = layer.p10 != null ? `${layer.p10.toFixed(1)}%` : '—';
+  document.getElementById('legendMid').textContent  = layer.p50 != null ? `${layer.p50.toFixed(1)}%` : '—';
+  document.getElementById('legendHigh').textContent = layer.p90 != null ? `${layer.p90.toFixed(1)}%` : '—';
+}
+
+function renderCAuris() {
+  const c = state.hai && state.hai.c_auris;
+  if (!c) return;
+  document.getElementById('cAurisTitle').textContent = `${c.pathogen} (${c.year} US national)`;
+  document.getElementById('cAurisMeta').textContent =
+    `Emerging multidrug-resistant fungus · ${c.states_with_data} states reporting`;
+  const root = document.getElementById('cAurisRows');
+  root.innerHTML = '';
+  const order = [
+    'Fluconazole', 'Amphotericin B', 'Anidulafungin', 'Micafungin', 'Pan Resistant',
+  ];
+  for (const drug of order) {
+    const pct = c.national_percent_resistant[drug];
+    if (pct == null) continue;
+    const pctNum = pct * 100;
+    const cls = pctNum > 50 ? 'high' : pctNum > 5 ? 'med' : 'low';
+    const div = document.createElement('div');
+    div.className = 'row';
+    div.innerHTML = `<span>${drug}</span><span class="pct ${cls}">${pctNum.toFixed(0)}%</span>`;
+    root.appendChild(div);
+  }
+}
+
+// ── Country profile (Globe tab side panel) ─────────────────────────────────
+async function openCountryPanel(iso3) {
+  const panel = document.getElementById('panel');
+  document.getElementById('panelName').textContent = state.countriesByIso[iso3] || iso3;
+  document.getElementById('panelRegion').textContent = '…';
+  document.getElementById('panelMetrics').innerHTML = '<div style="color:var(--muted);padding:12px 0">Loading…</div>';
+  panel.classList.add('open');
+  try {
+    const r = await fetch(`/api/country/${encodeURIComponent(iso3)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const profile = await r.json();
+    document.getElementById('panelRegion').textContent = `${iso3} · ${profile.region || '—'}`;
+    renderProfile(profile);
+  } catch (e) {
+    document.getElementById('panelMetrics').innerHTML =
+      '<div style="color:var(--bad);padding:12px 0">Failed to load profile.</div>';
+  }
+}
+function closePanel() { document.getElementById('panel').classList.remove('open'); }
+
+function renderProfile(profile) {
+  const groups = {};
+  for (const m of state.metrics) (groups[m.category] = groups[m.category] || []).push(m);
+  const root = document.getElementById('panelMetrics');
+  root.innerHTML = '';
+  for (const [cat, metrics] of Object.entries(groups)) {
+    const div = document.createElement('div');
+    div.className = 'group';
+    div.innerHTML = `<h3>${cat}</h3>`;
+    for (const m of metrics) {
+      const v = profile.metrics[m.id];
+      const row = document.createElement('div');
+      row.className = 'row';
+      const valEl = (v && v.value !== null && v.value !== undefined)
+        ? `<span class="value">${fmt(v.value, m.decimals)} <span style="color:var(--muted);font-weight:400">${m.unit}</span></span><span class="year">${v.year || ''}</span>`
+        : `<span class="value na">—</span>`;
+      row.innerHTML = `<span class="label" title="${m.description}">${m.name}</span>${valEl}`;
+      div.appendChild(row);
+    }
+    root.appendChild(div);
+  }
+}
+
+// ── Outbreak feed list ─────────────────────────────────────────────────────
+function renderOutbreakFeed() {
+  const o = state.outbreaks;
+  document.getElementById('feedTitle').textContent = 'Outbreak radar';
+  document.getElementById('feedMeta').textContent =
+    `WHO DON · ${o.total_items} items · refreshed ${fmtAge(new Date(o.fetched_at*1000).toISOString())}`;
+  const stats = document.getElementById('feedStats');
+  stats.innerHTML = '';
+  const sc = o.scope_counts;
+  const totalCountries = Object.keys(o.pins).length;
+  for (const [lab, val] of [
+    ['Items',  o.total_items],
+    ['Countries', totalCountries],
+    ['Global/multi', (sc.global || 0) + (sc.multi || 0)],
+    ['Diseases', o.disease_summary.length],
+  ]) {
+    const div = document.createElement('div');
+    div.className = 'stat';
+    div.innerHTML = `<div class="lab">${lab}</div><div class="val">${val}</div>`;
+    stats.appendChild(div);
+  }
+  const list = document.getElementById('feedList');
+  list.innerHTML = '';
+  const items = o.items.filter(it => !state.diseaseFilter || it.disease === state.diseaseFilter);
+  for (const it of items.slice(0, 50)) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    const where = it.country_iso3
+      ? `<span class="country">— ${it.country_name}</span>`
+      : `<span class="badge ${it.scope}">${it.scope}</span> <span class="country">${it.country_name || ''}</span>`;
+    div.innerHTML =
+      `<div class="disease">${it.disease}${where}</div>
+       <div class="when">${fmtAge(it.published)} · ${(it.published||'').slice(0,10)}</div>
+       <div class="summary">${it.summary || ''}</div>`;
+    div.addEventListener('click', () => {
+      if (it.country_iso3) flyToCountry(it.country_iso3);
+      if (it.url) window.open(it.url, '_blank', 'noopener,noreferrer');
+    });
+    list.appendChild(div);
+  }
+}
+
+// ── H5N1 feed ──────────────────────────────────────────────────────────────
+function renderH5N1Feed() {
+  const h = state.h5n1;
+  document.getElementById('feedTitle').textContent = 'H5N1 surveillance';
+  document.getElementById('feedMeta').textContent = `Cumulative as of ${h.as_of} · live DONs from WHO`;
+  const stats = document.getElementById('feedStats');
+  stats.innerHTML = '';
+  const t = h.totals;
+  for (const [lab, val] of [
+    ['Cum. cases',  t.cases.toLocaleString()],
+    ['Cum. deaths', t.deaths.toLocaleString()],
+    ['CFR', t.case_fatality_rate_pct + '%'],
+    ['Countries', t.countries_reporting],
+  ]) {
+    const div = document.createElement('div');
+    div.className = 'stat';
+    div.innerHTML = `<div class="lab">${lab}</div><div class="val">${val}</div>`;
+    stats.appendChild(div);
+  }
+  const list = document.getElementById('feedList');
+  list.innerHTML = '';
+  // First, recent DONs
+  const dh = document.createElement('h3');
+  dh.style.cssText = 'color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 6px';
+  dh.textContent = 'Recent WHO DONs';
+  list.appendChild(dh);
+  for (const it of (h.recent_dons || []).slice(0, 30)) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML =
+      `<div class="disease">${it.disease}<span class="country">— ${it.country_name || 'Global'}</span></div>
+       <div class="when">${fmtAge(it.published)} · ${(it.published||'').slice(0,10)}</div>
+       <div class="summary">${it.summary || ''}</div>`;
+    div.addEventListener('click', () => {
+      if (it.country_iso3) flyToCountry(it.country_iso3);
+      if (it.url) window.open(it.url, '_blank', 'noopener,noreferrer');
+    });
+    list.appendChild(div);
+  }
+  // Cumulative case table
+  const ch = document.createElement('h3');
+  ch.style.cssText = 'color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 6px';
+  ch.textContent = 'Cumulative human cases by country';
+  list.appendChild(ch);
+  for (const r of h.cumulative_human_cases || []) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.style.cursor = 'default';
+    div.innerHTML =
+      `<div class="disease" style="display:flex;justify-content:space-between">
+         <span>${r.country}</span>
+         <span style="font-variant-numeric:tabular-nums">${r.cases} cases · ${r.deaths} d</span>
+       </div>`;
+    list.appendChild(div);
+  }
+}
+
+// ── PHEIC list ─────────────────────────────────────────────────────────────
+function renderPheics() {
+  const list = document.getElementById('pheicList');
+  list.innerHTML = '';
+  document.getElementById('pheicPanel').classList.add('open');
+  for (const p of state.pheics.history) {
+    const div = document.createElement('div');
+    div.className = 'pheic';
+    const status = p.active
+      ? `<span class="badge active">Active</span>`
+      : `<span style="color:var(--muted);font-size:11px;margin-left:8px">ended ${p.ended}</span>`;
+    div.innerHTML =
+      `<div class="name">${p.name}${status}</div>
+       <div class="dates">declared ${p.declared} · ${p.disease}</div>
+       <div class="short">${p.short}</div>
+       <div class="notes">${p.notes}</div>`;
+    list.appendChild(div);
+  }
+}
+
+// ── Markets tab ─────────────────────────────────────────────────────────────
+function renderMarkets() {
+  const m = state.markets;
+  if (!m) return;
+  // Stats strip
+  const stats = document.getElementById('marketsStats');
+  stats.innerHTML = '';
+  const totalVol = m.markets
+    .filter(x => state.marketSources[x.source] && x.source !== 'manifold')
+    .reduce((acc, x) => acc + (x.volume || 0), 0);
+  for (const [lab, val] of [
+    ['Polymarket markets', m.counts.polymarket],
+    ['Kalshi markets',     m.counts.kalshi],
+    ['Manifold markets',   m.counts.manifold],
+    ['Total USD vol (PM+Kalshi)', `$${(totalVol/1e6).toFixed(1)}M`],
+    ['Cross-venue matches', m.cross_venue_matches.length],
+  ]) {
+    const div = document.createElement('div');
+    div.className = 'stat';
+    div.innerHTML = `<div class="lab">${lab}</div><div class="val">${val.toLocaleString ? val.toLocaleString() : val}</div>`;
+    stats.appendChild(div);
+  }
+  document.getElementById('marketsRefreshed').textContent =
+    `Refreshed ${fmtAge(new Date(m.fetched_at*1000).toISOString())}`;
+
+  renderMatches();
+  renderMarketsTable();
+}
+
+function renderMatches() {
+  const root = document.getElementById('matchesPanel');
+  const matches = (state.markets.cross_venue_matches || [])
+    .filter(x => state.marketSources[x.a.source] && state.marketSources[x.b.source])
+    .slice(0, 10);
+  if (!matches.length) { root.innerHTML = ''; return; }
+  let html = `<h3>Cross-venue spreads <span style="color:var(--muted);font-weight:400">— same question on multiple venues</span></h3>`;
+  for (const x of matches) {
+    const sa = badge(x.a.source);
+    const sb = badge(x.b.source);
+    const spread = x.spread !== null ? Math.abs(x.spread) : 0;
+    const cls = spread > 0.15 ? 'high' : spread > 0.05 ? 'med' : '';
+    const pa = x.a.probability !== null ? (x.a.probability*100).toFixed(0) + '¢' : '—';
+    const pb = x.b.probability !== null ? (x.b.probability*100).toFixed(0) + '¢' : '—';
+    html += `<div class="match">
+      <div class="q">${sa} <a href="${x.a.url}" target="_blank" rel="noopener">${x.a.question}</a> <b>${pa}</b></div>
+      <div class="vs">vs · sim ${x.similarity}</div>
+      <div class="q">${sb} <a href="${x.b.url}" target="_blank" rel="noopener">${x.b.question}</a> <b>${pb}</b></div>
+      <div class="spread ${cls}">${x.spread !== null ? (x.spread>0?'+':'') + (x.spread*100).toFixed(0) + '¢' : '—'}</div>
+    </div>`;
+  }
+  root.innerHTML = html;
+}
+
+function badge(src) {
+  const cls = src === 'polymarket' ? 'src-poly' : src === 'kalshi' ? 'src-kalshi' : 'src-manifold';
+  const lab = src === 'polymarket' ? 'POLY' : src === 'kalshi' ? 'KAL' : 'MAN';
+  return `<span class="src-badge ${cls}">${lab}</span>`;
+}
+
+function renderMarketsTable() {
+  const body = document.getElementById('marketsBody');
+  body.innerHTML = '';
+  let rows = state.markets.markets.filter(m => state.marketSources[m.source]);
+  const q = state.marketFilter.trim().toLowerCase();
+  if (q) rows = rows.filter(m => (m.question || '').toLowerCase().includes(q));
+  // Sort
+  const { col, desc } = state.marketSort;
+  rows = rows.slice().sort((a, b) => {
+    let av = a[col], bv = b[col];
+    if (av === null || av === undefined) av = -Infinity;
+    if (bv === null || bv === undefined) bv = -Infinity;
+    if (typeof av === 'string') return desc ? bv.localeCompare(av) : av.localeCompare(bv);
+    return desc ? bv - av : av - bv;
+  });
+
+  for (const m of rows.slice(0, 250)) {
+    const tr = document.createElement('tr');
+    const prob = m.probability !== null ? `${(m.probability*100).toFixed(0)}¢` : '—';
+    const probT = clamp01(m.probability ?? 0);
+    const vol = m.source === 'manifold'
+      ? (m.volume ? `M$${(m.volume/1000).toFixed(0)}k` : '—')
+      : (m.volume ? `$${(m.volume/1000).toFixed(0)}k` : '—');
+    const close = (m.close_time || '').slice(0, 10);
+    tr.innerHTML = `
+      <td>${badge(m.source)}</td>
+      <td>${m.question || '—'}</td>
+      <td class="num">${prob} <span class="prob-bar"><span style="width:${probT*100}%"></span></span></td>
+      <td class="num">${vol}</td>
+      <td>${close || '—'}</td>
+      <td><a href="${m.url}" target="_blank" rel="noopener">↗</a></td>`;
+    body.appendChild(tr);
+  }
+  if (rows.length > 250) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);padding:14px">… ${rows.length - 250} more rows hidden. Filter or change sources to narrow.</td>`;
+    body.appendChild(tr);
+  }
+}
+
+// ── Shortages tab ──────────────────────────────────────────────────────────
+function renderShortages() {
+  const v = state.shortages;
+  const overview = state.shortagesOverview;
+  const active = state.shortagesActive;
+  if (!v || !overview || !active) return;
+
+  // Stats strip — left side: own counts
+  const statsLeft = document.getElementById('shStatsLeft');
+  statsLeft.innerHTML = '';
+  const c = v.counts;
+  for (const [lab, val] of [
+    ['EML diseases scored', c.total_diseases - c.untracked_diseases],
+    ['Fragile diseases (≥6/10)', c.fragile_diseases],
+    ['Drugs scored', c.total_drugs_scored],
+    ['Drugs in active shortage', c.drugs_in_active_shortage],
+    ['Vaccines & untracked', c.untracked_drugs],
+  ]) {
+    const div = document.createElement('div');
+    div.className = 'stat';
+    div.innerHTML = `<div class="lab">${lab}</div><div class="val">${val}</div>`;
+    statsLeft.appendChild(div);
+  }
+
+  // Right: top therapeutic categories from FDA shortages
+  const statsRight = document.getElementById('shStatsRight');
+  statsRight.innerHTML = '';
+  const cats = Object.entries(overview.by_category).slice(0, 8);
+  let html = `<div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${overview.total_active.toLocaleString()} active shortages</div>`;
+  for (const [cat, n] of cats) {
+    const pct = (n / overview.total_active) * 100;
+    html += `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--grid)">
+      <span>${escapeHtml(cat).slice(0, 60)}</span>
+      <span style="font-variant-numeric:tabular-nums;font-weight:600">${n} <span style="color:var(--muted);font-weight:400">${pct.toFixed(0)}%</span></span>
+    </div>`;
+  }
+  statsRight.innerHTML = html;
+
+  // Top fragile drugs
+  const fdRoot = document.getElementById('shFragileDrugs');
+  fdRoot.innerHTML = '';
+  for (const x of v.fragile_drugs.slice(0, 12)) {
+    const flagsTxt = (x.weak_point_flags || []).slice(0, 2).join('; ');
+    const shortBadge = x.active_shortage ? '<span class="badge-shortage">in shortage</span>' : '';
+    const div = document.createElement('div');
+    div.className = 'leader-row';
+    div.innerHTML =
+      `<span class="score-pill r${x.weak_point_score}">${x.weak_point_score}/10</span>
+       <span><span class="name">${escapeHtml(x.generic)}${shortBadge}</span><br><span class="meta">${escapeHtml(flagsTxt).slice(0, 130)}</span></span>
+       <span class="meta">${x.manufacturer_count} mfr</span>`;
+    fdRoot.appendChild(div);
+  }
+
+  // Top vulnerable diseases
+  const vdRoot = document.getElementById('shVulnDiseases');
+  vdRoot.innerHTML = '';
+  for (const x of v.vulnerable_diseases.slice(0, 12)) {
+    const div = document.createElement('div');
+    div.className = 'leader-row';
+    div.style.cursor = 'pointer';
+    div.innerHTML =
+      `<span class="score-pill r${x.vulnerability_score}">${x.vulnerability_score}/10</span>
+       <span><span class="name">${x.category_emoji || '🩺'} ${escapeHtml(x.name)}</span><br><span class="meta">limited by: <b>${escapeHtml(x.limiting_drug || '')}</b> · ${x.first_line_count} first-line option${x.first_line_count===1?'':'s'}</span></span>
+       <span class="meta">${escapeHtml(x.category || '')}</span>`;
+    div.addEventListener('click', () => {
+      switchTab('atlas');
+      setTimeout(() => openAtlasDisease(x.slug), 120);
+    });
+    vdRoot.appendChild(div);
+  }
+
+  // Active shortages table
+  const body = document.getElementById('shTableBody');
+  body.innerHTML = '';
+  // Show matched-EML drugs first (already pre-sorted by the API)
+  for (const r of active.items.slice(0, 200)) {
+    const tr = document.createElement('tr');
+    const sCls = r.score == null ? 'dim' : r.score >= 6 ? 'high' : r.score >= 3 ? 'med' : 'low';
+    const sTxt = r.score == null ? '—' : `${r.score}/10`;
+    tr.innerHTML =
+      `<td class="score ${sCls}">${sTxt}</td>
+       <td>${escapeHtml(r.generic || '')}</td>
+       <td class="dim">${escapeHtml(r.brand || '—')}</td>
+       <td class="dim">${escapeHtml((r.company || '').slice(0, 32))}</td>
+       <td class="dim">${escapeHtml((r.form || '').slice(0, 26))}</td>
+       <td class="dim">${escapeHtml((r.reason || '').slice(0, 40))}</td>
+       <td class="dim">${escapeHtml(r.updated || '')}</td>`;
+    body.appendChild(tr);
+  }
+  if (active.items.length > 200) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="7" style="text-align:center;color:var(--muted);padding:14px">… ${active.items.length - 200} more rows hidden</td>`;
+    body.appendChild(tr);
+  }
+}
+
+// ── Atlas tab ──────────────────────────────────────────────────────────────
+function renderAtlas() {
+  if (!state.atlas) return;
+  // Populate category filter once
+  const sel = document.getElementById('atlasCategory');
+  if (sel.options.length <= 1) {
+    const cats = Object.keys(state.atlas.stats.categories || {}).sort();
+    for (const c of cats) {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      sel.appendChild(opt);
+    }
+  }
+  renderAtlasList();
+}
+
+function renderAtlasList() {
+  const root = document.getElementById('atlasScroll');
+  const q = state.atlasFilter.trim().toLowerCase();
+  const cat = state.atlasCategory;
+  const items = (state.atlas.diseases || []).filter(d => {
+    if (cat && d.category !== cat) return false;
+    if (!q) return true;
+    return (d.name || '').toLowerCase().includes(q) ||
+           (d.slug || '').toLowerCase().includes(q) ||
+           (d.icd10 || '').toLowerCase().includes(q);
+  });
+  document.getElementById('atlasCount').textContent =
+    `${items.length.toLocaleString()} of ${state.atlas.diseases.length} diseases · ` +
+    `${state.atlas.stats.with_who_data} with WHO factsheet · ${state.atlas.stats.with_treatment} with curated treatment`;
+  root.innerHTML = '';
+  for (const d of items.slice(0, 600)) {
+    const div = document.createElement('div');
+    div.className = 'item' + (d.has_who_data ? '' : ' no-who') + (d.slug === state.atlasSelected ? ' active' : '');
+    div.dataset.slug = d.slug;
+    const meta = d.icd10 ? d.icd10 : (d.has_who_data ? 'WHO' : '');
+    // Vulnerability badge from rollup index, if loaded
+    let vbadge = '';
+    if (state.vulnIndex && state.vulnIndex[d.slug] && state.vulnIndex[d.slug].score != null) {
+      const s = state.vulnIndex[d.slug].score;
+      const cls = s >= 6 ? 'high' : s >= 3 ? 'med' : 'low';
+      const color = cls === 'high' ? 'var(--bad)' : cls === 'med' ? 'var(--warn)' : 'var(--good)';
+      vbadge = `<span style="background:${color};color:var(--bg);padding:1px 4px;border-radius:2px;font-size:9px;font-weight:700;font-variant-numeric:tabular-nums" title="Treatment-supply weak-point: ${s}/10">${s}</span>`;
+    }
+    div.innerHTML =
+      `<span class="emoji">${d.category_emoji || '🩺'}</span>` +
+      `<span class="name">${d.name}</span>` +
+      vbadge +
+      `<span class="who-dot" title="${d.has_who_data ? 'WHO factsheet available' : 'curated stub only'}"></span>` +
+      `<span class="meta">${meta}</span>`;
+    div.addEventListener('click', () => openAtlasDisease(d.slug));
+    root.appendChild(div);
+  }
+  if (items.length > 600) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.style.color = 'var(--muted)';
+    div.style.cursor = 'default';
+    div.innerHTML = `<span class="name">… ${items.length - 600} more — narrow filter to see them</span>`;
+    root.appendChild(div);
+  }
+}
+
+async function openAtlasDisease(slug) {
+  state.atlasSelected = slug;
+  renderAtlasList(); // refresh active highlight
+  const root = document.getElementById('atlasDetail');
+  root.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const r = await fetch(`/api/disease/${encodeURIComponent(slug)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    renderDiseaseDetail(d);
+  } catch (e) {
+    console.error(e);
+    root.innerHTML = '<div class="empty" style="color:var(--bad)">Failed to load.</div>';
+  }
+}
+
+function renderDiseaseDetail(d) {
+  const root = document.getElementById('atlasDetail');
+  const sub = [];
+  if (d.category) sub.push(`<span class="badge">${d.category_emoji || ''} ${d.category}</span>`);
+  if (d.icd10) sub.push(`<span class="badge">ICD-10 · ${d.icd10}</span>`);
+  if (d.has_who_data) sub.push(`<span class="badge who">WHO Factsheet</span>`);
+  if (d.source_url) sub.push(`<a href="${d.source_url}" target="_blank" rel="noopener">Source ↗</a>`);
+
+  let html = `<h2>${d.name}</h2>
+    <div class="sub">${sub.join('')}</div>`;
+
+  if (d.key_facts && d.key_facts.length) {
+    html += `<div class="keyFacts"><h3>Key facts</h3><ul>`;
+    for (const f of d.key_facts) html += `<li>${escapeHtml(f)}</li>`;
+    html += `</ul></div>`;
+  }
+
+  // Standard sections — order matters
+  for (const [key, label] of [
+    ['overview',     'Overview'],
+    ['transmission', 'Transmission'],
+    ['causes',       'Causes'],
+    ['risk_factors', 'Risk factors'],
+    ['symptoms',     'Symptoms & signs'],
+    ['diagnosis',    'Diagnosis'],
+    ['treatment',    'Treatment'],
+    ['prevention',   'Prevention'],
+    ['vaccines',     'Vaccines'],
+    ['burden',       'Disease burden'],
+    ['epidemiology', 'Epidemiology'],
+  ]) {
+    if (d[key]) {
+      html += `<div class="section"><h3>${label}</h3><p>${escapeHtml(d[key])}</p></div>`;
+    }
+  }
+
+  // Essential medicines
+  const meds = d.essential_medicines || [];
+  if (meds.length) {
+    html += `<div class="section"><h3>Essential medicines (WHO EML + RxNorm brands · click for supply chain)</h3><div class="meds" id="medsList">`;
+    for (let i = 0; i < meds.length; i++) {
+      const m = meds[i];
+      const role = (m.role || '').replace(/[^a-z]/g, '');
+      html += `<div class="med" data-generic="${escapeHtml(m.generic)}" data-idx="${i}">
+        <div class="top">
+          <span class="role ${role}">${m.role || ''}</span>
+          <span class="generic">${escapeHtml(m.generic)}</span>
+        </div>`;
+      if (m.notes) html += `<div class="notes">${escapeHtml(m.notes)}</div>`;
+      const brands = m.brands || [];
+      if (brands.length) html += `<div class="brands">Brands: ${brands.slice(0, 8).map(escapeHtml).join(' · ')}${brands.length > 8 ? ` +${brands.length-8} more` : ''}</div>`;
+      html += `<div class="chain"><div class="muted" style="color:var(--muted);font-size:11px">Loading supply chain…</div></div>`;
+      html += `</div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  // Extra (WHO non-canonical sections)
+  const ex = d.extra_sections || {};
+  const exKeys = Object.keys(ex);
+  if (exKeys.length) {
+    html += `<details class="extra"><summary>Additional sections (${exKeys.length}) from WHO factsheet</summary>`;
+    for (const k of exKeys) {
+      html += `<div class="item"><div class="h">${escapeHtml(k.replace(/\b\w/g, c => c.toUpperCase()))}</div>${escapeHtml(ex[k])}</div>`;
+    }
+    html += `</details>`;
+  }
+
+  root.innerHTML = html;
+
+  // Wire med-click to load supply-chain detail
+  document.querySelectorAll('#atlasDetail .med').forEach(el => {
+    el.addEventListener('click', async () => {
+      if (el.classList.contains('open')) {
+        el.classList.remove('open');
+        return;
+      }
+      el.classList.add('open');
+      const generic = el.dataset.generic;
+      const chain = el.querySelector('.chain');
+      try {
+        const r = await fetch(`/api/drug/${encodeURIComponent(generic)}`);
+        if (!r.ok) throw new Error('failed');
+        const dd = await r.json();
+        chain.innerHTML = renderDrugChain(dd);
+      } catch (e) {
+        chain.innerHTML = '<div style="color:var(--bad);font-size:11px">Failed to load supply chain.</div>';
+      }
+    });
+  });
+}
+
+function renderDrugChain(d) {
+  const wp = d.weak_point || {};
+  const scoreCls = wp.rating === 'resilient' ? 'resilient'
+                 : wp.rating === 'watch list' ? 'watch'
+                 : wp.rating === 'fragile' ? 'fragile' : 'atrisk';
+  const labels = d.labels || {};
+  const sh = d.shortage || {};
+  const re = d.recalls || {};
+  let html = `<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+    <span style="font-size:12px;font-weight:600">Supply chain</span>
+    <span class="score ${scoreCls}">Weak-point ${wp.score ?? '?'}/10 · ${wp.rating || ''}</span>
+  </div>`;
+  if (sh.active_shortage) {
+    html += `<div class="shortage-banner">⚠ ACTIVE FDA SHORTAGE — ${sh.current_count} entries</div>`;
+  }
+  html += `<div class="row"><span class="lab">FDA labels</span><span class="val">${labels.total_labels ?? '—'}</span></div>`;
+  html += `<div class="row"><span class="lab">Distinct manufacturers</span><span class="val">${labels.manufacturer_count ?? '—'}</span></div>`;
+  html += `<div class="row"><span class="lab">Brand-name SBDs</span><span class="val">${(labels.brands || []).length}</span></div>`;
+  html += `<div class="row"><span class="lab">Past shortages (resolved)</span><span class="val">${sh.resolved_count ?? 0}</span></div>`;
+  html += `<div class="row"><span class="lab">Recalls last 5 yrs</span><span class="val">${re.recent_count ?? 0} (Class I: ${(re.by_classification && re.by_classification['Class I']) || 0})</span></div>`;
+  if ((wp.flags || []).length) {
+    html += `<ul class="flags">`;
+    for (const f of wp.flags) html += `<li>${escapeHtml(f)}</li>`;
+    html += `</ul>`;
+  }
+  if ((labels.manufacturers || []).length) {
+    html += `<div class="mfr-list"><b>Manufacturers:</b> ${labels.manufacturers.slice(0, 12).map(escapeHtml).join(' · ')}${labels.manufacturers.length > 12 ? ` +${labels.manufacturers.length-12} more` : ''}</div>`;
+  }
+  if (sh.current_entries && sh.current_entries.length) {
+    html += `<div class="mfr-list"><b>Active shortage filings:</b><br>`;
+    for (const e of sh.current_entries.slice(0, 4)) {
+      html += `${escapeHtml(e.generic || '')} — ${escapeHtml(e.company || '')} · ${escapeHtml(e.form || '')}<br>`;
+    }
+    html += `</div>`;
+  }
+  if (re.recent && re.recent.length) {
+    html += `<div class="mfr-list"><b>Recent recalls:</b><br>`;
+    for (const r of re.recent.slice(0, 3)) {
+      html += `[${escapeHtml(r.classification)}] ${escapeHtml(r.firm)} — ${escapeHtml((r.reason || '').slice(0, 100))}<br>`;
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+// ── Excess mortality chart ─────────────────────────────────────────────────
+async function showExcessChart(iso3) {
+  showStatus(`Loading excess mortality for ${state.countriesByIso[iso3] || iso3}…`);
+  try {
+    const r = await fetch(`/api/excess_mortality?country=${encodeURIComponent(iso3)}`);
+    const d = await r.json();
+    if (!d.points || !d.points.length) {
+      showStatus('No data for that country');
+      setTimeout(hideStatus, 1500);
+      return;
+    }
+    drawExcessChart(d);
+  } finally { hideStatus(); }
+}
+
+function drawExcessChart(d) {
+  const cv = document.getElementById('emCanvas');
+  const ctx = cv.getContext('2d');
+  cv.width = cv.clientWidth * window.devicePixelRatio;
+  cv.height = cv.clientHeight * window.devicePixelRatio;
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  const W = cv.clientWidth, H = cv.clientHeight;
+  ctx.clearRect(0, 0, W, H);
+
+  const pts = d.points.filter(p => p.p_score !== null);
+  if (!pts.length) return;
+  const xs = pts.map(p => p.date);
+  const ys = pts.map(p => p.p_score);
+  const xMin = 0, xMax = pts.length - 1;
+  const yMin = Math.min(0, ...ys);
+  const yMax = Math.max(0, ...ys);
+  const yPad = (yMax - yMin) * 0.1 || 5;
+
+  const xToPx = i => 8 + (i - xMin) / (xMax - xMin || 1) * (W - 16);
+  const yToPx = v => H - 8 - (v - (yMin - yPad)) / ((yMax - yMin + 2*yPad) || 1) * (H - 16);
+
+  // Zero line
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(8, yToPx(0)); ctx.lineTo(W - 8, yToPx(0)); ctx.stroke();
+
+  // Series, colored by sign of value
+  ctx.lineWidth = 1.5;
+  for (let i = 1; i < pts.length; i++) {
+    ctx.beginPath();
+    ctx.moveTo(xToPx(i-1), yToPx(ys[i-1]));
+    ctx.lineTo(xToPx(i),   yToPx(ys[i]));
+    ctx.strokeStyle = ys[i] > 0 ? '#f85149' : '#56d364';
+    ctx.stroke();
+  }
+
+  document.getElementById('emTitle').textContent = `${d.country || d.iso3} — monthly P-score`;
+  document.getElementById('emMeta').textContent =
+    `% deviation from 2015-2019 baseline · ${pts.length} months · ${pts[0].date} → ${pts[pts.length-1].date}`;
+  document.getElementById('emChart').classList.add('show');
+}
+
+function openOutbreakCountry(iso3) { flyToCountry(iso3); openCountryPanel(iso3); }
+
+// ── Country search ─────────────────────────────────────────────────────────
+function setupSearch() {
+  const input = document.getElementById('search');
+  const results = document.getElementById('searchResults');
+  let activeIndex = -1;
+  function close() { results.classList.remove('open'); activeIndex = -1; }
+  function render(matches) {
+    if (!matches.length) { close(); return; }
+    results.innerHTML = matches.slice(0, 10).map(c =>
+      `<div class="item" data-iso="${c.iso3}">${c.name}<span class="iso">${c.iso3}</span></div>`
+    ).join('');
+    results.classList.add('open');
+    results.querySelectorAll('.item').forEach(el => {
+      el.addEventListener('click', () => {
+        const iso = el.dataset.iso;
+        flyToCountry(iso);
+        if (state.tab === 'em') showExcessChart(iso);
+        else openCountryPanel(iso);
+        input.value = ''; close();
+      });
+    });
+  }
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 1) { close(); return; }
+    const matches = state.countries.filter(c =>
+      c.name.toLowerCase().includes(q) || c.iso3.toLowerCase().includes(q)
+    );
+    render(matches);
+  });
+  input.addEventListener('keydown', e => {
+    const items = results.querySelectorAll('.item');
+    if (e.key === 'ArrowDown') {
+      activeIndex = Math.min(items.length - 1, activeIndex + 1);
+      items.forEach((el, i) => el.classList.toggle('active', i === activeIndex)); e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      activeIndex = Math.max(0, activeIndex - 1);
+      items.forEach((el, i) => el.classList.toggle('active', i === activeIndex)); e.preventDefault();
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      const iso = items[activeIndex].dataset.iso;
+      flyToCountry(iso);
+      if (state.tab === 'em') showExcessChart(iso);
+      else openCountryPanel(iso);
+      input.value = ''; close();
+    } else if (e.key === 'Escape') close();
+  });
+  document.addEventListener('click', e => {
+    if (!input.contains(e.target) && !results.contains(e.target)) close();
+  });
+}
+
+const _featCenterCache = {};
+function featureCenterByIso(iso3) {
+  if (_featCenterCache[iso3] !== undefined) return _featCenterCache[iso3];
+  if (!state.countriesGeo) return null;
+  const feat = state.countriesGeo.features.find(f => {
+    const a3 = f?.properties?.ISO_A3 || f?.properties?.ADM0_A3;
+    return a3 === iso3;
+  });
+  _featCenterCache[iso3] = feat ? featureCenter(feat) : null;
+  return _featCenterCache[iso3];
+}
+
+function flyToCountry(iso3) {
+  const c = featureCenterByIso(iso3);
+  if (c && world) world.pointOfView({ lat: c.lat, lng: c.lng, altitude: 1.4 }, 1200);
+}
+function featureCenter(feat) {
+  let sumLng = 0, sumLat = 0, n = 0;
+  function walk(coords, depth) {
+    if (depth === 0) { sumLng += coords[0]; sumLat += coords[1]; n++; }
+    else for (const c of coords) walk(c, depth - 1);
+  }
+  const t = feat.geometry?.type;
+  if (t === 'Polygon') walk(feat.geometry.coordinates, 2);
+  else if (t === 'MultiPolygon') walk(feat.geometry.coordinates, 3);
+  else return null;
+  return n ? { lng: sumLng / n, lat: sumLat / n } : null;
+}
+
+// ── Bootstrap ──────────────────────────────────────────────────────────────
+async function main() {
+  initGlobe();
+
+  showStatus('Loading country polygons…');
+  const geoResp = await fetch('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@v5.1.2/geojson/ne_110m_admin_0_countries.geojson');
+  state.countriesGeo = await geoResp.json();
+
+  const [m, c] = await Promise.all([fetch('/api/metrics'), fetch('/api/countries')]);
+  state.metrics = (await m.json()).metrics;
+  state.metricsById = Object.fromEntries(state.metrics.map(x => [x.id, x]));
+  state.countries = (await c.json()).countries;
+  state.countriesByIso = Object.fromEntries(state.countries.map(x => [x.iso3, x.name]));
+
+  // Metric selector
+  const sel = document.getElementById('metric');
+  const byCat = {};
+  for (const x of state.metrics) (byCat[x.category] = byCat[x.category] || []).push(x);
+  for (const [cat, metrics] of Object.entries(byCat)) {
+    const og = document.createElement('optgroup'); og.label = cat;
+    for (const x of metrics) {
+      const opt = document.createElement('option'); opt.value = x.id; opt.textContent = x.name;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+  sel.value = state.selectedMetricId;
+  sel.addEventListener('change', () => loadMetric(sel.value));
+
+  document.getElementById('diseaseFilter').addEventListener('change', e => {
+    state.diseaseFilter = e.target.value;
+    if (state.tab === 'outbreaks') { applyOutbreakLayer(); renderOutbreakFeed(); }
+  });
+
+  document.querySelectorAll('.tab').forEach(b => {
+    b.addEventListener('click', () => switchTab(b.dataset.tab));
+  });
+
+  // Markets tab handlers
+  document.getElementById('marketSearch')?.addEventListener('input', e => {
+    state.marketFilter = e.target.value;
+    renderMarketsTable();
+  });
+  document.querySelectorAll('.source-toggle button').forEach(b => {
+    b.addEventListener('click', () => {
+      const src = b.dataset.src;
+      state.marketSources[src] = !state.marketSources[src];
+      b.classList.toggle('on', state.marketSources[src]);
+      renderMarkets();
+    });
+  });
+  document.querySelectorAll('table.markets th[data-sort]').forEach(h => {
+    h.addEventListener('click', () => {
+      const col = h.dataset.sort;
+      if (state.marketSort.col === col) state.marketSort.desc = !state.marketSort.desc;
+      else { state.marketSort.col = col; state.marketSort.desc = true; }
+      renderMarketsTable();
+    });
+  });
+
+  // Atlas tab handlers
+  document.getElementById('atlasSearch')?.addEventListener('input', e => {
+    state.atlasFilter = e.target.value;
+    renderAtlasList();
+  });
+  document.getElementById('atlasCategory')?.addEventListener('change', e => {
+    state.atlasCategory = e.target.value;
+    renderAtlasList();
+  });
+
+  // HAI tab handlers
+  document.getElementById('haiIndicator')?.addEventListener('change', e => {
+    loadHaiLayer(e.target.value);
+  });
+
+  setupSearch();
+  await loadMetric(state.selectedMetricId);
+}
+
+main().catch(e => { console.error(e); showStatus('Failed to initialize'); });
+</script>
+</body>
+</html>

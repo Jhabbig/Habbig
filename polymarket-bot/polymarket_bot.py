@@ -33,7 +33,10 @@ _btc_lead_cache = {"time": 0, "mom_3m": 0, "mom_1m": 0}
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API = "https://clob.polymarket.com"
 BINANCE_API = "https://api.binance.com/api/v3"
-LOCAL_API = "http://localhost:8000"
+# CRYPTO_API_BASE lets the bot reach the dashboard when it runs in a
+# different container (e.g. docker-compose). Default is localhost so the
+# systemd-on-one-host deploy keeps working unchanged.
+LOCAL_API = os.environ.get("CRYPTO_API_BASE", "http://localhost:8000")
 
 TRADE_LOG = Path(__file__).parent / "poly_trades.json"
 BOT_LOG = Path(__file__).parent / "poly_bot_activity.log"

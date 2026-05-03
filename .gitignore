@@ -3,9 +3,11 @@
 .env
 .env.*
 !.env.example
+!.env.*.example
 **/.env
 **/.env.*
 !**/.env.example
+!**/.env.*.example
 
 # Auth databases — contain PBKDF2 password hashes and live session tokens
 auth.db

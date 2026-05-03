@@ -1,0 +1,2177 @@
+# Voter-influence data overlay.
+#
+# What this captures: the measurable forces political-science research
+# consistently links to vote choice. Five buckets, in roughly the order
+# that voters report mattering when surveyed:
+#
+#   1. economic_pressure   — wages, jobs, inflation, housing, consumer
+#                            confidence. Single best predictor of incumbent
+#                            re-election in democracies (Bartels, Achen).
+#   2. trust               — institutional trust, satisfaction with
+#                            democracy, corruption perception, right-track.
+#                            Drives populist surges and protest votes.
+#   3. identity            — education, religion, urban-rural, generational
+#                            mix, gender gap. The cleavage map.
+#   4. information         — internet/social-media penetration, top
+#                            platforms, press freedom, misinformation
+#                            exposure. The shape of the information diet.
+#   5. crisis_memory       — recent shocks still salient: pandemics, wars,
+#                            terror attacks, scandals, riots.
+#   6. demographic_shifts  — net migration, generational replacement,
+#                            education trend. The slow-moving substrate.
+#
+# Conventions:
+#   • Percentages are 0..100. Survey-derived numbers carry their pollster
+#     in `source`. Trends use words (rising/falling/stable) rather than
+#     numbers, so you can see direction without false precision.
+#   • Ranks are out of total countries assessed (CPI ~180, Press Freedom ~180).
+#   • `key_pressure`, `key_cleavage`, `key_shift` are one-liner takeaways.
+#
+# Data lineage: hand-curated from public sources cited per block —
+# Pew Global Attitudes, Edelman Trust Barometer, World Values Survey,
+# OECD Better Life Index, Transparency International CPI 2025, RSF Press
+# Freedom Index 2025, World Bank, IMF, V-Dem, Pew Religious Landscape,
+# DataReportal Digital, UN DESA, UNODC homicide data.
+
+schema_version: 1
+last_curated: "2026-04-26"
+
+countries:
+
+  # ─────────────────────────── TIER A ────────────────────────────────
+
+  USA:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.4
+      unemployment_pct: 4.2
+      unemployment_trend: "stable"
+      inflation_pct: 3.4
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "Lingering inflation + housing affordability"
+      source: "BLS, Fed, Conference Board (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 22
+      trust_in_media_pct: 32
+      satisfaction_with_democracy_pct: 36
+      right_track_pct: 28
+      corruption_perception_score: 69
+      corruption_perception_rank: 24
+      source: "Pew, Gallup, Edelman, TI CPI 2025"
+    identity:
+      university_educated_pct: 38
+      religious_attendance_weekly_pct: 22
+      dominant_religion: "Christian (63%, declining)"
+      urban_pct: 83
+      median_age: 38.9
+      gender_gap_pp: 12
+      diploma_divide_pp: 24
+      key_cleavage: "Diploma divide + urban-rural; widening gender gap"
+    information:
+      internet_pct: 92
+      social_media_users_pct: 73
+      top_platforms: ["Facebook", "YouTube", "TikTok", "X"]
+      news_consumption: "TV cable for 50+; social platforms for under-35"
+      misinformation_exposure: "high"
+      press_freedom_rank: 55
+    crisis_memory:
+      - "2021-01: Capitol assault — political violence reframed both sides"
+      - "2020-22: Covid + institutional-trust collapse"
+      - "2022 inflation peak — real-wage shock"
+      - "2024 Trump assassination attempts — heightened security framing"
+    demographic_shifts:
+      net_migration_per_1000: 3.1
+      population_growth_5y_pct: 1.4
+      key_shift: "Hispanic +1.2pp/5y; college-grad share +2.8pp; rural -0.7pp"
+
+  GBR:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.6
+      unemployment_pct: 4.4
+      unemployment_trend: "rising"
+      inflation_pct: 3.1
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "NHS waits + cost-of-living squeeze + post-Brexit growth gap"
+      source: "ONS, BoE, GfK Consumer Confidence (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 19
+      trust_in_media_pct: 31
+      satisfaction_with_democracy_pct: 41
+      right_track_pct: 14
+      corruption_perception_score: 71
+      corruption_perception_rank: 20
+      source: "Edelman, Ipsos, Hansard Society, TI CPI 2025"
+    identity:
+      university_educated_pct: 47
+      religious_attendance_weekly_pct: 9
+      dominant_religion: "Christian (46%, declining); 37% no religion"
+      urban_pct: 84
+      median_age: 40.6
+      gender_gap_pp: 8
+      diploma_divide_pp: 18
+      key_cleavage: "Brexit hangover + age divide + Reform-Tory split"
+    information:
+      internet_pct: 95
+      social_media_users_pct: 79
+      top_platforms: ["WhatsApp", "Facebook", "Instagram", "TikTok"]
+      news_consumption: "BBC + tabloids; GB News rising on right"
+      misinformation_exposure: "moderate"
+      press_freedom_rank: 26
+    crisis_memory:
+      - "2022 Truss mini-budget — pension crisis + 49 days"
+      - "2016-20 Brexit referendum + delivery"
+      - "2017 Manchester / 2017 London Bridge — terror salience"
+      - "Cost-of-living winter 2022-23 — energy bills doubled"
+    demographic_shifts:
+      net_migration_per_1000: 11.5
+      population_growth_5y_pct: 2.4
+      key_shift: "Net migration record-high; small-boats salience; aging accelerating"
+
+  DEU:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.1
+      unemployment_pct: 6.0
+      unemployment_trend: "rising"
+      inflation_pct: 2.4
+      inflation_trend: "easing"
+      housing_unaffordability: "strained"
+      consumer_confidence: "below_avg"
+      key_pressure: "Industrial recession + energy costs + migration politics"
+      source: "Destatis, Bundesbank, GfK (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 27
+      trust_in_media_pct: 47
+      satisfaction_with_democracy_pct: 52
+      right_track_pct: 30
+      corruption_perception_score: 75
+      corruption_perception_rank: 15
+      source: "Edelman, Eurobarometer, ARD, TI CPI 2025"
+    identity:
+      university_educated_pct: 33
+      religious_attendance_weekly_pct: 9
+      dominant_religion: "Christian (49%, declining); Muslim 6%; 41% no religion"
+      urban_pct: 78
+      median_age: 45.2
+      gender_gap_pp: 7
+      diploma_divide_pp: 14
+      key_cleavage: "East-West divide; Christian-Muslim integration; AfD vote concentrated <40 male"
+    information:
+      internet_pct: 93
+      social_media_users_pct: 72
+      top_platforms: ["WhatsApp", "Instagram", "Facebook", "TikTok", "Telegram (alt-right)"]
+      news_consumption: "ARD/ZDF public broadcasters dominant; Bild tabloid"
+      misinformation_exposure: "moderate-high (Telegram echo chambers)"
+      press_freedom_rank: 11
+    crisis_memory:
+      - "2022-23 energy crisis post-Russian-gas cut"
+      - "2015-16 refugee influx — origin of AfD breakthrough"
+      - "2024 Magdeburg Christmas-market attack — migration debate"
+      - "Pandemic protests 2020-21 — Querdenker movement seeded AfD shift"
+    demographic_shifts:
+      net_migration_per_1000: 9.8
+      population_growth_5y_pct: 1.0
+      key_shift: "Aging at speed; migration provides growth; East depopulating"
+
+  FRA:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.4
+      unemployment_pct: 7.5
+      unemployment_trend: "stable"
+      inflation_pct: 2.0
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "below_avg"
+      key_pressure: "Purchasing power + pension reform fallout + immigration"
+      source: "INSEE, Banque de France, Ifop (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 25
+      trust_in_media_pct: 30
+      satisfaction_with_democracy_pct: 47
+      right_track_pct: 23
+      corruption_perception_score: 67
+      corruption_perception_rank: 25
+      source: "Cevipof, Edelman, TI CPI 2025"
+    identity:
+      university_educated_pct: 39
+      religious_attendance_weekly_pct: 8
+      dominant_religion: "Catholic (46%, declining); Muslim 9%; 40% no religion"
+      urban_pct: 81
+      median_age: 42.3
+      gender_gap_pp: 5
+      diploma_divide_pp: 19
+      key_cleavage: "Macron-RN-NFP three-block; banlieue vs périphérique vs core"
+    information:
+      internet_pct: 90
+      social_media_users_pct: 82
+      top_platforms: ["WhatsApp", "Instagram", "Facebook", "TikTok", "X"]
+      news_consumption: "TV news + Le Monde / Figaro / Mediapart; CNews on right"
+      misinformation_exposure: "moderate"
+      press_freedom_rank: 21
+    crisis_memory:
+      - "2018-19 Gilets Jaunes — fuel-tax revolt"
+      - "2023 pension reform protests + 49.3"
+      - "2024 dissolution + snap election — RN largest party"
+      - "2015-16 Charlie Hebdo + Bataclan — terror baseline"
+    demographic_shifts:
+      net_migration_per_1000: 1.1
+      population_growth_5y_pct: 0.9
+      key_shift: "Slow growth; suburbs depopulating; rural drift right"
+
+  BRA:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.8
+      unemployment_pct: 7.4
+      unemployment_trend: "easing"
+      inflation_pct: 4.2
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "average"
+      key_pressure: "Food prices + crime + fiscal-rule erosion"
+      source: "IBGE, BCB, FGV IBRE (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 32
+      trust_in_media_pct: 38
+      satisfaction_with_democracy_pct: 45
+      right_track_pct: 35
+      corruption_perception_score: 36
+      corruption_perception_rank: 96
+      source: "Datafolha, Edelman, TI CPI 2025"
+    identity:
+      university_educated_pct: 18
+      religious_attendance_weekly_pct: 32
+      dominant_religion: "Catholic (50%, falling); Evangelical (31%, rising)"
+      urban_pct: 88
+      median_age: 33.8
+      gender_gap_pp: 6
+      diploma_divide_pp: 15
+      key_cleavage: "Religious shift Catholic → Evangelical → Bolsonaro-aligned right"
+    information:
+      internet_pct: 84
+      social_media_users_pct: 80
+      top_platforms: ["WhatsApp", "Instagram", "Facebook", "TikTok"]
+      news_consumption: "WhatsApp groups, TV Globo, online video"
+      misinformation_exposure: "very high (WhatsApp closed networks)"
+      press_freedom_rank: 90
+    crisis_memory:
+      - "2023-01-08 Brasília attempted coup"
+      - "2018 Bolsonaro stabbing → election"
+      - "2014-21 Lava Jato corruption probe — re-litigated each cycle"
+      - "Covid 600k+ dead — Bolsonaro's biggest baggage"
+    demographic_shifts:
+      net_migration_per_1000: 0.4
+      population_growth_5y_pct: 0.5
+      key_shift: "Evangelical share +1pp/yr; rural-to-urban tail still ongoing"
+
+  ARG:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.2
+      unemployment_pct: 7.6
+      unemployment_trend: "stable"
+      inflation_pct: 41
+      inflation_trend: "easing fast"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Hyperinflation hangover + dollarisation debate + cepo lift"
+      source: "INDEC, BCRA, UTDT (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 41
+      trust_in_media_pct: 38
+      satisfaction_with_democracy_pct: 30
+      right_track_pct: 47
+      corruption_perception_score: 37
+      corruption_perception_rank: 99
+      source: "Poliarquía, UTDT Confianza Gobierno, TI CPI 2025"
+    identity:
+      university_educated_pct: 23
+      religious_attendance_weekly_pct: 18
+      dominant_religion: "Catholic (62%, declining); Evangelical 15%"
+      urban_pct: 92
+      median_age: 32.4
+      gender_gap_pp: -4
+      diploma_divide_pp: 8
+      key_cleavage: "Anti-Peronist alignment + young men → Milei; women + retirees → Peronism"
+    information:
+      internet_pct: 87
+      social_media_users_pct: 84
+      top_platforms: ["WhatsApp", "Instagram", "TikTok", "X (Milei active)"]
+      news_consumption: "TN, Clarín, La Nación; podcast / streaming on right"
+      misinformation_exposure: "moderate-high"
+      press_freedom_rank: 66
+    crisis_memory:
+      - "2001 corralito + default — generational trauma"
+      - "2023 inflation 211% peak — Milei election trigger"
+      - "2018 IMF programme restart — Macri's reputation hit"
+      - "Falklands 1982 — recurring election rhetoric"
+    demographic_shifts:
+      net_migration_per_1000: 0.0
+      population_growth_5y_pct: 0.7
+      key_shift: "Brain drain to Spain + US; emigration up post-Milei start"
+
+  ISR:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.3
+      unemployment_pct: 3.7
+      unemployment_trend: "stable"
+      inflation_pct: 3.0
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "Reservist economy + housing + war-tax fatigue"
+      source: "BoI, CBS, Bank Hapoalim (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 29
+      trust_in_media_pct: 36
+      satisfaction_with_democracy_pct: 31
+      right_track_pct: 18
+      corruption_perception_score: 64
+      corruption_perception_rank: 33
+      source: "Israel Democracy Institute, TI CPI 2025"
+    identity:
+      university_educated_pct: 51
+      religious_attendance_weekly_pct: 32
+      dominant_religion: "Jewish (74%); Muslim 18%; Christian 2%; Druze 1.5%"
+      urban_pct: 92
+      median_age: 30.8
+      gender_gap_pp: 10
+      diploma_divide_pp: 8
+      key_cleavage: "Secular/traditional/Haredi/Arab quadrant; hostage families now its own bloc"
+    information:
+      internet_pct: 92
+      social_media_users_pct: 81
+      top_platforms: ["WhatsApp", "Facebook", "Instagram", "Telegram (war news)"]
+      news_consumption: "Channel 12 / 13 news; Haaretz, Yedioth, Israel Hayom"
+      misinformation_exposure: "high (war fog + IDF/Hamas info-ops)"
+      press_freedom_rank: 101
+    crisis_memory:
+      - "2023-10-07 Hamas attack — defining trauma"
+      - "2023 judicial reform protests pre-war"
+      - "Hostage saga — recurrent crisis trigger"
+      - "2025 strikes on Iran — Israeli home-front baseline elevated"
+    demographic_shifts:
+      net_migration_per_1000: 6.0
+      population_growth_5y_pct: 9.3
+      key_shift: "Haredi share +0.5pp/yr; high birthrate keeps electorate young"
+
+  IND:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.2
+      unemployment_pct: 7.5
+      unemployment_trend: "stable"
+      inflation_pct: 4.6
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "above_avg"
+      key_pressure: "Jobs (esp youth) + agrarian distress + food inflation"
+      source: "MoSPI, RBI, CMIE (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 73
+      trust_in_media_pct: 50
+      satisfaction_with_democracy_pct: 71
+      right_track_pct: 60
+      corruption_perception_score: 39
+      corruption_perception_rank: 93
+      source: "Edelman, CSDS-Lokniti, TI CPI 2025"
+    identity:
+      university_educated_pct: 11
+      religious_attendance_weekly_pct: 60
+      dominant_religion: "Hindu (80%); Muslim 14%; Christian 2.3%; Sikh 1.7%"
+      urban_pct: 36
+      median_age: 28.7
+      gender_gap_pp: 3
+      diploma_divide_pp: 6
+      key_cleavage: "Hindu-Muslim cleavage; caste blocs (OBC, Dalit, upper); Hindi-belt vs South"
+    information:
+      internet_pct: 52
+      social_media_users_pct: 33
+      top_platforms: ["WhatsApp", "YouTube", "Facebook", "Instagram"]
+      news_consumption: "TV news (Hindi/regional); WhatsApp forwarding very strong"
+      misinformation_exposure: "very high"
+      press_freedom_rank: 159
+    crisis_memory:
+      - "2019 Pulwama-Balakot — security election"
+      - "2020-21 farm-laws repeal — first major Modi reversal"
+      - "2025 Manipur conflict + Pahalgam attack — security salience"
+      - "2024 stunning BJP majority loss — coalition era restart"
+    demographic_shifts:
+      net_migration_per_1000: -0.4
+      population_growth_5y_pct: 4.1
+      key_shift: "Now most populous country; under-25 cohort is the biggest voter bloc"
+
+  MEX:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 4.0
+      unemployment_pct: 2.8
+      unemployment_trend: "stable"
+      inflation_pct: 4.4
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "above_avg"
+      key_pressure: "Cartel violence + nearshoring opportunity + Pemex debt"
+      source: "INEGI, Banxico, Mitofsky (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 53
+      trust_in_media_pct: 36
+      satisfaction_with_democracy_pct: 60
+      right_track_pct: 52
+      corruption_perception_score: 26
+      corruption_perception_rank: 126
+      source: "Mitofsky, INEGI ENCIG, TI CPI 2025"
+    identity:
+      university_educated_pct: 21
+      religious_attendance_weekly_pct: 32
+      dominant_religion: "Catholic (78%, declining); Evangelical 11% (rising)"
+      urban_pct: 81
+      median_age: 30.5
+      gender_gap_pp: 4
+      diploma_divide_pp: 6
+      key_cleavage: "Welfare-state recipients (loyal MORENA) vs urban middle vs north business"
+    information:
+      internet_pct: 78
+      social_media_users_pct: 77
+      top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"]
+      news_consumption: "TV (Televisa, TV Azteca); AMLO mañanera set the agenda"
+      misinformation_exposure: "high"
+      press_freedom_rank: 121
+    crisis_memory:
+      - "2014 Ayotzinapa 43 disappeared — recurring scandal"
+      - "Ongoing cartel violence — record homicides 2018-23"
+      - "Covid death toll — second-worst in OECD"
+      - "Pemex serial bailouts — fiscal anxiety"
+    demographic_shifts:
+      net_migration_per_1000: -0.4
+      population_growth_5y_pct: 3.6
+      key_shift: "Returning migrants from US; urban share saturating"
+
+  CAN:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.9
+      unemployment_pct: 6.4
+      unemployment_trend: "rising"
+      inflation_pct: 2.6
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "Housing crisis + immigration backlash + productivity gap with US"
+      source: "StatCan, BoC, Conference Board (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 32
+      trust_in_media_pct: 49
+      satisfaction_with_democracy_pct: 56
+      right_track_pct: 27
+      corruption_perception_score: 76
+      corruption_perception_rank: 13
+      source: "Edelman, Abacus, TI CPI 2025"
+    identity:
+      university_educated_pct: 60
+      religious_attendance_weekly_pct: 14
+      dominant_religion: "Christian (53%, declining); 35% no religion"
+      urban_pct: 82
+      median_age: 41.7
+      gender_gap_pp: 9
+      diploma_divide_pp: 11
+      key_cleavage: "Housing have/have-not; Quebec exception; prairie alienation"
+    information:
+      internet_pct: 94
+      social_media_users_pct: 76
+      top_platforms: ["Facebook", "YouTube", "Instagram", "TikTok"]
+      news_consumption: "CBC, CTV, Global; declining traditional newspapers"
+      misinformation_exposure: "moderate"
+      press_freedom_rank: 14
+    crisis_memory:
+      - "2022 Ottawa trucker convoy — civil-liberties debate"
+      - "2024 doubled-immigration backlash"
+      - "Trudeau approval collapse 2024-25 → Carney handoff"
+      - "Trump tariffs 2025 — sovereignty discourse"
+    demographic_shifts:
+      net_migration_per_1000: 12.4
+      population_growth_5y_pct: 5.8
+      key_shift: "Highest immigration share in G7; political reaction starting to bite"
+
+  ITA:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -0.4
+      unemployment_pct: 6.2
+      unemployment_trend: "easing"
+      inflation_pct: 1.8
+      inflation_trend: "easing"
+      housing_unaffordability: "strained"
+      consumer_confidence: "below_avg"
+      key_pressure: "Wage stagnation 25 yrs + emigration + South-North gap"
+      source: "ISTAT, Bank of Italy (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 36
+      trust_in_media_pct: 34
+      satisfaction_with_democracy_pct: 41
+      right_track_pct: 34
+      corruption_perception_score: 56
+      corruption_perception_rank: 42
+      source: "Eurobarometer, IPSOS, TI CPI 2025"
+    identity:
+      university_educated_pct: 21
+      religious_attendance_weekly_pct: 22
+      dominant_religion: "Catholic (74%, declining); 17% no religion"
+      urban_pct: 71
+      median_age: 47.6
+      gender_gap_pp: 4
+      diploma_divide_pp: 6
+      key_cleavage: "North-South cleavage; aging electorate; emigration of <35"
+    information:
+      internet_pct: 85
+      social_media_users_pct: 71
+      top_platforms: ["WhatsApp", "Facebook", "Instagram", "TikTok"]
+      news_consumption: "RAI + Mediaset TV; Corriere/Repubblica/Stampa"
+      misinformation_exposure: "moderate"
+      press_freedom_rank: 46
+    crisis_memory:
+      - "2022 Draghi → Meloni — first hard-right govt since WWII"
+      - "Covid 175k dead — Lombardy hit hardest"
+      - "Migration in Mediterranean — perennial salience"
+      - "2018-19 yellow-green populist coalition — short-lived but normalizing"
+    demographic_shifts:
+      net_migration_per_1000: 1.7
+      population_growth_5y_pct: -1.0
+      key_shift: "Population shrinking; emigration of skilled young; aging at speed"
+
+  POL:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 7.0
+      unemployment_pct: 2.9
+      unemployment_trend: "stable"
+      inflation_pct: 4.6
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "average"
+      key_pressure: "Inflation hangover + Ukraine grain spillover + judicial reform"
+      source: "GUS, NBP, CBOS (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 35
+      trust_in_media_pct: 40
+      satisfaction_with_democracy_pct: 49
+      right_track_pct: 33
+      corruption_perception_score: 53
+      corruption_perception_rank: 47
+      source: "CBOS, Edelman, TI CPI 2025"
+    identity:
+      university_educated_pct: 37
+      religious_attendance_weekly_pct: 36
+      dominant_religion: "Catholic (71%, falling fast); secularising rapidly"
+      urban_pct: 60
+      median_age: 41.9
+      gender_gap_pp: 8
+      diploma_divide_pp: 22
+      key_cleavage: "Urban-rural; East-West; Catholic identity vs secularising youth"
+    information:
+      internet_pct: 88
+      social_media_users_pct: 73
+      top_platforms: ["Facebook", "WhatsApp", "Instagram", "TikTok"]
+      news_consumption: "TVN, Polsat, public TVP; politicised radio"
+      misinformation_exposure: "moderate-high"
+      press_freedom_rank: 47
+    crisis_memory:
+      - "2023 Tusk return — judicial-reform reversal in progress"
+      - "2022 Russia invasion — 1.5M Ukrainian refugees absorbed"
+      - "2020 abortion ruling — Black Protest movement"
+      - "Border-with-Belarus migration crises 2021"
+    demographic_shifts:
+      net_migration_per_1000: 4.2
+      population_growth_5y_pct: -0.7
+      key_shift: "Ukrainian refugees ~1.5M settled; secularisation accelerating"
+
+  JPN:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.2
+      unemployment_pct: 2.6
+      unemployment_trend: "stable"
+      inflation_pct: 2.5
+      inflation_trend: "easing"
+      housing_unaffordability: "manageable"
+      consumer_confidence: "below_avg"
+      key_pressure: "Yen weakness + wage stagnation + LDP slush-fund scandal"
+      source: "MIC, BoJ, Cabinet Office (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 23
+      trust_in_media_pct: 36
+      satisfaction_with_democracy_pct: 49
+      right_track_pct: 22
+      corruption_perception_score: 71
+      corruption_perception_rank: 19
+      source: "NHK, Edelman, TI CPI 2025"
+    identity:
+      university_educated_pct: 53
+      religious_attendance_weekly_pct: 8
+      dominant_religion: "Shinto/Buddhist (most non-practising); Christian 1%"
+      urban_pct: 92
+      median_age: 49.3
+      gender_gap_pp: 4
+      diploma_divide_pp: 5
+      key_cleavage: "Generational gulf; women's vote shifting away from LDP; rural depopulation"
+    information:
+      internet_pct: 93
+      social_media_users_pct: 78
+      top_platforms: ["LINE", "X (Twitter)", "Instagram", "YouTube"]
+      news_consumption: "NHK + major dailies (Yomiuri, Asahi); TV news still dominant"
+      misinformation_exposure: "moderate"
+      press_freedom_rank: 70
+    crisis_memory:
+      - "2022 Abe assassination + Unification Church scandal"
+      - "2023-24 LDP slush-fund scandal — confidence collapse"
+      - "2011-now Fukushima legacy — energy/safety politics"
+      - "Post-2020 yen-weakness era — first inflation in 30 yrs"
+    demographic_shifts:
+      net_migration_per_1000: 1.2
+      population_growth_5y_pct: -1.6
+      key_shift: "Population shrinking 600k/yr; first non-Japanese-majority neighbourhoods in Tokyo"
+
+  # ─────────────────────────── TIER A continued ──────────────────────
+
+  KOR:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.8
+      unemployment_pct: 3.0
+      unemployment_trend: "stable"
+      inflation_pct: 2.6
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "Housing-market shock + youth unemployment + childcare cost"
+      source: "Statistics Korea, BoK, KCCI (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 35
+      trust_in_media_pct: 28
+      satisfaction_with_democracy_pct: 44
+      right_track_pct: 30
+      corruption_perception_score: 64
+      corruption_perception_rank: 32
+      source: "Edelman, Realmeter, TI CPI 2025"
+    identity:
+      university_educated_pct: 70
+      religious_attendance_weekly_pct: 30
+      dominant_religion: "No religion 56%; Protestant 20%; Buddhist 16%; Catholic 11%"
+      urban_pct: 81
+      median_age: 44.9
+      gender_gap_pp: 18
+      diploma_divide_pp: 8
+      key_cleavage: "Age-gender gulf — young men sharply right, young women sharply left"
+    information:
+      internet_pct: 97
+      social_media_users_pct: 92
+      top_platforms: ["KakaoTalk", "Instagram", "YouTube", "Naver Blog"]
+      news_consumption: "Naver / Daum portals dominate; YouTube politics rising"
+      misinformation_exposure: "high (YouTube echo-chambers)"
+      press_freedom_rank: 47
+    crisis_memory:
+      - "2024-12 Yoon martial-law attempt + impeachment"
+      - "2022 Itaewon crowd disaster — Yoon trust hit"
+      - "2014 Sewol ferry — generational political trauma"
+      - "2017 Park Geun-hye impeachment — democratic-strength precedent"
+    demographic_shifts:
+      net_migration_per_1000: 0.8
+      population_growth_5y_pct: -0.2
+      key_shift: "Lowest birthrate in world; aging accelerating; first Korean shrinkage"
+
+  IDN:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 2.1
+      unemployment_pct: 5.0
+      unemployment_trend: "stable"
+      inflation_pct: 2.7
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "above_avg"
+      key_pressure: "Rice prices + nickel-mining royalties + IKN capital build cost"
+      source: "BPS, BI, Indikator Politik (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 78
+      trust_in_media_pct: 56
+      satisfaction_with_democracy_pct: 68
+      right_track_pct: 65
+      corruption_perception_score: 37
+      corruption_perception_rank: 99
+      source: "Edelman, LSI, TI CPI 2025"
+    identity:
+      university_educated_pct: 9
+      religious_attendance_weekly_pct: 64
+      dominant_religion: "Muslim (87%); Christian 10%; Hindu 1.7%; Buddhist 0.7%"
+      urban_pct: 58
+      median_age: 30.0
+      gender_gap_pp: 3
+      diploma_divide_pp: 4
+      key_cleavage: "Java vs outer islands; santri-abangan religious-practice axis"
+    information:
+      internet_pct: 79
+      social_media_users_pct: 60
+      top_platforms: ["WhatsApp", "TikTok", "Instagram", "Facebook"]
+      news_consumption: "TV news (RCTI, MetroTV); WhatsApp; YouTube"
+      misinformation_exposure: "high (closed groups)"
+      press_freedom_rank: 113
+    crisis_memory:
+      - "2024 Prabowo win — controversial Constitutional-Court ruling on age limit"
+      - "2019-20 anti-corruption-law protests"
+      - "1998 Asian-crisis memory — institutional baseline"
+      - "Pandemic — uneven response, vaccine politics"
+    demographic_shifts:
+      net_migration_per_1000: -0.5
+      population_growth_5y_pct: 4.5
+      key_shift: "Young population (median 30); Muslim-majority youth driving turnout"
+
+  TUR:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -3.0
+      unemployment_pct: 9.4
+      unemployment_trend: "stable"
+      inflation_pct: 38
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Inflation chronic + lira collapse + 2023 earthquake reconstruction"
+      source: "TURKSTAT, CBRT, MetroPOLL (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 40
+      trust_in_media_pct: 35
+      satisfaction_with_democracy_pct: 38
+      right_track_pct: 30
+      corruption_perception_score: 33
+      corruption_perception_rank: 113
+      source: "Edelman, KONDA, TI CPI 2025"
+    identity:
+      university_educated_pct: 25
+      religious_attendance_weekly_pct: 38
+      dominant_religion: "Sunni Muslim (~80%); Alevi 10-15%; Christian 0.2%"
+      urban_pct: 77
+      median_age: 33.5
+      gender_gap_pp: 11
+      diploma_divide_pp: 14
+      key_cleavage: "Secular-religious; Turkish-Kurdish; coastal-interior"
+    information:
+      internet_pct: 84
+      social_media_users_pct: 75
+      top_platforms: ["WhatsApp", "Instagram", "X (Twitter)", "YouTube"]
+      news_consumption: "Govt-aligned TV (TRT, ATV) + opposition (Halk TV, Sözcü); X very politicised"
+      misinformation_exposure: "high"
+      press_freedom_rank: 158
+    crisis_memory:
+      - "2023-02 Kahramanmaraş earthquakes — 50k+ dead"
+      - "2016 coup attempt + purges"
+      - "2024 İmamoğlu municipal-win sweep"
+      - "Lira crisis 2021-23 — middle-class wealth destruction"
+    demographic_shifts:
+      net_migration_per_1000: 1.5
+      population_growth_5y_pct: 2.4
+      key_shift: "Syrian refugees ~3.5M; pressure on labour market and welfare"
+
+  TWN:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 2.0
+      unemployment_pct: 3.4
+      unemployment_trend: "stable"
+      inflation_pct: 2.3
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "average"
+      key_pressure: "Cross-strait threat + housing prices + energy supply"
+      source: "DGBAS, CBC, TPOF (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 47
+      trust_in_media_pct: 31
+      satisfaction_with_democracy_pct: 64
+      right_track_pct: 47
+      corruption_perception_score: 67
+      corruption_perception_rank: 28
+      source: "Academia Sinica, TPOF, TI CPI 2025"
+    identity:
+      university_educated_pct: 45
+      religious_attendance_weekly_pct: 28
+      dominant_religion: "Folk + Buddhist + Taoist mix; Christian 4%"
+      urban_pct: 80
+      median_age: 43.0
+      gender_gap_pp: 6
+      diploma_divide_pp: 7
+      key_cleavage: "Taiwanese-vs-Chinese identity (78% Taiwanese-only); generational"
+    information:
+      internet_pct: 95
+      social_media_users_pct: 84
+      top_platforms: ["LINE", "Facebook", "Instagram", "YouTube"]
+      news_consumption: "TV networks fragmented; LINE forwards dominant for older voters"
+      misinformation_exposure: "very high (PRC info-ops documented)"
+      press_freedom_rank: 35
+    crisis_memory:
+      - "2022 Pelosi visit + PLA exercises"
+      - "Ongoing PLA incursions over median line — daily news"
+      - "2014 Sunflower Movement — generational"
+      - "TSMC export controls / chip-war salience"
+    demographic_shifts:
+      net_migration_per_1000: 1.0
+      population_growth_5y_pct: -1.0
+      key_shift: "Lowest birthrate; SE-Asian migrant workers ~700k; aging fast"
+
+  PHL:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.5
+      unemployment_pct: 4.1
+      unemployment_trend: "stable"
+      inflation_pct: 3.0
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "average"
+      key_pressure: "Rice prices + remittance flows + South-China-Sea pressure"
+      source: "PSA, BSP, Pulse Asia (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 53
+      trust_in_media_pct: 56
+      satisfaction_with_democracy_pct: 55
+      right_track_pct: 39
+      corruption_perception_score: 33
+      corruption_perception_rank: 115
+      source: "Pulse Asia, OCTA, TI CPI 2025"
+    identity:
+      university_educated_pct: 27
+      religious_attendance_weekly_pct: 47
+      dominant_religion: "Catholic (79%); Muslim (Bangsamoro) 5%; Evangelical 3%"
+      urban_pct: 48
+      median_age: 25.7
+      gender_gap_pp: 4
+      diploma_divide_pp: 5
+      key_cleavage: "Marcos-Duterte fracture; Mindanao vs Luzon; OFW remittance class"
+    information:
+      internet_pct: 73
+      social_media_users_pct: 68
+      top_platforms: ["Facebook", "TikTok", "YouTube", "Twitter/X"]
+      news_consumption: "Facebook is the news; ABS-CBN restored; TV5 / GMA"
+      misinformation_exposure: "very high"
+      press_freedom_rank: 134
+    crisis_memory:
+      - "Marcos-Duterte 2025 split — recurring crisis"
+      - "Drug-war legacy (2016-22) — 12-30k extra-judicial deaths"
+      - "2024 South-China-Sea standoffs — Scarborough escalations"
+      - "Typhoon Yolanda 2013 + recurring climate disasters"
+    demographic_shifts:
+      net_migration_per_1000: -1.2
+      population_growth_5y_pct: 5.5
+      key_shift: "Young population, OFW remittances ~9% GDP — diaspora politics matters"
+
+  AUS:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.5
+      unemployment_pct: 4.0
+      unemployment_trend: "stable"
+      inflation_pct: 2.5
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "Housing crisis + rate-cycle pain + energy transition"
+      source: "ABS, RBA, Westpac-MI Consumer (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 45
+      trust_in_media_pct: 38
+      satisfaction_with_democracy_pct: 65
+      right_track_pct: 38
+      corruption_perception_score: 75
+      corruption_perception_rank: 14
+      source: "Edelman, ANU Election Study, TI CPI 2025"
+    identity:
+      university_educated_pct: 50
+      religious_attendance_weekly_pct: 12
+      dominant_religion: "Christian (44%, declining); 39% no religion"
+      urban_pct: 86
+      median_age: 38.5
+      gender_gap_pp: 9
+      diploma_divide_pp: 12
+      key_cleavage: "Big-city houseowner vs renter; outer-suburb cost-of-living; Teal seats vs traditional"
+    information:
+      internet_pct: 91
+      social_media_users_pct: 79
+      top_platforms: ["Facebook", "Instagram", "YouTube", "TikTok"]
+      news_consumption: "ABC public + News Corp papers; talkback radio strong"
+      misinformation_exposure: "moderate"
+      press_freedom_rank: 27
+    crisis_memory:
+      - "2023-10 Voice referendum defeat — Indigenous-policy reset"
+      - "2019-20 Black Summer fires — climate baseline shift"
+      - "Covid border-closure era — Coalition wins extended then lost"
+      - "2025 minority govt — first since 2010"
+    demographic_shifts:
+      net_migration_per_1000: 17.5
+      population_growth_5y_pct: 6.4
+      key_shift: "Highest immigration share OECD; political backlash building"
+
+  NGA:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -8.0
+      unemployment_pct: 5.0
+      unemployment_trend: "rising"
+      inflation_pct: 33
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Subsidy-removal pain + naira collapse + insecurity (banditry, IPOB)"
+      source: "NBS, CBN, NOIPolls (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 26
+      trust_in_media_pct: 50
+      satisfaction_with_democracy_pct: 32
+      right_track_pct: 22
+      corruption_perception_score: 26
+      corruption_perception_rank: 145
+      source: "NOIPolls, Afrobarometer, TI CPI 2025"
+    identity:
+      university_educated_pct: 11
+      religious_attendance_weekly_pct: 75
+      dominant_religion: "Christian (~50%) + Muslim (~50%) — geographic split"
+      urban_pct: 54
+      median_age: 18.1
+      gender_gap_pp: 5
+      diploma_divide_pp: 4
+      key_cleavage: "North (Muslim, APC) / Southeast (Igbo, LP) / Southwest (Yoruba, APC) / South-South (Niger Delta)"
+    information:
+      internet_pct: 55
+      social_media_users_pct: 22
+      top_platforms: ["WhatsApp", "Facebook", "X (Twitter)", "TikTok"]
+      news_consumption: "Radio still very important; X political; church/mosque networks"
+      misinformation_exposure: "high"
+      press_freedom_rank: 112
+    crisis_memory:
+      - "2020 #EndSARS protests + Lekki shooting"
+      - "Ongoing Boko Haram + ISWAP + bandit attacks"
+      - "2023 election Tinubu-Atiku-Obi three-way result"
+      - "Subsidy removal + naira-floating pain 2023-onward"
+    demographic_shifts:
+      net_migration_per_1000: -0.3
+      population_growth_5y_pct: 13.0
+      key_shift: "Youngest country (median 18); 4M new voters/cycle; massive emigration of skilled"
+
+  ZAF:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.2
+      unemployment_pct: 32
+      unemployment_trend: "stable"
+      inflation_pct: 4.5
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Unemployment 32% + load-shedding + crime"
+      source: "StatsSA, SARB, Ipsos SA (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 22
+      trust_in_media_pct: 50
+      satisfaction_with_democracy_pct: 30
+      right_track_pct: 18
+      corruption_perception_score: 41
+      corruption_perception_rank: 83
+      source: "Afrobarometer, Edelman, TI CPI 2025"
+    identity:
+      university_educated_pct: 14
+      religious_attendance_weekly_pct: 55
+      dominant_religion: "Christian (78%); traditional African religions; Hindu, Muslim minorities"
+      urban_pct: 68
+      median_age: 28.0
+      gender_gap_pp: 4
+      diploma_divide_pp: 5
+      key_cleavage: "Race-class still central; Zuma's MK split ANC; DA white-base + middle-class urban"
+    information:
+      internet_pct: 72
+      social_media_users_pct: 47
+      top_platforms: ["WhatsApp", "Facebook", "TikTok", "X (Twitter)"]
+      news_consumption: "SABC + News24 + Daily Maverick; talk radio vital"
+      misinformation_exposure: "high"
+      press_freedom_rank: 38
+    crisis_memory:
+      - "2024 ANC loses majority for first time — GNU formed"
+      - "2021 KwaZulu-Natal riots — institutional fragility"
+      - "Ongoing load-shedding (Stage 6 baseline)"
+      - "Marikana 2012 + Zondo Commission revelations"
+    demographic_shifts:
+      net_migration_per_1000: 1.0
+      population_growth_5y_pct: 5.4
+      key_shift: "Urban migration continues; Zimbabwean diaspora ~3M; born-frees now decisive"
+
+  PAK:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -3.0
+      unemployment_pct: 8.0
+      unemployment_trend: "rising"
+      inflation_pct: 11
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "IMF programme + energy bills + 2022 floods recovery"
+      source: "PBS, SBP, Gallup Pakistan (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 25
+      trust_in_media_pct: 45
+      satisfaction_with_democracy_pct: 33
+      right_track_pct: 22
+      corruption_perception_score: 27
+      corruption_perception_rank: 133
+      source: "Gallup PK, IRI, TI CPI 2025"
+    identity:
+      university_educated_pct: 8
+      religious_attendance_weekly_pct: 84
+      dominant_religion: "Sunni Muslim (~75%); Shia 10-15%; Hindu 1.6%; Christian 1.6%"
+      urban_pct: 38
+      median_age: 21.0
+      gender_gap_pp: 6
+      diploma_divide_pp: 4
+      key_cleavage: "Punjab (PML-N/PTI fight); Sindh (PPP); KP (PTI); military influence pervasive"
+    information:
+      internet_pct: 35
+      social_media_users_pct: 22
+      top_platforms: ["WhatsApp", "TikTok", "Facebook", "YouTube"]
+      news_consumption: "TV news heavy; Geo, ARY, Dunya — politicised"
+      misinformation_exposure: "high"
+      press_freedom_rank: 152
+    crisis_memory:
+      - "2023 Imran Khan arrest + party-banning"
+      - "2022 floods — 33M displaced"
+      - "2024 election irregularities — PTI denied victory"
+      - "Recurring TTP / Balochistan insurgent attacks"
+    demographic_shifts:
+      net_migration_per_1000: -0.5
+      population_growth_5y_pct: 8.7
+      key_shift: "Young population (median 21); urbanising; remittances ~8% GDP politically charged"
+
+  IRN:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -5.0
+      unemployment_pct: 8.7
+      unemployment_trend: "stable"
+      inflation_pct: 35
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Sanctions + currency collapse + water crisis + 2025 strike damage"
+      source: "Statistical Centre Iran, CBI, Iran Open Data (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 14
+      trust_in_govt_pct_estimated: true
+      trust_in_media_pct: 13
+      trust_in_media_pct_estimated: true
+      satisfaction_with_democracy_pct: 22
+      right_track_pct: 17
+      corruption_perception_score: 23
+      corruption_perception_rank: 152
+      source: "GAMAAN anonymous-online survey 2022 (>200k respondents): only 14% wanted IR continuation; 13% trusted state media. Stasis Insights, TI CPI 2025."
+    identity:
+      university_educated_pct: 31
+      religious_attendance_weekly_pct: 30
+      dominant_religion: "Shia Muslim (90% officially); GAMAAN 2020 found 47% identify as 'no religion / spiritual / atheist / agnostic'"
+      urban_pct: 76
+      median_age: 33.0
+      gender_gap_pp: 14
+      gender_gap_pp_estimated: true
+      diploma_divide_pp: 22
+      diploma_divide_pp_estimated: true
+      key_cleavage: "Theocracy-supporters vs secularising young; Tehran vs religious-cities; ethnic peripheries — women's-rights gap drove 2022 protests"
+      identity_source: "GAMAAN 2022, World Values Survey wave 7 (limited Iran fieldwork)"
+    information:
+      internet_pct: 78
+      social_media_users_pct: 60
+      top_platforms: ["Telegram", "Instagram", "WhatsApp (filtered)", "Twitter/X (VPN)"]
+      news_consumption: "State TV + diaspora outlets (BBC Persian, Iran International) via VPN"
+      misinformation_exposure: "high (state + foreign info-ops)"
+      press_freedom_rank: 176
+    crisis_memory:
+      - "2022 Mahsa Amini protests + crackdown"
+      - "2024 Raisi helicopter crash + Pezeshkian election"
+      - "2025 Israel-US strikes + retaliations"
+      - "Recurring Bazaar / pensioner / teacher protests"
+    demographic_shifts:
+      net_migration_per_1000: -0.8
+      population_growth_5y_pct: 3.5
+      key_shift: "Brain drain accelerating; women's rights tension central"
+
+  UKR:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -2.0
+      unemployment_pct: 18
+      unemployment_trend: "stable"
+      inflation_pct: 6.5
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "War economy + reconstruction needs + Western aid uncertainty"
+      source: "NSSU, NBU, KIIS (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 48
+      trust_in_media_pct: 56
+      satisfaction_with_democracy_pct: 50
+      right_track_pct: 47
+      corruption_perception_score: 35
+      corruption_perception_rank: 105
+      source: "KIIS, Razumkov Centre, TI CPI 2025"
+    identity:
+      university_educated_pct: 53
+      religious_attendance_weekly_pct: 17
+      dominant_religion: "Orthodox Christian (~70%); UOC-MP severed; Greek Catholic 8% in west"
+      urban_pct: 70
+      median_age: 41.5
+      gender_gap_pp: 6
+      diploma_divide_pp: 6
+      key_cleavage: "War unity > pre-war east-west cleavage; veterans bloc emerging; refugee diaspora"
+    information:
+      internet_pct: 79
+      social_media_users_pct: 66
+      top_platforms: ["Telegram", "YouTube", "Facebook", "Viber"]
+      news_consumption: "Telegram channels dominant; TV news; daily presidential addresses"
+      misinformation_exposure: "very high (active Russian info-war)"
+      press_freedom_rank: 61
+    crisis_memory:
+      - "2022-02-24 invasion — defining national event"
+      - "2024-25 ceasefire negotiations under Trump pressure"
+      - "Ongoing missile/drone strikes — daily salience"
+      - "2014 Maidan + Crimea annexation — institutional baseline"
+    demographic_shifts:
+      net_migration_per_1000: -50
+      population_growth_5y_pct: -25
+      key_shift: "5-7M displaced abroad; demographic shock; veterans' generation forming"
+
+  VEN:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 5.0
+      unemployment_pct: 8.0
+      unemployment_trend: "easing"
+      inflation_pct: 80
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Hyperinflation hangover + sanctions + emigration of working-age population"
+      source: "BCV (limited), OVF, ORC Consultores (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 16
+      trust_in_media_pct: 32
+      satisfaction_with_democracy_pct: 28
+      right_track_pct: 18
+      corruption_perception_score: 10
+      corruption_perception_rank: 178
+      source: "ORC, IVAD, TI CPI 2025"
+    identity:
+      university_educated_pct: 27
+      religious_attendance_weekly_pct: 28
+      dominant_religion: "Catholic (71%, declining); Evangelical 17% (rising)"
+      urban_pct: 88
+      median_age: 30.0
+      gender_gap_pp: 5
+      diploma_divide_pp: 8
+      key_cleavage: "Chavismo loyalist core vs middle class vs the 7M emigrated"
+    information:
+      internet_pct: 70
+      social_media_users_pct: 70
+      top_platforms: ["WhatsApp", "Instagram", "TikTok", "X (Twitter)"]
+      news_consumption: "Independent outlets blocked, accessed via VPN; state TV; X opposition"
+      misinformation_exposure: "very high"
+      press_freedom_rank: 156
+    crisis_memory:
+      - "2024-07 disputed Maduro 'win' over Edmundo González"
+      - "2017-19 mass protests + opposition repression"
+      - "Hyperinflation peak 2018-19 — defined two generations"
+      - "Ongoing 7M emigrated since 2015 — diaspora vote"
+    demographic_shifts:
+      net_migration_per_1000: -25
+      population_growth_5y_pct: -7
+      key_shift: "Largest diaspora outflow in Latin American history; aging at home"
+
+  EGY:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -8.0
+      unemployment_pct: 7.0
+      unemployment_trend: "stable"
+      inflation_pct: 23
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Pound devaluation + IMF austerity + Suez revenue collapse"
+      source: "CAPMAS, CBE (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 33
+      trust_in_govt_pct_estimated: true
+      trust_in_media_pct: 31
+      trust_in_media_pct_estimated: true
+      satisfaction_with_democracy_pct: 19
+      right_track_pct: 25
+      right_track_pct_estimated: true
+      corruption_perception_score: 30
+      corruption_perception_rank: 130
+      source: "Arab Barometer Wave 7 (2021-22): trust govt 33%, trust media 31%, country-direction 25%. TI CPI 2025."
+    identity:
+      university_educated_pct: 32
+      religious_attendance_weekly_pct: 70
+      dominant_religion: "Sunni Muslim (~90%); Coptic Christian (~10%)"
+      urban_pct: 43
+      median_age: 24.6
+      gender_gap_pp: 4
+      gender_gap_pp_estimated: true
+      diploma_divide_pp: 7
+      diploma_divide_pp_estimated: true
+      key_cleavage: "Regime supporters vs silent majority; Coptic minority; Brotherhood remnants — universities are the pressure points"
+      identity_source: "Arab Barometer Wave 7 (Egypt), Pew Religion in Public Life 2017"
+    information:
+      internet_pct: 72
+      social_media_users_pct: 50
+      top_platforms: ["Facebook", "WhatsApp", "TikTok", "Instagram"]
+      news_consumption: "State TV + privately-owned (regime-aligned); Al Jazeera blocked"
+      misinformation_exposure: "high"
+      press_freedom_rank: 170
+    crisis_memory:
+      - "2011 Tahrir + 2013 coup — generational defining events"
+      - "Ongoing Sinai insurgency"
+      - "2022-23 economic crisis + IMF deal"
+      - "2024 Sisi 'reelection' (~89% on low turnout)"
+    demographic_shifts:
+      net_migration_per_1000: -1.0
+      population_growth_5y_pct: 7.5
+      key_shift: "Population +1M every 6 months; youth-bulge unemployment central"
+
+  THA:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.5
+      unemployment_pct: 1.0
+      unemployment_trend: "stable"
+      inflation_pct: 1.5
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "below_avg"
+      key_pressure: "Tourism dependence + household debt + agricultural prices"
+      source: "NSO, BoT, NIDA Poll (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 30
+      trust_in_media_pct: 35
+      satisfaction_with_democracy_pct: 38
+      right_track_pct: 28
+      corruption_perception_score: 34
+      corruption_perception_rank: 108
+      source: "NIDA, Edelman, TI CPI 2025"
+    identity:
+      university_educated_pct: 31
+      religious_attendance_weekly_pct: 38
+      dominant_religion: "Theravada Buddhist (~92%); Muslim 5% (south)"
+      urban_pct: 53
+      median_age: 41.0
+      gender_gap_pp: 4
+      diploma_divide_pp: 6
+      key_cleavage: "Bangkok-vs-rural; royalist establishment vs People's Party reform; Muslim south"
+    information:
+      internet_pct: 88
+      social_media_users_pct: 78
+      top_platforms: ["LINE", "Facebook", "TikTok", "X"]
+      news_consumption: "TV networks + social; lèse-majesté limits political speech"
+      misinformation_exposure: "moderate-high"
+      press_freedom_rank: 87
+    crisis_memory:
+      - "2024 dissolution of Move Forward + Pita ban"
+      - "2023 election PP win + court interventions"
+      - "Recurring Constitutional-Court interventions in elections"
+      - "2010 Red-Shirt crackdown — generational"
+    demographic_shifts:
+      net_migration_per_1000: 0.4
+      population_growth_5y_pct: -0.4
+      key_shift: "Aging fast; rural vote shrinking; Bangkok youth drives reform demand"
+
+  ESP:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 0.8
+      unemployment_pct: 11.3
+      unemployment_trend: "stable"
+      inflation_pct: 2.4
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "Housing crisis + youth unemployment + Catalan amnistía fallout"
+      source: "INE, Bank of Spain, CIS (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 32
+      trust_in_media_pct: 30
+      satisfaction_with_democracy_pct: 50
+      right_track_pct: 26
+      corruption_perception_score: 56
+      corruption_perception_rank: 41
+      source: "CIS Mar 2026, Eurobarometer 2025, TI CPI 2025"
+    identity:
+      university_educated_pct: 41
+      religious_attendance_weekly_pct: 17
+      dominant_religion: "Catholic (54%, declining); 38% no religion"
+      urban_pct: 81
+      median_age: 44.9
+      gender_gap_pp: 9
+      diploma_divide_pp: 14
+      key_cleavage: "Centre-periphery (Catalan / Basque / centre); polarisation PP-Vox vs PSOE-Sumar; gender gap salient"
+    information:
+      internet_pct: 94
+      social_media_users_pct: 76
+      top_platforms: ["WhatsApp", "Instagram", "TikTok", "X"]
+      news_consumption: "RTVE + private TV (Antena 3, Telecinco); El País / El Mundo / ABC"
+      misinformation_exposure: "moderate-high"
+      press_freedom_rank: 30
+    crisis_memory:
+      - "2024 DANA Valencia floods (220+ dead) — Mazón crisis"
+      - "2017 Catalan referendum + Article 155"
+      - "2020-21 Covid Madrid winter waves"
+      - "2008-13 financial crisis youth-emigration generation"
+    demographic_shifts:
+      net_migration_per_1000: 5.5
+      population_growth_5y_pct: 1.4
+      key_shift: "Latin-American migration sustaining growth; aging accelerating; emigration of skilled young"
+
+  SWE:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.6
+      unemployment_pct: 8.2
+      unemployment_trend: "stable"
+      inflation_pct: 1.8
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "below_avg"
+      key_pressure: "Gang violence + housing rates + integration politics"
+      source: "SCB, Riksbank, Konjunkturinstitutet (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 41
+      trust_in_media_pct: 56
+      satisfaction_with_democracy_pct: 73
+      right_track_pct: 36
+      corruption_perception_score: 80
+      corruption_perception_rank: 8
+      source: "SOM Institute Jan 2026, Edelman 2025, TI CPI 2025"
+    identity:
+      university_educated_pct: 47
+      religious_attendance_weekly_pct: 5
+      dominant_religion: "Lutheran (52%, mostly cultural); 30% no religion; Muslim 8%"
+      urban_pct: 88
+      median_age: 41.0
+      gender_gap_pp: 11
+      diploma_divide_pp: 16
+      key_cleavage: "Native-vs-immigrant background; rural-urban; gang-violence the unifier"
+    information:
+      internet_pct: 95
+      social_media_users_pct: 81
+      top_platforms: ["Facebook", "Instagram", "TikTok", "Snapchat"]
+      news_consumption: "SVT public broadcaster + DN, Aftonbladet, Expressen; tabloid culture strong"
+      misinformation_exposure: "moderate (rising on integration narratives)"
+      press_freedom_rank: 4
+    crisis_memory:
+      - "2017 Stockholm truck attack — turning point on integration"
+      - "Recurring gang shootings + bombings 2020-25 (highest gun-murder rate in EU)"
+      - "2022 NATO accession after Russia invasion"
+      - "2023 Quran-burning protests + Turkey blocking NATO"
+    demographic_shifts:
+      net_migration_per_1000: 2.5
+      population_growth_5y_pct: 2.7
+      key_shift: "Foreign-born share now 20%; net migration slowing under Tidö govt"
+
+  HUN:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 4.0
+      unemployment_pct: 4.4
+      unemployment_trend: "stable"
+      inflation_pct: 5.2
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "below_avg"
+      key_pressure: "Inflation hangover + EU funds blocked + currency weakness"
+      source: "KSH, MNB, GKI Index (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 38
+      trust_in_media_pct: 27
+      satisfaction_with_democracy_pct: 41
+      right_track_pct: 25
+      corruption_perception_score: 41
+      corruption_perception_rank: 76
+      source: "Medián Mar 2026, Eurobarometer 2025, TI CPI 2025"
+    identity:
+      university_educated_pct: 30
+      religious_attendance_weekly_pct: 12
+      dominant_religion: "Catholic (37%); Calvinist (12%); 36% no religion"
+      urban_pct: 73
+      median_age: 43.7
+      gender_gap_pp: 6
+      diploma_divide_pp: 18
+      key_cleavage: "Budapest vs countryside; pro-Brussels vs Fidesz; Magyar realigning urban centre"
+    information:
+      internet_pct: 90
+      social_media_users_pct: 74
+      top_platforms: ["Facebook", "Messenger", "TikTok", "Instagram"]
+      news_consumption: "MTVA state broadcaster + ATV + 444 / Telex (online opposition); Magyar uses Facebook live + TikTok"
+      misinformation_exposure: "high (state-aligned media dominant)"
+      press_freedom_rank: 67
+    crisis_memory:
+      - "2026 Magyar Tisza emergence — first real Orbán challenger since 2010"
+      - "2022-24 EU funds frozen over rule-of-law concerns"
+      - "2015 refugee crisis fence — Orbán's signature politics"
+      - "2024 child-abuse pardon scandal toppled Novák presidency"
+    demographic_shifts:
+      net_migration_per_1000: 4.0
+      population_growth_5y_pct: -1.3
+      key_shift: "Population shrinking; Ukrainian refugees absorbed; emigration of skilled to Western EU"
+
+  COL:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.0
+      unemployment_pct: 9.8
+      unemployment_trend: "stable"
+      inflation_pct: 5.6
+      inflation_trend: "easing"
+      housing_unaffordability: "strained"
+      consumer_confidence: "below_avg"
+      key_pressure: "Crime resurgence + healthcare reform + oil-export uncertainty"
+      source: "DANE, Banco de la República, Fedesarrollo (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 28
+      trust_in_media_pct: 35
+      satisfaction_with_democracy_pct: 33
+      right_track_pct: 24
+      corruption_perception_score: 39
+      corruption_perception_rank: 87
+      source: "Invamer Mar 2026, Latinobarómetro 2024, TI CPI 2025"
+    identity:
+      university_educated_pct: 27
+      religious_attendance_weekly_pct: 32
+      dominant_religion: "Catholic (62%, declining); Evangelical 22% (rising)"
+      urban_pct: 81
+      median_age: 31.3
+      gender_gap_pp: 7
+      diploma_divide_pp: 12
+      key_cleavage: "Petro-vs-Uribe polarisation; Caribbean vs Andes vs Pacific; class + race salient"
+    information:
+      internet_pct: 73
+      social_media_users_pct: 80
+      top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"]
+      news_consumption: "Caracol, RCN TV; El Tiempo, Semana; Petro uses X heavily"
+      misinformation_exposure: "high"
+      press_freedom_rank: 119
+    crisis_memory:
+      - "2021 paro nacional protests against Duque tax reform"
+      - "2016 FARC peace deal + ongoing dissident violence"
+      - "Total Peace failures 2023-25 — ELN + Clan del Golfo"
+      - "Petro-vs-armed-forces tensions"
+    demographic_shifts:
+      net_migration_per_1000: 1.0
+      population_growth_5y_pct: 4.5
+      key_shift: "2.9M Venezuelan migrants integrated; emigration of skilled accelerating"
+
+  CHL:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 2.0
+      unemployment_pct: 8.5
+      unemployment_trend: "stable"
+      inflation_pct: 3.8
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "average"
+      key_pressure: "Crime perception + pension reform + lithium royalty politics"
+      source: "INE, BCCh, Cadem (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 30
+      trust_in_media_pct: 35
+      satisfaction_with_democracy_pct: 39
+      right_track_pct: 38
+      corruption_perception_score: 66
+      corruption_perception_rank: 29
+      source: "CEP Mar 2026, Latinobarómetro 2024, TI CPI 2025"
+    identity:
+      university_educated_pct: 41
+      religious_attendance_weekly_pct: 22
+      dominant_religion: "Catholic (45%, declining fast); Evangelical 18%; 32% no religion"
+      urban_pct: 88
+      median_age: 36.0
+      gender_gap_pp: 5
+      diploma_divide_pp: 9
+      key_cleavage: "Post-2019 estallido political realignment; Boric/Frente Amplio vs Kast/Republicans"
+    information:
+      internet_pct: 90
+      social_media_users_pct: 85
+      top_platforms: ["WhatsApp", "Instagram", "TikTok", "X"]
+      news_consumption: "TVN, CHV, Mega TV; La Tercera, El Mercurio; podcast/streaming on right"
+      misinformation_exposure: "moderate-high (esp. Venezuelan-migration content)"
+      press_freedom_rank: 52
+    crisis_memory:
+      - "2019-20 estallido social — defining unrest"
+      - "2022 + 2023 constitutional referenda both failed"
+      - "Recurring Mapuche-conflict escalations in Araucanía"
+      - "2025 election Kast win — first far-right president since Pinochet"
+    demographic_shifts:
+      net_migration_per_1000: 4.0
+      population_growth_5y_pct: 3.6
+      key_shift: "1.8M migrants arrived 2018-25 (mostly Venezuelan, Haitian); now political pressure point"
+
+  BGD:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -1.5
+      unemployment_pct: 5.1
+      unemployment_trend: "stable"
+      inflation_pct: 9.5
+      inflation_trend: "easing"
+      housing_unaffordability: "strained"
+      consumer_confidence: "below_avg"
+      key_pressure: "Inflation legacy + IMF programme + RMG export uncertainty"
+      source: "BBS, Bangladesh Bank, BRAC IGS (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 64
+      trust_in_govt_pct_estimated: true
+      trust_in_media_pct: 51
+      trust_in_media_pct_estimated: true
+      satisfaction_with_democracy_pct: 49
+      right_track_pct: 51
+      corruption_perception_score: 23
+      corruption_perception_rank: 149
+      source: "VoA BD Mar 2026, BRAC IGS Justice survey 2025; honeymoon for Yunus interim govt"
+    identity:
+      university_educated_pct: 13
+      religious_attendance_weekly_pct: 70
+      dominant_religion: "Sunni Muslim (~91%); Hindu 8%; Christian/Buddhist <1%"
+      urban_pct: 41
+      median_age: 27.9
+      gender_gap_pp: 5
+      diploma_divide_pp: 8
+      key_cleavage: "BNP-Jamaat alliance vs banned AL diaspora; Islamist-secular axis; July student bloc"
+    information:
+      internet_pct: 39
+      social_media_users_pct: 33
+      top_platforms: ["WhatsApp", "Facebook", "Messenger", "TikTok"]
+      news_consumption: "TV news (Channel 24, Independent TV); Prothom Alo / Daily Star"
+      misinformation_exposure: "high (Facebook saturation)"
+      press_freedom_rank: 165
+    crisis_memory:
+      - "2024-07/08 student-led ouster of Hasina (1000+ killed)"
+      - "2024-11 minority-rights flashpoints + Hindu attacks"
+      - "Recurring floods + cyclones (Climate Vulnerability Forum founder-state)"
+      - "Ongoing Rohingya 1M+ refugees"
+    demographic_shifts:
+      net_migration_per_1000: -2.6
+      population_growth_5y_pct: 3.8
+      key_shift: "Massive labour-migration to Gulf + Malaysia; remittances 6% of GDP; youth bulge unemployed"
+
+  VNM:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 4.5
+      unemployment_pct: 2.3
+      unemployment_trend: "stable"
+      inflation_pct: 3.5
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "above_avg"
+      key_pressure: "Trump tariff threat + bond-market scandals + property-bubble unwind"
+      source: "GSO, SBV, VEPR (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 95
+      trust_in_govt_pct_estimated: true
+      trust_in_media_pct: 78
+      trust_in_media_pct_estimated: true
+      satisfaction_with_democracy_pct: 67
+      right_track_pct: 81
+      corruption_perception_score: 41
+      corruption_perception_rank: 83
+      source: "Edelman Vietnam 2024 (Edelman shows highest govt trust in world); Asian Barometer wave 5; TI CPI 2025"
+    identity:
+      university_educated_pct: 12
+      religious_attendance_weekly_pct: 14
+      dominant_religion: "Folk + Buddhist mix (most non-practising); Christian 8%; Cao Dai / Hoa Hao minorities"
+      urban_pct: 39
+      median_age: 33.7
+      gender_gap_pp: null
+      diploma_divide_pp: null
+      key_cleavage: "North-South historical divide; party-faction splits; minority-region tensions (Montagnard)"
+    information:
+      internet_pct: 79
+      social_media_users_pct: 78
+      top_platforms: ["Zalo", "Facebook", "TikTok", "YouTube"]
+      news_consumption: "VNExpress, VietnamNet; CPV-aligned print + TV; Facebook politicised"
+      misinformation_exposure: "moderate (state info-controls extensive)"
+      press_freedom_rank: 174
+    crisis_memory:
+      - "2024 Trọng death + Tô Lâm consolidation"
+      - "2022-25 'Blazing furnace' anti-corruption purges (multiple ministers, Politburo)"
+      - "Recurring SCS skirmishes with PRC fishing fleet"
+      - "Pandemic Zero-Covid lockdowns 2021"
+    demographic_shifts:
+      net_migration_per_1000: -0.4
+      population_growth_5y_pct: 4.2
+      key_shift: "Manufacturing FDI surging post-China-decoupling; aging starting; brain drain to KR/JP"
+
+  ETH:
+    economic_pressure:
+      real_wage_growth_yoy_pct: -10.0
+      unemployment_pct: 19
+      unemployment_trend: "stable"
+      inflation_pct: 25
+      inflation_trend: "easing"
+      housing_unaffordability: "severe"
+      consumer_confidence: "well_below_avg"
+      key_pressure: "Birr float devaluation + war reconstruction + IMF programme"
+      source: "CSA, NBE, IFPRI (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 41
+      trust_in_media_pct: 32
+      satisfaction_with_democracy_pct: 31
+      right_track_pct: 35
+      corruption_perception_score: 37
+      corruption_perception_rank: 99
+      source: "Afrobarometer R10 (Ethiopia 2024), TI CPI 2025"
+    identity:
+      university_educated_pct: 5
+      religious_attendance_weekly_pct: 78
+      dominant_religion: "Ethiopian Orthodox (44%); Muslim (34%); Protestant (19%)"
+      urban_pct: 23
+      median_age: 19.8
+      gender_gap_pp: 4
+      gender_gap_pp_estimated: true
+      diploma_divide_pp: 6
+      diploma_divide_pp_estimated: true
+      key_cleavage: "Ethnic-federal map: Tigray-Amhara-Oromo each their own crisis vector"
+    information:
+      internet_pct: 25
+      social_media_users_pct: 8
+      top_platforms: ["Facebook", "Telegram", "TikTok", "X"]
+      news_consumption: "EBC state broadcaster + Fana; Telegram very politicised; periodic shutdowns"
+      misinformation_exposure: "very high (war + ethnic info-ops)"
+      press_freedom_rank: 130
+    crisis_memory:
+      - "2020-22 Tigray war (600k+ excess deaths)"
+      - "Active Amhara Fano + OLA insurgencies 2023-now"
+      - "2024 Birr 80% devaluation"
+      - "Tigray famine 2024 — UN warns of return"
+    demographic_shifts:
+      net_migration_per_1000: -0.2
+      population_growth_5y_pct: 12.5
+      key_shift: "Population +1M every 5 weeks; youngest country on roster (median 20); urbanising fast"
+
+  SAU:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 1.5
+      unemployment_pct: 4.8
+      unemployment_trend: "easing"
+      inflation_pct: 2.0
+      inflation_trend: "stable"
+      housing_unaffordability: "strained"
+      consumer_confidence: "above_avg"
+      key_pressure: "Vision 2030 fiscal stretch + housing for nationals + youth Saudisation"
+      source: "GASTAT, SAMA, MoF (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 73
+      trust_in_govt_pct_estimated: true
+      trust_in_media_pct: 65
+      trust_in_media_pct_estimated: true
+      satisfaction_with_democracy_pct: null
+      right_track_pct: 75
+      right_track_pct_estimated: true
+      corruption_perception_score: 59
+      corruption_perception_rank: 39
+      source: "Arab Barometer Wave 8 (Saudi 2024) — high reported trust amid restricted survey environment; TI CPI 2025"
+    identity:
+      university_educated_pct: 28
+      religious_attendance_weekly_pct: 82
+      dominant_religion: "Sunni Muslim (85-90%); Shia 10-15% (Eastern Province)"
+      urban_pct: 84
+      median_age: 30.8
+      gender_gap_pp: null
+      diploma_divide_pp: null
+      key_cleavage: "Religious establishment vs Vision 2030 modernisers; Hejaz vs Najd; Shia minority"
+      identity_source: "Arab Barometer Wave 8, GAStat 2024"
+    information:
+      internet_pct: 99
+      social_media_users_pct: 80
+      top_platforms: ["WhatsApp", "TikTok", "Snapchat", "X (politicised)"]
+      news_consumption: "Al Arabiya + Al Ekhbariya state TV; Saudi-aligned X accounts dominate Arabic discourse"
+      misinformation_exposure: "high"
+      press_freedom_rank: 166
+    crisis_memory:
+      - "2018 Khashoggi murder — international consequences"
+      - "2017 anti-corruption purge (Ritz Carlton detentions)"
+      - "Yemen war 2015-now — fading politically"
+      - "2025 Israel-Iran strikes — regional realignment"
+    demographic_shifts:
+      net_migration_per_1000: 7.5
+      population_growth_5y_pct: 5.0
+      key_shift: "Foreign-worker share ~38% of population; women's labour-force participation rising fast"
+
+  ARE:
+    economic_pressure:
+      real_wage_growth_yoy_pct: 3.0
+      unemployment_pct: 2.6
+      unemployment_trend: "stable"
+      inflation_pct: 2.2
+      inflation_trend: "stable"
+      housing_unaffordability: "severe"
+      consumer_confidence: "above_avg"
+      key_pressure: "Dubai property bubble + Emiratisation push + US-tariff exposure"
+      source: "FCSC, CBUAE, JLL (Mar 2026)"
+    trust:
+      trust_in_govt_pct: 89
+      trust_in_govt_pct_estimated: true
+      trust_in_media_pct: 70
+      trust_in_media_pct_estimated: true
+      satisfaction_with_democracy_pct: null
+      right_track_pct: 82
+      right_track_pct_estimated: true
+      corruption_perception_score: 68
+      corruption_perception_rank: 26
+      source: "Edelman Trust UAE 2024 (highest globally); YouGov Gulf 2024; TI CPI 2025"
+    identity:
+      university_educated_pct: 38
+      religious_attendance_weekly_pct: 75
+      dominant_religion: "Sunni Muslim (~67%); Shia 15%; Christian 9% (mostly expats); Hindu 5%"
+      urban_pct: 88
+      median_age: 33.5
+      gender_gap_pp: null
+      diploma_divide_pp: null
+      key_cleavage: "Emirati nationals (12%) vs expat majority; Abu Dhabi vs Dubai institutional balance"
+      identity_source: "FCSC 2024, World Values Survey wave 7 (UAE limited fieldwork)"
+    information:
+      internet_pct: 100
+      social_media_users_pct: 99
+      top_platforms: ["WhatsApp", "Instagram", "TikTok", "Snapchat"]
+      news_consumption: "Gulf News, Khaleej Times, The National; state-aligned"
+      misinformation_exposure: "moderate-high (state info-controls extensive)"
+      press_freedom_rank: 164
+    crisis_memory:
+      - "2025 Trump-MBZ tariff diplomacy"
+      - "2023-25 hosting COP28 + climate diplomacy"
+      - "Abraham Accords 2020 — first Gulf state to recognise Israel"
+      - "2022 Houthi missile/drone strikes on Abu Dhabi (3 killed)"
+    demographic_shifts:
+      net_migration_per_1000: 9.0
+      population_growth_5y_pct: 6.0
+      key_shift: "88% expat population; Indian / Pakistani / Filipino / Egyptian majorities; Emiratisation accelerating"
+
+  PER:
+    economic_pressure: { real_wage_growth_yoy_pct: -0.5, unemployment_pct: 7.0, unemployment_trend: "stable", inflation_pct: 2.0, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Mining-royalty politics + crime + 5-presidents-in-5-years", source: "INEI, BCRP, Ipsos (Mar 2026)" }
+    trust: { trust_in_govt_pct: 12, trust_in_media_pct: 28, satisfaction_with_democracy_pct: 21, right_track_pct: 17, corruption_perception_score: 33, corruption_perception_rank: 121, source: "Ipsos Peru, Latinobarómetro 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 25, religious_attendance_weekly_pct: 35, dominant_religion: "Catholic (60%, declining); Evangelical (18%, rising)", urban_pct: 79, median_age: 30.4, gender_gap_pp: 6, diploma_divide_pp: 11, key_cleavage: "Coast (Lima/Trujillo) vs Andes vs Amazon; Fujimorista vs Castillo successors; class + race salient" }
+    information: { internet_pct: 76, social_media_users_pct: 73, top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"], news_consumption: "TV news (América, ATV); WhatsApp; periodic shutdowns of mining areas", misinformation_exposure: "high", press_freedom_rank: 125 }
+    crisis_memory:
+      - "2022-12 Castillo self-coup attempt + Boluarte takeover"
+      - "2023 Andean protests + 60+ killed (Boluarte's lasting wound)"
+      - "Recurring mining conflicts (Las Bambas, Tía María)"
+      - "Lava Jato spillover — multiple jailed presidents"
+    demographic_shifts: { net_migration_per_1000: 0.5, population_growth_5y_pct: 4.0, key_shift: "1.5M Venezuelans absorbed; emigration of professionals to Chile/Spain/US accelerating" }
+
+  ECU:
+    economic_pressure: { real_wage_growth_yoy_pct: 0.8, unemployment_pct: 4.0, unemployment_trend: "stable", inflation_pct: 2.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Cartel violence + energy blackouts + dollarization stretched", source: "INEC, BCE, Cedatos (Mar 2026)" }
+    trust: { trust_in_govt_pct: 49, trust_in_media_pct: 38, satisfaction_with_democracy_pct: 38, right_track_pct: 51, corruption_perception_score: 34, corruption_perception_rank: 105, source: "Cedatos Mar 2026, Latinobarómetro 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 23, religious_attendance_weekly_pct: 39, dominant_religion: "Catholic (74%); Evangelical 11%; indigenous beliefs", urban_pct: 65, median_age: 28.8, gender_gap_pp: 8, diploma_divide_pp: 10, key_cleavage: "Costa (Guayaquil narco/business) vs Sierra (Quito indigenous); Correísmo divide" }
+    information: { internet_pct: 70, social_media_users_pct: 68, top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"], news_consumption: "TV news + Diario El Universo / La Hora; threats against journalists rising", misinformation_exposure: "high (cartel intimidation)", press_freedom_rank: 110 }
+    crisis_memory:
+      - "2024-01 cartel TV-station attack (national emergency declared)"
+      - "2023 Villavicencio assassination (presidential candidate)"
+      - "Recurring blackouts 2023-25 (drought hits hydro)"
+      - "2018-23 Correísmo persecution + comeback"
+    demographic_shifts: { net_migration_per_1000: -8.5, population_growth_5y_pct: 5.5, key_shift: "Mass emigration to US/Spain (300k+ apprehensions at US border 2023-24); demographic flight" }
+
+  BOL:
+    economic_pressure: { real_wage_growth_yoy_pct: -2.5, unemployment_pct: 4.5, unemployment_trend: "stable", inflation_pct: 9.5, inflation_trend: "rising", housing_unaffordability: "strained", consumer_confidence: "well_below_avg", key_pressure: "Dollar shortage + fuel scarcity + gas-export collapse", source: "INE, BCB, Ipsos CIESMORI (Mar 2026)" }
+    trust: { trust_in_govt_pct: 22, trust_in_media_pct: 32, satisfaction_with_democracy_pct: 31, right_track_pct: 28, corruption_perception_score: 29, corruption_perception_rank: 130, source: "Tu Voto Cuenta, Latinobarómetro 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 17, religious_attendance_weekly_pct: 41, dominant_religion: "Catholic (76%, declining); Evangelical 8%; indigenous syncretic", urban_pct: 70, median_age: 25.6, gender_gap_pp: 5, diploma_divide_pp: 7, key_cleavage: "Highland (indigenous, MAS) vs Eastern lowlands (Santa Cruz, anti-MAS); Arce-Evo intra-MAS war" }
+    information: { internet_pct: 65, social_media_users_pct: 59, top_platforms: ["WhatsApp", "Facebook", "TikTok", "X"], news_consumption: "TV (UNITEL, ATB); radio still huge in altiplano; Página Siete closed", misinformation_exposure: "moderate-high", press_freedom_rank: 124 }
+    crisis_memory:
+      - "2019 Áñez interim coup vs MAS exile of Evo"
+      - "2024-06 Zúñiga attempted coup against Arce"
+      - "2025-08 Paz wins, ending 19y of MAS rule"
+      - "Recurring gas-supply crises since 2014"
+    demographic_shifts: { net_migration_per_1000: -2.0, population_growth_5y_pct: 3.5, key_shift: "Emigration to Argentina/Brazil/Chile rising; remittances 5% GDP" }
+
+  URY:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.2, unemployment_pct: 8.4, unemployment_trend: "stable", inflation_pct: 5.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Crime + cost of living + pension reform", source: "INE, BCU, Equipos (Mar 2026)" }
+    trust: { trust_in_govt_pct: 47, trust_in_media_pct: 44, satisfaction_with_democracy_pct: 71, right_track_pct: 51, corruption_perception_score: 76, corruption_perception_rank: 14, source: "Equipos Mar 2026, Latinobarómetro 2024, TI CPI 2025 (highest LatAm)" }
+    identity: { university_educated_pct: 23, religious_attendance_weekly_pct: 12, dominant_religion: "Catholic (47%, weak); 41% no religion (most secular in LatAm)", urban_pct: 96, median_age: 36.0, gender_gap_pp: 9, diploma_divide_pp: 8, key_cleavage: "Tradition of consensus politics; FA-PN-PC three-way; recent crime-driven realignment" }
+    information: { internet_pct: 90, social_media_users_pct: 80, top_platforms: ["WhatsApp", "Instagram", "TikTok", "Facebook"], news_consumption: "Channel 12 / 4 / 10 TV; El País + La Diaria; consensus media culture", misinformation_exposure: "low-moderate", press_freedom_rank: 19 }
+    crisis_memory:
+      - "2024-11 FA returns with Orsi after 5y of Lacalle Pou"
+      - "Pension referendum 2024 narrowly defeated"
+      - "Crime spike in Montevideo + Salto 2022-25"
+      - "Plebiscite tradition (security 2019, pensions 2024)"
+    demographic_shifts: { net_migration_per_1000: 0.5, population_growth_5y_pct: 0.4, key_shift: "Aging fast; emigration of young to Spain/Argentina; Argentine inflows" }
+
+  CRI:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.5, unemployment_pct: 7.4, unemployment_trend: "stable", inflation_pct: 0.6, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Crime spike + tax structure + CCSS healthcare strain", source: "INEC, BCCR, CIEP (Mar 2026)" }
+    trust: { trust_in_govt_pct: 42, trust_in_media_pct: 47, satisfaction_with_democracy_pct: 51, right_track_pct: 41, corruption_perception_score: 55, corruption_perception_rank: 45, source: "CIEP, Latinobarómetro 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 26, religious_attendance_weekly_pct: 35, dominant_religion: "Catholic (52%, declining); Evangelical 25% (rising fast)", urban_pct: 81, median_age: 34.2, gender_gap_pp: 7, diploma_divide_pp: 9, key_cleavage: "Anti-establishment Chaves vs traditional parties; Evangelical politicisation; urban-coast divide" }
+    information: { internet_pct: 85, social_media_users_pct: 76, top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"], news_consumption: "Teletica + Repretel TV; La Nación / CRHoy online", misinformation_exposure: "moderate (Chaves uses for direct broadcasts)", press_freedom_rank: 26 }
+    crisis_memory:
+      - "Homicide rate doubled 2022-25 (cartel transit + local gangs)"
+      - "2022 Chaves outsider win — anti-establishment moment"
+      - "Repeated Chaves-Sala IV constitutional clashes"
+      - "Pandemic education-loss generation"
+    demographic_shifts: { net_migration_per_1000: 1.7, population_growth_5y_pct: 1.5, key_shift: "Nicaraguan migrant absorption; aging accelerating; remote-work US influx" }
+
+  NLD:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.5, unemployment_pct: 3.8, unemployment_trend: "stable", inflation_pct: 2.8, inflation_trend: "easing", housing_unaffordability: "severe", consumer_confidence: "below_avg", key_pressure: "Housing shortage + asylum + nitrogen-emissions farming politics", source: "CBS, DNB, CPB (Mar 2026)" }
+    trust: { trust_in_govt_pct: 30, trust_in_media_pct: 51, satisfaction_with_democracy_pct: 67, right_track_pct: 28, corruption_perception_score: 78, corruption_perception_rank: 9, source: "I&O Research Mar 2026, Eurobarometer 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 41, religious_attendance_weekly_pct: 14, dominant_religion: "Christian (40%, declining); 53% no religion; Muslim 5%", urban_pct: 93, median_age: 42.7, gender_gap_pp: 8, diploma_divide_pp: 19, key_cleavage: "Pro-EU urban professional vs Wilders + farmer (BBB) periphery; housing have/have-not" }
+    information: { internet_pct: 96, social_media_users_pct: 84, top_platforms: ["WhatsApp", "Instagram", "Facebook", "TikTok"], news_consumption: "NOS public broadcaster + De Telegraaf / Volkskrant / NRC", misinformation_exposure: "moderate (rising on asylum)", press_freedom_rank: 6 }
+    crisis_memory:
+      - "2023 Schoof technocrat cabinet after Rutte fall"
+      - "2019-22 nitrogen-crisis farmer protests + BBB origin"
+      - "Toeslagenaffaire 2017-21 (childcare-benefits scandal)"
+      - "MH17 trial verdicts 2022 — Russia tensions ongoing"
+    demographic_shifts: { net_migration_per_1000: 9.0, population_growth_5y_pct: 3.0, key_shift: "Foreign-born share now 27% in Randstad; political driver" }
+
+  BEL:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.3, unemployment_pct: 5.8, unemployment_trend: "stable", inflation_pct: 2.3, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Public-finance gap + automatic-indexation pressure + rising right", source: "Statbel, NBB, Eurobarometer (Mar 2026)" }
+    trust: { trust_in_govt_pct: 32, trust_in_media_pct: 49, satisfaction_with_democracy_pct: 60, right_track_pct: 30, corruption_perception_score: 72, corruption_perception_rank: 18, source: "Eurobarometer 2025, Ipsos BE, TI CPI 2025" }
+    identity: { university_educated_pct: 42, religious_attendance_weekly_pct: 11, dominant_religion: "Catholic (51%, declining); 33% no religion; Muslim 7%", urban_pct: 98, median_age: 41.8, gender_gap_pp: 8, diploma_divide_pp: 16, key_cleavage: "Flemish-Walloon linguistic + ideological split (Flanders right, Wallonia left)" }
+    information: { internet_pct: 92, social_media_users_pct: 75, top_platforms: ["Facebook", "Instagram", "WhatsApp", "TikTok"], news_consumption: "VRT (Flemish) + RTBF (French) public; Het Laatste Nieuws / Le Soir", misinformation_exposure: "moderate", press_freedom_rank: 16 }
+    crisis_memory:
+      - "2025 Arizona coalition formed under De Wever (first N-VA federal PM)"
+      - "2024 elections: VB rose, N-VA largest, PS still Walloon dominant"
+      - "Brussels attacks 2016 — security baseline elevated"
+      - "541-day caretaker govt 2010-11 — coalition complexity"
+    demographic_shifts: { net_migration_per_1000: 5.0, population_growth_5y_pct: 1.5, key_shift: "Foreign-born ~20%; demographic + cleavage politics" }
+
+  GRC:
+    economic_pressure: { real_wage_growth_yoy_pct: 2.0, unemployment_pct: 9.5, unemployment_trend: "easing", inflation_pct: 2.5, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Cost of living + 'brain drain' + Tempi accountability", source: "ELSTAT, Bank of Greece, Pulse (Mar 2026)" }
+    trust: { trust_in_govt_pct: 30, trust_in_media_pct: 22, satisfaction_with_democracy_pct: 41, right_track_pct: 24, corruption_perception_score: 49, corruption_perception_rank: 59, source: "Pulse Mar 2026, Eurobarometer 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 33, religious_attendance_weekly_pct: 27, dominant_religion: "Greek Orthodox (90%); Muslim 2%", urban_pct: 80, median_age: 46.0, gender_gap_pp: 5, diploma_divide_pp: 10, key_cleavage: "Centre-right ND vs fragmented opposition; aging electorate; far-right 12%+ now" }
+    information: { internet_pct: 84, social_media_users_pct: 70, top_platforms: ["Facebook", "Instagram", "WhatsApp", "TikTok"], news_consumption: "ERT public + Mega/Skai/ANT1/Star private; Kathimerini + Ta Nea", misinformation_exposure: "moderate-high (lowest press freedom in EU)", press_freedom_rank: 88 }
+    crisis_memory:
+      - "2023 Tempi rail disaster (57 dead) — recurring trust shock"
+      - "2008-18 debt crisis legacy — generational trauma + emigration"
+      - "Recurring wildfires (2023 Rhodes, 2024 Attica)"
+      - "Migration / Aegean borders ongoing"
+    demographic_shifts: { net_migration_per_1000: -1.0, population_growth_5y_pct: -2.5, key_shift: "Ongoing emigration of <40 + return migration; aging fast; population shrinking" }
+
+  PRT:
+    economic_pressure: { real_wage_growth_yoy_pct: 2.5, unemployment_pct: 6.5, unemployment_trend: "stable", inflation_pct: 2.4, inflation_trend: "easing", housing_unaffordability: "severe", consumer_confidence: "below_avg", key_pressure: "Housing crisis + young-emigration + Chega rise", source: "INE Portugal, BdP, Eurosondagem (Mar 2026)" }
+    trust: { trust_in_govt_pct: 36, trust_in_media_pct: 51, satisfaction_with_democracy_pct: 53, right_track_pct: 35, corruption_perception_score: 61, corruption_perception_rank: 32, source: "Eurosondagem Mar 2026, Eurobarometer 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 31, religious_attendance_weekly_pct: 19, dominant_religion: "Catholic (80%, mostly cultural); 14% no religion", urban_pct: 67, median_age: 46.4, gender_gap_pp: 4, diploma_divide_pp: 11, key_cleavage: "Lisbon-Porto vs interior; PS-AD-Chega three-way after 2024 collapse" }
+    information: { internet_pct: 86, social_media_users_pct: 79, top_platforms: ["Facebook", "WhatsApp", "Instagram", "TikTok"], news_consumption: "RTP public + SIC/TVI; Público / Expresso / DN", misinformation_exposure: "moderate", press_freedom_rank: 7 }
+    crisis_memory:
+      - "2024-03 Chega tripled seats — first hard-right since 1974"
+      - "2017 Pedrógão Grande wildfires (66 dead)"
+      - "Troika bailout 2011-14 — austerity + emigration"
+      - "Costa investigation that brought down PS govt 2024"
+    demographic_shifts: { net_migration_per_1000: 8.0, population_growth_5y_pct: 1.2, key_shift: "Brazilian + South-Asian migration sustaining workforce; emigration of skilled young still flowing" }
+
+  ROU:
+    economic_pressure: { real_wage_growth_yoy_pct: 4.5, unemployment_pct: 5.4, unemployment_trend: "stable", inflation_pct: 5.0, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Inflation + EU funds + AUR/SOS far-right surge", source: "INSSE, BNR, INSCOP (Mar 2026)" }
+    trust: { trust_in_govt_pct: 21, trust_in_media_pct: 36, satisfaction_with_democracy_pct: 39, right_track_pct: 22, corruption_perception_score: 46, corruption_perception_rank: 65, source: "INSCOP Mar 2026, Eurobarometer 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 20, religious_attendance_weekly_pct: 32, dominant_religion: "Romanian Orthodox (81%); Catholic 5%", urban_pct: 54, median_age: 43.5, gender_gap_pp: 5, diploma_divide_pp: 14, key_cleavage: "Pro-EU urban professionals vs anti-system AUR/SOS rural; Hungarian minority in Transylvania" }
+    information: { internet_pct: 90, social_media_users_pct: 76, top_platforms: ["Facebook", "TikTok", "Instagram", "WhatsApp"], news_consumption: "TV (Antena 1/3, ProTV); G4Media / HotNews online; TikTok politicised after 2024", misinformation_exposure: "very high (Russian + Călin Georgescu TikTok ops)", press_freedom_rank: 49 }
+    crisis_memory:
+      - "2024-12 1st-round annulled (Georgescu Russian-influenced TikTok)"
+      - "2025-05 Nicușor Dan defeats Simion in re-run"
+      - "2023 Colectiv-style fire memory + healthcare reform pressure"
+      - "Romexit / Russia-tilt fears persistent"
+    demographic_shifts: { net_migration_per_1000: -2.0, population_growth_5y_pct: -3.0, key_shift: "Massive emigration to W Europe (5M+ abroad); diaspora 14% of voters" }
+
+  CZE:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.8, unemployment_pct: 2.5, unemployment_trend: "stable", inflation_pct: 2.3, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Cost of living hangover + auto-industry slowdown + Babiš return", source: "ČSÚ, ČNB, STEM (Mar 2026)" }
+    trust: { trust_in_govt_pct: 30, trust_in_media_pct: 35, satisfaction_with_democracy_pct: 49, right_track_pct: 28, corruption_perception_score: 55, corruption_perception_rank: 46, source: "STEM Mar 2026, Eurobarometer 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 28, religious_attendance_weekly_pct: 7, dominant_religion: "No religion 56% (most-secular EU); Catholic 7%; agnostic mass", urban_pct: 74, median_age: 43.4, gender_gap_pp: 6, diploma_divide_pp: 12, key_cleavage: "Pro-EU centrists vs Babiš-ANO populism + SPD nativism; urban-rural divide" }
+    information: { internet_pct: 85, social_media_users_pct: 76, top_platforms: ["Facebook", "Instagram", "TikTok", "WhatsApp"], news_consumption: "ČT public + private TV (Nova, Prima); Seznam Zprávy + iDNES.cz", misinformation_exposure: "high (Babiš's Mafra empire)", press_freedom_rank: 17 }
+    crisis_memory:
+      - "2025-10 Babiš ANO return + SPD/Motorists coalition"
+      - "2023-25 Fiala austerity (debt-brake era)"
+      - "2022 Russia-Ukraine refugee influx (>500k)"
+      - "Babiš oligarch-PM 2017-21 lawsuits"
+    demographic_shifts: { net_migration_per_1000: 6.0, population_growth_5y_pct: 1.5, key_shift: "Ukrainian refugees absorbed; aging; near-zero unemployment" }
+
+  NOR:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.2, unemployment_pct: 3.7, unemployment_trend: "stable", inflation_pct: 2.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Electricity prices + krone weakness + oil-fund politics", source: "SSB, Norges Bank, Norstat (Mar 2026)" }
+    trust: { trust_in_govt_pct: 51, trust_in_media_pct: 60, satisfaction_with_democracy_pct: 76, right_track_pct: 38, corruption_perception_score: 84, corruption_perception_rank: 5, source: "Edelman Norway 2025, Norstat, TI CPI 2025" }
+    identity: { university_educated_pct: 49, religious_attendance_weekly_pct: 10, dominant_religion: "Lutheran (66%, mostly cultural); 26% no religion", urban_pct: 84, median_age: 39.7, gender_gap_pp: 7, diploma_divide_pp: 11, key_cleavage: "Coast-fjord (oil) vs north (fisheries) vs cities (Greens); FrP vs Centre on EEA-EU" }
+    information: { internet_pct: 99, social_media_users_pct: 84, top_platforms: ["Facebook", "Instagram", "Snapchat", "TikTok"], news_consumption: "NRK public + VG / Aftenposten / Dagbladet; print + digital strong", misinformation_exposure: "low-moderate", press_freedom_rank: 1 }
+    crisis_memory:
+      - "2025-09 election: Labour returned, right gained, minority"
+      - "2022-23 electricity-price crisis (S Norway)"
+      - "2011 Utøya massacre — generational"
+      - "Oil-fund decisions ongoing — fossil-divestment debate"
+    demographic_shifts: { net_migration_per_1000: 2.5, population_growth_5y_pct: 2.0, key_shift: "Foreign-born share 16%; Polish + Lithuanian + Ukrainian groups largest" }
+
+  FIN:
+    economic_pressure: { real_wage_growth_yoy_pct: 0.5, unemployment_pct: 8.3, unemployment_trend: "rising", inflation_pct: 1.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Russia-border defence + spending cuts + paper-industry layoffs", source: "Tilastokeskus, Bank of Finland, EVA (Mar 2026)" }
+    trust: { trust_in_govt_pct: 40, trust_in_media_pct: 70, satisfaction_with_democracy_pct: 77, right_track_pct: 35, corruption_perception_score: 87, corruption_perception_rank: 2, source: "EVA Mar 2026, Edelman 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 41, religious_attendance_weekly_pct: 5, dominant_religion: "Lutheran (66%, cultural); 30% no religion", urban_pct: 86, median_age: 43.0, gender_gap_pp: 13, diploma_divide_pp: 14, key_cleavage: "PS (Finns) vs urban centre-left; Russia-border salience unifying" }
+    information: { internet_pct: 96, social_media_users_pct: 80, top_platforms: ["Facebook", "WhatsApp", "Instagram", "TikTok"], news_consumption: "Yle public + Helsingin Sanomat + tabloid Iltalehti / Ilta-Sanomat", misinformation_exposure: "low-moderate (Russia-targeted ops)", press_freedom_rank: 5 }
+    crisis_memory:
+      - "2022 NATO accession — turning point post-invasion"
+      - "2023 Russia-border closure"
+      - "Recurring hybrid attacks (migrants, GPS-jamming)"
+      - "1939-40 Winter War memory — civic baseline"
+    demographic_shifts: { net_migration_per_1000: 4.0, population_growth_5y_pct: 0.8, key_shift: "Aging + low birthrate; immigration policy tightened under Orpo" }
+
+  DNK:
+    economic_pressure: { real_wage_growth_yoy_pct: 2.0, unemployment_pct: 2.8, unemployment_trend: "stable", inflation_pct: 1.6, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Greenland sovereignty + Trump pressure + SAS-style restructuring", source: "DST, Danmarks Nationalbank, Voxmeter (Mar 2026)" }
+    trust: { trust_in_govt_pct: 51, trust_in_media_pct: 66, satisfaction_with_democracy_pct: 80, right_track_pct: 40, corruption_perception_score: 89, corruption_perception_rank: 1, source: "Voxmeter Mar 2026, Edelman 2025, TI CPI 2025 (highest globally)" }
+    identity: { university_educated_pct: 41, religious_attendance_weekly_pct: 6, dominant_religion: "Lutheran (74%, cultural); 16% no religion", urban_pct: 88, median_age: 42.0, gender_gap_pp: 10, diploma_divide_pp: 12, key_cleavage: "Cross-bloc consensus on tight migration; left-right cleavage on economy/EU" }
+    information: { internet_pct: 99, social_media_users_pct: 85, top_platforms: ["Facebook", "Instagram", "TikTok", "Snapchat"], news_consumption: "DR public + Berlingske / Politiken / JP", misinformation_exposure: "low", press_freedom_rank: 2 }
+    crisis_memory:
+      - "2025 Trump-Greenland statements + Frederiksen response"
+      - "2017 ghetto-package legislation (signature integration policy)"
+      - "Mink-cull scandal 2020-22"
+      - "Danish-cartoons era 2005-onward — recurring"
+    demographic_shifts: { net_migration_per_1000: 3.5, population_growth_5y_pct: 1.5, key_shift: "Tightest EU asylum stance; Greenland politics" }
+
+  CHE:
+    economic_pressure: { real_wage_growth_yoy_pct: 0.8, unemployment_pct: 2.4, unemployment_trend: "stable", inflation_pct: 0.9, inflation_trend: "stable", housing_unaffordability: "severe", consumer_confidence: "average", key_pressure: "EU-treaties referendum + health-insurance premiums + AHV", source: "BFS, SNB, GfS Bern (Mar 2026)" }
+    trust: { trust_in_govt_pct: 60, trust_in_media_pct: 50, satisfaction_with_democracy_pct: 87, right_track_pct: 60, corruption_perception_score: 81, corruption_perception_rank: 6, source: "GfS Bern Mar 2026, Edelman 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 47, religious_attendance_weekly_pct: 11, dominant_religion: "Christian (61%, declining); 30% no religion; Muslim 5%", urban_pct: 74, median_age: 42.7, gender_gap_pp: 7, diploma_divide_pp: 10, key_cleavage: "Linguistic cantons (German-French-Italian); SVP-led right vs SP/Greens; direct-democracy" }
+    information: { internet_pct: 96, social_media_users_pct: 81, top_platforms: ["WhatsApp", "Instagram", "Facebook", "TikTok"], news_consumption: "SRG SSR public (DE/FR/IT) + Tamedia + NZZ + Blick", misinformation_exposure: "low-moderate", press_freedom_rank: 9 }
+    crisis_memory:
+      - "2025-26 EU-treaties referendum looming"
+      - "Credit Suisse forced rescue 2023 — Glass-Steagall debate"
+      - "2024 AHV-pension reform passed"
+      - "2014 mass-immigration referendum + EU friction"
+    demographic_shifts: { net_migration_per_1000: 7.5, population_growth_5y_pct: 4.0, key_shift: "Foreign-born ~30% (highest EU); Italian + Portuguese + German + Balkan; cross-border commuters" }
+
+  IRL:
+    economic_pressure: { real_wage_growth_yoy_pct: 2.2, unemployment_pct: 4.4, unemployment_trend: "stable", inflation_pct: 1.5, inflation_trend: "stable", housing_unaffordability: "severe", consumer_confidence: "below_avg", key_pressure: "Housing crisis dominant + immigration backlash + corporate-tax cliff", source: "CSO, Central Bank, Red C (Mar 2026)" }
+    trust: { trust_in_govt_pct: 38, trust_in_media_pct: 51, satisfaction_with_democracy_pct: 65, right_track_pct: 31, corruption_perception_score: 77, corruption_perception_rank: 11, source: "Red C Mar 2026, Eurobarometer 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 58, religious_attendance_weekly_pct: 28, dominant_religion: "Catholic (69%, declining); 14% no religion", urban_pct: 64, median_age: 38.8, gender_gap_pp: 7, diploma_divide_pp: 9, key_cleavage: "Housing have/have-not; FF-FG centrism vs SF nationalism; emigrant-return diaspora" }
+    information: { internet_pct: 96, social_media_users_pct: 74, top_platforms: ["WhatsApp", "Facebook", "Instagram", "TikTok"], news_consumption: "RTÉ public + Independent / Times / Examiner", misinformation_exposure: "moderate (rising on asylum)", press_freedom_rank: 8 }
+    crisis_memory:
+      - "Housing crisis 10y-running"
+      - "2024 anti-immigration riots in Dublin"
+      - "Brexit border negotiations 2017-20"
+      - "Abortion + same-sex marriage referenda 2015/18 — moral revolution"
+    demographic_shifts: { net_migration_per_1000: 13.5, population_growth_5y_pct: 5.5, key_shift: "Highest population growth in EU; foreign-born now 22%; dramatic demographic change" }
+
+  AUT:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.0, unemployment_pct: 5.5, unemployment_trend: "rising", inflation_pct: 3.2, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Persistent inflation + Russian gas dependence + FPÖ's surge", source: "Statistik Austria, OeNB, Unique research (Mar 2026)" }
+    trust: { trust_in_govt_pct: 30, trust_in_media_pct: 38, satisfaction_with_democracy_pct: 47, right_track_pct: 22, corruption_perception_score: 71, corruption_perception_rank: 22, source: "Unique research Mar 2026, Eurobarometer 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 35, religious_attendance_weekly_pct: 15, dominant_religion: "Catholic (55%, declining); 22% no religion; Muslim 8%", urban_pct: 60, median_age: 44.0, gender_gap_pp: 7, diploma_divide_pp: 14, key_cleavage: "Vienna red vs Alpine FPÖ-ÖVP black/blue; pro/anti-Russia tilt; migration politics" }
+    information: { internet_pct: 89, social_media_users_pct: 75, top_platforms: ["WhatsApp", "Instagram", "Facebook", "TikTok"], news_consumption: "ORF public + Krone tabloid + Kurier + Standard / Presse", misinformation_exposure: "high (Krone partisanship + Russia-friendly narratives)", press_freedom_rank: 32 }
+    crisis_memory:
+      - "2025-02 Stocker (ÖVP) takes chancellorship after Kickl/FPÖ fails to form govt"
+      - "2024 election: FPÖ became largest party for first time"
+      - "Ibiza-Affäre 2019 (Strache scandal) — recurring reference"
+      - "Russian gas era ending 2024-25"
+    demographic_shifts: { net_migration_per_1000: 7.0, population_growth_5y_pct: 2.5, key_shift: "Ukrainian + Syrian + Afghan refugee absorption; Vienna foreign-born ~50%" }
+
+  MYS:
+    economic_pressure: { real_wage_growth_yoy_pct: 2.0, unemployment_pct: 3.2, unemployment_trend: "stable", inflation_pct: 2.0, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "above_avg", key_pressure: "Subsidy rationalisation + ringgit weakness + race-religion tensions", source: "DOSM, BNM, Merdeka Centre (Mar 2026)" }
+    trust: { trust_in_govt_pct: 50, trust_in_media_pct: 56, satisfaction_with_democracy_pct: 56, right_track_pct: 47, corruption_perception_score: 50, corruption_perception_rank: 57, source: "Merdeka Centre Mar 2026, Edelman 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 31, religious_attendance_weekly_pct: 65, dominant_religion: "Muslim (64%, Bumiputera majority); Buddhist 18%; Christian 9%; Hindu 6%", urban_pct: 78, median_age: 31.0, gender_gap_pp: 4, diploma_divide_pp: 7, key_cleavage: "Race (Malay/Chinese/Indian) + religion central; PN green-wave (rural Malay) vs PH urban-multi-ethnic" }
+    information: { internet_pct: 97, social_media_users_pct: 84, top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"], news_consumption: "TV3 / Astro Awani; New Straits Times + Star + Sin Chew", misinformation_exposure: "high (race-religion narratives)", press_freedom_rank: 107 }
+    crisis_memory:
+      - "2018 1MDB-driven Mahathir win + Anwar's eventual ascendance 2022"
+      - "2022 election: PH-BN unity govt — reset"
+      - "Pandemic Sheraton Move 2020"
+      - "Recurring race-religion flashpoints (Khat / Allah issue)"
+    demographic_shifts: { net_migration_per_1000: 3.0, population_growth_5y_pct: 4.5, key_shift: "Indonesian + Bangladeshi migrant labour ~3-4M; Malay-share politics" }
+
+  SGP:
+    economic_pressure: { real_wage_growth_yoy_pct: 2.5, unemployment_pct: 1.9, unemployment_trend: "stable", inflation_pct: 1.5, inflation_trend: "stable", housing_unaffordability: "severe", consumer_confidence: "above_avg", key_pressure: "GST hikes + HDB resale prices + foreign-talent debate", source: "MTI, MAS, IPS (Mar 2026)" }
+    trust: { trust_in_govt_pct: 70, trust_in_media_pct: 67, satisfaction_with_democracy_pct: 67, right_track_pct: 65, corruption_perception_score: 84, corruption_perception_rank: 4, source: "Edelman Singapore 2025, IPS, TI CPI 2025" }
+    identity: { university_educated_pct: 46, religious_attendance_weekly_pct: 18, dominant_religion: "Buddhist (31%); No religion (20%); Christian (19%); Muslim (15%); Taoist (8%); Hindu (5%)", urban_pct: 100, median_age: 42.8, gender_gap_pp: 4, diploma_divide_pp: 7, key_cleavage: "PAP-WP class divide; foreign-talent + cost of living; multi-racial harmony framing" }
+    information: { internet_pct: 96, social_media_users_pct: 87, top_platforms: ["WhatsApp", "Instagram", "TikTok", "Telegram"], news_consumption: "Mediacorp Channel 5/8 TV + Straits Times + CNA online", misinformation_exposure: "low-moderate (POFMA controls)", press_freedom_rank: 126 }
+    crisis_memory:
+      - "2024 Lee Hsien Loong handed off to Lawrence Wong"
+      - "2025 GE: PAP returned with 65.6%, WP held 10 seats"
+      - "Iswaran corruption charges 2024 — first sitting minister conviction"
+      - "Pandemic dorm-cluster framing 2020-21"
+    demographic_shifts: { net_migration_per_1000: 4.5, population_growth_5y_pct: 5.0, key_shift: "Foreign-born ~40%; PR + work-pass policies politically charged" }
+
+  KHM:
+    economic_pressure: { real_wage_growth_yoy_pct: -1.0, unemployment_pct: 1.4, unemployment_trend: "stable", inflation_pct: 2.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Microfinance debt trap + EU GSP suspension + China dependence", source: "NIS, NBC, IMF Cambodia (Mar 2026)" }
+    trust: { trust_in_govt_pct: 65, trust_in_govt_pct_estimated: true, trust_in_media_pct: 50, trust_in_media_pct_estimated: true, satisfaction_with_democracy_pct: 35, right_track_pct: 55, right_track_pct_estimated: true, corruption_perception_score: 22, corruption_perception_rank: 158, source: "Asian Barometer wave 5 (limited Cambodia fieldwork); Future Forum 2024; TI CPI 2025" }
+    identity: { university_educated_pct: 14, religious_attendance_weekly_pct: 60, dominant_religion: "Theravada Buddhist (~97%); Muslim Cham 2%", urban_pct: 25, median_age: 26.4, gender_gap_pp: null, diploma_divide_pp: null, key_cleavage: "CPP party-state vs banned opposition (Sam Rainsy / Kem Sokha exiled); urban-rural" }
+    information: { internet_pct: 60, social_media_users_pct: 67, top_platforms: ["Facebook", "TikTok", "Telegram", "Messenger"], news_consumption: "TV (CTN, Bayon, Hang Meas); independent press (VOD, RFA Cambodia) shut down 2022-23", misinformation_exposure: "high (state info-controls)", press_freedom_rank: 151 }
+    crisis_memory:
+      - "2023 Hun Manet succession from Hun Sen"
+      - "2017-now opposition CNRP banned + Kem Sokha treason trial"
+      - "Microfinance debt 4M+ households over-indebted"
+      - "Sihanoukville Chinese-investment boom-bust"
+    demographic_shifts: { net_migration_per_1000: -2.0, population_growth_5y_pct: 5.5, key_shift: "Migrant labour to Thailand 1M+; remittances 5% GDP" }
+
+  LKA:
+    economic_pressure: { real_wage_growth_yoy_pct: 3.0, unemployment_pct: 4.7, unemployment_trend: "stable", inflation_pct: 3.0, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "IMF programme + post-default recovery + accountability", source: "DCS, CBSL, IHP (Mar 2026)" }
+    trust: { trust_in_govt_pct: 64, trust_in_media_pct: 47, satisfaction_with_democracy_pct: 60, right_track_pct: 58, corruption_perception_score: 31, corruption_perception_rank: 121, source: "IHP Mar 2026 (NPP honeymoon), CPA, TI CPI 2025" }
+    identity: { university_educated_pct: 22, religious_attendance_weekly_pct: 56, dominant_religion: "Theravada Buddhist (70%, mostly Sinhalese); Hindu 12% (Tamil); Muslim 9.7%; Christian 7.4%", urban_pct: 19, median_age: 34.5, gender_gap_pp: 6, diploma_divide_pp: 9, key_cleavage: "Sinhalese-Buddhist majority + Tamil + Muslim minorities; class realignment after 2022 Aragalaya" }
+    information: { internet_pct: 65, social_media_users_pct: 50, top_platforms: ["WhatsApp", "Facebook", "YouTube", "TikTok"], news_consumption: "TV (Rupavahini, Sirasa, Derana); Daily Mirror + Island", misinformation_exposure: "high (post-truth + Aragalaya rumour mills)", press_freedom_rank: 150 }
+    crisis_memory:
+      - "2022 Aragalaya — Rajapaksa fled + economic collapse"
+      - "2024 NPP supermajority — first leftist govt"
+      - "Easter bombings 2019 — security baseline"
+      - "Civil war 1983-2009 — generational"
+    demographic_shifts: { net_migration_per_1000: -3.5, population_growth_5y_pct: 0.5, key_shift: "Massive labour-migration to Gulf + South Korea; brain drain accelerating" }
+
+  NPL:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.5, unemployment_pct: 11.4, unemployment_trend: "stable", inflation_pct: 5.0, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Youth migration + remittance dependence + permanent coalition flux", source: "NSO, NRB, Nepal Watch (Mar 2026)" }
+    trust: { trust_in_govt_pct: 31, trust_in_media_pct: 50, satisfaction_with_democracy_pct: 38, right_track_pct: 28, corruption_perception_score: 35, corruption_perception_rank: 107, source: "Asia Foundation Nepal Survey 2024, TI Nepal, TI CPI 2025" }
+    identity: { university_educated_pct: 12, religious_attendance_weekly_pct: 60, dominant_religion: "Hindu (81%); Buddhist 9%; Muslim 4%; Christian 1.4%", urban_pct: 22, median_age: 25.6, gender_gap_pp: 5, diploma_divide_pp: 7, key_cleavage: "Pahari (hill) vs Madhesi (plain); communist-vs-Congress; monarchist revival small but present" }
+    information: { internet_pct: 41, social_media_users_pct: 48, top_platforms: ["TikTok", "Facebook", "WhatsApp", "Instagram"], news_consumption: "FM radio still huge in hills; Kantipur + Annapurna Post; YouTube politicised", misinformation_exposure: "high", press_freedom_rank: 74 }
+    crisis_memory:
+      - "Permanent coalition flux: 14 PMs in 18 years"
+      - "2015 earthquake (9k dead) + 2024 Jajarkot quake"
+      - "Constitution 2015 + Madhesi blockade fallout"
+      - "Civil war 1996-2006 — Maoist legacy"
+    demographic_shifts: { net_migration_per_1000: -3.0, population_growth_5y_pct: 1.5, key_shift: "Youth migration to Gulf + Malaysia + Korea; remittances 25% GDP — highest in world" }
+
+  MMR:
+    economic_pressure: { real_wage_growth_yoy_pct: -15.0, unemployment_pct: 30, unemployment_trend: "rising", inflation_pct: 35, inflation_trend: "high", housing_unaffordability: "strained", consumer_confidence: "well_below_avg", key_pressure: "Civil-war economy collapse + sanctions + currency", source: "World Bank Myanmar 2025, IMF (limited)" }
+    trust: { trust_in_govt_pct: null, trust_in_media_pct: null, satisfaction_with_democracy_pct: null, right_track_pct: null, corruption_perception_score: 16, corruption_perception_rank: 162, source: "(active civil war; no in-country polling); TI CPI 2025" }
+    identity: { university_educated_pct: 14, religious_attendance_weekly_pct: 60, dominant_religion: "Theravada Buddhist (88%); Christian 6%; Muslim 4% (Rohingya)", urban_pct: 32, median_age: 30.1, gender_gap_pp: null, diploma_divide_pp: null, key_cleavage: "Bamar (NLD/NUG vs SAC) vs ethnic minorities (KIA, AA, TNLA, etc.); junta vs revolution" }
+    information: { internet_pct: 47, social_media_users_pct: 37, top_platforms: ["Telegram", "Facebook (limited)", "TikTok", "Signal"], news_consumption: "State MRTV vs exile media (Irrawaddy, RFA Burmese); VPN-required", misinformation_exposure: "very high", press_freedom_rank: 171 }
+    crisis_memory:
+      - "2021-02 coup — defining political event"
+      - "2017 Rohingya genocide + ICJ case"
+      - "Recurring junta scorched-earth + airstrikes 2024-26"
+      - "Sittwe + Lashio falls to EAOs 2024-25"
+    demographic_shifts: { net_migration_per_1000: -10, population_growth_5y_pct: -2.5, key_shift: "3.5M+ internally displaced; 1M+ refugees abroad; conscription-driven flight 2024" }
+
+  KEN:
+    economic_pressure: { real_wage_growth_yoy_pct: -2.0, unemployment_pct: 5.6, unemployment_trend: "rising", inflation_pct: 4.0, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Finance-Bill protests + cost-of-living + IMF programme", source: "KNBS, CBK, Infotrak (Mar 2026)" }
+    trust: { trust_in_govt_pct: 27, trust_in_media_pct: 56, satisfaction_with_democracy_pct: 39, right_track_pct: 22, corruption_perception_score: 32, corruption_perception_rank: 121, source: "Infotrak Mar 2026, Afrobarometer R10, TI CPI 2025" }
+    identity: { university_educated_pct: 10, religious_attendance_weekly_pct: 78, dominant_religion: "Christian (85%); Muslim 11%", urban_pct: 29, median_age: 20.0, gender_gap_pp: 4, diploma_divide_pp: 6, key_cleavage: "Ethnic blocs (Kikuyu/Luo/Kalenjin/Luhya) + Gen-Z trans-ethnic protest movement" }
+    information: { internet_pct: 41, social_media_users_pct: 26, top_platforms: ["WhatsApp", "Facebook", "TikTok", "X (Twitter)"], news_consumption: "TV (Citizen, NTV, KTN) + Daily Nation + Standard; X mobilised Gen-Z 2024", misinformation_exposure: "high", press_freedom_rank: 102 }
+    crisis_memory:
+      - "2024-06 Gen-Z Finance Bill protests stormed parliament + 60+ killed"
+      - "2017 election re-run + Maraga ruling"
+      - "2007-08 post-election violence (1.3k dead)"
+      - "Recurring drought + Gen-Z femicide protests 2024"
+    demographic_shifts: { net_migration_per_1000: 0.0, population_growth_5y_pct: 9.5, key_shift: "Median age 20 — youngest electorate driving Gen-Z politics; 1.2M new voters every cycle" }
+
+  GHA:
+    economic_pressure: { real_wage_growth_yoy_pct: -2.0, unemployment_pct: 14.0, unemployment_trend: "stable", inflation_pct: 22, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Cedi crisis + IMF programme + galamsey illegal mining", source: "GSS, BoG, Afrobarometer R10 (2024)" }
+    trust: { trust_in_govt_pct: 38, trust_in_media_pct: 56, satisfaction_with_democracy_pct: 60, right_track_pct: 41, corruption_perception_score: 42, corruption_perception_rank: 75, source: "Afrobarometer R10 (Ghana 2024), TI CPI 2025" }
+    identity: { university_educated_pct: 12, religious_attendance_weekly_pct: 81, dominant_religion: "Christian (71%, mostly Pentecostal); Muslim 18%; traditional 5%", urban_pct: 59, median_age: 21.5, gender_gap_pp: 4, diploma_divide_pp: 6, key_cleavage: "Akan-Asante (NPP) vs Ewe + Northern (NDC); Pentecostal-political-prosperity nexus" }
+    information: { internet_pct: 69, social_media_users_pct: 27, top_platforms: ["WhatsApp", "Facebook", "TikTok", "X"], news_consumption: "Joy/Citi/Peace FM radio + TV3/GBC + Graphic / Daily Guide", misinformation_exposure: "moderate-high", press_freedom_rank: 50 }
+    crisis_memory:
+      - "2024-12 Mahama defeats Bawumia — first sitting-VP loss"
+      - "Cedi crash 2022-23 + IMF deal"
+      - "Galamsey environmental crisis ongoing"
+      - "DUMSOR (rolling blackouts) recurring"
+    demographic_shifts: { net_migration_per_1000: -1.0, population_growth_5y_pct: 9.5, key_shift: "Massive youth bulge; emigration of skilled to UK/US growing" }
+
+  SEN:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.0, unemployment_pct: 19, unemployment_trend: "stable", inflation_pct: 2.5, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Youth unemployment + Sahel security + new oil/gas revenue", source: "ANSD, BCEAO, Afrobarometer (2024)" }
+    trust: { trust_in_govt_pct: 56, trust_in_media_pct: 60, satisfaction_with_democracy_pct: 51, right_track_pct: 50, corruption_perception_score: 45, corruption_perception_rank: 65, source: "Afrobarometer Senegal 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 9, religious_attendance_weekly_pct: 86, dominant_religion: "Muslim (94%, mostly Sufi); Christian 4%", urban_pct: 49, median_age: 19.4, gender_gap_pp: 6, diploma_divide_pp: 8, key_cleavage: "Rapid PASTEF realignment — pan-African anti-establishment vs old Macky-PDS-PS axis; Mouride brotherhood cuts across" }
+    information: { internet_pct: 60, social_media_users_pct: 21, top_platforms: ["WhatsApp", "Facebook", "TikTok", "Messenger"], news_consumption: "TFM/2sTV/RTS + Walfadjri radio + Le Quotidien", misinformation_exposure: "moderate", press_freedom_rank: 94 }
+    crisis_memory:
+      - "2024 Faye 1st-round win from prison release — pan-African moment"
+      - "2021-23 Sonko / PASTEF arrests + protests + 60+ deaths"
+      - "Sahel coup belt next door (Mali, Burkina, Niger)"
+      - "Recurring Casamance tensions"
+    demographic_shifts: { net_migration_per_1000: -2.0, population_growth_5y_pct: 13.0, key_shift: "Median age 19; Mediterranean-crossing migration; 14% of GDP from remittances" }
+
+  TUN:
+    economic_pressure: { real_wage_growth_yoy_pct: -3.0, unemployment_pct: 16, unemployment_trend: "stable", inflation_pct: 7.5, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "well_below_avg", key_pressure: "IMF refusal + currency drain + sub-Saharan migration backlash", source: "INS, BCT, Sigma Conseil (Mar 2026)" }
+    trust: { trust_in_govt_pct: 40, trust_in_media_pct: 35, satisfaction_with_democracy_pct: 25, right_track_pct: 27, corruption_perception_score: 39, corruption_perception_rank: 83, source: "Sigma Conseil Mar 2026, Arab Barometer Tunisia 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 28, religious_attendance_weekly_pct: 50, dominant_religion: "Sunni Muslim (98%); Jewish + Christian minorities", urban_pct: 70, median_age: 33.4, gender_gap_pp: 4, diploma_divide_pp: 6, key_cleavage: "Coastal modernisers vs interior Saied-supporters; secular-Islamist (Ennahda) split older now" }
+    information: { internet_pct: 80, social_media_users_pct: 70, top_platforms: ["Facebook", "TikTok", "WhatsApp", "Instagram"], news_consumption: "Wataniya 1/2 + private channels (Carthage, Nessma); restrictions tightening", misinformation_exposure: "high", press_freedom_rank: 118 }
+    crisis_memory:
+      - "2021-07 Saied self-coup dissolved parliament"
+      - "2024-10 Saied 'reelection' 90.7% with opponents detained"
+      - "Recurring Med-crossing migration crises"
+      - "2011 Jasmine Revolution — origin of Arab Spring"
+    demographic_shifts: { net_migration_per_1000: -2.5, population_growth_5y_pct: 2.5, key_shift: "Brain drain accelerating; sub-Saharan migration transit; emigration to France/Italy" }
+
+  MAR:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.0, unemployment_pct: 13, unemployment_trend: "rising", inflation_pct: 1.7, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Earthquake recovery + drought + youth unemployment", source: "HCP, BAM, Arab Barometer Morocco (2024)" }
+    trust: { trust_in_govt_pct: 38, trust_in_media_pct: 41, satisfaction_with_democracy_pct: 36, right_track_pct: 32, corruption_perception_score: 38, corruption_perception_rank: 97, source: "Arab Barometer Morocco 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 17, religious_attendance_weekly_pct: 60, dominant_religion: "Sunni Muslim (~99%); Jewish + Christian minorities tiny", urban_pct: 64, median_age: 30.0, gender_gap_pp: 6, diploma_divide_pp: 9, key_cleavage: "Berber (Amazigh) vs Arab; rural-urban; King + technocrat governance with limited party space" }
+    information: { internet_pct: 88, social_media_users_pct: 70, top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"], news_consumption: "2M / Al Aoula TV + Le Matin / Hespress online", misinformation_exposure: "moderate-high", press_freedom_rank: 144 }
+    crisis_memory:
+      - "2023-09 Atlas earthquake (3k dead)"
+      - "2025 Morocco-vs-Rest-of-Maghreb diplomatic isolation"
+      - "Hirak Rif 2016-17 protests"
+      - "2020 Israel normalisation (Abraham Accords)"
+    demographic_shifts: { net_migration_per_1000: -2.5, population_growth_5y_pct: 4.5, key_shift: "Sub-Saharan migration transit + Spain-bound; emigration of skilled" }
+
+  DZA:
+    economic_pressure: { real_wage_growth_yoy_pct: -2.0, unemployment_pct: 12, unemployment_trend: "stable", inflation_pct: 4.0, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Hydrocarbon dependence + youth unemployment + Hirak repression", source: "ONS, BdA, Arab Barometer Algeria (2024)" }
+    trust: { trust_in_govt_pct: 30, trust_in_govt_pct_estimated: true, trust_in_media_pct: 32, trust_in_media_pct_estimated: true, satisfaction_with_democracy_pct: 28, right_track_pct: 31, right_track_pct_estimated: true, corruption_perception_score: 32, corruption_perception_rank: 116, source: "Arab Barometer Algeria 2024 (limited fieldwork); TI CPI 2025" }
+    identity: { university_educated_pct: 28, religious_attendance_weekly_pct: 47, dominant_religion: "Sunni Muslim (99%); Berber identity ~25%", urban_pct: 75, median_age: 28.9, gender_gap_pp: null, diploma_divide_pp: null, key_cleavage: "Hirak generation (urban, Berber, secular-leaning) vs FLN-RND-army nexus + religious-traditional" }
+    information: { internet_pct: 71, social_media_users_pct: 60, top_platforms: ["Facebook", "WhatsApp", "TikTok", "YouTube"], news_consumption: "ENTV state + private (El Bilad, Echorouk); diaspora online (TSA Algérie)", misinformation_exposure: "high", press_freedom_rank: 139 }
+    crisis_memory:
+      - "2019-21 Hirak movement + Bouteflika ouster"
+      - "1990s civil war (200k dead) — 'Black Decade' baseline"
+      - "Recurring Kabyle protests + repression"
+      - "2024 election turnout disputed at <25% real"
+    demographic_shifts: { net_migration_per_1000: -1.0, population_growth_5y_pct: 7.0, key_shift: "Youth bulge unemployed; emigration to France ongoing" }
+
+  COD:
+    economic_pressure: { real_wage_growth_yoy_pct: 0.5, unemployment_pct: 4.5, unemployment_trend: "stable", inflation_pct: 14, inflation_trend: "stable", housing_unaffordability: "severe", consumer_confidence: "well_below_avg", key_pressure: "Eastern war + cobalt/copper rents + currency", source: "INS, BCC, Bureau Recherches DRC (Mar 2026)" }
+    trust: { trust_in_govt_pct: 24, trust_in_media_pct: 38, satisfaction_with_democracy_pct: 28, right_track_pct: 22, corruption_perception_score: 20, corruption_perception_rank: 162, source: "Afrobarometer DRC 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 7, religious_attendance_weekly_pct: 80, dominant_religion: "Catholic (29%); Protestant (27%); Kimbanguist (12%); Muslim 1.5%", urban_pct: 47, median_age: 16.7, gender_gap_pp: 4, diploma_divide_pp: 6, key_cleavage: "Massive ethnic + provincial fragmentation; Tshisekedi UDPS vs Kabila-PPRD now M23-aligned" }
+    information: { internet_pct: 28, social_media_users_pct: 16, top_platforms: ["WhatsApp", "Facebook", "TikTok", "X"], news_consumption: "RTNC state + Top Congo + RFI; Goma/Bukavu under M23 — info war", misinformation_exposure: "very high (war + Russia/Rwanda info-ops)", press_freedom_rank: 123 }
+    crisis_memory:
+      - "2025 M23/AFC takeover of Goma + Bukavu"
+      - "Ongoing eastern war (1996-now) — 6M+ dead cumulative"
+      - "Tshisekedi 2023 'reelection' contested"
+      - "Cobalt-mining child-labour exposés"
+    demographic_shifts: { net_migration_per_1000: -2.5, population_growth_5y_pct: 17.0, key_shift: "World's youngest population; 7M IDPs; Rwanda-DRC tension structural" }
+
+  RWA:
+    economic_pressure: { real_wage_growth_yoy_pct: 2.0, unemployment_pct: 17, unemployment_trend: "stable", inflation_pct: 5.0, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Aid uncertainty (UK partnership scrapped) + DRC war exposure + youth unemployment", source: "NISR, NBR, Afrobarometer 2022" }
+    trust: { trust_in_govt_pct: 88, trust_in_govt_pct_estimated: true, trust_in_media_pct: 70, trust_in_media_pct_estimated: true, satisfaction_with_democracy_pct: 70, right_track_pct: 81, right_track_pct_estimated: true, corruption_perception_score: 57, corruption_perception_rank: 41, source: "Afrobarometer Rwanda 2022 (last; high reported trust amid restricted environment); TI CPI 2025" }
+    identity: { university_educated_pct: 6, religious_attendance_weekly_pct: 82, dominant_religion: "Catholic (44%); Protestant (38%); Muslim 1.8%; SDA 13%", urban_pct: 18, median_age: 19.8, gender_gap_pp: null, diploma_divide_pp: null, key_cleavage: "Genocide memory unifying narrative; Hutu-Tutsi politics suppressed; Kagame consensus" }
+    information: { internet_pct: 33, social_media_users_pct: 12, top_platforms: ["WhatsApp", "Facebook", "TikTok", "Instagram"], news_consumption: "RBA state + KT Press + IGIHE; periodic shutdowns of foreign critical outlets", misinformation_exposure: "moderate (state info-controls)", press_freedom_rank: 144 }
+    crisis_memory:
+      - "1994 genocide — defining national event (1M+ dead)"
+      - "Recurring DRC engagements + M23 backing"
+      - "Karamoja 2024 visit + Russian/Ukrainian outreach"
+      - "Kagame 2024 'reelection' 99.18%"
+    demographic_shifts: { net_migration_per_1000: 0.0, population_growth_5y_pct: 11.5, key_shift: "Young population; high education-attainment growth (Vision 2050); refugees from neighbouring countries" }
+
+  UGA:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.0, unemployment_pct: 12, unemployment_trend: "stable", inflation_pct: 3.5, inflation_trend: "easing", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "EACOP oil + cost of living + Bobi Wine repression", source: "UBOS, BoU, Afrobarometer Uganda 2024" }
+    trust: { trust_in_govt_pct: 47, trust_in_media_pct: 51, satisfaction_with_democracy_pct: 41, right_track_pct: 38, corruption_perception_score: 26, corruption_perception_rank: 145, source: "Afrobarometer Uganda 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 8, religious_attendance_weekly_pct: 86, dominant_religion: "Christian (84%, mostly Anglican/Catholic/Pentecostal); Muslim 13%", urban_pct: 27, median_age: 17.2, gender_gap_pp: 5, diploma_divide_pp: 6, key_cleavage: "Buganda + central (NUP) vs Museveni-NRM rural support; ethno-regional mosaic" }
+    information: { internet_pct: 25, social_media_users_pct: 11, top_platforms: ["WhatsApp", "Facebook", "TikTok", "X"], news_consumption: "NBS / NTV / UBC TV + Daily Monitor / New Vision; periodic Twitter/X shutdowns", misinformation_exposure: "high", press_freedom_rank: 128 }
+    crisis_memory:
+      - "2021 Bobi Wine arrest + military presence in Kampala"
+      - "EACOP pipeline 2022-onward — civil-society vs govt"
+      - "2014 anti-gay law + recurring updates"
+      - "ADF attacks 2021-now — Islamist insurgency"
+    demographic_shifts: { net_migration_per_1000: 0.5, population_growth_5y_pct: 14.0, key_shift: "World's-youngest country (median 17); 1M+ refugees from S Sudan + DRC + Burundi" }
+
+  TZA:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.5, unemployment_pct: 9.0, unemployment_trend: "stable", inflation_pct: 3.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Tanga port + agriculture + post-Magufuli reset stalled", source: "NBS Tanzania, BoT, Afrobarometer 2024" }
+    trust: { trust_in_govt_pct: 60, trust_in_media_pct: 51, satisfaction_with_democracy_pct: 48, right_track_pct: 51, corruption_perception_score: 41, corruption_perception_rank: 81, source: "Afrobarometer Tanzania 2024, TI CPI 2025" }
+    identity: { university_educated_pct: 4, religious_attendance_weekly_pct: 75, dominant_religion: "Christian (61%); Muslim 35% (incl Zanzibar)", urban_pct: 37, median_age: 17.7, gender_gap_pp: 4, diploma_divide_pp: 5, key_cleavage: "Mainland vs Zanzibar (autonomy + Muslim politics); CCM dominance vs Chadema in cities" }
+    information: { internet_pct: 39, social_media_users_pct: 10, top_platforms: ["WhatsApp", "Instagram", "TikTok", "Facebook"], news_consumption: "TBC + ITV; Mwananchi / The Citizen; opposition media restricted", misinformation_exposure: "moderate-high", press_freedom_rank: 97 }
+    crisis_memory:
+      - "2025-10 election: Lissu disqualified + opposition crackdown"
+      - "Magufuli era 2015-21 — 'Bulldozer' authoritarian shift"
+      - "2024 Hassan-led reopening then 2025 reversal"
+      - "Zanzibar election fraud allegations recurring"
+    demographic_shifts: { net_migration_per_1000: -0.4, population_growth_5y_pct: 14.0, key_shift: "Massive youth bulge; urbanisation accelerating; Burundian refugee presence" }
+
+  NZL:
+    economic_pressure: { real_wage_growth_yoy_pct: 0.5, unemployment_pct: 5.0, unemployment_trend: "rising", inflation_pct: 2.4, inflation_trend: "stable", housing_unaffordability: "severe", consumer_confidence: "below_avg", key_pressure: "Cost of living + housing crisis + ram-raid era", source: "Stats NZ, RBNZ, 1News-Verian (Mar 2026)" }
+    trust: { trust_in_govt_pct: 36, trust_in_media_pct: 33, satisfaction_with_democracy_pct: 65, right_track_pct: 32, corruption_perception_score: 86, corruption_perception_rank: 3, source: "1News-Verian Mar 2026, Edelman 2025, TI CPI 2025" }
+    identity: { university_educated_pct: 50, religious_attendance_weekly_pct: 14, dominant_religion: "Christian (37%, declining); 49% no religion (most-secular OECD)", urban_pct: 87, median_age: 38.1, gender_gap_pp: 9, diploma_divide_pp: 13, key_cleavage: "Treaty + Māori politics; urban-rural; cost of living squeezes both" }
+    information: { internet_pct: 96, social_media_users_pct: 81, top_platforms: ["Facebook", "Instagram", "TikTok", "WhatsApp"], news_consumption: "TVNZ + RNZ + Stuff/NZ Herald; Newshub closed 2024", misinformation_exposure: "moderate (anti-vax + Treaty culture-war)", press_freedom_rank: 19 }
+    crisis_memory:
+      - "2023-10 Luxon coalition ended Labour's 6yr era"
+      - "2019 Christchurch mosque attacks — security baseline"
+      - "Pandemic Ardern era + 2021-22 protests"
+      - "2024-25 Treaty Principles Bill protests (Hīkoi)"
+    demographic_shifts: { net_migration_per_1000: 14, population_growth_5y_pct: 5.0, key_shift: "Highest per-capita immigration in OECD 2023-24; political backlash building" }
+
+  RUS:
+    economic_pressure: { real_wage_growth_yoy_pct: 6.0, unemployment_pct: 2.6, unemployment_trend: "stable", inflation_pct: 9.5, inflation_trend: "rising", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Wartime overheating + sanctions evasion + labour shortage from war + emigration", source: "Rosstat, CBR, Levada (Mar 2026)" }
+    trust: { trust_in_govt_pct: 60, trust_in_govt_pct_estimated: true, trust_in_media_pct: 47, trust_in_media_pct_estimated: true, satisfaction_with_democracy_pct: 50, right_track_pct: 65, right_track_pct_estimated: true, corruption_perception_score: 22, corruption_perception_rank: 159, source: "Levada Center Mar 2026 (under wartime censorship constraints); TI CPI 2025" }
+    identity: { university_educated_pct: 56, religious_attendance_weekly_pct: 8, dominant_religion: "Russian Orthodox (~70% identified, cultural); Muslim 10%; non-religious 25%", urban_pct: 75, median_age: 40.3, gender_gap_pp: null, diploma_divide_pp: null, key_cleavage: "Putin-loyal vs banned-opposition (in exile/jailed); Moscow metropolitan vs regions; ethnic minorities (Dagestan, Chechnya)" }
+    information: { internet_pct: 90, social_media_users_pct: 84, top_platforms: ["VK", "Telegram", "WhatsApp", "TikTok (banned)"], news_consumption: "Channel 1 + Rossiya state TV; Telegram channels (state + opposition); independent banned", misinformation_exposure: "very high (state monopoly + war)", press_freedom_rank: 171 }
+    crisis_memory:
+      - "2022-02-24 invasion of Ukraine — defining era"
+      - "2023 Wagner mutiny + Prigozhin death"
+      - "2024 Crocus City Hall attack"
+      - "Navalny death 2024-02 in penal colony"
+    demographic_shifts: { net_migration_per_1000: -2.0, population_growth_5y_pct: -1.8, key_shift: "1M+ Russians emigrated post-2022; population shrinking; demographic crisis structural" }
+
+  BLR:
+    economic_pressure: { real_wage_growth_yoy_pct: 6.0, unemployment_pct: 3.5, unemployment_trend: "stable", inflation_pct: 8.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "below_avg", key_pressure: "Sanctions + Russia dependence + war involvement", source: "Belstat, NBRB, Chatham House 'Belarusian Tracker' 2025" }
+    trust: { trust_in_govt_pct: 27, trust_in_govt_pct_estimated: true, trust_in_media_pct: 30, trust_in_media_pct_estimated: true, satisfaction_with_democracy_pct: 18, right_track_pct: 22, right_track_pct_estimated: true, corruption_perception_score: 33, corruption_perception_rank: 114, source: "Chatham House Belarus Tracker 2025 (anonymous online surveys); TI CPI 2025" }
+    identity: { university_educated_pct: 35, religious_attendance_weekly_pct: 17, dominant_religion: "Eastern Orthodox (~70%); Catholic (15%); secular", urban_pct: 80, median_age: 41.3, gender_gap_pp: null, diploma_divide_pp: null, key_cleavage: "Lukashenko-loyal vs 2020-protest generation in exile; Russian-vs-Belarusian language politics" }
+    information: { internet_pct: 87, social_media_users_pct: 65, top_platforms: ["VK", "Telegram", "Instagram", "TikTok"], news_consumption: "State BT + diaspora outlets (Nasha Niva, Zerkalo) via VPN", misinformation_exposure: "very high (state monopoly)", press_freedom_rank: 167 }
+    crisis_memory:
+      - "2020 mass protests + brutal crackdown"
+      - "2022 war involvement — Belarusian territory used"
+      - "2023 Wagner relocation"
+      - "Recurring political-prisoner releases / new arrests"
+    demographic_shifts: { net_migration_per_1000: -8.0, population_growth_5y_pct: -3.5, key_shift: "300k+ Belarusians fled post-2020; population shrinking; emigration of skilled" }
+
+  KAZ:
+    economic_pressure: { real_wage_growth_yoy_pct: 1.5, unemployment_pct: 4.8, unemployment_trend: "stable", inflation_pct: 9.5, inflation_trend: "stable", housing_unaffordability: "strained", consumer_confidence: "average", key_pressure: "Kashagan tax dispute + Russia ties + 2022-unrest legacy", source: "Bureau of Statistics Kazakhstan, NBK, Demoscope (Mar 2026)" }
+    trust: { trust_in_govt_pct: 60, trust_in_govt_pct_estimated: true, trust_in_media_pct: 50, trust_in_media_pct_estimated: true, satisfaction_with_democracy_pct: 51, right_track_pct: 64, right_track_pct_estimated: true, corruption_perception_score: 39, corruption_perception_rank: 88, source: "Demoscope KZ 2025 (state-aligned environment); Central Asia Barometer 2024; TI CPI 2025" }
+    identity: { university_educated_pct: 55, religious_attendance_weekly_pct: 27, dominant_religion: "Sunni Muslim (~70%); Russian Orthodox 17%; non-religious", urban_pct: 58, median_age: 31.9, gender_gap_pp: null, diploma_divide_pp: null, key_cleavage: "Tokayev-Nazarbayev clan rebalance; Russian-speaking minority + Kazakh nationalism; west oil-region restiveness" }
+    information: { internet_pct: 92, social_media_users_pct: 70, top_platforms: ["WhatsApp", "Instagram", "Telegram", "TikTok"], news_consumption: "Khabar / Astana TV state + Tengri / Vlast independent", misinformation_exposure: "high (state info-controls + Russian channels available)", press_freedom_rank: 142 }
+    crisis_memory:
+      - "2022-01 January unrest (Qantar) — 230+ killed"
+      - "Nazarbayev-Tokayev power transfer 2022-onward"
+      - "Kashagan dispute with oil majors"
+      - "Russia-Ukraine war straddling Russian-speaking minority"
+    demographic_shifts: { net_migration_per_1000: 2.0, population_growth_5y_pct: 6.0, key_shift: "Russian-emigré reception 2022 (~150k); Kazakh-language revival; oralman repatriation" }

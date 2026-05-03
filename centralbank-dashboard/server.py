@@ -18,10 +18,14 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from analysis import edge as edge_analysis
 from analysis import stance as stance_analysis
 from ingestion import decision_calendar, econ_releases, fred_client, implied_path, kalshi_client, ois_curve
+from trading import audit as trade_audit
+from trading import key_store
+from trading import order_manager
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -124,6 +128,168 @@ async def api_kalshi(force: bool = False) -> JSONResponse:
 @app.get("/api/stance")
 async def api_stance() -> JSONResponse:
     return JSONResponse(stance_analysis.compute())
+
+
+# ── Trading endpoints (Phase 2) ──────────────────────────────────────────────
+#
+# Identity: every trading endpoint requires an authenticated user. We trust
+# the gateway's `X-Gateway-User-Id` header — it's set by gateway/server.py
+# after the SSO check passes. In DEV_MODE we fall back to a single "dev"
+# user_id so a developer can exercise the trading flow on localhost without
+# running the full gateway.
+#
+# Safety: every order placement requires `confirm: true` in the request
+# body. The frontend only sets that after the user clicks "Confirm" in a
+# modal that re-states the order details. We never auto-trade based on
+# any signal.
+
+def _require_user_id(request: Request) -> str | JSONResponse:
+    uid = request.headers.get("x-gateway-user-id", "").strip()
+    if not uid:
+        if _DEV_MODE:
+            return "dev-user"
+        return JSONResponse(
+            {"error": "trading endpoints require gateway user identity"},
+            status_code=401,
+        )
+    return uid
+
+
+class KalshiKeyPayload(BaseModel):
+    api_key_id: str = Field(min_length=4, max_length=200)
+    private_key_pem: str = Field(min_length=100, max_length=10000)
+    mode: str = Field(default="paper", pattern="^(paper|prod)$")
+
+
+class ModePayload(BaseModel):
+    mode: str = Field(pattern="^(paper|prod)$")
+    confirm_real_money: bool = False  # required for paper → prod
+
+
+class OrderPayload(BaseModel):
+    ticker: str = Field(min_length=4, max_length=120)
+    side: str = Field(pattern="^(yes|no)$")
+    action: str = Field(pattern="^(buy|sell)$")
+    count: int = Field(ge=1, le=10000)
+    price_cents: int = Field(ge=1, le=99)
+    confirm: bool = False
+    client_order_id: str | None = Field(default=None, max_length=80)
+
+
+@app.get("/api/keys/kalshi/status")
+async def api_key_status(request: Request) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    return JSONResponse(key_store.status(uid))
+
+
+@app.post("/api/keys/kalshi")
+async def api_keys_upsert(request: Request, body: KalshiKeyPayload) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    try:
+        key_store.upsert_key(
+            user_id=uid,
+            api_key_id=body.api_key_id,
+            private_key_pem=body.private_key_pem,
+            mode=body.mode,
+        )
+    except (ValueError, RuntimeError) as exc:
+        trade_audit.write_event(uid, "key.upsert", ok=False, error=str(exc), mode=body.mode)
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    trade_audit.write_event(uid, "key.upsert", ok=True, mode=body.mode)
+    return JSONResponse({"ok": True, "mode": body.mode})
+
+
+@app.delete("/api/keys/kalshi")
+async def api_keys_delete(request: Request) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    removed = key_store.delete_key(uid)
+    trade_audit.write_event(uid, "key.delete", ok=removed)
+    return JSONResponse({"ok": True, "removed": removed})
+
+
+@app.post("/api/keys/kalshi/mode")
+async def api_keys_set_mode(request: Request, body: ModePayload) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    if body.mode == "prod" and not body.confirm_real_money:
+        return JSONResponse(
+            {"ok": False, "error": "switching to prod requires confirm_real_money=true"},
+            status_code=400,
+        )
+    ok = key_store.set_mode(uid, body.mode)
+    trade_audit.write_event(uid, "mode.set", ok=ok, mode=body.mode)
+    return JSONResponse({"ok": ok, "mode": body.mode})
+
+
+@app.get("/api/portfolio/balance")
+async def api_balance(request: Request) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    return JSONResponse(order_manager.get_balance(uid))
+
+
+@app.get("/api/portfolio/positions")
+async def api_positions(request: Request) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    return JSONResponse(order_manager.get_positions(uid))
+
+
+@app.get("/api/orders")
+async def api_orders(request: Request) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    return JSONResponse(order_manager.list_orders(uid))
+
+
+@app.post("/api/order/kalshi")
+async def api_order_place(request: Request, body: OrderPayload) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    if not body.confirm:
+        return JSONResponse(
+            {"ok": False, "error": "order requires explicit confirm=true (user must accept the modal)"},
+            status_code=400,
+        )
+    result = order_manager.place_order(
+        uid,
+        ticker=body.ticker,
+        side=body.side,
+        action=body.action,
+        count=body.count,
+        price_cents=body.price_cents,
+        client_order_id=body.client_order_id,
+    )
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@app.delete("/api/order/kalshi/{order_id}")
+async def api_order_cancel(request: Request, order_id: str) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    result = order_manager.cancel_order(uid, order_id)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@app.get("/api/audit")
+async def api_audit(request: Request, limit: int = 100) -> JSONResponse:
+    uid = _require_user_id(request)
+    if isinstance(uid, JSONResponse):
+        return uid
+    limit = max(1, min(limit, 500))
+    return JSONResponse({"events": trade_audit.tail_for_user(uid, limit=limit)})
 
 
 @app.get("/healthz")

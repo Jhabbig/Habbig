@@ -1904,6 +1904,8 @@ body {
     <button class="hbtn" id="btn-monitors" title="Custom keyword monitors">Monitors</button>
     <button class="hbtn" id="btn-export" title="Export current data (CSV / JSON)">Export</button>
     <button class="hbtn" id="btn-snapshot" title="Snapshot history &amp; playback">Snapshots</button>
+    <a class="hbtn" href="/history" title="Historical time-series charts" style="text-decoration:none;color:inherit;display:inline-flex;align-items:center;">History</a>
+    <a class="hbtn" href="/cesium" title="3D globe (Cesium) — lazy-loaded, ~3MB on first visit" style="text-decoration:none;color:inherit;display:inline-flex;align-items:center;">3D</a>
     <div class="theme-switcher">
       <div class="theme-btn active" data-theme="dark" title="Dark"></div>
       <div class="theme-btn" data-theme="light" title="Light"></div>
@@ -1974,7 +1976,7 @@ body {
       <label class="layer-toggle"><input type="checkbox" id="lyr-sanctions"><span class="layer-dot" style="background:#f87171"></span>Sanctions</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-webcams"><span class="layer-dot" style="background:#fcd34d"></span>Live Webcams</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-seaice"><span class="layer-dot" style="background:#bae6fd;border:1px solid #7dd3fc"></span>Sea Ice</label>
-      <label class="layer-toggle"><input type="checkbox" id="lyr-daynight"><span class="layer-dot" style="background:#1e293b;border:1px solid #94a3b8"></span>Day/Night</label>
+      <label class="layer-toggle"><input type="checkbox" id="lyr-daynight" checked><span class="layer-dot" style="background:#1e293b;border:1px solid #94a3b8"></span>Day/Night</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-firmsfires"><span class="layer-dot" style="background:#f97316"></span>FIRMS Fires</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-aptgroups"><span class="layer-dot" style="background:#a855f7"></span>APT Groups</label>
       <label class="layer-toggle"><input type="checkbox" id="lyr-climate"><span class="layer-dot" style="background:#fb923c"></span>Climate Anom</label>
@@ -2388,11 +2390,27 @@ function setTheme(theme) {
   else document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem('wm-theme', theme);
   document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
-  // Update globe background (MapLibre sky/fog)
+  // Update globe background (MapLibre sky/fog).
+  // Theme tweaks the void color and how much horizon glow is visible; the
+  // baseline atmospheric scattering is preserved so the planet still looks 3D.
   if (globeMap) {
-    const bgMap = { dark: '#050505', light: '#e0e0e0', green: '#030803', amber: '#080604', blue: '#040610' };
-    const bg = bgMap[theme] || '#050505';
-    try { globeMap.setFog({ color: bg, 'horizon-blend': 0.02 }); } catch(e) {}
+    const fogByTheme = {
+      dark:  { space: '#04060d', glow: 'rgba(120,165,220,0.55)', high: 'rgba(36,92,158,0.65)',  stars: 0.55 },
+      light: { space: '#e0e0e0', glow: 'rgba(140,170,210,0.45)', high: 'rgba(120,150,200,0.40)', stars: 0.0  },
+      green: { space: '#030803', glow: 'rgba( 80,200,140,0.45)', high: 'rgba( 30,120, 80,0.55)', stars: 0.55 },
+      amber: { space: '#080604', glow: 'rgba(220,160, 70,0.45)', high: 'rgba(150,100, 40,0.55)', stars: 0.55 },
+      blue:  { space: '#040610', glow: 'rgba(120,165,220,0.55)', high: 'rgba( 36, 92,158,0.65)', stars: 0.55 },
+    };
+    const f = fogByTheme[theme] || fogByTheme.dark;
+    try {
+      globeMap.setFog({
+        'color': f.glow,
+        'high-color': f.high,
+        'space-color': f.space,
+        'horizon-blend': 0.08,
+        'star-intensity': f.stars,
+      });
+    } catch(e) {}
   }
 }
 
@@ -2613,6 +2631,19 @@ function initGlobe() {
     if (_globeReady) return; // already initialized
     _globeReady = true;
 
+    // ─── Atmosphere / sky ───
+    // Earth-from-space look: deep-black void, subtle blue glow at the horizon,
+    // faint star field. `setTheme()` re-applies this with a theme-tinted void.
+    try {
+      globeMap.setFog({
+        'color': 'rgba(120, 165, 220, 0.55)',   // horizon glow (atmospheric scattering)
+        'high-color': 'rgba(36, 92, 158, 0.65)', // upper atmosphere tint
+        'space-color': '#04060d',                // void behind the planet
+        'horizon-blend': 0.08,                   // thickness of the glow band
+        'star-intensity': 0.55,                  // 0..1; subtle starfield
+      });
+    } catch(e) { /* MapLibre <3 fallback handled by existing setFog elsewhere */ }
+
     // ─── Create custom icon images ───
     function _makeIcon(size, drawFn) {
       const c = document.createElement('canvas');
@@ -2678,9 +2709,11 @@ function initGlobe() {
     });
 
     // ─── Country borders ───
+    // Vendored locally so an outage / rate-limit at raw.githubusercontent.com
+    // doesn't take the globe's borders offline.
     globeMap.addSource('countries', {
       type: 'geojson',
-      data: 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson',
+      data: '/static/countries.geojson',
     });
     globeMap.addLayer({ id: 'country-fill', type: 'fill', source: 'countries',
       paint: { 'fill-color': 'rgba(30,200,120,0.04)' } });
@@ -3031,6 +3064,7 @@ function initGlobe() {
     // Build initial data
     refreshGlobePoints();
     refreshGlobeArcs();
+    refreshDayNight();
   }
   globeMap.on('load', _onGlobeLoad);
   // Expose for debugging / preview verification

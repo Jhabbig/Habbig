@@ -594,8 +594,10 @@ app.add_middleware(
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     # Fail closed: if no gateway secret and not in dev mode, reject all requests
-    if not _BEHIND_GATEWAY and not _DEV_MODE:
-        return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+    # (but always let /healthz through so docker can probe).
+    if request.url.path != "/healthz":
+        if not _BEHIND_GATEWAY and not _DEV_MODE:
+            return JSONResponse({"error": "Service misconfigured"}, status_code=503)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -4386,6 +4388,11 @@ async def startup():
 # ---------------------------------------------------------------------------
 # Auth is handled by the gateway. These endpoints redirect to it or return
 # user info from the gateway-forwarded headers + local profiles.
+
+@app.get("/healthz")
+async def healthz() -> dict:
+    return {"ok": True}
+
 
 @app.get("/login")
 async def login_page():
@@ -10140,4 +10147,4 @@ setInterval(loadAdmin, 30000);
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8888, log_level="info")
+    uvicorn.run(app, host=os.environ.get("BIND_HOST", "127.0.0.1"), port=8888, log_level="info")

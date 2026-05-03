@@ -11,20 +11,35 @@ the world-state dashboard never hard-fails on a sibling outage.
 """
 
 import asyncio
+import os
 import time
 from typing import Any
 
 import httpx
 
+# Host resolution mirrors the gateway: default 127.0.0.1 for the
+# systemd-on-one-host deploy; docker-compose sets
+# DASHBOARD_HOST_TEMPLATE="{key}" so each sibling resolves to its own
+# compose service name.
+_HOST_TEMPLATE: str = os.environ.get("DASHBOARD_HOST_TEMPLATE", "127.0.0.1")
+
+
+def _sibling_host(key: str) -> str:
+    try:
+        return _HOST_TEMPLATE.format(key=key)
+    except (KeyError, IndexError):
+        return _HOST_TEMPLATE
+
+
 # ── Configuration ────────────────────────────────────────────────────
 SOURCES: dict[str, dict[str, Any]] = {
     "midterm_elections": {
-        "url": "http://127.0.0.1:8051/api/share/top-races",
+        "url": f"http://{_sibling_host('midterm')}:8051/api/share/top-races",
         "ttl": 60,          # seconds
         "timeout": 5,       # request timeout
     },
     "crypto_signals": {
-        "url": "http://127.0.0.1:8000/api/share/snapshot",
+        "url": f"http://{_sibling_host('crypto')}:8000/api/share/snapshot",
         "ttl": 30,
         "timeout": 5,
     },
@@ -35,15 +50,31 @@ _cache: dict[str, dict[str, Any]] = {}
 _cache_ts: dict[str, float] = {}
 _lock = asyncio.Lock()
 
+# Shared client: HTTP/1.1 keep-alive avoids a fresh TCP handshake per fetch.
+# Lazy-instantiated on first use so import order is irrelevant.
+_client: httpx.AsyncClient | None = None
+_client_lock = asyncio.Lock()
+
+
+async def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        async with _client_lock:
+            if _client is None:
+                _client = httpx.AsyncClient(
+                    limits=httpx.Limits(max_keepalive_connections=8, max_connections=16),
+                )
+    return _client
+
 
 async def _fetch_one(key: str, cfg: dict) -> dict:
     """Fetch a single sibling endpoint.  Returns the JSON body or {}."""
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(cfg["url"], timeout=cfg.get("timeout", 5))
-            if r.status_code == 200:
-                return r.json()
-            return {}
+        client = await _get_client()
+        r = await client.get(cfg["url"], timeout=cfg.get("timeout", 5))
+        if r.status_code == 200:
+            return r.json()
+        return {}
     except Exception:
         return {}
 

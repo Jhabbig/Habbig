@@ -1129,9 +1129,21 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.route("/cesium")
+def cesium():
+    """3D globe view with NASA GIBS satellite imagery overlays."""
+    return send_from_directory("static", "cesium.html")
+
+
 @app.route("/api/health")
 def api_health():
     return jsonify({"ok": True, "service": "climate-dashboard", "ts": time.time()})
+
+
+@app.route("/healthz")
+def healthz():
+    """Uniform liveness endpoint shared with the other dashboards."""
+    return jsonify({"ok": True})
 
 
 @app.route("/api/markets")
@@ -1289,4 +1301,4 @@ def api_backtest():
 
 if __name__ == "__main__":
     logger.info("Starting climate dashboard on :%d", PORT)
-    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
+    app.run(host=os.environ.get("BIND_HOST", "0.0.0.0"), port=PORT, debug=False, threaded=True)

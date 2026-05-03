@@ -1940,7 +1940,15 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
 
 @app.get("/checkout/viewer-pass")
 async def checkout_viewer_pass(request: Request, interval: str = "monthly"):
-    """Anonymous Stripe Checkout for the all-dashboards viewer pass."""
+    """Stripe Checkout for the all-dashboards viewer pass.
+
+    Works in two modes:
+      - Anonymous (no session): Stripe collects email; webhook mints an
+        invite token and emails it to the customer.
+      - Logged-in: user_id + email travel through metadata; webhook flips
+        has_full_access on the existing account directly. No second account
+        is created and no email round-trip is needed.
+    """
     if interval not in ("monthly", "annual"):
         interval = "monthly"
     cfg = VIEWER_PASS_CFG
@@ -1957,27 +1965,35 @@ async def checkout_viewer_pass(request: Request, interval: str = "monthly"):
         log.error("Viewer pass checkout requested but STRIPE_SECRET_KEY missing")
         return RedirectResponse("/?error=viewer_pass_unavailable", status_code=302)
 
+    # If the visitor is already logged in, attach their identity so the
+    # webhook upgrades the existing account instead of going through the
+    # email-token round-trip.
+    user = current_user(request)
+    metadata = {"type": "viewer_pass", "interval": interval}
+    extra: dict = {}
+    if user and not user.get("_dev_bypass"):
+        metadata["user_id"] = str(user["user_id"])
+        # Prefilling email speeds checkout up; customer can still change it.
+        extra["customer_email"] = user.get("email", "")
+        success_path = "/dashboards?viewer_pass=activated"
+    else:
+        success_path = "/viewer-pass/check-email?session_id={CHECKOUT_SESSION_ID}"
+        extra["customer_creation"] = "always"
+
     base = _stripe_base_url(request)
     try:
         session = stripe.checkout.Session.create(
             mode="subscription",
             line_items=[{"price": stripe_price_id, "quantity": 1}],
-            # No `customer=` — anonymous purchase. Stripe collects email itself.
-            customer_creation="always",
-            metadata={
-                "type": "viewer_pass",
-                "interval": interval,
-            },
+            metadata=metadata,
             subscription_data={
                 # Mirror metadata onto the subscription so cancellation events
                 # carry the type marker too.
-                "metadata": {
-                    "type": "viewer_pass",
-                    "interval": interval,
-                },
+                "metadata": metadata.copy(),
             },
-            success_url=base + "/viewer-pass/check-email?session_id={CHECKOUT_SESSION_ID}",
+            success_url=base + success_path,
             cancel_url=base + "/?viewer_pass_cancelled=1",
+            **extra,
         )
     except Exception as exc:
         log.error("Stripe viewer-pass checkout creation failed: %s", exc)
@@ -2164,10 +2180,13 @@ async def stripe_webhook(request: Request):
                 )
             log.info("Stripe: activated bundle %s (%s) for user %s", plan_type, interval, user_id)
 
-    # ── checkout.session.completed (anonymous viewer-pass purchase) ────────
-    # No user_id in metadata: this branch handles the "buy a pass with no
-    # account, get an invite link by email" flow. Mints a viewer-pass token
-    # linked to the Stripe sub_id and emails it.
+    # ── checkout.session.completed (viewer-pass purchase) ─────────────────
+    # Two sub-flows by metadata.user_id:
+    #   * present  → customer was logged in. Flip their has_full_access
+    #                directly; the token row is created already-claimed
+    #                so subscription.deleted webhooks can revoke later.
+    #   * absent   → anonymous. Mint a viewer-pass token, email it; the
+    #                customer claims it at /gate to set up their account.
     if event_type == "checkout.session.completed":
         meta = data_obj.get("metadata", {}) if isinstance(data_obj, dict) else (data_obj.metadata or {})
         if meta.get("type") == "viewer_pass":
@@ -2182,9 +2201,6 @@ async def stripe_webhook(request: Request):
                 or (data_obj.get("customer_email") if isinstance(data_obj, dict) else getattr(data_obj, "customer_email", None))
                 or ""
             )
-            if not customer_email:
-                log.error("Viewer-pass checkout completed without customer email (sub=%s)", stripe_sub_id)
-                return JSONResponse({"status": "ok"})
 
             # Idempotency: don't mint a second token if Stripe re-sends the event.
             existing = db.find_invite_token_by_stripe_sub(stripe_sub_id) if stripe_sub_id else None
@@ -2193,21 +2209,56 @@ async def stripe_webhook(request: Request):
                 return JSONResponse({"status": "ok", "duplicate": True})
 
             interval = meta.get("interval", "monthly")
-            note = f"Viewer pass ({interval}) — Stripe sub {stripe_sub_id} — {customer_email}"
-            new_token = db.create_invite_token(
-                note=note,
-                target_email=customer_email,
-                grants_full_access=True,
-                stripe_sub_id=stripe_sub_id or "",
-            )
-            log.info("Viewer-pass token minted for %s (sub=%s)", customer_email, stripe_sub_id)
+            existing_user_id_meta = meta.get("user_id")
 
-            # Email the token + setup link. SMTP failure is logged but doesn't
-            # fail the webhook — Stripe would retry and we'd re-enter the
-            # idempotency branch above.
-            scheme, base, port_suffix = _request_base_domain(request)
-            origin = f"{scheme}://{base}{port_suffix}"
-            _send_viewer_pass_email(customer_email, new_token, origin)
+            if existing_user_id_meta:
+                # Logged-in upgrade flow
+                try:
+                    existing_user_id = int(existing_user_id_meta)
+                except (ValueError, TypeError):
+                    log.warning("viewer_pass: invalid user_id in metadata: %s", existing_user_id_meta)
+                    return JSONResponse({"status": "ok"})
+                user_row = db.get_user_by_id(existing_user_id)
+                if not user_row:
+                    log.warning("viewer_pass: user_id=%s not found, can't upgrade", existing_user_id)
+                    return JSONResponse({"status": "ok"})
+                # Direct flip + create a pre-claimed token row purely so
+                # cancellation webhooks can locate the user via stripe_sub_id.
+                db.set_user_has_full_access(existing_user_id, True)
+                flush_session_cache()
+                note = f"Viewer pass ({interval}) — Stripe sub {stripe_sub_id} — user_id={existing_user_id}"
+                tracking_token = db.create_invite_token(
+                    note=note,
+                    target_email=customer_email or user_row["email"],
+                    grants_full_access=True,
+                    stripe_sub_id=stripe_sub_id or "",
+                )
+                # Mark the tracking token claimed by this user so revoke logic
+                # finds the right user_id without affecting their actual session.
+                db.claim_invite_token(tracking_token, existing_user_id, user_row["email"])
+                log.info(
+                    "Viewer pass: upgraded existing user %s (sub=%s)",
+                    existing_user_id, stripe_sub_id,
+                )
+            else:
+                # Anonymous flow — email the token to the customer
+                if not customer_email:
+                    log.error("Viewer-pass anonymous checkout completed without customer email (sub=%s)", stripe_sub_id)
+                    return JSONResponse({"status": "ok"})
+                note = f"Viewer pass ({interval}) — Stripe sub {stripe_sub_id} — {customer_email}"
+                new_token = db.create_invite_token(
+                    note=note,
+                    target_email=customer_email,
+                    grants_full_access=True,
+                    stripe_sub_id=stripe_sub_id or "",
+                )
+                log.info("Viewer-pass token minted for %s (sub=%s)", customer_email, stripe_sub_id)
+                # Email the token + setup link. SMTP failure is logged but doesn't
+                # fail the webhook — Stripe would retry and we'd re-enter the
+                # idempotency branch above.
+                scheme, base, port_suffix = _request_base_domain(request)
+                origin = f"{scheme}://{base}{port_suffix}"
+                _send_viewer_pass_email(customer_email, new_token, origin)
 
     # ── customer.subscription.deleted — subscription cancelled ─────────────
     elif event_type == "customer.subscription.deleted":

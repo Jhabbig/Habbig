@@ -88,6 +88,72 @@
   .econ-substat { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
   .econ-spark { margin-bottom: 4px; }
   .econ-when { color: var(--muted); font-size: 10px; }
+
+  /* Trading panel */
+  .trading-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .trading-grid { grid-template-columns: 1fr; } }
+  .trading-card { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px;
+                  padding: 14px; }
+  .trading-card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted);
+                     text-transform: uppercase; letter-spacing: 0.05em; }
+  .keystatus-row { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+  .keystatus-row .label { color: var(--muted); font-size: 11px; min-width: 80px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+          font-weight: 600; }
+  .pill.paper { background: #30363d; color: #a5d6ff; }
+  .pill.prod  { background: #f85149; color: #fff; }
+  .pill.no-key{ background: #21262d; color: var(--muted); }
+  .key-form input, .key-form textarea, .key-form select {
+    width: 100%; padding: 6px 8px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--grid); border-radius: 4px; font-family: ui-monospace, monospace;
+    font-size: 12px; box-sizing: border-box;
+  }
+  .key-form textarea { min-height: 110px; resize: vertical; }
+  .key-form .form-row { margin-bottom: 8px; }
+  .key-form .form-row label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .real-money-banner { background: #5a1313; color: #ffd6d6; padding: 8px 10px; border-radius: 4px;
+                       font-size: 11px; margin-top: 10px; border: 1px solid #f85149; }
+  .btn-primary { background: var(--accent); color: #0e1117; border: 0; padding: 8px 14px;
+                 border-radius: 4px; font-weight: 700; cursor: pointer; font-size: 12px; }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-secondary { background: transparent; color: var(--fg); border: 1px solid var(--grid);
+                   padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .btn-secondary:hover { background: var(--grid); }
+  .btn-danger { background: #f85149; color: #fff; border: 0; padding: 4px 10px;
+                border-radius: 4px; cursor: pointer; font-size: 11px; }
+  .audit-list { max-height: 200px; overflow-y: auto; font-family: ui-monospace, monospace;
+                font-size: 11px; }
+  .audit-row { padding: 4px 0; border-bottom: 1px solid var(--grid); display: grid;
+               grid-template-columns: 130px 110px 50px 1fr; gap: 8px; }
+  .audit-row .ok-true  { color: #56d364; }
+  .audit-row .ok-false { color: #f85149; }
+
+  /* Order modal */
+  .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); display: flex;
+           align-items: center; justify-content: center; z-index: 9000; }
+  .modal-card { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+                padding: 20px; max-width: 460px; width: 92%; max-height: 90vh; overflow-y: auto; }
+  .modal-card h2 { margin: 0 0 12px; font-size: 16px; }
+  .modal-warning { padding: 8px 10px; border-radius: 4px; font-size: 12px; margin-bottom: 12px;
+                   font-weight: 600; }
+  .modal-warning.paper { background: #1f2937; color: #a5d6ff; border: 1px solid #30363d; }
+  .modal-warning.prod  { background: #5a1313; color: #ffd6d6; border: 1px solid #f85149; }
+  #order-form .form-row { display: grid; grid-template-columns: 110px 1fr; gap: 12px;
+                          align-items: center; margin-bottom: 10px; }
+  #order-form label { color: var(--muted); font-size: 12px; font-weight: 600; }
+  #order-form input, #order-form select {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--grid);
+    border-radius: 4px; padding: 6px 8px; font-size: 13px;
+    font-family: ui-monospace, monospace; width: 100%; box-sizing: border-box;
+  }
+  .form-summary { background: #0e1117; padding: 8px; border-radius: 4px; font-size: 12px;
+                  color: var(--fg); border: 1px dashed var(--grid); margin-top: 4px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+  #order-result { margin-top: 12px; font-size: 12px; padding: 8px; border-radius: 4px; }
+  #order-result.ok  { background: #0d3a17; color: #56d364; border: 1px solid #2da050; }
+  #order-result.err { background: #5a1313; color: #ffd6d6; border: 1px solid #f85149; }
+  #order-result:empty { display: none; padding: 0; }
+  .muted { color: var(--muted); }
   .stance-row { display: grid; grid-template-columns: 180px 100px 1fr; gap: 16px;
                 align-items: center; padding: 10px 0; border-bottom: 1px solid var(--grid); }
   .stance-row:last-child { border-bottom: 0; }
@@ -161,7 +227,44 @@
       <tbody id="calendar"></tbody>
     </table>
   </section>
+  <section class="panel" id="trading-panel">
+    <h2>Kalshi trading — your account</h2>
+    <div id="trading-body">loading…</div>
+  </section>
 </main>
+
+<!-- ─── Order modal ───────────────────────────────────────────────────── -->
+<div id="order-modal" class="modal" hidden>
+  <div class="modal-card">
+    <h2 id="order-modal-title">Place Kalshi order</h2>
+    <div class="modal-warning" id="order-mode-banner"></div>
+    <form id="order-form">
+      <input type="hidden" name="ticker" id="order-ticker">
+      <div class="form-row"><label>Market</label>
+        <span id="order-market-label" class="muted"></span></div>
+      <div class="form-row"><label>Side</label>
+        <select name="side" id="order-side">
+          <option value="yes">YES</option>
+          <option value="no">NO</option>
+        </select></div>
+      <div class="form-row"><label>Action</label>
+        <select name="action" id="order-action">
+          <option value="buy">BUY</option>
+          <option value="sell">SELL</option>
+        </select></div>
+      <div class="form-row"><label>Count</label>
+        <input type="number" name="count" id="order-count" min="1" max="10000" value="1" required></div>
+      <div class="form-row"><label>Limit (¢)</label>
+        <input type="number" name="price_cents" id="order-price" min="1" max="99" value="50" required></div>
+      <div class="form-row form-summary" id="order-summary"></div>
+      <div class="modal-actions">
+        <button type="button" id="order-cancel" class="btn-secondary">Cancel</button>
+        <button type="submit" id="order-submit" class="btn-primary">Confirm &amp; Place</button>
+      </div>
+    </form>
+    <div id="order-result"></div>
+  </div>
+</div>
 
 <script>
 // Inline SVG line chart — Chart.js can be vendored later if we want axes/tooltips.
@@ -226,7 +329,313 @@ async function load() {
     document.getElementById("econ-body").innerHTML =
       `<span class="err">econ load failed: ${escapeHtml(econR.reason.message)}</span>`;
   }
+
+  // Trading panel — independent fetches; key status is always populated, the
+  // others depend on having credentials.
+  loadTradingPanel();
 }
+
+// ── Trading panel ─────────────────────────────────────────────────────────
+async function loadTradingPanel() {
+  const body = document.getElementById("trading-body");
+  let st;
+  try {
+    const r = await fetch("/api/keys/kalshi/status");
+    st = await r.json();
+  } catch (e) {
+    body.innerHTML = `<span class="err">key status failed: ${escapeHtml(e.message)}</span>`;
+    return;
+  }
+
+  const left = renderKeyCard(st);
+  const right = await renderAccountCard(st);
+  body.innerHTML = `<div class="trading-grid">${left}${right}</div>` + await renderAuditCard();
+
+  wireTradingHandlers(st);
+}
+
+function renderKeyCard(st) {
+  const pillCls = st.configured ? (st.mode === "prod" ? "prod" : "paper") : "no-key";
+  const pillTxt = st.configured ? st.mode.toUpperCase() : "NO KEY";
+  const updated = st.updated_at
+    ? new Date(st.updated_at * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC"
+    : "";
+
+  if (st.configured) {
+    const realMoneyBanner = st.mode === "prod"
+      ? `<div class="real-money-banner">
+           ⚠ REAL MONEY MODE — orders execute on the live Kalshi venue against your funded account.
+           Every order requires explicit confirm.
+         </div>` : "";
+    return `<div class="trading-card">
+      <h3>Kalshi credentials</h3>
+      <div class="keystatus-row"><span class="label">Status</span>
+        <span class="pill ${pillCls}">${escapeHtml(pillTxt)}</span></div>
+      <div class="keystatus-row"><span class="label">Updated</span>
+        <span class="muted">${escapeHtml(updated)}</span></div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button class="btn-secondary" id="btn-mode-toggle">Switch to ${st.mode === "paper" ? "PROD" : "PAPER"}</button>
+        <button class="btn-danger" id="btn-key-delete">Remove key</button>
+      </div>
+      ${realMoneyBanner}
+    </div>`;
+  }
+
+  return `<div class="trading-card">
+    <h3>Set up Kalshi trading</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Paste your Kalshi API key id and RSA private key (PEM). Paper mode by default —
+      switch to PROD only when you've verified everything works on demo first.
+      Get credentials at <code>kalshi.com/account/profile</code>.
+    </div>
+    <form class="key-form" id="key-form">
+      <div class="form-row">
+        <label>API key ID</label>
+        <input type="text" name="api_key_id" required placeholder="kalshi-key-id-…">
+      </div>
+      <div class="form-row">
+        <label>Private key (PEM)</label>
+        <textarea name="private_key_pem" required placeholder="-----BEGIN PRIVATE KEY-----&#10;…&#10;-----END PRIVATE KEY-----"></textarea>
+      </div>
+      <div class="form-row">
+        <label>Mode</label>
+        <select name="mode"><option value="paper">PAPER (demo, fake money)</option><option value="prod">PROD (real money)</option></select>
+      </div>
+      <button type="submit" class="btn-primary">Save credentials</button>
+    </form>
+  </div>`;
+}
+
+async function renderAccountCard(st) {
+  if (!st.configured) {
+    return `<div class="trading-card">
+      <h3>Account snapshot</h3>
+      <div class="muted" style="font-size:12px;">Add credentials on the left to see your Kalshi balance, positions, and open orders.</div>
+    </div>`;
+  }
+
+  // Pull balance + positions in parallel.
+  const [balR, posR] = await Promise.allSettled([
+    fetch("/api/portfolio/balance").then(r => r.json()),
+    fetch("/api/portfolio/positions").then(r => r.json()),
+  ]);
+
+  let balHtml = '<span class="muted">balance unavailable</span>';
+  if (balR.status === "fulfilled") {
+    const b = balR.value;
+    if (b.ok && b.response) {
+      const cents = b.response.balance ?? 0;
+      balHtml = `<strong>$${(cents / 100).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>`;
+    } else if (b.error) {
+      balHtml = `<span class="err">${escapeHtml(b.error.slice(0, 80))}</span>`;
+    }
+  }
+
+  let posHtml = '<span class="muted">no positions</span>';
+  if (posR.status === "fulfilled" && posR.value.ok && posR.value.response) {
+    const positions = (posR.value.response.market_positions || []).filter(p => p.position !== 0);
+    if (positions.length) {
+      posHtml = positions.slice(0, 5).map(p => {
+        const side = p.position > 0 ? "YES" : "NO";
+        return `<div style="font-size:11px;font-family:ui-monospace,monospace;">
+          ${escapeHtml(p.ticker)} · ${side} ${Math.abs(p.position)}</div>`;
+      }).join("");
+    }
+  }
+
+  return `<div class="trading-card">
+    <h3>Account · ${st.mode.toUpperCase()}</h3>
+    <div class="keystatus-row"><span class="label">Balance</span>${balHtml}</div>
+    <div class="keystatus-row" style="align-items:flex-start;"><span class="label">Positions</span>
+      <div>${posHtml}</div></div>
+  </div>`;
+}
+
+async function renderAuditCard() {
+  let html;
+  try {
+    const r = await fetch("/api/audit?limit=10");
+    const d = await r.json();
+    if (!d.events || !d.events.length) {
+      html = '<span class="muted" style="font-size:12px;">No actions yet.</span>';
+    } else {
+      html = '<div class="audit-list">' + d.events.map(ev => {
+        const t = new Date(ev.ts).toISOString().slice(0, 19).replace("T", " ");
+        const ok = ev.ok ? '<span class="ok-true">✓</span>' : '<span class="ok-false">✗</span>';
+        const err = ev.error ? `<span class="muted">${escapeHtml(ev.error.slice(0, 60))}</span>` : '';
+        return `<div class="audit-row"><span>${escapeHtml(t)}</span><span>${escapeHtml(ev.action)}</span><span>${ok}</span>${err}</div>`;
+      }).join("") + '</div>';
+    }
+  } catch (e) {
+    html = `<span class="err">audit fetch failed</span>`;
+  }
+  return `<div class="trading-card" style="grid-column: 1 / -1; margin-top: 12px;">
+    <h3>Recent activity</h3>${html}
+  </div>`;
+}
+
+function wireTradingHandlers(st) {
+  // 1. Save-credentials form
+  const keyForm = document.getElementById("key-form");
+  if (keyForm) {
+    keyForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(keyForm);
+      const r = await fetch("/api/keys/kalshi", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          api_key_id: fd.get("api_key_id").trim(),
+          private_key_pem: fd.get("private_key_pem"),
+          mode: fd.get("mode"),
+        }),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        loadTradingPanel();
+      } else {
+        alert("Save failed: " + (j.error || "unknown"));
+      }
+    });
+  }
+
+  // 2. Mode-toggle button (paper ↔ prod with confirm for prod)
+  const toggleBtn = document.getElementById("btn-mode-toggle");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", async () => {
+      const newMode = st.mode === "paper" ? "prod" : "paper";
+      let confirmReal = false;
+      if (newMode === "prod") {
+        if (!confirm(
+          "Switch to PROD mode?\n\nFrom this point, every order placed via this dashboard "
+          + "will execute against your real Kalshi account with real money. "
+          + "You will still need to confirm each individual order, but mistakes cost real cash.\n\n"
+          + "Click OK to proceed."
+        )) return;
+        confirmReal = true;
+      }
+      const r = await fetch("/api/keys/kalshi/mode", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mode: newMode, confirm_real_money: confirmReal}),
+      });
+      const j = await r.json();
+      if (j.ok) loadTradingPanel(); else alert("Mode change failed: " + (j.error || "unknown"));
+    });
+  }
+
+  // 3. Delete-key button
+  const delBtn = document.getElementById("btn-key-delete");
+  if (delBtn) {
+    delBtn.addEventListener("click", async () => {
+      if (!confirm("Remove your Kalshi credentials from this dashboard? This will not "
+                   + "affect your Kalshi account itself; you'll just need to re-enter the "
+                   + "key here to trade again.")) return;
+      const r = await fetch("/api/keys/kalshi", {method: "DELETE"});
+      const j = await r.json();
+      if (j.ok) loadTradingPanel(); else alert("Delete failed: " + (j.error || "unknown"));
+    });
+  }
+}
+
+// ── Order modal ───────────────────────────────────────────────────────────
+async function openOrderModal(opts) {
+  // opts = {ticker, market_label, side, action, count, price_cents}
+  const modal = document.getElementById("order-modal");
+
+  // Need to know mode — re-fetch status so the banner is fresh.
+  let st = {};
+  try {
+    st = await fetch("/api/keys/kalshi/status").then(r => r.json());
+  } catch {}
+
+  if (!st.configured) {
+    alert("No Kalshi credentials configured. Scroll to the Kalshi trading panel and add your key first.");
+    return;
+  }
+
+  const banner = document.getElementById("order-mode-banner");
+  if (st.mode === "prod") {
+    banner.className = "modal-warning prod";
+    banner.textContent = "⚠ REAL MONEY MODE — this order will execute on the live Kalshi venue.";
+  } else {
+    banner.className = "modal-warning paper";
+    banner.textContent = "Paper trading mode — fake money on Kalshi's demo venue.";
+  }
+
+  document.getElementById("order-ticker").value = opts.ticker || "";
+  document.getElementById("order-market-label").textContent = opts.market_label || opts.ticker || "—";
+  document.getElementById("order-side").value = opts.side || "yes";
+  document.getElementById("order-action").value = opts.action || "buy";
+  document.getElementById("order-count").value = opts.count || 1;
+  document.getElementById("order-price").value = opts.price_cents || 50;
+  document.getElementById("order-result").innerHTML = "";
+  document.getElementById("order-result").className = "";
+  updateOrderSummary();
+  modal.hidden = false;
+}
+
+function closeOrderModal() {
+  document.getElementById("order-modal").hidden = true;
+}
+
+function updateOrderSummary() {
+  const side = document.getElementById("order-side").value;
+  const action = document.getElementById("order-action").value;
+  const count = parseInt(document.getElementById("order-count").value, 10) || 0;
+  const cents = parseInt(document.getElementById("order-price").value, 10) || 0;
+  const total = (count * cents) / 100;
+  const bucketPrice = side === "yes" ? cents : (100 - cents);
+  document.getElementById("order-summary").textContent =
+    `${action.toUpperCase()} ${count} ${side.toUpperCase()} contracts at ${cents}¢ → notional $${total.toFixed(2)} ` +
+    `(implied ${bucketPrice}% probability of YES)`;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  ["order-side", "order-action", "order-count", "order-price"].forEach(id => {
+    document.getElementById(id).addEventListener("input", updateOrderSummary);
+    document.getElementById(id).addEventListener("change", updateOrderSummary);
+  });
+  document.getElementById("order-cancel").addEventListener("click", closeOrderModal);
+  document.getElementById("order-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const result = document.getElementById("order-result");
+    const submitBtn = document.getElementById("order-submit");
+    submitBtn.disabled = true;
+    result.className = "";
+    result.textContent = "Placing…";
+    try {
+      const r = await fetch("/api/order/kalshi", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          ticker: document.getElementById("order-ticker").value,
+          side: document.getElementById("order-side").value,
+          action: document.getElementById("order-action").value,
+          count: parseInt(document.getElementById("order-count").value, 10),
+          price_cents: parseInt(document.getElementById("order-price").value, 10),
+          confirm: true,
+        }),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        const orderId = (j.response && (j.response.order && j.response.order.order_id)) || (j.response && j.response.order_id) || "(unknown)";
+        result.className = "ok";
+        result.textContent = `Order placed: ${orderId} · mode=${j.mode}`;
+        // Refresh trading panel so balance/positions/audit update.
+        loadTradingPanel();
+      } else {
+        result.className = "err";
+        result.textContent = j.error || "order failed";
+      }
+    } catch (e) {
+      result.className = "err";
+      result.textContent = "network error: " + e.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+});
 
 function renderEcon(d) {
   const body = document.getElementById("econ-body");
@@ -367,9 +776,22 @@ function renderEdge(d) {
     if (dir.startsWith('SELL ')) return `<span class="dir-sell">${escapeHtml(dir)}</span>`;
     return `<span class="dir-arb">${escapeHtml(dir)}</span>`;
   };
-  const tradeBtn = (url, label) => url
-    ? `<a class="trade-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener">Trade ${label} →</a>`
-    : `<span class="trade-btn-disabled" title="No market on ${label}">— ${label}</span>`;
+  // Polymarket still deep-links — we don't have a Polymarket order interface.
+  const polyBtn = url => url
+    ? `<a class="trade-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener">Trade Poly →</a>`
+    : `<span class="trade-btn-disabled" title="No Polymarket market">— Poly</span>`;
+  // Kalshi opens the in-app modal — users place orders right here, no tab switch.
+  const kalshiBtn = (r) => {
+    if (!r.kalshi_ticker) {
+      return `<span class="trade-btn-disabled" title="No Kalshi market">— Kalshi</span>`;
+    }
+    const cents = r.kalshi_price ? Math.round(r.kalshi_price * 100) : 50;
+    return `<button type="button" class="trade-btn" data-trade-kalshi
+              data-ticker="${escapeHtml(r.kalshi_ticker)}"
+              data-bucket="${escapeHtml(r.outcome_bucket)}"
+              data-question="${escapeHtml(r.question)}"
+              data-price="${cents}">Trade Kalshi →</button>`;
+  };
 
   const rows = d.rows.map(r => {
     const epoly  = fmtPp(r.edge_poly_pp,    d.edge_threshold_pp);
@@ -385,7 +807,7 @@ function renderEdge(d) {
       <td class="num ${ekal.cls}">${ekal.txt}</td>
       <td class="num ${arb.cls}">${arb.txt}</td>
       <td>${dirSpan(r.direction_arb)}</td>
-      <td class="trade-cell">${tradeBtn(r.polymarket_url, 'Poly')}${tradeBtn(r.kalshi_url, 'Kalshi')}</td>
+      <td class="trade-cell">${polyBtn(r.polymarket_url)}${kalshiBtn(r)}</td>
     </tr>`;
   }).join("");
 
@@ -409,13 +831,27 @@ function renderEdge(d) {
       <strong>Edges</strong> = our model-implied probability − each venue's YES price.
       <strong>Arb (P−K)</strong> = Polymarket YES − Kalshi YES on the same outcome — when
       |spread| > ${d.edge_threshold_pp} pp, the same question is mispriced between the two
-      venues. <strong>Trade buttons deep-link to your own account on each venue</strong> —
-      we don't place orders for you (Phase 2). <strong>Not investment advice.</strong>
-      Validate against CME's own FedWatch numbers and consider each venue's bid-ask spread
-      and fees before acting on any signal.
+      venues. <strong>Trade Poly</strong> opens Polymarket in a new tab.
+      <strong>Trade Kalshi</strong> opens an in-dashboard order modal that places limit orders
+      directly via your stored Kalshi credentials (paper-mode default; explicit confirm
+      required). <strong>Not investment advice.</strong> Validate against CME's own FedWatch
+      numbers and consider each venue's bid-ask spread and fees before acting.
     </div>
     ${errs}
   `;
+
+  // Wire in-app order buttons after the table is in the DOM.
+  body.querySelectorAll('[data-trade-kalshi]').forEach(btn => {
+    btn.addEventListener('click', () => openOrderModal({
+      ticker: btn.dataset.ticker,
+      market_label: btn.dataset.bucket + " · " + btn.dataset.question.slice(0, 50) +
+                    (btn.dataset.question.length > 50 ? "…" : ""),
+      side: 'yes',
+      action: 'buy',
+      count: 1,
+      price_cents: parseInt(btn.dataset.price, 10) || 50,
+    }));
+  });
 }
 
 function renderImplied(d) {

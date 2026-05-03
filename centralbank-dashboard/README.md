@@ -20,32 +20,82 @@ Port: **7060**.
 | v0.5 | **Cross-venue arbitrage + Trade buttons** — Kalshi YES price beside Polymarket YES on the same FOMC outcome. `Arb (P−K)` column flags spreads >3 pp. One-click **Trade Poly →** and **Trade Kalshi →** deep-links so users place orders with their own accounts on each venue. | Kalshi Trade API v2 (read-only public endpoint) |
 | v0.6 | **Full OIS curve overlay** — extends `implied_path` from "next FOMC" to a full 18-month strip of monthly Fed Funds futures. Each month shows the implied average FF rate; the curve is overlaid on the rate-path chart as a dashed teal forward line, anchored at the latest spot reading. | Yahoo Finance ZQ contract chain (continuous) |
 | v0.7 | **Macro release tracker** — Headline / Core CPI, Headline / Core PCE, NFP. Latest YoY % (or MoM jobs change for NFP), 24-month sparkline, days-until-next-release with imminent / soon / later badges. Release dates computed from BLS / BEA conventions, no scraping. | FRED CSV |
+| v0.8 | **Phase 2 — In-app Kalshi trading** — per-user encrypted Kalshi API key storage (Fernet), RSA-PSS request signing, order modal with paper-mode default + explicit confirm-each-order, balance + positions snapshot, append-only audit log. The "Trade Kalshi →" button now places real orders through the dashboard instead of deep-linking out. | Kalshi Trade API v2 (private, signed) |
 
 All views graceful-degrade when their data source is unreachable (the panel
 shows an inline error; other panels keep working).
 
 ## Trading model
 
-The dashboard is **read-only** for trading. It surfaces the price discrepancies
-and signals; users execute trades themselves via the deep-link buttons:
+| Venue | UX | Auth | Risk surface |
+|---|---|---|---|
+| **Polymarket** | Deep-link out (new tab) | User's Polymarket account in browser | None on our side — we never touch Polymarket creds |
+| **Kalshi** | **In-app order modal** with paper / prod toggle and confirm-per-order | RSA-PSS signed requests with the user's own Kalshi API key + private key (PEM), encrypted at rest with Fernet | Custodial of an encrypted private key per user; see security notes below |
 
-  * **Trade Poly →** opens the matched Polymarket market in a new tab.
-  * **Trade Kalshi →** opens the matched Kalshi event page (groups all rate
-    buckets so users see the full ladder before placing an order).
+### How Kalshi trading works in the dashboard
 
-This was a deliberate v0.5 choice — full in-app order placement requires:
+1. User visits the Kalshi trading panel (bottom of the page) and pastes their
+   API key id + RSA private key. Mode defaults to **PAPER** (Kalshi's demo venue,
+   fake money).
+2. The dashboard encrypts both fields with Fernet (AES-128-CBC + HMAC-SHA-256,
+   authenticated) using the operator's `CB_KEY_STORE_SECRET` env var, and
+   stores the ciphertext in `data/key_store.db` (SQLite).
+3. When the user clicks **Trade Kalshi →** in the edge table, an in-dashboard
+   modal opens with the ticker, side (YES/NO), action (BUY/SELL), count, and
+   limit price (¢) pre-filled. The mode banner is colored red for PROD and
+   blue for PAPER.
+4. On submit, the server decrypts the credentials *for the duration of one
+   signing call*, builds the RSA-PSS-signed request, hits Kalshi, and writes
+   an audit-log entry with the request payload (private key redacted) and
+   Kalshi's response.
+5. Switching from PAPER to PROD requires an explicit `confirm_real_money` flag
+   plus a `confirm()` dialog. Every order requires `confirm: true` in the
+   request body.
 
-  - Per-user Kalshi API key + RSA private key storage (keyed on gateway DB)
-  - RSA-PSS request signing on every order (standard Kalshi auth)
-  - Order management (place, cancel, status, fills)
-  - Position + balance views
-  - Confirmation flow + audit log
-  - Probably paper-trading toggle for new users
+### Security notes
 
-That's a security-heavy multi-day project — flagged as **Phase 2** in the
-roadmap. The deep-link approach delivers ~80% of the user value for ~5% of
-the build cost, and keeps every order an explicit user click on the venue's
-own UI.
+- **The private key never leaves the operator's host.** It's encrypted at
+  rest with a master key the *operator* supplies via `CB_KEY_STORE_SECRET`.
+  Without that env var, the SQLite ciphertexts are useless.
+- **Plaintext private-key material is held in memory for one signing call.**
+  We re-decrypt on every request rather than caching a decrypted copy.
+- **Audit log redacts known-secret fields** (`private_key_pem`, `signature`,
+  etc.) before writing. Greppable as `<redacted>`.
+- **Paper mode by default.** Real-money mode requires an explicit toggle
+  with a `confirm()` warning.
+- **Every order is a user click.** No auto-trading, no signal-driven fires.
+- **No order modification (yet).** Place + cancel only; v0.9 will add resize
+  and price-replacement.
+
+### Operator setup
+
+1. **Generate the master key for at-rest encryption** (one-time, store securely):
+
+   ```bash
+   python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+   ```
+
+2. **Set it in the environment** (e.g. via `gateway/.env.production`):
+
+   ```
+   CB_KEY_STORE_SECRET=<the urlsafe-base64 string above>
+   ```
+
+   In `DEV_MODE=1` a random key is generated automatically and stashed at
+   `data/dev_master.key` — never use that for production.
+
+3. **Restart the dashboard.** Users can now configure their Kalshi creds via
+   the trading panel.
+
+### What's still Phase 2.1 (not in v0.8)
+
+- **Order modification / resize** — currently place + cancel only.
+- **Multi-key per user** — one set of Kalshi creds per `user_id`.
+- **Webhook-driven fill notifications** — currently the user reloads the panel
+  to see balance / position changes.
+- **Cross-dashboard credential sharing** — credentials live in this dashboard's
+  SQLite; if you want sports-dashboard to also trade Kalshi, you'd duplicate
+  the storage or extract `trading/` to a shared service.
 
 ## Endpoints
 
@@ -60,6 +110,16 @@ own UI.
 | `GET /api/stance` | 1 h | Stance ladder per CB |
 | `GET /api/ois?months_ahead=18` | 30 min | Full Fed Funds futures strip → implied avg FF rate per month |
 | `GET /api/econ` | 6 h | CPI / Core CPI / PCE / Core PCE / NFP latest + sparkline + next-release date |
+| `GET /api/keys/kalshi/status` | — | Whether the calling user has credentials configured + their mode (paper/prod) |
+| `POST /api/keys/kalshi` | — | Save / replace credentials (encrypted at rest) |
+| `DELETE /api/keys/kalshi` | — | Remove credentials |
+| `POST /api/keys/kalshi/mode` | — | Toggle paper ↔ prod (prod requires `confirm_real_money: true`) |
+| `GET /api/portfolio/balance` | — | Authenticated Kalshi balance |
+| `GET /api/portfolio/positions` | — | Authenticated Kalshi positions |
+| `GET /api/orders` | — | Authenticated Kalshi open orders |
+| `POST /api/order/kalshi` | — | Place a limit order (requires `confirm: true`) |
+| `DELETE /api/order/kalshi/{id}` | — | Cancel an open order |
+| `GET /api/audit?limit=100` | — | This user's trading-action log (newest first) |
 | `GET /healthz` | — | Liveness probe |
 
 ## Run locally
@@ -110,6 +170,11 @@ centralbank-dashboard/
 │   ├── ois_curve.py                Full 18-month FF futures strip → monthly avg rates
 │   ├── econ_releases.py            CPI / Core CPI / PCE / Core PCE / NFP via FRED + release dates
 │   └── cb_statements.py            RSS feeds + HTML body fetcher (Fed/ECB/BoE)
+├── trading/
+│   ├── kalshi_auth.py              RSA-PSS signed-request builder
+│   ├── key_store.py                Per-user encrypted Kalshi creds (Fernet + SQLite)
+│   ├── audit.py                    Append-only JSONL audit log of every trading action
+│   └── order_manager.py            place / cancel / balance / positions / list-orders
 ├── analysis/
 │   ├── stance_keywords.py          Hawkish/dovish phrase dictionary (extend here)
 │   ├── stance_scorer.py            Phrase-match scorer with sentence normalization
@@ -188,13 +253,14 @@ Polymarket's own bid-ask plus our modelling slack live below that.
 | v0.5 | ✓ done | Kalshi cross-venue arbitrage panel + Trade-on-Poly/Kalshi deep-links |
 | v0.6 | ✓ done | Full OIS curve overlay (18-month FF futures strip on rate-path chart) |
 | v0.7 | ✓ done | Macro release tracker (CPI / Core CPI / PCE / Core PCE / NFP) — latest, sparkline, next-release date |
-| v0.8 | open  | Consensus-vs-actual surprise tracking (paid feeds — defer until users justify) |
-| v0.9 | open  | Statement diff viewer (compare two press releases side-by-side) |
-| v1.0 | open  | Extend implied path to ECB (€STR OIS) and BoE (SONIA OIS) |
-| v1.1 | open  | Auto-scrape annual CB calendar pages so meeting dates refresh |
-| v1.2 | open  | ECB-specific phrases in `stance_keywords.py` (current dictionary skews Fed/BoE) |
-| v1.3 | open  | BoJ — needs direct BoJ stats API (FRED proxies are noisy) |
-| **Phase 2** | open | **In-app trade execution** on Kalshi: per-user API key + RSA-PSS request signing, order management (place/cancel/status), positions + balance views, paper-trading toggle, audit log. Security-heavy multi-day project — gated until Phase 1 (this dashboard) has paying users to justify the build. |
+| v0.8 | ✓ done | **Phase 2 — In-app Kalshi trading** (encrypted creds + RSA-PSS + paper-mode default + confirm-per-order + balance/positions + audit log) |
+| v0.9  | open  | Phase 2.1 — order modification (resize, price replace) + webhook-driven fill notifications |
+| v0.10 | open  | Consensus-vs-actual surprise tracking (paid feeds — defer until users justify) |
+| v0.11 | open  | Statement diff viewer (compare two press releases side-by-side) |
+| v1.0  | open  | Extend implied path to ECB (€STR OIS) and BoE (SONIA OIS) |
+| v1.1  | open  | Auto-scrape annual CB calendar pages so meeting dates refresh |
+| v1.2  | open  | ECB-specific phrases in `stance_keywords.py` (current dictionary skews Fed/BoE) |
+| v1.3  | open  | BoJ — needs direct BoJ stats API (FRED proxies are noisy) |
 
 ## Env vars
 

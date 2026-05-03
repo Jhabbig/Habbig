@@ -6,12 +6,17 @@ import hmac
 import json
 import logging
 import math
+import mimetypes
 import os
 import re
 import threading
 import time
 import urllib.parse
 import urllib.request
+
+# Python's mimetypes table doesn't know about .geojson; declare it so StaticFiles
+# serves countries.geojson with the correct Content-Type instead of text/plain.
+mimetypes.add_type("application/geo+json", ".geojson")
 try:
     from defusedxml.ElementTree import fromstring as _xml_fromstring
 except ImportError:
@@ -20,6 +25,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -29,13 +35,23 @@ from infrastructure_data import (
     OIL_RARE_EARTH_FIELDS as _INFRA_FIELDS,
 )
 import cross_dashboard
+import data_sources
+import history
 
 app = FastAPI(title="World State Dashboard")
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 HTML_PATH = Path(__file__).parent / "index.html"
+HISTORY_HTML_PATH = Path(__file__).parent / "history.html"
+CESIUM_HTML_PATH = Path(__file__).parent / "cesium.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Read HTML files once at startup; they don't change at runtime.
+_INDEX_HTML: str | None = HTML_PATH.read_text() if HTML_PATH.exists() else None
+_HISTORY_HTML: str | None = HISTORY_HTML_PATH.read_text() if HISTORY_HTML_PATH.exists() else None
+_CESIUM_HTML: str | None = CESIUM_HTML_PATH.read_text() if CESIUM_HTML_PATH.exists() else None
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
@@ -48,22 +64,42 @@ if not _sso_secret:
 
 @app.middleware("http")
 async def security_and_auth(request: Request, call_next):
-    # Authenticate via gateway SSO header
-    if _sso_secret:
-        client_secret = request.headers.get("x-gateway-secret", "")
-        if not hmac.compare_digest(client_secret, _sso_secret):
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    elif not _DEV_MODE:
-        return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+    # Authenticate via gateway SSO header (skipped for /healthz so the
+    # docker healthcheck can probe without holding the shared secret).
+    if request.url.path != "/healthz":
+        if _sso_secret:
+            client_secret = request.headers.get("x-gateway-secret", "")
+            if not hmac.compare_digest(client_secret, _sso_secret):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        elif not _DEV_MODE:
+            return JSONResponse({"error": "Service misconfigured"}, status_code=503)
 
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
+    # The /cesium page loads the CesiumJS bundle + its web workers from jsdelivr;
+    # widen the policy for that route only so the rest of the app stays locked down.
+    if request.url.path == "/cesium" or request.url.path.startswith("/cesium/"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "img-src 'self' data: blob: https:; "
+            "connect-src 'self' https://cdn.jsdelivr.net https://server.arcgisonline.com; "
+            "worker-src 'self' blob: https://cdn.jsdelivr.net; "
+            "frame-ancestors 'none'"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
     if _sso_secret:
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    # Long-lived cache for vendored static assets (maplibre, chart.js, countries.geojson,
+    # favicon). They only change when we redeploy. 1 day is conservative; bump to 1 week
+    # if we adopt cache-busting query strings.
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=86400"
     return response
 
 
@@ -75,12 +111,31 @@ NEWS_CACHE = {"data": [], "fetched_at": 0.0}
 NEWS_CACHE_TTL = 90  # 90 seconds
 
 NEWS_FEEDS = [
-    {"name": "BBC World", "url": "http://feeds.bbci.co.uk/news/world/rss.xml"},
-    {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml"},
-    {"name": "Guardian", "url": "https://www.theguardian.com/world/rss"},
-    {"name": "NPR World", "url": "https://feeds.npr.org/1004/rss.xml"},
-    {"name": "DW World", "url": "https://rss.dw.com/rdf/rss-en-world"},
-    {"name": "France24", "url": "https://www.france24.com/en/rss"},
+    # ── Wire services ──
+    {"name": "BBC World",       "url": "http://feeds.bbci.co.uk/news/world/rss.xml"},
+    {"name": "Reuters World",   "url": "https://feeds.reuters.com/reuters/worldNews"},
+    {"name": "AP Top News",     "url": "https://feeds.apnews.com/apf-topnews"},
+    # ── Anglo broadsheets ──
+    {"name": "Guardian",        "url": "https://www.theguardian.com/world/rss"},
+    {"name": "NYT World",       "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"},
+    {"name": "WaPo World",      "url": "https://feeds.washingtonpost.com/rss/world"},
+    {"name": "CNN World",       "url": "http://rss.cnn.com/rss/edition_world.rss"},
+    # ── Public broadcasters ──
+    {"name": "NPR World",       "url": "https://feeds.npr.org/1004/rss.xml"},
+    {"name": "DW World",        "url": "https://rss.dw.com/rdf/rss-en-world"},
+    {"name": "France24",        "url": "https://www.france24.com/en/rss"},
+    {"name": "CBC World",       "url": "https://www.cbc.ca/cmlink/rss-world"},
+    # ── Regional ──
+    {"name": "Al Jazeera",      "url": "https://www.aljazeera.com/xml/rss/all.xml"},
+    {"name": "SCMP",            "url": "https://www.scmp.com/rss/91/feed"},
+    {"name": "Times of Israel", "url": "https://www.timesofisrael.com/feed/"},
+    {"name": "RFE/RL",          "url": "https://www.rferl.org/api/zppmoyr_pp"},
+    # ── Foreign affairs / analysis ──
+    {"name": "Foreign Policy",  "url": "https://foreignpolicy.com/feed/"},
+    {"name": "Politico EU",     "url": "https://www.politico.eu/feed/"},
+    {"name": "Bellingcat",      "url": "https://www.bellingcat.com/feed/"},
+    # ── Institutional ──
+    {"name": "UN News",         "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml"},
 ]
 
 
@@ -101,51 +156,63 @@ def _parse_date(pub_date: str):
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def fetch_news():
+def _fetch_one_feed(feed: dict) -> list[dict]:
+    """Fetch+parse one RSS/Atom feed. Returns list of items (empty on failure)."""
+    items_out: list[dict] = []
+    try:
+        req = urllib.request.Request(
+            feed["url"],
+            headers={"User-Agent": "Mozilla/5.0 (WorldMonitor/1.0)"},
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            xml_data = resp.read()
+        root = _xml_fromstring(xml_data)
+
+        # Handle both RSS 2.0 and RDF/Atom-ish feeds
+        items = root.findall(".//item")
+        if not items:
+            ns = {"a": "http://www.w3.org/2005/Atom"}
+            items = root.findall("a:entry", ns)
+
+        for item in items[:12]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub_date = (item.findtext("pubDate") or item.findtext("{http://purl.org/dc/elements/1.1/}date") or "").strip()
+            desc = _strip_html(item.findtext("description") or "")[:180]
+
+            if not title:
+                continue
+            if link and not link.startswith(("http://", "https://")):
+                link = ""
+
+            items_out.append({
+                "source": feed["name"],
+                "title": title,
+                "link": link,
+                "pub_date": pub_date,
+                "description": desc,
+            })
+    except Exception as e:
+        print(f"[news] {feed['name']} failed: {e}")
+    return items_out
+
+
+async def fetch_news_async() -> list[dict]:
+    """Fetch all NEWS_FEEDS in parallel via asyncio.gather + thread pool.
+    Total wall time is bounded by the slowest feed (~6s) instead of the sum (~36s)."""
     now = time.time()
     with _cache_lock:
         if NEWS_CACHE["data"] and (now - NEWS_CACHE["fetched_at"]) < NEWS_CACHE_TTL:
             return NEWS_CACHE["data"]
 
-    all_items = []
-    for feed in NEWS_FEEDS:
-        try:
-            req = urllib.request.Request(
-                feed["url"],
-                headers={"User-Agent": "Mozilla/5.0 (WorldMonitor/1.0)"},
-            )
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                xml_data = resp.read()
-            root = _xml_fromstring(xml_data)
-
-            # Handle both RSS 2.0 and RDF/Atom-ish feeds
-            items = root.findall(".//item")
-            if not items:
-                # Atom feed
-                ns = {"a": "http://www.w3.org/2005/Atom"}
-                items = root.findall("a:entry", ns)
-
-            for item in items[:12]:
-                title = (item.findtext("title") or "").strip()
-                link = (item.findtext("link") or "").strip()
-                pub_date = (item.findtext("pubDate") or item.findtext("{http://purl.org/dc/elements/1.1/}date") or "").strip()
-                desc = _strip_html(item.findtext("description") or "")[:180]
-
-                if not title:
-                    continue
-                # Validate link scheme to prevent javascript: URI injection
-                if link and not link.startswith(("http://", "https://")):
-                    link = ""
-
-                all_items.append({
-                    "source": feed["name"],
-                    "title": title,
-                    "link": link,
-                    "pub_date": pub_date,
-                    "description": desc,
-                })
-        except Exception as e:
-            print(f"[news] {feed['name']} failed: {e}")
+    results = await asyncio.gather(
+        *(asyncio.to_thread(_fetch_one_feed, feed) for feed in NEWS_FEEDS),
+        return_exceptions=True,
+    )
+    all_items: list[dict] = []
+    for r in results:
+        if isinstance(r, list):
+            all_items.extend(r)
 
     all_items.sort(key=lambda x: _parse_date(x["pub_date"]), reverse=True)
     with _cache_lock:
@@ -7671,11 +7738,30 @@ def compute_correlation_signals() -> list:
 
 # ── API Routes ────────────────────────────────────────────────────────────────
 
+@app.get("/healthz")
+async def healthz() -> dict:
+    return {"ok": True}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    if not HTML_PATH.exists():
+    if _INDEX_HTML is None:
         return HTMLResponse("<h1>index.html not found</h1>", status_code=500)
-    return HTMLResponse(HTML_PATH.read_text())
+    return HTMLResponse(_INDEX_HTML)
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history_page():
+    if _HISTORY_HTML is None:
+        return HTMLResponse("<h1>history.html not found</h1>", status_code=500)
+    return HTMLResponse(_HISTORY_HTML)
+
+
+@app.get("/cesium", response_class=HTMLResponse)
+async def cesium_page():
+    if _CESIUM_HTML is None:
+        return HTMLResponse("<h1>cesium.html not found</h1>", status_code=500)
+    return HTMLResponse(_CESIUM_HTML)
 
 
 def _json(data):
@@ -7756,7 +7842,7 @@ async def get_geopolitical():
 
 @app.get("/api/news")
 async def get_news():
-    news = await asyncio.to_thread(fetch_news)
+    news = await fetch_news_async()
     return _json({"news": news})
 
 
@@ -7873,6 +7959,204 @@ async def get_world_state():
     })
 
 
+# ── History snapshot collector ───────────────────────────────────────────────
+def _collect_history_metrics() -> dict[str, float]:
+    """Pull a flat dict of current metric values for the snapshot logger.
+    Called every SNAPSHOT_INTERVAL_SEC by history._loop. All values must be
+    numeric (int/float). Categories: composite risk, intel index, raw counts."""
+    intel = compute_country_intel_index()
+    risk = _compute_strategic_risk(intel)
+    intel_scores = [c["score"] for c in intel.values()]
+    intel_avg = sum(intel_scores) / len(intel_scores) if intel_scores else 0.0
+    intel_max = max(intel_scores, default=0.0)
+
+    def _count_severity(seq, field, target):
+        target_u = target.upper()
+        return sum(1 for x in seq if (x.get(field) or "").upper() == target_u)
+
+    return {
+        # ── Strategic risk composite + module breakdowns ──
+        "strategic_risk.composite":          risk["composite"],
+        "strategic_risk.country_intel":      risk["modules"]["country_intel"],
+        "strategic_risk.high_intel_count":   risk["modules"]["high_intel"],
+        "strategic_risk.conflicts":          risk["modules"]["conflicts"],
+        "strategic_risk.supply":             risk["modules"]["supply"],
+        "strategic_risk.climate":            risk["modules"]["climate"],
+        "strategic_risk.volcanoes":          risk["modules"]["volcanoes"],
+        "strategic_risk.cyber":              risk["modules"]["cyber"],
+        "strategic_risk.grounded":           risk["modules"]["grounded"],
+        # ── Country intel index distribution ──
+        "intel_index.avg":                   intel_avg,
+        "intel_index.max":                   intel_max,
+        "intel_index.high_count":            sum(1 for s in intel_scores if s >= 50),
+        "intel_index.country_count":         len(intel_scores),
+        # ── Raw event counts ──
+        "counts.conflicts":                  len(CONFLICTS),
+        "counts.hotspots":                   len(HOTSPOTS),
+        "counts.sanctions":                  len(SANCTIONS),
+        "counts.militias":                   len(MILITIAS),
+        "counts.disease_outbreaks":          len(DISEASE_OUTBREAKS),
+        "counts.protests":                   len(PROTEST_EVENTS),
+        "counts.cyber_advisories":           len(CYBER_ADVISORIES),
+        "counts.cyber_critical":             _count_severity(CYBER_ADVISORIES, "severity", "CRITICAL"),
+        "counts.internet_outages":           len(INTERNET_OUTAGES),
+        "counts.gps_jamming":                len(GPS_JAMMING_ZONES),
+        "counts.volcanoes_active":           len(ACTIVE_VOLCANOES),
+        "counts.volcanoes_erupting":         sum(1 for v in ACTIVE_VOLCANOES if (v.get("status") or "").upper() == "ERUPTING"),
+        "counts.climate_anomalies":          len(CLIMATE_ANOMALIES),
+        "counts.climate_extreme":            _count_severity(CLIMATE_ANOMALIES, "severity", "EXTREME"),
+        "counts.supply_chain":               len(SUPPLY_CHAIN_DISRUPTIONS),
+        "counts.supply_chain_extreme":       _count_severity(SUPPLY_CHAIN_DISRUPTIONS, "severity", "EXTREME"),
+        "counts.aviation_grounded":          sum(1 for a in AVIATION_AIRPORTS if a.get("ground_stop")),
+        "counts.notam_closures":             len(NOTAM_CLOSURES),
+        "counts.apt_groups":                 len(APT_GROUPS),
+        "counts.displacement_flows":         len(DISPLACEMENT_FLOWS),
+        "counts.displacement_pop_total":     sum((f.get("population") or 0) for f in DISPLACEMENT_FLOWS),
+    }
+
+
+history.register_collector(_collect_history_metrics)
+
+
+@app.on_event("startup")
+async def _start_history_loop() -> None:
+    history.start()
+
+
+@app.on_event("shutdown")
+async def _stop_history_loop() -> None:
+    await history.stop()
+
+
+# ── History query endpoints ──────────────────────────────────────────────────
+@app.get("/api/history/keys")
+async def history_keys():
+    """List every metric tracked, with row count and earliest/latest timestamp."""
+    keys = await asyncio.to_thread(history.list_keys)
+    return _json({"keys": keys, "count": len(keys), "interval_sec": history.SNAPSHOT_INTERVAL_SEC})
+
+
+@app.get("/api/history/latest")
+async def history_latest():
+    """Most recent value for every tracked key (useful for sanity checks)."""
+    snap = await asyncio.to_thread(history.latest_snapshot)
+    return _json({"latest": snap, "count": len(snap)})
+
+
+@app.get("/api/history")
+async def history_query(
+    key: str = "",
+    hours: int = 24,
+    bucket_sec: int = 0,
+    t_from: int = 0,
+    t_to: int = 0,
+):
+    """Time series for one metric. Defaults to the last 24 h.
+    Pass `bucket_sec` (e.g. 3600) to downsample over long ranges."""
+    if not key:
+        return _json({"error": "key parameter required"})
+    now = int(time.time())
+    if t_to <= 0:
+        t_to = now
+    if t_from <= 0:
+        t_from = t_to - max(1, hours) * 3600
+    series = await asyncio.to_thread(history.query, key, t_from, t_to, max(0, bucket_sec))
+    return _json({
+        "key": key,
+        "from": t_from,
+        "to": t_to,
+        "bucket_sec": bucket_sec,
+        "points": series,
+        "count": len(series),
+    })
+
+
+@app.post("/api/history/snapshot-now")
+async def history_snapshot_now():
+    """Force one snapshot immediately. Useful after deploys / for tests."""
+    n = await history.snapshot_now()
+    return _json({"recorded": n, "ts": int(time.time())})
+
+
+@app.get("/api/history/multi")
+async def history_multi(
+    keys: str = "",
+    hours: int = 0,
+    bucket_sec: int = 0,
+    t_from: int = 0,
+    t_to: int = 0,
+):
+    """Batch endpoint: fetch many series in one round-trip.
+    `keys` is a comma-separated list. Hours=0 → return everything (oldest to now)."""
+    key_list = [k.strip() for k in keys.split(",") if k.strip()]
+    if not key_list:
+        return _json({"error": "keys parameter required (comma-separated)"})
+    now = int(time.time())
+    if t_to <= 0:
+        t_to = now
+    if t_from <= 0 and hours > 0:
+        t_from = t_to - hours * 3600
+    elif t_from <= 0:
+        # No hours, no t_from → fetch full history (1970..now)
+        t_from = 0
+
+    results = await asyncio.gather(*[
+        asyncio.to_thread(history.query, k, t_from, t_to, max(0, bucket_sec))
+        for k in key_list
+    ])
+    series = {k: pts for k, pts in zip(key_list, results)}
+    return _json({
+        "from": t_from,
+        "to": t_to,
+        "bucket_sec": bucket_sec,
+        "series": series,
+    })
+
+
+# ── Historical backfill from external sources ──────────────────────────────
+@app.post("/api/history/backfill/worldbank")
+async def backfill_worldbank(indicators: str = "", since_year: int = 1990):
+    """Backfill annual World Bank indicators into the snapshots DB.
+    Comma-separated `indicators` overrides the default set; omit to backfill all."""
+    sel = [s.strip() for s in indicators.split(",") if s.strip()] or None
+    summary = await data_sources.backfill_worldbank(indicators=sel, since_year=since_year)
+    return _json({"source": "worldbank", "since_year": since_year, "summary": summary})
+
+
+@app.post("/api/history/backfill/fred")
+async def backfill_fred(series: str = "", since: str = "2000-01-01"):
+    """Backfill FRED time series. Requires FRED_API_KEY env var; returns empty otherwise."""
+    if not data_sources.fred_enabled():
+        return _json({"source": "fred", "error": "FRED_API_KEY not set"})
+    sel = [s.strip() for s in series.split(",") if s.strip()] or None
+    summary = await data_sources.backfill_fred(series_ids=sel, since=since)
+    return _json({"source": "fred", "since": since, "summary": summary})
+
+
+@app.get("/api/conflicts-live")
+async def conflicts_live(days: int = 7, limit: int = 500):
+    """Live ACLED armed-conflict events. Requires ACLED creds; returns empty otherwise."""
+    if not data_sources.acled_enabled():
+        return _json({
+            "source": "acled",
+            "events": [],
+            "error": "ACLED_EMAIL+ACLED_PASSWORD or ACLED_ACCESS_TOKEN not set",
+        })
+    events = await data_sources.fetch_acled_recent(days=max(1, days), limit=max(1, min(5000, limit)))
+    return _json({"source": "acled", "days": days, "count": len(events), "events": events})
+
+
+@app.get("/api/data-sources/status")
+async def data_sources_status():
+    """Tells the client which optional data sources are wired (for UI gating)."""
+    return _json({
+        "worldbank": True,            # always on, no key needed
+        "fred": data_sources.fred_enabled(),
+        "acled": data_sources.acled_enabled(),
+        "news_feed_count": len(NEWS_FEEDS),
+    })
+
+
 @app.get("/api/infrastructure")
 async def get_infrastructure():
     return _json({
@@ -7903,6 +8187,9 @@ async def get_all():
         fires = []
     if isinstance(cross_data, Exception):
         cross_data = {}
+    # Compute the country intel index once and reuse it for strategic_risk —
+    # both loop over ~10 global lists, so reusing saves ~20-40ms per /api/all hit.
+    intel_index = compute_country_intel_index()
     return _json({
         # ── Cross-dashboard live data ──
         "midterm_elections": cross_data.get("midterm_elections", {}),
@@ -7962,7 +8249,7 @@ async def get_all():
         "intel_hotspots": INTEL_HOTSPOTS,
         "sanctions_pressure": SANCTIONS_PRESSURE,
         "live_webcams": LIVE_WEBCAMS,
-        "country_intel_index": compute_country_intel_index(),
+        "country_intel_index": intel_index,
         "correlation_alerts": compute_correlation_signals(),
         "apt_groups": APT_GROUPS,
         "firms_fires": NASA_FIRMS_FIRES,
@@ -7983,7 +8270,7 @@ async def get_all():
         "strategic_posture": STRATEGIC_POSTURE,
         "live_intel_feeds": LIVE_INTELLIGENCE_FEEDS,
         "population_exposure": POPULATION_EXPOSURE,
-        "strategic_risk": _compute_strategic_risk(),
+        "strategic_risk": _compute_strategic_risk(intel_index),
         "market_indices": MARKET_INDICES,
         "fear_greed": FEAR_GREED_INDEX,
         "yield_curve_us": YIELD_CURVE_US,
@@ -8239,10 +8526,12 @@ async def get_population_exposure():
     return _json({"regions": POPULATION_EXPOSURE, "count": len(POPULATION_EXPOSURE)})
 
 
-def _compute_strategic_risk():
-    """Composite risk score across modules. Used by /api/all and /api/strategic-risk."""
+def _compute_strategic_risk(intel: dict | None = None):
+    """Composite risk score across modules. Used by /api/all and /api/strategic-risk.
+    Pass `intel` to reuse an already-computed country_intel_index and skip recomputation."""
     try:
-        intel = compute_country_intel_index()
+        if intel is None:
+            intel = compute_country_intel_index()
         avg_score = sum(c["score"] for c in intel.values()) / max(1, len(intel))
         high_intel_countries = sum(1 for c in intel.values() if c["score"] >= 50)
     except Exception:
@@ -8490,4 +8779,4 @@ async def get_cross_dashboard():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=7050)
+    uvicorn.run(app, host=os.environ.get("BIND_HOST", "127.0.0.1"), port=7050)

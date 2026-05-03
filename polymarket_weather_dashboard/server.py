@@ -2401,6 +2401,12 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.route("/healthz")
+def healthz():
+    """Uniform liveness endpoint shared with the other dashboards."""
+    return {"ok": True}
+
+
 @app.route("/manifest.json")
 def manifest():
     return send_from_directory("static", "manifest.json")
@@ -4305,8 +4311,11 @@ if __name__ == "__main__":
     if _debug and _production:
         logging.error("FLASK_DEBUG=1 is not allowed when PRODUCTION=1 — disabling debug mode")
         _debug = False
-    # Never bind to all interfaces in production, even if DEV_MODE leaks through
-    bind_host = "127.0.0.1" if _production else ("0.0.0.0" if _DEV_MODE else "127.0.0.1")
+    # Never bind to all interfaces in production, even if DEV_MODE leaks through.
+    # BIND_HOST is honored when explicitly set (e.g. docker-compose sets 0.0.0.0
+    # because the container itself is the network boundary).
+    _default_bind = "127.0.0.1" if _production else ("0.0.0.0" if _DEV_MODE else "127.0.0.1")
+    bind_host = os.environ.get("BIND_HOST", _default_bind)
     # Only start background threads in the reloader child (or when reloader is off)
     if not _debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         t = threading.Thread(target=_snapshot_loop, daemon=True)

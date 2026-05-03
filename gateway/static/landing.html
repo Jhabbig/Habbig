@@ -188,6 +188,80 @@
     @media (max-width: 520px) {
       .pr-input.visible { width: 85%; max-width: 320px; }
     }
+
+    /* ── Skip-the-line: viewer-pass purchase ─────────────────────── */
+    .pr-skip {
+      margin-top: 56px;
+      padding-top: 36px;
+      border-top: 1px solid rgba(0,0,0,0.08);
+      width: min(520px, 90vw);
+      text-align: center;
+    }
+    .pr-skip-divider {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-size: 0.85rem;
+      color: var(--text-tertiary);
+      letter-spacing: 0.04em;
+      margin-bottom: 20px;
+    }
+    .pr-skip-headline {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-size: 1.25rem;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+      line-height: 1.35;
+    }
+    .pr-skip-sub {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      letter-spacing: 0.01em;
+      margin-bottom: 20px;
+    }
+    .pr-skip-row {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .pr-skip-btn {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 22px;
+      background: var(--interactive-bg);
+      color: var(--interactive-text);
+      border: none;
+      border-radius: 8px;
+      text-decoration: none;
+      font-family: var(--font-ui);
+      font-size: 0.92rem;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      transition: transform 0.12s ease, opacity 0.12s ease;
+    }
+    .pr-skip-btn:hover { transform: translateY(-1px); opacity: 0.9; }
+    .pr-skip-btn-alt {
+      background: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border-strong);
+    }
+    .pr-skip-btn-price {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-size: 0.78rem;
+      opacity: 0.85;
+      margin-top: 2px;
+    }
+    .pr-skip-btn-alt .pr-skip-btn-price { opacity: 0.7; }
+    .pr-skip-fineprint {
+      font-size: 0.7rem;
+      color: var(--text-tertiary);
+      margin-top: 14px;
+      letter-spacing: 0.04em;
+    }
   </style>
 </head>
 <body>
@@ -232,6 +306,24 @@
         <a class="pr-share-btn" id="pr-share-x" href="#" target="_blank" rel="noopener">Share on X →</a>
         <a class="pr-share-btn" id="pr-share-wa" href="#" target="_blank" rel="noopener">Share on WhatsApp →</a>
       </div>
+    </div>
+
+    <!-- Skip-the-line: pay for instant Full Access Pass -->
+    <div class="pr-skip">
+      <div class="pr-skip-divider">— or —</div>
+      <div class="pr-skip-headline">Skip the waitlist. Get every dashboard now.</div>
+      <div class="pr-skip-sub">One subscription unlocks all 10 dashboards. Cancel anytime.</div>
+      <div class="pr-skip-row">
+        <a class="pr-skip-btn" href="/checkout/viewer-pass?interval=monthly">
+          Get Full Access
+          <span class="pr-skip-btn-price">£20 / month</span>
+        </a>
+        <a class="pr-skip-btn pr-skip-btn-alt" href="/checkout/viewer-pass?interval=annual">
+          Annual (save 20%)
+          <span class="pr-skip-btn-price">£192 / year</span>
+        </a>
+      </div>
+      <div class="pr-skip-fineprint">Email link arrives within a minute. Pay once, never see Stripe again.</div>
     </div>
   </div>
   <div style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(0,0,0,0.35);z-index:5;font-family:var(--font-ui);letter-spacing:0.02em">

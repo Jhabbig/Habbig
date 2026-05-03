@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Climate Dashboard — 3D Globe</title>
+
+<!-- CesiumJS — bundle is only fetched when you visit this page. -->
+<link href="https://cdn.jsdelivr.net/npm/cesium@1.141.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.141.0/Build/Cesium/Cesium.js"></script>
+
+<style>
+:root {
+  --bg-0: #050505; --bg-1: #111; --bg-2: #161616;
+  --border: #1f1f1f; --border-light: #262626;
+  --text-0: #e6e6e6; --text-1: #888; --text-2: #555;
+  --green: #4ade80; --orange: #fb923c; --blue: #60a5fa;
+  --mono: 'SF Mono','Cascadia Code','Fira Code','JetBrains Mono',Monaco,Consolas,monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body { font-family: var(--mono); background: var(--bg-0); color: var(--text-0); font-size: 12px; overflow: hidden; }
+
+.header {
+  height: 40px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; background: rgba(10,10,10,0.85); border-bottom: 1px solid var(--border);
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100; backdrop-filter: blur(6px);
+}
+.header h1 { font-size: 13px; font-weight: 500; letter-spacing: 0.06em; }
+.header h1 .accent { color: var(--green); }
+.header h1 .sub { color: var(--text-1); }
+.header .right { display:flex; gap: 12px; align-items: center; color: var(--text-1); font-size: 11px; }
+.header a, .header button {
+  color: var(--text-0); text-decoration: none; background: var(--bg-2);
+  border: 1px solid var(--border); padding: 4px 10px; cursor: pointer;
+  font-family: var(--mono); font-size: 11px;
+}
+.header a:hover, .header button:hover { border-color: var(--green); color: var(--green); }
+.header input[type="date"] {
+  background: var(--bg-2); color: var(--text-0); border: 1px solid var(--border);
+  padding: 3px 8px; font-family: var(--mono); font-size: 11px;
+}
+
+#cesiumContainer { position: absolute; top: 40px; left: 0; right: 0; bottom: 0; }
+
+.layer-panel {
+  position: fixed; top: 50px; left: 12px; z-index: 90;
+  width: 270px; max-height: calc(100vh - 70px);
+  background: rgba(10,10,10,0.88); border: 1px solid var(--border);
+  font-size: 11px; backdrop-filter: blur(6px);
+  display: flex; flex-direction: column;
+}
+.lp-header {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.10em; color: var(--text-1);
+  cursor: pointer; user-select: none;
+}
+.lp-header .toggle { color: var(--text-2); font-size: 9px; }
+.lp-body { overflow-y: auto; flex: 1; }
+.layer-panel.collapsed .lp-body { display: none; }
+
+.lp-section { padding: 8px 12px 10px; border-bottom: 1px solid var(--bg-2); }
+.lp-section:last-child { border-bottom: none; }
+.lp-section-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-2); margin-bottom: 4px;
+}
+.lp-section label {
+  display: flex; align-items: center; gap: 6px; padding: 3px 0;
+  cursor: pointer; user-select: none; color: var(--text-1);
+}
+.lp-section label:hover { color: var(--text-0); }
+.lp-section label input { accent-color: var(--green); flex-shrink: 0; }
+.lp-section label .name { flex: 1; }
+.lp-section label .src { color: var(--text-2); font-size: 9px; }
+.lp-section .opacity {
+  width: 100%; margin-top: 4px; accent-color: var(--green);
+}
+
+.hud {
+  position: fixed; bottom: 12px; right: 12px; z-index: 50;
+  background: rgba(10,10,10,0.88); border: 1px solid var(--border);
+  padding: 10px 14px; backdrop-filter: blur(6px);
+  font-size: 11px; color: var(--text-1); min-width: 280px;
+}
+.hud .title { color: var(--green); margin-bottom: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; }
+.hud .stat { display: flex; justify-content: space-between; gap: 14px; padding: 2px 0; }
+.hud .stat .v { color: var(--text-0); font-weight: 500; }
+.hud .stat .ts { color: var(--text-2); font-size: 10px; }
+
+#loading {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-0); z-index: 200; color: var(--text-1);
+  font-size: 12px; flex-direction: column; gap: 16px;
+}
+#loading .spinner {
+  width: 32px; height: 32px; border: 2px solid var(--border-light);
+  border-top-color: var(--green); border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.cesium-viewer-bottom { display: none !important; }
+.cesium-credit-textContainer { display: none !important; }
+.cesium-viewer-toolbar { top: 50px !important; right: 300px !important; }
+.cesium-button { background: rgba(20,20,20,0.85) !important; border-color: var(--border) !important; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1><span class="accent">●</span> Climate / <span class="sub">3D globe + nasa satellite imagery</span></h1>
+  <div class="right">
+    <label>date <input type="date" id="date-picker"></label>
+    <a href="/">← dashboard</a>
+  </div>
+</header>
+
+<div id="loading"><div class="spinner"></div><div id="loading-msg">loading cesium…</div></div>
+<div id="cesiumContainer"></div>
+
+<aside class="layer-panel" id="layer-panel">
+  <div class="lp-header" id="lp-header">
+    <span>Imagery & overlays</span>
+    <span class="toggle">▼</span>
+  </div>
+  <div class="lp-body" id="lp-body"></div>
+</aside>
+
+<div class="hud" id="hud" style="display:none">
+  <div class="title">Live climate state</div>
+  <div class="stat"><span>annual anomaly (latest yr)</span><span class="v" id="hud-temp">—</span></div>
+  <div class="stat"><span>YTD anomaly</span><span class="v" id="hud-temp-ytd">—</span></div>
+  <div class="stat"><span>CO₂ (Mauna Loa)</span><span class="v" id="hud-co2">—</span></div>
+  <div class="stat"><span>CH₄ (NOAA)</span><span class="v" id="hud-ch4">—</span></div>
+  <div class="stat"><span>sea ice (NSIDC)</span><span class="v" id="hud-ice">—</span></div>
+  <div class="stat"><span>ENSO</span><span class="v" id="hud-enso">—</span></div>
+  <div class="stat"><span class="ts" id="hud-asof">…</span></div>
+</div>
+
+<script>
+'use strict';
+window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.141.0/Build/Cesium/';
+
+// ── NASA GIBS layer registry ────────────────────────────────────────────────
+// All layers served from gibs.earthdata.nasa.gov, free, no auth, EPSG:4326.
+// `time: 'today'` resolves to (today - 1d) since same-day tiles aren't always
+// processed. `static: true` means the layer ignores the date picker.
+// matrixSet must match the layer's native resolution. maxLevel caps zoom.
+const GIBS_LAYERS = [
+  { group: 'Base imagery (replaces ESRI)', kind: 'base',
+    id: 'modis-true-terra', label: 'MODIS Terra true color',
+    layer: 'MODIS_Terra_CorrectedReflectance_TrueColor',
+    matrixSet: '250m', maxLevel: 9, format: 'image/jpeg' },
+  { group: 'Base imagery (replaces ESRI)', kind: 'base',
+    id: 'modis-true-aqua', label: 'MODIS Aqua true color',
+    layer: 'MODIS_Aqua_CorrectedReflectance_TrueColor',
+    matrixSet: '250m', maxLevel: 9, format: 'image/jpeg' },
+  { group: 'Base imagery (replaces ESRI)', kind: 'base',
+    id: 'viirs-true', label: 'VIIRS SNPP true color (sharpest)',
+    layer: 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
+    matrixSet: '250m', maxLevel: 9, format: 'image/jpeg' },
+  { group: 'Base imagery (replaces ESRI)', kind: 'base',
+    id: 'esri', label: 'ESRI World Imagery (no date)', static: true },
+
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'sst', label: 'Sea Surface Temperature',
+    layer: 'GHRSST_L4_MUR_Sea_Surface_Temperature',
+    matrixSet: '1km', maxLevel: 7, format: 'image/png', defaultOpacity: 0.7 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'sst-anom', label: 'SST anomaly (vs climatology)',
+    layer: 'GHRSST_L4_MUR_Sea_Surface_Temperature_Anomalies',
+    matrixSet: '1km', maxLevel: 7, format: 'image/png', defaultOpacity: 0.7 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'sea-ice', label: 'Sea ice concentration',
+    layer: 'AMSRU2_Sea_Ice_Concentration_12km',
+    matrixSet: '2km', maxLevel: 6, format: 'image/png', defaultOpacity: 0.8 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'snow', label: 'Snow cover (MODIS Terra)',
+    layer: 'MODIS_Terra_NDSI_Snow_Cover',
+    matrixSet: '500m', maxLevel: 8, format: 'image/png', defaultOpacity: 0.7 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'aerosol', label: 'Aerosol optical depth',
+    layer: 'MODIS_Combined_Value_Added_AOD',
+    matrixSet: '2km', maxLevel: 6, format: 'image/png', defaultOpacity: 0.6 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'fires', label: 'Fires (MODIS, last 24h)',
+    layer: 'MODIS_Combined_Thermal_Anomalies_All',
+    matrixSet: '1km', maxLevel: 7, format: 'image/png', defaultOpacity: 0.9 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'cloud-day', label: 'Cloud top temperature (day)',
+    layer: 'MODIS_Terra_Cloud_Top_Temp_Day',
+    matrixSet: '2km', maxLevel: 6, format: 'image/png', defaultOpacity: 0.6 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'land-temp', label: 'Land surface temperature (day)',
+    layer: 'MODIS_Terra_Land_Surface_Temp_Day',
+    matrixSet: '1km', maxLevel: 7, format: 'image/png', defaultOpacity: 0.7 },
+  { group: 'Climate overlays', kind: 'overlay',
+    id: 'ndvi', label: 'NDVI vegetation (16-day)',
+    layer: 'MODIS_Terra_NDVI_16Day',
+    matrixSet: '500m', maxLevel: 8, format: 'image/png', defaultOpacity: 0.8 },
+];
+
+// State
+const state = {
+  viewer: null,
+  date: '',
+  imageryLayers: {},   // id → Cesium ImageryLayer or null
+  baseLayerId: 'esri',
+};
+
+// ── Bootstrap ───────────────────────────────────────────────────────────────
+(async function init() {
+  const setMsg = (m) => { const el = document.getElementById('loading-msg'); if (el) el.textContent = m; };
+  if (typeof Cesium === 'undefined') { setMsg('cesium failed to load — check network'); return; }
+
+  // Date defaults to yesterday (today's tiles often not yet processed)
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  state.date = yesterday;
+  document.getElementById('date-picker').value = yesterday;
+  document.getElementById('date-picker').max = new Date().toISOString().slice(0, 10);
+  document.getElementById('date-picker').addEventListener('change', (e) => {
+    state.date = e.target.value || yesterday;
+    rebuildAllLayers();
+  });
+
+  // Initialize viewer with no base layer; we attach one in rebuildAllLayers
+  const viewer = new Cesium.Viewer('cesiumContainer', {
+    baseLayer: false,
+    baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
+    navigationHelpButton: false, animation: false, timeline: false,
+    fullscreenButton: true, vrButton: false, infoBox: true, selectionIndicator: false,
+    scene3DOnly: true, shouldAnimate: true,
+  });
+  state.viewer = viewer;
+  viewer.scene.globe.depthTestAgainstTerrain = false;
+  viewer.scene.globe.enableLighting = true;
+  viewer.scene.skyAtmosphere.show = true;
+  viewer.scene.skyAtmosphere.brightnessShift = 0.05;
+  viewer.scene.fog.enabled = true;
+  viewer.scene.skyBox.show = true;
+  viewer.scene.sun.show = true;
+  viewer.scene.moon.show = true;
+  viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#04060d');
+  viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(0, 30, 18000000) });
+
+  // Country borders overlay
+  try {
+    const ds = await Cesium.GeoJsonDataSource.load('/static/countries.geojson', {
+      stroke: Cesium.Color.fromCssColorString('rgba(74,222,128,0.55)'),
+      fill:   Cesium.Color.fromCssColorString('rgba(74,222,128,0.02)'),
+      strokeWidth: 0.8, clampToGround: true,
+    });
+    viewer.dataSources.add(ds);
+  } catch (e) { console.warn('borders load failed', e); }
+
+  buildLayerPanel();
+  rebuildAllLayers();
+  fetchClimateHud();
+
+  // Hide loading after first render or 6s safety
+  const hideLoading = () => {
+    const el = document.getElementById('loading'); if (el) el.style.display = 'none';
+    document.getElementById('hud').style.display = '';
+  };
+  const onTile = viewer.scene.globe.tileLoadProgressEvent.addEventListener((qLen) => {
+    if (qLen <= 1) { hideLoading(); onTile(); }
+  });
+  setTimeout(hideLoading, 6000);
+})();
+
+// ── Imagery providers ───────────────────────────────────────────────────────
+function gibsProvider(cfg) {
+  const ext = cfg.format === 'image/jpeg' ? 'jpg' : 'png';
+  const t = cfg.static ? 'default' : state.date;
+  return new Cesium.WebMapTileServiceImageryProvider({
+    url: `https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/${cfg.layer}/default/${t}/${cfg.matrixSet}/{TileMatrix}/{TileRow}/{TileCol}.${ext}`,
+    layer: cfg.layer,
+    style: 'default',
+    tileMatrixSetID: cfg.matrixSet,
+    maximumLevel: cfg.maxLevel,
+    format: cfg.format,
+    tilingScheme: new Cesium.GeographicTilingScheme(),
+  });
+}
+
+async function esriProvider() {
+  return await Cesium.ArcGisMapServerImageryProvider.fromUrl(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
+  );
+}
+
+async function rebuildAllLayers() {
+  // 1) Reset all imagery — Cesium has one stack
+  state.viewer.imageryLayers.removeAll();
+  state.imageryLayers = {};
+
+  // 2) Add the selected base
+  const baseCfg = GIBS_LAYERS.find(l => l.id === state.baseLayerId);
+  let baseProvider;
+  if (baseCfg && baseCfg.id === 'esri') {
+    baseProvider = await esriProvider();
+  } else if (baseCfg) {
+    baseProvider = gibsProvider(baseCfg);
+  } else {
+    baseProvider = await esriProvider();
+  }
+  const baseLayer = state.viewer.imageryLayers.addImageryProvider(baseProvider);
+  state.imageryLayers[state.baseLayerId] = baseLayer;
+
+  // 3) For each *active* overlay (checkbox checked), add it on top
+  for (const cfg of GIBS_LAYERS) {
+    if (cfg.kind !== 'overlay') continue;
+    const cb = document.querySelector(`input[data-overlay="${cfg.id}"]`);
+    if (cb && cb.checked) {
+      const provider = gibsProvider(cfg);
+      const layer = state.viewer.imageryLayers.addImageryProvider(provider);
+      const slider = document.querySelector(`input[data-opacity="${cfg.id}"]`);
+      layer.alpha = slider ? parseFloat(slider.value) : (cfg.defaultOpacity ?? 0.7);
+      state.imageryLayers[cfg.id] = layer;
+    }
+  }
+}
+
+// ── UI ──────────────────────────────────────────────────────────────────────
+function buildLayerPanel() {
+  const body = document.getElementById('lp-body');
+  const groups = new Map();
+  for (const cfg of GIBS_LAYERS) {
+    if (!groups.has(cfg.group)) groups.set(cfg.group, []);
+    groups.get(cfg.group).push(cfg);
+  }
+
+  for (const [groupName, cfgs] of groups) {
+    const sec = document.createElement('div');
+    sec.className = 'lp-section';
+    const t = document.createElement('div');
+    t.className = 'lp-section-title';
+    t.textContent = groupName;
+    sec.appendChild(t);
+
+    for (const cfg of cfgs) {
+      const lbl = document.createElement('label');
+      const isBase = cfg.kind === 'base';
+      const ctrl = isBase
+        ? `<input type="radio" name="base" data-base="${cfg.id}" ${cfg.id === state.baseLayerId ? 'checked' : ''}>`
+        : `<input type="checkbox" data-overlay="${cfg.id}">`;
+      lbl.innerHTML = `
+        ${ctrl}
+        <span class="name">${cfg.label}</span>
+        <span class="src">${cfg.static ? 'no date' : 'GIBS'}</span>`;
+      sec.appendChild(lbl);
+
+      // Opacity slider for overlays
+      if (cfg.kind === 'overlay') {
+        const sl = document.createElement('input');
+        sl.type = 'range'; sl.min = '0'; sl.max = '1'; sl.step = '0.05';
+        sl.value = String(cfg.defaultOpacity ?? 0.7);
+        sl.className = 'opacity'; sl.dataset.opacity = cfg.id;
+        sl.addEventListener('input', (e) => {
+          const layer = state.imageryLayers[cfg.id];
+          if (layer) layer.alpha = parseFloat(e.target.value);
+        });
+        sec.appendChild(sl);
+      }
+    }
+    body.appendChild(sec);
+  }
+
+  body.querySelectorAll('input[data-base]').forEach(rb => {
+    rb.addEventListener('change', (e) => {
+      state.baseLayerId = e.target.dataset.base;
+      rebuildAllLayers();
+    });
+  });
+  body.querySelectorAll('input[data-overlay]').forEach(cb => {
+    cb.addEventListener('change', () => rebuildAllLayers());
+  });
+  document.getElementById('lp-header').addEventListener('click', () => {
+    document.getElementById('layer-panel').classList.toggle('collapsed');
+  });
+}
+
+// ── HUD: pull live values from the climate dashboard's own APIs ─────────────
+async function fetchClimateHud() {
+  const safe = async (path) => {
+    try { const r = await fetch(path); if (!r.ok) return null; return await r.json(); }
+    catch { return null; }
+  };
+
+  const [summary, sst, regime] = await Promise.all([
+    safe('/api/summary'),
+    safe('/api/sst'),
+    safe('/api/regime'),
+  ]);
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.textContent = v; };
+
+  if (summary) {
+    if (summary.temperature?.latest_anomaly_c != null) {
+      set('hud-temp', `+${Number(summary.temperature.latest_anomaly_c).toFixed(2)} °C`);
+    } else if (summary.temperature?.latest != null) {
+      set('hud-temp', `+${Number(summary.temperature.latest).toFixed(2)} °C`);
+    }
+    if (summary.co2?.latest_ppm != null) set('hud-co2', `${Number(summary.co2.latest_ppm).toFixed(1)} ppm`);
+    if (summary.methane?.latest_ppb != null) set('hud-ch4', `${Number(summary.methane.latest_ppb).toFixed(1)} ppb`);
+    if (summary.sea_ice?.arctic?.latest_extent_million_sq_km != null)
+      set('hud-arctic',     `${Number(summary.sea_ice.arctic.latest_extent_million_sq_km).toFixed(2)} M km²`);
+    if (summary.sea_ice?.antarctic?.latest_extent_million_sq_km != null)
+      set('hud-antarctic',  `${Number(summary.sea_ice.antarctic.latest_extent_million_sq_km).toFixed(2)} M km²`);
+    set('hud-asof', summary.asof || '');
+  }
+  if (sst?.latest_value_c != null) set('hud-sst', `${Number(sst.latest_value_c).toFixed(2)} °C`);
+  if (regime?.oni != null) {
+    const oni = Number(regime.oni);
+    let label = 'neutral';
+    if (oni >= 0.5) label = 'El Niño';
+    else if (oni <= -0.5) label = 'La Niña';
+    set('hud-enso', `${label} (ONI ${oni.toFixed(2)})`);
+  }
+}
+</script>
+</body>
+</html>

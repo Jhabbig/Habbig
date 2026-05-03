@@ -500,38 +500,6 @@
     <div id="signals-list"></div>
 </div>
 
-<!-- ═══ BOT TAB ═══ -->
-<div class="view" id="view-bot">
-    <div style="font-size:18px;font-weight:700;margin-bottom:4px">Trading Bot</div>
-    <div style="font-size:13px;color:var(--text-3);margin-bottom:16px">Live signals and trades from the weather bot. Scans Polymarket + Kalshi every 15 min.</div>
-
-    <!-- Bot Stats -->
-    <div class="stats-row" id="bot-stats-row">
-        <div class="stat-card"><div class="stat-val" style="color:var(--green)" id="bot-trades-today">--</div><div class="stat-label">Trades Today</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:var(--blue)" id="bot-signals-today">--</div><div class="stat-label">Signals Today</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:var(--amber)" id="bot-wagered">--</div><div class="stat-label">All-Time Wagered</div></div>
-    </div>
-
-    <!-- Calibration -->
-    <div id="bot-calibration" style="margin:16px 0;padding:14px;background:var(--card);border-radius:12px;border:1px solid var(--border)">
-        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);margin-bottom:10px">Model Calibration (Brier Score)</div>
-        <div class="stats-row">
-            <div class="stat-card"><div class="stat-val" style="color:var(--cyan)" id="bot-brier-model">--</div><div class="stat-label">Model</div></div>
-            <div class="stat-card"><div class="stat-val" style="color:var(--text-2)" id="bot-brier-market">--</div><div class="stat-label">Market</div></div>
-            <div class="stat-card"><div class="stat-val" style="color:var(--green)" id="bot-brier-edge">--</div><div class="stat-label">Edge</div></div>
-        </div>
-        <div id="bot-calibration-buckets" style="margin-top:10px;font-size:12px;color:var(--text-2)"></div>
-    </div>
-
-    <!-- Recent Signals -->
-    <div style="font-size:14px;font-weight:600;margin:16px 0 8px">Recent Signals</div>
-    <div id="bot-signals-list" style="font-size:12px"></div>
-
-    <!-- Recent Trades -->
-    <div style="font-size:14px;font-weight:600;margin:16px 0 8px">Recent Trades</div>
-    <div id="bot-trades-list" style="font-size:12px"></div>
-</div>
-
 <!-- ═══ HISTORY TAB ═══ -->
 <div class="view" id="view-history">
     <div style="font-size:18px;font-weight:700;margin-bottom:14px">Track Record</div>
@@ -658,10 +626,6 @@
     <button class="nav-tab" data-tab="signals" onclick="switchTab('signals')">
         <svg viewBox="0 0 24 24"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>
         <span data-i18n="nav.signals">Opportunities</span>
-    </button>
-    <button class="nav-tab" data-tab="bot" onclick="switchTab('bot')">
-        <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 12h-2v-2h2v2zm0-4h-2V6h2v4z"/></svg>
-        <span>Bot</span>
     </button>
     <button class="nav-tab" data-tab="history" onclick="switchTab('history')">
         <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
@@ -1163,93 +1127,7 @@ function switchTab(tab) {
     document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
     document.querySelector(`.nav-tab[data-tab="${tab}"]`).classList.add('active');
     if (tab === 'signals') renderSignals();
-    if (tab === 'bot') loadBot();
     if (tab === 'history') loadHistory();
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// BOT TAB
-// ═══════════════════════════════════════════════════════════════════════
-async function loadBot() {
-    try {
-        const [statsR, sigsR, tradesR, calR] = await Promise.all([
-            fetch('/api/bot/stats'), fetch('/api/bot/signals'),
-            fetch('/api/bot/trades'), fetch('/api/bot/calibration'),
-        ]);
-        const stats = await statsR.json();
-        const sigs = await sigsR.json();
-        const trades = await tradesR.json();
-        const cal = await calR.json();
-
-        // Stats
-        const el = id => document.getElementById(id);
-        if (stats.today) {
-            el('bot-trades-today').textContent = stats.today.trades;
-            el('bot-signals-today').textContent = stats.today.actionable_signals;
-        }
-        if (stats.all_time) {
-            el('bot-wagered').textContent = '$' + stats.all_time.wagered.toLocaleString();
-        }
-
-        // Calibration
-        if (cal.brier_model != null) {
-            el('bot-brier-model').textContent = cal.brier_model.toFixed(4);
-            el('bot-brier-market').textContent = cal.brier_market.toFixed(4);
-            const edge = cal.edge_vs_market;
-            el('bot-brier-edge').textContent = (edge > 0 ? '+' : '') + edge.toFixed(4);
-            el('bot-brier-edge').style.color = edge > 0 ? 'var(--green)' : 'var(--red)';
-
-            if (cal.calibration_buckets) {
-                let bHtml = '<table style="width:100%;border-collapse:collapse"><tr style="color:var(--text-3)"><th style="text-align:left;padding:2px 6px">Bucket</th><th>N</th><th>Predicted</th><th>Actual</th></tr>';
-                for (const [label, d] of Object.entries(cal.calibration_buckets)) {
-                    const diff = d.avg_actual - d.avg_predicted;
-                    const clr = Math.abs(diff) < 0.1 ? 'var(--green)' : 'var(--amber)';
-                    bHtml += `<tr><td style="padding:2px 6px">${label}</td><td style="text-align:center">${d.n}</td><td style="text-align:center">${(d.avg_predicted*100).toFixed(0)}%</td><td style="text-align:center;color:${clr}">${(d.avg_actual*100).toFixed(0)}%</td></tr>`;
-                }
-                bHtml += '</table>';
-                el('bot-calibration-buckets').innerHTML = bHtml;
-            }
-        } else {
-            el('bot-calibration-buckets').innerHTML = '<span style="color:var(--text-3)">No resolved signals yet — calibration data will appear after markets settle.</span>';
-        }
-
-        // Signals table
-        const sigList = sigs.signals || [];
-        if (sigList.length) {
-            let html = '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="color:var(--text-3);font-size:11px"><th style="text-align:left;padding:4px">Time</th><th>Platform</th><th>Action</th><th>Edge</th><th>Model</th><th>Market</th><th style="text-align:left">City</th></tr>';
-            for (const s of sigList.slice(0, 30)) {
-                if (s.action === 'NO_TRADE') continue;
-                const ts = (s.timestamp || '').slice(0,16).replace('T',' ');
-                const plat = (s.platform || 'poly').slice(0,6);
-                const edge = ((s.edge||0)*100).toFixed(1);
-                const edgeClr = s.edge > 0 ? 'var(--green)' : 'var(--red)';
-                html += `<tr><td style="padding:3px 4px;white-space:nowrap">${ts}</td><td style="text-align:center">${plat}</td><td style="text-align:center;font-weight:600">${s.action}</td><td style="text-align:center;color:${edgeClr}">${edge}%</td><td style="text-align:center">${((s.model_prob||0)*100).toFixed(0)}%</td><td style="text-align:center">${((s.market_prob||0)*100).toFixed(0)}%</td><td style="padding:3px 4px">${s.city||''}</td></tr>`;
-            }
-            html += '</table>';
-            el('bot-signals-list').innerHTML = html;
-        } else {
-            el('bot-signals-list').innerHTML = '<span style="color:var(--text-3)">No actionable signals yet.</span>';
-        }
-
-        // Trades table
-        const tradeList = trades.trades || [];
-        if (tradeList.length) {
-            let html = '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="color:var(--text-3);font-size:11px"><th style="text-align:left;padding:4px">Time</th><th>Platform</th><th>Side</th><th>Amount</th><th>Price</th><th>Edge</th><th style="text-align:left">City</th></tr>';
-            for (const t of tradeList.slice(0, 30)) {
-                const ts = (t.timestamp || '').slice(0,16).replace('T',' ');
-                const plat = (t.platform || 'poly').slice(0,6);
-                const paper = t.paper_mode ? ' [P]' : '';
-                html += `<tr><td style="padding:3px 4px;white-space:nowrap">${ts}</td><td style="text-align:center">${plat}</td><td style="text-align:center;font-weight:600">${t.side}${paper}</td><td style="text-align:center">$${(t.amount||0).toFixed(2)}</td><td style="text-align:center">${(t.price||0).toFixed(3)}</td><td style="text-align:center">${((t.edge||0)*100).toFixed(1)}%</td><td style="padding:3px 4px">${t.city||''}</td></tr>`;
-            }
-            html += '</table>';
-            el('bot-trades-list').innerHTML = html;
-        } else {
-            el('bot-trades-list').innerHTML = '<span style="color:var(--text-3)">No trades yet.</span>';
-        }
-    } catch (e) {
-        console.error('Bot tab load error:', e);
-        document.getElementById('bot-signals-list').innerHTML = '<span style="color:var(--red)">Failed to load bot data.</span>';
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Monitor — History</title>
+<link rel="icon" type="image/png" href="/static/favicon.png">
+<link rel="stylesheet" href="/static/uPlot.min.css">
+<style>
+:root {
+  --bg-0: #0a0a0a; --bg-1: #111; --bg-2: #161616; --bg-3: #1c1c1c;
+  --border: #1f1f1f; --border-light: #262626;
+  --text-0: #e6e6e6; --text-1: #888; --text-2: #555;
+  --green: #4ade80; --orange: #fb923c; --blue: #60a5fa; --teal: #2dd4bf;
+  --mono: 'SF Mono','Cascadia Code','Fira Code','JetBrains Mono',Monaco,Consolas,monospace;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: var(--mono); background: var(--bg-0); color: var(--text-0);
+  font-size: 12px; line-height: 1.5;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.header {
+  height: 40px; display:flex; align-items:center; justify-content:space-between;
+  padding: 0 16px; background: var(--bg-1); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
+}
+.header h1 { font-size: 13px; font-weight: 500; letter-spacing: 0.06em; }
+.header h1 .accent { color: var(--green); }
+.header .right { display:flex; gap: 16px; align-items:center; color: var(--text-1); font-size: 11px; }
+
+.layout { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: calc(100vh - 40px); }
+
+.sidebar {
+  background: var(--bg-1); border-right: 1px solid var(--border);
+  padding: 16px; overflow-y: auto;
+}
+.sidebar .section { margin-bottom: 18px; }
+.sidebar .section-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.10em;
+  color: var(--text-1); margin-bottom: 8px; font-weight: 600;
+}
+select, input[type=text] {
+  width: 100%; background: var(--bg-2); color: var(--text-0);
+  border: 1px solid var(--border-light); padding: 6px 8px;
+  font-family: var(--mono); font-size: 11px; outline: none;
+}
+select:focus, input[type=text]:focus { border-color: var(--green); }
+
+.chips { display:flex; flex-wrap:wrap; gap: 4px; margin-top: 8px; }
+.chip {
+  background: var(--bg-2); border: 1px solid var(--border-light);
+  padding: 3px 8px; cursor: pointer; user-select: none;
+  font-size: 11px; color: var(--text-1);
+}
+.chip:hover { border-color: var(--text-1); color: var(--text-0); }
+.chip.active { background: var(--bg-3); color: var(--text-0); border-color: var(--green); }
+.chip .swatch { display:inline-block; width:8px; height:8px; margin-right:4px; vertical-align:middle; border-radius: 1px; }
+
+.range-buttons { display:flex; gap: 4px; }
+.range-buttons button {
+  flex: 1; background: var(--bg-2); color: var(--text-1); border: 1px solid var(--border-light);
+  padding: 5px 8px; font-family: var(--mono); font-size: 11px; cursor: pointer;
+}
+.range-buttons button.active { background: var(--bg-3); color: var(--text-0); border-color: var(--green); }
+.range-buttons button:hover { color: var(--text-0); }
+
+.main {
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
+  background: var(--bg-0); min-width: 0;
+}
+.toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.toolbar h2 { font-size: 14px; font-weight: 500; color: var(--text-0); }
+.toolbar .stats { color: var(--text-1); font-size: 11px; margin-left: auto; }
+
+.chart-wrap {
+  background: var(--bg-1); border: 1px solid var(--border);
+  padding: 12px; min-height: 480px;
+}
+.chart-wrap.empty { display:flex; align-items:center; justify-content:center; color: var(--text-1); }
+#chart { width: 100%; }
+
+.latest {
+  background: var(--bg-1); border: 1px solid var(--border); padding: 12px;
+}
+.latest h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-1); margin-bottom: 8px; }
+.latest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.latest-cell {
+  background: var(--bg-2); padding: 6px 10px; border-left: 2px solid var(--green);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.latest-cell .label { color: var(--text-1); font-size: 10px; }
+.latest-cell .value { color: var(--text-0); font-size: 14px; font-weight: 500; }
+.latest-cell .meta { color: var(--text-2); font-size: 10px; }
+
+.uplot-tooltip {
+  position: absolute; pointer-events: none; padding: 6px 10px;
+  background: rgba(20,20,20,0.95); border: 1px solid var(--border-light);
+  font-family: var(--mono); font-size: 11px; color: var(--text-0); z-index: 50;
+}
+
+.empty-state { color: var(--text-1); padding: 40px; text-align: center; }
+
+/* uPlot dark overrides */
+.u-legend { color: var(--text-1) !important; font-family: var(--mono) !important; font-size: 11px !important; }
+.u-legend .u-marker { border-radius: 1px; }
+.u-axis { color: var(--text-1) !important; }
+.u-cursor-x, .u-cursor-y { background: var(--text-1) !important; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1><span class="accent">●</span> World Monitor / <span style="color:var(--text-1)">history</span></h1>
+  <div class="right">
+    <span id="db-stats">…</span>
+    <a href="/">← live dashboard</a>
+  </div>
+</header>
+
+<div class="layout">
+
+  <aside class="sidebar">
+    <div class="section">
+      <div class="section-title">Metric</div>
+      <select id="metric-picker"></select>
+    </div>
+
+    <div class="section" id="country-section" style="display:none">
+      <div class="section-title">Countries</div>
+      <input type="text" id="country-search" placeholder="search ISO2 code…">
+      <div class="chips" id="country-chips"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Range</div>
+      <div class="range-buttons">
+        <button data-years="5">5y</button>
+        <button data-years="10">10y</button>
+        <button data-years="20">20y</button>
+        <button data-years="35" class="active">all</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <h2 id="chart-title">—</h2>
+      <span class="stats" id="chart-stats"></span>
+    </div>
+    <div class="chart-wrap" id="chart-wrap">
+      <div class="empty-state" id="empty">Select a metric…</div>
+      <div id="chart"></div>
+    </div>
+    <div class="latest" id="latest" style="display:none">
+      <h3>Latest values</h3>
+      <div class="latest-grid" id="latest-grid"></div>
+    </div>
+  </main>
+
+</div>
+
+<script src="/static/uPlot.iife.min.js"></script>
+<script>
+'use strict';
+
+// ── State ───────────────────────────────────────────────────────────────────
+const state = {
+  keys: [],            // raw keys list from /api/history/keys
+  groups: new Map(),   // indicator → [country codes] (only for country-keyed metrics)
+  systemKeys: [],      // [{key, count, ...}] for non-country metrics
+  countryNames: {},    // ISO2 → ISO3 (display)
+  selectedIndicator: null,
+  selectedCountries: ['US','CN','RU','IN','GB','DE','FR','JP','BR','UA'],
+  yearsBack: 35,
+  chart: null,
+};
+
+// 10-color palette tuned for the dark theme
+const COLORS = ['#4ade80','#60a5fa','#fb923c','#a855f7','#f472b6','#facc15','#2dd4bf','#f87171','#a3e635','#22d3ee'];
+
+// Friendly labels for known metric prefixes
+const METRIC_LABELS = {
+  'wb.gdp_usd':            { label: 'GDP (USD)',                 fmt: 'usd_t', unit: '$' },
+  'wb.population':         { label: 'Population',                fmt: 'count' },
+  'wb.inflation_pct':      { label: 'Inflation (CPI %YoY)',      fmt: 'pct' },
+  'wb.milex_usd':          { label: 'Military expenditure (USD)',fmt: 'usd_b', unit: '$' },
+  'wb.electricity_kwh_pc': { label: 'Electricity per capita (kWh)', fmt: 'count' },
+  'wb.gov_debt_pct_gdp':   { label: 'Government debt (% of GDP)',fmt: 'pct' },
+  'wb.idps_total':         { label: 'IDPs total',                fmt: 'count' },
+  'wb.refugees_origin':    { label: 'Refugees (origin)',         fmt: 'count' },
+  'wb.refugees_dest':      { label: 'Refugees (destination)',    fmt: 'count' },
+  'fred.us_10y_yield':     { label: 'US 10y Treasury yield',     fmt: 'pct' },
+  'fred.us_2y_yield':      { label: 'US 2y Treasury yield',      fmt: 'pct' },
+  'fred.yield_curve_10y2y':{ label: 'Yield curve (10y - 2y)',    fmt: 'pct' },
+  'fred.vix':              { label: 'VIX',                       fmt: 'num' },
+  'fred.wti_oil':          { label: 'WTI oil (USD/bbl)',         fmt: 'usd' },
+  'fred.brent_oil':        { label: 'Brent oil (USD/bbl)',       fmt: 'usd' },
+  'fred.gold':             { label: 'Gold (USD/oz)',             fmt: 'usd' },
+  'fred.eur_usd':          { label: 'EUR/USD',                   fmt: 'fx'  },
+  'fred.cny_usd':          { label: 'CNY/USD',                   fmt: 'fx'  },
+  'fred.jpy_usd':          { label: 'JPY/USD',                   fmt: 'fx'  },
+  'fred.unrate_us':        { label: 'US unemployment rate',      fmt: 'pct' },
+  'fred.cpi_us':           { label: 'US CPI',                    fmt: 'num' },
+  'fred.fed_funds':        { label: 'Federal funds rate',        fmt: 'pct' },
+  'fred.m2_us':            { label: 'US M2 money supply',        fmt: 'usd_b' },
+};
+
+const SYSTEM_LABELS = {
+  'strategic_risk.composite':       'Strategic risk (composite)',
+  'strategic_risk.country_intel':   'Country intel (avg)',
+  'strategic_risk.high_intel_count':'Country intel ≥ 50 count',
+  'strategic_risk.conflicts':       'Active conflict count',
+  'strategic_risk.supply':          'Supply chain (extreme)',
+  'strategic_risk.climate':         'Climate (extreme)',
+  'strategic_risk.volcanoes':       'Volcanoes (erupting)',
+  'strategic_risk.cyber':           'Cyber (critical)',
+  'strategic_risk.grounded':        'Aviation grounded',
+  'intel_index.avg':                'Intel index avg',
+  'intel_index.max':                'Intel index max',
+  'intel_index.high_count':         'Intel index ≥50 count',
+  'intel_index.country_count':      'Intel index country count',
+};
+
+// ── Formatters ──────────────────────────────────────────────────────────────
+function fmtValue(v, kind) {
+  if (v == null || isNaN(v)) return '—';
+  switch (kind) {
+    case 'usd_t': return '$' + (v / 1e12).toFixed(2) + 'T';
+    case 'usd_b': return '$' + (v / 1e9).toFixed(1) + 'B';
+    case 'usd':   return '$' + v.toFixed(2);
+    case 'pct':   return v.toFixed(1) + '%';
+    case 'fx':    return v.toFixed(4);
+    case 'count': return v >= 1e9 ? (v/1e9).toFixed(2)+'B'
+                       : v >= 1e6 ? (v/1e6).toFixed(2)+'M'
+                       : v >= 1e3 ? (v/1e3).toFixed(0)+'K'
+                       : v.toFixed(0);
+    default:      return v.toLocaleString();
+  }
+}
+
+// ── Bootstrap ───────────────────────────────────────────────────────────────
+async function init() {
+  const r = await fetch('/api/history/keys');
+  const d = await r.json();
+  state.keys = d.keys || [];
+  document.getElementById('db-stats').textContent =
+    `${state.keys.length} metrics · ${state.keys.reduce((a,k)=>a+k.count,0).toLocaleString()} rows`;
+
+  // Partition keys into "indicator.country" buckets vs simple system metrics.
+  // Country-keyed pattern: 3+ dot-segments, last segment is 2-letter code (or numeric region code).
+  for (const k of state.keys) {
+    const parts = k.key.split('.');
+    if (parts.length >= 3 && /^[A-Z0-9]{2,3}$/.test(parts[parts.length-1])) {
+      const indicator = parts.slice(0, -1).join('.');
+      const cc = parts[parts.length-1];
+      if (!state.groups.has(indicator)) state.groups.set(indicator, []);
+      state.groups.get(indicator).push(cc);
+    } else {
+      state.systemKeys.push(k);
+    }
+  }
+
+  buildMetricPicker();
+  bindRange();
+
+  // Default selection: first country-keyed metric we know about, else first system metric
+  const defaultIndicator = [...state.groups.keys()].find(k => METRIC_LABELS[k]) || [...state.groups.keys()][0]
+    || (state.systemKeys[0] && state.systemKeys[0].key);
+  if (defaultIndicator) {
+    document.getElementById('metric-picker').value = defaultIndicator;
+    onMetricChange();
+  }
+}
+
+function buildMetricPicker() {
+  const sel = document.getElementById('metric-picker');
+  sel.innerHTML = '';
+
+  // Group 1: country-keyed indicators
+  if (state.groups.size > 0) {
+    const og = document.createElement('optgroup');
+    og.label = 'Country indicators';
+    for (const [ind, ccs] of [...state.groups.entries()].sort()) {
+      const opt = document.createElement('option');
+      opt.value = ind;
+      const meta = METRIC_LABELS[ind];
+      opt.textContent = (meta ? meta.label : ind) + ` (${ccs.length} countries)`;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+
+  // Group 2: system metrics
+  if (state.systemKeys.length > 0) {
+    const og = document.createElement('optgroup');
+    og.label = 'System metrics';
+    for (const k of state.systemKeys.sort((a,b) => a.key.localeCompare(b.key))) {
+      const opt = document.createElement('option');
+      opt.value = k.key;
+      opt.textContent = SYSTEM_LABELS[k.key] || k.key;
+      sel.appendChild(opt);
+    }
+  }
+
+  sel.addEventListener('change', onMetricChange);
+}
+
+function bindRange() {
+  const buttons = document.querySelectorAll('.range-buttons button');
+  buttons.forEach(b => b.addEventListener('click', () => {
+    buttons.forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    state.yearsBack = parseInt(b.dataset.years, 10);
+    drawChart();
+  }));
+}
+
+// ── Selection change ────────────────────────────────────────────────────────
+function onMetricChange() {
+  const v = document.getElementById('metric-picker').value;
+  state.selectedIndicator = v;
+  const isCountryKeyed = state.groups.has(v);
+  document.getElementById('country-section').style.display = isCountryKeyed ? '' : 'none';
+  if (isCountryKeyed) buildCountryChips();
+  drawChart();
+}
+
+function buildCountryChips() {
+  const grid = document.getElementById('country-chips');
+  grid.innerHTML = '';
+  const ccs = state.groups.get(state.selectedIndicator).slice().sort();
+  for (let i = 0; i < ccs.length; i++) {
+    const cc = ccs[i];
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    if (state.selectedCountries.includes(cc)) {
+      chip.classList.add('active');
+      const idx = state.selectedCountries.indexOf(cc);
+      const swatch = `<span class="swatch" style="background:${COLORS[idx % COLORS.length]}"></span>`;
+      chip.innerHTML = swatch + cc;
+    } else {
+      chip.textContent = cc;
+    }
+    chip.addEventListener('click', () => toggleCountry(cc));
+    grid.appendChild(chip);
+  }
+  document.getElementById('country-search').oninput = (e) => {
+    const q = e.target.value.toUpperCase();
+    [...grid.children].forEach(ch => {
+      ch.style.display = ch.textContent.includes(q) ? '' : 'none';
+    });
+  };
+}
+
+function toggleCountry(cc) {
+  const i = state.selectedCountries.indexOf(cc);
+  if (i >= 0) state.selectedCountries.splice(i, 1);
+  else state.selectedCountries.push(cc);
+  if (state.selectedCountries.length > 10) {
+    state.selectedCountries.shift(); // cap at 10 for chart legibility
+  }
+  buildCountryChips();
+  drawChart();
+}
+
+// ── Chart ───────────────────────────────────────────────────────────────────
+async function drawChart() {
+  const v = state.selectedIndicator;
+  if (!v) return;
+  const isCountryKeyed = state.groups.has(v);
+  const meta = METRIC_LABELS[v] || { label: SYSTEM_LABELS[v] || v, fmt: 'num' };
+  document.getElementById('chart-title').textContent = meta.label;
+
+  // Build the list of keys to fetch
+  let keys, names;
+  if (isCountryKeyed) {
+    if (state.selectedCountries.length === 0) {
+      showEmpty('Pick at least one country');
+      return;
+    }
+    keys = state.selectedCountries.map(cc => `${v}.${cc}`);
+    names = state.selectedCountries.slice();
+  } else {
+    keys = [v];
+    names = [v];
+  }
+
+  const hours = state.yearsBack > 0 ? state.yearsBack * 365 * 24 : 0;
+  const url = `/api/history/multi?keys=${encodeURIComponent(keys.join(','))}&hours=${hours}`;
+  document.getElementById('chart-stats').textContent = 'loading…';
+
+  let data;
+  try {
+    const r = await fetch(url);
+    data = await r.json();
+  } catch (e) {
+    showEmpty('Fetch failed: ' + e);
+    return;
+  }
+  const series = data.series || {};
+  if (!Object.keys(series).length || keys.every(k => (series[k] || []).length === 0)) {
+    showEmpty('No data for this selection');
+    return;
+  }
+
+  // Align series on a union of timestamps
+  const tsSet = new Set();
+  keys.forEach(k => (series[k] || []).forEach(p => tsSet.add(p.ts)));
+  const ts = [...tsSet].sort((a,b) => a - b);
+  const cols = [ts];
+  let total = 0;
+  keys.forEach(k => {
+    const map = new Map((series[k] || []).map(p => [p.ts, p.value]));
+    cols.push(ts.map(t => map.has(t) ? map.get(t) : null));
+    total += map.size;
+  });
+
+  document.getElementById('chart-stats').textContent =
+    `${total.toLocaleString()} points · ${ts.length} time slots · ${keys.length} series`;
+
+  // Build uPlot config
+  document.getElementById('empty').style.display = 'none';
+  const wrap = document.getElementById('chart-wrap');
+  const width = wrap.clientWidth - 24;
+  const height = 480;
+
+  const uplotSeries = [
+    {}, // x axis spec
+    ...names.map((n, i) => ({
+      label: n,
+      stroke: COLORS[i % COLORS.length],
+      width: 1.6,
+      points: { show: ts.length < 100, size: 4 },
+      value: (u, v) => fmtValue(v, meta.fmt),
+    })),
+  ];
+
+  if (state.chart) { state.chart.destroy(); state.chart = null; }
+  state.chart = new uPlot({
+    width, height,
+    scales: { x: { time: true } },
+    axes: [
+      { stroke: '#888', grid: { stroke: '#1f1f1f' }, ticks: { stroke: '#262626' } },
+      { stroke: '#888', grid: { stroke: '#1f1f1f' }, ticks: { stroke: '#262626' },
+        values: (u, vals) => vals.map(v => fmtValue(v, meta.fmt)) },
+    ],
+    series: uplotSeries,
+    cursor: { drag: { x: true, y: false } },
+    legend: { show: true, live: true },
+  }, cols, document.getElementById('chart'));
+
+  // Latest values panel
+  renderLatest(names, keys, series, meta);
+}
+
+function renderLatest(names, keys, series, meta) {
+  const grid = document.getElementById('latest-grid');
+  grid.innerHTML = '';
+  let any = false;
+  for (let i = 0; i < keys.length; i++) {
+    const pts = series[keys[i]] || [];
+    if (!pts.length) continue;
+    const last = pts[pts.length - 1];
+    const date = new Date(last.ts * 1000);
+    const cell = document.createElement('div');
+    cell.className = 'latest-cell';
+    cell.style.borderLeftColor = COLORS[i % COLORS.length];
+    cell.innerHTML =
+      `<div class="label">${names[i]}</div>` +
+      `<div class="value">${fmtValue(last.value, meta.fmt)}</div>` +
+      `<div class="meta">${date.toISOString().slice(0,10)}</div>`;
+    grid.appendChild(cell);
+    any = true;
+  }
+  document.getElementById('latest').style.display = any ? '' : 'none';
+}
+
+function showEmpty(msg) {
+  if (state.chart) { state.chart.destroy(); state.chart = null; }
+  document.getElementById('chart').innerHTML = '';
+  document.getElementById('empty').textContent = msg;
+  document.getElementById('empty').style.display = '';
+  document.getElementById('chart-stats').textContent = '';
+  document.getElementById('latest').style.display = 'none';
+}
+
+// Resize uPlot when the window resizes
+window.addEventListener('resize', () => {
+  if (state.chart) {
+    const wrap = document.getElementById('chart-wrap');
+    state.chart.setSize({ width: wrap.clientWidth - 24, height: 480 });
+  }
+});
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+
+</body>
+</html>

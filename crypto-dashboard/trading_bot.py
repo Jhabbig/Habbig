@@ -33,7 +33,10 @@ from pathlib import Path
 from dataclasses import dataclass, field, asdict
 
 # ─── Config ───────────────────────────────────────────────────────────
-API_BASE = "http://localhost:8000"
+# CRYPTO_API_BASE lets the bot reach the dashboard when it runs in a
+# different container (e.g. docker-compose). Default is localhost so the
+# systemd-on-one-host deploy keeps working unchanged.
+API_BASE = os.environ.get("CRYPTO_API_BASE", "http://localhost:8000")
 TRADE_LOG = Path(__file__).parent / "trades.json"
 BOT_LOG = Path(__file__).parent / "bot_activity.log"
 WINDOW_SECONDS = 300

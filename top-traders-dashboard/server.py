@@ -51,12 +51,13 @@ if not _sso_secret:
 @app.middleware("http")
 async def gateway_auth_middleware(request: Request, call_next):
     """Verify gateway SSO secret on all requests. Reject if secret not configured (unless DEV_MODE)."""
-    if _sso_secret:
-        client_secret = request.headers.get("x-gateway-secret", "")
-        if not hmac.compare_digest(client_secret, _sso_secret):
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    elif not _DEV_MODE:
-        return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+    if request.url.path != "/healthz":
+        if _sso_secret:
+            client_secret = request.headers.get("x-gateway-secret", "")
+            if not hmac.compare_digest(client_secret, _sso_secret):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        elif not _DEV_MODE:
+            return JSONResponse({"error": "Service misconfigured"}, status_code=503)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -726,4 +727,4 @@ async def healthz():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="info")
+    uvicorn.run(app, host=os.environ.get("BIND_HOST", "127.0.0.1"), port=PORT, log_level="info")
