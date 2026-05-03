@@ -4760,6 +4760,13 @@ async def api_data(request: Request):
     # current data is for a different sport, return a 202 with a hint so
     # the client knows it needs to wait for the data_updater to catch up.
     requested_sport = request.query_params.get("sport")
+    # Optional ?min_liquidity=N filter — hides markets with Polymarket
+    # liquidity below the threshold. Defaults to 0 (no filter) so existing
+    # callers behave the same. Recommended UI default: $1000.
+    try:
+        min_liquidity = float(request.query_params.get("min_liquidity") or 0)
+    except (ValueError, TypeError):
+        min_liquidity = 0.0
     # Snapshot dashboard_data under the lock so we never serialize a half-
     # updated dict (the data_updater mutates this dict in-place).
     async with _data_lock:
@@ -4771,6 +4778,14 @@ async def api_data(request: Request):
              "requested_sport": requested_sport},
             status_code=202,
         )
+    if min_liquidity > 0:
+        # Filter the per-game signals list. Each event carries
+        # poly_liquidity (USD); markets below the threshold drop.
+        events = snapshot.get("events", []) or []
+        filtered = [e for e in events if (e.get("poly_liquidity") or 0) >= min_liquidity]
+        snapshot["events"] = filtered
+        snapshot["_min_liquidity_filter"] = min_liquidity
+        snapshot["_filtered_out"] = len(events) - len(filtered)
     return JSONResponse(snapshot)
 
 

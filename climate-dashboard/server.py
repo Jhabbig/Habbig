@@ -1129,6 +1129,63 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.route("/calibration")
+def calibration_page():
+    """Public-ish track-record page. Renders /api/backtest with hit-rate
+    metrics suitable for showing investors. Auth still applies via the
+    gateway (this is a dashboard route), but it's the v1 of what would
+    eventually be a platform-wide /track-record page."""
+    return send_from_directory("static", "calibration.html")
+
+
+@app.route("/api/calibration")
+def api_calibration():
+    """Calibration metrics derived from the backtest data — this is the
+    JSON the /calibration page renders. Aggregates the per-year errors
+    into headline accuracy numbers for both temperature and CO2 models."""
+    g = fetch_gistemp()
+    c = fetch_co2()
+    gist_rows = gistemp_backtest(g) if g else []
+    co2_rows = co2_backtest(c) if c else []
+
+    def _summarize(rows, error_field, unit):
+        if not rows:
+            return None
+        errs = [r[error_field] for r in rows]
+        abs_errs = [abs(e) for e in errs]
+        n = len(errs)
+        return {
+            "n": n,
+            "mean_abs_error": round(sum(abs_errs) / n, 3),
+            "max_abs_error": round(max(abs_errs), 3),
+            "mean_signed_error": round(sum(errs) / n, 3),
+            "unit": unit,
+            # "within 1 unit": fraction of years where |error| <= 1.0 of the unit
+            "within_1_unit": round(sum(1 for e in abs_errs if e <= 1.0) / n, 2),
+        }
+
+    return jsonify({
+        "gistemp": {
+            "rows": gist_rows,
+            "summary": _summarize(gist_rows, "error_c", "°C"),
+            "method": ("Replays the YTD-anomaly + historical-drift model "
+                       "'as of June' for each completed year, scored vs "
+                       "the actual J-D mean from NASA GISTEMP v4."),
+        },
+        "co2": {
+            "rows": co2_rows,
+            "summary": _summarize(co2_rows, "error_ppm", "ppm"),
+            "method": ("Refits the 24-month linear regression at June of "
+                       "each completed year, scored vs the actual December "
+                       "reading from NOAA Mauna Loa."),
+        },
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "note": ("v1: climate-only. Other dashboards will grow their own "
+                 "backtest endpoints over time and roll up into a unified "
+                 "platform track-record page."),
+    })
+
+
 @app.route("/api/health")
 def api_health():
     return jsonify({"ok": True, "service": "climate-dashboard", "ts": time.time()})
