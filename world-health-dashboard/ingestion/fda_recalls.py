@@ -54,17 +54,20 @@ def _write_cache(generic: str, data: dict) -> None:
             json.dumps({"fetched_at": time.time(), "data": data}),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("fda_recalls cache write failed for %s: %s", generic, exc)
 
 
 def _http_get(params: dict, timeout: float = 20.0) -> dict | None:
     qs = urllib.parse.urlencode(params)
     url = f"{API}?{qs}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.4",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.4",
+            "Accept": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -123,15 +126,17 @@ def lookup(generic: str, max_age_years: float = 5.0, force: bool = False) -> dic
         firm = (r.get("recalling_firm") or "").strip()
         if firm:
             by_firm[firm] = by_firm.get(firm, 0) + 1
-        recent.append({
-            "date":       date_str,
-            "firm":       firm,
-            "product":    (r.get("product_description") or "")[:200],
-            "reason":     (r.get("reason_for_recall") or "")[:300],
-            "classification": clsf,
-            "status":     r.get("status"),
-            "country":    r.get("country"),
-        })
+        recent.append(
+            {
+                "date": date_str,
+                "firm": firm,
+                "product": (r.get("product_description") or "")[:200],
+                "reason": (r.get("reason_for_recall") or "")[:300],
+                "classification": clsf,
+                "status": r.get("status"),
+                "country": r.get("country"),
+            }
+        )
     recent.sort(key=lambda x: x["date"], reverse=True)
 
     out = {
@@ -151,7 +156,4 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     for d in ("metformin", "ibuprofen", "vincristine", "albuterol", "artemether"):
         r = lookup(d)
-        print(f"  {d:15s} alltime={r['total_recalls_alltime']:5d}  "
-              f"recent5y={r['recent_count']:3d}  "
-              f"classI={r['by_classification']['Class I']}  "
-              f"top_firm={list(r['by_firm'].keys())[:1]}")
+        print(f"  {d:15s} alltime={r['total_recalls_alltime']:5d}  recent5y={r['recent_count']:3d}  classI={r['by_classification']['Class I']}  top_firm={list(r['by_firm'].keys())[:1]}")

@@ -61,10 +61,13 @@ def _write_cache(payload: dict) -> None:
 def _http_get(path: str, params: dict | None = None, timeout: float = 15.0) -> dict | None:
     qs = ("?" + urllib.parse.urlencode(params)) if params else ""
     url = f"{KALSHI}{path}{qs}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.3",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.3",
+            "Accept": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -122,12 +125,7 @@ def _fetch_health_events(max_pages: int = 30) -> list[dict]:
 
 
 def _normalize(m: dict, series: dict | None) -> dict:
-    yes = (
-        _safe_float(m.get("yes_ask_dollars"))
-        or _safe_float(m.get("last_price_dollars"))
-        or _safe_float(m.get("yes_ask"))
-        or _safe_float(m.get("last_price"))
-    )
+    yes = _safe_float(m.get("yes_ask_dollars")) or _safe_float(m.get("last_price_dollars")) or _safe_float(m.get("yes_ask")) or _safe_float(m.get("last_price"))
     vol = _safe_float(m.get("volume_fp")) or _safe_float(m.get("volume"))
     vol_24h = _safe_float(m.get("volume_24h_fp")) or _safe_float(m.get("volume_24h"))
     liq = _safe_float(m.get("liquidity_dollars")) or _safe_float(m.get("liquidity"))
@@ -148,9 +146,7 @@ def _normalize(m: dict, series: dict | None) -> dict:
         "close_time": m.get("close_time"),
         "category": "Health",
         "outcomes": None,  # Kalshi markets are binary by default
-        "tags": [series.get("title") if series else None].__class__([
-            t for t in [series.get("title") if series else None] if t
-        ]),
+        "tags": [series.get("title") if series else None].__class__([t for t in [series.get("title") if series else None] if t]),
         "description": (m.get("rules_primary") or m.get("subtitle") or "")[:500],
     }
 
@@ -175,8 +171,8 @@ def fetch(force: bool = False) -> dict:
                 stale = json.loads(p.read_text(encoding="utf-8"))
                 stale["stale"] = True
                 return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("kalshi_health stale cache read failed (%s); returning empty markets", cache_exc)
         return {"markets": [], "fetched_at": time.time(), "stale": False, "event_count": 0}
 
     raw_markets: list[tuple[dict, dict]] = []
@@ -211,6 +207,6 @@ if __name__ == "__main__":
     p = fetch(force=True)
     print(f"Markets: {len(p['markets'])} across {p.get('event_count')} events")
     for m in p["markets"][:10]:
-        prob = f"{m['probability']:.2f}" if m['probability'] is not None else "—"
-        vol = f"${m['volume']:,.0f}" if m['volume'] else "—"
+        prob = f"{m['probability']:.2f}" if m["probability"] is not None else "—"
+        vol = f"${m['volume']:,.0f}" if m["volume"] else "—"
         print(f"  yes={prob}  vol={vol:>14s}  {m['question'][:80]}")

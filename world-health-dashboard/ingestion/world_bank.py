@@ -77,11 +77,13 @@ def _write_cache(code: str, payload: dict) -> None:
 
 def _fetch(code: str, timeout: float = 30.0) -> list[dict]:
     """Hit World Bank, follow pagination if needed (rare for health indicators)."""
-    qs = urllib.parse.urlencode({
-        "format": "json",
-        "date": f"{DATE_FROM}:{DATE_TO}",
-        "per_page": 20000,
-    })
+    qs = urllib.parse.urlencode(
+        {
+            "format": "json",
+            "date": f"{DATE_FROM}:{DATE_TO}",
+            "per_page": 20000,
+        }
+    )
     url = f"{API.format(code=code)}?{qs}"
     req = urllib.request.Request(url, headers={"User-Agent": "world-health-dashboard/0.1"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted host)
@@ -98,10 +100,10 @@ def _fetch(code: str, timeout: float = 30.0) -> list[dict]:
 
 def _shape_rows(rows: list[dict]) -> dict:
     """Convert raw rows into:
-        {
-          "by_country": {iso3: [(year:int, value:float), ...]},
-          "latest":     {iso3: {"year": ..., "value": ...}},
-        }
+    {
+      "by_country": {iso3: [(year:int, value:float), ...]},
+      "latest":     {iso3: {"year": ..., "value": ...}},
+    }
     """
     by_country: dict[str, list[tuple[int, float]]] = {}
     for r in rows:
@@ -151,8 +153,8 @@ def fetch_indicator(code: str, force: bool = False) -> dict:
                 stale = json.loads(path.read_text(encoding="utf-8"))
                 stale["stale"] = True
                 return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("world_bank stale cache read failed for %s (%s); returning empty payload", code, cache_exc)
         return {"by_country": {}, "latest": {}, "fetched_at": time.time(), "error": str(exc)}
 
     shaped = _shape_rows(rows)

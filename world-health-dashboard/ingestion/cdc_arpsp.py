@@ -58,10 +58,13 @@ def _read_cache() -> dict | None:
 
 
 def _http_get(url: str, timeout: float = 30.0) -> object:
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.4",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.4",
+            "Accept": "application/json",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
@@ -77,12 +80,12 @@ def _safe_float(x) -> float | None:
 
 def fetch(force: bool = False) -> dict:
     """Return shaped C. auris resistance data:
-        {
-            "national": [{year, drug, antifungal_class, isolates, percent_resistant}, ...],
-            "by_state": {"NY": [{...}, ...]},
-            "drugs": [{class, drug}, ...],
-            "fetched_at": <epoch>,
-        }
+    {
+        "national": [{year, drug, antifungal_class, isolates, percent_resistant}, ...],
+        "by_state": {"NY": [{...}, ...]},
+        "drugs": [{class, drug}, ...],
+        "fetched_at": <epoch>,
+    }
     """
     with _lock:
         if not force:
@@ -102,8 +105,8 @@ def fetch(force: bool = False) -> dict:
                 stale["stale"] = True
                 stale["error"] = str(exc)
                 return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("cdc_arpsp stale cache read failed (%s); returning empty payload", cache_exc)
         return {"national": [], "by_state": {}, "fetched_at": time.time(), "error": str(exc)}
 
     if not isinstance(rows, list):
@@ -154,8 +157,8 @@ def fetch(force: bool = False) -> dict:
     }
     try:
         _cache_path().write_text(json.dumps(payload), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as cache_exc:
+        log.warning("cdc_arpsp cache write failed: %s", cache_exc)
     log.info("CDC ARPSP C. auris: %d national rows, %d states", len(national), len(by_state))
     return payload
 
@@ -177,7 +180,7 @@ def latest_summary() -> dict:
             by_state_latest[state] = latest_state
 
     return {
-        "year":     latest_year,
+        "year": latest_year,
         "national": {r["drug"]: r for r in nat_latest},
         "by_state": by_state_latest,
         "fetched_at": payload.get("fetched_at"),
@@ -191,4 +194,4 @@ if __name__ == "__main__":
     print("national resistance (latest year):")
     for drug, r in s["national"].items():
         pct = r.get("percent_resistant")
-        print(f"  {drug:30s} {(pct*100 if pct else 0):5.1f}%   isolates={r.get('isolates')}")
+        print(f"  {drug:30s} {(pct * 100 if pct else 0):5.1f}%   isolates={r.get('isolates')}")

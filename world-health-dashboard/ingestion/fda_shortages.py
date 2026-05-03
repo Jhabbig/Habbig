@@ -52,10 +52,13 @@ def _read_cache() -> dict | None:
 def _http_get(params: dict, timeout: float = 30.0) -> dict | None:
     qs = urllib.parse.urlencode(params)
     url = f"{API}?{qs}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.4",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.4",
+            "Accept": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -132,10 +135,9 @@ def fetch(force: bool = False) -> dict:
     }
     try:
         _cache_path().write_text(json.dumps(payload), encoding="utf-8")
-    except Exception:
-        pass
-    log.info("FDA shortages: %d total, %d current",
-             payload["total_entries"], payload["current_count"])
+    except Exception as exc:
+        log.warning("fda_shortages cache write failed: %s", exc)
+    log.info("FDA shortages: %d total, %d current", payload["total_entries"], payload["current_count"])
     return payload
 
 
@@ -157,10 +159,12 @@ def for_drug(generic_name: str) -> list[dict]:
             seen_ids.add(rid)
             out.append(r)
     # Sort by status (Current first) then by update date desc.
-    out.sort(key=lambda r: (
-        0 if (r.get("status") or "").lower() == "current" else 1,
-        -_date_key(r.get("update_date") or r.get("initial_posting_date") or ""),
-    ))
+    out.sort(
+        key=lambda r: (
+            0 if (r.get("status") or "").lower() == "current" else 1,
+            -_date_key(r.get("update_date") or r.get("initial_posting_date") or ""),
+        )
+    )
     return out
 
 
@@ -181,8 +185,7 @@ def _date_key(s: str) -> int:
 def current_shortages() -> list[dict]:
     """Drugs currently in shortage."""
     payload = fetch()
-    return [r for r in payload.get("all_entries", [])
-            if (r.get("status") or "").lower() == "current"]
+    return [r for r in payload.get("all_entries", []) if (r.get("status") or "").lower() == "current"]
 
 
 if __name__ == "__main__":

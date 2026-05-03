@@ -36,11 +36,36 @@ _lock = Lock()
 
 # ── Health filter signals ─────────────────────────────────────────────────────
 HEALTH_TAG_SLUGS: set[str] = {
-    "health", "healthcare", "pandemics", "pandemic", "diseases", "disease",
-    "vaccines", "vaccine", "mpox", "monkeypox", "avian-flu", "bird-flu",
-    "h5n1", "ebola", "covid", "covid-19", "fda", "who", "cdc",
-    "rfk-jr", "obesity", "drugs", "ozempic", "marburg", "dengue", "malaria",
-    "polio", "measles", "wegovy", "public-health",
+    "health",
+    "healthcare",
+    "pandemics",
+    "pandemic",
+    "diseases",
+    "disease",
+    "vaccines",
+    "vaccine",
+    "mpox",
+    "monkeypox",
+    "avian-flu",
+    "bird-flu",
+    "h5n1",
+    "ebola",
+    "covid",
+    "covid-19",
+    "fda",
+    "who",
+    "cdc",
+    "rfk-jr",
+    "obesity",
+    "drugs",
+    "ozempic",
+    "marburg",
+    "dengue",
+    "malaria",
+    "polio",
+    "measles",
+    "wegovy",
+    "public-health",
 }
 
 # Keywords matched CASE-SENSITIVELY against the question text only — using
@@ -48,28 +73,80 @@ HEALTH_TAG_SLUGS: set[str] = {
 # "fdadasdf", etc. Acronyms and disease names that have a unique case form go
 # here.
 HEALTH_KEYWORDS_CASE_SENSITIVE: tuple[str, ...] = (
-    " WHO ", " FDA ", " CDC ", " HHS ", " NIH ", " IHR ", " EMA ",
-    " PHEIC ", " H5N1", " H5N", " H7N", " H9N", " H1N1",
-    "Ebola", "Marburg", "Mpox", "MPOX", "Nipah", "Zika", "Lassa",
-    "Ozempic", "Wegovy", "Mounjaro", "GLP-1",
+    " WHO ",
+    " FDA ",
+    " CDC ",
+    " HHS ",
+    " NIH ",
+    " IHR ",
+    " EMA ",
+    " PHEIC ",
+    " H5N1",
+    " H5N",
+    " H7N",
+    " H9N",
+    " H1N1",
+    "Ebola",
+    "Marburg",
+    "Mpox",
+    "MPOX",
+    "Nipah",
+    "Zika",
+    "Lassa",
+    "Ozempic",
+    "Wegovy",
+    "Mounjaro",
+    "GLP-1",
     "RFK Jr",
-    "Medicaid", "Medicare", "Obamacare", " ACA ",
+    "Medicaid",
+    "Medicare",
+    "Obamacare",
+    " ACA ",
 )
 # Lowercase keywords matched case-insensitively (always lowercased before compare).
 HEALTH_KEYWORDS_LC: tuple[str, ...] = (
-    "pandemic", "epidemic", "outbreak",
-    "bird flu", "avian flu", "swine flu",
-    "monkeypox", "dengue", "cholera", "malaria", "polio", "measles",
-    "rabies", "tuberculosis", "hepatitis",
-    "vaccine", "vaccination", "immunization", "booster shot",
-    "drug approval", "fda approval", "clinical trial",
-    "weight loss drug", "weight-loss drug",
-    "surgeon general", "robert f kennedy",
-    "abortion", "fertility", "ivf", " obesity ",
-    "human cases", "human-to-human transmission", "zoonotic",
-    "life expectancy", "infant mortality", "maternal mortality",
-    "psilocybin", "marijuana", "cannabis legaliz",
-    "covid", "coronavirus", "long covid",
+    "pandemic",
+    "epidemic",
+    "outbreak",
+    "bird flu",
+    "avian flu",
+    "swine flu",
+    "monkeypox",
+    "dengue",
+    "cholera",
+    "malaria",
+    "polio",
+    "measles",
+    "rabies",
+    "tuberculosis",
+    "hepatitis",
+    "vaccine",
+    "vaccination",
+    "immunization",
+    "booster shot",
+    "drug approval",
+    "fda approval",
+    "clinical trial",
+    "weight loss drug",
+    "weight-loss drug",
+    "surgeon general",
+    "robert f kennedy",
+    "abortion",
+    "fertility",
+    "ivf",
+    " obesity ",
+    "human cases",
+    "human-to-human transmission",
+    "zoonotic",
+    "life expectancy",
+    "infant mortality",
+    "maternal mortality",
+    "psilocybin",
+    "marijuana",
+    "cannabis legaliz",
+    "covid",
+    "coronavirus",
+    "long covid",
 )
 
 
@@ -101,10 +178,13 @@ def _write_cache(payload: dict) -> None:
 def _http_get(path: str, params: dict, timeout: float = 20.0) -> object:
     qs = urllib.parse.urlencode(params)
     url = f"{GAMMA}{path}?{qs}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.3",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.3",
+            "Accept": "application/json",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
@@ -185,7 +265,7 @@ def _normalize(m: dict) -> dict:
             yes_price = outs[0]["price"]
 
     tags = []
-    for t in (m.get("tags") or []):
+    for t in m.get("tags") or []:
         if isinstance(t, dict):
             label = t.get("label")
             if label:
@@ -240,8 +320,8 @@ def fetch(force: bool = False, max_markets: int = 1500) -> dict:
                 stale["stale"] = True
                 stale["error"] = str(exc)
                 return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("polymarket_health stale cache read failed (%s); returning empty markets", cache_exc)
         return {"markets": [], "fetched_at": time.time(), "stale": False, "error": str(exc)}
 
     health = [m for m in raw_markets if _is_health_market(m)]
@@ -266,6 +346,6 @@ if __name__ == "__main__":
     p = fetch(force=True)
     print(f"Health markets: {len(p['markets'])} of {p.get('total_scanned')}")
     for m in p["markets"][:8]:
-        prob = f"{m['probability']:.2f}" if m['probability'] is not None else "—"
-        vol = f"${m['volume']:,.0f}" if m['volume'] else "—"
+        prob = f"{m['probability']:.2f}" if m["probability"] is not None else "—"
+        vol = f"${m['volume']:,.0f}" if m["volume"] else "—"
         print(f"  yes={prob}  vol={vol:>15s}  {m['question'][:80]}")

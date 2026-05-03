@@ -342,6 +342,116 @@ STUBS: list[tuple[str, str, str, str, str]] = [
     ("rotavirus",              "Rotavirus",                     "A00-B99", "A08.0", "Vaccine-preventable infant gastroenteritis."),
     ("buruli-ulcer-(mycobacterium-ulcerans-infection)", "Buruli ulcer", "A00-B99", "A31.1",
      "Skin and soft-tissue infection; rifampicin + clarithromycin."),
+
+    # ── Phase 4d-extension: 75 more stubs to reach ~500 ─────────────────────
+    # Additional infectious / parasitic
+    ("vibrio-vulnificus",      "Vibrio vulnificus",             "A00-B99", "A05.5", "Halophilic Vibrio — flesh-eating wound infection from warm seawater."),
+    ("scarlet-fever",          "Scarlet fever",                 "A00-B99", "A38",   "Group A strep; resurgence in 2022-2023 noted in UK + Netherlands."),
+    ("kawasaki-disease",       "Kawasaki disease",              "A00-B99", "M30.3", "Paediatric vasculitis; IVIG + aspirin."),
+    ("toxic-shock-syndrome",   "Toxic shock syndrome",          "A00-B99", "A48.3", "Staph or Strep superantigen-mediated; supportive + antibiotics."),
+    ("legionnaires-disease",   "Legionnaires' disease",         "A00-B99", "A48.1", "Atypical pneumonia from water-aerosol exposure."),
+    ("psittacosis",            "Psittacosis",                   "A00-B99", "A70",   "Chlamydia psittaci — birds-to-human pneumonia."),
+    ("q-fever",                "Q fever",                       "A00-B99", "A78",   "Coxiella burnetii — endocarditis risk in chronic form."),
+    ("erythema-infectiosum",   "Fifth disease",                 "A00-B99", "B08.3", "Parvovirus B19 — childhood rash + adult arthralgia."),
+    ("hand-foot-mouth",        "Hand-foot-mouth disease",       "A00-B99", "B08.4", "Coxsackievirus A6/A16, EV71 — paeds vesicular rash."),
+    ("roseola-infantum",       "Roseola infantum",              "A00-B99", "B08.2", "HHV-6 — high fever + rash in infants."),
+
+    # Cancers — additional types
+    ("gallbladder-cancer",     "Gallbladder cancer",            "C00-D49", "C23",   "Often diagnosed late; gallstone-related."),
+    ("biliary-tract-cancer",   "Biliary tract cancer",          "C00-D49", "C24",   "Cholangiocarcinoma; FGFR + IDH targeted therapies."),
+    ("anal-cancer",            "Anal cancer",                   "C00-D49", "C21",   "HPV-driven; chemoradiation curative."),
+    ("vulvar-cancer",          "Vulvar cancer",                 "C00-D49", "C51",   "HPV-related and lichen sclerosus types."),
+    ("vaginal-cancer",         "Vaginal cancer",                "C00-D49", "C52",   "Rare; HPV-driven."),
+    ("penile-cancer",          "Penile cancer",                 "C00-D49", "C60",   "HPV-related; surgery + chemoradiation."),
+    ("testicular-cancer",      "Testicular cancer",             "C00-D49", "C62",   ">95% cure with platinum chemo."),
+    ("head-neck-cancer",       "Head & neck cancer",            "C00-D49", "C00-C14","HPV-driven oropharyngeal rising; surgery + chemoradiation + immunotherapy."),
+    ("nasopharyngeal-cancer",  "Nasopharyngeal cancer",         "C00-D49", "C11",   "EBV-associated; concurrent chemoradiation."),
+    ("salivary-gland-tumours", "Salivary gland tumours",        "C00-D49", "C07-C08","Mostly parotid; pleomorphic adenoma most common benign."),
+    ("soft-tissue-sarcoma",    "Soft-tissue sarcoma",           "C00-D49", "C49",   "Heterogeneous; surgical resection mainstay."),
+    ("gist",                   "Gastrointestinal stromal tumour","C00-D49", "C16-C26","Imatinib transformative; KIT/PDGFRA mutations."),
+    ("osteosarcoma",           "Osteosarcoma",                  "C00-D49", "C40-C41","Adolescent peak; MAP regimen + surgery."),
+    ("ewing-sarcoma",          "Ewing sarcoma",                 "C00-D49", "C40-C41","Adolescent; vincristine + doxorubicin + cyclophosphamide."),
+    ("neuroblastoma",          "Neuroblastoma",                 "C00-D49", "C74.9", "Most-common extracranial paeds solid tumour."),
+    ("retinoblastoma",         "Retinoblastoma",                "C00-D49", "C69.2", "RB1 gene; intra-arterial chemo preserves vision."),
+    ("wilms-tumour",           "Wilms tumour",                  "C00-D49", "C64",   "Most-common paeds renal cancer; >90% cure."),
+    ("mds",                    "Myelodysplastic syndromes",     "C00-D49", "D46",   "Pre-leukaemic; azacitidine, lenalidomide."),
+    ("mpn",                    "Myeloproliferative neoplasms",  "C00-D49", "D45-D47","JAK2 V617F-driven; ruxolitinib."),
+    ("cll",                    "Chronic lymphocytic leukaemia", "C00-D49", "C91.1", "Most-common adult leukaemia in West; BTK inhibitors."),
+
+    # Endocrine / metabolic
+    ("hyperparathyroidism",    "Hyperparathyroidism",           "E00-E89", "E21",   "Primary: parathyroidectomy; calcimimetics."),
+    ("hypoparathyroidism",     "Hypoparathyroidism",            "E00-E89", "E20",   "Calcium + active vitamin D; rhPTH."),
+    ("acromegaly",             "Acromegaly",                    "E00-E89", "E22.0", "GH excess from pituitary adenoma; somatostatin analogues."),
+    ("prolactinoma",           "Prolactinoma",                  "E00-E89", "D35.2", "Cabergoline first-line."),
+    ("hashimotos-thyroiditis", "Hashimoto's thyroiditis",       "E00-E89", "E06.3", "Most-common cause of hypothyroidism in iodine-replete countries."),
+    ("graves-disease",         "Graves' disease",               "E00-E89", "E05.0", "Autoimmune hyperthyroidism; methimazole, RAI, surgery."),
+    ("congenital-adrenal-hyperplasia", "CAH",                   "E00-E89", "E25.0", "21-hydroxylase deficiency most common; hydrocortisone."),
+    ("hyperaldosteronism",     "Hyperaldosteronism",            "E00-E89", "E26",   "Conn's syndrome; resistant hypertension; spironolactone."),
+    ("glycogen-storage-disease","Glycogen storage diseases",    "E00-E89", "E74.0", "Pompe + others; enzyme replacement available."),
+    ("lysosomal-storage",      "Lysosomal storage diseases",    "E00-E89", "E75-E76","Gaucher, Fabry, MPS — enzyme replacement transformed."),
+
+    # Mental
+    ("body-dysmorphic-disorder","Body dysmorphic disorder",     "F01-F99", "F45.22","CBT + SSRIs."),
+    ("hoarding-disorder",      "Hoarding disorder",             "F01-F99", "F42.3", "DSM-5; CBT-targeted."),
+    ("dissociative-disorders", "Dissociative disorders",        "F01-F99", "F44",   "DID, depersonalisation, dissociative amnesia."),
+    ("postpartum-depression",  "Postpartum depression",         "F01-F99", "F53",   "Brexanolone, zuranolone approved 2019/23."),
+    ("seasonal-affective",     "Seasonal affective disorder",   "F01-F99", "F33",   "Light therapy + SSRIs."),
+
+    # Nervous
+    ("essential-tremor",       "Essential tremor",              "G00-G99", "G25.0", "Most-common adult movement disorder; propranolol, primidone, focused ultrasound."),
+    ("dystonia",               "Dystonia",                      "G00-G99", "G24",   "Botulinum toxin for focal forms; DBS for generalized."),
+    ("spinocerebellar-ataxia", "Spinocerebellar ataxia",        "G00-G99", "G11.1", "Inherited progressive ataxia; symptomatic only."),
+    ("friedreich-ataxia",      "Friedreich ataxia",             "G00-G99", "G11.1", "Frataxin deficiency; omaveloxolone approved 2023."),
+    ("charcot-marie-tooth",    "Charcot-Marie-Tooth disease",   "G00-G99", "G60.0", "Most-common inherited neuropathy."),
+    ("brain-aneurysm",         "Brain aneurysm / SAH",          "G00-G99", "I60",   "Surgical clip vs endovascular coil."),
+    ("normal-pressure-hydrocephalus", "Normal-pressure hydrocephalus", "G00-G99", "G91.2", "Triad: gait + cognition + incontinence; VP shunt."),
+
+    # Eye, ear, immune extras
+    ("keratoconus",            "Keratoconus",                   "H00-H59", "H18.6", "Corneal cross-linking; corneal transplant."),
+    ("strabismus",             "Strabismus",                    "H00-H59", "H50",   "Surgical correction + amblyopia treatment."),
+    ("amblyopia",              "Amblyopia",                     "H00-H59", "H53.0", "Lazy eye; patching + atropine therapy."),
+    ("blepharitis",            "Blepharitis",                   "H00-H59", "H01.0", "Lid hygiene + topical antibiotics."),
+    ("hearing-impairment-paeds","Paediatric hearing loss",      "H60-H95", "H90",   "Newborn screening universal in HIC."),
+
+    # Cardiovascular
+    ("heart-block-arrhythmia", "Heart block",                   "I00-I99", "I44-I45","Pacemaker for advanced AV block."),
+    ("long-qt-syndrome",       "Long QT syndrome",              "I00-I99", "I49.8", "Inherited or drug-induced; beta-blockers + ICD."),
+    ("brugada-syndrome",       "Brugada syndrome",              "I00-I99", "I42.8", "ICD for survivors of cardiac arrest."),
+    ("infective-myocarditis",  "Myocarditis",                   "I00-I99", "I40",   "Viral most common; supportive + immunosuppression."),
+    ("cardiac-amyloidosis",    "Cardiac amyloidosis",           "I00-I99", "E85.4", "Tafamidis for ATTR; specific therapies for AL."),
+
+    # Respiratory
+    ("acute-respiratory-distress", "Acute respiratory distress (ARDS)", "J00-J99", "J80",   "Lung-protective ventilation; prone positioning."),
+    ("pulmonary-hypertension", "Pulmonary hypertension",        "J00-J99", "I27",   "PDE5i, ERA, prostacyclin analogues."),
+    ("alpha-1-antitrypsin",    "Alpha-1 antitrypsin deficiency","J00-J99", "E88.01","Augmentation therapy slows COPD progression."),
+
+    # Digestive
+    ("gastroparesis",          "Gastroparesis",                 "K00-K95", "K31.84","Diabetic + idiopathic; metoclopramide, prucalopride."),
+    ("eosinophilic-esophagitis","Eosinophilic esophagitis",     "K00-K95", "K20.0", "Topical steroids; dupilumab approved 2022."),
+    ("primary-biliary-cholangitis","Primary biliary cholangitis","K00-K95","K74.3","Ursodeoxycholic acid; obeticholic acid."),
+    ("primary-sclerosing-cholangitis","Primary sclerosing cholangitis","K00-K95","K83.0","No proven medical therapy; transplant for ESLD."),
+    ("achalasia",              "Achalasia",                     "K00-K95", "K22.0", "POEM, Heller myotomy, pneumatic dilation."),
+
+    # Skin / autoimmune extras
+    ("lichen-planus",          "Lichen planus",                 "L00-L99", "L43",   "Topical + intralesional steroids."),
+    ("lupus-cutaneous",        "Cutaneous lupus",               "L00-L99", "L93",   "Hydroxychloroquine + topical steroids."),
+    ("dermatomyositis",        "Dermatomyositis",               "M00-M99", "M33.1", "Steroids + IVIG; cancer screening."),
+
+    # Genitourinary / reproductive
+    ("interstitial-cystitis",  "Interstitial cystitis",         "N00-N99", "N30.1", "Bladder pain syndrome; pentosan, intravesical therapy."),
+    ("varicocele",             "Varicocele",                    "N00-N99", "I86.1", "Surgical or embolization for fertility."),
+    ("polycystic-kidney",      "Polycystic kidney disease",     "N00-N99", "Q61.2", "Tolvaptan slows progression in ADPKD."),
+
+    # Pregnancy / perinatal extras
+    ("rh-disease",             "Rh disease (haemolytic disease of newborn)", "P00-P96", "P55", "Anti-D immunoglobulin prophylaxis."),
+
+    # Symptoms / Common Conditions
+    ("dry-mouth",              "Xerostomia",                    "K00-K95", "K11.7", "Drug-induced common; pilocarpine."),
+    ("urticarial-vasculitis",  "Urticarial vasculitis",         "L00-L99", "L95",   "Hypocomplementaemic form severe; immunosuppression."),
+
+    # Misc
+    ("chronic-fatigue-syndrome","Myalgic encephalomyelitis / chronic fatigue", "G00-G99", "G93.3", "Long COVID has reignited research; pacing remains mainstay."),
+    ("post-acute-sequelae-covid","Long COVID / PASC",           "A00-B99", "U09.9", "Multi-system; symptomatic + rehabilitation."),
 ]
 
 

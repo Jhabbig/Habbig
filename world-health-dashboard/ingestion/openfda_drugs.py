@@ -58,17 +58,20 @@ def _write_cache(generic: str, data: dict) -> None:
             json.dumps({"fetched_at": time.time(), "data": data}),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("openfda_drugs cache write failed for %s: %s", generic, exc)
 
 
 def _http_get(params: dict, timeout: float = 20.0) -> dict | None:
     qs = urllib.parse.urlencode(params)
     url = f"{API}?{qs}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.4",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.4",
+            "Accept": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -162,10 +165,8 @@ def lookup(generic: str, force: bool = False) -> dict:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    for d in ("metformin", "ibuprofen", "vincristine", "semaglutide",
-              "albuterol", "artemether", "isoniazid", "dolutegravir"):
+    for d in ("metformin", "ibuprofen", "vincristine", "semaglutide", "albuterol", "artemether", "isoniazid", "dolutegravir"):
         r = lookup(d)
-        print(f"  {d:18s} labels={r['total_labels']:5d}  "
-              f"manufacturers={r['manufacturer_count']:3d}  "
-              f"brands={len(r['brands']):3d}  "
-              f"top_mfr={(r['manufacturers'][0] if r['manufacturers'] else '—')[:35]}")
+        print(
+            f"  {d:18s} labels={r['total_labels']:5d}  manufacturers={r['manufacturer_count']:3d}  brands={len(r['brands']):3d}  top_mfr={(r['manufacturers'][0] if r['manufacturers'] else '—')[:35]}"
+        )

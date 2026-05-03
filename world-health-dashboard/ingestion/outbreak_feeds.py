@@ -104,12 +104,28 @@ WHO_COUNTRY_ALIASES: dict[str, str] = {
 
 # Strings that mean "no single country" (regional, global, multi-country).
 NON_COUNTRY_PATTERNS: tuple[str, ...] = (
-    "global situation", "global update", "global", "world",
-    "multi-country", "multi country", "multiple countries",
-    "region of the americas", "region of the european", "region of the",
-    "european region", "african region", "americas region",
-    "south-east asia region", "western pacific region", "eastern mediterranean region",
-    "afro", "amro", "emro", "euro", "searo", "wpro",
+    "global situation",
+    "global update",
+    "global",
+    "world",
+    "multi-country",
+    "multi country",
+    "multiple countries",
+    "region of the americas",
+    "region of the european",
+    "region of the",
+    "european region",
+    "african region",
+    "americas region",
+    "south-east asia region",
+    "western pacific region",
+    "eastern mediterranean region",
+    "afro",
+    "amro",
+    "emro",
+    "euro",
+    "searo",
+    "wpro",
 )
 
 # Reverse: catalog name → ISO3, lowercased for matching.
@@ -196,7 +212,9 @@ _PROTECTED_HYPHENS: tuple[str, ...] = (
     "MERS-CoV",
     "SARS-CoV",
     "SARS-CoV-2",
-    "cVDPV1", "cVDPV2", "cVDPV3",
+    "cVDPV1",
+    "cVDPV2",
+    "cVDPV3",
     # Special characters in disease names
     "non-typhoidal",
 )
@@ -217,8 +235,8 @@ def _split_title(title: str) -> tuple[str, str]:
     if not matches:
         return title.strip(), ""
     last = matches[-1]
-    head = protected[:last.start()].strip().replace(_SENTINEL, "-")
-    tail = protected[last.end():].strip().replace(_SENTINEL, "-")
+    head = protected[: last.start()].strip().replace(_SENTINEL, "-")
+    tail = protected[last.end() :].strip().replace(_SENTINEL, "-")
     if tail.lower().startswith("the "):
         tail = tail[4:].strip()
     return head, tail
@@ -302,10 +320,13 @@ def _fetch_who_don(top: int = 200, timeout: float = 30.0) -> list[dict]:
         size = min(page, top - len(out))
         qs = f"%24top={size}&%24skip={skip}&%24orderby={orderby}"
         url = f"{WHO_DON_API}?{qs}"
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "world-health-dashboard/0.2",
-            "Accept": "application/json",
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "world-health-dashboard/0.2",
+                "Accept": "application/json",
+            },
+        )
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted host)
             body = resp.read().decode("utf-8", errors="replace")
         parsed = json.loads(body)
@@ -321,11 +342,11 @@ def _fetch_who_don(top: int = 200, timeout: float = 30.0) -> list[dict]:
 
 def fetch_outbreaks(force: bool = False, top: int = 200) -> dict:
     """Return the latest outbreak feed:
-        {
-          "items":      [{...}, ...],
-          "fetched_at": <epoch>,
-          "stale":      bool,
-        }
+    {
+      "items":      [{...}, ...],
+      "fetched_at": <epoch>,
+      "stale":      bool,
+    }
     """
     with _lock:
         if not force:
@@ -345,8 +366,8 @@ def fetch_outbreaks(force: bool = False, top: int = 200) -> dict:
                 stale["stale"] = True
                 stale["error"] = str(exc)
                 return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("outbreak_feeds stale cache read failed (%s); returning empty items", cache_exc)
         return {"items": [], "fetched_at": time.time(), "stale": False, "error": str(exc)}
 
     items = [_normalize_don(it) for it in raw]
@@ -362,6 +383,7 @@ def fetch_outbreaks(force: bool = False, top: int = 200) -> dict:
 
 
 # ─── Aggregations used by the frontend ─────────────────────────────────────
+
 
 def by_country(payload: dict | None = None) -> dict[str, list[dict]]:
     """{iso3: [outbreak, ...]} — only items we successfully geocoded."""

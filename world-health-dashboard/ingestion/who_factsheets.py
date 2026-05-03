@@ -66,8 +66,13 @@ SECTION_MAP: dict[str, str] = {
 # H2 sections WHO uses that aren't disease-specific or not interesting for the
 # disease atlas — we drop these.
 DROP_SECTIONS: set[str] = {
-    "who response", "footnotes", "references", "related links",
-    "media centre", "more information", "sources",
+    "who response",
+    "footnotes",
+    "references",
+    "related links",
+    "media centre",
+    "more information",
+    "sources",
 }
 
 
@@ -97,15 +102,19 @@ def _bullets(html_block: str, max_items: int = 12) -> list[str]:
 
 
 def _http_get(url: str, timeout: float = 20.0) -> str:
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.4",
-        "Accept": "text/html",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.4",
+            "Accept": "text/html",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
         return resp.read().decode("utf-8", errors="replace")
 
 
 # ─── Index of fact sheets ───────────────────────────────────────────────────
+
 
 def _index_cache_path() -> Path:
     return CACHE_DIR / "_index.json"
@@ -119,8 +128,8 @@ def fetch_index(force: bool = False) -> list[dict]:
             body = json.loads(p.read_text(encoding="utf-8"))
             if (time.time() - body.get("fetched_at", 0)) < INDEX_CACHE_TTL:
                 return body.get("items", [])
-        except Exception:
-            pass
+        except Exception as cache_exc:
+            log.warning("who_factsheets index cache read failed (%s); will re-fetch", cache_exc)
 
     try:
         html_body = _http_get(INDEX_URL)
@@ -150,10 +159,11 @@ def fetch_index(force: bool = False) -> list[dict]:
 
 # ─── Detail-page parser ─────────────────────────────────────────────────────
 
+
 def _split_sections(article_html: str) -> dict[str, str]:
     """Split article HTML on <h2> tags; return {section_name: inner_html}."""
     out: dict[str, str] = {}
-    h2_iter = list(re.finditer(r'<h2[^>]*>(.*?)</h2>', article_html, re.DOTALL | re.IGNORECASE))
+    h2_iter = list(re.finditer(r"<h2[^>]*>(.*?)</h2>", article_html, re.DOTALL | re.IGNORECASE))
     for i, m in enumerate(h2_iter):
         title = _strip(m.group(1), max_len=200).lower().strip()
         start = m.end()
@@ -166,11 +176,11 @@ def _parse_factsheet(name: str, slug: str, html_body: str) -> dict:
     # Locate the article body — WHO wraps content in <article> or
     # <div class="sf-detail-body-wrapper">. Fall back to whole document.
     body = ""
-    m = re.search(r'<article[^>]*>(.*?)</article>', html_body, re.DOTALL | re.IGNORECASE)
+    m = re.search(r"<article[^>]*>(.*?)</article>", html_body, re.DOTALL | re.IGNORECASE)
     if m:
         body = m.group(1)
     else:
-        m = re.search(r'<main[^>]*>(.*?)</main>', html_body, re.DOTALL | re.IGNORECASE)
+        m = re.search(r"<main[^>]*>(.*?)</main>", html_body, re.DOTALL | re.IGNORECASE)
         body = m.group(1) if m else html_body
 
     sections = _split_sections(body)
@@ -179,8 +189,9 @@ def _parse_factsheet(name: str, slug: str, html_body: str) -> dict:
     # bullet list with "key facts" heading anywhere in the body.
     key_facts: list[str] = []
     kf_match = re.search(
-        r'(?:Key\s+facts|KEY\s+FACTS)\s*</h[2-3]>\s*<ul[^>]*>(.*?)</ul>',
-        body, re.DOTALL | re.IGNORECASE,
+        r"(?:Key\s+facts|KEY\s+FACTS)\s*</h[2-3]>\s*<ul[^>]*>(.*?)</ul>",
+        body,
+        re.DOTALL | re.IGNORECASE,
     )
     if kf_match:
         key_facts = _bullets(kf_match.group(1), max_items=10)
@@ -251,8 +262,8 @@ def fetch_factsheet(slug: str, name: str | None = None, force: bool = False) -> 
                 if stale:
                     stale["stale"] = True
                     return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("who_factsheets stale cache read failed for %s (%s); returning None", slug, cache_exc)
         return None
 
     name = name or slug.replace("-", " ").title()

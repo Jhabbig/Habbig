@@ -32,6 +32,7 @@ Edges = (model_p − implied_p) in percentage points.
 from __future__ import annotations
 
 import csv
+import hmac
 import io
 import logging
 import math
@@ -54,9 +55,46 @@ app = Flask(__name__, static_folder="static")
 # Gzip compression
 try:
     from flask_compress import Compress
+
     Compress(app)
 except Exception:
     logger.warning("flask_compress not available; responses will not be gzipped")
+
+
+# ─── Gateway SSO check ─────────────────────────────────────────────────────────
+#
+# Climate-dashboard binds 0.0.0.0 (so the gateway / docker bridge can reach it).
+# That means anyone on Tailscale or the local LAN could hit our port directly,
+# bypassing the gateway's auth. Mirror the pattern used by voters/world-state/
+# world-health: every request must carry a matching `x-gateway-secret` header
+# (set by the gateway after its own login + subscription check).
+#
+# In DEV_MODE we skip the check so a developer can curl localhost without a
+# gateway. In production with no secret set, fail closed (503) — never silently
+# open.
+
+_sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+if not _sso_secret:
+    if _DEV_MODE:
+        logger.warning("GATEWAY_SSO_SECRET unset — climate dashboard running in DEV_MODE (no auth)")
+    else:
+        logger.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — all non-healthz requests will 503")
+
+
+@app.before_request
+def _gateway_sso_check():
+    # Health checks must always succeed for systemd / docker readiness probes.
+    if request.path in ("/healthz", "/api/health"):
+        return None
+    if _sso_secret:
+        client_secret = request.headers.get("x-gateway-secret", "")
+        if not hmac.compare_digest(client_secret, _sso_secret):
+            return jsonify({"error": "Unauthorized"}), 401
+    elif not _DEV_MODE:
+        return jsonify({"error": "Service misconfigured"}), 503
+    return None
+
 
 PORT = int(os.environ.get("PORT", "7052"))
 
@@ -69,13 +107,13 @@ _cache_lock = threading.Lock()
 # generously — re-pulling NASA CSVs every minute would be wasteful and rude.
 _TTL_DEFAULT = 60 * 60  # 1h
 _TTL: dict[str, int] = {
-    "gistemp": 60 * 60 * 12,        # GISTEMP updates monthly, refresh twice a day
-    "co2": 60 * 60 * 12,            # NOAA Mauna Loa updates monthly
-    "methane": 60 * 60 * 12,        # NOAA GML CH4 updates monthly
-    "sea_ice": 60 * 60 * 6,         # NSIDC updates daily
-    "sst": 60 * 60 * 3,             # OISST daily
-    "oni": 60 * 60 * 12,            # CPC ONI updates monthly
-    "polymarket": 60 * 5,            # Markets move — refresh every 5 min
+    "gistemp": 60 * 60 * 12,  # GISTEMP updates monthly, refresh twice a day
+    "co2": 60 * 60 * 12,  # NOAA Mauna Loa updates monthly
+    "methane": 60 * 60 * 12,  # NOAA GML CH4 updates monthly
+    "sea_ice": 60 * 60 * 6,  # NSIDC updates daily
+    "sst": 60 * 60 * 3,  # OISST daily
+    "oni": 60 * 60 * 12,  # CPC ONI updates monthly
+    "polymarket": 60 * 5,  # Markets move — refresh every 5 min
 }
 
 
@@ -122,25 +160,67 @@ def _http_get(url: str, *, timeout: int = 20, params: Optional[dict] = None) -> 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 
 CLIMATE_TAG_SLUGS = [
-    "climate-change", "global-temperature", "climate",
-    "global-warming", "sea-level", "extreme-weather",
+    "climate-change",
+    "global-temperature",
+    "climate",
+    "global-warming",
+    "sea-level",
+    "extreme-weather",
 ]
 
 # Reject sports / politics / crypto markets that share keywords with climate.
 # Note: do NOT use "vs." here — climate markets sometimes phrase comparisons
 # (e.g. "Arctic vs Antarctic") with that token.
 REJECT_KEYWORDS = [
-    "nfl", "nba", "nhl", "mlb", "mls", "rugby", "premier league", "ligue 1",
-    "champion", "playoff", "election", "president", "senate", "governor",
-    "ipo", "stock", "bitcoin", "crypto", "tesla", "spacex", "starship",
-    "head-to-head", "champions league", "fight", "boxing",
+    "nfl",
+    "nba",
+    "nhl",
+    "mlb",
+    "mls",
+    "rugby",
+    "premier league",
+    "ligue 1",
+    "champion",
+    "playoff",
+    "election",
+    "president",
+    "senate",
+    "governor",
+    "ipo",
+    "stock",
+    "bitcoin",
+    "crypto",
+    "tesla",
+    "spacex",
+    "starship",
+    "head-to-head",
+    "champions league",
+    "fight",
+    "boxing",
 ]
 
 CLIMATE_KEYWORDS = [
-    "warmest", "hottest year", "global temperature", "global average",
-    "climate", "co2", "carbon dioxide", "ppm", "sea ice", "arctic",
-    "antarctic", "sea level", "ipcc", "1.5", "2 degrees", "paris agreement",
-    "el nino", "la nina", "enso", "ocean temperature", "sst",
+    "warmest",
+    "hottest year",
+    "global temperature",
+    "global average",
+    "climate",
+    "co2",
+    "carbon dioxide",
+    "ppm",
+    "sea ice",
+    "arctic",
+    "antarctic",
+    "sea level",
+    "ipcc",
+    "1.5",
+    "2 degrees",
+    "paris agreement",
+    "el nino",
+    "la nina",
+    "enso",
+    "ocean temperature",
+    "sst",
 ]
 
 
@@ -160,7 +240,7 @@ def _fetch_events_by_tag(tag_slug: str, seen_ids: set, all_markets: list, lock: 
         if not events:
             break
         for event in events:
-            title = (event.get("title", "") or "")
+            title = event.get("title", "") or ""
             tl = title.lower()
             if any(k in tl for k in REJECT_KEYWORDS):
                 continue
@@ -188,9 +268,9 @@ def fetch_climate_markets() -> list[dict]:
     seen_ids: set = set()
     lock = threading.Lock()
     from concurrent.futures import ThreadPoolExecutor
+
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(_fetch_events_by_tag, slug, seen_ids, all_markets, lock)
-                   for slug in CLIMATE_TAG_SLUGS]
+        futures = [pool.submit(_fetch_events_by_tag, slug, seen_ids, all_markets, lock) for slug in CLIMATE_TAG_SLUGS]
         for f in futures:
             try:
                 f.result()
@@ -236,7 +316,7 @@ def fetch_gistemp() -> Optional[dict]:
     series_monthly: list[dict] = []
     series_annual: list[dict] = []
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    for line in lines[header_idx + 1:]:
+    for line in lines[header_idx + 1 :]:
         parts = line.split(",")
         if len(parts) < 14:
             continue
@@ -302,11 +382,14 @@ def fetch_co2() -> Optional[dict]:
             continue
         if ppm_avg < 0:
             continue
-        series.append({
-            "year": year, "month": month,
-            "decimal_date": round(decimal_date, 4),
-            "ppm": round(ppm_avg, 2),
-        })
+        series.append(
+            {
+                "year": year,
+                "month": month,
+                "decimal_date": round(decimal_date, 4),
+                "ppm": round(ppm_avg, 2),
+            }
+        )
     if not series:
         return None
     latest = series[-1]
@@ -352,11 +435,14 @@ def fetch_methane() -> Optional[dict]:
             continue
         if ppb_avg < 0:
             continue
-        series.append({
-            "year": year, "month": month,
-            "decimal_date": round(decimal_date, 4),
-            "ppb": round(ppb_avg, 2),
-        })
+        series.append(
+            {
+                "year": year,
+                "month": month,
+                "decimal_date": round(decimal_date, 4),
+                "ppb": round(ppb_avg, 2),
+            }
+        )
     if not series:
         return None
     out = {
@@ -403,8 +489,7 @@ def methane_year_end_projection(ch4: dict) -> Optional[dict]:
     }
 
 
-def methane_threshold_probs(ch4_proj: Optional[dict],
-                             thresholds_ppb: tuple[float, ...] = (1930, 1940, 1950, 1960, 1970, 1980, 1990, 2000)) -> Optional[dict]:
+def methane_threshold_probs(ch4_proj: Optional[dict], thresholds_ppb: tuple[float, ...] = (1930, 1940, 1950, 1960, 1970, 1980, 1990, 2000)) -> Optional[dict]:
     """P(year-end CH4 ≥ T) under N(projection, residual_std)."""
     if not ch4_proj:
         return None
@@ -447,13 +532,15 @@ def methane_backtest(ch4: Optional[dict], n_years: int = 5) -> list[dict]:
         slope = num / den
         intercept = my - slope * mx
         projected = intercept + slope * (target_year + 1.0)
-        rows.append({
-            "year": target_year,
-            "as_of": "Jun",
-            "projected_year_end_ppb": round(projected, 2),
-            "actual_dec_ppb": round(actual[-1]["ppb"], 2),
-            "error_ppb": round(projected - actual[-1]["ppb"], 2),
-        })
+        rows.append(
+            {
+                "year": target_year,
+                "as_of": "Jun",
+                "projected_year_end_ppb": round(projected, 2),
+                "actual_dec_ppb": round(actual[-1]["ppb"], 2),
+                "error_ppb": round(projected - actual[-1]["ppb"], 2),
+            }
+        )
     return rows
 
 
@@ -492,9 +579,7 @@ def fetch_sea_ice() -> Optional[dict]:
     cached = cache_get("sea_ice")
     if cached is not None:
         return cached
-    out = {"source": "NSIDC Sea Ice Index G02135 v4.0",
-           "units": "million km²",
-           "fetched_at": datetime.now(timezone.utc).isoformat()}
+    out = {"source": "NSIDC Sea Ice Index G02135 v4.0", "units": "million km²", "fetched_at": datetime.now(timezone.utc).isoformat()}
     rn = _http_get(SEA_ICE_URL_NORTH, timeout=30)
     if rn:
         out["arctic"] = _parse_seaice_csv(rn.text)
@@ -586,6 +671,7 @@ def fetch_oni() -> Optional[dict]:
 
 
 # ─── Models ────────────────────────────────────────────────────────────────────
+
 
 def annual_record_pace_projection(gistemp: dict) -> Optional[dict]:
     """Project this year's annual mean using YTD progress and historical analog years."""
@@ -807,8 +893,7 @@ def antarctic_min_projection(sea_ice: dict) -> Optional[dict]:
     }
 
 
-def temperature_threshold_probs(gistemp_proj: Optional[dict],
-                                  thresholds_c: tuple[float, ...] = (1.3, 1.4, 1.5, 1.6, 1.7, 1.8)) -> Optional[dict]:
+def temperature_threshold_probs(gistemp_proj: Optional[dict], thresholds_c: tuple[float, ...] = (1.3, 1.4, 1.5, 1.6, 1.7, 1.8)) -> Optional[dict]:
     """For each anomaly threshold, P(annual mean ≥ T) under N(projection, drift_std)."""
     if not gistemp_proj:
         return None
@@ -824,8 +909,7 @@ def temperature_threshold_probs(gistemp_proj: Optional[dict],
     return {"thresholds": out, "mu_c": mu, "sigma_c": round(sigma, 3)}
 
 
-def co2_threshold_probs(co2_proj: Optional[dict],
-                        thresholds_ppm: tuple[float, ...] = (424, 425, 426, 427, 428, 429, 430)) -> Optional[dict]:
+def co2_threshold_probs(co2_proj: Optional[dict], thresholds_ppm: tuple[float, ...] = (424, 425, 426, 427, 428, 429, 430)) -> Optional[dict]:
     """P(year-end ppm ≥ T) under normal centered on regression projection."""
     if not co2_proj:
         return None
@@ -875,13 +959,15 @@ def gistemp_backtest(gistemp: Optional[dict], n_years: int = 5) -> list[dict]:
         drift = sum(diffs) / len(diffs)
         projected = round(ytd + drift, 3)
         actual = annual[target_year]
-        rows.append({
-            "year": target_year,
-            "as_of": months[as_of - 1],
-            "projected_c": projected,
-            "actual_c": round(actual, 3),
-            "error_c": round(projected - actual, 3),
-        })
+        rows.append(
+            {
+                "year": target_year,
+                "as_of": months[as_of - 1],
+                "projected_c": projected,
+                "actual_c": round(actual, 3),
+                "error_c": round(projected - actual, 3),
+            }
+        )
     return rows
 
 
@@ -916,13 +1002,15 @@ def co2_backtest(co2: Optional[dict], n_years: int = 5) -> list[dict]:
         slope = num / den
         intercept = my - slope * mx
         projected = intercept + slope * (target_year + 1.0)
-        rows.append({
-            "year": target_year,
-            "as_of": "Jun",
-            "projected_year_end_ppm": round(projected, 2),
-            "actual_dec_ppm": round(actual[-1]["ppm"], 2),
-            "error_ppm": round(projected - actual[-1]["ppm"], 2),
-        })
+        rows.append(
+            {
+                "year": target_year,
+                "as_of": "Jun",
+                "projected_year_end_ppm": round(projected, 2),
+                "actual_dec_ppm": round(actual[-1]["ppm"], 2),
+                "error_ppm": round(projected - actual[-1]["ppm"], 2),
+            }
+        )
     return rows
 
 
@@ -1030,12 +1118,9 @@ def _methane_threshold_market_p(question: str, proj: dict) -> Optional[float]:
     return None
 
 
-def edges_for_markets(markets: list[dict],
-                       gistemp_proj: Optional[dict],
-                       co2_proj: Optional[dict],
-                       arctic_proj: Optional[dict] = None,
-                       antarctic_proj: Optional[dict] = None,
-                       methane_proj: Optional[dict] = None) -> list[dict]:
+def edges_for_markets(
+    markets: list[dict], gistemp_proj: Optional[dict], co2_proj: Optional[dict], arctic_proj: Optional[dict] = None, antarctic_proj: Optional[dict] = None, methane_proj: Optional[dict] = None
+) -> list[dict]:
     """Attach a model probability + edge to markets where we can score them."""
     out = []
     for m in markets:
@@ -1051,78 +1136,69 @@ def edges_for_markets(markets: list[dict],
         rationale = ""
 
         # 1) Warmest-year-on-record markets
-        if gistemp_proj and ("warmest year" in tl or "hottest year" in tl
-                              or "record" in tl and "temperature" in tl):
+        if gistemp_proj and ("warmest year" in tl or "hottest year" in tl or "record" in tl and "temperature" in tl):
             model_p = gistemp_proj.get("p_breaks_record")
-            rationale = (f"YTD {gistemp_proj['ytd_anomaly_c']}°C → projected "
-                         f"{gistemp_proj['projected_annual_anomaly_c']}°C vs record "
-                         f"{gistemp_proj['current_record']['anomaly_c']}°C "
-                         f"({gistemp_proj['current_record']['year']})")
+            rationale = (
+                f"YTD {gistemp_proj['ytd_anomaly_c']}°C → projected "
+                f"{gistemp_proj['projected_annual_anomaly_c']}°C vs record "
+                f"{gistemp_proj['current_record']['anomaly_c']}°C "
+                f"({gistemp_proj['current_record']['year']})"
+            )
 
         # 2) Annual-anomaly threshold markets ("above 1.5°C", etc.)
-        if model_p is None and gistemp_proj and ("anomaly" in tl or "global temperature" in tl
-                                                   or "global average" in tl or "1.5" in tl
-                                                   or "warming" in tl):
+        if model_p is None and gistemp_proj and ("anomaly" in tl or "global temperature" in tl or "global average" in tl or "1.5" in tl or "warming" in tl):
             p = _temperature_anomaly_market_p(title, gistemp_proj)
             if p is not None:
                 model_p = max(0.0, min(1.0, p))
-                rationale = (f"N(μ={gistemp_proj['projected_annual_anomaly_c']}°C, "
-                             f"σ={gistemp_proj['drift_std_c']}°C) projection")
+                rationale = f"N(μ={gistemp_proj['projected_annual_anomaly_c']}°C, σ={gistemp_proj['drift_std_c']}°C) projection"
 
         # 3) Antarctic sea ice
         if model_p is None and antarctic_proj and ("antarctic" in tl and ("sea ice" in tl or "ice extent" in tl)):
             p = _ice_min_market_p(title, antarctic_proj)
             if p is not None:
                 model_p = max(0.0, min(1.0, p))
-                rationale = (f"Antarctic trend → {antarctic_proj['projected_min_mkm2']} Mkm² "
-                             f"(σ={antarctic_proj['residual_std_mkm2']}, "
-                             f"{antarctic_proj['trend_mkm2_per_year']:+.3f}/yr)")
+                rationale = f"Antarctic trend → {antarctic_proj['projected_min_mkm2']} Mkm² (σ={antarctic_proj['residual_std_mkm2']}, {antarctic_proj['trend_mkm2_per_year']:+.3f}/yr)"
 
         # 4) Arctic sea ice
-        if model_p is None and arctic_proj and ("arctic sea ice" in tl
-                                                  or "minimum arctic" in tl
-                                                  or ("sea ice" in tl and "antarctic" not in tl)):
+        if model_p is None and arctic_proj and ("arctic sea ice" in tl or "minimum arctic" in tl or ("sea ice" in tl and "antarctic" not in tl)):
             p = _ice_min_market_p(title, arctic_proj)
             if p is not None:
                 model_p = max(0.0, min(1.0, p))
-                rationale = (f"Trend → {arctic_proj['projected_min_mkm2']} Mkm² "
-                             f"(σ={arctic_proj['residual_std_mkm2']}, "
-                             f"{arctic_proj['trend_mkm2_per_year']:+.3f}/yr)")
+                rationale = f"Trend → {arctic_proj['projected_min_mkm2']} Mkm² (σ={arctic_proj['residual_std_mkm2']}, {arctic_proj['trend_mkm2_per_year']:+.3f}/yr)"
 
         # 5) CO₂ threshold markets
         if model_p is None and co2_proj and ("co2" in tl or "carbon dioxide" in tl or "ppm" in tl):
             p = _co2_threshold_market_p(title, co2_proj)
             if p is not None:
                 model_p = max(0.0, min(1.0, p))
-                rationale = (f"N(μ={co2_proj['projected_year_end_ppm']} ppm, "
-                             f"σ={co2_proj['residual_std_ppm']} ppm), "
-                             f"+{co2_proj['ppm_per_year']}/yr")
+                rationale = f"N(μ={co2_proj['projected_year_end_ppm']} ppm, σ={co2_proj['residual_std_ppm']} ppm), +{co2_proj['ppm_per_year']}/yr"
 
         # 6) Methane (CH4) threshold markets
         if model_p is None and methane_proj and ("methane" in tl or "ch4" in tl or "ppb" in tl):
             p = _methane_threshold_market_p(title, methane_proj)
             if p is not None:
                 model_p = max(0.0, min(1.0, p))
-                rationale = (f"N(μ={methane_proj['projected_year_end_ppb']} ppb, "
-                             f"σ={methane_proj['residual_std_ppb']} ppb), "
-                             f"+{methane_proj['ppb_per_year']}/yr")
+                rationale = f"N(μ={methane_proj['projected_year_end_ppb']} ppb, σ={methane_proj['residual_std_ppb']} ppb), +{methane_proj['ppb_per_year']}/yr"
 
         if implied is not None and model_p is not None:
             edge = round((model_p - implied) * 100, 1)
         else:
             edge = None
 
-        out.append({
-            **m,
-            "_implied_p": implied,
-            "_model_p": round(model_p, 3) if model_p is not None else None,
-            "_edge_pp": edge,
-            "_rationale": rationale,
-        })
+        out.append(
+            {
+                **m,
+                "_implied_p": implied,
+                "_model_p": round(model_p, 3) if model_p is not None else None,
+                "_edge_pp": edge,
+                "_rationale": rationale,
+            }
+        )
     return out
 
 
 # ─── Routes ────────────────────────────────────────────────────────────────────
+
 
 @app.route("/")
 def index():
@@ -1159,18 +1235,20 @@ def api_markets():
     aap = antarctic_min_projection(sea) if sea else None
     mp = methane_year_end_projection(ch4) if ch4 else None
     enriched = edges_for_markets(markets, gp, cp, ap, aap, mp)
-    return jsonify({
-        "markets": enriched,
-        "count": len(enriched),
-        "gistemp_projection": gp,
-        "co2_projection": cp,
-        "methane_projection": mp,
-        "arctic_min_projection": ap,
-        "antarctic_min_projection": aap,
-        "temperature_thresholds": temperature_threshold_probs(gp),
-        "co2_thresholds": co2_threshold_probs(cp),
-        "methane_thresholds": methane_threshold_probs(mp),
-    })
+    return jsonify(
+        {
+            "markets": enriched,
+            "count": len(enriched),
+            "gistemp_projection": gp,
+            "co2_projection": cp,
+            "methane_projection": mp,
+            "arctic_min_projection": ap,
+            "antarctic_min_projection": aap,
+            "temperature_thresholds": temperature_threshold_probs(gp),
+            "co2_thresholds": co2_threshold_probs(cp),
+            "methane_thresholds": methane_threshold_probs(mp),
+        }
+    )
 
 
 @app.route("/api/temperature")
@@ -1210,14 +1288,16 @@ def api_sea_ice():
     # Trim arrays sent to the client — frontend only needs last ~3y for plots
     arctic = s.get("arctic") or []
     antarctic = s.get("antarctic") or []
-    return jsonify({
-        "source": s["source"],
-        "units": s["units"],
-        "fetched_at": s["fetched_at"],
-        "arctic_recent": arctic[-1100:],
-        "antarctic_recent": antarctic[-1100:],
-        "record_check": rec,
-    })
+    return jsonify(
+        {
+            "source": s["source"],
+            "units": s["units"],
+            "fetched_at": s["fetched_at"],
+            "arctic_recent": arctic[-1100:],
+            "antarctic_recent": antarctic[-1100:],
+            "record_check": rec,
+        }
+    )
 
 
 @app.route("/api/sst")
@@ -1249,33 +1329,35 @@ def api_summary():
     ap = arctic_min_projection(s) if s else None
     aap = antarctic_min_projection(s) if s else None
     mp = methane_year_end_projection(ch4) if ch4 else None
-    return jsonify({
-        "gistemp": {
-            "latest_annual": g["annual"][-1] if g and g.get("annual") else None,
-            "projection": gp,
-            "thresholds": temperature_threshold_probs(gp),
-        },
-        "co2": {
-            "latest": c["latest"] if c else None,
-            "projection": cp,
-            "thresholds": co2_threshold_probs(cp),
-        },
-        "methane": {
-            "latest": ch4["latest"] if ch4 else None,
-            "projection": mp,
-            "thresholds": methane_threshold_probs(mp),
-        },
-        "sea_ice": {
-            "record_check": sea_ice_record_check(s) if s else None,
-            "arctic_projection": ap,
-            "antarctic_projection": aap,
-        },
-        "regime": {
-            "latest": o["latest"] if o else None,
-            "state": o["state"] if o else None,
-        },
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-    })
+    return jsonify(
+        {
+            "gistemp": {
+                "latest_annual": g["annual"][-1] if g and g.get("annual") else None,
+                "projection": gp,
+                "thresholds": temperature_threshold_probs(gp),
+            },
+            "co2": {
+                "latest": c["latest"] if c else None,
+                "projection": cp,
+                "thresholds": co2_threshold_probs(cp),
+            },
+            "methane": {
+                "latest": ch4["latest"] if ch4 else None,
+                "projection": mp,
+                "thresholds": methane_threshold_probs(mp),
+            },
+            "sea_ice": {
+                "record_check": sea_ice_record_check(s) if s else None,
+                "arctic_projection": ap,
+                "antarctic_projection": aap,
+            },
+            "regime": {
+                "latest": o["latest"] if o else None,
+                "state": o["state"] if o else None,
+            },
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
 @app.route("/api/backtest")
@@ -1284,17 +1366,19 @@ def api_backtest():
     g = fetch_gistemp()
     c = fetch_co2()
     ch4 = fetch_methane()
-    return jsonify({
-        "gistemp": gistemp_backtest(g) if g else [],
-        "co2": co2_backtest(c) if c else [],
-        "methane": methane_backtest(ch4) if ch4 else [],
-        "method": {
-            "gistemp": "Replays the YTD-anomaly + historical-drift model 'as of June' for each year, scored vs the actual J-D mean.",
-            "co2": "Refits the 24-month linear regression at June of each year, scored vs the actual December reading.",
-            "methane": "Same June-cutoff 24-month regression as CO₂, scored vs the actual December reading.",
-        },
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-    })
+    return jsonify(
+        {
+            "gistemp": gistemp_backtest(g) if g else [],
+            "co2": co2_backtest(c) if c else [],
+            "methane": methane_backtest(ch4) if ch4 else [],
+            "method": {
+                "gistemp": "Replays the YTD-anomaly + historical-drift model 'as of June' for each year, scored vs the actual J-D mean.",
+                "co2": "Refits the 24-month linear regression at June of each year, scored vs the actual December reading.",
+                "methane": "Same June-cutoff 24-month regression as CO₂, scored vs the actual December reading.",
+            },
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
 # ─── Main ──────────────────────────────────────────────────────────────────────

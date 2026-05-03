@@ -100,9 +100,12 @@ def _write_cache(payload: dict) -> None:
 
 
 def _fetch_csv(timeout: float = 30.0) -> str:
-    req = urllib.request.Request(CSV_URL, headers={
-        "User-Agent": "world-health-dashboard/0.2",
-    })
+    req = urllib.request.Request(
+        CSV_URL,
+        headers={
+            "User-Agent": "world-health-dashboard/0.2",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted host)
         return resp.read().decode("utf-8", errors="replace")
 
@@ -134,12 +137,14 @@ def _parse_csv(body: str) -> dict:
             cum_pm = float(row["cum_excess_per_million_proj_all_ages"]) if row.get("cum_excess_per_million_proj_all_ages") else None
         except (ValueError, TypeError):
             cum_pm = None
-        by_country.setdefault(iso, []).append({
-            "date": date,
-            "p_score": p,
-            "excess_per_million": excess_pm,
-            "cum_excess_per_million": cum_pm,
-        })
+        by_country.setdefault(iso, []).append(
+            {
+                "date": date,
+                "p_score": p,
+                "excess_per_million": excess_pm,
+                "cum_excess_per_million": cum_pm,
+            }
+        )
 
     # Sort each country's series by date, and compute latest cumulative.
     latest: dict[str, dict] = {}
@@ -150,8 +155,7 @@ def _parse_csv(body: str) -> dict:
             latest[iso] = non_null[-1]
 
     if skipped:
-        log.info("Excess mortality: %d unresolved locations (samples: %s)",
-                 len(skipped), ", ".join(sorted(skipped)[:5]))
+        log.info("Excess mortality: %d unresolved locations (samples: %s)", len(skipped), ", ".join(sorted(skipped)[:5]))
     return {"by_country": by_country, "latest": latest}
 
 
@@ -172,8 +176,8 @@ def fetch(force: bool = False) -> dict:
                 stale = json.loads(p.read_text(encoding="utf-8"))
                 stale["stale"] = True
                 return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("excess_mortality stale cache read failed (%s); returning empty payload", cache_exc)
         return {"by_country": {}, "latest": {}, "fetched_at": time.time(), "error": str(exc)}
 
     parsed = _parse_csv(body)
@@ -186,9 +190,7 @@ def fetch(force: bool = False) -> dict:
     }
     with _lock:
         _write_cache(payload)
-    log.info("Excess mortality: %d countries, %d total points",
-             len(parsed["by_country"]),
-             sum(len(v) for v in parsed["by_country"].values()))
+    log.info("Excess mortality: %d countries, %d total points", len(parsed["by_country"]), sum(len(v) for v in parsed["by_country"].values()))
     return payload
 
 

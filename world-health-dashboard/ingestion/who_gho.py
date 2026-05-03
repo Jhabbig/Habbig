@@ -79,10 +79,13 @@ def _fetch(code: str, timeout: float = 45.0) -> list[dict]:
     flt = "SpatialDimType eq 'COUNTRY'"
     qs = urllib.parse.urlencode({"$filter": flt})
     url = f"{API.format(code=code)}?{qs}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.1",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.1",
+            "Accept": "application/json",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted host)
         body = resp.read().decode("utf-8", errors="replace")
     parsed = json.loads(body)
@@ -150,8 +153,8 @@ def fetch_indicator(code: str, force: bool = False) -> dict:
                 stale = json.loads(path.read_text(encoding="utf-8"))
                 stale["stale"] = True
                 return stale
-            except Exception:
-                pass
+            except Exception as cache_exc:
+                log.warning("who_gho stale cache read failed for %s (%s); returning empty payload", code, cache_exc)
         return {"by_country": {}, "latest": {}, "fetched_at": time.time(), "error": str(exc)}
 
     shaped = _shape_rows(rows)

@@ -42,10 +42,26 @@ _lock = Lock()
 # Drugs that are vaccines / not RxNorm-mappable cleanly. Skip these to avoid
 # wasting API calls; the EML notes column is descriptive enough.
 SKIP_PREFIXES = (
-    "rts,", "r21/", "bcg ", "mmr ", "hpv ", "men", "qdenga", "yf-vax",
-    "covid-19 vaccines", "seasonal influenza vaccine", "rotateq",
-    "rotarix", "shanchol", "dukoral", "stamaril", "ervebo", "jynneos",
-    "rvsv", "mva-bn", "typbar",
+    "rts,",
+    "r21/",
+    "bcg ",
+    "mmr ",
+    "hpv ",
+    "men",
+    "qdenga",
+    "yf-vax",
+    "covid-19 vaccines",
+    "seasonal influenza vaccine",
+    "rotateq",
+    "rotarix",
+    "shanchol",
+    "dukoral",
+    "stamaril",
+    "ervebo",
+    "jynneos",
+    "rvsv",
+    "mva-bn",
+    "typbar",
 )
 
 
@@ -73,17 +89,20 @@ def _write_cache(name: str, data: dict) -> None:
             json.dumps({"fetched_at": time.time(), "data": data}),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("rxnorm cache write failed for %s: %s", name, exc)
 
 
 def _http_get(path: str, params: dict, timeout: float = 15.0) -> dict | None:
     qs = urllib.parse.urlencode(params)
     url = f"{API}{path}?{qs}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "world-health-dashboard/0.4",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "world-health-dashboard/0.4",
+            "Accept": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted)
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -111,9 +130,7 @@ def _normalize_query(generic: str) -> str:
     # Strip qualifiers in parens.
     g = re.sub(r"\s*\([^)]+\)", "", g).strip()
     # Strip trailing dosage forms.
-    g = re.sub(
-        r"\s+(LA|XR|SR|ER|IR|XL)\b", "", g, flags=re.IGNORECASE
-    ).strip()
+    g = re.sub(r"\s+(LA|XR|SR|ER|IR|XL)\b", "", g, flags=re.IGNORECASE).strip()
     # Drop combos: 'a-b' -> just 'a' for the query (we'll find combo SBDs anyway)
     if "-" in g and " " not in g:
         g = g.split("-")[0]
@@ -123,8 +140,7 @@ def _normalize_query(generic: str) -> str:
 def resolve(generic: str, force: bool = False) -> dict:
     """Return {generic, query, brands: [...], rxcuis: [...], scd_count, sbd_count}."""
     if any(generic.lower().startswith(p) for p in SKIP_PREFIXES):
-        return {"generic": generic, "query": generic, "brands": [], "rxcuis": [],
-                "scd_count": 0, "sbd_count": 0, "skipped": True}
+        return {"generic": generic, "query": generic, "brands": [], "rxcuis": [], "scd_count": 0, "sbd_count": 0, "skipped": True}
 
     if not force:
         cached = _read_cache(generic)
@@ -134,8 +150,7 @@ def resolve(generic: str, force: bool = False) -> dict:
     query = _normalize_query(generic)
     data = _http_get("/drugs.json", {"name": query})
     if not data:
-        out = {"generic": generic, "query": query, "brands": [], "rxcuis": [],
-               "scd_count": 0, "sbd_count": 0, "error": "fetch_failed"}
+        out = {"generic": generic, "query": query, "brands": [], "rxcuis": [], "scd_count": 0, "sbd_count": 0, "error": "fetch_failed"}
         _write_cache(generic, out)
         return out
 
@@ -148,7 +163,7 @@ def resolve(generic: str, force: bool = False) -> dict:
 
     for cg in concept_groups:
         tty = cg.get("tty") or ""
-        for cp in (cg.get("conceptProperties") or []):
+        for cp in cg.get("conceptProperties") or []:
             name = cp.get("name") or ""
             rxcui = cp.get("rxcui") or ""
             if rxcui:
@@ -187,8 +202,7 @@ def resolve_many(generics: list[str], max_workers: int = 8) -> dict[str, dict]:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    for g in ("ibuprofen", "semaglutide", "metformin", "amoxicillin",
-              "artemether-lumefantrine", "paracetamol", "salbutamol"):
+    for g in ("ibuprofen", "semaglutide", "metformin", "amoxicillin", "artemether-lumefantrine", "paracetamol", "salbutamol"):
         r = resolve(g)
         brands = ", ".join(r["brands"][:6])
         print(f"  {g:35s} → {len(r['brands'])} brands: {brands}")
