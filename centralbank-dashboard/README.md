@@ -18,6 +18,8 @@ Port: **7060**.
 | v0.3 | **Statement stance ladder** — hawkish ↔ dovish per CB based on rule-based scoring of the latest press release, with matched phrases shown inline | Fed / ECB / BoE RSS feeds + body-text fetch |
 | v0.4 | **Polymarket edge** — table of FOMC markets with edge = implied − Polymarket price, sorted by |edge|, BUY YES / SELL YES signals at ±3 pp | Polymarket Gamma API |
 | v0.5 | **Cross-venue arbitrage + Trade buttons** — Kalshi YES price beside Polymarket YES on the same FOMC outcome. `Arb (P−K)` column flags spreads >3 pp. One-click **Trade Poly →** and **Trade Kalshi →** deep-links so users place orders with their own accounts on each venue. | Kalshi Trade API v2 (read-only public endpoint) |
+| v0.6 | **Full OIS curve overlay** — extends `implied_path` from "next FOMC" to a full 18-month strip of monthly Fed Funds futures. Each month shows the implied average FF rate; the curve is overlaid on the rate-path chart as a dashed teal forward line, anchored at the latest spot reading. | Yahoo Finance ZQ contract chain (continuous) |
+| v0.7 | **Macro release tracker** — Headline / Core CPI, Headline / Core PCE, NFP. Latest YoY % (or MoM jobs change for NFP), 24-month sparkline, days-until-next-release with imminent / soon / later badges. Release dates computed from BLS / BEA conventions, no scraping. | FRED CSV |
 
 All views graceful-degrade when their data source is unreachable (the panel
 shows an inline error; other panels keep working).
@@ -56,6 +58,8 @@ own UI.
 | `GET /api/edge` | 5 min (markets) | Cross-venue table: bucket × {Poly, Kalshi, Implied} + edges + arb spreads + trade-out URLs |
 | `GET /api/kalshi` | 5 min | Raw Kalshi FOMC market list (debug-friendly) |
 | `GET /api/stance` | 1 h | Stance ladder per CB |
+| `GET /api/ois?months_ahead=18` | 30 min | Full Fed Funds futures strip → implied avg FF rate per month |
+| `GET /api/econ` | 6 h | CPI / Core CPI / PCE / Core PCE / NFP latest + sparkline + next-release date |
 | `GET /healthz` | — | Liveness probe |
 
 ## Run locally
@@ -83,6 +87,8 @@ python3 -m ingestion.implied_path         # ZQ futures + implied move
 python3 -m ingestion.outcome_classifier   # 15 fixtures across Poly + Kalshi phrasings
 python3 -m ingestion.polymarket_client    # Polymarket FOMC market fetch
 python3 -m ingestion.kalshi_client        # live Kalshi FOMC fetch
+python3 -m ingestion.ois_curve            # 18-month Fed Funds futures strip
+python3 -m ingestion.econ_releases        # CPI/PCE/NFP latest + release calendar
 python3 -m ingestion.cb_statements        # CB RSS pulls
 python3 -m analysis.stance_scorer         # scorer fixtures
 python3 -m analysis.stance                # full stance ladder
@@ -101,6 +107,8 @@ centralbank-dashboard/
 │   ├── outcome_classifier.py       Shared rule-based bucket classifier (Poly + Kalshi)
 │   ├── polymarket_client.py        Gamma API fetch; delegates to outcome_classifier
 │   ├── kalshi_client.py            Kalshi /trade-api/v2 public read; deep-link builder
+│   ├── ois_curve.py                Full 18-month FF futures strip → monthly avg rates
+│   ├── econ_releases.py            CPI / Core CPI / PCE / Core PCE / NFP via FRED + release dates
 │   └── cb_statements.py            RSS feeds + HTML body fetcher (Fed/ECB/BoE)
 ├── analysis/
 │   ├── stance_keywords.py          Hawkish/dovish phrase dictionary (extend here)
@@ -178,11 +186,14 @@ Polymarket's own bid-ask plus our modelling slack live below that.
 | v0.3 | ✓ done | Statement scraper + stance scorer + ladder |
 | v0.4 | ✓ done | Polymarket edge table |
 | v0.5 | ✓ done | Kalshi cross-venue arbitrage panel + Trade-on-Poly/Kalshi deep-links |
-| v0.6 | open  | Statement diff viewer (compare two press releases side-by-side) |
-| v0.7 | open  | Extend implied path to ECB (€STR OIS) and BoE (SONIA OIS) |
-| v0.8 | open  | Auto-scrape annual CB calendar pages so meeting dates refresh |
-| v0.9 | open  | ECB-specific phrases in `stance_keywords.py` (current dictionary skews Fed/BoE) |
-| v1.0 | open  | BoJ — needs direct BoJ stats API (FRED proxies are noisy) |
+| v0.6 | ✓ done | Full OIS curve overlay (18-month FF futures strip on rate-path chart) |
+| v0.7 | ✓ done | Macro release tracker (CPI / Core CPI / PCE / Core PCE / NFP) — latest, sparkline, next-release date |
+| v0.8 | open  | Consensus-vs-actual surprise tracking (paid feeds — defer until users justify) |
+| v0.9 | open  | Statement diff viewer (compare two press releases side-by-side) |
+| v1.0 | open  | Extend implied path to ECB (€STR OIS) and BoE (SONIA OIS) |
+| v1.1 | open  | Auto-scrape annual CB calendar pages so meeting dates refresh |
+| v1.2 | open  | ECB-specific phrases in `stance_keywords.py` (current dictionary skews Fed/BoE) |
+| v1.3 | open  | BoJ — needs direct BoJ stats API (FRED proxies are noisy) |
 | **Phase 2** | open | **In-app trade execution** on Kalshi: per-user API key + RSA-PSS request signing, order management (place/cancel/status), positions + balance views, paper-trading toggle, audit log. Security-heavy multi-day project — gated until Phase 1 (this dashboard) has paying users to justify the build. |
 
 ## Env vars

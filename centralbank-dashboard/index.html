@@ -75,6 +75,19 @@
   .trade-btn:hover { filter: brightness(1.15); text-decoration: none; }
   .trade-btn-disabled { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px;
                         color: var(--muted); border: 1px solid var(--grid); background: #0e1117; }
+  .econ-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+               gap: 12px; margin-bottom: 12px; }
+  .econ-card { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px;
+               padding: 12px; }
+  .econ-head { display: flex; justify-content: space-between; align-items: flex-start;
+               margin-bottom: 8px; }
+  .econ-name { font-weight: 600; font-size: 13px; }
+  .econ-fred { color: var(--muted); font-size: 10px; margin-top: 1px; }
+  .econ-stat { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
+               margin-bottom: 2px; }
+  .econ-substat { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .econ-spark { margin-bottom: 4px; }
+  .econ-when { color: var(--muted); font-size: 10px; }
   .stance-row { display: grid; grid-template-columns: 180px 100px 1fr; gap: 16px;
                 align-items: center; padding: 10px 0; border-bottom: 1px solid var(--grid); }
   .stance-row:last-child { border-bottom: 0; }
@@ -129,6 +142,10 @@
     <h2>Next FOMC — market-implied move</h2>
     <div id="implied-body">loading…</div>
   </section>
+  <section class="panel" id="econ-panel">
+    <h2>Macro releases — CPI, PCE, NFP</h2>
+    <div id="econ-body">loading…</div>
+  </section>
   <section class="panel" id="edge-panel">
     <h2>Polymarket edge — implied vs market price</h2>
     <div id="edge-body">loading…</div>
@@ -154,16 +171,21 @@ const COLORS = ["#58a6ff", "#f0883e", "#56d364", "#d2a8ff", "#ff7b72"];
 async function load() {
   const meta = document.getElementById("meta");
   // Fire all requests in parallel — one shouldn't block the others.
-  const [ratesR, calR, impR, edgeR, stanceR] = await Promise.allSettled([
+  const [ratesR, calR, impR, edgeR, stanceR, oisR, econR] = await Promise.allSettled([
     fetch("/api/rates").then(r => r.ok ? r.json() : Promise.reject(new Error("rates HTTP " + r.status))),
     fetch("/api/calendar").then(r => r.ok ? r.json() : Promise.reject(new Error("cal HTTP " + r.status))),
     fetch("/api/implied").then(r => r.ok ? r.json() : Promise.reject(new Error("imp HTTP " + r.status))),
     fetch("/api/edge").then(r => r.ok ? r.json() : Promise.reject(new Error("edge HTTP " + r.status))),
     fetch("/api/stance").then(r => r.ok ? r.json() : Promise.reject(new Error("stance HTTP " + r.status))),
+    fetch("/api/ois").then(r => r.ok ? r.json() : Promise.reject(new Error("ois HTTP " + r.status))),
+    fetch("/api/econ").then(r => r.ok ? r.json() : Promise.reject(new Error("econ HTTP " + r.status))),
   ]);
 
+  // Render the rates chart with the OIS curve overlaid (forward dashed line).
+  // If either side is missing, render with what we have.
   if (ratesR.status === "fulfilled") {
-    render(ratesR.value);
+    const oisData = oisR.status === "fulfilled" ? oisR.value : null;
+    render(ratesR.value, oisData);
     const ts = new Date(ratesR.value.fetched_at * 1000).toISOString().replace("T", " ").slice(0, 16);
     meta.textContent = "data fetched " + ts + " UTC";
   } else {
@@ -197,6 +219,85 @@ async function load() {
     document.getElementById("stance-body").innerHTML =
       `<span class="err">stance load failed: ${escapeHtml(stanceR.reason.message)}</span>`;
   }
+
+  if (econR.status === "fulfilled") {
+    renderEcon(econR.value);
+  } else {
+    document.getElementById("econ-body").innerHTML =
+      `<span class="err">econ load failed: ${escapeHtml(econR.reason.message)}</span>`;
+  }
+}
+
+function renderEcon(d) {
+  const body = document.getElementById("econ-body");
+  if (!d.series || !d.series.length) {
+    body.innerHTML = '<div class="footnote">No data.</div>';
+    return;
+  }
+  const cards = d.series.map(s => {
+    const latest = s.latest;
+    const days = s.days_until;
+    const release = s.next_release_date || "—";
+    let badgeCls = "later", badgeTxt = "—";
+    if (days !== null && days !== undefined) {
+      if (days <= 1) { badgeCls = "imminent"; badgeTxt = days === 0 ? "today" : "tomorrow"; }
+      else if (days <= 7) { badgeCls = "soon"; badgeTxt = days + "d"; }
+      else { badgeCls = "later"; badgeTxt = days + "d"; }
+    }
+    let mainStat = "—", subStat = "—";
+    if (latest) {
+      if (s.is_index) {
+        const yoy = latest.yoy_pct;
+        const mom = latest.mom_pct;
+        const yoyClass = yoy > 2 ? "edge-neg" : yoy < 1 ? "edge-pos" : "";  // hawkish=red, dovish=green
+        mainStat = `<span class="${yoyClass}">${yoy.toFixed(2)}% YoY</span>`;
+        subStat = `${mom > 0 ? "+" : ""}${mom.toFixed(2)}% MoM · idx ${latest.value.toFixed(1)}`;
+      } else {
+        // NFP shown as monthly job change in thousands
+        const ch = latest.mom_change_k;
+        const chClass = ch > 0 ? "edge-pos" : "edge-neg";
+        mainStat = `<span class="${chClass}">${ch >= 0 ? "+" : ""}${Math.round(ch).toLocaleString()}k</span>`;
+        subStat = `total ${(latest.value/1000).toFixed(1)}M jobs`;
+      }
+    }
+    // Sparkline SVG
+    const sp = s.sparkline || [];
+    const spSvg = sp.length >= 2 ? sparkSvg(sp) : "";
+    return `<div class="econ-card">
+      <div class="econ-head">
+        <div>
+          <div class="econ-name">${escapeHtml(s.name)}</div>
+          <div class="econ-fred"><code>${escapeHtml(s.fred_id)}</code></div>
+        </div>
+        <span class="badge ${badgeCls}" title="${escapeHtml(release)}">${badgeTxt}</span>
+      </div>
+      <div class="econ-stat">${mainStat}</div>
+      <div class="econ-substat">${subStat}</div>
+      <div class="econ-spark">${spSvg}</div>
+      <div class="econ-when">next: ${escapeHtml(release)}</div>
+    </div>`;
+  }).join("");
+  body.innerHTML = `<div class="econ-grid">${cards}</div>` +
+    `<div class="footnote">Latest values + 24-month sparkline from FRED. Release dates approximate ` +
+    `(BLS conventions). <strong>Consensus-vs-actual surprise tracking is Phase 2</strong> — Bloomberg ` +
+    `consensus is paid; for now, compare actuals against your own consensus.</div>`;
+}
+
+function sparkSvg(data) {
+  const w = 140, h = 30, pad = 1;
+  if (!data.length) return "";
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = max - min || 1;
+  const sx = i => pad + (i / (data.length - 1)) * (w - 2 * pad);
+  const sy = v => h - pad - ((v - min) / range) * (h - 2 * pad);
+  const d = data.map((v, i) => (i ? "L" : "M") + sx(i).toFixed(1) + "," + sy(v).toFixed(1)).join(" ");
+  // Color the line: green if last reading is below mid, red if above.
+  const last = data[data.length - 1];
+  const mid = (min + max) / 2;
+  const stroke = last > mid ? "#f85149" : "#56d364";
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <path d="${d}" fill="none" stroke="${stroke}" stroke-width="1.4"/>
+  </svg>`;
 }
 
 function renderStance(d) {
@@ -378,7 +479,7 @@ function renderCalendar(data) {
   }).join("");
 }
 
-function render(data) {
+function render(data, oisData) {
   const series = data.series.filter(s => s.points && s.points.length);
   if (!series.length) {
     document.getElementById("chart").innerHTML =
@@ -398,8 +499,17 @@ function render(data) {
       .filter(p => p.t >= cutoffMs),
   })).filter(s => s.points.length);
 
-  const allT = filtered.flatMap(s => s.points.map(p => p.t));
-  const allR = filtered.flatMap(s => s.points.map(p => p.r));
+  // Build OIS forward points (anchored at month-start of each contract month).
+  const oisPts = [];
+  if (oisData && oisData.curve && oisData.curve.length) {
+    for (const c of oisData.curve) {
+      const t = Date.UTC(c.year, c.month - 1, 1);
+      oisPts.push({ t, r: c.implied_avg_rate });
+    }
+  }
+
+  const allT = filtered.flatMap(s => s.points.map(p => p.t)).concat(oisPts.map(p => p.t));
+  const allR = filtered.flatMap(s => s.points.map(p => p.r)).concat(oisPts.map(p => p.r));
   const tMin = Math.min(...allT), tMax = Math.max(...allT);
   const rMin = Math.min(0, Math.min(...allR));
   const rMax = Math.max(...allR) * 1.1 || 1;
@@ -436,12 +546,30 @@ function render(data) {
     parts.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"/>`);
   });
 
+  // OIS forward curve — dashed teal line stepping into the future.
+  // Anchored at the most recent Fed Funds reading so it visually continues
+  // from where the spot rate left off.
+  let legendOis = "";
+  if (oisPts.length) {
+    const fedSeries = filtered.find(s => /\bDFF|Fed Funds\b/i.test(s.label));
+    let anchorPts = oisPts.slice();
+    if (fedSeries && fedSeries.points.length) {
+      const last = fedSeries.points[fedSeries.points.length - 1];
+      anchorPts = [{ t: last.t, r: last.r }, ...oisPts.filter(p => p.t > last.t)];
+    }
+    const oisD = anchorPts.map((p, j) =>
+      (j === 0 ? "M" : "L") + xScale(p.t).toFixed(1) + "," + yScale(p.r).toFixed(1)
+    ).join(" ");
+    parts.push(`<path d="${oisD}" fill="none" stroke="#14b8a6" stroke-width="2" stroke-dasharray="5,4"/>`);
+    legendOis = `<span><span class="swatch" style="background:#14b8a6"></span>OIS curve (implied)</span>`;
+  }
+
   document.getElementById("chart").innerHTML = parts.join("");
 
   // legend
   document.getElementById("legend").innerHTML = filtered.map((s, i) =>
     `<span><span class="swatch" style="background:${COLORS[i % COLORS.length]}"></span>${escapeHtml(s.label)}</span>`
-  ).join("");
+  ).join("") + legendOis;
 
   // latest table
   document.getElementById("latest").innerHTML = data.series.map(s => {

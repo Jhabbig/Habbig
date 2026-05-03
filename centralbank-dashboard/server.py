@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from analysis import edge as edge_analysis
 from analysis import stance as stance_analysis
-from ingestion import decision_calendar, fred_client, implied_path, kalshi_client
+from ingestion import decision_calendar, econ_releases, fred_client, implied_path, kalshi_client, ois_curve
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -83,6 +83,17 @@ async def api_calendar(horizon_days: int = 90) -> JSONResponse:
 @app.get("/api/implied")
 async def api_implied(force: bool = False) -> JSONResponse:
     return JSONResponse(implied_path.get_cached(force=force))
+
+
+@app.get("/api/ois")
+async def api_ois(months_ahead: int = 18, force: bool = False) -> JSONResponse:
+    months_ahead = max(3, min(months_ahead, 36))
+    return JSONResponse(ois_curve.get_cached(months_ahead=months_ahead, force=force))
+
+
+@app.get("/api/econ")
+async def api_econ(force: bool = False) -> JSONResponse:
+    return JSONResponse(econ_releases.get_cached(force=force))
 
 
 @app.get("/api/edge")
