@@ -144,6 +144,53 @@ class DashboardCache:
             log.debug("Cache invalidate error: %s", e)
             return 0
 
+    # ── Generic key-value (used for session + subscription caches) ──────
+    #
+    # These methods store a JSON-encoded value under a fixed prefix.  Falls
+    # back gracefully when Redis is unavailable — callers should treat None
+    # as "not cached" and re-resolve.
+
+    def kv_get_json(self, namespace: str, key: str) -> Optional[dict]:
+        if not self.available:
+            return None
+        try:
+            raw = self._r.get(f"{namespace}:{key}")
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except (redis.RedisError, json.JSONDecodeError) as e:
+            log.debug("kv_get_json error: %s", e)
+            return None
+
+    def kv_set_json(self, namespace: str, key: str, value: dict, ttl: int) -> None:
+        if not self.available:
+            return
+        try:
+            self._r.setex(f"{namespace}:{key}", ttl, json.dumps(value))
+        except (redis.RedisError, TypeError) as e:
+            log.debug("kv_set_json error: %s", e)
+
+    def kv_delete(self, namespace: str, key: str) -> None:
+        if not self.available:
+            return
+        try:
+            self._r.delete(f"{namespace}:{key}")
+        except redis.RedisError as e:
+            log.debug("kv_delete error: %s", e)
+
+    def kv_delete_pattern(self, namespace: str, pattern: str = "*") -> int:
+        """Delete all keys in a namespace matching pattern (default: all)."""
+        if not self.available:
+            return 0
+        try:
+            keys = list(self._r.scan_iter(f"{namespace}:{pattern}", count=200))
+            if keys:
+                return self._r.delete(*keys)
+            return 0
+        except redis.RedisError as e:
+            log.debug("kv_delete_pattern error: %s", e)
+            return 0
+
     # ── Pub/sub (dashboard → gateway → SSE clients) ─────────────────────
 
     def publish(self, dashboard: str, event: str = "data_updated", data: Optional[dict] = None) -> None:

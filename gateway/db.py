@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin          INTEGER NOT NULL DEFAULT 0,
     suspended         INTEGER NOT NULL DEFAULT 0,
     default_dashboard TEXT,
-    invite_token_id   INTEGER REFERENCES invite_tokens(id)
+    invite_token_id   INTEGER REFERENCES invite_tokens(id),
+    -- has_full_access = "viewer pass": grants read access to every dashboard
+    -- without admin privileges. Set when claiming an invite_token whose
+    -- grants_full_access=1. Used for investor / partner / press passes.
+    has_full_access   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -65,7 +69,13 @@ CREATE TABLE IF NOT EXISTS invite_tokens (
     claimed_by_email TEXT,
     note            TEXT DEFAULT '',
     created_at      INTEGER NOT NULL,
-    claimed_at      INTEGER
+    claimed_at      INTEGER,
+    -- grants_full_access = when claimed, the new user is marked
+    -- has_full_access=1 (read-only access to every dashboard, no admin powers).
+    grants_full_access INTEGER NOT NULL DEFAULT 0,
+    -- stripe_sub_id = the subscription that paid for this viewer-pass token.
+    -- Used to revoke access when the customer's subscription cancels.
+    stripe_sub_id   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS enquiries (
@@ -217,10 +227,17 @@ def init_db() -> None:
             for row in c.execute("SELECT id, email FROM users WHERE username IS NULL").fetchall():
                 uname = row[1].split("@")[0] if row[1] else f"user{row[0]}"
                 c.execute("UPDATE users SET username = ? WHERE id = ?", (uname, row[0]))
+        if "has_full_access" not in existing_cols:
+            c.execute("ALTER TABLE users ADD COLUMN has_full_access INTEGER NOT NULL DEFAULT 0")
         # invite_tokens migrations
         invite_cols = {row["name"] for row in c.execute("PRAGMA table_info(invite_tokens)")}
         if "target_email" not in invite_cols:
             c.execute("ALTER TABLE invite_tokens ADD COLUMN target_email TEXT")
+        if "grants_full_access" not in invite_cols:
+            c.execute("ALTER TABLE invite_tokens ADD COLUMN grants_full_access INTEGER NOT NULL DEFAULT 0")
+        if "stripe_sub_id" not in invite_cols:
+            c.execute("ALTER TABLE invite_tokens ADD COLUMN stripe_sub_id TEXT")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_invite_tokens_stripe_sub_id ON invite_tokens(stripe_sub_id)")
         # subscriptions migrations
         sub_cols = {row["name"] for row in c.execute("PRAGMA table_info(subscriptions)")}
         if "stripe_sub_id" not in sub_cols:
@@ -419,7 +436,9 @@ def get_session(token: str) -> Optional[sqlite3.Row]:
         return None
     with conn() as c:
         row = c.execute(
-            "SELECT s.*, u.username, u.email, u.is_admin, u.suspended FROM sessions s "
+            "SELECT s.*, u.username, u.email, u.is_admin, u.suspended, "
+            "u.has_full_access "
+            "FROM sessions s "
             "JOIN users u ON u.id = s.user_id "
             "WHERE s.token = ? AND s.expires_at > ?",
             (token, int(time.time())),
@@ -457,9 +476,10 @@ def list_subscriptions(user_id: int) -> list[sqlite3.Row]:
 def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
     now = int(time.time())
     with conn() as c:
-        # Single query: admin bypass OR active subscription.
+        # Single query: admin OR full-access viewer OR active subscription.
         row = c.execute(
-            "SELECT 1 FROM users WHERE id = ? AND is_admin > 0 "
+            "SELECT 1 FROM users "
+            "WHERE id = ? AND (is_admin > 0 OR has_full_access > 0) "
             "UNION ALL "
             "SELECT 1 FROM subscriptions "
             "WHERE user_id = ? AND dashboard_key = ? AND status = 'active' "
@@ -524,13 +544,36 @@ def generate_invite_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-def create_invite_token(note: str = "", target_email: str = "") -> str:
-    """Create a new unclaimed invite token. Returns the token string."""
+def create_invite_token(
+    note: str = "",
+    target_email: str = "",
+    grants_full_access: bool = False,
+    stripe_sub_id: str = "",
+) -> str:
+    """Create a new unclaimed invite token. Returns the token string.
+
+    If grants_full_access=True, claiming this token marks the new user
+    as has_full_access=1 (read-only access to every dashboard, no admin
+    powers). Use for investor / partner / press passes.
+
+    If stripe_sub_id is non-empty, the token is linked to that Stripe
+    subscription so the gateway can revoke access when the subscription
+    cancels.
+    """
     token = generate_invite_token()
     with conn() as c:
         c.execute(
-            "INSERT INTO invite_tokens (token, status, note, target_email, created_at) VALUES (?, 'unclaimed', ?, ?, ?)",
-            (token, note, target_email.strip() or None, int(time.time())),
+            "INSERT INTO invite_tokens "
+            "(token, status, note, target_email, created_at, grants_full_access, stripe_sub_id) "
+            "VALUES (?, 'unclaimed', ?, ?, ?, ?, ?)",
+            (
+                token,
+                note,
+                target_email.strip() or None,
+                int(time.time()),
+                1 if grants_full_access else 0,
+                stripe_sub_id.strip() or None,
+            ),
         )
     return token
 
@@ -541,8 +584,29 @@ def get_invite_token(token: str) -> Optional[sqlite3.Row]:
         return c.execute("SELECT * FROM invite_tokens WHERE token = ?", (token,)).fetchone()
 
 
+def find_invite_token_by_stripe_sub(stripe_sub_id: str) -> Optional[sqlite3.Row]:
+    """Look up the invite token tied to a Stripe subscription.
+
+    Used by the webhook handler when a subscription cancels — we need to
+    find the token (and the user it claimed for) to revoke their pass.
+    """
+    if not stripe_sub_id:
+        return None
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM invite_tokens WHERE stripe_sub_id = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (stripe_sub_id,),
+        ).fetchone()
+
+
 def claim_invite_token(token_str: str, user_id: int, email: str) -> bool:
-    """Atomically claim a token. Returns True if claimed, False if already claimed (race condition)."""
+    """Atomically claim a token. Returns True if claimed, False if already claimed (race condition).
+
+    If the token's grants_full_access=1, also sets users.has_full_access=1
+    so the user immediately sees every dashboard as accessible (without
+    admin powers).
+    """
     token_str = token_str.strip()
     with conn() as c:
         cur = c.execute(
@@ -554,6 +618,14 @@ def claim_invite_token(token_str: str, user_id: int, email: str) -> bool:
             return False
         c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
                    (token_str, user_id))
+        # If this token grants full-access, flip the user's has_full_access flag.
+        c.execute(
+            "UPDATE users SET has_full_access = 1 "
+            "WHERE id = ? AND EXISTS ("
+            "    SELECT 1 FROM invite_tokens WHERE token = ? AND grants_full_access = 1"
+            ")",
+            (user_id, token_str),
+        )
         return True
 
 
@@ -579,6 +651,20 @@ def set_user_role(user_id: int, level: int) -> None:
     """Set user role: 0=user, 1=admin, 2=super_admin."""
     with conn() as c:
         c.execute("UPDATE users SET is_admin = ? WHERE id = ?", (level, user_id))
+
+
+def set_user_has_full_access(user_id: int, has_full_access: bool) -> None:
+    """Toggle the viewer-pass flag on a user.
+
+    has_full_access=True grants read access to every dashboard without
+    admin privileges. False removes that grant; the user falls back to
+    their actual subscription set.
+    """
+    with conn() as c:
+        c.execute(
+            "UPDATE users SET has_full_access = ? WHERE id = ?",
+            (1 if has_full_access else 0, user_id),
+        )
 
 
 def set_user_admin(user_id: int, is_admin: bool) -> None:
@@ -1168,3 +1254,18 @@ def rebuild_positions_for_user(user_id: int) -> int:
         )
         count += 1
     return count
+
+
+# ── Stripe webhook event purge ─────────────────────────────────────────────
+
+
+def purge_old_stripe_events(older_than_days: int = 90) -> int:
+    """Drop processed Stripe event rows older than the cutoff. Stripe retries
+    top out at ~3 days; 90 days is generous and keeps the table small."""
+    cutoff = int(time.time()) - (older_than_days * 86400)
+    with conn() as c:
+        cur = c.execute(
+            "DELETE FROM stripe_events WHERE processed_at < ?",
+            (cutoff,),
+        )
+        return cur.rowcount

@@ -1,0 +1,31 @@
+[Unit]
+Description=Narve Climate Change Dashboard (port 7052)
+After=network.target
+
+[Service]
+# Required env vars: (none — climate dashboard pulls public data and reads no secrets)
+# Note: Loads the shared gateway .env in case PORT is overridden there.
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/climate-dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+Environment=PORT=7052
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/climate-dashboard
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

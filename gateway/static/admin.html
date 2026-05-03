@@ -75,6 +75,10 @@
       <form class="generate-form" method="post" action="/admin/tokens/generate">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         <input type="text" name="note" placeholder="Note (optional) — e.g. For John, Stripe #123">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);white-space:nowrap;margin:0 8px">
+          <input type="checkbox" name="grants_full_access" value="1">
+          Viewer pass (all dashboards, no Stripe)
+        </label>
         <button type="submit" class="btn btn-primary" style="white-space:nowrap">+ Generate Token</button>
       </form>
 

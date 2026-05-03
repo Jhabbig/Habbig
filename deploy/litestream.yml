@@ -1,0 +1,35 @@
+# Litestream configuration — streams the gateway SQLite database to S3.
+#
+# Litestream replicates SQLite WAL frames continuously, so the off-site copy
+# is at most a few seconds behind production.  Restore is `litestream restore`
+# from the same config; recovery is point-in-time within the retention window.
+#
+# Required env vars (set in /etc/default/litestream or the systemd unit):
+#   LITESTREAM_ACCESS_KEY_ID
+#   LITESTREAM_SECRET_ACCESS_KEY
+#   LITESTREAM_BUCKET                — S3-compatible bucket name
+#   LITESTREAM_ENDPOINT (optional)   — e.g. https://s3.us-east-005.backblazeb2.com
+#   LITESTREAM_REGION (optional)     — defaults to us-east-1
+#
+# B2 is the cheapest reasonable target (~$0.005/GB-mo storage, no egress for
+# restore from your own infra).  Plain S3 also works.
+
+access-key-id:     ${LITESTREAM_ACCESS_KEY_ID}
+secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+
+dbs:
+  - path: /home/julianhabbig/Polymarket/gateway/auth.db
+    replicas:
+      - type: s3
+        bucket:    ${LITESTREAM_BUCKET}
+        path:      narve/auth.db
+        endpoint:  ${LITESTREAM_ENDPOINT}
+        region:    ${LITESTREAM_REGION}
+
+        # Snapshot every hour, retain for 30 days.
+        snapshot-interval:  1h
+        retention:          720h
+        retention-check-interval: 24h
+
+        # Sync the WAL every second — bounded data loss if the box dies.
+        sync-interval: 1s

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -24,6 +25,19 @@ import httpx
 from cache import cache, DEFAULT_TTLS
 
 log = logging.getLogger("gateway.poller")
+
+# Mirror the gateway server's host-template env var so the poller reaches
+# dashboards the same way the proxy does. Default is 127.0.0.1 (systemd-
+# on-one-host); in docker-compose set DASHBOARD_HOST_TEMPLATE="{key}" to
+# resolve dashboards by their compose service name.
+_DASHBOARD_HOST_TEMPLATE: str = os.environ.get("DASHBOARD_HOST_TEMPLATE", "127.0.0.1")
+
+
+def _dashboard_host(key: str) -> str:
+    try:
+        return _DASHBOARD_HOST_TEMPLATE.format(key=key)
+    except (KeyError, IndexError):
+        return _DASHBOARD_HOST_TEMPLATE
 
 # ── Per-dashboard poll config ────────────────────────────────────────────────
 # endpoint: the path to poll on the local backend
@@ -52,6 +66,9 @@ POLL_TARGETS: dict[str, list[dict]] = {
     "top_traders": [
         {"endpoint": "/api/leaderboard?window=1d&limit=20", "interval": 12},
         {"endpoint": "/api/top-traders", "interval": 12},
+    ],
+    "stock": [
+        {"endpoint": "/api/state", "interval": 30},
     ],
 }
 
@@ -108,7 +125,7 @@ class Poller:
 
     async def _poll_loop(self, dashboard: str, port: int, endpoint: str, interval: int) -> None:
         """Repeatedly fetch one endpoint and cache the result."""
-        url = f"http://127.0.0.1:{port}{endpoint}"
+        url = f"http://{_dashboard_host(dashboard)}:{port}{endpoint}"
         ttl = DEFAULT_TTLS.get(dashboard, 30)
         # Cache TTL should be longer than poll interval so there's always
         # a warm entry between polls.

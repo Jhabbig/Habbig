@@ -1,0 +1,24 @@
+[Unit]
+Description=Litestream — continuous SQLite replication for narve auth.db
+Documentation=https://litestream.io
+After=network-online.target narve-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=julianhabbig
+ExecStart=/usr/local/bin/litestream replicate -config /etc/litestream.yml
+Restart=always
+RestartSec=10
+
+# Credentials live in /etc/default/litestream (chmod 600).
+EnvironmentFile=/etc/default/litestream
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadOnlyPaths=/home/julianhabbig/Polymarket/gateway
+ReadWritePaths=/var/lib/litestream
+
+[Install]
+WantedBy=multi-user.target

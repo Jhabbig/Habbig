@@ -56,6 +56,7 @@ import polymarket_client as poly_client
 import kalshi_client as kalshi_client
 import trading
 from cache import cache
+from metrics import metrics
 from sse import event_stream, active_connection_count
 from poller import Poller
 from mark_to_market import MarkToMarketWorker
@@ -74,9 +75,44 @@ DOMAIN: str = CONFIG["domain"]
 # when port 7000 is held by another process (e.g. macOS Control Center).
 GATEWAY_PORT: int = int(os.environ.get("GATEWAY_PORT") or CONFIG["gateway_port"])
 DASHBOARDS: dict = CONFIG["dashboards"]
+VIEWER_PASS_CFG: dict = CONFIG.get("viewer_pass", {}) or {}
+
+# Where to reach each dashboard. Default is 127.0.0.1 (works for systemd
+# deployments where everything runs on one host's loopback). In docker-compose
+# bridge networking, set DASHBOARD_HOST_TEMPLATE="{key}" so the gateway resolves
+# each dashboard via its compose service name (crypto, sports, …).
+# The template is .format()-substituted with `key=<dashboard_key>`.
+DASHBOARD_HOST_TEMPLATE: str = os.environ.get("DASHBOARD_HOST_TEMPLATE", "127.0.0.1")
+
+
+def dashboard_host(key: str) -> str:
+    """Resolve the upstream host for a dashboard by key."""
+    try:
+        return DASHBOARD_HOST_TEMPLATE.format(key=key)
+    except (KeyError, IndexError):
+        return DASHBOARD_HOST_TEMPLATE
+
 
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
+
+
+def _currency_symbol(cfg: dict) -> str:
+    """Return the display currency symbol for a dashboard.
+
+    Looks up `cfg["currency"]` (e.g. "GBP", "USD") and returns the matching
+    symbol. Defaults to "$" so existing dashboards keep their old display.
+    """
+    code = (cfg.get("currency") or "USD").upper()
+    return {"GBP": "£", "EUR": "€", "USD": "$"}.get(code, "$")
+
+
+def _price_str(cfg: dict, kind: str = "monthly", *, decimals: int = 2) -> str:
+    """Format a dashboard price like '£20.00' or '$19.99'."""
+    cents_field = "annual_cents" if kind == "annual" else "monthly_cents"
+    suffix = "/yr" if kind == "annual" else "/mo"
+    cents = cfg.get(cents_field, 0)
+    return f"{_currency_symbol(cfg)}{cents/100:.{decimals}f}{suffix}"
 
 # ── Stripe config ──────────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -231,6 +267,27 @@ DASHBOARD_PREVIEWS = {
             "Data refreshed every 5 minutes",
         ],
     },
+    "stock": {
+        "tagline": "Polymarket stock-market signals at a glance. ML predictions, sentiment overlays, and execution-ready edges across the major equity prediction markets.",
+        "features": [
+            {"icon": "\U0001f4c9", "title": "Edge Signals", "desc": "Polymarket stock prices vs. ML fair value with shaded confidence bands."},
+            {"icon": "\U0001f9e0", "title": "ML Predictor", "desc": "Ensemble model trained on price, volume, and sentiment features."},
+            {"icon": "\U0001f4f0", "title": "Sentiment Overlay", "desc": "News and social sentiment aligned with each ticker for context."},
+            {"icon": "⚡", "title": "Quick Trade", "desc": "Embeddable trade widget for one-click size + side from any market card."},
+            {"icon": "\U0001f4ca", "title": "Smart Bet Sizing", "desc": "Translate model edge into a position-sized recommendation per market."},
+            {"icon": "\U0001f4be", "title": "Trade Journal", "desc": "Auto-logged predictions and outcomes for paper-trade backtesting."},
+        ],
+        "includes": [
+            "Polymarket stock-market coverage",
+            "Daily-refreshed ML predictions",
+            "News + social sentiment scoring",
+            "Bet sizing recommendations",
+            "Embedded quick-trade UI",
+            "Paper-trade journal (CSV export)",
+            "Historical accuracy charts",
+            "Updated multiple times per hour",
+        ],
+    },
 }
 
 # Production flag: set PRODUCTION=1 on the deployed server. Disables the
@@ -270,10 +327,26 @@ def cookie_domain_for(request: Request) -> Optional[str]:
         return f".{base}"
     return None
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] gateway: %(message)s",
-)
+import contextvars
+
+# Per-request context — propagated through async tasks via contextvars.
+_request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+class _RequestIdFilter(logging.Filter):
+    """Injects the current request_id (or '-') into every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = _request_id_ctx.get()
+        return True
+
+
+_root_handler = logging.StreamHandler()
+_root_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] gateway[%(request_id)s]: %(message)s"
+))
+_root_handler.addFilter(_RequestIdFilter())
+logging.basicConfig(level=logging.INFO, handlers=[_root_handler], force=True)
 log = logging.getLogger("gateway")
 
 # Simple but defensible email regex (no attempt to RFC 5322; just common cases).
@@ -313,8 +386,11 @@ async def _health_check_loop():
         while True:
             for key, cfg in DASHBOARDS.items():
                 port = cfg["target"]
+                host = dashboard_host(key)
                 try:
-                    resp = await probe_client.get(f"http://127.0.0.1:{port}/")
+                    # Probe /healthz: it's the one path every dashboard guarantees
+                    # to return 200 without holding the gateway SSO secret.
+                    resp = await probe_client.get(f"http://{host}:{port}/healthz")
                     _upstream_health[key] = resp.status_code < 500
                 except Exception:
                     _upstream_health[key] = False
@@ -335,8 +411,12 @@ async def _periodic_cleanup():
         try:
             sessions_purged = db.purge_expired_sessions()
             resets_purged = db.purge_expired_resets()
-            if sessions_purged or resets_purged:
-                log.info("Cleanup: purged %d expired sessions, %d expired resets", sessions_purged, resets_purged)
+            stripe_purged = db.purge_old_stripe_events()
+            if sessions_purged or resets_purged or stripe_purged:
+                log.info(
+                    "Cleanup: purged %d expired sessions, %d expired resets, %d old Stripe events",
+                    sessions_purged, resets_purged, stripe_purged,
+                )
         except Exception as e:
             log.warning("Cleanup error: %s", e)
 
@@ -473,6 +553,73 @@ app.add_middleware(SecurityHeadersMiddleware)
 # GZip compression — compresses HTML/JSON/CSS responses > 500 bytes.
 from starlette.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+# ── Request ID + access log middleware ────────────────────────────────────────
+
+
+class RequestIdMiddleware:
+    """Generates a request ID for each request, propagates it via contextvar
+    so log records pick it up, and adds X-Request-ID to the response.
+
+    Honours an existing X-Request-ID header from Cloudflare so a single ID
+    flows through edge -> gateway -> dashboard.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        # Reuse upstream X-Request-ID if present, else generate one.
+        rid = "-"
+        for name, value in scope.get("headers", []):
+            if name == b"x-request-id":
+                rid = value.decode("ascii", errors="replace")[:64]
+                break
+        if rid == "-":
+            rid = secrets.token_hex(8)
+
+        token = _request_id_ctx.set(rid)
+
+        async def send_with_id(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"x-request-id", rid.encode("ascii")))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        try:
+            start = time.time()
+            method = scope.get("method", "?")
+            path = scope.get("path", "?")
+            status_holder = {"code": 0}
+
+            async def send_capture(message):
+                if message["type"] == "http.response.start":
+                    status_holder["code"] = message.get("status", 0)
+                await send_with_id(message)
+
+            try:
+                await self.app(scope, receive, send_capture)
+            finally:
+                if scope["type"] == "http":
+                    elapsed = time.time() - start
+                    # Don't log /metrics scrapes — they'd flood the log.
+                    if path != "/metrics":
+                        log.info("%s %s %d — %.1fms", method, path, status_holder["code"], elapsed * 1000)
+        finally:
+            _request_id_ctx.reset(token)
+
+
+app.add_middleware(RequestIdMiddleware)
+
+
+def current_request_id() -> str:
+    return _request_id_ctx.get()
 
 
 # ── Rate limiting ────────────────────────────────────────────────────────────
@@ -756,31 +903,64 @@ def ensure_dev_user() -> int:
     return user_id
 
 
-# ── Session cache ──────────────────────────────────────────────────────────────
-# Avoids a DB round-trip on every proxied request.  Entries expire after 60 s
-# so permission changes (suspend, role update) propagate within a minute.
+# ── Session + subscription cache (two-tier: in-process LRU + Redis) ───────────
+#
+# Reading a session/sub now follows this order:
+#   1. Process-local LRU dict (fastest; always populated)
+#   2. Redis (shared across workers and survives restart)
+#   3. SQLite (source of truth)
+#
+# A miss at tier N populates all higher tiers.  Invalidation deletes from both
+# tiers explicitly so we never serve stale data after a real change.
+#
+# Multi-worker mode: each uvicorn worker has its own process-local LRU, but
+# they all share the same Redis namespace, so a logout on worker A propagates
+# to worker B within seconds (process-local entries expire on TTL).
 
 _SESSION_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 _SESSION_CACHE_TTL = 60  # seconds
 _SESSION_CACHE_MAX = 500
+_SESSION_NS = "session"
+
+_SUB_CACHE: OrderedDict[tuple[int, str], tuple[float, bool]] = OrderedDict()
+_SUB_CACHE_TTL = 120  # seconds
+_SUB_CACHE_MAX = 1000
+_SUB_NS = "sub"
 
 
 def _get_cached_session(token: str) -> Optional[dict]:
     """Look up a session token, returning a cached result when possible."""
     now = time.time()
+
+    # Tier 1: process-local LRU
     entry = _SESSION_CACHE.get(token)
     if entry and now - entry[0] < _SESSION_CACHE_TTL:
         _SESSION_CACHE.move_to_end(token)
         return entry[1]
+
+    # Tier 2: Redis
+    cached = cache.kv_get_json(_SESSION_NS, token)
+    if cached is not None:
+        if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX:
+            _SESSION_CACHE.popitem(last=False)
+        _SESSION_CACHE[token] = (now, cached)
+        return cached
+
+    # Tier 3: DB
     session = db.get_session(token)
     if not session:
         _SESSION_CACHE.pop(token, None)
         return None
-    # Check if user is suspended
     if session["suspended"]:
         _SESSION_CACHE.pop(token, None)
         return None
     admin_level = session["is_admin"] or 0
+    # has_full_access — viewer pass: true read access to every dashboard
+    # without admin privileges. Admins implicitly have it too.
+    try:
+        has_full_access = bool(session["has_full_access"])
+    except (KeyError, IndexError):
+        has_full_access = False
     result = {
         "user_id": session["user_id"],
         "username": session["username"],
@@ -788,45 +968,54 @@ def _get_cached_session(token: str) -> Optional[dict]:
         "is_admin": bool(admin_level),
         "is_super_admin": admin_level >= 2,
         "admin_level": admin_level,
+        "has_full_access": has_full_access or bool(admin_level),
     }
-    # Evict LRU entry if cache is full
     if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX:
         _SESSION_CACHE.popitem(last=False)
     _SESSION_CACHE[token] = (now, result)
+    cache.kv_set_json(_SESSION_NS, token, result, _SESSION_CACHE_TTL)
     return result
 
 
 def invalidate_session_cache(token: str) -> None:
-    """Remove a token from the session cache (call on logout)."""
+    """Remove a token from both cache tiers (call on logout)."""
     _SESSION_CACHE.pop(token, None)
+    cache.kv_delete(_SESSION_NS, token)
 
 
 def flush_session_cache() -> None:
-    """Clear the entire session cache (call on suspend/password reset)."""
+    """Clear all session cache entries (call on suspend/password reset)."""
     _SESSION_CACHE.clear()
-
-
-# ── Subscription cache ────────────────────────────────────────────────────────
-# Caches has_active_subscription results per (user_id, dashboard_key).
-# TTL is 120 s — subscriptions change far less often than sessions.
-
-_SUB_CACHE: OrderedDict[tuple[int, str], tuple[float, bool]] = OrderedDict()
-_SUB_CACHE_TTL = 120  # seconds
-_SUB_CACHE_MAX = 1000
+    cache.kv_delete_pattern(_SESSION_NS)
 
 
 def cached_has_subscription(user_id: int, dashboard_key: str) -> bool:
-    """Cached wrapper around db.has_active_subscription."""
+    """Two-tier cache around db.has_active_subscription."""
     now = time.time()
+    redis_key = f"{user_id}:{dashboard_key}"
     cache_key = (user_id, dashboard_key)
+
+    # Tier 1: process-local LRU
     entry = _SUB_CACHE.get(cache_key)
     if entry and now - entry[0] < _SUB_CACHE_TTL:
         _SUB_CACHE.move_to_end(cache_key)
         return entry[1]
+
+    # Tier 2: Redis
+    cached = cache.kv_get_json(_SUB_NS, redis_key)
+    if cached is not None and "v" in cached:
+        result = bool(cached["v"])
+        if len(_SUB_CACHE) >= _SUB_CACHE_MAX:
+            _SUB_CACHE.popitem(last=False)
+        _SUB_CACHE[cache_key] = (now, result)
+        return result
+
+    # Tier 3: DB
     result = db.has_active_subscription(user_id, dashboard_key)
     if len(_SUB_CACHE) >= _SUB_CACHE_MAX:
         _SUB_CACHE.popitem(last=False)
     _SUB_CACHE[cache_key] = (now, result)
+    cache.kv_set_json(_SUB_NS, redis_key, {"v": result}, _SUB_CACHE_TTL)
     return result
 
 
@@ -836,15 +1025,17 @@ def cached_active_dashboard_keys(user_id: int) -> list[str]:
 
 
 def invalidate_sub_cache_for_user(user_id: int) -> None:
-    """Remove all subscription cache entries for a user."""
+    """Remove all subscription cache entries for a user (both tiers)."""
     stale = [k for k in _SUB_CACHE if k[0] == user_id]
     for k in stale:
         del _SUB_CACHE[k]
+    cache.kv_delete_pattern(_SUB_NS, f"{user_id}:*")
 
 
 def flush_sub_cache() -> None:
-    """Clear the entire subscription cache."""
+    """Clear all subscription cache entries."""
     _SUB_CACHE.clear()
+    cache.kv_delete_pattern(_SUB_NS)
 
 
 def current_user(request: Request) -> Optional[dict]:
@@ -984,6 +1175,39 @@ def render_page(name: str, request: Optional[Request] = None, **context) -> HTML
     return resp
 
 
+# ── Health + metrics endpoints ────────────────────────────────────────────────
+
+
+@app.get("/healthz")
+async def healthz():
+    """Cheap liveness probe: returns 200 if the process is up. No DB hits."""
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/metrics")
+async def metrics_endpoint(request: Request):
+    """Prometheus scrape endpoint.
+
+    Restricted to localhost / private networks in production so the metrics
+    aren't world-readable. Cloudflare Tunnel always presents a non-loopback
+    source IP, so external scrapes go through the localhost-bound monitoring
+    process on the same host.
+    """
+    if IS_PRODUCTION:
+        client_ip = _get_client_ip(request)
+        if not (client_ip.startswith("127.") or client_ip.startswith("10.")
+                or client_ip.startswith("192.168.") or client_ip == "::1"):
+            return Response("forbidden", status_code=403)
+
+    # Refresh dynamic gauges before rendering.
+    for k in DASHBOARDS:
+        metrics.set_upstream_health(k, is_upstream_healthy(k))
+    metrics.set_gauge("gateway_session_cache_size", float(len(_SESSION_CACHE)))
+    metrics.set_gauge("gateway_sub_cache_size", float(len(_SUB_CACHE)))
+
+    return Response(metrics.render(), media_type="text/plain; version=0.0.4")
+
+
 # ── Apex routes (login / signup / my dashboards / billing) ────────────────────
 
 
@@ -1011,7 +1235,7 @@ def _render_landing() -> HTMLResponse:
           <div class="landing-dash-dot"></div>
           <div class="landing-dash-title">{html.escape(cfg['display_name'])}</div>
           <div class="landing-dash-desc">{html.escape(cfg['description'])}</div>
-          <div class="landing-dash-price">${cfg['monthly_cents']/100:.0f}/mo</div>
+          <div class="landing-dash-price">{_price_str(cfg, "monthly", decimals=0)}</div>
         </div>
         """)
     return render_page(
@@ -1311,20 +1535,23 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
+    # has_full_access also covers admins (set by _get_cached_session) — used
+    # here for "can the user open this dashboard" gating.
+    has_full_access_user = bool(user.get("has_full_access"))
     local_mode = is_local_host(request)
 
     # ── Build subscription summary ──────────────────────────────────
     active_subs = []
     total_monthly = 0
     for key, cfg in DASHBOARDS.items():
-        if _is_sub_active(subs.get(key), is_admin_user):
+        if _is_sub_active(subs.get(key), has_full_access_user):
             sub_record = subs.get(key)
             plan = sub_record["plan"] if sub_record else ""
             if "annual" in plan:
-                price_label = f"${cfg['annual_cents']/100:.2f}/yr"
+                price_label = _price_str(cfg, "annual")
                 total_monthly += cfg["annual_cents"] / 12
             else:
-                price_label = f"${cfg['monthly_cents']/100:.2f}/mo"
+                price_label = _price_str(cfg, "monthly")
                 total_monthly += cfg["monthly_cents"]
             active_subs.append({"name": cfg["display_name"], "accent": cfg["accent"], "price": price_label})
 
@@ -1361,7 +1588,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
     req_scheme, req_base, req_port = _request_base_domain(request)
     cards_html = []
     for key, cfg in DASHBOARDS.items():
-        has_sub = _is_sub_active(subs.get(key), is_admin_user)
+        has_sub = _is_sub_active(subs.get(key), has_full_access_user)
         active_badge = (
             '<span class="badge badge-active">Active</span>' if has_sub
             else '<span class="badge badge-locked">Locked</span>'
@@ -1398,7 +1625,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
           <div class="dash-card-title">{cfg['display_name']}</div>
           <div class="dash-card-desc">{cfg['description']}</div>
           {highlights_html}
-          <div class="dash-card-price">${cfg['monthly_cents']/100:.2f}/mo · ${cfg['annual_cents']/100:.2f}/yr</div>
+          <div class="dash-card-price">{_price_str(cfg, "monthly")} · {_price_str(cfg, "annual")}</div>
           <div class="dash-card-foot">{cta}</div>
         </div>
         """)
@@ -1419,8 +1646,9 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
         )
         includes = preview.get("includes", [])[:4]
         inc_html = "".join(f'<li>{html.escape(item)}</li>' for item in includes)
-        price_mo = f"${cfg['monthly_cents']/100:.2f}"
-        price_yr = f"${cfg['annual_cents']/100:.2f}"
+        sym = _currency_symbol(cfg)
+        price_mo = f"{sym}{cfg['monthly_cents']/100:.2f}"
+        price_yr = f"{sym}{cfg['annual_cents']/100:.2f}"
 
         tour_steps_html.append(
             f'<div class="tour-step" data-step="{i + 2}">'
@@ -1472,13 +1700,17 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     is_admin_user = bool(user.get("is_admin"))
+    # has_full_access also covers admins (set by _get_cached_session). Used
+    # for "is this user actually entitled to access" while is_admin_user
+    # remains the strict admin-UI gate.
+    has_full_access_user = bool(user.get("has_full_access"))
     now = int(time.time())
     csrf_token = _get_csrf_token(request)
     csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
-        is_active = _is_sub_active(s, is_admin_user)
+        is_active = _is_sub_active(s, has_full_access_user)
         if is_admin_user and not s:
             status_label = '<span style="color:var(--green)">Active (admin)</span>'
         elif is_active:
@@ -1489,11 +1721,12 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
             status_label = '<span style="color:var(--red)">Cancelled</span>'
         else:
             status_label = '<span style="color:var(--text-muted)">Not subscribed</span>'
+        sym = _currency_symbol(cfg)
         monthly_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
+            f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly {sym}{cfg["monthly_cents"]/100:.2f}</button>'
         )
         annual_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual ${cfg["annual_cents"]/100:.2f}</button>'
+            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual {sym}{cfg["annual_cents"]/100:.2f}</button>'
         )
         cancel_btn = (
             f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>'
@@ -1691,6 +1924,151 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
     return RedirectResponse(session.url, status_code=303)
 
 
+# ── Viewer-pass Stripe checkout (anonymous: no login required) ────────────
+#
+# Flow:
+#   1. Visitor hits /checkout/viewer-pass?interval=monthly  (no account needed)
+#   2. Stripe Checkout collects email + payment
+#   3. On success, Stripe redirects to /viewer-pass/check-email
+#   4. Webhook (checkout.session.completed, type="viewer_pass") fires:
+#        - mints a viewer-pass invite token linked to the Stripe sub_id
+#        - emails the token + /gate?token=… link to the customer
+#   5. Customer clicks link, lands on /gate, signs up — has_full_access flips
+#      to 1 in the same transaction. They never see Stripe again.
+#   6. If the subscription cancels, the webhook revokes has_full_access via
+#      the stripe_sub_id stored on the token row.
+
+@app.get("/checkout/viewer-pass")
+async def checkout_viewer_pass(request: Request, interval: str = "monthly"):
+    """Anonymous Stripe Checkout for the all-dashboards viewer pass."""
+    if interval not in ("monthly", "annual"):
+        interval = "monthly"
+    cfg = VIEWER_PASS_CFG
+    if not cfg:
+        log.error("Viewer pass requested but viewer_pass config missing")
+        return RedirectResponse("/?error=viewer_pass_unavailable", status_code=302)
+
+    price_key = "stripe_price_monthly" if interval == "monthly" else "stripe_price_annual"
+    stripe_price_id = cfg.get(price_key)
+    if not stripe_price_id or stripe_price_id.startswith("TODO"):
+        log.error("Viewer pass %s Stripe price ID not configured (got %r)", interval, stripe_price_id)
+        return RedirectResponse("/?error=viewer_pass_unavailable", status_code=302)
+    if not STRIPE_SECRET_KEY:
+        log.error("Viewer pass checkout requested but STRIPE_SECRET_KEY missing")
+        return RedirectResponse("/?error=viewer_pass_unavailable", status_code=302)
+
+    base = _stripe_base_url(request)
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            line_items=[{"price": stripe_price_id, "quantity": 1}],
+            # No `customer=` — anonymous purchase. Stripe collects email itself.
+            customer_creation="always",
+            metadata={
+                "type": "viewer_pass",
+                "interval": interval,
+            },
+            subscription_data={
+                # Mirror metadata onto the subscription so cancellation events
+                # carry the type marker too.
+                "metadata": {
+                    "type": "viewer_pass",
+                    "interval": interval,
+                },
+            },
+            success_url=base + "/viewer-pass/check-email?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=base + "/?viewer_pass_cancelled=1",
+        )
+    except Exception as exc:
+        log.error("Stripe viewer-pass checkout creation failed: %s", exc)
+        return RedirectResponse("/?error=viewer_pass_unavailable", status_code=302)
+    return RedirectResponse(session.url, status_code=303)
+
+
+@app.get("/viewer-pass/check-email", response_class=HTMLResponse)
+async def viewer_pass_check_email(request: Request, session_id: str = ""):
+    """Confirmation page shown after Stripe checkout succeeds.
+
+    The token email is sent asynchronously by the webhook. This page just
+    tells the customer to expect the email. It deliberately doesn't try to
+    look up the Stripe session — the webhook is the source of truth.
+    """
+    body = """
+    <!DOCTYPE html>
+    <html><head>
+      <meta charset="utf-8">
+      <title>Check your email — Full Access Pass</title>
+      <link rel="stylesheet" href="/static/narve-theme.css">
+      <link rel="stylesheet" href="/static/gateway.css">
+    </head><body>
+      <main style="max-width: 560px; margin: 80px auto; padding: 0 20px; text-align: center">
+        <div style="font-size: 56px; margin-bottom: 16px">📧</div>
+        <h1 style="margin-bottom: 12px">Payment received — check your email</h1>
+        <p style="color: var(--text-muted); line-height: 1.6">
+          Thanks for subscribing to the Full Access Pass.
+          We've emailed you a one-time invite token. Click the link in the
+          email (or paste the token at <a href="/gate">narve.ai/gate</a>) to
+          set up your account. Once you do, every dashboard unlocks
+          automatically — no Stripe, no logging in to billing, ever.
+        </p>
+        <p style="color: var(--text-muted); margin-top: 32px; font-size: 13px">
+          Email didn't arrive after a few minutes? Check spam, or
+          <a href="/support">contact support</a>.
+        </p>
+      </main>
+    </body></html>
+    """
+    return HTMLResponse(body)
+
+
+def _send_viewer_pass_email(to_email: str, token: str, request_origin: str) -> bool:
+    """Send the viewer-pass token to the customer over SMTP.
+
+    Returns True on success. Failures are logged but never raise — the
+    customer can retry by emailing support; the token is already in the DB.
+    """
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    if not smtp_host or not smtp_user:
+        log.error("Viewer-pass email NOT sent (SMTP not configured). Token for %s: %s", to_email, token)
+        return False
+    try:
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    except (ValueError, TypeError):
+        smtp_port = 587
+
+    gate_url = f"{request_origin}/gate?token={token}"
+    domain = DOMAIN
+    body_text = (
+        f"Welcome to {domain} — Full Access Pass\n\n"
+        f"Your one-time setup link:\n  {gate_url}\n\n"
+        f"Or paste this token at {request_origin}/gate :\n  {token}\n\n"
+        f"After signup, every dashboard at *.{domain} unlocks automatically\n"
+        f"with your normal session cookie. You will never need to handle\n"
+        f"Stripe or billing again.\n\n"
+        f"Cancel any time from your Stripe receipt — access ends when the\n"
+        f"subscription does.\n"
+    )
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        msg = MIMEText(body_text)
+        msg["Subject"] = f"Your {domain} access link"
+        msg["From"] = smtp_user
+        msg["To"] = to_email
+        with smtplib.SMTP(smtp_host, smtp_port) as srv:
+            if smtp_pass:
+                srv.starttls()
+                srv.login(smtp_user, smtp_pass)
+            srv.sendmail(smtp_user, [to_email], msg.as_string())
+        log.info("Viewer-pass email sent to %s", to_email)
+        return True
+    except Exception as exc:
+        log.error("Viewer-pass email send failed for %s: %s", to_email, exc)
+        return False
+
+
 # ── Stripe webhook & success ──────────────────────────────────────────────
 
 
@@ -1732,15 +2110,23 @@ async def stripe_webhook(request: Request):
     # ── checkout.session.completed — subscription paid ─────────────────────
     if event_type == "checkout.session.completed":
         meta = data_obj.get("metadata", {}) if isinstance(data_obj, dict) else (data_obj.metadata or {})
-        raw_user_id = meta.get("user_id")
-        if not raw_user_id:
-            log.warning("Stripe webhook: checkout.session.completed without user_id in metadata")
-            return JSONResponse({"status": "ignored"})
-        try:
-            user_id = int(raw_user_id)
-        except (ValueError, TypeError):
-            log.warning("Invalid user_id in Stripe metadata: %s", raw_user_id)
-            return JSONResponse({"ok": True})  # ack webhook, don't retry
+        # Viewer-pass purchases are ANONYMOUS (no user_id in metadata) — skip
+        # the user_id gate and let the dedicated branch below handle them.
+        if meta.get("type") == "viewer_pass":
+            raw_user_id = None
+        else:
+            raw_user_id = meta.get("user_id")
+            if not raw_user_id:
+                log.warning("Stripe webhook: checkout.session.completed without user_id in metadata")
+                return JSONResponse({"status": "ignored"})
+        if raw_user_id is not None:
+            try:
+                user_id = int(raw_user_id)
+            except (ValueError, TypeError):
+                log.warning("Invalid user_id in Stripe metadata: %s", raw_user_id)
+                return JSONResponse({"ok": True})  # ack webhook, don't retry
+        else:
+            user_id = None
 
         stripe_sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
 
@@ -1778,10 +2164,73 @@ async def stripe_webhook(request: Request):
                 )
             log.info("Stripe: activated bundle %s (%s) for user %s", plan_type, interval, user_id)
 
+    # ── checkout.session.completed (anonymous viewer-pass purchase) ────────
+    # No user_id in metadata: this branch handles the "buy a pass with no
+    # account, get an invite link by email" flow. Mints a viewer-pass token
+    # linked to the Stripe sub_id and emails it.
+    if event_type == "checkout.session.completed":
+        meta = data_obj.get("metadata", {}) if isinstance(data_obj, dict) else (data_obj.metadata or {})
+        if meta.get("type") == "viewer_pass":
+            stripe_sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
+            customer_details = (
+                data_obj.get("customer_details", {})
+                if isinstance(data_obj, dict)
+                else (getattr(data_obj, "customer_details", None) or {})
+            )
+            customer_email = (
+                (customer_details.get("email") if isinstance(customer_details, dict) else getattr(customer_details, "email", None))
+                or (data_obj.get("customer_email") if isinstance(data_obj, dict) else getattr(data_obj, "customer_email", None))
+                or ""
+            )
+            if not customer_email:
+                log.error("Viewer-pass checkout completed without customer email (sub=%s)", stripe_sub_id)
+                return JSONResponse({"status": "ok"})
+
+            # Idempotency: don't mint a second token if Stripe re-sends the event.
+            existing = db.find_invite_token_by_stripe_sub(stripe_sub_id) if stripe_sub_id else None
+            if existing:
+                log.info("Viewer-pass token already minted for sub %s — skipping", stripe_sub_id)
+                return JSONResponse({"status": "ok", "duplicate": True})
+
+            interval = meta.get("interval", "monthly")
+            note = f"Viewer pass ({interval}) — Stripe sub {stripe_sub_id} — {customer_email}"
+            new_token = db.create_invite_token(
+                note=note,
+                target_email=customer_email,
+                grants_full_access=True,
+                stripe_sub_id=stripe_sub_id or "",
+            )
+            log.info("Viewer-pass token minted for %s (sub=%s)", customer_email, stripe_sub_id)
+
+            # Email the token + setup link. SMTP failure is logged but doesn't
+            # fail the webhook — Stripe would retry and we'd re-enter the
+            # idempotency branch above.
+            scheme, base, port_suffix = _request_base_domain(request)
+            origin = f"{scheme}://{base}{port_suffix}"
+            _send_viewer_pass_email(customer_email, new_token, origin)
+
     # ── customer.subscription.deleted — subscription cancelled ─────────────
     elif event_type == "customer.subscription.deleted":
         stripe_sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+
+        # Branch 1: legacy per-dashboard / bundle subscription rows.
         db.cancel_subscription_by_stripe_id(stripe_sub_id)
+
+        # Branch 2: viewer-pass — find the linked invite token, revoke the
+        # claiming user's has_full_access, and mark the token revoked.
+        viewer_pass_token = db.find_invite_token_by_stripe_sub(stripe_sub_id)
+        if viewer_pass_token:
+            claimed_user_id = viewer_pass_token["claimed_by_user_id"]
+            if claimed_user_id:
+                db.set_user_has_full_access(claimed_user_id, False)
+                flush_session_cache()
+                log.info(
+                    "Stripe: revoked viewer pass for user %s (sub=%s, token id=%s)",
+                    claimed_user_id, stripe_sub_id, viewer_pass_token["id"],
+                )
+            # Mark the token revoked even if it was unclaimed — saves a customer
+            # claiming after they've already cancelled the underlying subscription.
+            db.revoke_invite_token(viewer_pass_token["id"])
         log.info("Stripe: cancelled subscription %s", stripe_sub_id)
 
     # ── invoice.payment_failed — payment issue ────────────────────────────
@@ -1821,8 +2270,9 @@ async def preview_page(request: Request, dashboard_key: str):
 
     # If the user already has an active subscription, redirect to the dashboard.
     is_admin_user = bool(user.get("is_admin"))
+    has_full_access_user = bool(user.get("has_full_access"))
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
-    if _is_sub_active(subs.get(dashboard_key), is_admin_user):
+    if _is_sub_active(subs.get(dashboard_key), has_full_access_user):
         return RedirectResponse("/dashboards", status_code=302)
 
     # Build feature cards HTML
@@ -1851,8 +2301,9 @@ async def preview_page(request: Request, dashboard_key: str):
             f'</li>'
         )
 
-    monthly_price = f"${cfg['monthly_cents'] / 100:.2f}"
-    annual_price = f"${cfg['annual_cents'] / 100:.2f}"
+    sym = _currency_symbol(cfg)
+    monthly_price = f"{sym}{cfg['monthly_cents'] / 100:.2f}"
+    annual_price = f"{sym}{cfg['annual_cents'] / 100:.2f}"
     # Calculate annual savings percentage vs paying monthly for 12 months
     monthly_total = cfg["monthly_cents"] * 12
     savings_pct = round((1 - cfg["annual_cents"] / monthly_total) * 100) if monthly_total > 0 else 0
@@ -2514,6 +2965,13 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             badge = '<span class="badge" style="background:var(--green-bg);color:var(--green)">Claimed</span>'
         else:
             badge = '<span class="badge" style="background:var(--red-bg);color:var(--red)">Revoked</span>'
+        # Viewer-pass tokens grant full dashboard access on claim — flag visually.
+        try:
+            grants_full = bool(t["grants_full_access"])
+        except (KeyError, IndexError):
+            grants_full = False
+        if grants_full:
+            badge += ' <span class="badge" style="background:rgba(124,92,255,0.15);color:#7c5cff" title="Claiming this token grants the user read access to every dashboard without Stripe">Viewer pass</span>'
         prefix = html.escape(t["token"][:8]) + "..." + html.escape(t["token"][-4:])
         meta_parts = []
         if t["claimed_by_email"]:
@@ -2556,11 +3014,18 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
 
     for u in users:
         ulevel = u["is_admin"] or 0
+        try:
+            has_viewer_pass = bool(u["has_full_access"])
+        except (KeyError, IndexError):
+            has_viewer_pass = False
         badges = ""
         if ulevel >= 2:
             badges += '<span class="badge" style="background:rgba(245,158,11,0.12);color:var(--amber)">SUPER ADMIN</span> '
         elif ulevel == 1:
             badges += '<span class="badge" style="background:var(--accent-light);color:var(--accent)">ADMIN</span> '
+        if has_viewer_pass and ulevel == 0:
+            # Distinct from admin: viewer pass is read-only across all dashboards.
+            badges += '<span class="badge" style="background:rgba(124,92,255,0.15);color:#7c5cff" title="Read access to every dashboard without Stripe">VIEWER PASS</span> '
         if u["suspended"]:
             badges += '<span class="badge" style="background:var(--red-bg);color:var(--red)">SUSPENDED</span> '
         joined = _dt.datetime.fromtimestamp(u["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -2634,6 +3099,29 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
                 f'{csrf_hidden}{pw_field}'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
             )
+
+            # Viewer pass toggle (admin+) — grants/revokes has_full_access
+            # without making the user an admin. Useful for investors / press / partners.
+            if has_viewer_pass:
+                detail_extra += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/viewer-pass" onclick="event.stopPropagation()" '
+                    f'onsubmit="return confirm(\'Revoke viewer pass for {uname_js}? They will lose access to dashboards they have not subscribed to.\')" '
+                    f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                    f'{csrf_hidden}'
+                    f'<input type="hidden" name="action" value="revoke">'
+                    f'{pw_field}'
+                    f'<button class="btn btn-danger" style="font-size:11px" title="Removes read-all-dashboards grant; user falls back to their actual subscriptions">Revoke Viewer Pass</button></form>'
+                )
+            elif ulevel == 0:  # only offer for non-admins; admins already see everything
+                detail_extra += (
+                    f'<form method="post" action="/admin/users/{u["id"]}/viewer-pass" onclick="event.stopPropagation()" '
+                    f'onsubmit="return confirm(\'Grant viewer pass to {uname_js}? They get read access to every dashboard without paying Stripe.\')" '
+                    f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+                    f'{csrf_hidden}'
+                    f'<input type="hidden" name="action" value="grant">'
+                    f'{pw_field}'
+                    f'<button class="btn btn-primary-outline" style="font-size:11px;color:#7c5cff;border-color:#7c5cff" title="Read access to every dashboard, no Stripe charge">Grant Viewer Pass</button></form>'
+                )
 
             # Grant subscription (super admin only)
             if is_super:
@@ -2882,16 +3370,35 @@ async def admin_page(request: Request):
 
 
 @app.post("/admin/tokens/generate")
-async def admin_generate_token(request: Request, note: str = Form(""), target_email: str = Form("")):
+async def admin_generate_token(
+    request: Request,
+    note: str = Form(""),
+    target_email: str = Form(""),
+    grants_full_access: str = Form(""),
+):
     user = _require_admin_user(request)
     # CSRF check
     form_data = await request.form()
     csrf_tok = form_data.get("_csrf_token", "")
     if not _validate_csrf(request, csrf_tok):
         return _csrf_error()
-    new_token = db.create_invite_token(note.strip(), target_email=target_email.strip())
-    log.info("Admin %s generated invite token (target: %s)", user["email"], target_email.strip() or "none")
-    log.debug("Admin %s generated invite token: %s (target: %s)", user["email"], new_token, target_email.strip() or "none")
+    is_viewer_pass = grants_full_access in ("1", "on", "true", "yes")
+    note_str = note.strip()
+    if is_viewer_pass and not note_str:
+        note_str = "Viewer pass"
+    elif is_viewer_pass and "viewer" not in note_str.lower():
+        note_str = f"{note_str} (viewer pass)"
+    new_token = db.create_invite_token(
+        note_str,
+        target_email=target_email.strip(),
+        grants_full_access=is_viewer_pass,
+    )
+    log.info(
+        "Admin %s generated %sinvite token (target: %s)",
+        user["email"], "viewer-pass " if is_viewer_pass else "", target_email.strip() or "none",
+    )
+    log.debug("Admin %s generated invite token: %s (target: %s, viewer_pass=%s)",
+              user["email"], new_token, target_email.strip() or "none", is_viewer_pass)
     csrf_token = _get_csrf_token(request)
     ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
@@ -2988,6 +3495,36 @@ async def admin_unsuspend(request: Request, user_id: int):
     db.set_user_suspended(user_id, False)
     flush_session_cache()
     log.info("Admin %s unsuspended user id=%s", admin.get("email"), user_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{user_id}/viewer-pass")
+async def admin_toggle_viewer_pass(request: Request, user_id: int, action: str = Form("")):
+    """Grant or revoke the 'viewer pass' (has_full_access) on a user.
+
+    `action="grant"` flips it on; anything else flips it off. Sessions are
+    flushed so the next request reflects the new entitlements within seconds.
+    """
+    admin = _require_admin_user(request)
+    form = await request.form()
+    csrf_tok = form.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+    pw = form.get("password", "")
+    if not _verify_admin_password(request, admin, pw):
+        raise HTTPException(status_code=403, detail="Incorrect password — re-authenticate to perform this action")
+    if not _can_manage_user(admin, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    grant = (action or "").strip().lower() == "grant"
+    db.set_user_has_full_access(user_id, grant)
+    # Flush so the user's existing sessions pick up the change without
+    # requiring a re-login. Session cache TTL also catches it within a
+    # few seconds, but flushing makes admin actions feel instant.
+    flush_session_cache()
+    log.info(
+        "Admin %s %s viewer pass for user id=%s",
+        admin.get("email"), "granted" if grant else "revoked", user_id,
+    )
     return RedirectResponse("/admin", status_code=302)
 
 
@@ -3256,13 +3793,13 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         return RedirectResponse("/gate", status_code=302)
 
     current_pref = db.get_default_dashboard(user["user_id"]) or ""
-    # Subscriptions the user has access to (admins get everything).
+    # Subscriptions the user has access to (admins + full-access viewers get everything).
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
-    is_admin = bool(user.get("is_admin"))
+    has_access_unrestricted = bool(user.get("has_full_access"))
 
     option_html = ['<option value="">Always show the dashboards hub</option>']
     for key, cfg in DASHBOARDS.items():
-        has_access = _is_sub_active(subs.get(key), is_admin)
+        has_access = _is_sub_active(subs.get(key), has_access_unrestricted)
         if not has_access:
             continue
         selected = " selected" if key == current_pref else ""
@@ -3903,7 +4440,9 @@ def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf
         scheme, base, port_suffix = _request_base_domain(request)
         local = base == "localhost" or base.endswith(".localhost") or base == "127.0.0.1"
         if local:
-            gw_port = CONFIG.get("gateway_port", 7000)
+            # Honour the GATEWAY_PORT env override so local dev still works
+            # when something else (macOS AirPlay) holds the configured port.
+            gw_port = GATEWAY_PORT
             portfolio_url = f"http://localhost:{gw_port}/portfolio"
         else:
             portfolio_url = f"{scheme}://{base}{port_suffix}/portfolio"
@@ -3945,7 +4484,8 @@ def _build_tab_html(user_id: int, active_tab: str = "", request: Request = None)
         d = DASHBOARDS[k]
         cls = "gw-tab active" if k == active_tab else "gw-tab"
         if local:
-            gw_port = CONFIG.get("gateway_port", 7000)
+            # Same env-override path as the portfolio link above.
+            gw_port = GATEWAY_PORT
             url = f"http://{d['subdomain']}.localhost:{gw_port}/"
         else:
             url = f"{scheme}://{d['subdomain']}.{base}{port_suffix}/"
@@ -4069,18 +4609,23 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # 4. Forward the request.
     target_port = dash_cfg["target"]
+    target_host = dashboard_host(key)
     path = forced_path if forced_path is not None else request.url.path
     query = request.url.query
-    upstream_url = f"http://127.0.0.1:{target_port}{path}"
+    upstream_url = f"http://{target_host}:{target_port}{path}"
     if query:
         upstream_url += f"?{query}"
 
     # Cache-first: serve GET /api/* and /data/* from Redis when available.
     # Never cache /api/auth/* — responses are per-user.
+    proxy_start = time.time()
     cache_path = f"{path}?{query}" if query else path
     if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")) and not path.startswith("/api/auth"):
         cached = cache.get_api(key, cache_path)
         if cached:
+            metrics.inc_cache("api", hit=True)
+            metrics.inc_request(key, request.method, 200)
+            metrics.observe_request_duration(key, time.time() - proxy_start)
             cached_body, cached_ct = cached
             return Response(
                 content=cached_body,
@@ -4091,6 +4636,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
                     "cache-control": "no-store",
                 },
             )
+        metrics.inc_cache("api", hit=False)
 
     # Strip hop-by-hop headers; also strip any client-supplied X-Gateway-*
     # headers so a malicious client can't forge upstream identity.
@@ -4115,6 +4661,8 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         fwd_headers["X-Gateway-Secret"] = _sso_secret
     fwd_headers["X-Forwarded-Host"] = request.headers.get("host", "")
     fwd_headers["X-Forwarded-Proto"] = request.url.scheme
+    # Propagate the request ID so dashboard logs can be correlated with gateway logs.
+    fwd_headers["X-Request-ID"] = current_request_id()
 
     body = await request.body()
 
@@ -4127,6 +4675,8 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
             follow_redirects=False,
         )
     except httpx.ConnectError:
+        metrics.inc_upstream_error(key, "connect")
+        metrics.inc_request(key, request.method, 502)
         return HTMLResponse(
             f"<h1>{html.escape(dash_cfg['display_name'])} is offline</h1>"
             f"<p>The backend on port {target_port} isn't responding. "
@@ -4134,6 +4684,8 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
             status_code=502,
         )
     except httpx.RequestError as e:
+        metrics.inc_upstream_error(key, "request")
+        metrics.inc_request(key, request.method, 502)
         log.exception("Upstream error for %s: %s", upstream_url, e)
         return HTMLResponse(
             f"<h1>Upstream error</h1><p>{html.escape(str(e))}</p>",
@@ -4177,6 +4729,9 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         body = _inject_sse_client(body)
         resp_headers.pop("content-length", None)
         resp_headers["content-length"] = str(len(body))
+
+    metrics.inc_request(key, request.method, upstream.status_code)
+    metrics.observe_request_duration(key, time.time() - proxy_start)
 
     return Response(
         content=body,
@@ -4295,8 +4850,9 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
         return
 
     target_port = dash_cfg["target"]
+    target_host = dashboard_host(key)
     query = ws.url.query
-    upstream_url = f"ws://127.0.0.1:{target_port}/{full_path}"
+    upstream_url = f"ws://{target_host}:{target_port}/{full_path}"
     if query:
         upstream_url += f"?{query}"
 

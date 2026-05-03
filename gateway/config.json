@@ -3,6 +3,16 @@
   "domain": "narve.ai",
   "gateway_port": 7000,
   "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
+  "viewer_pass": {
+    "_comment": "All-dashboards read pass purchased via Stripe. On checkout, the gateway emails the customer a single-use invite token; once claimed, their session cookie unlocks every dashboard. They never interact with Stripe again. Cancelling the subscription auto-revokes the pass.",
+    "display_name": "Full Access Pass",
+    "description": "Every dashboard, one subscription. Cancel anytime.",
+    "currency": "GBP",
+    "monthly_cents": 2000,
+    "annual_cents": 19200,
+    "stripe_price_monthly": "TODO_VIEWER_PASS_STRIPE_MONTHLY",
+    "stripe_price_annual": "TODO_VIEWER_PASS_STRIPE_ANNUAL"
+  },
   "dashboards": {
     "sports": {
       "subdomain": "sports",
@@ -76,6 +86,18 @@
       "stripe_price_monthly": "price_1TJXujQq4pCmZ517lvI0RcLS",
       "stripe_price_annual": "price_1TJXukQq4pCmZ517ma0Q8iMP"
     },
+    "voters": {
+      "subdomain": "voters",
+      "target": 7051,
+      "display_name": "Voters Atlas",
+      "description": "Who voters are, what they want, when they vote — 25 countries curated, with discussion",
+      "accent": "#7c5cff",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_VOTERS_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_VOTERS_STRIPE_ANNUAL"
+    },
     "climate": {
       "subdomain": "climate",
       "target": 7052,
@@ -99,6 +121,19 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "stock": {
+      "subdomain": "markets",
+      "target": 8050,
+      "display_name": "StockSignal",
+      "description": "Polymarket stock-market signals · ML model · sentiment overlay",
+      "accent": "#22c55e",
+      "currency": "GBP",
+      "monthly_cents": 2000,
+      "annual_cents": 19200,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_STOCK_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_STOCK_STRIPE_ANNUAL"
     }
   }
 }
