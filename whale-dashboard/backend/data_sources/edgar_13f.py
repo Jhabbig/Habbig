@@ -109,10 +109,21 @@ async def _get_bytes(session: aiohttp.ClientSession, url: str) -> bytes:
 
 async def list_13f_filings(session: aiohttp.ClientSession,
                            cik: int) -> List[FilingRef]:
-    """Return all 13F-HR/HR/A filings for a CIK from the submissions JSON."""
+    """Return all 13F-HR/HR/A filings for a CIK from the submissions JSON.
+
+    EDGAR returns 404 for CIKs that have been merged/deregistered (e.g.
+    SSgA Funds Management → State Street consolidation). Treat 404 as
+    "no filings" rather than raising — the worker keeps moving instead
+    of marking the whole 13F cycle as failed."""
     import json as _json
     url = f"{SEC_DATA}/submissions/CIK{cik:010d}.json"
-    text = await _get(session, url)
+    try:
+        text = await _get(session, url)
+    except aiohttp.ClientResponseError as e:
+        if e.status == 404:
+            logger.info("13f: CIK %d returns 404 — likely merged/deregistered, skipping", cik)
+            return []
+        raise
     data = _json.loads(text)
     recent = data.get("filings", {}).get("recent", {})
 
