@@ -21,6 +21,7 @@ Port: **7060**.
 | v0.6 | **Full OIS curve overlay** — extends `implied_path` from "next FOMC" to a full 18-month strip of monthly Fed Funds futures. Each month shows the implied average FF rate; the curve is overlaid on the rate-path chart as a dashed teal forward line, anchored at the latest spot reading. | Yahoo Finance ZQ contract chain (continuous) |
 | v0.7 | **Macro release tracker** — Headline / Core CPI, Headline / Core PCE, NFP. Latest YoY % (or MoM jobs change for NFP), 24-month sparkline, days-until-next-release with imminent / soon / later badges. Release dates computed from BLS / BEA conventions, no scraping. | FRED CSV |
 | v0.8 | **Phase 2 — In-app Kalshi trading** — per-user encrypted Kalshi API key storage (Fernet), RSA-PSS request signing, order modal with paper-mode default + explicit confirm-each-order, balance + positions snapshot, append-only audit log. The "Trade Kalshi →" button now places real orders through the dashboard instead of deep-linking out. | Kalshi Trade API v2 (private, signed) |
+| v0.9 | **Right Now synthesis strip** — top-of-page paragraph that summarizes everything below in plain English. Pulls from every existing analysis cache, derives a headline (next meeting + market consensus), subhead (top opportunity + macro / stance signals), and click-to-scroll chips. Warnings surface degraded data sources inline. Cached 60s; cold compose <1s when downstream caches are warm. | Composes existing caches — no new data source |
 
 All views graceful-degrade when their data source is unreachable (the panel
 shows an inline error; other panels keep working).
@@ -110,6 +111,7 @@ shows an inline error; other panels keep working).
 | `GET /api/stance` | 1 h | Stance ladder per CB |
 | `GET /api/ois?months_ahead=18` | 30 min | Full Fed Funds futures strip → implied avg FF rate per month |
 | `GET /api/econ` | 6 h | CPI / Core CPI / PCE / Core PCE / NFP latest + sparkline + next-release date |
+| `GET /api/right-now` | 60 s | Synthesis: headline + subhead + ranked signal chips + warnings — composes from every other endpoint |
 | `GET /api/keys/kalshi/status` | — | Whether the calling user has credentials configured + their mode (paper/prod) |
 | `POST /api/keys/kalshi` | — | Save / replace credentials (encrypted at rest) |
 | `DELETE /api/keys/kalshi` | — | Remove credentials |
@@ -179,7 +181,8 @@ centralbank-dashboard/
 │   ├── stance_keywords.py          Hawkish/dovish phrase dictionary (extend here)
 │   ├── stance_scorer.py            Phrase-match scorer with sentence normalization
 │   ├── stance.py                   Composes scraper + scorer into the ladder API
-│   └── edge.py                     Cross-venue join: Implied × Polymarket × Kalshi → edges + arb
+│   ├── edge.py                     Cross-venue join: Implied × Polymarket × Kalshi → edges + arb
+│   └── right_now.py                Synthesizes every cache into a one-paragraph "what matters" brief
 ├── index.html                      Single-file UI: SVG chart + 4 panels, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7060
 ├── requirements.txt                fastapi, uvicorn, defusedxml
@@ -254,7 +257,13 @@ Polymarket's own bid-ask plus our modelling slack live below that.
 | v0.6 | ✓ done | Full OIS curve overlay (18-month FF futures strip on rate-path chart) |
 | v0.7 | ✓ done | Macro release tracker (CPI / Core CPI / PCE / Core PCE / NFP) — latest, sparkline, next-release date |
 | v0.8 | ✓ done | **Phase 2 — In-app Kalshi trading** (encrypted creds + RSA-PSS + paper-mode default + confirm-per-order + balance/positions + audit log) |
-| v0.9  | open  | Phase 2.1 — order modification (resize, price replace) + webhook-driven fill notifications |
+| v0.9 | ✓ done | **Right Now strip** — top-of-page synthesis paragraph + click-to-scroll signal chips + degraded-data warnings |
+| v0.10 | open  | Historical context — every number gets "vs 1d / 7d / 1m" deltas via a small `historical_store.py` |
+| v0.11 | open  | Ranked-opportunities table — replace panel-order with EV-sorted "today's trades" |
+| v0.12 | open  | Backtest hit-rate per signal class (3pp arb, hawkish stance pivot, CPI surprise > 0.15 pp) |
+| v0.13 | open  | Per-user P&L panel (realized + unrealized via Kalshi positions endpoint, won/lost track) |
+| v0.14 | open  | Custom alerts via email — "Notify me when arb > 5pp" |
+| v0.15 | open  | Phase 2.1 — order modification (resize, price replace) + webhook-driven fill notifications |
 | v0.10 | open  | Consensus-vs-actual surprise tracking (paid feeds — defer until users justify) |
 | v0.11 | open  | Statement diff viewer (compare two press releases side-by-side) |
 | v1.0  | open  | Extend implied path to ECB (€STR OIS) and BoE (SONIA OIS) |

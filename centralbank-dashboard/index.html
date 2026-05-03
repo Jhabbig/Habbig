@@ -154,6 +154,53 @@
   #order-result.err { background: #5a1313; color: #ffd6d6; border: 1px solid #f85149; }
   #order-result:empty { display: none; padding: 0; }
   .muted { color: var(--muted); }
+
+  /* Right Now strip — top-of-page synthesis */
+  .right-now {
+    display: flex; gap: 16px; padding: 0; margin: 0;
+    background: linear-gradient(135deg, #0d2522 0%, #11302d 100%);
+    border: 1px solid var(--accent); border-radius: 8px; overflow: hidden;
+    position: relative;
+  }
+  .right-now-rail { width: 4px; background: var(--accent); flex-shrink: 0; }
+  .right-now-body { padding: 18px 22px; flex: 1; min-width: 0; }
+  .right-now-eyebrow {
+    color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; margin-bottom: 8px;
+  }
+  .right-now-eyebrow .muted { font-weight: 400; letter-spacing: 0; text-transform: none;
+                              margin-left: 8px; color: #5f7a76; }
+  .right-now-headline {
+    font-size: 20px; font-weight: 600; line-height: 1.3; color: var(--fg);
+    margin-bottom: 8px;
+  }
+  @media (max-width: 720px) { .right-now-headline { font-size: 17px; } }
+  .right-now-subhead {
+    font-size: 14px; line-height: 1.5; color: #c9d3d8; margin-bottom: 12px;
+  }
+  .right-now-subhead:empty { display: none; margin: 0; }
+  .right-now-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .right-now-chips:empty { display: none; }
+  .signal-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    border: 1px solid var(--grid); cursor: pointer; transition: filter 0.1s;
+    background: #0e1117; color: var(--fg); text-decoration: none;
+  }
+  .signal-chip:hover { filter: brightness(1.2); text-decoration: none; }
+  .signal-chip.hawkish    { border-color: #f85149; color: #ff9b8a; }
+  .signal-chip.dovish     { border-color: #56d364; color: #91d499; }
+  .signal-chip.actionable { background: var(--accent); color: #0e1117; border-color: var(--accent); }
+  .signal-chip.neutral    { border-color: var(--grid); color: var(--muted); }
+  .signal-chip.data       { border-color: #d29922; color: #d29922; }
+  .signal-chip .arrow { font-size: 10px; opacity: 0.7; }
+  .right-now-warnings {
+    margin-top: 10px; font-size: 11px; color: #d29922;
+    border-top: 1px solid #30363d; padding-top: 8px; display: none;
+  }
+  .right-now-warnings:not(:empty) { display: block; }
+  .right-now-warnings .label { font-weight: 600; margin-right: 6px; color: #d29922; }
+  .right-now-warnings ul { margin: 4px 0 0 16px; padding: 0; }
   .stance-row { display: grid; grid-template-columns: 180px 100px 1fr; gap: 16px;
                 align-items: center; padding: 10px 0; border-bottom: 1px solid var(--grid); }
   .stance-row:last-child { border-bottom: 0; }
@@ -192,6 +239,16 @@
   <span class="meta" id="meta">loading…</span>
 </header>
 <main>
+  <section id="right-now-strip" class="right-now" aria-live="polite">
+    <div class="right-now-rail"></div>
+    <div class="right-now-body">
+      <div class="right-now-eyebrow">RIGHT NOW <span id="right-now-when" class="muted"></span></div>
+      <div class="right-now-headline" id="right-now-headline">loading…</div>
+      <div class="right-now-subhead" id="right-now-subhead"></div>
+      <div class="right-now-chips" id="right-now-chips"></div>
+      <div class="right-now-warnings" id="right-now-warnings"></div>
+    </div>
+  </section>
   <section class="panel">
     <h2>Policy rate history</h2>
     <div class="legend" id="legend"></div>
@@ -274,6 +331,13 @@ const COLORS = ["#58a6ff", "#f0883e", "#56d364", "#d2a8ff", "#ff7b72"];
 async function load() {
   const meta = document.getElementById("meta");
   // Fire all requests in parallel — one shouldn't block the others.
+  // Right Now is fetched first and rendered immediately so the user sees a
+  // synthesized summary before the heavy panels finish drawing.
+  fetch("/api/right-now").then(r => r.json()).then(renderRightNow).catch(e => {
+    document.getElementById("right-now-headline").innerHTML =
+      `<span class="err">summary unavailable: ${escapeHtml(e.message)}</span>`;
+  });
+
   const [ratesR, calR, impR, edgeR, stanceR, oisR, econR] = await Promise.allSettled([
     fetch("/api/rates").then(r => r.ok ? r.json() : Promise.reject(new Error("rates HTTP " + r.status))),
     fetch("/api/calendar").then(r => r.ok ? r.json() : Promise.reject(new Error("cal HTTP " + r.status))),
@@ -333,6 +397,55 @@ async function load() {
   // Trading panel — independent fetches; key status is always populated, the
   // others depend on having credentials.
   loadTradingPanel();
+}
+
+// ── Right Now strip ───────────────────────────────────────────────────────
+function renderRightNow(d) {
+  // Headline
+  document.getElementById("right-now-headline").textContent = d.headline || "—";
+
+  // Eyebrow timestamp ("RIGHT NOW · updated 3 min ago")
+  const when = d.as_of ? new Date(d.as_of) : null;
+  const whenEl = document.getElementById("right-now-when");
+  if (when) {
+    const ago = Math.round((Date.now() - when.getTime()) / 60000);
+    whenEl.textContent = "· updated " + (ago < 1 ? "just now" : ago + " min ago");
+  }
+
+  // Subhead lines (joined with spaces — they read as a paragraph)
+  const sub = (d.subhead || []).join(" ");
+  document.getElementById("right-now-subhead").textContent = sub;
+
+  // Signal chips — each click-scrolls to the relevant panel
+  const chipsEl = document.getElementById("right-now-chips");
+  if (d.signals && d.signals.length) {
+    chipsEl.innerHTML = d.signals.slice(0, 8).map(s => {
+      const tone = s.tone || "neutral";
+      const arrow = s.panel_id ? '<span class="arrow">↓</span>' : "";
+      const target = s.panel_id ? `data-panel="${escapeHtml(s.panel_id)}"` : "";
+      return `<a class="signal-chip ${escapeHtml(tone)}" href="#${escapeHtml(s.panel_id || '')}" ${target}>${escapeHtml(s.text)} ${arrow}</a>`;
+    }).join("");
+    // Smooth-scroll to the panel, since native anchor jumps on a sticky
+    // header look jarring.
+    chipsEl.querySelectorAll("[data-panel]").forEach(el => {
+      el.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const target = document.getElementById(el.dataset.panel);
+        if (target) target.scrollIntoView({behavior: "smooth", block: "start"});
+      });
+    });
+  } else {
+    chipsEl.innerHTML = "";
+  }
+
+  // Warnings — only shown when there are degraded data sources
+  const warnEl = document.getElementById("right-now-warnings");
+  if (d.warnings && d.warnings.length) {
+    warnEl.innerHTML = `<span class="label">Data notes:</span><ul>` +
+      d.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join("") + `</ul>`;
+  } else {
+    warnEl.innerHTML = "";
+  }
 }
 
 // ── Trading panel ─────────────────────────────────────────────────────────

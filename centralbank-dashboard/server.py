@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from analysis import edge as edge_analysis
+from analysis import right_now as right_now_analysis
 from analysis import stance as stance_analysis
 from ingestion import decision_calendar, econ_releases, fred_client, implied_path, kalshi_client, ois_curve
 from trading import audit as trade_audit
@@ -71,6 +72,13 @@ async def security_and_auth(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/api/right-now")
+async def api_right_now(force: bool = False) -> JSONResponse:
+    """Synthesized one-paragraph dashboard summary. Cached 60s — composed
+    from the existing analysis caches without refetching anything."""
+    return JSONResponse(right_now_analysis.get_cached(force=force))
 
 
 @app.get("/api/rates")
