@@ -1,7 +1,9 @@
 {
-  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work.",
+  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change \u2014 it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work.",
   "domain": "narve.ai",
-  "domain_aliases": ["habbig.com"],
+  "domain_aliases": [
+    "habbig.com"
+  ],
   "gateway_port": 7000,
   "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
   "dashboards": {
@@ -64,6 +66,16 @@
       "monthly_cents": 1299,
       "annual_cents": 12900,
       "supports_websocket": false
+    },
+    "whale": {
+      "subdomain": "whale",
+      "target": 8053,
+      "display_name": "Whale Watch",
+      "description": "Institutional whale flow \u2014 13F, Form 4, 13D filings",
+      "accent": "#10b981",
+      "monthly_cents": 1799,
+      "annual_cents": 17900,
+      "supports_websocket": true
     }
   }
 }

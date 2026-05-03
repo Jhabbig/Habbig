@@ -162,6 +162,26 @@ SUBPRODUCTS: dict[str, dict] = {
         "tabs": ["Leaderboard", "Wallet Activity", "Follow", "Settings"],
         "env_price_id": "STRIPE_PRICE_ID_TRADERS_MONTHLY",
     },
+    "whale": {
+        "slug": "whale",
+        "dashboard_key": "whale",
+        "name": "Whale Watch",
+        "tagline": "Institutional money movement",
+        "hero_headline": "Watch the / billion-dollar / footprints.",
+        "hero_sub": (
+            "Whale Watch surfaces every SEC filing from the institutions that move "
+            "markets — JPMorgan, BlackRock, Berkshire, Citadel, the activist funds — "
+            "and cross-references them against live Polymarket markets."
+        ),
+        "price_usd": 17.99,
+        "price_gbp": 13.99,
+        "floating_numbers": ["13F", "+5.2%", "13D", "$2.1B", "+$340M", "NEW", "−$120M",
+                             "BRK.B", "6.4%", "NVDA", "EXIT", "$8.7B", "ADD", "+12%", "PSHZF"],
+        "animation_style": "measured",
+        "stat_pills": ["{whales} mega-funds tracked", "latest 13D {recent_13d}", "updated hourly"],
+        "tabs": ["Live Feed", "Whales", "Activist", "Cluster Buys", "Consensus", "Watchlist"],
+        "env_price_id": "STRIPE_PRICE_ID_WHALE_MONTHLY",
+    },
 }
 
 # Bridge from SUBPRODUCT slug → subscriptions.dashboard_key. For five of the
