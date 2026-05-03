@@ -33,6 +33,11 @@ credentials*
 *.cert
 *.crt
 
+# centralbank-dashboard runtime trading data — encrypted creds, audit log,
+# dev-mode auto-master-key. All purely runtime state, never appropriate for git.
+# (`*.db` and `*.key` above already cover key_store.db and dev_master.key.)
+centralbank-dashboard/data/audit.jsonl
+
 # Cloudflare tunnel credentials
 .cloudflared/
 *.cloudflared.json
