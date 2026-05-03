@@ -1296,11 +1296,13 @@ def fetch_metar(icao: str) -> Optional[dict]:
         return cached
 
     # aviationweather.gov returns JSON when format=json. Free, no auth.
-    # NOTE: this endpoint regularly takes 5-15s under load. A 10s timeout
-    # was producing hundreds of "Read timed out" warnings/hour. We use a
-    # 30s timeout + a single retry on timeout, which empirically catches
-    # ~99% of transient slowness without significantly slowing healthy fetches.
+    # NOTE: this endpoint takes 5-15s under load (hence the 30s timeout) and
+    # also occasionally fails with SSLEOFError, transient DNS resolution
+    # failures, and connection resets — most of those clear on a quick retry.
+    # We retry once on Timeout AND on the connection/SSL/DNS family before
+    # giving up; only catastrophic non-network errors fall through.
     rows = None
+    last_exc = None
     for _attempt in range(2):
         try:
             resp = requests.get(
@@ -1313,10 +1315,16 @@ def fetch_metar(icao: str) -> Optional[dict]:
                 return None
             rows = resp.json()
             break
-        except requests.exceptions.Timeout:
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.SSLError) as e:
+            # Transient — sleep briefly + retry once before giving up
+            last_exc = e
             if _attempt == 1:
-                logger.warning("METAR fetch for %s timed out after 30s × 2 attempts", icao)
+                logger.warning("METAR fetch for %s failed after 2 attempts: %s",
+                               icao, type(e).__name__)
                 return None
+            time.sleep(0.5)
             continue
         except Exception as e:
             logger.warning("METAR fetch for %s failed: %s", icao, e)
