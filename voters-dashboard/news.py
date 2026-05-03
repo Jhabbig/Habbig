@@ -17,13 +17,19 @@ If Google News is unreachable we return an empty items list with
 _status.ok=False so the UI can show "news unavailable" rather than
 fail the whole drawer.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
 import time
-import xml.etree.ElementTree as ET
+
+# Use defusedxml — Google News RSS is untrusted input. Stdlib's
+# ElementTree is vulnerable to billion-laughs / XXE / entity-expansion
+# attacks; defusedxml is a drop-in replacement that disables those.
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from typing import Any
 from urllib.parse import urlencode
 
@@ -33,7 +39,7 @@ log = logging.getLogger("voters.news")
 
 GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
 REQUEST_TIMEOUT = 6.0
-CACHE_TTL = 600           # 10 min — political news changes on hour-scale
+CACHE_TTL = 600  # 10 min — political news changes on hour-scale
 NEGATIVE_CACHE_TTL = 120  # 2 min — retry sooner if upstream failed
 MAX_ITEMS = 12
 
@@ -87,7 +93,10 @@ def _parse_rss(xml_text: str) -> list[dict]:
     items: list[dict] = []
     try:
         root = ET.fromstring(xml_text)
-    except ET.ParseError as e:
+    except (ET.ParseError, DefusedXmlException) as e:
+        # ParseError = malformed XML; DefusedXmlException = defusedxml
+        # blocked something dangerous (entity expansion, external DTD, etc.)
+        # Either way, drop the feed silently — better than 500-ing the request.
         log.warning("news rss parse failed: %s", e)
         return []
     # RSS 2.0: channel/item under <rss>
@@ -102,13 +111,15 @@ def _parse_rss(xml_text: str) -> list[dict]:
         summary = _strip_html(description)[:280] or None
         if not (title and link):
             continue
-        items.append({
-            "title": title,
-            "link": link,
-            "source": source,
-            "published": pub,
-            "summary": summary,
-        })
+        items.append(
+            {
+                "title": title,
+                "link": link,
+                "source": source,
+                "published": pub,
+                "summary": summary,
+            }
+        )
         if len(items) >= MAX_ITEMS:
             break
     return items
