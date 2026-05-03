@@ -200,6 +200,9 @@ async def resolve_unmapped_cusips_via_openfigi(
                 WHERE h.cusip IS NOT NULL
                   AND LENGTH(h.cusip) >= 9
                   AND (ct.cusip8 IS NULL OR ct.source = 'fuzzy_name')
+                  -- Don't re-query CUSIPs we already tried that returned no
+                  -- match (foreign issuers, mutual funds, defunct securities).
+                  AND COALESCE(MAX(ct.source), '') != 'openfigi_unmappable'
                 GROUP BY SUBSTR(h.cusip, 1, 9)
                 ORDER BY
                   -- fuzzy_name first (currently mislabeled), then unmapped
@@ -239,8 +242,15 @@ async def resolve_unmapped_cusips_via_openfigi(
 
             now = datetime.now(timezone.utc).isoformat()
             writes: list[tuple] = []
+            unmappable: list[tuple] = []
             for cusip9, best in mapping.items():
                 if not best or not best.get("ticker"):
+                    # Remember that OpenFIGI gave nothing for this cusip so
+                    # we don't keep re-querying it on every loop. Write a
+                    # source='openfigi_unmappable' row that resolve_unmapped
+                    # filters out (treated as "already tried, no match").
+                    unmappable.append((cusip9[:8], "?", "(no match)",
+                                       "openfigi_unmappable", now))
                     skipped += 1
                     continue
                 # Strip share-class suffix like "BRK/A" → "BRK.A" for
@@ -249,6 +259,20 @@ async def resolve_unmapped_cusips_via_openfigi(
                 name = best.get("name") or ""
                 writes.append((cusip9[:8], ticker, name, "openfigi", now))
                 resolved += 1
+            # Persist the "tried but no match" rows so future loops skip them.
+            if unmappable:
+                with get_conn() as conn:
+                    conn.executemany(
+                        """INSERT INTO cusip_ticker
+                             (cusip8, ticker, issuer_name, source, last_updated)
+                           VALUES (?, ?, ?, ?, ?)
+                           ON CONFLICT(cusip8) DO UPDATE SET
+                             source=excluded.source,
+                             last_updated=excluded.last_updated
+                           WHERE cusip_ticker.source IN ('fuzzy_name',
+                                                         'openfigi_unmappable')""",
+                        unmappable,
+                    )
 
             if writes:
                 with get_conn() as conn:

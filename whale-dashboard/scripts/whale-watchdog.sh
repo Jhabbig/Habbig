@@ -75,15 +75,17 @@ start_whale() {
     log "starting whale on port $PORT"
     cd /home/julianhabbig/Polymarket/whale-dashboard/backend
     # Load env file using a python helper so unquoted values with spaces
-    # (e.g. SEC_USER_AGENT="WhaleDashboard ops@narve.ai") survive sourcing.
-    eval "$(python3 -c "
-import shlex
-for line in open('$ENV_FILE'):
+    # (e.g. SEC_USER_AGENT=WhaleDashboard ops@narve.ai) survive sourcing.
+    # ENV_FILE is passed via env so we don't have to escape it through the
+    # nested heredoc layers.
+    eval "$(ENV_FILE="$ENV_FILE" python3 -c '
+import os, shlex
+for line in open(os.environ["ENV_FILE"]):
     line = line.strip()
-    if line and not line.startswith('#') and '=' in line:
-        k, _, v = line.partition('=')
-        print(f'export {k}={shlex.quote(v)}')
-")"
+    if line and not line.startswith("#") and "=" in line:
+        k, _, v = line.partition("=")
+        print(f"export {k}={shlex.quote(v)}")
+')"
     PORT="$PORT" PYTHONUNBUFFERED=1 nohup "$PYTHON" "$ENTRY" \
         >> "$LOG_FILE" 2>&1 &
     sleep 3
