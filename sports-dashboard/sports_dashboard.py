@@ -74,7 +74,32 @@ from fastapi import FastAPI, HTTPException, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
+# ---------------------------------------------------------------------------
+# Layered env loading
+# ---------------------------------------------------------------------------
+# Search order (later files override earlier values that are still empty):
+#   1. ~/.gateway_env                                  — platform-shared secrets
+#   2. ~/Polymarket/gateway/.env.production            — gateway / shared API keys
+#   3. <this dashboard>/.env.production                — per-dashboard overrides
+#   4. <this dashboard>/.env                           — local dev fallback
+#
+# Each file is optional; missing files are silently skipped. Using
+# `override=False` means the **first** file that defines a key wins, so
+# narrower files can sit on top of platform defaults without being clobbered
+# (we walk from broadest → narrowest below). Loud startup logging lets us
+# stop debugging silent "ODDS_API_KEY not set" failures by reading the log.
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_ENV_SEARCH = [
+    Path.home() / ".gateway_env",
+    _DASHBOARD_DIR.parent / "gateway" / ".env.production",
+    _DASHBOARD_DIR / ".env.production",
+    _DASHBOARD_DIR / ".env",
+]
+_loaded_from = []
+for _f in _ENV_SEARCH:
+    if _f.is_file():
+        load_dotenv(_f, override=False)
+        _loaded_from.append(str(_f))
 
 # ---------------------------------------------------------------------------
 # Config
@@ -690,9 +715,26 @@ OUTRIGHT_SPORT_KEYS = {
 }
 
 
+# Throttle the "ODDS_API_KEY missing" warning to once per hour so the log
+# isn't swamped, but ensure it appears (every 12 polls = once per ~hour).
+_ODDS_KEY_WARN_LAST = 0.0
+_ODDS_KEY_WARN_INTERVAL = 3600  # seconds
+
+
+def _warn_odds_key_missing(caller: str) -> None:
+    global _ODDS_KEY_WARN_LAST
+    now = time.time()
+    if now - _ODDS_KEY_WARN_LAST >= _ODDS_KEY_WARN_INTERVAL:
+        _ODDS_KEY_WARN_LAST = now
+        print(f"⚠ {caller}: ODDS_API_KEY is empty — bookmaker odds will be empty. "
+              f"Set it in gateway/.env.production and restart polymarket-sports.",
+              flush=True)
+
+
 def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[list[dict], str | None]:
     """Fetch match odds from The Odds API. Returns (events, requests_remaining)."""
     if not ODDS_API_KEY:
+        _warn_odds_key_missing("fetch_odds")
         return [], None
 
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
@@ -711,6 +753,7 @@ def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[lis
 def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
     """Fetch outright/futures odds for a sport (e.g. league winner)."""
     if not ODDS_API_KEY:
+        _warn_odds_key_missing("fetch_outright_odds")
         return [], None
 
     outright_key = OUTRIGHT_SPORT_KEYS.get(sport_key)
@@ -4377,8 +4420,37 @@ async def startup():
     _spawn_bg(_top_traders_periodic_refresh())
 
     print(f"Sports Dashboard started. Polling {dashboard_data.get('active_sport', 'unknown')} every {POLL_INTERVAL}s")
-    if not ODDS_API_KEY:
-        print("WARNING: ODDS_API_KEY not set — bookmaker odds will be unavailable")
+
+    # ── Loud, single-pass key-status banner ────────────────────────────────
+    # If any third-party API key is missing, the corresponding feature will
+    # silently degrade. Surface that here so misconfiguration is immediately
+    # visible in the log instead of producing 564 cycles of "0 odds".
+    print("─── env files loaded ───")
+    if _loaded_from:
+        for _p in _loaded_from:
+            print(f"  ✓ {_p}")
+    else:
+        print("  (none — using process environment only)")
+
+    print("─── third-party API keys ───")
+    _key_status = [
+        ("ODDS_API_KEY", ODDS_API_KEY, "the-odds-api.com — bookmaker odds (CRITICAL)"),
+        ("KALSHI_API_KEY_ID", os.getenv("KALSHI_API_KEY_ID", ""), "Kalshi authenticated requests (optional)"),
+        ("KALSHI_PRIVATE_KEY", os.getenv("KALSHI_PRIVATE_KEY", ""), "Kalshi key-pair signing (optional)"),
+        ("GATEWAY_SSO_SECRET", os.getenv("GATEWAY_SSO_SECRET", ""), "Gateway SSO header verification"),
+    ]
+    _missing_critical = []
+    for _name, _value, _desc in _key_status:
+        if _value:
+            print(f"  ✓ {_name:25s} set ({len(_value)} chars) — {_desc}")
+        else:
+            print(f"  ✗ {_name:25s} MISSING — {_desc}")
+            if "CRITICAL" in _desc:
+                _missing_critical.append(_name)
+    if _missing_critical:
+        print(f"⚠ CRITICAL keys missing: {', '.join(_missing_critical)} — core features will silently return empty.")
+        print("  → add them to /home/julianhabbig/Polymarket/gateway/.env.production and restart polymarket-sports.")
+    print("────────────────────────")
 
 
 # ---------------------------------------------------------------------------
@@ -4390,6 +4462,30 @@ async def startup():
 @app.get("/login")
 async def login_page():
     return RedirectResponse("https://narve.ai/login", status_code=302)
+
+
+@app.get("/api/health")
+async def health():
+    """Liveness + key-status. Returns 200 if alive, 'degraded' if a critical
+    third-party key is missing (i.e. the dashboard is up but core feature is
+    silently empty). Use this from monitoring to catch the silent-failure
+    mode that bit us with ODDS_API_KEY."""
+    keys = {
+        "ODDS_API_KEY":       {"set": bool(ODDS_API_KEY),                   "critical": True},
+        "KALSHI_API_KEY_ID":  {"set": bool(os.getenv("KALSHI_API_KEY_ID")), "critical": False},
+        "KALSHI_PRIVATE_KEY": {"set": bool(os.getenv("KALSHI_PRIVATE_KEY")), "critical": False},
+        "GATEWAY_SSO_SECRET": {"set": bool(os.getenv("GATEWAY_SSO_SECRET")), "critical": False},
+    }
+    missing_critical = [k for k, v in keys.items() if v["critical"] and not v["set"]]
+    return JSONResponse({
+        "ok": True,
+        "service": "sports-dashboard",
+        "status": "degraded" if missing_critical else "healthy",
+        "missing_critical_keys": missing_critical,
+        "keys": keys,
+        "env_files_loaded": _loaded_from,
+        "ts": time.time(),
+    })
 
 
 @app.get("/api/logout")
