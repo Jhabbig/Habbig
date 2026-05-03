@@ -183,15 +183,29 @@ async def resolve_unmapped_cusips_via_openfigi(
     with get_conn() as conn:
         # Pull cusips we have NO mapping for, plus any fuzzy_name mappings
         # we want to upgrade. We query each cusip8 at most once.
+        #
+        # Priority order:
+        #   1. Existing fuzzy_name mappings — these are the ones currently
+        #      showing the wrong ticker on the dashboard, so fixing them
+        #      has visible value. (`source` ordering: fuzzy_name < NULL)
+        #   2. Most-frequently-held CUSIPs — if a position is held by 10
+        #      whales it matters more than one held by 1 micro-cap whale.
         rows = conn.execute(
-            """SELECT DISTINCT SUBSTR(h.cusip, 1, 9) AS cusip9
+            """SELECT SUBSTR(h.cusip, 1, 9) AS cusip9,
+                      MAX(ct.source) AS existing_source,
+                      COUNT(*) AS n_holdings
                  FROM holdings h
                  LEFT JOIN cusip_ticker ct
                         ON ct.cusip8 = SUBSTR(h.cusip, 1, 8)
                 WHERE h.cusip IS NOT NULL
                   AND LENGTH(h.cusip) >= 9
                   AND (ct.cusip8 IS NULL OR ct.source = 'fuzzy_name')
-                ORDER BY h.cusip
+                GROUP BY SUBSTR(h.cusip, 1, 9)
+                ORDER BY
+                  -- fuzzy_name first (currently mislabeled), then unmapped
+                  CASE WHEN MAX(ct.source) = 'fuzzy_name' THEN 0 ELSE 1 END,
+                  -- within each bucket, most-held first
+                  COUNT(*) DESC
                 LIMIT ?""",
             (max_cusips,),
         ).fetchall()
