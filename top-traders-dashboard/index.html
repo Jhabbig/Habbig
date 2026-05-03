@@ -1142,18 +1142,6 @@
   .unit-btn:hover:not(.active) {
     color: var(--text);
   }
-
-  /* ──────────────────────────────────────────────────────────────────
-     Hide the cross-venue insider tabs. The frontend wires up:
-       /api/insider-events, /api/cross-venue-suspicious,
-       /api/actor-leaderboard, /api/enforcement/*, /api/watchlist
-     but server.py doesn't currently serve those routes (the supporting
-     congress_ptr.py + insider_events.py source files are missing from
-     the production deploy — only .pyc remains). Showing tabs that load
-     empty or 401 looks broken in front of investors, so we hide them
-     until the backend is wired up. To re-enable: delete this rule.
-     ────────────────────────────────────────────────────────────────── */
-  .tab-btn.insider { display: none !important; }
 </style>
 </head>
 <body>
