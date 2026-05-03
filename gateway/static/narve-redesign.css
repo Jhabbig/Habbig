@@ -1025,14 +1025,22 @@ body {
   box-sizing: border-box;
 }
 
-/* The four canonical top-level wrappers — every narve template uses
-   one of these. Frame on all four sides, generous internal padding. */
+/* Top-level wrappers — every narve template uses one of these.
+   Selectors broadened on 2026-05-03 after a probe found the real DOM
+   uses .pr-page / .pr-hero / .wrap on apex/marketing pages, NOT
+   .app-shell / .landing-body as we'd assumed. The fallback `main` /
+   `article` selectors catch any future page that uses an unknown
+   wrapper class. */
 body > .app-shell,
 body > .src-shell,
 body > .c-wrap,
-body > main:not([class*="page-frame--off"]),
-body > article,
-body > .landing-body {
+body > .wrap,
+body > .pr-page,
+body > .pr-hero,
+body > .landing-body,
+body > .auth-shell,
+body > main:not([class*="page-frame--off"]):not(.nv-error),
+body > article {
   border: 1px solid var(--border-default) !important;
   border-radius: var(--radius-md, 10px) !important;
   background: var(--bg-surface, var(--surface, var(--bg-base))) !important;
@@ -1066,8 +1074,13 @@ body > .app-shell > .main-content {
 [data-density="compact"] body > .app-shell,
 [data-density="compact"] body > .src-shell,
 [data-density="compact"] body > .c-wrap,
+[data-density="compact"] body > .wrap,
+[data-density="compact"] body > .pr-page,
+[data-density="compact"] body > .pr-hero,
+[data-density="compact"] body > .landing-body,
+[data-density="compact"] body > .auth-shell,
 [data-density="compact"] body > main,
-[data-density="compact"] body > .landing-body {
+[data-density="compact"] body > article {
   padding: var(--space-4, 16px) var(--space-4, 16px) !important;
 }
 [data-density="compact"] body > .app-shell > .main-content {
@@ -1083,8 +1096,13 @@ body > .app-shell > .main-content {
   body > .app-shell,
   body > .src-shell,
   body > .c-wrap,
+  body > .wrap,
+  body > .pr-page,
+  body > .pr-hero,
+  body > .landing-body,
+  body > .auth-shell,
   body > main,
-  body > .landing-body {
+  body > article {
     padding: var(--space-4, 16px) var(--space-3, 12px) !important;
     border-radius: var(--radius-sm, 6px) !important;
   }
