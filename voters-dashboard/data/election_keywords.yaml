@@ -177,3 +177,178 @@ THA:
 VEN:
   must_any: ["venezuela", "venezuelan", "maduro", "machado", "edmundo gonzález", "edmundo gonzalez"]
   boost:   ["venezuela 2024", "venezuelan president", "maduro successor"]
+
+# ─────────────────────────── BATCH 3: 37 more ───────────────────────
+
+PER:
+  must_any: ["peru", "peruvian", "boluarte", "fujimori", "castillo", "vladimir cerrón"]
+  must_not: ["peru rugby", "peru football"]
+  boost:   ["peru 2026", "peruvian president", "boluarte successor"]
+
+ECU:
+  must_any: ["ecuador", "ecuadorian", "noboa", "correa", "lasso"]
+  must_not: ["ecuador rugby"]
+  boost:   ["ecuadorian president", "ecuador 2025"]
+
+BOL:
+  must_any: ["bolivia", "bolivian", "rodrigo paz", "evo morales", "luis arce", "tuto quiroga"]
+  boost:   ["bolivian president", "bolivia 2025"]
+
+URY:
+  must_any: ["uruguay", "uruguayan", "orsi", "delgado", "lacalle pou"]
+  must_not: ["uruguay football"]
+  boost:   ["uruguayan president"]
+
+CRI:
+  must_any: ["costa rica", "costa rican", "rodrigo chaves", "fabricio alvarado"]
+  boost:   ["costa rica 2026", "costa rican president"]
+
+NLD:
+  must_any: ["netherlands", "dutch", "wilders", "schoof", "rutte", "yesilgöz"]
+  must_not: ["dutch football", "eredivisie"]
+  boost:   ["next dutch pm", "dutch general election"]
+
+BEL:
+  must_any: ["belgium", "belgian", "de wever", "magnette", "vlaams belang"]
+  must_not: ["belgian league"]
+  boost:   ["belgian pm", "belgium election"]
+
+GRC:
+  must_any: ["greece", "greek", "mitsotakis", "tsipras", "androulakis"]
+  must_not: ["greek superleague"]
+  boost:   ["next greek pm", "greek election"]
+
+PRT:
+  must_any: ["portugal", "portuguese", "montenegro", "ventura", "sá pinto"]
+  must_not: ["portuguese liga"]
+  boost:   ["portuguese pm", "chega portugal"]
+
+ROU:
+  must_any: ["romania", "romanian", "nicusor dan", "nicușor dan", "simion", "georgescu", "ciolacu"]
+  boost:   ["romanian president", "romania 2025"]
+
+CZE:
+  must_any: ["czech republic", "czech", "babis", "babiš", "fiala", "ano party"]
+  boost:   ["czech pm", "czech election"]
+
+NOR:
+  must_any: ["norway", "norwegian", "støre", "store", "solberg", "listhaug"]
+  must_not: ["norwegian air"]
+  boost:   ["norwegian pm", "norway election"]
+
+FIN:
+  must_any: ["finland", "finnish", "orpo", "lindtman", "purra"]
+  must_not: ["finnish football"]
+  boost:   ["finnish pm", "finland election"]
+
+DNK:
+  must_any: ["denmark", "danish", "frederiksen", "støjberg", "stojberg", "loekke", "løkke"]
+  must_not: ["danish league"]
+  boost:   ["danish pm", "denmark election", "greenland politics"]
+
+CHE:
+  must_any: ["switzerland", "swiss", "federal council", "svp switzerland", "udc switzerland"]
+  must_not: ["swiss open"]
+  boost:   ["swiss federal council", "swiss referendum"]
+
+IRL:
+  must_any: ["ireland", "irish", "taoiseach", "sinn féin", "sinn fein", "fine gael", "fianna fáil", "fianna fail", "michéal martin", "harris"]
+  must_not: ["northern ireland"]
+  boost:   ["next taoiseach", "irish general election"]
+
+AUT:
+  must_any: ["austria", "austrian", "kickl", "stocker", "babler", "fpö", "fpo", "övp", "ovp"]
+  must_not: ["austrian league"]
+  boost:   ["austrian chancellor", "austria election"]
+
+MYS:
+  must_any: ["malaysia", "malaysian", "anwar ibrahim", "muhyiddin", "hadi awang", "umno"]
+  must_not: ["malaysian league"]
+  boost:   ["malaysia 2027", "malaysian pm"]
+
+SGP:
+  must_any: ["singapore", "lawrence wong", "singaporean", "pap singapore", "workers party singapore"]
+  boost:   ["singapore election", "singapore pm"]
+
+KHM:
+  must_any: ["cambodia", "cambodian", "hun manet", "hun sen", "cnrp"]
+  boost:   ["cambodia 2028", "cambodian pm"]
+
+LKA:
+  must_any: ["sri lanka", "sri lankan", "anura kumara", "dissanayake", "rajapaksa", "jvp"]
+  must_not: ["sri lanka cricket"]
+  boost:   ["sri lankan president"]
+
+NPL:
+  must_any: ["nepal", "nepali", "nepalese", "oli", "deuba", "prachanda", "rsp nepal"]
+  boost:   ["nepal pm", "nepali election"]
+
+MMR:
+  must_any: ["myanmar", "burmese", "burma", "min aung hlaing", "aung san suu kyi", "tatmadaw", "junta"]
+  must_not: ["myanmar football"]
+  boost:   ["myanmar civil war", "burma election"]
+
+KEN:
+  must_any: ["kenya", "kenyan", "ruto", "raila odinga", "uhuru kenyatta", "gen z kenya"]
+  must_not: ["kenya rugby"]
+  boost:   ["kenya 2027", "kenyan president"]
+
+GHA:
+  must_any: ["ghana", "ghanaian", "mahama", "bawumia", "akufo-addo", "ndc ghana", "npp ghana"]
+  must_not: ["ghana football"]
+  boost:   ["ghanaian president"]
+
+SEN:
+  must_any: ["senegal", "senegalese", "bassirou diomaye faye", "ousmane sonko", "macky sall", "pastef"]
+  boost:   ["senegalese president"]
+
+TUN:
+  must_any: ["tunisia", "tunisian", "kais saied", "ennahda", "ghannouchi"]
+  must_not: ["tunisia football"]
+  boost:   ["tunisia 2024", "tunisian president"]
+
+MAR:
+  must_any: ["morocco", "moroccan", "akhannouch", "mohammed vi", "rni morocco", "western sahara"]
+  must_not: ["morocco football"]
+  boost:   ["moroccan king", "morocco election"]
+
+DZA:
+  must_any: ["algeria", "algerian", "tebboune", "fln algeria", "hirak"]
+  must_not: ["algeria football"]
+  boost:   ["algerian president", "algeria 2024"]
+
+COD:
+  must_any: ["dr congo", "drc", "congo-kinshasa", "tshisekedi", "katumbi", "m23", "kabila"]
+  boost:   ["drc president", "drc 2028"]
+
+RWA:
+  must_any: ["rwanda", "rwandan", "kagame", "rpf", "ingabire"]
+  boost:   ["rwandan president"]
+
+UGA:
+  must_any: ["uganda", "ugandan", "museveni", "bobi wine", "muhoozi"]
+  must_not: ["uganda rugby"]
+  boost:   ["ugandan president", "uganda 2026"]
+
+TZA:
+  must_any: ["tanzania", "tanzanian", "samia suluhu", "lissu", "ccm tanzania", "chadema"]
+  boost:   ["tanzanian president"]
+
+NZL:
+  must_any: ["new zealand", "nz pm", "luxon", "hipkins", "chris hipkins", "winston peters", "nz first", "act new zealand"]
+  must_not: ["new zealand rugby", "all blacks"]
+  boost:   ["next nz pm", "new zealand election"]
+
+RUS:
+  must_any: ["russia", "russian", "putin", "navalny", "duma", "united russia", "kpRF"]
+  must_not: ["russia football", "russian league"]
+  boost:   ["putin successor", "russian president 2030"]
+
+BLR:
+  must_any: ["belarus", "belarusian", "lukashenko", "tsikhanouskaya", "tikhanovsky"]
+  boost:   ["belarus president", "lukashenko successor"]
+
+KAZ:
+  must_any: ["kazakhstan", "kazakh", "tokayev", "nazarbayev", "amanat"]
+  must_not: ["kazakhstan football"]
+  boost:   ["kazakh president", "kazakhstan election"]

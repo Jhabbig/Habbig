@@ -29,6 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from analysis import (
     country_profile,
+    country_vulnerability,
     disease_atlas,
     drug_supply_chain,
     hai_radar,
@@ -36,6 +37,7 @@ from analysis import (
     outbreak_radar,
     treatment_vulnerability,
 )
+from ingestion import pharma_trade
 from ingestion import (
     country_codes,
     excess_mortality,
@@ -270,6 +272,34 @@ async def api_shortages_active() -> JSONResponse:
     return JSONResponse({
         "items": treatment_vulnerability.active_shortages_with_scores(),
     })
+
+
+# ── Phase 4d-extension: country vulnerability + pharma trade ───────────────
+
+@app.get("/api/country_vulnerability/globe")
+async def api_country_vulnerability_globe() -> JSONResponse:
+    return JSONResponse(country_vulnerability.globe_layer())
+
+
+@app.get("/api/country_vulnerability/{iso3}")
+async def api_country_vulnerability_country(iso3: str) -> JSONResponse:
+    rec = country_vulnerability.country_score(iso3)
+    if not rec:
+        return JSONResponse({"error": f"unknown iso3: {iso3}"}, status_code=404)
+    return JSONResponse(rec)
+
+
+@app.get("/api/pharma_trade")
+async def api_pharma_trade() -> JSONResponse:
+    return JSONResponse(pharma_trade.overview())
+
+
+@app.get("/api/pharma_trade/{iso3}")
+async def api_pharma_trade_country(iso3: str) -> JSONResponse:
+    rec = pharma_trade.for_country(iso3)
+    if "error" in rec:
+        return JSONResponse(rec, status_code=404)
+    return JSONResponse(rec)
 
 
 if __name__ == "__main__":

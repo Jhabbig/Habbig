@@ -174,7 +174,7 @@ const GIBS_LAYERS = [
     matrixSet: '1km', maxLevel: 7, format: 'image/png', defaultOpacity: 0.7 },
   { group: 'Climate overlays', kind: 'overlay',
     id: 'sea-ice', label: 'Sea ice concentration',
-    layer: 'AMSRU2_Sea_Ice_Concentration_12km',
+    layer: 'AMSR2_Sea_Ice_Concentration_12km',
     matrixSet: '2km', maxLevel: 6, format: 'image/png', defaultOpacity: 0.8 },
   { group: 'Climate overlays', kind: 'overlay',
     id: 'snow', label: 'Snow cover (MODIS Terra)',
@@ -383,42 +383,49 @@ function buildLayerPanel() {
 }
 
 // ── HUD: pull live values from the climate dashboard's own APIs ─────────────
+// Paths verified against actual /api/summary response (see /api/summary).
 async function fetchClimateHud() {
   const safe = async (path) => {
     try { const r = await fetch(path); if (!r.ok) return null; return await r.json(); }
     catch { return null; }
   };
 
-  const [summary, sst, regime] = await Promise.all([
-    safe('/api/summary'),
-    safe('/api/sst'),
-    safe('/api/regime'),
-  ]);
-
+  const summary = await safe('/api/summary');
   const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.textContent = v; };
 
-  if (summary) {
-    if (summary.temperature?.latest_anomaly_c != null) {
-      set('hud-temp', `+${Number(summary.temperature.latest_anomaly_c).toFixed(2)} °C`);
-    } else if (summary.temperature?.latest != null) {
-      set('hud-temp', `+${Number(summary.temperature.latest).toFixed(2)} °C`);
-    }
-    if (summary.co2?.latest_ppm != null) set('hud-co2', `${Number(summary.co2.latest_ppm).toFixed(1)} ppm`);
-    if (summary.methane?.latest_ppb != null) set('hud-ch4', `${Number(summary.methane.latest_ppb).toFixed(1)} ppb`);
-    if (summary.sea_ice?.arctic?.latest_extent_million_sq_km != null)
-      set('hud-arctic',     `${Number(summary.sea_ice.arctic.latest_extent_million_sq_km).toFixed(2)} M km²`);
-    if (summary.sea_ice?.antarctic?.latest_extent_million_sq_km != null)
-      set('hud-antarctic',  `${Number(summary.sea_ice.antarctic.latest_extent_million_sq_km).toFixed(2)} M km²`);
-    set('hud-asof', summary.asof || '');
+  if (!summary) return;
+
+  // GISTEMP — annual anomaly (last full year) + YTD projected
+  const annual = summary.gistemp?.latest_annual;
+  if (annual?.anomaly_c != null) {
+    set('hud-temp', `+${Number(annual.anomaly_c).toFixed(2)} °C  (${annual.year})`);
   }
-  if (sst?.latest_value_c != null) set('hud-sst', `${Number(sst.latest_value_c).toFixed(2)} °C`);
-  if (regime?.oni != null) {
-    const oni = Number(regime.oni);
-    let label = 'neutral';
-    if (oni >= 0.5) label = 'El Niño';
-    else if (oni <= -0.5) label = 'La Niña';
-    set('hud-enso', `${label} (ONI ${oni.toFixed(2)})`);
+  const ytd = summary.gistemp?.projection?.ytd_anomaly_c;
+  if (ytd != null) {
+    const yr = summary.gistemp?.projection?.current_year ?? '';
+    set('hud-temp-ytd', `+${Number(ytd).toFixed(2)} °C  (${yr})`);
   }
+
+  // CO₂ + CH₄ — Mauna Loa / NOAA GML
+  const co2 = summary.co2?.latest;
+  if (co2?.ppm != null) set('hud-co2', `${Number(co2.ppm).toFixed(2)} ppm  (${co2.year}-${String(co2.month).padStart(2, '0')})`);
+  const ch4 = summary.methane?.latest;
+  if (ch4?.ppb != null) set('hud-ch4', `${Number(ch4.ppb).toFixed(2)} ppb  (${ch4.year}-${String(ch4.month).padStart(2, '0')})`);
+
+  // Sea ice — NSIDC record-check (combined extent)
+  const ice = summary.sea_ice?.record_check;
+  if (ice?.extent_mkm2 != null) {
+    const rank = ice.rank_lowest_in_record;
+    const rankS = rank ? ` · rank #${rank} of ${ice.history_years}` : '';
+    set('hud-ice', `${Number(ice.extent_mkm2).toFixed(2)} M km²${rankS}`);
+  }
+
+  // ENSO — regime state + ONI
+  const oni = summary.regime?.latest?.oni;
+  const state = summary.regime?.state;
+  if (oni != null) set('hud-enso', `${state || 'neutral'} (ONI ${Number(oni).toFixed(2)})`);
+
+  set('hud-asof', summary.fetched_at ? `as of ${summary.fetched_at.replace('T', ' ').slice(0, 16)} UTC` : '');
 }
 </script>
 </body>

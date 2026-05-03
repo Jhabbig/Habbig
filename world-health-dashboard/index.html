@@ -897,9 +897,35 @@ function hideStatus()  { document.getElementById('status').classList.remove('sho
 async function loadMetric(metricId) {
   showStatus(`Loading ${state.metricsById[metricId]?.name || metricId}…`);
   try {
-    const resp = await fetch(`/api/globe/${encodeURIComponent(metricId)}`);
+    let url;
+    if (metricId === '_country_vulnerability') {
+      url = '/api/country_vulnerability/globe';
+    } else {
+      url = `/api/globe/${encodeURIComponent(metricId)}`;
+    }
+    const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    state.layer = await resp.json();
+    const data = await resp.json();
+    // Composite layers come back without a `metric` block wired into our
+    // catalog; synthesize a metric record so applyMetricLayer can render.
+    if (metricId === '_country_vulnerability') {
+      data.metric = {
+        id: metricId,
+        name: data.indicator.name,
+        unit: data.indicator.unit,
+        description: data.indicator.description,
+        source: data.indicator.source,
+        source_code: 'composite',
+        direction: 'lower_is_better',
+        decimals: 2,
+      };
+      // by_iso3 entries already have `value`; year is N/A → set to 2024 placeholder
+      for (const k in data.by_iso3) {
+        data.by_iso3[k].year = data.by_iso3[k].year || '';
+      }
+      data.n = data.n || Object.keys(data.by_iso3).length;
+    }
+    state.layer = data;
     state.selectedMetricId = metricId;
     if (state.tab === 'globe') applyMetricLayer();
   } catch (e) {
@@ -1825,6 +1851,20 @@ async function main() {
 
   // Metric selector
   const sel = document.getElementById('metric');
+  // Composite metrics first — synthesised from multiple sources.
+  const ogComposite = document.createElement('optgroup');
+  ogComposite.label = 'Composite (synthesised)';
+  const optV = document.createElement('option');
+  optV.value = '_country_vulnerability';
+  optV.textContent = 'Treatment-supply vulnerability (burden-weighted)';
+  ogComposite.appendChild(optV);
+  sel.appendChild(ogComposite);
+  state.metricsById['_country_vulnerability'] = {
+    id: '_country_vulnerability',
+    name: 'Treatment-supply vulnerability',
+    description: 'Burden-weighted weak-point score per country',
+  };
+
   const byCat = {};
   for (const x of state.metrics) (byCat[x.category] = byCat[x.category] || []).push(x);
   for (const [cat, metrics] of Object.entries(byCat)) {

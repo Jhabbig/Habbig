@@ -267,8 +267,10 @@ Polymarket's own bid-ask plus our modelling slack live below that.
 | Var | Default | Effect |
 |---|---|---|
 | `GATEWAY_SSO_SECRET` | unset | Required behind the gateway. |
-| `DEV_MODE` | unset | Set `1` to bypass gateway auth locally. |
+| `DEV_MODE` | unset | Set `1` to bypass gateway auth locally; also auto-generates a master key for the trading store at `data/dev_master.key`. |
+| `BIND_HOST` | `0.0.0.0` | Listen address. Set `127.0.0.1` for localhost-only. |
 | `PORT` | `7060` | Override listen port. |
+| `CB_KEY_STORE_SECRET` | required for trading | Fernet master key (urlsafe-base64) used to encrypt user Kalshi credentials at rest. Generate with `python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`. Without this, all trading endpoints return an error in non-DEV mode. |
 
 ## Caveats / known limits
 

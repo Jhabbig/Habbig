@@ -1584,6 +1584,42 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             '</div>'
         )
 
+    # Full Access Pass upsell — shown to logged-in users who don't already
+    # have full access (admins are excluded by the has_full_access_user check).
+    # Routes to /checkout/viewer-pass which detects the session and upgrades
+    # the existing account directly via the Stripe webhook (no email round-trip).
+    vp = VIEWER_PASS_CFG
+    if not has_full_access_user and vp:
+        vp_sym = _currency_symbol(vp)
+        vp_mo = f"{vp_sym}{vp.get('monthly_cents', 0)/100:.0f}"
+        vp_yr = f"{vp_sym}{vp.get('annual_cents', 0)/100:.0f}"
+        summary_html += (
+            '<div class="viewer-pass-cta" style="'
+            'margin-top:14px;padding:18px 22px;border-radius:14px;'
+            'background:linear-gradient(135deg, rgba(124,92,255,0.14), rgba(124,92,255,0.04));'
+            'border:1px solid rgba(124,92,255,0.25);display:flex;'
+            'align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap">'
+            '<div style="flex:1;min-width:240px">'
+            '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:4px">'
+            f'{html.escape(vp.get("display_name", "Full Access Pass"))}'
+            '</div>'
+            '<div style="font-size:12px;color:var(--text-muted);line-height:1.45">'
+            f'{html.escape(vp.get("description", "Every dashboard, one subscription."))}'
+            ' One click — your existing account upgrades automatically.'
+            '</div></div>'
+            '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+            '<a href="/checkout/viewer-pass?interval=monthly" '
+            'style="padding:9px 16px;border-radius:8px;background:#7c5cff;color:#fff;'
+            'text-decoration:none;font-size:13px;font-weight:500;white-space:nowrap">'
+            f'Upgrade — {vp_mo}/mo</a>'
+            '<a href="/checkout/viewer-pass?interval=annual" '
+            'style="padding:9px 16px;border-radius:8px;background:transparent;color:#7c5cff;'
+            'text-decoration:none;font-size:13px;font-weight:500;white-space:nowrap;'
+            'border:1px solid rgba(124,92,255,0.45)">'
+            f'Annual — {vp_yr}/yr</a>'
+            '</div></div>'
+        )
+
     # ── Build dashboard cards with feature highlights ───────────────
     req_scheme, req_base, req_port = _request_base_domain(request)
     cards_html = []
