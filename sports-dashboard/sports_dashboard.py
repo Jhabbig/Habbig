@@ -731,10 +731,49 @@ def _warn_odds_key_missing(caller: str) -> None:
               flush=True)
 
 
+# ── the-odds-api quota circuit breaker ───────────────────────────────────
+# the-odds-api free tier is 500 requests/month. Once exhausted, the API
+# returns HTTP 401 with body {"error_code": "OUT_OF_USAGE_CREDITS"} on
+# every subsequent call.
+#
+# Without a breaker, the polling loop keeps hitting the API every 5 min,
+# producing log noise AND — critically — burning through the next month's
+# allowance the instant the quota resets (8,640 calls/month at 5-min poll
+# vs 500 free quota → exhausted within 42h of reset).
+#
+# The breaker:
+#   - Trips when we see 401 with OUT_OF_USAGE_CREDITS
+#   - Stays open for 6h, then makes one probe to detect quota reset
+#   - On subsequent 200 responses, closes again
+# So during quota-exhausted periods we make ~4 calls/day instead of 288,
+# which means a fresh 500-quota actually lasts a couple weeks instead of
+# a couple days.
+_ODDS_BREAKER_OPEN_UNTIL = 0.0
+_ODDS_BREAKER_PROBE_INTERVAL_S = 6 * 3600
+_ODDS_BREAKER_LAST_REASON = ""
+
+
+def _is_odds_quota_error(resp: requests.Response) -> bool:
+    if resp.status_code != 401:
+        return False
+    try:
+        body = resp.json()
+        return body.get("error_code") == "OUT_OF_USAGE_CREDITS"
+    except Exception:
+        return False
+
+
 def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[list[dict], str | None]:
     """Fetch match odds from The Odds API. Returns (events, requests_remaining)."""
+    global _ODDS_BREAKER_OPEN_UNTIL, _ODDS_BREAKER_LAST_REASON
+
     if not ODDS_API_KEY:
         _warn_odds_key_missing("fetch_odds")
+        return [], None
+
+    if time.time() < _ODDS_BREAKER_OPEN_UNTIL:
+        # Breaker still open — degrade silently, dashboard falls back to
+        # Polymarket↔Kalshi cross-venue arbitrage as the primary signal.
         return [], None
 
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
@@ -745,6 +784,17 @@ def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[lis
         "oddsFormat": "decimal",
     }
     resp = requests.get(url, params=params, timeout=30)
+    if _is_odds_quota_error(resp):
+        _ODDS_BREAKER_OPEN_UNTIL = time.time() + _ODDS_BREAKER_PROBE_INTERVAL_S
+        _ODDS_BREAKER_LAST_REASON = "OUT_OF_USAGE_CREDITS"
+        print(
+            f"⚠ the-odds-api quota exhausted (HTTP 401, OUT_OF_USAGE_CREDITS). "
+            f"Suspending bookmaker fetch for 6h. Dashboard will fall back to "
+            f"Polymarket↔Kalshi cross-venue arbitrage. To restore: upgrade "
+            f"plan at https://the-odds-api.com or rotate ODDS_API_KEY.",
+            flush=True,
+        )
+        return [], None
     resp.raise_for_status()
     remaining = resp.headers.get("x-requests-remaining")
     return resp.json(), remaining
@@ -752,8 +802,13 @@ def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[lis
 
 def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
     """Fetch outright/futures odds for a sport (e.g. league winner)."""
+    global _ODDS_BREAKER_OPEN_UNTIL, _ODDS_BREAKER_LAST_REASON
+
     if not ODDS_API_KEY:
         _warn_odds_key_missing("fetch_outright_odds")
+        return [], None
+
+    if time.time() < _ODDS_BREAKER_OPEN_UNTIL:
         return [], None
 
     outright_key = OUTRIGHT_SPORT_KEYS.get(sport_key)
@@ -769,6 +824,10 @@ def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
     }
     try:
         resp = requests.get(url, params=params, timeout=30)
+        if _is_odds_quota_error(resp):
+            _ODDS_BREAKER_OPEN_UNTIL = time.time() + _ODDS_BREAKER_PROBE_INTERVAL_S
+            _ODDS_BREAKER_LAST_REASON = "OUT_OF_USAGE_CREDITS"
+            return [], None
         resp.raise_for_status()
         remaining = resp.headers.get("x-requests-remaining")
         return resp.json(), remaining
@@ -4514,12 +4573,24 @@ async def health():
         "GATEWAY_SSO_SECRET": {"set": bool(os.getenv("GATEWAY_SSO_SECRET")), "critical": False},
     }
     missing_critical = [k for k, v in keys.items() if v["critical"] and not v["set"]]
+    odds_breaker_open = time.time() < _ODDS_BREAKER_OPEN_UNTIL
+    status = "healthy"
+    if missing_critical:
+        status = "degraded"
+    elif odds_breaker_open:
+        # Still healthy operationally, just on the cross-venue-only fallback
+        status = "degraded-quota-exhausted"
     return JSONResponse({
         "ok": True,
         "service": "sports-dashboard",
-        "status": "degraded" if missing_critical else "healthy",
+        "status": status,
         "missing_critical_keys": missing_critical,
         "keys": keys,
+        "odds_breaker": {
+            "open": odds_breaker_open,
+            "reopen_in_s": max(0, int(_ODDS_BREAKER_OPEN_UNTIL - time.time())),
+            "last_reason": _ODDS_BREAKER_LAST_REASON or None,
+        },
         "env_files_loaded": _loaded_from,
         "ts": time.time(),
     })
