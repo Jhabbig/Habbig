@@ -118,36 +118,73 @@ _EVENT_DATE_RE = re.compile(
     re.IGNORECASE,
 )
 _ITEM4_RE = re.compile(
-    r"ITEM\s+4\.?\s*PURPOSE\s+OF\s+TRANSACTION[\s\S]+?"
-    r"(?=ITEM\s+5\.?|$)",
+    r"(?:item\s*)?\b4\.?\s*purpose\s+of\s+transaction\b[\s\S]+?"
+    r"(?=\bitem\s*5\b|\b5\.\s*interest\b|$)",
     re.IGNORECASE,
 )
 
 
 async def find_13d_body_url(session: aiohttp.ClientSession,
                             cik: int, accession: str) -> Optional[str]:
-    """Locate the primary text/HTML body of a 13D filing."""
+    """Locate the primary text/HTML body of a 13D filing.
+
+    EDGAR's filing index page contains many .htm hrefs — header navigation
+    (`/search/search.htm`), nav (`/cgi-bin/...`), the EDGAR Online Forms link,
+    etc. The actual filing documents are listed in a `<table class="tableFile">`
+    with *relative* hrefs (just `something.htm` or `./something.htm`). We
+    filter to those — anything starting with `/` or `http` is a header link.
+    """
     nodash = accession.replace("-", "")
     index_url = f"{SEC_BASE}/Archives/edgar/data/{cik}/{nodash}/"
-    html = await _get_text(session, index_url)
+    try:
+        html = await _get_text(session, index_url)
+    except aiohttp.ClientResponseError as e:
+        if e.status == 404:
+            return None
+        raise
+
+    # EDGAR uses absolute paths in the index page. Restrict to documents
+    # actually IN this filing's directory so we don't pick up the header
+    # nav links (`/search/search.htm` etc).
+    archive_prefix = f"/Archives/edgar/data/{cik}/{nodash}/"
     candidates = re.findall(
         r'href="([^"]+\.(?:htm|html|txt))"', html, flags=re.IGNORECASE
     )
+    candidates = [c for c in candidates if c.startswith(archive_prefix)]
     if not candidates:
         return None
-    # Prefer the largest non-index document — the cover page is usually the
-    # primary doc (e.g. sched13d.htm). The directory listing already orders
-    # the primary first, so first match is a reasonable default.
-    for c in candidates:
-        name = c.rsplit("/", 1)[-1].lower()
-        if name in ("index.htm", "index.html", "0001.htm"):
-            continue
-        return f"{SEC_BASE}{c}" if c.startswith("/") else f"{index_url}{c}"
-    return None
+
+    # Skip the index/headers files; prefer the actual schedule body.
+    def _name(c: str) -> str:
+        return c.rsplit("/", 1)[-1].lower()
+
+    def _score(c: str) -> int:
+        n = _name(c)
+        if n.endswith("-index.html") or n.endswith("-index-headers.html"):
+            return -1
+        if n.endswith(".txt"):
+            return 5   # the .txt is the full SGML; usable but ugly
+        if "13d" in n or "13g" in n:
+            return 100
+        if "sched" in n or "schedule" in n:
+            return 90
+        if n.startswith("primary_doc"):
+            return 1
+        return 50
+
+    candidates.sort(key=_score, reverse=True)
+    if _score(candidates[0]) < 0:
+        return None
+    return f"{SEC_BASE}{candidates[0]}"
 
 
 def _strip_html(s: str) -> str:
-    return re.sub(r"<[^>]+>", " ", s)
+    """Strip HTML tags AND entities (&nbsp; etc.) so regex can match
+    section headers reliably. Without entity decoding, headings like
+    `&nbsp;4. Purpose of Transaction` slip through."""
+    import html as _html
+    s = re.sub(r"<[^>]+>", " ", s)
+    return _html.unescape(s)
 
 
 def parse_13d_body(text: str) -> dict:
@@ -273,7 +310,14 @@ async def ingest_issuer_13d(session: aiohttp.ClientSession,
             filer_cik, filer_name = await find_filer_cik(session, issuer_cik, accession)
             if not filer_cik or not filer_name:
                 continue
-            body_url = await find_13d_body_url(session, filer_cik, accession)
+            # Try issuer-rooted path first since that's where we found the
+            # accession (via the issuer's atom feed). EDGAR mirrors filings
+            # under both filer and issuer CIK paths but the issuer one is
+            # guaranteed to exist for cross-indexed accessions; the filer
+            # path can 404 if their CIK is non-canonical.
+            body_url = await find_13d_body_url(session, issuer_cik, accession)
+            if not body_url:
+                body_url = await find_13d_body_url(session, filer_cik, accession)
             parsed = {}
             if body_url:
                 try:
