@@ -1,0 +1,1224 @@
+# Supplementary voter-influence data — merged into the main influences
+# overlay at request time. Adds:
+#   • trust_extra:     trust in military / courts / police separately
+#                      (Edelman Trust Barometer, Latinobarómetro, Afrobarometer, Arab Barometer)
+#   • identity_extra:  Gini coefficient, generational mix, last-election turnout
+#                      (World Bank, UN DESA, IDEA Voter Turnout DB)
+#   • security:        homicide rate (UNODC), terror salience, climate-disaster
+#                      memory, military's political role, internet freedom
+#                      (UNODC, GTI, ND-GAIN climate vulnerability, Freedom House
+#                      Internet Freedom 2024, V-Dem)
+#   • economic_extra:  Gini, energy import dependence, food import dependence
+#                      (World Bank, IEA, FAO)
+#
+# Where a number is reported but not surveyed independently (autocracies),
+# the field carries `_estimated: true` and the source string names the
+# specific external estimator (GAMAAN, Arab Barometer, ORC Consultores,
+# Latinobarómetro, V-Dem expert ratings).
+
+schema_version: 1
+last_curated: "2026-04-26"
+
+countries:
+
+  USA:
+    trust_extra:
+      trust_in_military_pct: 60
+      trust_in_courts_pct: 41
+      trust_in_police_pct: 45
+      source: "Gallup Confidence in Institutions 2025; Pew Research Mar 2026"
+    identity_extra:
+      gini_coefficient: 0.395
+      gen_z_share_pct: 21
+      millennial_share_pct: 22
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 21
+      voter_turnout_last_pct: 66.6
+      voter_turnout_source: "2024 Presidential — IDEA / US Census"
+      source: "World Bank 2024, US Census 2024, IDEA Voter Turnout DB"
+    security:
+      homicide_per_100k: 6.3
+      homicide_trend: "easing"
+      violent_crime_perception: "high concern"
+      terror_salience: "moderate"
+      climate_disasters_recent: ["Hurricane Helene 2024 (NC/TN)", "LA wildfires 2025", "Texas heat-dome 2023"]
+      military_role: "quiet (apolitical norm strained)"
+      internet_freedom_score: 76
+      energy_import_dependence_pct: -8
+      food_import_dependence_pct: 12
+      source: "UNODC 2023, FBI UCR, GTI 2024, FH Internet Freedom 2024, EIA"
+
+  GBR:
+    trust_extra:
+      trust_in_military_pct: 65
+      trust_in_courts_pct: 51
+      trust_in_police_pct: 53
+      source: "Edelman Trust Barometer 2025, ONS Public Trust 2024"
+    identity_extra:
+      gini_coefficient: 0.354
+      gen_z_share_pct: 19
+      millennial_share_pct: 22
+      gen_x_share_pct: 20
+      boomer_plus_share_pct: 22
+      voter_turnout_last_pct: 60.0
+      voter_turnout_source: "2024 General Election — UK Electoral Commission"
+      source: "World Bank 2024, ONS, UK Electoral Commission"
+    security:
+      homicide_per_100k: 1.0
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (knife crime salient)"
+      terror_salience: "moderate"
+      climate_disasters_recent: ["UK 40°C July 2022", "Storm Babet 2023", "Storm Bert 2024"]
+      military_role: "quiet"
+      internet_freedom_score: 79
+      energy_import_dependence_pct: 35
+      food_import_dependence_pct: 46
+      source: "UNODC 2023, ONS Crime Survey, GTI 2024, FH Internet Freedom"
+
+  DEU:
+    trust_extra:
+      trust_in_military_pct: 49
+      trust_in_courts_pct: 60
+      trust_in_police_pct: 70
+      source: "Edelman 2025, Bertelsmann Stiftung 2024"
+    identity_extra:
+      gini_coefficient: 0.319
+      gen_z_share_pct: 17
+      millennial_share_pct: 21
+      gen_x_share_pct: 20
+      boomer_plus_share_pct: 26
+      voter_turnout_last_pct: 76.4
+      voter_turnout_source: "2025 Bundestag — Bundeswahlleiterin"
+      source: "Destatis 2024, World Bank, Bundeswahlleiterin"
+    security:
+      homicide_per_100k: 0.9
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate"
+      terror_salience: "elevated (2024 Solingen + 2024 Magdeburg attacks)"
+      climate_disasters_recent: ["Ahrtal floods 2021 (180+ dead)", "Bavaria floods 2024"]
+      military_role: "low-profile (Bundeswehr underfunded)"
+      internet_freedom_score: 78
+      energy_import_dependence_pct: 64
+      food_import_dependence_pct: 28
+      source: "UNODC, BKA Crime Statistics 2024, GTI 2024, FH Internet Freedom"
+
+  FRA:
+    trust_extra:
+      trust_in_military_pct: 70
+      trust_in_courts_pct: 51
+      trust_in_police_pct: 64
+      source: "Cevipof Baromètre Confiance 2025"
+    identity_extra:
+      gini_coefficient: 0.317
+      gen_z_share_pct: 18
+      millennial_share_pct: 20
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 23
+      voter_turnout_last_pct: 66.7
+      voter_turnout_source: "2024 legislative 1st round — Ministère de l'Intérieur"
+      source: "INSEE, Banque de France, Ministère Intérieur"
+    security:
+      homicide_per_100k: 1.2
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate-high"
+      terror_salience: "high (post-2015 baseline; 2024 Arras + 2024 Olympics threats)"
+      climate_disasters_recent: ["2022 heat dome 47°C", "2023 SE France floods", "2024 Pyrenees fires"]
+      military_role: "quiet (Sentinelle still deployed in cities)"
+      internet_freedom_score: 75
+      energy_import_dependence_pct: 47
+      food_import_dependence_pct: 22
+      source: "UNODC 2023, GTI 2024, ND-GAIN, FH Internet Freedom"
+
+  BRA:
+    trust_extra:
+      trust_in_military_pct: 56
+      trust_in_courts_pct: 33
+      trust_in_police_pct: 42
+      source: "Datafolha Mar 2026; ICJ Brasil 2024"
+    identity_extra:
+      gini_coefficient: 0.518
+      gen_z_share_pct: 21
+      millennial_share_pct: 23
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 16
+      voter_turnout_last_pct: 79.1
+      voter_turnout_source: "2022 General — TSE"
+      source: "World Bank 2024, IBGE, TSE"
+    security:
+      homicide_per_100k: 19.0
+      homicide_trend: "easing slowly"
+      violent_crime_perception: "very high"
+      terror_salience: "low"
+      climate_disasters_recent: ["RS floods 2024 (180+ dead, 600k displaced)", "Amazon drought 2024", "SP urban floods 2025"]
+      military_role: "elevated (Bolsonaro era politicisation, partly reversed)"
+      internet_freedom_score: 65
+      energy_import_dependence_pct: -10
+      food_import_dependence_pct: 6
+      source: "UNODC 2023, FBSP 2024, ND-GAIN, FH Internet Freedom"
+
+  ARG:
+    trust_extra:
+      trust_in_military_pct: 33
+      trust_in_courts_pct: 21
+      trust_in_police_pct: 30
+      source: "Latinobarómetro 2024; Poliarquía Mar 2026"
+    identity_extra:
+      gini_coefficient: 0.420
+      gen_z_share_pct: 19
+      millennial_share_pct: 22
+      gen_x_share_pct: 18
+      boomer_plus_share_pct: 19
+      voter_turnout_last_pct: 76.4
+      voter_turnout_source: "2023 General runoff — Cámara Nacional Electoral"
+      source: "World Bank 2024, INDEC, CNE"
+    security:
+      homicide_per_100k: 4.6
+      homicide_trend: "stable (Rosario hot)"
+      violent_crime_perception: "high (Rosario centric)"
+      terror_salience: "low (1994 AMIA reanimated by Israel-Iran)"
+      climate_disasters_recent: ["2022-23 historic drought (soy losses)", "2023 Buenos Aires extreme heat"]
+      military_role: "quiet (post-junta norm)"
+      internet_freedom_score: 70
+      energy_import_dependence_pct: 0
+      food_import_dependence_pct: -45
+      source: "UNODC, Min Seguridad, Latinobarómetro, FH Internet Freedom"
+
+  ISR:
+    trust_extra:
+      trust_in_military_pct: 70
+      trust_in_courts_pct: 41
+      trust_in_police_pct: 35
+      source: "Israel Democracy Institute Democracy Index 2025"
+    identity_extra:
+      gini_coefficient: 0.386
+      gen_z_share_pct: 22
+      millennial_share_pct: 22
+      gen_x_share_pct: 17
+      boomer_plus_share_pct: 17
+      voter_turnout_last_pct: 70.6
+      voter_turnout_source: "2022 Knesset — Israel CEC"
+      source: "Bank of Israel 2024, CBS, CEC"
+    security:
+      homicide_per_100k: 2.1
+      homicide_trend: "rising (Arab-Israeli organised crime)"
+      violent_crime_perception: "very high"
+      terror_salience: "very high (post-Oct 7)"
+      climate_disasters_recent: ["2025 northern flooding", "Recurrent water-stress summers"]
+      military_role: "decisive (war footing; reservist economy)"
+      internet_freedom_score: 75
+      energy_import_dependence_pct: 30
+      food_import_dependence_pct: 39
+      source: "UNODC, IDI, GTI 2024, FH Internet Freedom"
+
+  IND:
+    trust_extra:
+      trust_in_military_pct: 87
+      trust_in_courts_pct: 62
+      trust_in_police_pct: 56
+      source: "CSDS-Lokniti Mood of Nation 2025; Pew India 2024"
+    identity_extra:
+      gini_coefficient: 0.357
+      gen_z_share_pct: 26
+      millennial_share_pct: 23
+      gen_x_share_pct: 18
+      boomer_plus_share_pct: 11
+      voter_turnout_last_pct: 65.8
+      voter_turnout_source: "2024 Lok Sabha — Election Commission of India"
+      source: "World Bank 2024, ECI, MoSPI"
+    security:
+      homicide_per_100k: 3.0
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (women's-safety salient)"
+      terror_salience: "high (2025 Pahalgam attack; Manipur conflict)"
+      climate_disasters_recent: ["2024 Wayanad landslides 350+ dead", "2024 heat-dome >50°C", "2024 Sikkim glacial lake outburst"]
+      military_role: "elevated (Pakistan + China borders active)"
+      internet_freedom_score: 49
+      energy_import_dependence_pct: 38
+      food_import_dependence_pct: -5
+      source: "UNODC, NCRB, GTI 2024, ND-GAIN, FH Internet Freedom"
+
+  MEX:
+    trust_extra:
+      trust_in_military_pct: 76
+      trust_in_courts_pct: 21
+      trust_in_police_pct: 26
+      source: "INEGI ENCIG 2024; Latinobarómetro 2024"
+    identity_extra:
+      gini_coefficient: 0.456
+      gen_z_share_pct: 22
+      millennial_share_pct: 23
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 14
+      voter_turnout_last_pct: 60.7
+      voter_turnout_source: "2024 General — INE"
+      source: "World Bank 2024, INE, INEGI"
+    security:
+      homicide_per_100k: 25.2
+      homicide_trend: "easing slightly (still record-high)"
+      violent_crime_perception: "very high"
+      terror_salience: "low (US designating cartels FTOs in 2025)"
+      climate_disasters_recent: ["2024 Hurricane Otis Acapulco (250+ dead)", "2024 NW Mexico drought"]
+      military_role: "decisive (AMLO/Sheinbaum gave army major civilian roles)"
+      internet_freedom_score: 60
+      energy_import_dependence_pct: 25
+      food_import_dependence_pct: 25
+      source: "UNODC, SESNSP, ND-GAIN, FH Internet Freedom"
+
+  CAN:
+    trust_extra:
+      trust_in_military_pct: 60
+      trust_in_courts_pct: 53
+      trust_in_police_pct: 49
+      source: "Edelman Trust Canada 2025; Abacus 2025"
+    identity_extra:
+      gini_coefficient: 0.301
+      gen_z_share_pct: 18
+      millennial_share_pct: 22
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 22
+      voter_turnout_last_pct: 67.2
+      voter_turnout_source: "2025 Federal — Elections Canada"
+      source: "StatCan, Elections Canada"
+    security:
+      homicide_per_100k: 2.0
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (rising in major cities)"
+      terror_salience: "moderate"
+      climate_disasters_recent: ["2023 record wildfire season (4.4M ha)", "2024 BC atmospheric rivers", "2024 Jasper wildfire"]
+      military_role: "quiet"
+      internet_freedom_score: 86
+      energy_import_dependence_pct: -65
+      food_import_dependence_pct: 0
+      source: "UNODC, StatCan, ND-GAIN, FH Internet Freedom"
+
+  ITA:
+    trust_extra:
+      trust_in_military_pct: 64
+      trust_in_courts_pct: 35
+      trust_in_police_pct: 56
+      source: "ISTAT 2024; Eurobarometer 2025"
+    identity_extra:
+      gini_coefficient: 0.347
+      gen_z_share_pct: 16
+      millennial_share_pct: 19
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 28
+      voter_turnout_last_pct: 63.9
+      voter_turnout_source: "2022 General — Ministero dell'Interno"
+      source: "ISTAT 2024, Min Interno"
+    security:
+      homicide_per_100k: 0.5
+      homicide_trend: "easing"
+      violent_crime_perception: "moderate"
+      terror_salience: "moderate"
+      climate_disasters_recent: ["2023 Emilia-Romagna floods", "2024 Sicily wildfires + drought"]
+      military_role: "quiet"
+      internet_freedom_score: 76
+      energy_import_dependence_pct: 73
+      food_import_dependence_pct: 30
+      source: "UNODC, ISTAT, ND-GAIN, FH Internet Freedom"
+
+  POL:
+    trust_extra:
+      trust_in_military_pct: 75
+      trust_in_courts_pct: 34
+      trust_in_police_pct: 65
+      source: "CBOS Mar 2026; Eurobarometer 2025"
+    identity_extra:
+      gini_coefficient: 0.286
+      gen_z_share_pct: 17
+      millennial_share_pct: 21
+      gen_x_share_pct: 20
+      boomer_plus_share_pct: 23
+      voter_turnout_last_pct: 74.4
+      voter_turnout_source: "2023 Sejm — PKW"
+      source: "GUS, PKW"
+    security:
+      homicide_per_100k: 0.8
+      homicide_trend: "easing"
+      violent_crime_perception: "low-moderate"
+      terror_salience: "low (border-with-Belarus migration salient)"
+      climate_disasters_recent: ["2024 Sept SW floods (Wrocław/Kłodzko)", "2024 Vistula drought"]
+      military_role: "elevated (border with Russia + UA war)"
+      internet_freedom_score: 75
+      energy_import_dependence_pct: 47
+      food_import_dependence_pct: -8
+      source: "UNODC, KGP, GTI 2024, FH Internet Freedom"
+
+  JPN:
+    trust_extra:
+      trust_in_military_pct: 60
+      trust_in_courts_pct: 64
+      trust_in_police_pct: 71
+      source: "NHK 2025; Cabinet Office 2024"
+    identity_extra:
+      gini_coefficient: 0.329
+      gen_z_share_pct: 14
+      millennial_share_pct: 18
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 32
+      voter_turnout_last_pct: 53.9
+      voter_turnout_source: "2024 House of Reps — MIC"
+      source: "MIC, Cabinet Office"
+    security:
+      homicide_per_100k: 0.2
+      homicide_trend: "stable"
+      violent_crime_perception: "low"
+      terror_salience: "low (post-Abe assassination follow-up trials)"
+      climate_disasters_recent: ["2024 Noto earthquake + tsunami (300+ dead)", "2023 record summer heat"]
+      military_role: "low-profile but rising (defence budget doubling)"
+      internet_freedom_score: 75
+      energy_import_dependence_pct: 88
+      food_import_dependence_pct: 62
+      source: "UNODC, NPA, ND-GAIN, FH Internet Freedom"
+
+  KOR:
+    trust_extra:
+      trust_in_military_pct: 53
+      trust_in_courts_pct: 36
+      trust_in_police_pct: 46
+      source: "Edelman Korea 2025; Realmeter Mar 2026"
+    identity_extra:
+      gini_coefficient: 0.331
+      gen_z_share_pct: 15
+      millennial_share_pct: 21
+      gen_x_share_pct: 21
+      boomer_plus_share_pct: 27
+      voter_turnout_last_pct: 67.1
+      voter_turnout_source: "2024 Legislative — NEC"
+      source: "Statistics Korea, NEC"
+    security:
+      homicide_per_100k: 0.6
+      homicide_trend: "stable"
+      violent_crime_perception: "low (women's-safety salient)"
+      terror_salience: "moderate (DPRK threat baseline)"
+      climate_disasters_recent: ["2023 monsoon floods 50+ dead", "2024 record summer humidity"]
+      military_role: "elevated (martial-law attempt by Yoon, now reversed)"
+      internet_freedom_score: 67
+      energy_import_dependence_pct: 84
+      food_import_dependence_pct: 70
+      source: "UNODC, KOSTAT, ND-GAIN, FH Internet Freedom"
+
+  IDN:
+    trust_extra:
+      trust_in_military_pct: 84
+      trust_in_courts_pct: 52
+      trust_in_police_pct: 61
+      source: "Indikator Politik 2025; LSI 2025"
+    identity_extra:
+      gini_coefficient: 0.388
+      gen_z_share_pct: 25
+      millennial_share_pct: 24
+      gen_x_share_pct: 22
+      boomer_plus_share_pct: 11
+      voter_turnout_last_pct: 81.8
+      voter_turnout_source: "2024 General — KPU"
+      source: "BPS, KPU"
+    security:
+      homicide_per_100k: 0.4
+      homicide_trend: "stable"
+      violent_crime_perception: "low-moderate"
+      terror_salience: "low (Detachment-88 effective; JI dissolution 2024)"
+      climate_disasters_recent: ["2024 Sumatra floods + landslides", "2024 Mt Marapi eruption"]
+      military_role: "elevated (Prabowo expanding civilian roles)"
+      internet_freedom_score: 49
+      energy_import_dependence_pct: 22
+      food_import_dependence_pct: 12
+      source: "UNODC, BPS, GTI, ND-GAIN, FH Internet Freedom"
+
+  TUR:
+    trust_extra:
+      trust_in_military_pct: 70
+      trust_in_courts_pct: 30
+      trust_in_police_pct: 53
+      source: "KONDA 2025; MetroPOLL Mar 2026"
+    identity_extra:
+      gini_coefficient: 0.408
+      gen_z_share_pct: 20
+      millennial_share_pct: 22
+      gen_x_share_pct: 20
+      boomer_plus_share_pct: 14
+      voter_turnout_last_pct: 84.2
+      voter_turnout_source: "2023 Presidential 1st round — YSK"
+      source: "TURKSTAT, YSK"
+    security:
+      homicide_per_100k: 2.5
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (femicide salience)"
+      terror_salience: "high (PKK + ISIS + 2023 Istanbul bombing)"
+      climate_disasters_recent: ["2023 Kahramanmaraş earthquakes (50k+ dead)", "2024 Aegean wildfires"]
+      military_role: "elevated (Syria + Iraq operations; coup-plot trials)"
+      internet_freedom_score: 32
+      energy_import_dependence_pct: 73
+      food_import_dependence_pct: 12
+      source: "UNODC, TÜİK, GTI 2024, FH Internet Freedom"
+
+  TWN:
+    trust_extra:
+      trust_in_military_pct: 49
+      trust_in_courts_pct: 38
+      trust_in_police_pct: 67
+      source: "Academia Sinica 2024; TPOF Mar 2026"
+    identity_extra:
+      gini_coefficient: 0.342
+      gen_z_share_pct: 17
+      millennial_share_pct: 21
+      gen_x_share_pct: 22
+      boomer_plus_share_pct: 21
+      voter_turnout_last_pct: 71.9
+      voter_turnout_source: "2024 Presidential — CEC"
+      source: "DGBAS, CEC"
+    security:
+      homicide_per_100k: 0.7
+      homicide_trend: "stable"
+      violent_crime_perception: "low"
+      terror_salience: "moderate (PRC info-ops + grey-zone)"
+      climate_disasters_recent: ["2024 Hualien earthquake 7.4 (18 dead)", "2024 Typhoon Krathon"]
+      military_role: "elevated (PRC pressure baseline)"
+      internet_freedom_score: 78
+      energy_import_dependence_pct: 96
+      food_import_dependence_pct: 65
+      source: "UNODC, MOI, GTI, ND-GAIN, FH Internet Freedom"
+
+  PHL:
+    trust_extra:
+      trust_in_military_pct: 81
+      trust_in_courts_pct: 56
+      trust_in_police_pct: 60
+      source: "OCTA Apr 2025; SWS Sep 2024"
+    identity_extra:
+      gini_coefficient: 0.404
+      gen_z_share_pct: 25
+      millennial_share_pct: 23
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 9
+      voter_turnout_last_pct: 81.6
+      voter_turnout_source: "2022 Presidential — Comelec"
+      source: "PSA, Comelec"
+    security:
+      homicide_per_100k: 4.4
+      homicide_trend: "easing (post-drug-war)"
+      violent_crime_perception: "high"
+      terror_salience: "moderate (Mindanao localised)"
+      climate_disasters_recent: ["2024 Typhoons Carina, Marce, Kristine — multi-typhoon season", "2023 Mt Mayon evacuation"]
+      military_role: "elevated (SCS standoff with PRC)"
+      internet_freedom_score: 64
+      energy_import_dependence_pct: 50
+      food_import_dependence_pct: 18
+      source: "UNODC, PNP, GTI, ND-GAIN, FH Internet Freedom"
+
+  AUS:
+    trust_extra:
+      trust_in_military_pct: 70
+      trust_in_courts_pct: 56
+      trust_in_police_pct: 65
+      source: "ANU Election Study 2025; Edelman AU 2025"
+    identity_extra:
+      gini_coefficient: 0.343
+      gen_z_share_pct: 18
+      millennial_share_pct: 22
+      gen_x_share_pct: 20
+      boomer_plus_share_pct: 21
+      voter_turnout_last_pct: 89.8
+      voter_turnout_source: "2025 Federal — AEC (compulsory)"
+      source: "ABS, AEC"
+    security:
+      homicide_per_100k: 0.8
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (DV + youth crime)"
+      terror_salience: "moderate"
+      climate_disasters_recent: ["2024-25 NQ tropical cyclones", "2023 Black Summer aftermath floods", "2024 NSW bushfires"]
+      military_role: "elevated (AUKUS + Pacific posture)"
+      internet_freedom_score: 75
+      energy_import_dependence_pct: -180
+      food_import_dependence_pct: -50
+      source: "UNODC, AIC, ND-GAIN, FH Internet Freedom"
+
+  NGA:
+    trust_extra:
+      trust_in_military_pct: 60
+      trust_in_courts_pct: 38
+      trust_in_police_pct: 27
+      source: "Afrobarometer Round 9 (Nigeria); NOIPolls 2025"
+    identity_extra:
+      gini_coefficient: 0.351
+      gen_z_share_pct: 27
+      millennial_share_pct: 22
+      gen_x_share_pct: 17
+      boomer_plus_share_pct: 7
+      voter_turnout_last_pct: 26.7
+      voter_turnout_source: "2023 Presidential — INEC (record-low)"
+      source: "NBS, INEC"
+    security:
+      homicide_per_100k: 21.7
+      homicide_trend: "rising"
+      violent_crime_perception: "very high"
+      terror_salience: "very high (Boko Haram, ISWAP, banditry, IPOB)"
+      climate_disasters_recent: ["2024 Maiduguri floods (250+ dead)", "Recurring Sahel droughts", "2022 record floods"]
+      military_role: "decisive (active counter-insurgency in 4 regions)"
+      internet_freedom_score: 56
+      energy_import_dependence_pct: -90
+      food_import_dependence_pct: 12
+      source: "UNODC, NBS, GTI 2024, ND-GAIN, FH Internet Freedom"
+
+  ZAF:
+    trust_extra:
+      trust_in_military_pct: 50
+      trust_in_courts_pct: 40
+      trust_in_police_pct: 27
+      source: "Afrobarometer Round 9 (South Africa)"
+    identity_extra:
+      gini_coefficient: 0.630
+      gen_z_share_pct: 22
+      millennial_share_pct: 22
+      gen_x_share_pct: 18
+      boomer_plus_share_pct: 11
+      voter_turnout_last_pct: 58.6
+      voter_turnout_source: "2024 General — IEC"
+      source: "StatsSA, IEC"
+    security:
+      homicide_per_100k: 41.9
+      homicide_trend: "rising"
+      violent_crime_perception: "very high"
+      terror_salience: "low"
+      climate_disasters_recent: ["2022 KZN floods (450+ dead)", "Cape Town day-zero memory", "2024 Eastern Cape floods"]
+      military_role: "low (SANDF underfunded)"
+      internet_freedom_score: 73
+      energy_import_dependence_pct: -25
+      food_import_dependence_pct: -10
+      source: "UNODC (highest in dataset), SAPS, ND-GAIN, FH Internet Freedom"
+
+  PAK:
+    trust_extra:
+      trust_in_military_pct: 73
+      trust_in_courts_pct: 38
+      trust_in_police_pct: 40
+      source: "Gallup Pakistan 2025; IRI Pakistan 2024"
+    identity_extra:
+      gini_coefficient: 0.296
+      gen_z_share_pct: 26
+      millennial_share_pct: 22
+      gen_x_share_pct: 17
+      boomer_plus_share_pct: 7
+      voter_turnout_last_pct: 47.6
+      voter_turnout_source: "2024 General — ECP"
+      source: "PBS, ECP"
+    security:
+      homicide_per_100k: 4.0
+      homicide_trend: "stable"
+      violent_crime_perception: "high"
+      terror_salience: "very high (TTP + Balochistan + recurring)"
+      climate_disasters_recent: ["2022 floods (33M displaced)", "2024 Balochistan flash floods", "2024 Karachi heat dome"]
+      military_role: "decisive (de-facto power broker; Imran arrest)"
+      internet_freedom_score: 26
+      energy_import_dependence_pct: 35
+      food_import_dependence_pct: 15
+      source: "UNODC, PBS, GTI 2024, ND-GAIN, FH Internet Freedom"
+
+  IRN:
+    trust_extra:
+      trust_in_military_pct: 35
+      trust_in_military_pct_estimated: true
+      trust_in_courts_pct: 18
+      trust_in_courts_pct_estimated: true
+      trust_in_police_pct: 24
+      trust_in_police_pct_estimated: true
+      source: "GAMAAN 2022 anonymous-online survey + Iran Open Data; IRGC retains higher trust than judiciary"
+    identity_extra:
+      gini_coefficient: 0.345
+      gen_z_share_pct: 22
+      millennial_share_pct: 25
+      gen_x_share_pct: 17
+      boomer_plus_share_pct: 9
+      voter_turnout_last_pct: 49.8
+      voter_turnout_source: "2024 Presidential 2nd round — Interior Ministry (record-low for IR)"
+      source: "World Bank 2020 (last reliable Gini), Iran Statistical Centre, Interior Ministry"
+    security:
+      homicide_per_100k: 2.2
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (water-protest unrest)"
+      terror_salience: "high (2024 Kerman bombing + 2025 strikes)"
+      climate_disasters_recent: ["2024 SE Iran floods", "Recurring water crisis (Khuzestan, Isfahan)", "Tehran air-quality crisis"]
+      military_role: "decisive (IRGC parallel state)"
+      internet_freedom_score: 11
+      energy_import_dependence_pct: -180
+      food_import_dependence_pct: 18
+      source: "UNODC (limited Iran reporting), Iran Open Data, GTI 2024, FH Internet Freedom 2024 — among lowest in world"
+
+  UKR:
+    trust_extra:
+      trust_in_military_pct: 92
+      trust_in_courts_pct: 22
+      trust_in_police_pct: 49
+      source: "KIIS Mar 2026"
+    identity_extra:
+      gini_coefficient: 0.252
+      gen_z_share_pct: 16
+      millennial_share_pct: 21
+      gen_x_share_pct: 21
+      boomer_plus_share_pct: 25
+      voter_turnout_last_pct: 62.1
+      voter_turnout_source: "2019 Presidential 2nd round (last possible — martial law since 2022)"
+      source: "World Bank pre-war, Ukrstat, CEC"
+    security:
+      homicide_per_100k: 6.4
+      homicide_trend: "war elevated (combat excluded from civilian stats)"
+      violent_crime_perception: "war-elevated"
+      terror_salience: "very high (daily missile/drone strikes)"
+      climate_disasters_recent: ["2023 Kakhovka dam destruction (war-caused)", "2024 power-grid winter strikes"]
+      military_role: "decisive (war footing 4th year)"
+      internet_freedom_score: 60
+      energy_import_dependence_pct: 25
+      food_import_dependence_pct: -65
+      source: "UNODC pre-war, Ukrstat, GTI 2024, FH Internet Freedom (war-affected)"
+
+  VEN:
+    trust_extra:
+      trust_in_military_pct: 22
+      trust_in_military_pct_estimated: true
+      trust_in_courts_pct: 12
+      trust_in_courts_pct_estimated: true
+      trust_in_police_pct: 18
+      trust_in_police_pct_estimated: true
+      source: "ORC Consultores Mar 2026; Datincorp 2024; Latinobarómetro 2024 (FANB-loyalty estimated separately)"
+    identity_extra:
+      gini_coefficient: 0.469
+      gen_z_share_pct: 21
+      millennial_share_pct: 24
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 12
+      voter_turnout_last_pct: 59.0
+      voter_turnout_source: "2024 Presidential — CNE official (widely disputed)"
+      source: "World Bank 2014 (last reliable Gini, since deteriorated), INE Venezuela, CNE"
+    security:
+      homicide_per_100k: 26.8
+      homicide_trend: "easing from peaks"
+      violent_crime_perception: "very high"
+      terror_salience: "low"
+      climate_disasters_recent: ["2022 Las Tejerías landslide (50+ dead)", "Recurrent power crisis"]
+      military_role: "decisive (FANB props up Maduro)"
+      internet_freedom_score: 28
+      energy_import_dependence_pct: -300
+      food_import_dependence_pct: 70
+      source: "OVV / Observatorio Venezolano de Violencia (UNODC unreliable for VE), GTI, FH Internet Freedom"
+
+  EGY:
+    trust_extra:
+      trust_in_military_pct: 72
+      trust_in_military_pct_estimated: true
+      trust_in_courts_pct: 50
+      trust_in_courts_pct_estimated: true
+      trust_in_police_pct: 47
+      trust_in_police_pct_estimated: true
+      source: "Arab Barometer Wave 7 (Egypt 2021-22): military 72%, judiciary 50%, police 47%"
+    identity_extra:
+      gini_coefficient: 0.315
+      gen_z_share_pct: 28
+      millennial_share_pct: 22
+      gen_x_share_pct: 17
+      boomer_plus_share_pct: 8
+      voter_turnout_last_pct: 66.8
+      voter_turnout_source: "2023 Presidential — National Election Authority (Sisi 89.6%)"
+      source: "World Bank 2019, CAPMAS, NEA"
+    security:
+      homicide_per_100k: 1.0
+      homicide_trend: "stable"
+      violent_crime_perception: "low officially (data thin)"
+      terror_salience: "moderate (Sinai insurgency persists)"
+      climate_disasters_recent: ["2024 Mediterranean storms", "Recurring water-stress + Nile dam dispute"]
+      military_role: "decisive (largest economic actor)"
+      internet_freedom_score: 27
+      energy_import_dependence_pct: 4
+      food_import_dependence_pct: 35
+      source: "UNODC limited, MoI Egypt, GTI 2024, FH Internet Freedom"
+
+  THA:
+    trust_extra:
+      trust_in_military_pct: 41
+      trust_in_courts_pct: 35
+      trust_in_police_pct: 23
+      source: "NIDA Poll Mar 2026; Asian Barometer 2023"
+    identity_extra:
+      gini_coefficient: 0.350
+      gen_z_share_pct: 16
+      millennial_share_pct: 22
+      gen_x_share_pct: 22
+      boomer_plus_share_pct: 22
+      voter_turnout_last_pct: 75.7
+      voter_turnout_source: "2023 General — Election Commission Thailand"
+      source: "NSO Thailand, ECT"
+    security:
+      homicide_per_100k: 2.6
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (Deep South localised)"
+      terror_salience: "moderate (BRN insurgency in deep south)"
+      climate_disasters_recent: ["2024 northern floods (Chiang Rai)", "2024 PM2.5 air-pollution crisis", "2025 Myanmar earthquake aftershocks"]
+      military_role: "decisive (multiple coups; lèse-majesté + Article 112)"
+      internet_freedom_score: 39
+      energy_import_dependence_pct: 50
+      food_import_dependence_pct: -25
+      source: "UNODC, RTP, GTI 2024, FH Internet Freedom"
+
+  ESP:
+    trust_extra:
+      trust_in_military_pct: 68
+      trust_in_courts_pct: 38
+      trust_in_police_pct: 67
+      source: "CIS Mar 2026; Eurobarometer 2025"
+    identity_extra:
+      gini_coefficient: 0.331
+      gen_z_share_pct: 17
+      millennial_share_pct: 21
+      gen_x_share_pct: 21
+      boomer_plus_share_pct: 23
+      voter_turnout_last_pct: 70.4
+      voter_turnout_source: "2023 General — Ministerio del Interior"
+      source: "INE 2024, Min Interior"
+    security:
+      homicide_per_100k: 0.7
+      homicide_trend: "stable"
+      violent_crime_perception: "low-moderate"
+      terror_salience: "moderate (ETA legacy + jihadist baseline)"
+      climate_disasters_recent: ["2024 DANA Valencia floods (220+ dead)", "2022-24 multi-year drought", "2023 Tenerife wildfires"]
+      military_role: "quiet (apolitical)"
+      internet_freedom_score: 81
+      energy_import_dependence_pct: 67
+      food_import_dependence_pct: -8
+      source: "UNODC, INE, GTI, ND-GAIN, FH Internet Freedom"
+
+  SWE:
+    trust_extra:
+      trust_in_military_pct: 70
+      trust_in_courts_pct: 71
+      trust_in_police_pct: 64
+      source: "SOM Institute 2025; Edelman Sweden 2025"
+    identity_extra:
+      gini_coefficient: 0.297
+      gen_z_share_pct: 19
+      millennial_share_pct: 21
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 24
+      voter_turnout_last_pct: 84.2
+      voter_turnout_source: "2022 General — Valmyndigheten"
+      source: "SCB, Valmyndigheten"
+    security:
+      homicide_per_100k: 1.2
+      homicide_trend: "stable (highest gun-murder rate in EU)"
+      violent_crime_perception: "high (gang explosions/shootings)"
+      terror_salience: "elevated (Quran-burnings + 2017 attack)"
+      climate_disasters_recent: ["2018 + 2022 + 2024 record wildfire seasons", "2023 Storm Hans floods"]
+      military_role: "elevated (post-2024 NATO accession + total-defence)"
+      internet_freedom_score: 84
+      energy_import_dependence_pct: 24
+      food_import_dependence_pct: 30
+      source: "UNODC, BRÅ, GTI 2024, FH Internet Freedom"
+
+  HUN:
+    trust_extra:
+      trust_in_military_pct: 47
+      trust_in_courts_pct: 36
+      trust_in_police_pct: 50
+      source: "Medián Mar 2026; Eurobarometer 2025"
+    identity_extra:
+      gini_coefficient: 0.301
+      gen_z_share_pct: 17
+      millennial_share_pct: 21
+      gen_x_share_pct: 21
+      boomer_plus_share_pct: 24
+      voter_turnout_last_pct: 69.6
+      voter_turnout_source: "2022 General — NVI"
+      source: "KSH, NVI"
+    security:
+      homicide_per_100k: 1.0
+      homicide_trend: "stable"
+      violent_crime_perception: "low"
+      terror_salience: "low"
+      climate_disasters_recent: ["2024 Vistula-Danube flood spillover", "2022 record drought (Tisza basin)"]
+      military_role: "elevated (border with Ukraine; Russia ties controversial)"
+      internet_freedom_score: 69
+      energy_import_dependence_pct: 58
+      food_import_dependence_pct: -15
+      source: "UNODC, ORFK, ND-GAIN, FH Internet Freedom"
+
+  COL:
+    trust_extra:
+      trust_in_military_pct: 65
+      trust_in_courts_pct: 30
+      trust_in_police_pct: 36
+      source: "Invamer Mar 2026; Latinobarómetro 2024"
+    identity_extra:
+      gini_coefficient: 0.546
+      gen_z_share_pct: 22
+      millennial_share_pct: 23
+      gen_x_share_pct: 19
+      boomer_plus_share_pct: 12
+      voter_turnout_last_pct: 58.1
+      voter_turnout_source: "2022 Presidential 2nd round — Registraduría"
+      source: "World Bank 2024, DANE, Registraduría"
+    security:
+      homicide_per_100k: 26.1
+      homicide_trend: "rising (post-Total Peace breakdown)"
+      violent_crime_perception: "very high"
+      terror_salience: "high (ELN + Clan del Golfo + dissident FARC)"
+      climate_disasters_recent: ["2024 La Guajira drought", "2022-24 La Niña floods", "2024 Bogotá heat anomaly"]
+      military_role: "elevated (active counter-insurgency, civil-military tensions under Petro)"
+      internet_freedom_score: 65
+      energy_import_dependence_pct: -110
+      food_import_dependence_pct: 25
+      source: "UNODC, Min Defensa, GTI 2024, ND-GAIN, FH Internet Freedom"
+
+  CHL:
+    trust_extra:
+      trust_in_military_pct: 52
+      trust_in_courts_pct: 31
+      trust_in_police_pct: 49
+      source: "CEP Mar 2026; Latinobarómetro 2024"
+    identity_extra:
+      gini_coefficient: 0.439
+      gen_z_share_pct: 18
+      millennial_share_pct: 23
+      gen_x_share_pct: 22
+      boomer_plus_share_pct: 17
+      voter_turnout_last_pct: 84.0
+      voter_turnout_source: "2025 Presidential runoff — Servel (compulsory since 2022)"
+      source: "World Bank 2024, INE Chile, Servel"
+    security:
+      homicide_per_100k: 6.7
+      homicide_trend: "rising (Tren de Aragua + organised crime)"
+      violent_crime_perception: "very high"
+      terror_salience: "moderate (Mapuche conflict in Araucanía)"
+      climate_disasters_recent: ["2024 Valparaíso wildfires (130+ dead)", "Recurring central-Chile mega-drought"]
+      military_role: "elevated (Macrozona Sur militarised; immigration deployments)"
+      internet_freedom_score: 75
+      energy_import_dependence_pct: 64
+      food_import_dependence_pct: -20
+      source: "UNODC, Subsecretaría de Prevención del Delito, ND-GAIN, FH Internet Freedom"
+
+  BGD:
+    trust_extra:
+      trust_in_military_pct: 76
+      trust_in_courts_pct: 53
+      trust_in_police_pct: 31
+      source: "BRAC IGS Justice Survey 2025; Voice of America BD Mar 2026"
+    identity_extra:
+      gini_coefficient: 0.336
+      gen_z_share_pct: 25
+      millennial_share_pct: 23
+      gen_x_share_pct: 18
+      boomer_plus_share_pct: 7
+      voter_turnout_last_pct: 41.8
+      voter_turnout_source: "2024 Jan election — Election Commission (boycotted by BNP, widely disputed)"
+      source: "World Bank 2022 (last reliable Gini), BBS, EC"
+    security:
+      homicide_per_100k: 2.4
+      homicide_trend: "stable"
+      violent_crime_perception: "moderate (post-July unrest)"
+      terror_salience: "moderate (JMB + ABT residual)"
+      climate_disasters_recent: ["2024 Cyclone Remal", "2024 northeast floods (record)", "Recurring Sundarbans cyclones"]
+      military_role: "elevated (army backed July transition; anti-corruption tribunals)"
+      internet_freedom_score: 39
+      energy_import_dependence_pct: 35
+      food_import_dependence_pct: 18
+      source: "UNODC, Police HQ, GTI 2024, ND-GAIN, FH Internet Freedom"
+
+  VNM:
+    trust_extra:
+      trust_in_military_pct: 92
+      trust_in_military_pct_estimated: true
+      trust_in_courts_pct: 80
+      trust_in_courts_pct_estimated: true
+      trust_in_police_pct: 86
+      trust_in_police_pct_estimated: true
+      source: "Edelman Vietnam 2024 (highest govt-institution trust globally); Asian Barometer wave 5 (limited)"
+    identity_extra:
+      gini_coefficient: 0.357
+      gen_z_share_pct: 22
+      millennial_share_pct: 24
+      gen_x_share_pct: 22
+      boomer_plus_share_pct: 13
+      voter_turnout_last_pct: 99.6
+      voter_turnout_source: "2021 National Assembly — official (reported turnout near-universal in single-party system)"
+      source: "World Bank 2022, GSO, NA"
+    security:
+      homicide_per_100k: 1.5
+      homicide_trend: "stable"
+      violent_crime_perception: "low"
+      terror_salience: "low"
+      climate_disasters_recent: ["2024 Typhoon Yagi (300+ dead)", "Recurring Mekong saltwater intrusion", "2023 record summer"]
+      military_role: "decisive (CPV Politburo + Central Military Commission)"
+      internet_freedom_score: 22
+      energy_import_dependence_pct: 0
+      food_import_dependence_pct: -25
+      source: "UNODC, Public Security Ministry, GTI, ND-GAIN, FH Internet Freedom — among lowest in world"
+
+  ETH:
+    trust_extra:
+      trust_in_military_pct: 60
+      trust_in_courts_pct: 46
+      trust_in_police_pct: 49
+      source: "Afrobarometer Round 10 (Ethiopia 2024)"
+    identity_extra:
+      gini_coefficient: 0.350
+      gen_z_share_pct: 28
+      millennial_share_pct: 22
+      gen_x_share_pct: 16
+      boomer_plus_share_pct: 6
+      voter_turnout_last_pct: 89.6
+      voter_turnout_source: "2021 General — NEBE (held during Tigray war, partial)"
+      source: "World Bank 2016 (last reliable Gini), CSA, NEBE"
+    security:
+      homicide_per_100k: 7.6
+      homicide_trend: "elevated (war + insurgencies)"
+      violent_crime_perception: "very high"
+      terror_salience: "very high (Fano + OLA active; al-Shabaab spillover)"
+      climate_disasters_recent: ["2024 Horn-of-Africa drought (5y)", "Recurring locust swarms 2020-now", "2024 Tigray famine warnings"]
+      military_role: "decisive (active multi-front counter-insurgency)"
+      internet_freedom_score: 31
+      energy_import_dependence_pct: 5
+      food_import_dependence_pct: 30
+      source: "UNODC limited, ENA reports, GTI 2024, ND-GAIN, FH Internet Freedom"
+
+  SAU:
+    trust_extra:
+      trust_in_military_pct: 88
+      trust_in_military_pct_estimated: true
+      trust_in_courts_pct: 71
+      trust_in_courts_pct_estimated: true
+      trust_in_police_pct: 78
+      trust_in_police_pct_estimated: true
+      source: "Arab Barometer Wave 8 (Saudi 2024); Doha Institute 2024"
+    identity_extra:
+      gini_coefficient: 0.45
+      gen_z_share_pct: 21
+      millennial_share_pct: 24
+      gen_x_share_pct: 20
+      boomer_plus_share_pct: 9
+      voter_turnout_last_pct: null
+      voter_turnout_source: "(no national elections; municipal turnout ~40%)"
+      source: "Arab Barometer, GAStat 2024, World Bank Saudi (limited Gini reporting)"
+    security:
+      homicide_per_100k: 0.8
+      homicide_trend: "stable"
+      violent_crime_perception: "low officially"
+      terror_salience: "moderate (Yemen border + al-Qaeda residual)"
+      climate_disasters_recent: ["2024 Jeddah floods", "2024 Mecca Hajj heat (1300+ dead)", "Recurring water-stress"]
+      military_role: "decisive (Yemen war 2015-now; major rearmament programme)"
+      internet_freedom_score: 24
+      energy_import_dependence_pct: -270
+      food_import_dependence_pct: 75
+      source: "UNODC limited, MoI Saudi, GTI 2024, FH Internet Freedom"
+
+  ARE:
+    trust_extra:
+      trust_in_military_pct: 90
+      trust_in_military_pct_estimated: true
+      trust_in_courts_pct: 80
+      trust_in_courts_pct_estimated: true
+      trust_in_police_pct: 88
+      trust_in_police_pct_estimated: true
+      source: "Edelman UAE 2024; YouGov Gulf 2024 — UAE consistently reports highest institutional trust globally"
+    identity_extra:
+      gini_coefficient: 0.32
+      gen_z_share_pct: 17
+      millennial_share_pct: 28
+      gen_x_share_pct: 27
+      boomer_plus_share_pct: 8
+      voter_turnout_last_pct: null
+      voter_turnout_source: "(FNC: 224k eligible from select families, 35.4% turnout 2023)"
+      source: "Edelman, FCSC 2024, FNC NEC"
+    security:
+      homicide_per_100k: 0.5
+      homicide_trend: "stable"
+      violent_crime_perception: "very low"
+      terror_salience: "moderate (Houthi missile/drone strikes 2022; ISIS-K threats)"
+      climate_disasters_recent: ["2024 Dubai April floods (record)", "Recurring extreme heat (>50°C summers)"]
+      military_role: "decisive (largest active per-capita force in Gulf; Yemen + Sudan involvements)"
+      internet_freedom_score: 28
+      energy_import_dependence_pct: -180
+      food_import_dependence_pct: 90
+      source: "UNODC limited, MoI UAE, GTI 2024, FH Internet Freedom"
+
+  PER:
+    trust_extra: { trust_in_military_pct: 41, trust_in_courts_pct: 13, trust_in_police_pct: 26, source: "Ipsos Peru Mar 2026; Latinobarómetro 2024" }
+    identity_extra: { gini_coefficient: 0.405, gen_z_share_pct: 22, millennial_share_pct: 23, gen_x_share_pct: 19, boomer_plus_share_pct: 13, voter_turnout_last_pct: 73.4, voter_turnout_source: "2021 Presidential 2nd round — ONPE", source: "World Bank 2024, INEI, ONPE" }
+    security: { homicide_per_100k: 7.6, homicide_trend: "rising", violent_crime_perception: "very high (extortion epidemic)", terror_salience: "moderate (Sendero residual)", climate_disasters_recent: ["2024 Cyclone Yaku floods", "El Niño 2023-24 droughts/floods"], military_role: "elevated (declared emergencies in Lima)", internet_freedom_score: 64, energy_import_dependence_pct: 17, food_import_dependence_pct: 25, source: "UNODC, INEI, GTI, ND-GAIN, FH Internet Freedom" }
+
+  ECU:
+    trust_extra: { trust_in_military_pct: 75, trust_in_courts_pct: 26, trust_in_police_pct: 41, source: "Cedatos Mar 2026; Latinobarómetro 2024" }
+    identity_extra: { gini_coefficient: 0.451, gen_z_share_pct: 22, millennial_share_pct: 24, gen_x_share_pct: 19, boomer_plus_share_pct: 12, voter_turnout_last_pct: 83.5, voter_turnout_source: "2025 Presidential runoff — CNE", source: "World Bank 2024, INEC, CNE" }
+    security: { homicide_per_100k: 47.2, homicide_trend: "stable (down from 2023 peak)", violent_crime_perception: "very high", terror_salience: "high (cartel-state war declared)", climate_disasters_recent: ["2024 cartel attacks declared 'terror'", "2023-24 hydro-drought blackouts"], military_role: "decisive (internal armed conflict declared 2024)", internet_freedom_score: 57, energy_import_dependence_pct: -55, food_import_dependence_pct: 12, source: "UNODC (Latin America's most violent), INEC, GTI 2024, FH Internet Freedom" }
+
+  BOL:
+    trust_extra: { trust_in_military_pct: 36, trust_in_courts_pct: 18, trust_in_police_pct: 31, source: "Latinobarómetro 2024; Tu Voto Cuenta Mar 2026" }
+    identity_extra: { gini_coefficient: 0.405, gen_z_share_pct: 24, millennial_share_pct: 23, gen_x_share_pct: 18, boomer_plus_share_pct: 11, voter_turnout_last_pct: 86.4, voter_turnout_source: "2025 General — TSE (compulsory)", source: "World Bank 2021, INE, TSE" }
+    security: { homicide_per_100k: 4.3, homicide_trend: "stable", violent_crime_perception: "moderate-high", terror_salience: "low", climate_disasters_recent: ["2024 Amazon fires (record)", "2023-24 drought + Lake Poopó dried", "Recurring landslides"], military_role: "elevated (2024 Zúñiga coup attempt)", internet_freedom_score: 56, energy_import_dependence_pct: -25, food_import_dependence_pct: 18, source: "UNODC, INE, ND-GAIN, FH Internet Freedom" }
+
+  URY:
+    trust_extra: { trust_in_military_pct: 52, trust_in_courts_pct: 51, trust_in_police_pct: 50, source: "Latinobarómetro 2024; Equipos Mar 2026" }
+    identity_extra: { gini_coefficient: 0.402, gen_z_share_pct: 17, millennial_share_pct: 21, gen_x_share_pct: 20, boomer_plus_share_pct: 21, voter_turnout_last_pct: 89.5, voter_turnout_source: "2024 Presidential runoff — Corte Electoral (compulsory)", source: "World Bank 2024, INE, Corte Electoral" }
+    security: { homicide_per_100k: 11.2, homicide_trend: "rising", violent_crime_perception: "high (rising)", terror_salience: "low", climate_disasters_recent: ["2022-24 worst-recorded drought", "2023 record summer heat"], military_role: "quiet (post-junta apolitical norm)", internet_freedom_score: 75, energy_import_dependence_pct: 50, food_import_dependence_pct: -250, source: "UNODC, Min Interior, ND-GAIN, FH Internet Freedom" }
+
+  CRI:
+    trust_extra: { trust_in_military_pct: null, trust_in_courts_pct: 41, trust_in_police_pct: 47, source: "CIEP 2026; Latinobarómetro 2024 (no military since 1948)" }
+    identity_extra: { gini_coefficient: 0.474, gen_z_share_pct: 19, millennial_share_pct: 22, gen_x_share_pct: 20, boomer_plus_share_pct: 16, voter_turnout_last_pct: 60.0, voter_turnout_source: "2022 Presidential runoff — TSE", source: "World Bank 2024, INEC, TSE" }
+    security: { homicide_per_100k: 17.2, homicide_trend: "rising sharply", violent_crime_perception: "high (record 2023-24)", terror_salience: "low", climate_disasters_recent: ["2024 Caribbean coast floods", "Recurring earthquakes"], military_role: "no military (Public Force only)", internet_freedom_score: 86, energy_import_dependence_pct: 50, food_import_dependence_pct: 20, source: "UNODC, OIJ, ND-GAIN, FH Internet Freedom" }
+
+  NLD:
+    trust_extra: { trust_in_military_pct: 60, trust_in_courts_pct: 70, trust_in_police_pct: 75, source: "Edelman NL 2025; SCP 2024" }
+    identity_extra: { gini_coefficient: 0.286, gen_z_share_pct: 17, millennial_share_pct: 22, gen_x_share_pct: 21, boomer_plus_share_pct: 22, voter_turnout_last_pct: 77.8, voter_turnout_source: "2023 General — Kiesraad", source: "CBS, Kiesraad" }
+    security: { homicide_per_100k: 0.7, homicide_trend: "stable", violent_crime_perception: "low-moderate (Mocro Maffia headlines)", terror_salience: "moderate", climate_disasters_recent: ["2021 Limburg floods", "Recurring storms (2024 Storm Eowyn)"], military_role: "elevated (NATO buildup; conscription debate)", internet_freedom_score: 87, energy_import_dependence_pct: 35, food_import_dependence_pct: -25, source: "UNODC, CBS, GTI, FH Internet Freedom" }
+
+  BEL:
+    trust_extra: { trust_in_military_pct: 56, trust_in_courts_pct: 50, trust_in_police_pct: 60, source: "Eurobarometer 2025; Ipsos BE Mar 2026" }
+    identity_extra: { gini_coefficient: 0.270, gen_z_share_pct: 18, millennial_share_pct: 21, gen_x_share_pct: 21, boomer_plus_share_pct: 23, voter_turnout_last_pct: 87.4, voter_turnout_source: "2024 Federal — IBZ (compulsory)", source: "Statbel, IBZ" }
+    security: { homicide_per_100k: 1.7, homicide_trend: "stable", violent_crime_perception: "moderate (Antwerp narcotrafic)", terror_salience: "high (post-Brussels-2016 baseline)", climate_disasters_recent: ["2021 Wallonia floods (39 dead)", "2024 Storm Eowyn"], military_role: "low-profile (rebuilding from cuts)", internet_freedom_score: 80, energy_import_dependence_pct: 75, food_import_dependence_pct: 18, source: "UNODC, Statbel, GTI, FH Internet Freedom" }
+
+  GRC:
+    trust_extra: { trust_in_military_pct: 60, trust_in_courts_pct: 30, trust_in_police_pct: 35, source: "Eurobarometer 2025; Pulse Mar 2026" }
+    identity_extra: { gini_coefficient: 0.319, gen_z_share_pct: 16, millennial_share_pct: 21, gen_x_share_pct: 22, boomer_plus_share_pct: 25, voter_turnout_last_pct: 53.7, voter_turnout_source: "2023 General 2nd vote — YpEs", source: "ELSTAT, YpEs" }
+    security: { homicide_per_100k: 1.0, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "moderate (anarchist + jihadist baseline)", climate_disasters_recent: ["2023 Rhodes/Evros wildfires (record)", "2023 Tempi rail disaster", "Recurring earthquakes"], military_role: "elevated (Turkey tensions)", internet_freedom_score: 76, energy_import_dependence_pct: 80, food_import_dependence_pct: 25, source: "UNODC, ELSTAT, GTI, FH Internet Freedom" }
+
+  PRT:
+    trust_extra: { trust_in_military_pct: 60, trust_in_courts_pct: 41, trust_in_police_pct: 53, source: "Eurobarometer 2025; Eurosondagem Mar 2026" }
+    identity_extra: { gini_coefficient: 0.328, gen_z_share_pct: 16, millennial_share_pct: 19, gen_x_share_pct: 21, boomer_plus_share_pct: 26, voter_turnout_last_pct: 59.9, voter_turnout_source: "2024 Legislative — CNE", source: "INE Portugal, CNE" }
+    security: { homicide_per_100k: 0.8, homicide_trend: "stable", violent_crime_perception: "low", terror_salience: "low", climate_disasters_recent: ["2023 Algarve fires", "2017 Pedrógão (66 dead)", "Recurring drought"], military_role: "low-profile", internet_freedom_score: 80, energy_import_dependence_pct: 67, food_import_dependence_pct: 30, source: "UNODC, INE, ND-GAIN, FH Internet Freedom" }
+
+  ROU:
+    trust_extra: { trust_in_military_pct: 67, trust_in_courts_pct: 38, trust_in_police_pct: 47, source: "INSCOP Mar 2026; Eurobarometer 2025" }
+    identity_extra: { gini_coefficient: 0.345, gen_z_share_pct: 16, millennial_share_pct: 21, gen_x_share_pct: 22, boomer_plus_share_pct: 23, voter_turnout_last_pct: 64.7, voter_turnout_source: "2025 Presidential re-run — BEC", source: "INSSE, BEC" }
+    security: { homicide_per_100k: 0.9, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "low", climate_disasters_recent: ["2024 Galați + Vaslui floods", "Recurring drought (Danube basin)"], military_role: "elevated (NATO-Russia frontier)", internet_freedom_score: 71, energy_import_dependence_pct: 30, food_import_dependence_pct: -10, source: "UNODC, INSSE, ND-GAIN, FH Internet Freedom" }
+
+  CZE:
+    trust_extra: { trust_in_military_pct: 70, trust_in_courts_pct: 56, trust_in_police_pct: 70, source: "STEM Mar 2026; Eurobarometer 2025" }
+    identity_extra: { gini_coefficient: 0.247, gen_z_share_pct: 17, millennial_share_pct: 22, gen_x_share_pct: 21, boomer_plus_share_pct: 24, voter_turnout_last_pct: 66.6, voter_turnout_source: "2025 Chamber of Deputies — ČSÚ", source: "ČSÚ" }
+    security: { homicide_per_100k: 0.7, homicide_trend: "stable", violent_crime_perception: "low", terror_salience: "low", climate_disasters_recent: ["2024 Moravian floods (Sept)", "Recurring tornadoes"], military_role: "elevated (NATO-Ukraine support)", internet_freedom_score: 78, energy_import_dependence_pct: 30, food_import_dependence_pct: 0, source: "UNODC, ČSÚ, ND-GAIN, FH Internet Freedom" }
+
+  NOR:
+    trust_extra: { trust_in_military_pct: 70, trust_in_courts_pct: 78, trust_in_police_pct: 80, source: "Difi Trust Survey 2024; Norstat Mar 2026" }
+    identity_extra: { gini_coefficient: 0.276, gen_z_share_pct: 17, millennial_share_pct: 21, gen_x_share_pct: 19, boomer_plus_share_pct: 22, voter_turnout_last_pct: 78.2, voter_turnout_source: "2025 Storting — SSB", source: "SSB" }
+    security: { homicide_per_100k: 0.5, homicide_trend: "stable", violent_crime_perception: "low", terror_salience: "moderate (post-Utøya baseline)", climate_disasters_recent: ["2023 Gudbrandsdalen floods", "Recurring landslides + extreme weather"], military_role: "elevated (Russia-border + NATO)", internet_freedom_score: 92, energy_import_dependence_pct: -650, food_import_dependence_pct: 50, source: "UNODC, Kripos, GTI, FH Internet Freedom" }
+
+  FIN:
+    trust_extra: { trust_in_military_pct: 90, trust_in_courts_pct: 76, trust_in_police_pct: 86, source: "Edelman Finland 2025; MTS 2024" }
+    identity_extra: { gini_coefficient: 0.279, gen_z_share_pct: 16, millennial_share_pct: 19, gen_x_share_pct: 19, boomer_plus_share_pct: 27, voter_turnout_last_pct: 71.9, voter_turnout_source: "2023 Eduskunta — Tilastokeskus", source: "Tilastokeskus" }
+    security: { homicide_per_100k: 1.4, homicide_trend: "stable", violent_crime_perception: "low (rising knife crime)", terror_salience: "low-moderate", climate_disasters_recent: ["2023 record summer heat", "Recurring forest fires"], military_role: "decisive (NATO frontline; conscription preserved)", internet_freedom_score: 95, energy_import_dependence_pct: 32, food_import_dependence_pct: 20, source: "UNODC, Tilastokeskus, GTI, FH Internet Freedom (highest globally)" }
+
+  DNK:
+    trust_extra: { trust_in_military_pct: 70, trust_in_courts_pct: 82, trust_in_police_pct: 88, source: "Edelman Denmark 2025; Voxmeter Mar 2026" }
+    identity_extra: { gini_coefficient: 0.275, gen_z_share_pct: 16, millennial_share_pct: 21, gen_x_share_pct: 21, boomer_plus_share_pct: 23, voter_turnout_last_pct: 84.2, voter_turnout_source: "2022 Folketing — DST", source: "DST" }
+    security: { homicide_per_100k: 1.0, homicide_trend: "stable", violent_crime_perception: "low (gang-spillover from Sweden)", terror_salience: "moderate (Quran-burning era)", climate_disasters_recent: ["2023 Storm Babet flooding", "Recurring storms"], military_role: "elevated (Greenland politics + NATO)", internet_freedom_score: 88, energy_import_dependence_pct: -10, food_import_dependence_pct: -100, source: "UNODC, DST, GTI, FH Internet Freedom" }
+
+  CHE:
+    trust_extra: { trust_in_military_pct: 65, trust_in_courts_pct: 71, trust_in_police_pct: 85, source: "GfS Bern Mar 2026; ETH Sicherheit 2025" }
+    identity_extra: { gini_coefficient: 0.331, gen_z_share_pct: 17, millennial_share_pct: 22, gen_x_share_pct: 22, boomer_plus_share_pct: 23, voter_turnout_last_pct: 46.6, voter_turnout_source: "2023 National Council — BFS", source: "BFS" }
+    security: { homicide_per_100k: 0.5, homicide_trend: "stable", violent_crime_perception: "low", terror_salience: "low", climate_disasters_recent: ["2024 Mistral storm Valais", "Glacial collapse 2024 Brienz"], military_role: "low-profile (neutral; militia-based)", internet_freedom_score: 84, energy_import_dependence_pct: 60, food_import_dependence_pct: 50, source: "UNODC, BFS, GTI, FH Internet Freedom" }
+
+  IRL:
+    trust_extra: { trust_in_military_pct: 79, trust_in_courts_pct: 51, trust_in_police_pct: 67, source: "Edelman Ireland 2025; Red C Mar 2026" }
+    identity_extra: { gini_coefficient: 0.303, gen_z_share_pct: 19, millennial_share_pct: 23, gen_x_share_pct: 21, boomer_plus_share_pct: 16, voter_turnout_last_pct: 60.0, voter_turnout_source: "2024 General — Department of Housing", source: "CSO" }
+    security: { homicide_per_100k: 0.6, homicide_trend: "stable", violent_crime_perception: "moderate (Dublin riots era)", terror_salience: "low (post-Troubles)", climate_disasters_recent: ["2024 Storm Bert/Darragh", "Recurring storms"], military_role: "low-profile (neutrality debated)", internet_freedom_score: 87, energy_import_dependence_pct: 71, food_import_dependence_pct: -100, source: "UNODC, CSO, GTI, FH Internet Freedom" }
+
+  AUT:
+    trust_extra: { trust_in_military_pct: 56, trust_in_courts_pct: 50, trust_in_police_pct: 65, source: "Eurobarometer 2025; Unique research Mar 2026" }
+    identity_extra: { gini_coefficient: 0.299, gen_z_share_pct: 16, millennial_share_pct: 20, gen_x_share_pct: 21, boomer_plus_share_pct: 25, voter_turnout_last_pct: 77.7, voter_turnout_source: "2024 Nationalrat — BMI", source: "Statistik Austria, BMI" }
+    security: { homicide_per_100k: 0.9, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "moderate (2020 Vienna attack)", climate_disasters_recent: ["2024 Sept floods (E Austria)", "Recurring Alpine landslides"], military_role: "low-profile (neutrality, conscription)", internet_freedom_score: 76, energy_import_dependence_pct: 65, food_import_dependence_pct: 7, source: "UNODC, Statistik Austria, GTI, FH Internet Freedom" }
+
+  MYS:
+    trust_extra: { trust_in_military_pct: 67, trust_in_courts_pct: 47, trust_in_police_pct: 51, source: "Merdeka Centre Mar 2026; Edelman 2025" }
+    identity_extra: { gini_coefficient: 0.401, gen_z_share_pct: 23, millennial_share_pct: 24, gen_x_share_pct: 22, boomer_plus_share_pct: 12, voter_turnout_last_pct: 73.9, voter_turnout_source: "2022 GE15 — SPR", source: "DOSM, SPR" }
+    security: { homicide_per_100k: 1.4, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "moderate (ISIS-affiliated localised)", climate_disasters_recent: ["2024-25 Kelantan/Terengganu floods (record)", "Recurring monsoons"], military_role: "low-profile (Sabah ESSCOM)", internet_freedom_score: 56, energy_import_dependence_pct: -15, food_import_dependence_pct: 25, source: "UNODC, DOSM, GTI, FH Internet Freedom" }
+
+  SGP:
+    trust_extra: { trust_in_military_pct: 80, trust_in_courts_pct: 81, trust_in_police_pct: 87, source: "Edelman Singapore 2025; IPS 2025" }
+    identity_extra: { gini_coefficient: 0.378, gen_z_share_pct: 14, millennial_share_pct: 24, gen_x_share_pct: 24, boomer_plus_share_pct: 22, voter_turnout_last_pct: 92.5, voter_turnout_source: "2025 GE — ELD (compulsory)", source: "DOS, ELD" }
+    security: { homicide_per_100k: 0.1, homicide_trend: "stable", violent_crime_perception: "very low", terror_salience: "low (ISD effective)", climate_disasters_recent: ["Recurring sea-level + flooding stress"], military_role: "low-profile (NS conscription)", internet_freedom_score: 53, energy_import_dependence_pct: 98, food_import_dependence_pct: 90, source: "UNODC, DOS, FH Internet Freedom" }
+
+  KHM:
+    trust_extra: { trust_in_military_pct: 60, trust_in_military_pct_estimated: true, trust_in_courts_pct: 35, trust_in_courts_pct_estimated: true, trust_in_police_pct: 45, trust_in_police_pct_estimated: true, source: "Asian Barometer wave 5 (limited Cambodia); Future Forum 2024" }
+    identity_extra: { gini_coefficient: 0.378, gen_z_share_pct: 25, millennial_share_pct: 22, gen_x_share_pct: 18, boomer_plus_share_pct: 6, voter_turnout_last_pct: 84.6, voter_turnout_source: "2023 General — NEC (CPP near-sweep, opposition banned)", source: "World Bank, NIS, NEC" }
+    security: { homicide_per_100k: 1.7, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "low", climate_disasters_recent: ["Recurring Tonlé Sap floods", "Mekong dam impact ongoing"], military_role: "decisive (CPP-Hun family control)", internet_freedom_score: 33, energy_import_dependence_pct: 20, food_import_dependence_pct: -30, source: "UNODC, NIS, FH Internet Freedom" }
+
+  LKA:
+    trust_extra: { trust_in_military_pct: 65, trust_in_courts_pct: 38, trust_in_police_pct: 33, source: "IHP Sri Lanka Mar 2026; CPA 2024" }
+    identity_extra: { gini_coefficient: 0.397, gen_z_share_pct: 18, millennial_share_pct: 21, gen_x_share_pct: 22, boomer_plus_share_pct: 20, voter_turnout_last_pct: 79.5, voter_turnout_source: "2024 Presidential — Election Commission", source: "DCS, EC" }
+    security: { homicide_per_100k: 2.0, homicide_trend: "stable", violent_crime_perception: "moderate", terror_salience: "moderate (post-2019 Easter bombings + LTTE legacy)", climate_disasters_recent: ["2024 floods + landslides", "Recurring monsoon damage"], military_role: "elevated (large standing army post-civil-war)", internet_freedom_score: 41, energy_import_dependence_pct: 70, food_import_dependence_pct: 18, source: "UNODC, DCS, GTI, FH Internet Freedom" }
+
+  NPL:
+    trust_extra: { trust_in_military_pct: 81, trust_in_courts_pct: 52, trust_in_police_pct: 61, source: "Asia Foundation Nepal Survey 2024; Afrobarometer-style polls" }
+    identity_extra: { gini_coefficient: 0.300, gen_z_share_pct: 24, millennial_share_pct: 23, gen_x_share_pct: 19, boomer_plus_share_pct: 9, voter_turnout_last_pct: 61.4, voter_turnout_source: "2022 Federal — EC Nepal", source: "World Bank, NSO Nepal, EC" }
+    security: { homicide_per_100k: 2.4, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "low (post-Maoist)", climate_disasters_recent: ["2024 Jajarkot earthquake", "Recurring monsoon landslides"], military_role: "elevated (federal security)", internet_freedom_score: 53, energy_import_dependence_pct: 90, food_import_dependence_pct: 35, source: "UNODC, NSO, ND-GAIN, FH Internet Freedom" }
+
+  MMR:
+    trust_extra: { trust_in_military_pct: 18, trust_in_military_pct_estimated: true, trust_in_courts_pct: 12, trust_in_courts_pct_estimated: true, trust_in_police_pct: 14, trust_in_police_pct_estimated: true, source: "(active civil war; estimates from People's Pulse + ISP-Myanmar exile-network surveys 2024)" }
+    identity_extra: { gini_coefficient: 0.309, gen_z_share_pct: 21, millennial_share_pct: 24, gen_x_share_pct: 21, boomer_plus_share_pct: 11, voter_turnout_last_pct: null, voter_turnout_source: "(2020 GE was last; SAC's planned 2025 sham election widely boycotted)", source: "World Bank pre-coup, CSO Myanmar, UEC" }
+    security: { homicide_per_100k: null, homicide_trend: "war-elevated (combat deaths dominate)", violent_crime_perception: "very high", terror_salience: "very high (active multi-front civil war)", climate_disasters_recent: ["2025 Mandalay 7.7 earthquake (5k+ dead)", "2024 Cyclone Yagi", "Recurring monsoon"], military_role: "decisive (junta in active war)", internet_freedom_score: 9, energy_import_dependence_pct: 0, food_import_dependence_pct: -10, source: "UNODC limited, ACLED for combat, GTI 2024 (top-3 globally), FH Internet Freedom (lowest tier)" }
+
+  KEN:
+    trust_extra: { trust_in_military_pct: 61, trust_in_courts_pct: 38, trust_in_police_pct: 27, source: "Afrobarometer R10 (Kenya 2024); Infotrak Mar 2026" }
+    identity_extra: { gini_coefficient: 0.408, gen_z_share_pct: 24, millennial_share_pct: 23, gen_x_share_pct: 17, boomer_plus_share_pct: 7, voter_turnout_last_pct: 64.6, voter_turnout_source: "2022 General — IEBC", source: "KNBS, IEBC" }
+    security: { homicide_per_100k: 4.9, homicide_trend: "stable (femicide rising)", violent_crime_perception: "high", terror_salience: "high (Al-Shabaab recurring)", climate_disasters_recent: ["2024 long-rains floods (300+ dead)", "2022-23 Horn drought (5y)"], military_role: "elevated (Somalia + Haiti + DRC missions)", internet_freedom_score: 64, energy_import_dependence_pct: 16, food_import_dependence_pct: 25, source: "UNODC, KNBS, GTI 2024, ND-GAIN, FH Internet Freedom" }
+
+  GHA:
+    trust_extra: { trust_in_military_pct: 70, trust_in_courts_pct: 47, trust_in_police_pct: 41, source: "Afrobarometer R10 (Ghana 2024)" }
+    identity_extra: { gini_coefficient: 0.435, gen_z_share_pct: 25, millennial_share_pct: 22, gen_x_share_pct: 16, boomer_plus_share_pct: 6, voter_turnout_last_pct: 60.9, voter_turnout_source: "2024 General — EC", source: "GSS, EC" }
+    security: { homicide_per_100k: 1.4, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "moderate (Sahel-spillover monitored)", climate_disasters_recent: ["2024 northern Ghana drought", "Recurring coastal erosion + dumsor"], military_role: "low-profile (apolitical norm)", internet_freedom_score: 65, energy_import_dependence_pct: -55, food_import_dependence_pct: 12, source: "UNODC, GSS, GTI, FH Internet Freedom" }
+
+  SEN:
+    trust_extra: { trust_in_military_pct: 79, trust_in_courts_pct: 56, trust_in_police_pct: 60, source: "Afrobarometer R10 (Senegal 2024)" }
+    identity_extra: { gini_coefficient: 0.380, gen_z_share_pct: 27, millennial_share_pct: 21, gen_x_share_pct: 16, boomer_plus_share_pct: 6, voter_turnout_last_pct: 61.3, voter_turnout_source: "2024 Presidential — Cour Constitutionnelle", source: "ANSD" }
+    security: { homicide_per_100k: 5.6, homicide_trend: "stable", violent_crime_perception: "moderate", terror_salience: "moderate (Sahel + MFDC)", climate_disasters_recent: ["2022 Dakar floods", "Coastal erosion ongoing"], military_role: "elevated (ECOWAS deployments)", internet_freedom_score: 50, energy_import_dependence_pct: 50, food_import_dependence_pct: 35, source: "UNODC, ANSD, GTI, FH Internet Freedom" }
+
+  TUN:
+    trust_extra: { trust_in_military_pct: 78, trust_in_courts_pct: 36, trust_in_police_pct: 51, source: "Arab Barometer Tunisia 2024; Sigma Conseil Mar 2026" }
+    identity_extra: { gini_coefficient: 0.327, gen_z_share_pct: 16, millennial_share_pct: 22, gen_x_share_pct: 21, boomer_plus_share_pct: 16, voter_turnout_last_pct: 28.8, voter_turnout_source: "2024 Presidential — ISIE (record-low)", source: "INS, ISIE" }
+    security: { homicide_per_100k: 3.1, homicide_trend: "stable", violent_crime_perception: "moderate", terror_salience: "moderate (post-2015 baseline)", climate_disasters_recent: ["2023-24 record drought + dam levels", "Med-crossing migrant deaths recurring"], military_role: "elevated (Saied-aligned)", internet_freedom_score: 39, energy_import_dependence_pct: 50, food_import_dependence_pct: 40, source: "UNODC, INS, GTI, FH Internet Freedom" }
+
+  MAR:
+    trust_extra: { trust_in_military_pct: 68, trust_in_courts_pct: 41, trust_in_police_pct: 56, source: "Arab Barometer Morocco 2024" }
+    identity_extra: { gini_coefficient: 0.395, gen_z_share_pct: 22, millennial_share_pct: 22, gen_x_share_pct: 18, boomer_plus_share_pct: 10, voter_turnout_last_pct: 50.2, voter_turnout_source: "2021 House — Ministry of Interior", source: "HCP" }
+    security: { homicide_per_100k: 1.4, homicide_trend: "stable", violent_crime_perception: "moderate", terror_salience: "moderate", climate_disasters_recent: ["2023 Atlas earthquake (3k dead)", "Recurring drought (5y)"], military_role: "elevated (Sahara conflict + COMINOC)", internet_freedom_score: 44, energy_import_dependence_pct: 90, food_import_dependence_pct: 45, source: "UNODC, HCP, GTI, FH Internet Freedom" }
+
+  DZA:
+    trust_extra: { trust_in_military_pct: 70, trust_in_military_pct_estimated: true, trust_in_courts_pct: 35, trust_in_courts_pct_estimated: true, trust_in_police_pct: 47, trust_in_police_pct_estimated: true, source: "Arab Barometer Algeria 2024 (limited fieldwork)" }
+    identity_extra: { gini_coefficient: 0.275, gen_z_share_pct: 21, millennial_share_pct: 24, gen_x_share_pct: 19, boomer_plus_share_pct: 9, voter_turnout_last_pct: 23.7, voter_turnout_source: "2024 Presidential — ANIE (heavily disputed)", source: "ONS, ANIE" }
+    security: { homicide_per_100k: 1.3, homicide_trend: "stable", violent_crime_perception: "low-moderate", terror_salience: "moderate (Sahel border)", climate_disasters_recent: ["2024 wildfires (Kabylie)", "Recurring drought"], military_role: "decisive (army-state nexus)", internet_freedom_score: 30, energy_import_dependence_pct: -200, food_import_dependence_pct: 60, source: "UNODC limited, ONS, GTI, FH Internet Freedom" }
+
+  COD:
+    trust_extra: { trust_in_military_pct: 56, trust_in_courts_pct: 35, trust_in_police_pct: 36, source: "Afrobarometer DRC 2024" }
+    identity_extra: { gini_coefficient: 0.421, gen_z_share_pct: 28, millennial_share_pct: 22, gen_x_share_pct: 15, boomer_plus_share_pct: 5, voter_turnout_last_pct: 41.4, voter_turnout_source: "2023 General — CENI (heavily disputed)", source: "INS DRC, CENI" }
+    security: { homicide_per_100k: 13.6, homicide_trend: "war-elevated", violent_crime_perception: "very high", terror_salience: "very high (M23 + ADF + 100+ armed groups)", climate_disasters_recent: ["2025 Goma volcanic + flood", "Recurring Ebola outbreaks"], military_role: "decisive (active war)", internet_freedom_score: 35, energy_import_dependence_pct: -50, food_import_dependence_pct: 18, source: "UNODC, ACLED, GTI 2024 (top-5 globally), ND-GAIN, FH Internet Freedom" }
+
+  RWA:
+    trust_extra: { trust_in_military_pct: 90, trust_in_military_pct_estimated: true, trust_in_courts_pct: 75, trust_in_courts_pct_estimated: true, trust_in_police_pct: 81, trust_in_police_pct_estimated: true, source: "Afrobarometer Rwanda 2022 (high reported amid restricted environment)" }
+    identity_extra: { gini_coefficient: 0.437, gen_z_share_pct: 26, millennial_share_pct: 23, gen_x_share_pct: 16, boomer_plus_share_pct: 6, voter_turnout_last_pct: 98.2, voter_turnout_source: "2024 Presidential — NEC", source: "NISR, NEC" }
+    security: { homicide_per_100k: 2.5, homicide_trend: "stable", violent_crime_perception: "low (officially)", terror_salience: "moderate (DRC + Burundi spillover)", climate_disasters_recent: ["2023 Western Province floods (130+ dead)"], military_role: "decisive (DRC engagements; Mozambique mission)", internet_freedom_score: 38, energy_import_dependence_pct: 40, food_import_dependence_pct: 18, source: "UNODC, NISR, GTI, FH Internet Freedom" }
+
+  UGA:
+    trust_extra: { trust_in_military_pct: 67, trust_in_courts_pct: 47, trust_in_police_pct: 36, source: "Afrobarometer Uganda 2024" }
+    identity_extra: { gini_coefficient: 0.428, gen_z_share_pct: 28, millennial_share_pct: 22, gen_x_share_pct: 14, boomer_plus_share_pct: 4, voter_turnout_last_pct: 59.4, voter_turnout_source: "2021 General — EC Uganda", source: "UBOS, EC" }
+    security: { homicide_per_100k: 11.0, homicide_trend: "stable", violent_crime_perception: "high", terror_salience: "high (ADF + LRA legacy)", climate_disasters_recent: ["2024 Kasese floods", "2022-23 Ebola Sudan-strain outbreak"], military_role: "decisive (UPDF; Somalia ATMIS; DRC engagements)", internet_freedom_score: 41, energy_import_dependence_pct: 50, food_import_dependence_pct: -10, source: "UNODC, UBOS, GTI, FH Internet Freedom" }
+
+  TZA:
+    trust_extra: { trust_in_military_pct: 76, trust_in_courts_pct: 56, trust_in_police_pct: 41, source: "Afrobarometer Tanzania 2024" }
+    identity_extra: { gini_coefficient: 0.405, gen_z_share_pct: 28, millennial_share_pct: 22, gen_x_share_pct: 14, boomer_plus_share_pct: 4, voter_turnout_last_pct: 50.7, voter_turnout_source: "2025 General — NEC (Lissu-disqualified, contested)", source: "NBS, NEC" }
+    security: { homicide_per_100k: 6.6, homicide_trend: "stable", violent_crime_perception: "moderate-high", terror_salience: "moderate (Mozambique-border ASWJ)", climate_disasters_recent: ["2024 Hanang landslides", "2024 Rufiji floods"], military_role: "elevated (Mozambique deployment + Zanzibar)", internet_freedom_score: 30, energy_import_dependence_pct: 8, food_import_dependence_pct: -25, source: "UNODC, NBS, GTI, FH Internet Freedom" }
+
+  NZL:
+    trust_extra: { trust_in_military_pct: 61, trust_in_courts_pct: 60, trust_in_police_pct: 73, source: "1News-Verian Mar 2026; Edelman 2025" }
+    identity_extra: { gini_coefficient: 0.349, gen_z_share_pct: 17, millennial_share_pct: 22, gen_x_share_pct: 20, boomer_plus_share_pct: 22, voter_turnout_last_pct: 78.2, voter_turnout_source: "2023 General — EC NZ", source: "Stats NZ, EC" }
+    security: { homicide_per_100k: 1.0, homicide_trend: "stable (Christchurch attack era past)", violent_crime_perception: "moderate (ram-raids + youth)", terror_salience: "moderate (post-2019 Christchurch)", climate_disasters_recent: ["2023 Cyclone Gabrielle (12 dead)", "Recurring atmospheric rivers"], military_role: "low-profile (Pacific posture)", internet_freedom_score: 87, energy_import_dependence_pct: 20, food_import_dependence_pct: -100, source: "UNODC, Stats NZ, GTI, FH Internet Freedom" }
+
+  RUS:
+    trust_extra: { trust_in_military_pct: 72, trust_in_courts_pct: 41, trust_in_police_pct: 47, source: "Levada Mar 2026 (under wartime censorship)" }
+    identity_extra: { gini_coefficient: 0.360, gen_z_share_pct: 14, millennial_share_pct: 22, gen_x_share_pct: 22, boomer_plus_share_pct: 26, voter_turnout_last_pct: 77.4, voter_turnout_source: "2024 Presidential — CEC (Putin 88.5%, contested)", source: "World Bank 2020, Rosstat, CEC" }
+    security: { homicide_per_100k: 7.3, homicide_trend: "war-elevated", violent_crime_perception: "moderate (war casualties hidden)", terror_salience: "high (Crocus 2024; Kaspiysk; recurring)", climate_disasters_recent: ["2024 Orsk floods (record)", "Recurring Siberian wildfires"], military_role: "decisive (war footing)", internet_freedom_score: 16, energy_import_dependence_pct: -200, food_import_dependence_pct: -25, source: "UNODC, Rosstat, GTI 2024, FH Internet Freedom" }
+
+  BLR:
+    trust_extra: { trust_in_military_pct: 35, trust_in_military_pct_estimated: true, trust_in_courts_pct: 22, trust_in_courts_pct_estimated: true, trust_in_police_pct: 25, trust_in_police_pct_estimated: true, source: "Chatham House Belarus Tracker 2025 (anonymous online)" }
+    identity_extra: { gini_coefficient: 0.244, gen_z_share_pct: 14, millennial_share_pct: 21, gen_x_share_pct: 22, boomer_plus_share_pct: 26, voter_turnout_last_pct: 85.7, voter_turnout_source: "2025 Presidential — CEC (Lukashenko 86.8%, contested)", source: "Belstat, CEC" }
+    security: { homicide_per_100k: 2.4, homicide_trend: "stable", violent_crime_perception: "low (officially)", terror_salience: "low (Russian-aligned)", climate_disasters_recent: ["Recurring forest fires + Belovezhskaya droughts"], military_role: "decisive (Russia-aligned, war infrastructure)", internet_freedom_score: 24, energy_import_dependence_pct: 80, food_import_dependence_pct: -25, source: "UNODC, Belstat, FH Internet Freedom" }
+
+  KAZ:
+    trust_extra: { trust_in_military_pct: 60, trust_in_military_pct_estimated: true, trust_in_courts_pct: 45, trust_in_courts_pct_estimated: true, trust_in_police_pct: 40, trust_in_police_pct_estimated: true, source: "Demoscope KZ 2025 (state-aligned environment); Central Asia Barometer 2024" }
+    identity_extra: { gini_coefficient: 0.275, gen_z_share_pct: 22, millennial_share_pct: 23, gen_x_share_pct: 19, boomer_plus_share_pct: 13, voter_turnout_last_pct: 81.0, voter_turnout_source: "2022 Presidential — CEC (Tokayev 81.3%, contested)", source: "BNS, CEC" }
+    security: { homicide_per_100k: 4.0, homicide_trend: "stable", violent_crime_perception: "moderate", terror_salience: "moderate (post-2022-Qantar; Sahel-spillover monitored)", climate_disasters_recent: ["2024 spring floods (record)", "Aral Sea ongoing", "Recurring earthquakes"], military_role: "elevated (CSTO-Russia-China balancing)", internet_freedom_score: 30, energy_import_dependence_pct: -300, food_import_dependence_pct: -10, source: "UNODC, BNS, GTI, FH Internet Freedom" }

@@ -1,0 +1,194 @@
+# Curated "impact chains" — voter concern → actor → policy → market.
+#
+# Each chain answers: "they care about X, they'll vote for Y, who'll do Z,
+# which moves market W." These are the editorial centerpiece of the dashboard.
+#
+# Schema:
+#   chains[].iso            ISO3 country code
+#   chains[].title          short human title
+#   chains[].summary        one-paragraph framing
+#   chains[].confidence     overall author confidence 1..5
+#   chains[].steps[].kind   concern|actor|policy|market|evidence
+#   chains[].steps[].text   short label
+#   chains[].steps[].detail optional elaboration
+#   chains[].steps[].ref_url optional supporting link
+#   chains[].steps[].ref_provider polymarket|kalshi|news|poll
+#   chains[].steps[].ref_id provider id (e.g. polymarket market id)
+#
+# These are imported once on first server boot (when impact_chains is empty)
+# with status='approved' and source_kind='seed'. Users can post counter-
+# chains (slice 4) referencing them by id.
+
+schema_version: 1
+last_curated: "2026-04-20"
+
+chains:
+
+  # ── Argentina: inflation → Milei → FX liberalisation → peso ──────
+  - iso: ARG
+    title: "Inflation drives Milei's FX endgame"
+    summary: >
+      Argentine voters rank inflation #1 (62% in March '26 polling).
+      Milei's coalition has staked re-election on completing dollarisation
+      or a free FX float by end of '26. Either path implies a peso
+      revaluation event that Polymarket and FX forwards already price in.
+    confidence: 4
+    steps:
+      - { kind: concern, text: "Inflation is the #1 voter issue (62%)",
+          detail: "Pew March '26: 62% of Argentines name inflation top concern, up from 51% Q4 '25." }
+      - { kind: actor,   text: "Milei consolidates coalition around macro plan",
+          detail: "La Libertad Avanza needs ~40% in 2027 generals; Milei has tied legacy to FX reform." }
+      - { kind: policy,  text: "Lift remaining FX controls / hard-peg the peso",
+          detail: "Cepo wind-down + IMF disbursements expected H2 '26." }
+      - { kind: market,  text: "Polymarket: Argentina inflation ≥ 45% in 2026",
+          ref_provider: polymarket,
+          detail: "Trading ~12% YES — implies aggressive disinflation, conditional on the policy step landing." }
+
+  # ── United States: midterms → House majority → tax cliff → SPX ──
+  - iso: USA
+    title: "House majority decides 2026 tax cliff"
+    summary: >
+      The 2017 TCJA individual provisions sunset Dec 31 2025; the post-
+      midterm Congress writes the extension. Polling has Democrats +4 on
+      generic ballot. House control flips the marginal-rate baseline,
+      which feeds directly into S&P earnings consensus.
+    confidence: 4
+    steps:
+      - { kind: concern, text: "Cost of living + healthcare rank #1-2 (Pew Mar '26)" }
+      - { kind: actor,   text: "Generic ballot D+4 (NYT/Siena, ABC/WaPo Apr '26)" }
+      - { kind: policy,  text: "Partial TCJA extension only (no corporate cut renewal)",
+          detail: "Most likely outcome under split government: individual brackets extended, corporate side lapses." }
+      - { kind: market,  text: "Polymarket: Dem House majority 2027",
+          ref_provider: polymarket }
+      - { kind: evidence, text: "CRFB: full extension costs $4.6T over 10y" }
+
+  # ── United Kingdom: Reform surge → Starmer minority → fiscal drag ─
+  - iso: GBR
+    title: "Reform UK eats Tory vote — Labour governs to its left"
+    summary: >
+      Reform polls ~30% and is the largest party in headline VI. Under FPTP
+      this still produces a Labour government but with a wafer-thin lead
+      and pressure from the Greens and SNP. Result: looser fiscal stance,
+      weaker GBP versus a tighter-fiscal-counterfactual.
+    confidence: 3
+    steps:
+      - { kind: concern, text: "Immigration #1 issue (43%) — More in Common Mar '26" }
+      - { kind: actor,   text: "Reform UK leads VI; Tories at 19% post-collapse" }
+      - { kind: policy,  text: "Asylum-deal reset + welfare uprating freeze",
+          detail: "Labour adopts Reform-coded language to staunch defections." }
+      - { kind: market,  text: "Polymarket: Next UK PM = Farage",
+          ref_provider: polymarket }
+
+  # ── Brazil: cost of living → Lula re-election → fiscal slip ──────
+  - iso: BRA
+    title: "Lula re-election → fiscal frame loosens, real underperforms"
+    summary: >
+      Brazilian voters split between cost-of-living and crime. Lula's path
+      back to a third term runs through pension top-ups and food-staple
+      subsidies. The fiscal frame Haddad codified is widely expected to
+      slip, which BRL forwards already partially price.
+    confidence: 3
+    steps:
+      - { kind: concern, text: "Inflation + food prices top issues (DataFolha Apr '26)" }
+      - { kind: actor,   text: "Lula vs Tarcísio neck-and-neck H1 '26" }
+      - { kind: policy,  text: "Bolsa Família expansion + fuel price cap reactivation" }
+      - { kind: market,  text: "Polymarket: Lula re-elected 2026",
+          ref_provider: polymarket }
+      - { kind: market,  text: "Selic rate path — Bank of Brazil Apr '26 cut",
+          ref_provider: polymarket }
+
+  # ── Israel: Gaza endgame → Netanyahu coalition → ILS / defense ────
+  - iso: ISR
+    title: "Coalition fragility around Gaza pivot"
+    summary: >
+      Knesset coalition has held only because elections would deliver a
+      Bennett or Lapid government. Any Gaza ceasefire that disappoints
+      far-right partners triggers Likud bleed. Election → centrist coalition
+      → defense-spending normalisation → shekel relief.
+    confidence: 3
+    steps:
+      - { kind: concern, text: "Hostage families + cost of war dominate domestic discourse" }
+      - { kind: actor,   text: "Netanyahu coalition margin: 1 seat" }
+      - { kind: policy,  text: "Phase-2 ceasefire vote splits coalition" }
+      - { kind: market,  text: "Polymarket: Israel-Hamas ceasefire by June 30",
+          ref_provider: polymarket }
+      - { kind: market,  text: "Polymarket: Next Israeli PM = Bennett",
+          ref_provider: polymarket }
+
+  # ── Germany: AfD ceiling → CDU-SPD grand coalition → defense bill ─
+  - iso: DEU
+    title: "Merz CDU governs with SPD — defense package passes"
+    summary: >
+      AfD has plateaued ~22-24% under firewall; CDU/CSU's path is a grand
+      coalition with SPD. The defense supplemental (3% of GDP commit) and
+      the debt-brake reform sit at the centre of the Koalitionsvertrag.
+    confidence: 3
+    steps:
+      - { kind: concern, text: "Migration #1 issue (33%) | Economy #2 (28%)" }
+      - { kind: actor,   text: "CDU/CSU 30% lead; AfD plateau at 22-24%" }
+      - { kind: policy,  text: "Debt-brake reform + €100B defense fund extension" }
+      - { kind: market,  text: "Polymarket: Will Germany leave the EU before 2030?",
+          ref_provider: polymarket,
+          detail: "Trading <1% — proxy for AfD ceiling holding." }
+
+  # ── France: 2027 presidential — Le Pen vs centre-left ─────────────
+  - iso: FRA
+    title: "Le Pen 2027 path — bond spread widens"
+    summary: >
+      Bardella/Le Pen campaign on "France-first" budget overrides of EU
+      fiscal rules. A second-round Le Pen win — modal but not majority
+      probability — re-prices OAT-Bund spreads by 80-150bp on impact.
+    confidence: 3
+    steps:
+      - { kind: concern, text: "Cost of living + immigration (#1-2 Ifop Mar '26)" }
+      - { kind: actor,   text: "Bardella leads 1st-round VI; Le Pen wins 2nd vs PS" }
+      - { kind: policy,  text: "Pension-reform reversal + EU rule defiance" }
+      - { kind: market,  text: "Polymarket: Will Le Pen / Bardella be on the ballot?",
+          ref_provider: polymarket }
+
+  # ── India: cost of living → Modi 3.0 → capex push → INR ──────────
+  - iso: IND
+    title: "Modi 3.0 fiscal: infra capex over consumption"
+    summary: >
+      BJP's 2024 mandate weakened but holds. The 2026 union budget
+      doubles down on capex over direct cash transfers. Result: stronger
+      INR / banks, weaker FMCG.
+    confidence: 3
+    steps:
+      - { kind: concern, text: "Jobs + inflation top issues (CSDS Mar '26)" }
+      - { kind: actor,   text: "Modi approval ~58%; BJP holds 240 LS seats" }
+      - { kind: policy,  text: "FY27 budget: ₹14L Cr capex; PM-Kisan flat" }
+      - { kind: market,  text: "Polymarket: Modi approval rating > 55% Dec '26",
+          ref_provider: polymarket }
+
+  # ── Mexico: security → Sheinbaum → Pemex bailout → MXN ───────────
+  - iso: MEX
+    title: "Sheinbaum's Pemex problem"
+    summary: >
+      AMLO left Pemex with $108B debt; Sheinbaum has to choose between
+      another federal bailout (MXN-negative, fiscal-negative) or a
+      partial-privatisation pivot Morena's base will reject. Security
+      headlines drive whichever choice gets political cover.
+    confidence: 2
+    steps:
+      - { kind: concern, text: "Security #1 (47%); economy #2 (29%)" }
+      - { kind: actor,   text: "Sheinbaum approval ~62%, Morena holds Congress" }
+      - { kind: policy,  text: "Pemex 2026 maturities: $9.7B — bailout vs partial sale" }
+      - { kind: market,  text: "Polymarket: Mexico sovereign rating cut by Dec '26",
+          ref_provider: polymarket }
+
+  # ── Canada: housing → Carney coalition → CAD/rates ───────────────
+  - iso: CAN
+    title: "Carney's housing supply gambit"
+    summary: >
+      Carney Liberals retained government on a promise of 500k homes/yr.
+      Implementation requires CMHC mandate change + provincial zoning
+      override. If they deliver, BoC stays on hold longer; if they don't,
+      Conservative majority in 2029.
+    confidence: 2
+    steps:
+      - { kind: concern, text: "Housing affordability #1 (51%)" }
+      - { kind: actor,   text: "Liberal minority gov, NDP supply-and-confidence" }
+      - { kind: policy,  text: "Build Canada Homes Act passes Q3 '26" }
+      - { kind: market,  text: "Polymarket: Next Canadian PM",
+          ref_provider: polymarket }

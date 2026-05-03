@@ -5855,9 +5855,15 @@ async def dashboard(request: Request):
         user_threshold = DIVERGENCE_THRESHOLD
     user_sport = settings.get("default_sport", "basketball_nba")
     import html as _html_mod
+    # Server-side state for the bookmaker-quota banner. Avoids needing
+    # /api/health to be accessible without auth (which would leak status).
+    quota_banner_display = "block" if (time.time() < _ODDS_BREAKER_OPEN_UNTIL) else "none"
+    quota_banner_reopen_hrs = max(0, int((_ODDS_BREAKER_OPEN_UNTIL - time.time()) / 3600))
     html = DASHBOARD_HTML.replace("__USER_THRESHOLD__", str(user_threshold))
     html = html.replace("__USER_SPORT__", _html_mod.escape(user_sport).replace("\\", "\\\\").replace("'", "\\'"))
     html = html.replace("__USERNAME__", _html_mod.escape(user["username"]).replace("\\", "\\\\").replace("'", "\\'"))
+    html = html.replace("__QUOTA_BANNER_DISPLAY__", quota_banner_display)
+    html = html.replace("__QUOTA_BANNER_HOURS__", str(quota_banner_reopen_hrs))
     return HTMLResponse(html)
 
 
@@ -6775,9 +6781,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .perf-grid { grid-template-columns: 1fr; }
     .card-action-hint { font-size: 11px; padding: 0 14px 10px; }
   }
+  /* Quota-exhausted banner — only shown when /api/health flags
+     degraded-quota-exhausted, otherwise stays display:none. Sits above the
+     nav so the bookmaker-odds gap is acknowledged before users see empty
+     edge cards. Polymarket + Kalshi cross-venue signals continue working. */
+  .quota-banner {
+    display: none;
+    background: linear-gradient(90deg, rgba(251,191,36,0.15), rgba(251,191,36,0.05));
+    border-bottom: 1px solid rgba(251,191,36,0.4);
+    color: #fbbf24;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .quota-banner b { color: #fde68a; }
+  .quota-banner .quota-banner-detail {
+    color: rgba(253,230,138,0.7);
+    font-size: 12px;
+    font-weight: 400;
+    margin-top: 2px;
+  }
 </style>
 </head>
 <body>
+
+<!-- ===== QUOTA BANNER (server-rendered: shown only when breaker is open) ===== -->
+<div class="quota-banner" id="quotaBanner" style="display:__QUOTA_BANNER_DISPLAY__;">
+  <b>Bookmaker odds temporarily unavailable</b> — the-odds-api monthly quota exhausted; falling back to Polymarket↔Kalshi cross-venue signals below.
+  <div class="quota-banner-detail">Auto-probes again in ~__QUOTA_BANNER_HOURS__h, or restored instantly when ODDS_API_KEY is rotated/upgraded.</div>
+</div>
 
 <!-- ===== NAV ===== -->
 <nav class="nav">
