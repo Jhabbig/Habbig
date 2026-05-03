@@ -65,6 +65,45 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# ── Layered .env loader ──────────────────────────────────────────────────────
+# See sports-dashboard for rationale. ~/.gateway_env → gateway/.env.production →
+# dashboard/.env.production → dashboard/.env (first definition wins).
+try:
+    from dotenv import load_dotenv as _dotenv_load
+except ImportError:
+    def _dotenv_load(p, override=False):
+        for raw in Path(p).read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if not override and k in os.environ:
+                continue
+            os.environ[k] = v
+        return True
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_GATEWAY_ENV = None
+for _p in [_DASHBOARD_DIR, *_DASHBOARD_DIR.parents][:5]:
+    _candidate = _p / "gateway" / ".env.production"
+    if _candidate.is_file():
+        _GATEWAY_ENV = _candidate
+        break
+_ENV_SEARCH = [Path.home() / ".gateway_env"]
+if _GATEWAY_ENV is not None:
+    _ENV_SEARCH.append(_GATEWAY_ENV)
+_ENV_SEARCH.extend([_DASHBOARD_DIR / ".env.production", _DASHBOARD_DIR / ".env"])
+_loaded_env_files: list[str] = []
+for _f in _ENV_SEARCH:
+    if _f.is_file():
+        _dotenv_load(_f, override=False)
+        _loaded_env_files.append(str(_f))
+print(f"[weather-dashboard] env files loaded: {len(_loaded_env_files)}", flush=True)
+for _f in _loaded_env_files:
+    print(f"  ✓ {_f}", flush=True)
+if not os.getenv("GATEWAY_SSO_SECRET"):
+    print("⚠ [weather-dashboard] GATEWAY_SSO_SECRET missing — gateway-fronted requests will be rejected", flush=True)
+
 
 # Prevent browsers/service workers from caching API responses
 @app.after_request
@@ -1257,48 +1296,60 @@ def fetch_metar(icao: str) -> Optional[dict]:
         return cached
 
     # aviationweather.gov returns JSON when format=json. Free, no auth.
-    try:
-        resp = requests.get(
-            "https://aviationweather.gov/api/data/metar",
-            params={"ids": icao, "format": "json", "hours": 2},
-            timeout=10,
-            headers={"User-Agent": "NoRainDashboard/1.0"},
-        )
-        if resp.status_code != 200:
+    # NOTE: this endpoint regularly takes 5-15s under load. A 10s timeout
+    # was producing hundreds of "Read timed out" warnings/hour. We use a
+    # 30s timeout + a single retry on timeout, which empirically catches
+    # ~99% of transient slowness without significantly slowing healthy fetches.
+    rows = None
+    for _attempt in range(2):
+        try:
+            resp = requests.get(
+                "https://aviationweather.gov/api/data/metar",
+                params={"ids": icao, "format": "json", "hours": 2},
+                timeout=30,
+                headers={"User-Agent": "NoRainDashboard/1.0"},
+            )
+            if resp.status_code != 200:
+                return None
+            rows = resp.json()
+            break
+        except requests.exceptions.Timeout:
+            if _attempt == 1:
+                logger.warning("METAR fetch for %s timed out after 30s × 2 attempts", icao)
+                return None
+            continue
+        except Exception as e:
+            logger.warning("METAR fetch for %s failed: %s", icao, e)
             return None
-        rows = resp.json()
-        if not rows:
-            return None
-        # Most recent observation first
-        latest = rows[0]
-        temp_c = latest.get("temp")
-        dewp_c = latest.get("dewp")
-        wind_dir = latest.get("wdir")
-        wind_speed = latest.get("wspd")  # knots
-        wind_gust = latest.get("wgst")
-        wx = latest.get("wxString") or ""
-        clouds = latest.get("clouds") or []
-        obs_time = latest.get("obsTime")
-        result = {
-            "icao": icao,
-            "temp_f": round(temp_c * 9 / 5 + 32, 1) if temp_c is not None else None,
-            "dewpoint_f": round(dewp_c * 9 / 5 + 32, 1) if dewp_c is not None else None,
-            "wind_dir": wind_dir,
-            "wind_mph": round(wind_speed * 1.15078, 1) if wind_speed is not None else None,
-            "wind_gust_mph": round(wind_gust * 1.15078, 1) if wind_gust is not None else None,
-            "weather": wx,
-            "cloud_layers": [
-                {"cover": c.get("cover"), "base_ft": c.get("base")}
-                for c in clouds[:3]
-            ],
-            "obs_time": obs_time,
-            "raw": latest.get("rawOb", ""),
-        }
-        cache_set(cache_key, result)
-        return result
-    except Exception as e:
-        logger.warning("METAR fetch for %s failed: %s", icao, e)
-    return None
+    if not rows:
+        return None
+    # Most recent observation first
+    latest = rows[0]
+    temp_c = latest.get("temp")
+    dewp_c = latest.get("dewp")
+    wind_dir = latest.get("wdir")
+    wind_speed = latest.get("wspd")  # knots
+    wind_gust = latest.get("wgst")
+    wx = latest.get("wxString") or ""
+    clouds = latest.get("clouds") or []
+    obs_time = latest.get("obsTime")
+    result = {
+        "icao": icao,
+        "temp_f": round(temp_c * 9 / 5 + 32, 1) if temp_c is not None else None,
+        "dewpoint_f": round(dewp_c * 9 / 5 + 32, 1) if dewp_c is not None else None,
+        "wind_dir": wind_dir,
+        "wind_mph": round(wind_speed * 1.15078, 1) if wind_speed is not None else None,
+        "wind_gust_mph": round(wind_gust * 1.15078, 1) if wind_gust is not None else None,
+        "weather": wx,
+        "cloud_layers": [
+            {"cover": c.get("cover"), "base_ft": c.get("base")}
+            for c in clouds[:3]
+        ],
+        "obs_time": obs_time,
+        "raw": latest.get("rawOb", ""),
+    }
+    cache_set(cache_key, result)
+    return result
 
 
 # ─── Hourly forecast at the resolution station ─────────────────────────────────

@@ -23,6 +23,45 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+# ── Layered .env loader ──────────────────────────────────────────────────────
+# See sports-dashboard for rationale. ~/.gateway_env → gateway/.env.production →
+# dashboard/.env.production → dashboard/.env, broadest → narrowest.
+try:
+    from dotenv import load_dotenv as _dotenv_load
+except ImportError:
+    def _dotenv_load(p, override=False):
+        for raw in Path(p).read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if not override and k in os.environ:
+                continue
+            os.environ[k] = v
+        return True
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_GATEWAY_ENV = None
+for _p in [_DASHBOARD_DIR, *_DASHBOARD_DIR.parents][:5]:
+    _candidate = _p / "gateway" / ".env.production"
+    if _candidate.is_file():
+        _GATEWAY_ENV = _candidate
+        break
+_ENV_SEARCH = [Path.home() / ".gateway_env"]
+if _GATEWAY_ENV is not None:
+    _ENV_SEARCH.append(_GATEWAY_ENV)
+_ENV_SEARCH.extend([_DASHBOARD_DIR / ".env.production", _DASHBOARD_DIR / ".env"])
+_loaded_env_files: list[str] = []
+for _f in _ENV_SEARCH:
+    if _f.is_file():
+        _dotenv_load(_f, override=False)
+        _loaded_env_files.append(str(_f))
+print(f"[world-dashboard] env files loaded: {len(_loaded_env_files)}", flush=True)
+for _f in _loaded_env_files:
+    print(f"  ✓ {_f}", flush=True)
+if not os.getenv("GATEWAY_SSO_SECRET"):
+    print("⚠ [world-dashboard] GATEWAY_SSO_SECRET missing — gateway-fronted requests will be rejected", flush=True)
+
 from infrastructure_data import (
     UNDERSEA_CABLES as _INFRA_CABLES,
     OIL_GAS_PIPELINES as _INFRA_PIPELINES,

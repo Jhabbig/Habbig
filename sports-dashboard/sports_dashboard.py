@@ -1071,10 +1071,33 @@ _kalshi_cache: list[dict] = []
 _kalshi_cache_time: float = 0
 
 
+# ── Kalshi rate-limit circuit breaker ────────────────────────────────────────
+# Without authenticated keys (KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY) we get
+# the IP-based unauth quota, which the previous fetcher blew through ~2400
+# times/hour. The breaker tracks consecutive 429s in this poll cycle and
+# stops calling Kalshi for the rest of the cycle once we've hit a wall — so
+# we degrade gracefully instead of looping retries.
+_KALSHI_429_LAST_HIT = 0.0
+_KALSHI_BREAKER_OPEN_UNTIL = 0.0
+_KALSHI_REQ_DELAY_S = 0.15  # ~6 req/s; well under documented unauth limits
+_KALSHI_BREAKER_COOLDOWN_S = 120
+
+
 def fetch_kalshi_markets(sport_key: str) -> list[dict]:
-    """Fetch markets from Kalshi for the given sport across all its series."""
+    """Fetch markets from Kalshi for the given sport across all its series.
+
+    With no auth keys we throttle to ~6 req/s, honor ``Retry-After`` on 429,
+    and trip a circuit breaker that suppresses Kalshi traffic for 2 min after
+    a rate-limit wall is hit. Once Kalshi auth keys are wired up the breaker
+    becomes a no-op (auth quotas are far higher than what we need)."""
+    global _KALSHI_429_LAST_HIT, _KALSHI_BREAKER_OPEN_UNTIL
+
     series_list = KALSHI_SERIES.get(sport_key, [])
     if not series_list:
+        return []
+
+    # Skip the fetch entirely while breaker is open.
+    if time.time() < _KALSHI_BREAKER_OPEN_UNTIL:
         return []
 
     session = _make_http_session()
@@ -1087,6 +1110,17 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
                 params["cursor"] = cursor
             try:
                 resp = session.get(f"{KALSHI_API_HOST}/markets", params=params, timeout=30)
+                if resp.status_code == 429:
+                    retry_after = float(resp.headers.get("Retry-After", "60"))
+                    _KALSHI_429_LAST_HIT = time.time()
+                    _KALSHI_BREAKER_OPEN_UNTIL = time.time() + max(retry_after, _KALSHI_BREAKER_COOLDOWN_S)
+                    print(
+                        f"⚠ Kalshi rate-limited (429) on {series}; opening breaker for "
+                        f"{int(_KALSHI_BREAKER_OPEN_UNTIL - time.time())}s. "
+                        f"Set KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY for higher quotas.",
+                        flush=True,
+                    )
+                    return all_markets  # bail out of *all* series for this sport
                 resp.raise_for_status()
                 body = resp.json()
             except Exception as e:
@@ -1100,6 +1134,9 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
             cursor = body.get("cursor")
             if not cursor:
                 break
+            time.sleep(_KALSHI_REQ_DELAY_S)
+        # Stagger between series too, especially when there are many tickers
+        time.sleep(_KALSHI_REQ_DELAY_S)
 
     return all_markets
 

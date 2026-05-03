@@ -41,12 +41,29 @@ MAX_TRADES_PER_FETCH = 1000    # per API call
 # ═══════════════════════════════════════════════════════════════════════
 
 def api_get(url, params=None, retries=3):
+    """GET helper for the Polymarket data/gamma APIs.
+
+    Pagination quirk: ``data-api.polymarket.com/trades`` returns HTTP 400
+    once you walk past offset≈4000 instead of returning an empty array.
+    Treating that 400 as end-of-data lets paginating callers (suspicious
+    trades scanner, wallet trade history) terminate cleanly instead of
+    spamming "API error: 400 Client Error" lines and burning retries.
+    """
+    paginating_past_end = (
+        params is not None
+        and isinstance(params.get("offset"), (int, float))
+        and params["offset"] >= 4000
+        and "/trades" in url
+    )
     for attempt in range(retries):
         try:
             resp = requests.get(url, params=params, timeout=30)
             if resp.status_code == 429:
                 time.sleep(2)
                 continue
+            if resp.status_code == 400 and paginating_past_end:
+                # Treat as end-of-data; caller will see an empty list and break.
+                return []
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
