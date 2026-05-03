@@ -65,8 +65,16 @@ async def _get_text(session: aiohttp.ClientSession, url: str) -> str:
 # Atom feed -> list of (accession, filing index URL)
 # ---------------------------------------------------------------------------
 
-_ACCESSION_RE = re.compile(r"accession_number=(\d{10}-\d{2}-\d{6})", re.IGNORECASE)
-_HREF_RE = re.compile(r"<link[^>]+href=\"([^\"]+)\"")
+# EDGAR's atom feed uses <entry> blocks with these fields per filing:
+#   <accession-number>0001199039-26-000003</accession-number>
+#   <filing-href>https://www.sec.gov/.../0001199039-26-000003-index.htm</filing-href>
+# We match both forms (hyphen in XML tag and inside the href URL); the
+# pre-2025 form was `accession_number=` with an underscore but EDGAR has
+# since switched to hyphenated tag names throughout.
+_ENTRY_RE = re.compile(r"<entry>(.*?)</entry>", re.DOTALL | re.IGNORECASE)
+_ACC_TAG_RE = re.compile(r"<accession-number>(\d{10}-\d{2}-\d{6})</accession-number>",
+                         re.IGNORECASE)
+_FILING_HREF_RE = re.compile(r"<filing-href>([^<]+)</filing-href>", re.IGNORECASE)
 
 
 async def list_form4_for_issuer(session: aiohttp.ClientSession,
@@ -85,16 +93,16 @@ async def list_form4_for_issuer(session: aiohttp.ClientSession,
 
     out: List[Tuple[str, str]] = []
     seen: set[str] = set()
-    # Iterate hrefs in document order — atom <entry> contains a <link href="...">
-    # to the filing index page. We extract the accession from that URL.
-    for href_match in _HREF_RE.finditer(atom):
-        href = href_match.group(1)
-        m = _ACCESSION_RE.search(href)
-        if not m:
+    for entry_match in _ENTRY_RE.finditer(atom):
+        block = entry_match.group(1)
+        acc_match = _ACC_TAG_RE.search(block)
+        if not acc_match:
             continue
-        acc = m.group(1)
+        acc = acc_match.group(1)
         if acc in seen:
             continue
+        href_match = _FILING_HREF_RE.search(block)
+        href = href_match.group(1).strip() if href_match else ""
         seen.add(acc)
         out.append((acc, href))
     return out

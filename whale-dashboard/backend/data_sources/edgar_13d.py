@@ -53,9 +53,12 @@ async def _get_text(session: aiohttp.ClientSession, url: str) -> str:
         return await r.text()
 
 
-_ACCESSION_RE = re.compile(r"accession_number=(\d{10}-\d{2}-\d{6})", re.IGNORECASE)
-_HREF_RE = re.compile(r"<link[^>]+href=\"([^\"]+)\"")
-_ENTRY_RE = re.compile(r"<entry>(.*?)</entry>", re.DOTALL)
+# EDGAR atom feed uses hyphenated XML tags, not the URL-style `accession_number=`
+# pre-2025 form. See data_sources/edgar_form4.py for full notes — same fix.
+_ENTRY_RE = re.compile(r"<entry>(.*?)</entry>", re.DOTALL | re.IGNORECASE)
+_ACC_TAG_RE = re.compile(r"<accession-number>(\d{10}-\d{2}-\d{6})</accession-number>",
+                         re.IGNORECASE)
+_FILING_HREF_RE = re.compile(r"<filing-href>([^<]+)</filing-href>", re.IGNORECASE)
 _CATEGORY_RE = re.compile(r'<category[^>]*term="([^"]+)"')
 
 
@@ -81,17 +84,15 @@ async def list_13d_for_issuer(session: aiohttp.ClientSession,
             raise
 
         for entry in _ENTRY_RE.findall(atom):
-            href_m = _HREF_RE.search(entry)
-            cat_m = _CATEGORY_RE.search(entry)
-            if not href_m:
-                continue
-            href = href_m.group(1)
-            acc_m = _ACCESSION_RE.search(href)
+            acc_m = _ACC_TAG_RE.search(entry)
             if not acc_m:
                 continue
             acc = acc_m.group(1)
             if acc in seen:
                 continue
+            href_m = _FILING_HREF_RE.search(entry)
+            href = href_m.group(1).strip() if href_m else ""
+            cat_m = _CATEGORY_RE.search(entry)
             seen.add(acc)
             # Use atom category term when available — preserves 13D/A vs 13D.
             schedule = (cat_m.group(1) if cat_m else schedule_label).replace("SC ", "")
