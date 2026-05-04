@@ -112,7 +112,7 @@
     },
     "centralbank": {
       "subdomain": "cb",
-      "target": 7060,
+      "target": 7061,
       "display_name": "Central Bank Tracker",
       "description": "Fed, ECB, BoE rates · implied path · Polymarket FOMC edge",
       "accent": "#14b8a6",
@@ -121,6 +121,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "disasters": {
+      "subdomain": "disasters",
+      "target": 7060,
+      "display_name": "Eco Disasters",
+      "description": "Live ecological & environmental disaster feed (USGS, NASA EONET, GDACS, ReliefWeb, NOAA NWS, NASA FIRMS)",
+      "accent": "#22c55e",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_DISASTERS_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_DISASTERS_STRIPE_ANNUAL"
     },
     "stock": {
       "subdomain": "markets",
@@ -134,6 +146,19 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_STOCK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_STOCK_STRIPE_ANNUAL"
+    },
+    "world_health": {
+      "subdomain": "health",
+      "target": 7053,
+      "display_name": "World Health",
+      "description": "508-disease atlas · WHO outbreaks · AMR globe · drug supply chains · prediction markets",
+      "accent": "#10b981",
+      "currency": "GBP",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_WORLD_HEALTH_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_WORLD_HEALTH_STRIPE_ANNUAL"
     }
   }
 }
