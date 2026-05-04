@@ -65,18 +65,69 @@ If you're returning to this code months later, this doc is the map.
 
 ## Subject grammar (the routing primitive)
 
-Everything happens in the `[tag]` at the start of the subject line. Body is appended to the prompt as extra context.
+Everything happens in the `[tag]` at the start of the subject line. Body is appended to the prompt as extra context (with quoted prior-message text stripped).
 
 | Tag | Action | Why |
 |---|---|---|
-| `[<bot_key>]` | fresh session in `bot_dirs[bot_key]` | quick one-off question to a bot |
+| `[<bot>]` | fresh session in `bot_dirs[bot]` | start a new conversation |
+| `[<bot>:last]` | resume most recent session in that bot's dir | jump back into where you left off |
+| `[<bot>:new]` | force fresh, override In-Reply-To | reset mid-thread |
+| `[<bot>:list]` / `[list:<bot>]` | enumerate sessions for that bot | scoped variant |
 | `[list]` | enumerate all sessions in `~/.claude/projects/` | "what threads have I got?" |
-| `[list:<bot_key>]` | enumerate sessions whose `cwd` is under that bot's dir | scoped variant |
-| `[<query>]` (anything else) | resume session matching query | continue a conversation |
+| `[<query>]` | resume session matching query | jump to a specific other thread |
 
-The dispatcher in `parse_subject()` returns one of `{action: "skip" | "fresh" | "list" | "resume"}` plus the relevant args. Re:/Fwd: prefixes are stripped first so replies route the same way.
+The dispatcher in `parse_subject()` returns `{action: "skip" | "fresh" | "list" | "resume" | "resume_last", ...}`. `Re:` and `Fwd:` prefixes are stripped first so replies route the same way.
 
 A query is a UUID prefix (≥6 hex chars, exact prefix match) or a substring of the session's title (case-insensitive). If 0 or >1 sessions match, the relay replies with an error or candidate list — it never silently picks one.
+
+---
+
+## Auto-continue on reply (the "feels like the desktop app" trick)
+
+When the relay sends a reply, it includes a fresh `Message-ID` in the SMTP envelope and persists `Message-ID → session_id` to `threads.json`. When you hit Reply in Gmail, your reply's `In-Reply-To` header points to that exact `Message-ID`. The relay looks it up, finds the session, and resumes.
+
+```
+[user] [centralbank] FOMC arb status                  ← fresh
+       └─ Message-ID: <reply-1@narve.ai>
+          threads.json: {<reply-1@narve.ai>: abc12345}
+
+[user replies] (subject: Re: [centralbank] FOMC arb status)
+   In-Reply-To: <reply-1@narve.ai>                    ← maps to abc12345
+   → resume abc12345
+   └─ Message-ID: <reply-2@narve.ai>
+      threads.json: {<reply-1>: abc12345, <reply-2>: abc12345}
+
+[user replies again] (chains forever)
+   In-Reply-To: <reply-2@narve.ai>                    ← also maps to abc12345
+   → resume abc12345
+```
+
+`session_from_in_reply_to()` walks both `In-Reply-To` and the space-separated `References` header so deep reply chains don't need every intermediate Message-ID to be in the map — any one match resumes the right session.
+
+### Priority when signals conflict
+
+```
+1. [<bot>:new]              → fresh                (explicit override)
+2. [<query>] that resolves  → resume that          (explicit jump)
+3. In-Reply-To match        → resume that          ← the auto-continue
+4. [<bot>] / [<bot>:last]   → fresh / resume-last
+5. [list] / [<bot>:list]    → list
+6. fall-through             → skip / error
+```
+
+### Why this matters
+
+Without auto-continue, every reply spawns a fresh session because `Re: [centralbank] foo` parses as `[centralbank]`. The user has to manually edit each subject to `[abc12345] foo` to maintain context — fine for one-shot questions, awful for back-and-forth. With In-Reply-To routing, replying just works, and the subject tag becomes "the address bar" — only used to navigate to a *different* conversation.
+
+### Quoted text stripping
+
+Mail clients prepend the prior message on Reply (`On Tue, May 3, 2026 at 7:14 PM you@gmail.com wrote: > foo > bar`). Without stripping, Claude sees the entire prior conversation re-pasted on every turn — confusing and wasteful. `strip_quoted()` cuts at:
+
+- A `On <date> [at <time>] wrote:` line (Gmail / Apple Mail, EN/FR/ES/DE)
+- The first `>` line that follows non-empty user content
+- Outlook's `--- Original Message ---` separator
+
+Top-quoted (user types above the quote) and bottom-quoted (rare) replies both work. Inline replies (interleaving `>` and new text) are partial — only the text above the first quote line is kept.
 
 ---
 
@@ -119,6 +170,7 @@ If the session lived in a worktree that's been deleted (`/Polymarket/.claude/wor
 | Where | What | Why |
 |---|---|---|
 | `state.json` | `{"last_uid": <int>}` | Without this, restart re-processes the whole inbox |
+| `threads.json` | `{<Message-ID>: <session_id>}` | Powers auto-continue on reply |
 | `.env` | credentials, allowlist, timeouts | Loaded once at startup; restart to reload |
 | `~/.claude/projects/` | session histories | Read-only from the relay's perspective |
 
