@@ -137,6 +137,72 @@
   .timeline-tooltip { position: absolute; background: #161b22; border: 1px solid var(--grid);
                       border-radius: 4px; padding: 6px 10px; font-size: 12px; pointer-events: none;
                       max-width: 240px; z-index: 20; display: none; }
+  /* ─── Leader cards ─── */
+  .leaders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .leader-card { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px; padding: 12px; }
+  .leader-card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .leader-card .name { font-weight: 600; font-size: 14px; }
+  .leader-card .age { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .leader-card .role { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .leader-card .summary { color: var(--fg); font-size: 12px; margin-top: 8px; line-height: 1.45; }
+  .leader-card .succession { color: var(--muted); font-size: 11px; margin-top: 6px; font-style: italic; }
+  .actu-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 6px 0; }
+  .actu { background: #161b22; border: 1px solid var(--grid); border-radius: 4px; padding: 6px 8px; text-align: center; }
+  .actu .lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .actu .val { font-weight: 600; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .actu.die-high { background: #5a1d1d; border-color: #8a2424; }
+  .actu.die-high .val { color: #ffb3b0; }
+  .actu.die-mid  { background: #4a3d12; border-color: #6e521b; }
+  .actu.die-mid .val { color: #f7c873; }
+  /* ─── Country table ─── */
+  .country-row { display: grid; grid-template-columns: 220px 90px 1fr; gap: 12px; align-items: center;
+                 padding: 6px 0; border-bottom: 1px solid var(--grid); }
+  .country-row:last-child { border-bottom: 0; }
+  .country-row .name { font-weight: 600; }
+  .country-row .pop { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  .stack { display: flex; height: 20px; border-radius: 3px; overflow: hidden; border: 1px solid var(--grid); }
+  .stack .seg { height: 100%; min-width: 1px; }
+  .stack .seg.Christian   { background: #58a6ff; }
+  .stack .seg.Muslim      { background: #56d364; }
+  .stack .seg.Hindu       { background: #f0883e; }
+  .stack .seg.Buddhist    { background: #d2a8ff; }
+  .stack .seg.Jewish      { background: #79c0ff; }
+  .stack .seg.Sikh        { background: #ffb86b; }
+  .stack .seg.Folk        { background: #f7d76b; }
+  .stack .seg.Unaffiliated{ background: #6e7681; }
+  .stack .seg.Jain        { background: #c8b88a; }
+  .stack .seg.Druze       { background: #a8d97e; }
+  .stack .seg.Other       { background: #444c56; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px;
+                vertical-align: middle; }
+  /* ─── Calendar ─── */
+  .cal-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .cal-event { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px; padding: 10px;
+               border-left: 3px solid var(--accent); }
+  .cal-event .when { color: var(--accent); font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .cal-event .countdown { color: var(--muted); font-size: 11px; }
+  .cal-event .name { font-weight: 600; margin: 4px 0; }
+  .cal-event .religion { color: var(--muted); font-size: 11px; }
+  .cal-event .summary { color: var(--fg); font-size: 12px; margin-top: 6px; line-height: 1.4; }
+  /* ─── Cult risk axes ─── */
+  .axis-bars { display: grid; grid-template-columns: 130px 1fr 30px; gap: 8px; align-items: center;
+               margin-top: 6px; }
+  .axis-bars .axlbl { color: var(--muted); font-size: 11px; }
+  .axis-bars .axtrk { background: #0e1117; border: 1px solid var(--grid); height: 8px; border-radius: 2px;
+                      overflow: hidden; }
+  .axis-bars .axfill { height: 100%; }
+  .axis-bars .axfill.lvl-extreme { background: #f85149; }
+  .axis-bars .axfill.lvl-high    { background: #d29922; }
+  .axis-bars .axfill.lvl-moderate{ background: #58a6ff; }
+  .axis-bars .axfill.lvl-low     { background: #56d364; }
+  .axis-bars .axval { font-size: 11px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .composite { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 700;
+               margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .composite.lvl-extreme { background: #f85149; color: #fff; }
+  .composite.lvl-high    { background: #d29922; color: #0e1117; }
+  .composite.lvl-moderate{ background: #58a6ff; color: #0e1117; }
+  .composite.lvl-low     { background: #30363d; color: var(--muted); }
   .err { color: #f85149; }
   .empty { color: var(--muted); font-style: italic; }
   .footnote { color: var(--muted); font-size: 11px; margin-top: 12px; }
@@ -158,6 +224,18 @@
   <section class="panel">
     <h2>Global snapshot</h2>
     <div class="summary-grid" id="summary">loading…</div>
+  </section>
+
+  <section class="panel">
+    <h2>Religious leaders — actuarial</h2>
+    <div id="leaders">loading…</div>
+    <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). Religious leaders generally have above-average longevity; treat SSA as a conservative prior. Sorted by 1-year mortality probability — most market-relevant first.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Upcoming religious calendar — 2026</h2>
+    <div id="calendar-strip">loading…</div>
+    <p class="footnote">Movable feasts pre-computed for 2026. Source: ecclesiastical calendars + Pew religious-calendar reference.</p>
   </section>
 
   <section class="panel">
@@ -204,6 +282,13 @@
   </section>
 
   <section class="panel">
+    <h2>Country religion composition — top 30 by population</h2>
+    <div class="legend" id="country-legend"></div>
+    <div id="countries">loading…</div>
+    <p class="footnote">Source: Pew Research Center "Religious Composition by Country" series. Categories follow Pew's mutually-exclusive top-level taxonomy.</p>
+  </section>
+
+  <section class="panel">
     <h2>Religious-freedom designations (USCIRF 2024)</h2>
     <div id="freedom">loading…</div>
     <p class="footnote">CPC = Country of Particular Concern · SWL = Special Watch List · EPC = Entity of Particular Concern (non-state actor).</p>
@@ -247,10 +332,13 @@ async function fetchJson(url) {
 
 async function load() {
   const meta = document.getElementById("meta");
-  const [sumR, relR, fullR, cultR, freeR, mktR, newsR] = await Promise.allSettled([
+  const [sumR, relR, fullR, ldrR, ctyR, calR, cultR, freeR, mktR, newsR] = await Promise.allSettled([
     fetchJson("/api/summary"),
     fetchJson("/api/religions"),
     fetchJson("/api/religions-full"),
+    fetchJson("/api/leaders"),
+    fetchJson("/api/countries"),
+    fetchJson("/api/calendar?upcoming=1&days=365"),
     fetchJson("/api/cults"),
     fetchJson("/api/freedom"),
     fetchJson("/api/markets"),
@@ -264,6 +352,9 @@ async function load() {
     renderTimeline(fullR.value.religions);
     initRegistry(fullR.value);
   }
+  if (ldrR.status === "fulfilled") renderLeaders(ldrR.value);
+  if (ctyR.status === "fulfilled") renderCountries(ctyR.value);
+  if (calR.status === "fulfilled") renderCalendar(calR.value);
   if (cultR.status === "fulfilled") { window._cults = cultR.value; renderCults(""); }
   if (freeR.status === "fulfilled") renderFreedom(freeR.value);
   if (mktR.status === "fulfilled") renderMarkets(mktR.value);
@@ -472,24 +563,121 @@ function renderCults(filter) {
   const list = filter ? d.groups.filter(c => (c.risk||"").toLowerCase() === filter) : d.groups;
   if (!list.length) { root.innerHTML = '<div class="empty">No groups match this filter.</div>'; return; }
 
+  const AXES = [
+    ["financial_opacity", "Financial opacity"],
+    ["leadership_risk",   "Leadership risk"],
+    ["isolation",         "Isolation"],
+    ["criminal_disclosure","Criminal disclosure"],
+  ];
+
   root.innerHTML = list.map(c => {
     const status = (c.status || "").toLowerCase();
     const sCls = status === "defunct" ? "status-defunct"
                : status.startsWith("active") ? "status-active"
                : "status-other";
     const rCls = "risk-" + (c.risk || "low");
+    const lCls = "lvl-" + (c.risk || "low");
     const span = (c.founded ? c.founded : "?") + "–" + (c.ended || (status === "defunct" ? "?" : "present"));
+    const axes = c.risk_axes || {};
+    const bars = AXES.map(([k, lbl]) => {
+      const v = axes[k] || 0;
+      const fillCls = v >= 8 ? "lvl-extreme" : v >= 6 ? "lvl-high" : v >= 4 ? "lvl-moderate" : "lvl-low";
+      return `<div class="axlbl">${escapeHtml(lbl)}</div>
+        <div class="axtrk"><div class="axfill ${fillCls}" style="width:${v*10}%"></div></div>
+        <div class="axval">${v}/10</div>`;
+    }).join("");
     return `<div class="cult-row">
       <div class="head">
         <span class="name">${escapeHtml(c.name)}</span>
-        <span class="badge ${rCls}">${escapeHtml(c.risk || "")}</span>
+        <span class="composite ${lCls}">${(c.risk_score ?? 0).toFixed(2)} · ${escapeHtml(c.risk || "")}</span>
         <span class="badge ${sCls}">${escapeHtml(c.status || "")}</span>
         <span class="meta">${escapeHtml(c.founder || "")} · ${escapeHtml(c.country || "")} · ${escapeHtml(span)}</span>
       </div>
       <div class="meta">${escapeHtml(c.category || "")}${c.members_peak ? " · peak ~" + fmt.num(c.members_peak) + " members" : ""}</div>
       <div class="summary">${escapeHtml(c.summary || "")}</div>
+      <div class="axis-bars">${bars}</div>
     </div>`;
   }).join("");
+}
+
+// ─── Leaders ──────────────────────────────────────────────────────────────
+
+function renderLeaders(d) {
+  const root = document.getElementById("leaders");
+  if (!d.leaders.length) { root.innerHTML = '<div class="empty">No leaders loaded.</div>'; return; }
+  root.innerHTML = '<div class="leaders-grid">' + d.leaders.map(L => {
+    const a = L.actuarial;
+    const dieCls = a && a.p_dies_1y >= 0.10 ? "die-high" : (a && a.p_dies_1y >= 0.04 ? "die-mid" : "");
+    const succession = L.succession ? `<div class="succession">Succession: ${escapeHtml(L.succession)}</div>` : "";
+    const yio = L.years_in_office !== null && L.years_in_office !== undefined
+      ? `· ${L.years_in_office.toFixed(1)} yrs in office` : "";
+    const actuHtml = a ? `
+      <div class="actu-grid">
+        <div class="actu ${dieCls}"><div class="lbl">P(dies 1y)</div><div class="val">${(a.p_dies_1y*100).toFixed(1)}%</div></div>
+        <div class="actu"><div class="lbl">P(alive 5y)</div><div class="val">${(a.p_alive_5y*100).toFixed(0)}%</div></div>
+        <div class="actu"><div class="lbl">P(alive 10y)</div><div class="val">${(a.p_alive_10y*100).toFixed(0)}%</div></div>
+      </div>` : "";
+    return `<div class="leader-card">
+      <div class="head">
+        <span class="name">${escapeHtml(L.name)}</span>
+        <span class="age">${a ? a.age.toFixed(1) + "y" : ""} ${yio}</span>
+      </div>
+      <div class="role">${escapeHtml(L.role)} · ${escapeHtml(L.religion)}</div>
+      ${actuHtml}
+      <div class="summary">${escapeHtml(L.summary || "")}</div>
+      ${succession}
+    </div>`;
+  }).join("") + '</div>';
+}
+
+// ─── Country composition ──────────────────────────────────────────────────
+
+function renderCountries(d) {
+  const root = document.getElementById("countries");
+  const legend = document.getElementById("country-legend");
+
+  // Build legend from rollup, sorted by adherents.
+  const order = Object.entries(d.rollup_by_religion || {})
+    .sort((a, b) => b[1].adherents_m - a[1].adherents_m)
+    .map(([k]) => k);
+  legend.innerHTML = order.map(r => {
+    const cls = r.replace(/[\s/]+/g, "");
+    return `<span><span class="sw seg ${cls}"></span>${escapeHtml(r)}</span>`;
+  }).join("");
+
+  root.innerHTML = d.countries.map(c => {
+    const segs = order.map(r => {
+      const pct = (c.religion_pct || {})[r] || 0;
+      if (pct < 0.1) return "";
+      const cls = r.replace(/[\s/]+/g, "");
+      return `<div class="seg ${cls}" style="width:${pct}%" title="${escapeHtml(r)} ${pct.toFixed(1)}%"></div>`;
+    }).join("");
+    return `<div class="country-row">
+      <div class="name">${escapeHtml(c.country)} <span style="color:var(--muted);font-weight:400;font-size:11px">${escapeHtml(c.majority)}</span></div>
+      <div class="pop">${c.pop_m >= 1 ? c.pop_m.toLocaleString() + "M" : (c.pop_m * 1000).toFixed(0) + "K"}</div>
+      <div class="stack">${segs}</div>
+    </div>`;
+  }).join("");
+}
+
+// ─── Calendar ─────────────────────────────────────────────────────────────
+
+function renderCalendar(d) {
+  const root = document.getElementById("calendar-strip");
+  if (!d.events.length) { root.innerHTML = '<div class="empty">No upcoming events in window.</div>'; return; }
+  const today = new Date(d.today);
+  root.innerHTML = '<div class="cal-strip">' + d.events.slice(0, 12).map(e => {
+    const evDate = new Date(e.date);
+    const days = Math.round((evDate - today) / (1000*60*60*24));
+    const cd = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+    return `<div class="cal-event">
+      <div class="when">${escapeHtml(e.date)}</div>
+      <div class="countdown">${escapeHtml(cd)}${e.duration > 1 ? " · " + e.duration + " days" : ""}</div>
+      <div class="name">${escapeHtml(e.name)}</div>
+      <div class="religion">${escapeHtml(e.religion)}</div>
+      <div class="summary">${escapeHtml(e.summary)}</div>
+    </div>`;
+  }).join("") + '</div>';
 }
 
 function renderFreedom(d) {

@@ -28,7 +28,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +36,7 @@ import requests
 from defusedxml import ElementTree as DET
 from flask import Flask, jsonify, request, send_from_directory
 
+import actuarial
 import religion_data as rd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -384,15 +385,114 @@ def api_religions_full():
 def api_cults():
     status = (request.args.get("status") or "").strip().lower()
     risk = (request.args.get("risk") or "").strip().lower()
-    items = list(rd.CULTS_WATCHLIST)
+    items = []
+    for c in rd.CULTS_WATCHLIST:
+        score, bucket = rd.cult_risk_score(c)
+        items.append({**c, "risk_score": score, "risk": bucket})
     if status:
         items = [c for c in items if status in (c.get("status") or "").lower()]
     if risk:
-        items = [c for c in items if (c.get("risk") or "").lower() == risk]
+        items = [c for c in items if c["risk"] == risk]
+    items.sort(key=lambda c: c["risk_score"], reverse=True)
     return jsonify({
         "fetched_at": int(time.time()),
         "count": len(items),
         "groups": items,
+        "scoring_axes": ["financial_opacity", "leadership_risk", "isolation", "criminal_disclosure"],
+    })
+
+
+@app.route("/api/leaders")
+def api_leaders():
+    """Religious leaders with life-table actuarial. ?ref=YYYY-MM-DD overrides today."""
+    ref_str = (request.args.get("ref") or "").strip()
+    try:
+        ref = date.fromisoformat(ref_str) if ref_str else date.today()
+    except ValueError:
+        ref = date.today()
+
+    out = []
+    for L in rd.RELIGIOUS_LEADERS:
+        born = L.get("born") or ""
+        try:
+            age = actuarial.age_on(born, ref)
+        except Exception:
+            age = None
+        actu = None
+        if age is not None and age > 0:
+            sex = L.get("sex", "M")
+            actu = {
+                "age": round(age, 2),
+                "p_alive_1y":  round(actuarial.survival_prob(age, sex,  12), 4),
+                "p_alive_5y":  round(actuarial.survival_prob(age, sex,  60), 4),
+                "p_alive_10y": round(actuarial.survival_prob(age, sex, 120), 4),
+                "p_dies_1y":   round(1 - actuarial.survival_prob(age, sex, 12),  4),
+            }
+        # Years in office
+        took = L.get("took_office") or ""
+        try:
+            years_in_office = round(actuarial.age_on(took, ref), 1) if took else None
+        except Exception:
+            years_in_office = None
+
+        out.append({**L, "actuarial": actu, "years_in_office": years_in_office})
+
+    # Sort: highest 1-year death probability first (most market-relevant).
+    out.sort(key=lambda x: (x["actuarial"]["p_dies_1y"] if x.get("actuarial") else -1), reverse=True)
+    return jsonify({
+        "fetched_at": int(time.time()),
+        "ref_date": ref.isoformat(),
+        "model": "SSA 2022 period life table; per-month survival walk forward.",
+        "count": len(out),
+        "leaders": out,
+    })
+
+
+@app.route("/api/countries")
+def api_countries():
+    """Top countries by population with religion composition. Optional ?religion= filter."""
+    rel = (request.args.get("religion") or "").strip()
+    items = list(rd.COUNTRY_RELIGION)
+    if rel:
+        items = [c for c in items if c.get("majority") == rel]
+    items.sort(key=lambda c: c.get("pop_m") or 0, reverse=True)
+    # Build a quick "by religion" rollup
+    rollup: dict[str, dict] = {}
+    for c in rd.COUNTRY_RELIGION:
+        for r, pct in (c.get("religion_pct") or {}).items():
+            adherents_m = (c.get("pop_m") or 0) * (pct / 100.0)
+            rollup.setdefault(r, {"adherents_m": 0.0, "countries": 0})
+            rollup[r]["adherents_m"] += adherents_m
+            rollup[r]["countries"] += 1
+    for r in rollup:
+        rollup[r]["adherents_m"] = round(rollup[r]["adherents_m"], 1)
+    return jsonify({
+        "fetched_at": int(time.time()),
+        "source": "Pew Research Center, Religious Composition by Country (2010-2050 series)",
+        "count": len(items),
+        "countries": items,
+        "rollup_by_religion": rollup,
+    })
+
+
+@app.route("/api/calendar")
+def api_calendar():
+    """Religious calendar 2026. ?upcoming=1 returns only events ≥ today; ?days=N caps horizon."""
+    upcoming_only = request.args.get("upcoming") in ("1", "true", "yes")
+    horizon = int(request.args.get("days") or "365")
+    horizon = max(1, min(horizon, 730))
+    today = date.today()
+    items = list(rd.RELIGIOUS_CALENDAR_2026)
+    if upcoming_only:
+        items = [e for e in items if date.fromisoformat(e["date"]) >= today]
+    items = [e for e in items if (date.fromisoformat(e["date"]) - today).days <= horizon]
+    items.sort(key=lambda e: e["date"])
+    return jsonify({
+        "fetched_at": int(time.time()),
+        "today": today.isoformat(),
+        "year": 2026,
+        "count": len(items),
+        "events": items,
     })
 
 
@@ -440,6 +540,9 @@ def api_summary():
         "world_population_m": total_m,
         "religions_tracked": len(rd.WORLD_RELIGIONS),
         "registry_size": len(rd.RELIGIONS_FULL),
+        "leaders_tracked": len(rd.RELIGIOUS_LEADERS),
+        "countries_tracked": len(rd.COUNTRY_RELIGION),
+        "calendar_events": len(rd.RELIGIOUS_CALENDAR_2026),
         "cults_tracked": len(cults),
         "cults_active": sum(1 for c in cults if "active" in (c.get("status") or "").lower()),
         "cults_defunct": sum(1 for c in cults if (c.get("status") or "").lower() == "defunct"),
