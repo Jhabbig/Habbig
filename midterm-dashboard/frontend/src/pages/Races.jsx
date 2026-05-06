@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtCount } from '../lib/settings'
-import { Search, ArrowRight, MapPin, X, History, Scale, Vote, MessageCircle, GitCompare, Layers } from 'lucide-react'
+import { Search, ArrowRight, MapPin, X, History, Scale, Vote, MessageCircle, GitCompare, Layers, Download } from 'lucide-react'
 
 const SOURCE_STYLES = {
   polymarket: { bg: 'bg-purple-100', text: 'text-purple-700', bar: '#a855f7', label: 'Polymarket' },
@@ -156,8 +156,8 @@ function RaceCard({ g, hist, ctx }) {
         <ArrowRight className="h-4 w-4 text-stone-400 shrink-0 mt-1" />
       </div>
 
-      {/* Source columns */}
-      <div className="flex items-stretch gap-2 mb-3">
+      {/* Source columns — stack on small screens */}
+      <div className="flex flex-wrap sm:flex-nowrap items-stretch gap-2 mb-3">
         {sourceKeys.map(src => (
           <SourceColumn key={src} source={src} market={g.sources[src]} raceTitle={g.title} allSources={g.sources} />
         ))}
@@ -270,16 +270,28 @@ export default function Races() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-semibold text-stone-800">All Races</h1>
-        <span className="text-sm text-stone-400">{filteredMatched.length + filteredUnmatched.length} races</span>
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+        <h1 className="text-2xl sm:text-3xl font-semibold text-stone-800">All Races</h1>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-stone-400">{filteredMatched.length + filteredUnmatched.length} races</span>
+          <a href={api.exportRacesCsvUrl({
+              race_type: typeFilter !== 'all' ? typeFilter : undefined,
+              state_abbr: stateFilter !== 'all' ? stateFilter : undefined,
+              search: search || undefined,
+            })}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs bg-stone-100 text-stone-700 hover:bg-stone-200 transition-colors"
+            aria-label="Download races as CSV">
+            <Download className="h-3.5 w-3.5" aria-hidden="true" /> CSV
+          </a>
+        </div>
       </div>
 
       {/* Filters */}
       <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-4 mb-6 space-y-3">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
-          <input type="text" placeholder="Search races..." value={search} onChange={e => setSearch(e.target.value)}
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" aria-hidden="true" />
+          <input type="search" placeholder="Search races..." value={search} onChange={e => setSearch(e.target.value)}
+            aria-label="Search races by title or state"
             className="w-full bg-stone-50 border border-stone-200 rounded-lg pl-10 pr-4 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-900/10" />
         </div>
         <div className="flex flex-wrap gap-1">
@@ -308,7 +320,10 @@ export default function Races() {
       </div>
 
       {loading ? (
-        <div className="grid gap-3">{[1,2,3,4,5].map(i => <div key={i} className="bg-white shadow-sm border border-stone-100 rounded-xl animate-pulse h-32"></div>)}</div>
+        <div className="grid gap-3" role="status" aria-live="polite" aria-label="Loading races">
+          {[1,2,3,4,5].map(i => <div key={i} className="bg-white shadow-sm border border-stone-100 rounded-xl animate-pulse h-32"></div>)}
+          <span className="sr-only">Loading races…</span>
+        </div>
       ) : (
         <>
           {/* SECTION 1: Cross-Source Comparison */}

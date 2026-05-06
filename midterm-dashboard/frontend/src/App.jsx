@@ -5,10 +5,12 @@ import { SettingsProvider } from './lib/settings'
 import { useT } from './lib/i18n'
 import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History } from 'lucide-react'
 
+import ErrorBoundary from './lib/ErrorBoundary'
 import Dashboard from './pages/Dashboard'
 import Races from './pages/Races'
 import RaceDetail from './pages/RaceDetail'
 import Divergence from './pages/Divergence'
+import Compare from './pages/Compare'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import AdminDashboard from './pages/AdminDashboard'
@@ -49,8 +51,10 @@ function AuthProvider({ children }) {
   }
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50">
+    <div className="min-h-screen flex items-center justify-center bg-stone-50"
+      role="status" aria-live="polite" aria-label="Loading dashboard">
       <div className="animate-spin rounded-full h-6 w-6 border-2 border-stone-300 border-t-stone-800"></div>
+      <span className="sr-only">Loading…</span>
     </div>
   )
 
@@ -72,6 +76,7 @@ function Nav() {
   const links = [
     { to: '/', label: t('nav.overview'), icon: Home },
     { to: '/races', label: t('nav.races'), icon: BarChart3 },
+    { to: '/compare', label: 'Compare', icon: GitCompare },
     { to: '/divergence', label: t('nav.divergence'), icon: GitCompare },
     { to: '/world', label: t('nav.world'), icon: Globe },
     { to: '/historical', label: t('nav.historical'), icon: History },
@@ -121,13 +126,15 @@ function Nav() {
             )}
           </div>
 
-          <button className="md:hidden text-stone-500" onClick={() => setMobileOpen(!mobileOpen)}>
-            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          <button className="md:hidden text-stone-500" onClick={() => setMobileOpen(!mobileOpen)}
+            aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={mobileOpen} aria-controls="mobile-nav">
+            {mobileOpen ? <X className="h-5 w-5" aria-hidden="true" /> : <Menu className="h-5 w-5" aria-hidden="true" />}
           </button>
         </div>
 
         {mobileOpen && (
-          <div className="md:hidden pb-4 pt-2 space-y-1 border-t border-stone-100">
+          <div id="mobile-nav" className="md:hidden pb-4 pt-2 space-y-1 border-t border-stone-100">
             {links.map(l => (
               <Link key={l.to} to={l.to} onClick={() => setMobileOpen(false)}
                 className={`block px-3 py-2 rounded-lg text-sm ${
@@ -165,20 +172,23 @@ export default function App() {
     <AuthProvider>
       <div className="min-h-screen bg-stone-50">
         <Nav />
-        <main className="max-w-6xl mx-auto px-6 py-8">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/races" element={<Races />} />
-            <Route path="/race/:raceKey" element={<RaceDetail />} />
-            <Route path="/divergence" element={<Divergence />} />
-            <Route path="/world" element={<WorldElections />} />
-            <Route path="/historical" element={<Historical />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-            <Route path="/admin" element={<ProtectedRoute tier="admin"><AdminDashboard /></ProtectedRoute>} />
-          </Routes>
+        <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/races" element={<Races />} />
+              <Route path="/race/:raceKey" element={<RaceDetail />} />
+              <Route path="/compare" element={<Compare />} />
+              <Route path="/divergence" element={<Divergence />} />
+              <Route path="/world" element={<WorldElections />} />
+              <Route path="/historical" element={<Historical />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+              <Route path="/admin" element={<ProtectedRoute tier="admin"><AdminDashboard /></ProtectedRoute>} />
+            </Routes>
+          </ErrorBoundary>
         </main>
         <footer className="border-t border-stone-200/60 mt-16 py-8 text-center text-stone-400 text-sm">
           <span className="text-stone-500">MidtermEdge</span> &middot; Prediction market data for informational purposes only.

@@ -1331,6 +1331,138 @@ async def data_sources():
     return {"sources": dict(sources)}
 
 
+def _comparison_rows(race_type: Optional[str] = None, state_abbr: Optional[str] = None) -> list[dict]:
+    """Build cross-source comparison rows for the /data/comparison and CSV
+    export endpoints. Each row has the top-outcome probability per source
+    plus a ``spread`` (max-min in percentage points)."""
+    markets = state.db.get_markets(race_type=race_type, state=state_abbr)
+    valid = {"senate", "house", "governor", "control", "presidential", "world"}
+    markets = [m for m in markets if m.get("race_type") in valid]
+
+    wrong_flags = state.db.get_all_wrong_flags()
+
+    by_race: dict[str, dict] = {}
+    for raw in markets:
+        m = dict(raw)
+        rk = market_race_key(m)
+        if rk.startswith("unmatched_"):
+            continue
+        pair = (m.get("source", ""), m.get("source_id", ""))
+        if pair in wrong_flags.get(rk, set()):
+            continue
+        outcomes = m.get("outcomes", []) or []
+        if not outcomes:
+            continue
+        top = outcomes[0].get("probability")
+        if top is None:
+            continue
+        bucket = by_race.setdefault(rk, {
+            "race_key": rk,
+            "title": m.get("event_title") or m.get("title"),
+            "race_type": m.get("race_type"),
+            "state": m.get("state"),
+        })
+        # Keep the highest-volume source representation per race
+        src = m.get("source", "unknown")
+        existing = bucket.get(f"_{src}_volume", -1)
+        if (m.get("volume") or 0) > existing:
+            bucket[src] = top
+            bucket[f"_{src}_volume"] = m.get("volume") or 0
+
+    rows = []
+    for rk, b in by_race.items():
+        sources_present = [s for s in ("polymarket", "kalshi", "predictit", "polling") if b.get(s) is not None]
+        if len(sources_present) < 2:
+            continue
+        probs = [b[s] for s in sources_present]
+        spread_pp = (max(probs) - min(probs)) * 100
+        # Strip the per-source volume helpers
+        for k in list(b.keys()):
+            if k.startswith("_"):
+                del b[k]
+        b["spread"] = round(spread_pp, 2)
+        b["source_count"] = len(sources_present)
+        rows.append(b)
+
+    rows.sort(key=lambda r: r["spread"], reverse=True)
+    return rows
+
+
+@app.get("/data/comparison")
+async def data_comparison(
+    race_type: Optional[str] = None,
+    state_abbr: Optional[str] = None,
+):
+    """Side-by-side cross-source probability table for every multi-source race.
+
+    Powers the /compare frontend page. Each row carries the top-outcome
+    probability for each source plus the spread (max-min, percentage points).
+    """
+    return {"rows": _comparison_rows(race_type, state_abbr)}
+
+
+@app.get("/data/export/races.csv")
+async def data_export_races_csv(
+    race_type: Optional[str] = None,
+    state_abbr: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    """CSV download of every active race with per-source probabilities."""
+    import csv
+    import io
+
+    markets = state.db.get_markets(
+        race_type=race_type, state=state_abbr, search=search,
+    )
+    wrong_flags = state.db.get_all_wrong_flags()
+
+    by_race: dict[str, dict] = {}
+    for raw in markets:
+        m = dict(raw)
+        rk = market_race_key(m)
+        if rk.startswith("unmatched_"):
+            continue
+        pair = (m.get("source", ""), m.get("source_id", ""))
+        if pair in wrong_flags.get(rk, set()):
+            continue
+        outcomes = m.get("outcomes", []) or []
+        top = outcomes[0].get("probability") if outcomes else None
+        bucket = by_race.setdefault(rk, {
+            "race_key": rk,
+            "title": m.get("event_title") or m.get("title") or "",
+            "race_type": m.get("race_type") or "",
+            "state": m.get("state") or "",
+            "polymarket": "",
+            "kalshi": "",
+            "predictit": "",
+            "polling": "",
+            "volume": 0.0,
+        })
+        bucket["volume"] += float(m.get("volume") or 0)
+        src = m.get("source") or ""
+        if src in bucket and top is not None:
+            bucket[src] = round(top, 4)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["race_key", "title", "race_type", "state",
+                     "polymarket", "kalshi", "predictit", "polling", "volume"])
+    for rk in sorted(by_race.keys()):
+        r = by_race[rk]
+        writer.writerow([
+            r["race_key"], r["title"], r["race_type"], r["state"],
+            r["polymarket"], r["kalshi"], r["predictit"], r["polling"],
+            f"{r['volume']:.0f}",
+        ])
+
+    from fastapi.responses import Response
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="midterm-races.csv"'},
+    )
+
+
 @app.get("/data/polling/recent")
 async def data_polling_recent(limit: int = 50):
     """Most recent polls across all races."""

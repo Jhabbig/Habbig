@@ -1008,19 +1008,22 @@ export default function RaceDetail() {
 
       {/* Price History */}
       {history.length > 0 && (
-        <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-6">
+        <section aria-labelledby="price-history-heading"
+          className="bg-white shadow-sm border border-stone-100 rounded-xl p-4 sm:p-6 mb-6">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <h3 className="text-lg font-semibold text-stone-800 flex items-center gap-2">
-              <Clock className="h-5 w-5 text-stone-500" />Price History
+            <h3 id="price-history-heading" className="text-lg font-semibold text-stone-800 flex items-center gap-2">
+              <Clock className="h-5 w-5 text-stone-500" aria-hidden="true" />Price History
             </h3>
-            <div className="flex gap-1.5 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Toggle data sources">
               {availableSources.map(source => (
                 <button key={source} onClick={() => toggleSource(source)}
+                  aria-pressed={visibleSources.has(source)}
+                  aria-label={`${visibleSources.has(source) ? 'Hide' : 'Show'} ${sourceLabels[source] || source}`}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all border ${
                     visibleSources.has(source) ? 'border-stone-200 bg-white text-stone-700 shadow-sm' : 'border-transparent bg-stone-100 text-stone-400'
                   }`}>
-                  {visibleSources.has(source) ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-                  <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sourceColors[source] }}></div>
+                  {visibleSources.has(source) ? <Eye className="h-3 w-3" aria-hidden="true" /> : <EyeOff className="h-3 w-3" aria-hidden="true" />}
+                  <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sourceColors[source] }} aria-hidden="true"></div>
                   {sourceLabels[source] || source}
                 </button>
               ))}
@@ -1043,7 +1046,7 @@ export default function RaceDetail() {
               ))}
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </section>
       )}
 
       {/* Polls */}

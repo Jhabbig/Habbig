@@ -91,14 +91,20 @@ export default function Historical() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
         <div className="p-2 bg-amber-50 rounded-lg">
-          <History className="h-6 w-6 text-amber-600" />
+          <History className="h-6 w-6 text-amber-600" aria-hidden="true" />
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold text-stone-900 tracking-tight">Historical Results</h1>
           <p className="text-stone-500 text-sm">Past election winners, vote totals, and margins</p>
         </div>
+        {data.last_verified && (
+          <span className="text-[11px] text-stone-400 bg-stone-50 border border-stone-200 px-2 py-1 rounded-md"
+            title="Date this hand-curated dataset was last reviewed">
+            Verified {data.last_verified}
+          </span>
+        )}
       </div>
 
       <div className="bg-white border border-stone-100 rounded-xl shadow-sm p-4 mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">

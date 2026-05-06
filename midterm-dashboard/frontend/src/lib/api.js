@@ -1,4 +1,6 @@
-const BASE = ''
+// Default to same-origin (frontend served by FastAPI in production). Override
+// with VITE_API_URL when the frontend is hosted separately from the backend.
+const BASE = (import.meta.env?.VITE_API_URL ?? '').replace(/\/$/, '')
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -60,6 +62,16 @@ export const api = {
   sources: () => request('/data/sources'),
   polling: (key) => request(`/data/polling/${key}`),
   recentPolls: () => request('/data/polling/recent'),
+  comparison: (filters = {}) => {
+    const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined && v !== '' && v !== null)).toString()
+    return request(`/data/comparison${q ? '?' + q : ''}`)
+  },
+  // CSV export — returns the URL the browser should hit (download endpoint
+  // sets Content-Disposition so the browser saves the file).
+  exportRacesCsvUrl: (filters = {}) => {
+    const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined && v !== '' && v !== null)).toString()
+    return `${BASE}/data/export/races.csv${q ? '?' + q : ''}`
+  },
 
   // Premium
   watchlist: () => request('/premium/watchlist'),
