@@ -30,7 +30,9 @@ from collections import OrderedDict
 from typing import Any, Callable
 
 import requests
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
+
+import insights as insights_module
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("love")
@@ -289,6 +291,136 @@ def eurostat_divorce_rate() -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# World Happiness Report (Connection subscore — Tier B)
+#
+# WHR publishes the Figure 2.1 data table annually. URLs change year over
+# year; we try a small set of recent ones and fall back to a CSV that the
+# operator can drop into `data/whr.csv`. Expected columns (case-insensitive,
+# any subset accepted): `country` and `social support` (0-1 scale).
+# ---------------------------------------------------------------------------
+
+import csv
+import io
+import re
+from pathlib import Path
+
+WHR_URL_CANDIDATES = (
+    "https://happiness-report.s3.amazonaws.com/2024/DataForFigure2.1.xls",
+    "https://happiness-report.s3.amazonaws.com/2024/DataForFigure2.1+with+sub+bars+2024.xls",
+    "https://happiness-report.s3.amazonaws.com/2023/DataForFigure2.1WHR2023.xls",
+)
+WHR_LOCAL = Path(__file__).parent / "data" / "whr.csv"
+
+# WHR uses informal country names; map the ones that don't match the WB name
+# directly. Lookup is case-insensitive and ignores punctuation.
+WHR_NAME_OVERRIDES = {
+    "united states":            "USA",
+    "united states of america": "USA",
+    "russia":                   "RUS",
+    "south korea":              "KOR",
+    "north korea":              "PRK",
+    "czech republic":           "CZE",
+    "czechia":                  "CZE",
+    "ivory coast":              "CIV",
+    "cote d ivoire":            "CIV",
+    "congo brazzaville":        "COG",
+    "congo kinshasa":           "COD",
+    "democratic republic of congo": "COD",
+    "hong kong":                "HKG",
+    "hong kong sar of china":   "HKG",
+    "taiwan":                   "TWN",
+    "taiwan province of china": "TWN",
+    "palestinian territories":  "PSE",
+    "state of palestine":       "PSE",
+    "vietnam":                  "VNM",
+    "iran":                     "IRN",
+    "syria":                    "SYR",
+    "venezuela":                "VEN",
+    "tanzania":                 "TZA",
+    "moldova":                  "MDA",
+    "bolivia":                  "BOL",
+    "laos":                     "LAO",
+    "turkey":                   "TUR",
+    "turkiye":                  "TUR",
+    "swaziland":                "SWZ",
+    "eswatini":                 "SWZ",
+    "macedonia":                "MKD",
+    "north macedonia":          "MKD",
+}
+
+
+def _normalize_country_name(s: str) -> str:
+    s = s.lower().strip()
+    s = re.sub(r"[^a-z ]+", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _whr_name_to_iso3(meta: dict[str, dict]) -> dict[str, str]:
+    out: dict[str, str] = dict(WHR_NAME_OVERRIDES)
+    for iso3, c in meta.items():
+        name = c.get("name") or ""
+        out[_normalize_country_name(name)] = iso3
+    return out
+
+
+def _parse_whr_csv(text: str) -> dict[str, float]:
+    """Parse a WHR-style CSV with country + social-support columns.
+
+    Returns {iso3: social_support_0_to_100}. Unmatched countries are dropped.
+    """
+    meta = get_country_meta()
+    name_to_iso3 = _whr_name_to_iso3(meta)
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return {}
+    name_col = next((c for c in reader.fieldnames if "country" in c.lower()), None)
+    ss_col = next((c for c in reader.fieldnames
+                   if "social support" in c.lower() or c.lower() == "social_support"), None)
+    if not name_col or not ss_col:
+        return {}
+    out: dict[str, float] = {}
+    for row in reader:
+        nm = _normalize_country_name(row.get(name_col) or "")
+        if not nm:
+            continue
+        iso3 = name_to_iso3.get(nm)
+        if not iso3:
+            continue
+        try:
+            v = float(row.get(ss_col) or "")
+        except ValueError:
+            continue
+        # WHR reports 0-1 share; rescale to 0-100 for parity with our subscores.
+        out[iso3] = v * 100.0 if 0.0 <= v <= 1.0 else v
+    return out
+
+
+def fetch_whr_social_support() -> dict[str, float]:
+    """Try a few WHR URLs, then fall back to data/whr.csv if present."""
+    if WHR_LOCAL.exists():
+        try:
+            return _parse_whr_csv(WHR_LOCAL.read_text())
+        except Exception as exc:
+            log.warning("WHR local file %s parse failed: %s", WHR_LOCAL, exc)
+    last_err: Exception | None = None
+    for url in WHR_URL_CANDIDATES:
+        try:
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            text = r.content.decode("utf-8", errors="replace")
+            parsed = _parse_whr_csv(text)
+            if parsed:
+                return parsed
+        except Exception as exc:
+            last_err = exc
+            continue
+    if last_err:
+        log.warning("WHR fetch failed (drop a CSV at %s): %s", WHR_LOCAL, last_err)
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Methodology: percentile rank within income tier
 # ---------------------------------------------------------------------------
 
@@ -337,79 +469,115 @@ def _safe_fetch(key: str, loader: Callable[[], dict[str, float]]) -> dict[str, f
         return {}
 
 
-def compute_subscores() -> dict[str, dict]:
-    meta = get_country_meta()
+def _build_subscore_layers() -> dict[str, Any]:
+    """Fetch and normalize every input. Pure data; no weight choices.
 
+    Cached separately from the composite so weight customization doesn't
+    re-trigger network fetches.
+    """
+    meta                 = get_country_meta()
     marriage_rate        = _safe_fetch("eurostat_marriage", eurostat_marriage_rate)
     divorce_rate         = _safe_fetch("eurostat_divorce",  eurostat_divorce_rate)
     adolescent_fertility = _safe_fetch("wb_adolescent",
                                        lambda: fetch_wb_indicator("SP.ADO.TFRT"))
+    social_support       = _safe_fetch("whr_social_support", fetch_whr_social_support)
 
-    # Partnership: marriage rate (v1 proxy for partnership rate)
+    # Connection: WHR social-support index (0-100), already on the right scale.
+    # Rank within income tier so cross-tier comparisons stay fair.
+    connection_pct = percentile_rank_within_tier(social_support, higher_is_better=True)
+
+    # Partnership: marriage rate (v1 proxy for partnership rate); cap at 80th pct.
     partnership_pct = percentile_rank_within_tier(
         marriage_rate, higher_is_better=True, cap_pct=PARTNERSHIP_CAP_PCT,
     )
 
-    # Stability: combine divorce rate (lower=better) + adolescent fertility
-    # (lower=better — high values flag early/coerced unions).
+    # Stability: divorce rate (lower=better) + adolescent fertility (lower=better
+    # because very high values flag early/coerced unions).
     stability_div_pct = percentile_rank_within_tier(divorce_rate, higher_is_better=False)
     stability_ado_pct = percentile_rank_within_tier(adolescent_fertility, higher_is_better=False)
-    stability = {}
+    stability_pct: dict[str, float] = {}
     for iso in set(stability_div_pct) | set(stability_ado_pct):
-        stability[iso] = avg_present(stability_div_pct.get(iso), stability_ado_pct.get(iso))
+        v = avg_present(stability_div_pct.get(iso), stability_ado_pct.get(iso))
+        if v is not None:
+            stability_pct[iso] = v
 
-    # Connection + Activity: stubbed in v1
-    connection: dict[str, float] = {}
-    activity: dict[str, float] = {}
+    # Activity: still stubbed in v2.
+    activity_pct: dict[str, float] = {}
+
+    return {
+        "meta": meta,
+        "subscores": {
+            "connection":  connection_pct,
+            "partnership": partnership_pct,
+            "stability":   stability_pct,
+            "activity":    activity_pct,
+        },
+        "raw": {
+            "marriage_rate_per_1000":         marriage_rate,
+            "divorce_rate_per_1000":          divorce_rate,
+            "adolescent_fertility_per_1000":  adolescent_fertility,
+            "whr_social_support_pct":         social_support,
+        },
+    }
+
+
+def _normalize_weights(weights: dict[str, float] | None) -> dict[str, float]:
+    if not weights:
+        return dict(WEIGHTS)
+    out = {k: max(0.0, float(weights.get(k, WEIGHTS[k]))) for k in WEIGHTS}
+    s = sum(out.values())
+    if s <= 0:
+        return dict(WEIGHTS)
+    return {k: v / s for k, v in out.items()}
+
+
+def compute_subscores(weights: dict[str, float] | None = None) -> dict[str, dict]:
+    layers = cached("subscore_layers", _build_subscore_layers)
+    meta = layers["meta"]
+    subs_layers = layers["subscores"]
+    raw_layers = layers["raw"]
+    w = _normalize_weights(weights)
 
     out: dict[str, dict] = {}
-    all_iso = set(connection) | set(partnership_pct) | set(stability) | set(activity) | set(meta)
+    all_iso: set[str] = set(meta)
+    for sub in subs_layers.values():
+        all_iso |= set(sub)
+
     for iso in all_iso:
-        if iso not in meta:
+        country_meta = meta.get(iso)
+        if not country_meta:
             continue
-        subs = {
-            "connection":  connection.get(iso),
-            "partnership": partnership_pct.get(iso),
-            "stability":   stability.get(iso),
-            "activity":    activity.get(iso),
-        }
+        subs = {k: subs_layers[k].get(iso) for k in WEIGHTS}
         present_ab = sum(1 for k in TIER_AB_SUBSCORES if subs.get(k) is not None)
         if present_ab < MIN_TIER_AB_PRESENT:
             continue
-        # weighted average over present subscores (weights renormalize)
         num = den = 0.0
         for k, v in subs.items():
             if v is None:
                 continue
-            num += WEIGHTS[k] * v
-            den += WEIGHTS[k]
+            num += w[k] * v
+            den += w[k]
         composite = num / den if den > 0 else None
         out[iso] = {
             "iso3": iso,
-            "iso2": meta[iso].get("iso2"),
-            "name": meta[iso].get("name"),
-            "income_tier": meta[iso].get("income_tier"),
-            "region": meta[iso].get("region"),
+            "iso2": country_meta.get("iso2"),
+            "name": country_meta.get("name"),
+            "income_tier": country_meta.get("income_tier"),
+            "region": country_meta.get("region"),
             "subscores": subs,
             "composite": round(composite, 1) if composite is not None else None,
             "used": [k for k, v in subs.items() if v is not None],
-            "raw": {
-                "marriage_rate_per_1000":      marriage_rate.get(iso),
-                "divorce_rate_per_1000":       divorce_rate.get(iso),
-                "adolescent_fertility_per_1000": adolescent_fertility.get(iso),
-            },
+            "raw": {key: layer.get(iso) for key, layer in raw_layers.items()},
         }
     return out
 
 
-def build_summary() -> dict:
-    countries = compute_subscores()
-    rows = sorted(
-        countries.values(),
-        key=lambda c: (c["composite"] is not None, c["composite"] or 0),
-        reverse=True,
-    )
-    composites = [c["composite"] for c in countries.values() if c["composite"] is not None]
+def build_summary(weights: dict[str, float] | None = None) -> dict:
+    w = _normalize_weights(weights)
+    countries = compute_subscores(w)
+    ranked = [c for c in countries.values() if c["composite"] is not None]
+    ranked.sort(key=lambda c: c["composite"], reverse=True)
+    composites = [c["composite"] for c in ranked]
     avg = round(sum(composites) / len(composites), 1) if composites else None
 
     subs_avg: dict[str, float | None] = {}
@@ -418,20 +586,41 @@ def build_summary() -> dict:
                 if c["subscores"].get(k) is not None]
         subs_avg[k] = round(sum(vals) / len(vals), 1) if vals else None
 
+    layers = cached("subscore_layers", _build_subscore_layers)
+    sub_coverage = {k: len(v) for k, v in layers["subscores"].items()}
+
     return {
         "as_of": time.strftime("%Y-%m-%d"),
         "global_index": avg,
-        "n_countries": len(composites),
+        "n_countries": len(ranked),
+        "n_meta": len(layers["meta"]),
         "subscores_avg": subs_avg,
-        "weights": WEIGHTS,
-        "top": rows[:10],
-        "bottom": [r for r in rows if r["composite"] is not None][-10:][::-1],
+        "subscore_coverage": sub_coverage,
+        "weights": w,
+        "default_weights": dict(WEIGHTS),
+        "weights_customized": w != WEIGHTS,
+        "top": ranked[:10],
+        "bottom": ranked[-10:][::-1],
         "coverage_note": (
-            "v1 covers Europe (Eurostat marriage + divorce) plus a global "
-            "Stability indicator (adolescent fertility, World Bank). "
-            "Connection (WHR) and Activity (Trends) land in v1.1."
+            f"Live data from {sum(1 for v in layers['subscores'].values() if v)} subscore "
+            f"layers. Connection (WHR) and Activity (Trends) populate when their "
+            f"fetchers reach data; the index reweights over present subscores."
         ),
     }
+
+
+def _parse_weight_params(args) -> dict[str, float] | None:
+    """Read /api/...?w_connection=0.5&w_partnership=0.3&... query params."""
+    out: dict[str, float] = {}
+    for k in WEIGHTS:
+        v = args.get(f"w_{k}")
+        if v is None:
+            continue
+        try:
+            out[k] = float(v)
+        except ValueError:
+            continue
+    return out or None
 
 
 # ---------------------------------------------------------------------------
@@ -455,36 +644,105 @@ def health():
 
 @app.get("/api/summary")
 def summary():
+    weights = _parse_weight_params(request.args)
+    if weights:
+        return jsonify(build_summary(weights))
     return jsonify(cached("summary", build_summary))
 
 
 @app.get("/api/index")
 def index_route():
+    weights = _parse_weight_params(request.args)
+    if weights:
+        return jsonify(list(compute_subscores(weights).values()))
     return jsonify(cached("index", lambda: list(compute_subscores().values())))
+
+
+def _peer_compare(c: dict, all_countries: list[dict]) -> dict:
+    """Mean+std of each subscore within the country's income tier."""
+    tier = c.get("income_tier")
+    peers = [r for r in all_countries if r.get("income_tier") == tier and r["iso3"] != c["iso3"]]
+    out: dict[str, dict] = {}
+    for sub in WEIGHTS:
+        vals = [r["subscores"].get(sub) for r in peers if r["subscores"].get(sub) is not None]
+        if not vals:
+            continue
+        m = sum(vals) / len(vals)
+        out[sub] = {
+            "tier_mean": round(m, 1),
+            "tier_n":    len(vals),
+            "value":     c["subscores"].get(sub),
+            "delta":     round(c["subscores"].get(sub) - m, 1) if c["subscores"].get(sub) is not None else None,
+        }
+    return out
 
 
 @app.get("/api/country/<iso>")
 def country(iso: str):
     iso = iso.upper()
-    countries = compute_subscores()
+    weights = _parse_weight_params(request.args)
+    countries = compute_subscores(weights) if weights else cached("index_map", lambda: compute_subscores())
     if iso not in countries:
         return jsonify({"error": f"country {iso} has no Love Index (insufficient data)"}), 404
-    return jsonify(countries[iso])
+    detail = dict(countries[iso])
+    detail["peer_compare"] = _peer_compare(detail, list(countries.values()))
+    return jsonify(detail)
+
+
+@app.get("/api/countries")
+def countries_route():
+    """Full country list, sortable client-side. Includes ranked + unranked rows."""
+    weights = _parse_weight_params(request.args)
+    countries = compute_subscores(weights) if weights else cached("index_map", lambda: compute_subscores())
+    layers = cached("subscore_layers", _build_subscore_layers)
+    out = list(countries.values())
+    ranked = {c["iso3"] for c in out}
+    # also include unranked countries that have at least some data, with composite=None
+    for iso3, m in layers["meta"].items():
+        if iso3 in ranked:
+            continue
+        subs = {k: layers["subscores"][k].get(iso3) for k in WEIGHTS}
+        if not any(v is not None for v in subs.values()):
+            continue
+        out.append({
+            "iso3": iso3,
+            "iso2": m.get("iso2"),
+            "name": m.get("name"),
+            "income_tier": m.get("income_tier"),
+            "region": m.get("region"),
+            "subscores": subs,
+            "composite": None,
+            "used": [k for k, v in subs.items() if v is not None],
+            "raw": {key: layer.get(iso3) for key, layer in layers["raw"].items()},
+            "unranked_reason": "fewer than 2 of 3 Tier-A/B subscores present",
+        })
+    out.sort(key=lambda c: (c["composite"] is None, -(c["composite"] or 0)))
+    return jsonify(out)
+
+
+@app.get("/api/insights")
+def insights_route():
+    weights = _parse_weight_params(request.args)
+    countries = compute_subscores(weights) if weights else cached("index_map", lambda: compute_subscores())
+    layers = cached("subscore_layers", _build_subscore_layers)
+    return jsonify(insights_module.generate_insights(list(countries.values()), layers["meta"]))
 
 
 @app.get("/api/sources")
 def sources():
+    layers = cached("subscore_layers", _build_subscore_layers)
     return jsonify({
-        "weights": WEIGHTS,
-        "min_tier_ab_present": MIN_TIER_AB_PRESENT,
-        "partnership_cap_pct": PARTNERSHIP_CAP_PCT,
+        "weights":              WEIGHTS,
+        "min_tier_ab_present":  MIN_TIER_AB_PRESENT,
+        "partnership_cap_pct":  PARTNERSHIP_CAP_PCT,
+        "subscore_coverage":    {k: len(v) for k, v in layers["subscores"].items()},
         "feeds": {
-            "eurostat_demo_nind":     {"tier": "A", "covers": "EU + EFTA",     "in_use": True},
-            "eurostat_demo_ndivind":  {"tier": "A", "covers": "EU + EFTA",     "in_use": True},
-            "world_bank_wdi":         {"tier": "A", "covers": "global",        "in_use": True},
-            "world_happiness_report": {"tier": "B", "covers": "~150 countries","in_use": False},
-            "google_trends":          {"tier": "C", "covers": "global",        "in_use": False},
-            "un_desa":                {"tier": "A", "covers": "global",        "in_use": False},
+            "eurostat_demo_nind":     {"tier": "A", "covers": "EU + EFTA",      "in_use": True,  "feeds": "partnership"},
+            "eurostat_demo_ndivind":  {"tier": "A", "covers": "EU + EFTA",      "in_use": True,  "feeds": "stability"},
+            "world_bank_wdi":         {"tier": "A", "covers": "global",         "in_use": True,  "feeds": "stability + meta"},
+            "world_happiness_report": {"tier": "B", "covers": "~150 countries", "in_use": bool(layers["subscores"]["connection"]), "feeds": "connection"},
+            "google_trends":          {"tier": "C", "covers": "global",         "in_use": False, "feeds": "activity"},
+            "un_desa":                {"tier": "A", "covers": "global",         "in_use": False, "feeds": "partnership + stability worldwide"},
         },
     })
 
