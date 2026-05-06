@@ -184,6 +184,33 @@
     border-radius: 8px;
     font-size: 13px;
   }
+  .toolbar input[type="number"] {
+    flex: 0 0 auto;
+    width: 140px;
+    min-width: 0;
+  }
+  .toolbar label.check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    padding: 7px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toolbar label.check input { margin: 0; accent-color: var(--accent); }
+  .market-count {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .market-count b { color: var(--text-1); font-weight: 600; }
   .thresholds {
     display: flex;
     flex-wrap: wrap;
@@ -221,12 +248,25 @@
 <div class="section-title">Climate markets</div>
 <div class="toolbar">
   <input id="search" placeholder="Search markets…" />
+  <select id="topic">
+    <option value="all">Topic: all</option>
+    <option value="temperature">Temperature</option>
+    <option value="co2">CO₂</option>
+    <option value="methane">Methane</option>
+    <option value="sea-ice">Sea ice</option>
+    <option value="other">Other</option>
+  </select>
+  <input id="min-edge" type="number" placeholder="Min |edge| pp" min="0" step="0.5" />
+  <input id="min-liq" type="number" placeholder="Min liquidity $" min="0" step="100" />
+  <label class="check" title="Hide markets we can't score with a model"><input id="scored-only" type="checkbox" /> Scored only</label>
   <select id="sort">
-    <option value="edge">Sort: largest edge</option>
+    <option value="edge">Sort: largest |edge|</option>
+    <option value="edge-signed">Sort: best long edge</option>
     <option value="liquidity">Sort: most liquidity</option>
     <option value="end">Sort: ends soonest</option>
   </select>
 </div>
+<div id="market-count" class="market-count"></div>
 <div id="markets"></div>
 
 <div class="section-title">Model performance — last 5 years</div>
@@ -454,9 +494,29 @@ async function loadCards() {
 
 let _allMarkets = [];
 
+function categorizeMarket(m) {
+  const t = ((m._event_title || "") + " " + (m.question || "")).toLowerCase();
+  if (/\bmethane\b|\bch4\b|\bppb\b/.test(t)) return "methane";
+  if (/\bco2\b|carbon dioxide|\bppm\b/.test(t)) return "co2";
+  if (/sea ice|\barctic\b|\bantarctic\b/.test(t)) return "sea-ice";
+  if (/temperature|anomaly|warming|warmest|hottest|°c|paris|\b1\.5\b/.test(t)) return "temperature";
+  return "other";
+}
+
+function hasEdge(m) {
+  return m._edge_pp !== null && m._edge_pp !== undefined;
+}
+
 function renderMarkets() {
   const q = document.getElementById("search").value.toLowerCase().trim();
   const sortBy = document.getElementById("sort").value;
+  const topic = document.getElementById("topic").value;
+  const minEdgeRaw = document.getElementById("min-edge").value;
+  const minEdge = minEdgeRaw === "" ? null : Number(minEdgeRaw);
+  const minLiqRaw = document.getElementById("min-liq").value;
+  const minLiq = minLiqRaw === "" ? null : Number(minLiqRaw);
+  const scoredOnly = document.getElementById("scored-only").checked;
+
   let rows = _allMarkets.slice();
   if (q) {
     rows = rows.filter(m => {
@@ -464,10 +524,28 @@ function renderMarkets() {
       return t.includes(q);
     });
   }
+  if (topic !== "all") {
+    rows = rows.filter(m => categorizeMarket(m) === topic);
+  }
+  if (scoredOnly) {
+    rows = rows.filter(m => m._model_p !== null && m._model_p !== undefined);
+  }
+  if (minEdge !== null && !Number.isNaN(minEdge)) {
+    rows = rows.filter(m => hasEdge(m) && Math.abs(m._edge_pp) >= minEdge);
+  }
+  if (minLiq !== null && !Number.isNaN(minLiq)) {
+    rows = rows.filter(m => Number(m.liquidity || 0) >= minLiq);
+  }
+
   rows.sort((a, b) => {
     if (sortBy === "edge") {
-      const ea = a._edge_pp === null ? -999 : Math.abs(a._edge_pp);
-      const eb = b._edge_pp === null ? -999 : Math.abs(b._edge_pp);
+      const ea = hasEdge(a) ? Math.abs(a._edge_pp) : -Infinity;
+      const eb = hasEdge(b) ? Math.abs(b._edge_pp) : -Infinity;
+      return eb - ea;
+    }
+    if (sortBy === "edge-signed") {
+      const ea = hasEdge(a) ? a._edge_pp : -Infinity;
+      const eb = hasEdge(b) ? b._edge_pp : -Infinity;
       return eb - ea;
     }
     if (sortBy === "liquidity") {
@@ -478,6 +556,9 @@ function renderMarkets() {
     }
     return 0;
   });
+
+  document.getElementById("market-count").innerHTML =
+    `Showing <b>${rows.length}</b> of <b>${_allMarkets.length}</b> markets`;
 
   if (!rows.length) {
     document.getElementById("markets").innerHTML = `<div class="empty">No markets match.</div>`;
@@ -594,8 +675,12 @@ async function loadBacktest() {
   `;
 }
 
-document.getElementById("search").addEventListener("input", renderMarkets);
-document.getElementById("sort").addEventListener("change", renderMarkets);
+["search", "min-edge", "min-liq"].forEach(id => {
+  document.getElementById(id).addEventListener("input", renderMarkets);
+});
+["topic", "sort", "scored-only"].forEach(id => {
+  document.getElementById(id).addEventListener("change", renderMarkets);
+});
 
 loadRegime();
 loadCards();
