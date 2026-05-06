@@ -60,6 +60,7 @@ export const api = {
   sources: () => request('/data/sources'),
   polling: (key) => request(`/data/polling/${key}`),
   recentPolls: () => request('/data/polling/recent'),
+  backtest: (sinceDays = 30) => request(`/data/backtest?since_days=${sinceDays}`),
 
   // Premium
   watchlist: () => request('/premium/watchlist'),

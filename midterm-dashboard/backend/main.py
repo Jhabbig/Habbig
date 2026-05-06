@@ -4,16 +4,18 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
 import aiohttp
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -23,7 +25,11 @@ from aggregators import (
     KalshiAggregator,
     PredictItAggregator,
     PollingAggregator,
+    ManifoldAggregator,
+    MetaculusAggregator,
 )
+from cache import cache
+from alerts import dispatch_divergence_alert
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
 
@@ -115,11 +121,11 @@ class AppState:
     kalshi: KalshiAggregator
     predictit: PredictItAggregator
     polling: PollingAggregator
+    manifold: ManifoldAggregator
+    metaculus: MetaculusAggregator
 
     def __init__(self):
         self.background_tasks: list[asyncio.Task] = []
-        # In-memory rate-limit store: {ip: [timestamps]}
-        self.rate_limit_store: dict[str, list[float]] = defaultdict(list)
 
 
 state = AppState()
@@ -172,31 +178,17 @@ async def require_tier(request: Request, tier: str) -> dict:
 # Rate limiter
 # ---------------------------------------------------------------------------
 
-def _check_rate_limit(ip: str, tier: str) -> bool:
-    """Return True if the request is allowed, False if rate-limited."""
+def _check_rate_limit(identity: str, tier: str) -> bool:
+    """Return True if the request is allowed, False if rate-limited.
+
+    Backed by Redis when available so quotas are shared across uvicorn
+    workers and survive restarts. Falls back to per-process in-memory
+    counters when Redis is offline.
+    """
     limit = RATE_LIMITS.get(tier, 60)
     if limit == 0:
         return True  # unlimited
-
-    now = time.time()
-    window = 60.0
-
-    # Prune entries older than the window
-    cutoff = now - window
-    # Note: relies on state.rate_limit_store being a defaultdict(list)
-    state.rate_limit_store[ip] = [t for t in state.rate_limit_store[ip] if t > cutoff]
-
-    # Clean up empty keys to prevent unbounded memory growth from blocked IPs
-    if not state.rate_limit_store[ip]:
-        del state.rate_limit_store[ip]
-        # After cleanup the list is empty, so this request is within limits —
-        # fall through to the append below.
-    elif len(state.rate_limit_store[ip]) >= limit:
-        return False
-
-    # Only record the timestamp if the request is allowed
-    state.rate_limit_store.setdefault(ip, []).append(now)
-    return True
+    return cache.rate_limit_check(identity, limit=limit, window_seconds=60)
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +225,17 @@ async def data_refresh_loop():
                 with_timeout(state.predictit.fetch_election_markets(), "PredictIt"),
                 with_timeout(state.polling.fetch_all_polls(), "Polling", seconds=30),
                 with_timeout(state.polymarket.fetch_world_election_markets(), "Polymarket-World", seconds=120),
+                with_timeout(state.manifold.fetch_election_markets(), "Manifold", seconds=60),
+                with_timeout(state.manifold.fetch_world_election_markets(), "Manifold-World", seconds=60),
+                with_timeout(state.metaculus.fetch_election_markets(), "Metaculus", seconds=60),
+                with_timeout(state.metaculus.fetch_world_election_markets(), "Metaculus-World", seconds=60),
                 return_exceptions=True,
             )
-            poly_data, kalshi_data, pi_data, poll_data, poly_world = results
+            (
+                poly_data, kalshi_data, pi_data, poll_data, poly_world,
+                manifold_data, manifold_world,
+                metaculus_data, metaculus_world,
+            ) = results
 
             # Kalshi world uses cached data from the midterm fetch above
             try:
@@ -247,7 +247,13 @@ async def data_refresh_loop():
                 kalshi_world = e
 
             # Store midterm markets
-            for label, data in [("Polymarket", poly_data), ("Kalshi", kalshi_data), ("PredictIt", pi_data)]:
+            for label, data in [
+                ("Polymarket", poly_data),
+                ("Kalshi", kalshi_data),
+                ("PredictIt", pi_data),
+                ("Manifold", manifold_data),
+                ("Metaculus", metaculus_data),
+            ]:
                 if isinstance(data, list):
                     state.db.upsert_markets_batch(data)
                     logger.info(f"Stored {len(data)} {label} markets")
@@ -266,12 +272,20 @@ async def data_refresh_loop():
                 logger.error(f"Polling fetch error: {poll_data}")
 
             # Store world election markets
-            for label, data in [("Polymarket world", poly_world), ("Kalshi world", kalshi_world)]:
+            for label, data in [
+                ("Polymarket world", poly_world),
+                ("Kalshi world", kalshi_world),
+                ("Manifold world", manifold_world),
+                ("Metaculus world", metaculus_world),
+            ]:
                 if isinstance(data, list):
                     state.db.upsert_markets_batch(data)
                     logger.info(f"Stored {len(data)} {label} markets")
                 else:
                     logger.error(f"{label} fetch error: {data}")
+
+            # Notify connected SSE clients that fresh data has landed.
+            cache.publish("data_updated", {"phase": "markets"})
 
         except Exception as e:
             logger.error(f"Data refresh error: {e}", exc_info=True)
@@ -336,6 +350,10 @@ async def divergence_calculator():
                         "kalshi": source_probs.get("kalshi"),
                         "predictit": source_probs.get("predictit"),
                         "polling": source_probs.get("polling"),
+                        # New sources are folded into details and remain
+                        # readable to clients via source_probs.
+                        "manifold": source_probs.get("manifold"),
+                        "metaculus": source_probs.get("metaculus"),
                         "max_divergence": round(max_div, 4),
                         "details": source_probs,
                     }
@@ -343,6 +361,7 @@ async def divergence_calculator():
                 count += 1
 
             logger.info(f"Divergence calculated for {count} races")
+            cache.publish("data_updated", {"phase": "divergence", "races": count})
         except Exception as e:
             logger.error(f"Divergence calculator error: {e}", exc_info=True)
 
@@ -423,6 +442,105 @@ async def district_profile_updater():
             logger.error(f"District profile updater error: {e}", exc_info=True)
 
         await asyncio.sleep(PROFILE_CHECK_INTERVAL)
+
+
+async def alert_dispatch_loop():
+    """Watch divergence snapshots and dispatch alerts for breached thresholds.
+
+    Runs every minute. For each enabled alert we look up the latest divergence
+    snapshot for the watched race, compare to the user's threshold, and
+    dispatch via email + Telegram if (a) the threshold is breached and (b)
+    we haven't already sent the same alert in the last hour.
+
+    The cooldown is intentionally simple — anything more sophisticated (e.g.
+    "only re-alert when divergence crosses the threshold from below") would
+    require state machines we haven't built yet.
+    """
+    INTERVAL_SECONDS = 60
+    COOLDOWN_SECONDS = 3600  # 1 hour
+    while True:
+        try:
+            alerts = state.db.get_all_active_alerts()
+            sent = 0
+            for a in alerts:
+                race_key = a.get("race_key")
+                if not race_key:
+                    continue
+                threshold = float(a.get("threshold") or 5.0) / 100.0  # stored as pp (5.0 = 5pp)
+                snap = state.db.get_latest_divergence(race_key)
+                if not snap:
+                    continue
+                max_div = float(snap.get("max_divergence") or 0)
+                if max_div < threshold:
+                    continue
+
+                # Cooldown
+                last = state.db.last_alert_time(a["user_id"], race_key, a.get("alert_type") or "divergence")
+                if last:
+                    try:
+                        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                        if (datetime.now(timezone.utc) - last_dt).total_seconds() < COOLDOWN_SECONDS:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                details = snap.get("divergence_details") or {}
+                if isinstance(details, str):
+                    try:
+                        details = json.loads(details)
+                    except json.JSONDecodeError:
+                        details = {}
+
+                result = await dispatch_divergence_alert(
+                    user_email=a.get("email"),
+                    user_telegram_chat=None,  # no per-user TG yet — env-default chat used
+                    race_key=race_key,
+                    threshold=threshold * 100.0,
+                    max_div=max_div,
+                    sources=details,
+                )
+                if result.get("email") or result.get("telegram"):
+                    state.db.record_alert_dispatch(
+                        user_id=a["user_id"],
+                        race_key=race_key,
+                        alert_type=a.get("alert_type") or "divergence",
+                        message=f"max_div={max_div:.4f} threshold={threshold:.4f}",
+                    )
+                    sent += 1
+            if sent:
+                logger.info(f"Alert dispatcher: sent {sent} alerts")
+        except Exception as e:
+            logger.error(f"Alert dispatcher error: {e}", exc_info=True)
+        await asyncio.sleep(INTERVAL_SECONDS)
+
+
+async def db_retention_loop():
+    """Daily sweep: prune old price-history + divergence rows.
+
+    The price-history table grows unbounded if nothing trims it (the production
+    DB was already 108MB+). Retention keeps 30 days of price points and 90
+    days of divergence snapshots, then runs VACUUM weekly to reclaim space.
+    """
+    PRICE_RETAIN_DAYS = int(os.getenv("PRICE_RETAIN_DAYS", "30"))
+    DIVERGENCE_RETAIN_DAYS = int(os.getenv("DIVERGENCE_RETAIN_DAYS", "90"))
+    SWEEP_INTERVAL = 24 * 3600  # daily
+    runs = 0
+    while True:
+        try:
+            deleted_prices = state.db.prune_price_history(retain_days=PRICE_RETAIN_DAYS)
+            deleted_div = state.db.prune_divergence_snapshots(retain_days=DIVERGENCE_RETAIN_DAYS)
+            logger.info(
+                f"DB retention: pruned {deleted_prices} price-history rows, "
+                f"{deleted_div} divergence rows"
+            )
+            runs += 1
+            # VACUUM is expensive (rewrites the whole file) — run weekly.
+            if runs % 7 == 0:
+                state.db.vacuum()
+                logger.info("DB retention: VACUUM complete")
+        except Exception as e:
+            logger.error(f"DB retention error: {e}", exc_info=True)
+        await asyncio.sleep(SWEEP_INTERVAL)
 
 
 async def jurisdiction_profile_updater():
@@ -533,12 +651,18 @@ async def lifespan(app: FastAPI):
     state.db = Database()
     state.db.connect()
 
+    # Connect to Redis. If unavailable the dashboard still runs — rate-limit
+    # quotas just become per-process and SSE clients get an offline notice.
+    cache.connect()
+
     state.http_session = aiohttp.ClientSession()
 
     state.polymarket = PolymarketAggregator(session=state.http_session)
     state.kalshi = KalshiAggregator(session=state.http_session)
     state.predictit = PredictItAggregator(session=state.http_session)
     state.polling = PollingAggregator(session=state.http_session)
+    state.manifold = ManifoldAggregator(session=state.http_session)
+    state.metaculus = MetaculusAggregator(session=state.http_session)
 
     # Seed district profiles from static data on startup
     _seed_district_profiles()
@@ -549,6 +673,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(divergence_calculator(), name="divergence"),
         asyncio.create_task(district_profile_updater(), name="district_profiles"),
         asyncio.create_task(jurisdiction_profile_updater(), name="jurisdiction_profiles"),
+        asyncio.create_task(db_retention_loop(), name="db_retention"),
+        asyncio.create_task(alert_dispatch_loop(), name="alert_dispatch"),
     ]
 
     logger.info("Background tasks started")
@@ -723,8 +849,74 @@ async def auth_me(request: Request):
 
 
 # ===================================================================
+# SERVER-SENT EVENTS
+# ===================================================================
+
+def _format_sse(event: str, data: dict) -> str:
+    payload = json.dumps(data, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+@app.get("/data/stream")
+async def data_stream(request: Request):
+    """SSE stream of live data-update events for connected browsers.
+
+    Subscribes to the same Redis ``dashboard:midterm`` channel the gateway
+    listens on. Without Redis the endpoint sends one ``offline`` frame and
+    closes — the frontend then falls back to its 5-min polling.
+    """
+    async def event_gen():
+        try:
+            async for msg in cache.subscribe_async():
+                if await request.is_disconnected():
+                    break
+                event = msg.get("event", "data_updated")
+                yield _format_sse(event, msg)
+        except asyncio.CancelledError:
+            raise
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_gen(), media_type="text/event-stream", headers=headers)
+
+
+# ===================================================================
 # PUBLIC DATA ENDPOINTS
 # ===================================================================
+
+_DEM_NAME_RE = re.compile(r"\b(democrat|dems?|democratic|d\.?)\b", re.I)
+_REP_NAME_RE = re.compile(r"\b(republican|reps?|gop|r\.?)\b", re.I)
+
+
+def _classify_outcome_party(outcome_name: str, market_title: str) -> Optional[str]:
+    """Return ``"democrat"`` or ``"republican"`` for a control-market outcome.
+
+    Recognised forms:
+      * Outcome names that name a party directly ("Democratic", "GOP", etc.).
+      * Yes/No outcomes when the title asks "will democrats..." / "will republicans...".
+
+    Returns ``None`` if the outcome can't be classified — this is preferable
+    to silently miscounting it.
+    """
+    name = (outcome_name or "").strip().lower()
+    title = (market_title or "").lower()
+
+    if _DEM_NAME_RE.search(name):
+        return "democrat"
+    if _REP_NAME_RE.search(name):
+        return "republican"
+
+    if name in {"yes", "no"}:
+        # "Will Democrats win the Senate?" → Yes = dem
+        if "democrat" in title:
+            return "democrat" if name == "yes" else "republican"
+        if "republican" in title or "gop" in title:
+            return "republican" if name == "yes" else "democrat"
+    return None
+
 
 @app.get("/data/overview")
 async def data_overview():
@@ -732,8 +924,8 @@ async def data_overview():
     all_markets = state.db.get_all_markets(active_only=True)
 
     # Build control overview from "control" type markets
-    senate_sources = {}
-    house_sources = {}
+    senate_sources: dict[str, dict[str, float]] = {}
+    house_sources: dict[str, dict[str, float]] = {}
     source_summary = defaultdict(lambda: {"market_count": 0, "status": "ok"})
 
     for m in all_markets:
@@ -742,37 +934,52 @@ async def data_overview():
 
         if m.get("race_type") != "control":
             continue
-        title = (m.get("title") or "").lower()
-        outcomes = m.get("outcomes", [])
+        title = (m.get("title") or "")
+        title_lower = title.lower()
+        outcomes = m.get("outcomes", []) or []
 
         target = None
-        if "senate" in title:
+        if "senate" in title_lower:
             target = senate_sources
-        elif "house" in title:
+        elif "house" in title_lower:
             target = house_sources
+        if target is None:
+            continue
 
-        if target is not None and outcomes:
-            dem_prob = 0
-            rep_prob = 0
-            for o in outcomes:
-                name = (o.get("name") or "").lower()
-                prob = o.get("probability") or 0
-                if "democrat" in name or name in ("dem", "dems") or "yes" in name:
-                    dem_prob = prob
-                elif "republican" in name or name in ("rep", "reps", "gop") or name == "no":
-                    rep_prob = prob
-            if not rep_prob and dem_prob:
-                rep_prob = 1 - dem_prob
-            target[source] = {"democrat": dem_prob, "republican": rep_prob}
+        # Tally probabilities by classified party. Markets often have multiple
+        # outcomes (e.g. seat-count brackets); sum the dem vs rep probability
+        # mass and only fall back to (1 - dem) when there's no rep classification.
+        tallies = {"democrat": 0.0, "republican": 0.0}
+        unclassified = 0
+        for o in outcomes:
+            prob = o.get("probability")
+            if prob is None:
+                continue
+            party = _classify_outcome_party(o.get("name") or "", title)
+            if party is None:
+                unclassified += 1
+                continue
+            tallies[party] += float(prob)
+
+        dem_prob = tallies["democrat"]
+        rep_prob = tallies["republican"]
+        if dem_prob and not rep_prob and unclassified == 0:
+            rep_prob = max(0.0, 1.0 - dem_prob)
+        if rep_prob and not dem_prob and unclassified == 0:
+            dem_prob = max(0.0, 1.0 - rep_prob)
+
+        if dem_prob == 0 and rep_prob == 0:
+            continue
+        target[source] = {
+            "democrat": round(min(dem_prob, 1.0), 4),
+            "republican": round(min(rep_prob, 1.0), 4),
+        }
 
     return {
         "senate_control": {"sources": senate_sources},
         "house_control": {"sources": house_sources},
         "source_summary": dict(source_summary),
     }
-
-
-import re as _re
 
 
 def _canonical_question(m: dict) -> str:
@@ -831,7 +1038,7 @@ def _canonical_question(m: dict) -> str:
     if "balance of power" in text:
         return "national_balance_of_power"
     # Senate seat count
-    if _re.search(r"hold exactly \d+ senate", text) or "senate seats" in text:
+    if re.search(r"hold exactly \d+ senate", text) or "senate seats" in text:
         return "national_senate_seats"
     # Trump leaving office
     if "trump" in text and any(kw in text for kw in ("out as president", "removed",
@@ -1354,6 +1561,124 @@ async def data_historical(
             "race_types": all_types,
             "states": all_states,
         },
+    }
+
+
+@app.get("/data/backtest")
+async def data_backtest(since_days: int = 30):
+    """Per-source backtest against the curated historical-results dataset.
+
+    For every divergence snapshot in the last ``since_days`` days whose race
+    matches a row in ``HISTORICAL_RESULTS``, compute the Brier score
+    ``(p - outcome)^2`` for each source's probability vs. the actual winning
+    party. The lower the Brier score the better calibrated that source was on
+    that race; aggregating across races yields a per-source quality metric.
+
+    Returns:
+      * ``coverage`` — how many divergence snapshots, races, and resolved
+        races each source contributed to.
+      * ``brier`` — mean Brier score per source (only over resolved races).
+      * ``samples`` — sampled (race_key, source, prob, winner) rows so the
+        frontend can plot a calibration chart.
+
+    Caveats:
+      * The historical dataset is hand-curated and small; full coverage will
+        only arrive once 2026 races resolve.
+      * "Probability" here is treated as P(Democratic win). Markets that
+        present a different outcome require the canonical-question matcher to
+        normalise — for now we only score control / senate / governor races
+        whose outcomes can be unambiguously reduced to D vs R.
+    """
+    from historical_results import HISTORICAL_RESULTS, winning_party
+
+    snapshots = state.db.get_divergence_history(since_days=since_days)
+
+    # Build a (race_type, state) → year map of resolved races so we can match
+    # snapshots to outcomes. We only count the *most recent* historical row for
+    # a given (race_type, state) — older races don't have current divergence.
+    resolved_by_race: dict[tuple[str, str], dict] = {}
+    for r in HISTORICAL_RESULTS:
+        key = (r["race_type"], r["state"].upper())
+        if key not in resolved_by_race or r["year"] > resolved_by_race[key]["year"]:
+            resolved_by_race[key] = r
+
+    SOURCE_COLS = {
+        "polymarket": "polymarket_prob",
+        "kalshi": "kalshi_prob",
+        "predictit": "predictit_prob",
+        "polling": "polling_avg",
+    }
+
+    coverage = {src: {"snapshots": 0, "races": set(), "resolved_races": set()}
+                for src in list(SOURCE_COLS) + ["manifold", "metaculus"]}
+    brier_totals = {src: {"sum": 0.0, "n": 0} for src in coverage}
+    samples: list[dict] = []
+
+    for snap in snapshots:
+        rt = (snap.get("race_type") or "").lower()
+        st = (snap.get("state") or "").upper()
+        race_key = snap.get("race_key") or ""
+        # Probabilities for the major sources are denormalised columns;
+        # secondary sources live in ``divergence_details``.
+        details = snap.get("divergence_details") or {}
+        all_probs = {}
+        for src, col in SOURCE_COLS.items():
+            v = snap.get(col)
+            if v is not None:
+                all_probs[src] = float(v)
+        for src in ("manifold", "metaculus"):
+            v = details.get(src) if isinstance(details, dict) else None
+            if v is not None:
+                try:
+                    all_probs[src] = float(v)
+                except (ValueError, TypeError):
+                    pass
+
+        for src, p in all_probs.items():
+            coverage[src]["snapshots"] += 1
+            coverage[src]["races"].add(race_key)
+
+        # Score against historical winner if we have one
+        hist = resolved_by_race.get((rt, st))
+        if not hist:
+            continue
+        winning = (hist.get("party") or "").upper()
+        if winning not in {"D", "R"}:
+            continue
+        # By convention probabilities here represent P(D wins). For races where
+        # the snapshot was about R-controlled outcomes we'd need the matcher;
+        # assume canonical D-orientation for the basic backtest.
+        outcome = 1.0 if winning == "D" else 0.0
+
+        for src, p in all_probs.items():
+            coverage[src]["resolved_races"].add(race_key)
+            brier_totals[src]["sum"] += (p - outcome) ** 2
+            brier_totals[src]["n"] += 1
+            samples.append({
+                "race_key": race_key,
+                "source": src,
+                "prob_d": p,
+                "winner": winning,
+                "year": hist.get("year"),
+                "snapshot_time": snap.get("snapshot_time"),
+            })
+
+    return {
+        "since_days": since_days,
+        "snapshots_total": len(snapshots),
+        "coverage": {
+            src: {
+                "snapshots": v["snapshots"],
+                "races": len(v["races"]),
+                "resolved_races": len(v["resolved_races"]),
+            }
+            for src, v in coverage.items()
+        },
+        "brier": {
+            src: round(v["sum"] / v["n"], 4) if v["n"] else None
+            for src, v in brier_totals.items()
+        },
+        "samples": samples[:500],
     }
 
 

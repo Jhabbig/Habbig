@@ -15,6 +15,7 @@ import AdminDashboard from './pages/AdminDashboard'
 import Account from './pages/Account'
 import WorldElections from './pages/WorldElections'
 import Historical from './pages/Historical'
+import Backtest from './pages/Backtest'
 import Settings from './pages/Settings'
 
 const AuthContext = createContext(null)
@@ -75,6 +76,7 @@ function Nav() {
     { to: '/divergence', label: t('nav.divergence'), icon: GitCompare },
     { to: '/world', label: t('nav.world'), icon: Globe },
     { to: '/historical', label: t('nav.historical'), icon: History },
+    { to: '/backtest', label: 'Backtest', icon: Activity },
   ]
 
   if (user?.tier === 'admin') {
@@ -173,6 +175,7 @@ export default function App() {
             <Route path="/divergence" element={<Divergence />} />
             <Route path="/world" element={<WorldElections />} />
             <Route path="/historical" element={<Historical />} />
+            <Route path="/backtest" element={<Backtest />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
