@@ -19,6 +19,7 @@ See `CONTRIBUTING.md` for the contributor quick-start (Docker + manual).
 | `polymarket_weather_dashboard/` | 5050 | Weather-market dashboard UI (Flask + PWA). |
 | `sports-dashboard/` | 8888 | Sports arbitrage signals (The Odds API vs Polymarket). |
 | `world-state-dashboard/` | 7050 | Geopolitical feed + infrastructure map. |
+| `religion-dashboard/` | 7062 | World religions, NRM/cult watchlist, USCIRF designations, Polymarket religion markets. |
 | `Dashboard-x-truth-research-prediction/` | 18789 | X / TruthSocial prediction-mining dashboard. |
 | `polymarket_weather_bot/` | — | Headless weather-market trading bot (no UI). |
 | `polymarket-bot/` | — | 5-minute up/down trading bot (single file, tightly coupled to crypto-dashboard). |
