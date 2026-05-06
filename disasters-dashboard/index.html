@@ -9,14 +9,17 @@
     --bg-0: #0b1220;
     --bg-1: #0f172a;
     --bg-2: #1e293b;
+    --bg-3: #28354c;
     --border: #243042;
     --text-1: #f1f5f9;
     --text-2: #94a3b8;
     --text-3: #64748b;
-    --accent: #f97316;        /* orange - disaster theme */
+    --accent: #f97316;        /* orange - dashboard theme */
     --accent-2: #ef4444;      /* red - critical */
     --accent-3: #fbbf24;      /* yellow - warn */
+    --accent-4: #38bdf8;      /* sky - info */
     --good: #34d399;
+    --magenta: #c084fc;
   }
   * { box-sizing: border-box; }
   body {
@@ -31,13 +34,39 @@
     border-bottom: 1px solid var(--border);
     background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
   }
-  header h1 {
-    margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em;
-  }
-  header .sub {
-    margin-top: 3px; color: var(--text-2); font-size: 12px;
-  }
+  header .row { display: flex; align-items: baseline; gap: 24px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  header .sub { margin-top: 3px; color: var(--text-2); font-size: 12px; }
+  header .updated { font-size: 11px; color: var(--text-3); margin-left: auto; font-variant-numeric: tabular-nums; }
+  header .updated .dot { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: var(--good); vertical-align: middle; margin-right: 6px; }
+  header .updated.stale .dot { background: var(--accent-3); }
+
   main { padding: 18px 24px 80px; max-width: 1320px; margin: 0 auto; }
+
+  .crit-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 0 0 22px;
+  }
+  .crit-strip .crit {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .crit .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+  .crit .num { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .crit.red    { border-color: rgba(239,68,68,0.4); }
+  .crit.orange { border-color: rgba(249,115,22,0.4); }
+  .crit.yellow { border-color: rgba(251,191,36,0.4); }
+  .crit.red    .num { color: var(--accent-2); }
+  .crit.orange .num { color: var(--accent); }
+  .crit.yellow .num { color: var(--accent-3); }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -57,23 +86,25 @@
     color: var(--text-3); font-weight: 600;
   }
   .card .big {
-    font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+    font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
   }
-  .card .sub {
-    color: var(--text-2); font-size: 12px; margin-top: 4px;
-  }
+  .card .sub { color: var(--text-2); font-size: 12px; margin-top: 4px; }
+  .card .source { color: var(--text-3); font-size: 10px; margin-top: 8px; font-style: italic; }
+
   .pill {
     display: inline-block;
     padding: 2px 8px;
     border-radius: 999px;
     font-size: 11px; font-weight: 600;
     background: var(--bg-2); color: var(--text-2);
-    margin-right: 6px;
+    margin: 0 6px 4px 0;
   }
-  .pill.hot  { background: rgba(239, 68, 68, 0.15); color: var(--accent-2); }
-  .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--accent-3); }
-  .pill.good { background: rgba(52, 211, 153, 0.15); color: var(--good); }
-  .pill.accent { background: rgba(249, 115, 22, 0.15); color: var(--accent); }
+  .pill.hot     { background: rgba(239, 68, 68, 0.15); color: var(--accent-2); }
+  .pill.warn    { background: rgba(251, 191, 36, 0.15); color: var(--accent-3); }
+  .pill.good    { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  .pill.accent  { background: rgba(249, 115, 22, 0.15); color: var(--accent); }
+  .pill.info    { background: rgba(56, 189, 248, 0.15); color: var(--accent-4); }
+  .pill.magenta { background: rgba(192, 132, 252, 0.15); color: var(--magenta); }
 
   section { margin: 28px 0 18px; }
   section h2 {
@@ -83,7 +114,11 @@
     letter-spacing: 0.08em;
     color: var(--text-2);
     font-weight: 600;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
   }
+  section h2 small { font-size: 10px; color: var(--text-3); text-transform: none; letter-spacing: 0; font-style: italic; }
 
   table {
     width: 100%;
@@ -102,13 +137,11 @@
   }
   th {
     background: var(--bg-2);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
-    font-weight: 600;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-3); font-weight: 600;
   }
   tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: rgba(255,255,255,0.02); }
   td.num { font-variant-numeric: tabular-nums; text-align: right; }
   td.edge-buy  { color: var(--good); font-weight: 600; }
   td.edge-sell { color: var(--accent-2); font-weight: 600; }
@@ -125,48 +158,121 @@
     margin: 10px 0;
     font-size: 12px;
   }
+
+  .drought-bar { display: flex; height: 18px; border-radius: 4px; overflow: hidden; margin: 8px 0; background: var(--bg-2); }
+  .drought-bar > div { display: flex; align-items: center; justify-content: center; font-size: 10px; color: rgba(0,0,0,0.7); font-weight: 600; }
+  .drought-none { background: #4ade80; }
+  .drought-d0   { background: #fde68a; }
+  .drought-d1   { background: #fbbf24; }
+  .drought-d2   { background: #f97316; }
+  .drought-d3   { background: #ef4444; }
+  .drought-d4   { background: #991b1b; color: white; }
+
   .footer {
-    color: var(--text-3);
-    font-size: 11px;
-    margin-top: 60px;
-    padding-top: 18px;
+    color: var(--text-3); font-size: 11px;
+    margin-top: 60px; padding-top: 18px;
     border-top: 1px solid var(--border);
   }
+  .footer h4 { margin: 0 0 6px; font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.08em; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Major Disasters</h1>
-  <div class="sub">Live event tracker + Polymarket edges - hurricanes, earthquakes, wildfires, severe weather</div>
+  <div class="row">
+    <div>
+      <h1>Major Disasters</h1>
+      <div class="sub">Live tracker + Polymarket edges across hurricanes, earthquakes, wildfires, severe weather, volcanoes, drought, and FEMA declarations</div>
+    </div>
+    <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
+  </div>
 </header>
 <main>
+  <!-- Critical events strip (GDACS red/orange + USGS PAGER red/orange) -->
+  <div class="crit-strip" id="crit-strip"></div>
+
   <section>
-    <h2>Active threats</h2>
+    <h2>Active threats <small>now</small></h2>
     <div id="active-grid" class="grid"></div>
   </section>
 
   <section>
-    <h2>Year-end projections</h2>
+    <h2>Year-end projections <small>YTD + Poisson / climo prior</small></h2>
     <div id="proj-grid" class="grid"></div>
   </section>
 
   <section>
-    <h2>Recent significant earthquakes (M5+, last 30d)</h2>
+    <h2>US Drought Monitor <small>weekly</small></h2>
+    <div id="drought-card"></div>
+  </section>
+
+  <section>
+    <h2>GDACS critical events <small>orange &amp; red severity worldwide</small></h2>
+    <div id="gdacs-table"></div>
+  </section>
+
+  <section>
+    <h2>Significant earthquakes <small>USGS PAGER · last 30 days</small></h2>
+    <div id="significant-table"></div>
+  </section>
+
+  <section>
+    <h2>Recent earthquakes M5+ <small>USGS · last 30 days</small></h2>
     <div id="quakes-table"></div>
   </section>
 
   <section>
-    <h2>Polymarket disaster markets</h2>
+    <h2>Active US wildfires <small>NIFC WFIGS · DailyAcres &gt; 0</small></h2>
+    <div id="fires-table"></div>
+  </section>
+
+  <section>
+    <h2>Active volcanoes <small>Smithsonian GVP weekly bulletin</small></h2>
+    <div id="volcanoes-table"></div>
+  </section>
+
+  <section>
+    <h2>Polymarket disaster markets <small>scored markets first, by absolute edge</small></h2>
     <div id="markets-table"></div>
   </section>
 
-  <div class="footer" id="footer"></div>
+  <section>
+    <h2>Backtest <small>year-end projections vs realised for 2014-2024</small></h2>
+    <div id="backtest-table"></div>
+  </section>
+
+  <div class="footer" id="footer">
+    <h4>Sources</h4>
+    NHC <code>CurrentStorms.json</code> (tropical cyclones) ·
+    USGS FDSN <code>event/1</code> (earthquakes) ·
+    USGS <code>significant_month.geojson</code> (PAGER alerts) ·
+    NASA EONET v3 (wildfires / severe storms / volcanoes / floods) ·
+    NIFC WFIGS Current (US wildfire incidents + acres) ·
+    NWS <code>api.weather.gov/alerts/active</code> (severe-weather alerts) ·
+    SPC daily storm reports + monthly tornado climatology ·
+    Smithsonian GVP weekly volcanic activity bulletin ·
+    GDACS RSS (severity-coded global events) ·
+    USDM (US Drought Monitor categorical %) ·
+    OpenFEMA <code>DisasterDeclarationsSummaries</code> ·
+    Polymarket Gamma API.<br/>
+    Models are climatology + Poisson + Normal approximations - informational, not investment advice.
+  </div>
 </main>
 
 <script>
-  const fmt = (n, d = 0) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+(function() {
+  const fmt = (n, d = 0) => n == null ? "-" :
+    Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmtBig = (n) => {
+    if (n == null) return "-";
+    if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(2) + "B";
+    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return fmt(n);
+  };
   const pct = (p) => p == null ? "-" : (p * 100).toFixed(1) + "%";
-  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
 
   async function fetchJson(path) {
     const r = await fetch(path, { credentials: "include" });
@@ -178,83 +284,236 @@
     return `<span class="pill ${kind}">${escapeHtml(label)}</span>`;
   }
 
-  function activeCard(title, big, sub, kind = "") {
-    const bigClass = kind === "hot" ? "big" : "big";
-    const subKind = kind ? `class="pill ${kind}"` : "";
+  function critTile(label, n, kind) {
+    return `<div class="crit ${kind}"><div class="label">${escapeHtml(label)}</div><div class="num">${fmt(n)}</div></div>`;
+  }
+
+  function activeCard(title, big, sub, source = "") {
     return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
-      `<div class="${bigClass}">${big}</div>` +
-      `<div class="sub">${sub}</div></div>`;
+      `<div class="big">${big}</div>` +
+      `<div class="sub">${sub}</div>` +
+      (source ? `<div class="source">${escapeHtml(source)}</div>` : "") +
+      `</div>`;
+  }
+
+  function setUpdated(iso) {
+    const d = iso ? new Date(iso) : new Date();
+    const ago = Math.round((Date.now() - d.getTime()) / 1000);
+    const txt = ago < 60 ? `${ago}s ago` : `${Math.round(ago/60)}m ago`;
+    document.getElementById("updated-text").textContent = txt;
+    document.getElementById("updated").classList.toggle("stale", ago > 600);
+  }
+
+  function renderCritStrip(summary) {
+    const r = summary.recent_quakes || {};
+    const g = summary.gdacs || {};
+    const a = summary.active || {};
+    const tiles = [
+      critTile("GDACS red events", g.by_alert?.Red || 0, "red"),
+      critTile("GDACS orange events", g.by_alert?.Orange || 0, "orange"),
+      critTile("M7+ quakes / 30d", r.m7_plus_30d || 0, "red"),
+      critTile("M6+ quakes / 30d", r.m6_plus_30d || 0, "orange"),
+      critTile("USGS PAGER / 30d", r.significant_30d_count || 0, "yellow"),
+      critTile("Active named storms", a.named_storms_count || 0, a.named_storms_count > 0 ? "orange" : "yellow"),
+      critTile("US severe alerts", a.alerts_count || 0, a.alerts_count > 50 ? "red" : a.alerts_count > 0 ? "orange" : "yellow"),
+      critTile("Active US wildfires", a.us_active_fires || 0, a.us_active_fires > 100 ? "orange" : "yellow"),
+    ];
+    document.getElementById("crit-strip").innerHTML = tiles.join("");
   }
 
   function renderActive(summary) {
     const a = summary.active || {};
     const r = summary.recent_quakes || {};
     const cards = [];
-    cards.push(activeCard("Named storms", fmt(a.named_storms_count),
+    cards.push(activeCard(
+      "Named storms",
+      fmt(a.named_storms_count),
       a.named_storms_count > 0
         ? a.named_storms.map(s => pill(`${s.name || "?"} - ${s.classification || "?"}`, "hot")).join("")
-        : '<span class="pill good">none active</span>'));
-    cards.push(activeCard("NWS severe alerts", fmt(a.alerts_count),
+        : '<span class="pill good">none active</span>',
+      "NHC CurrentStorms"));
+    cards.push(activeCard(
+      "NWS severe alerts",
+      fmt(a.alerts_count),
       a.alerts_count > 0
-        ? a.alerts_top.slice(0, 3).map(x => pill(x.event || "?", "warn")).join("")
-        : '<span class="pill good">all clear</span>'));
-    cards.push(activeCard("Open wildfires (EONET)", fmt(a.wildfires_count),
-      a.wildfires_count > 50 ? pill("very active", "hot") : pill("normal", "good")));
-    cards.push(activeCard("Open severe storms (EONET)", fmt(a.severe_storms_count), pill("global", "")));
-    cards.push(activeCard("Open volcanoes (EONET)", fmt(a.volcanoes_count), pill("erupting", a.volcanoes_count > 5 ? "warn" : "")));
-    cards.push(activeCard("M5+ quakes, 30d", fmt(r.count_30d),
-      `M6+: ${fmt(r.m6_plus_30d)} &nbsp; M7+: ${fmt(r.m7_plus_30d)}`));
-
+        ? Object.entries(a.alerts_by_event || {}).slice(0, 4)
+            .map(([ev, n]) => pill(`${ev} (${n})`, "warn")).join("")
+        : '<span class="pill good">all clear</span>',
+      "api.weather.gov"));
+    cards.push(activeCard(
+      "Active US wildfires",
+      fmt(a.us_active_fires),
+      `<strong>${fmtBig(a.us_active_acres)} acres</strong> currently burning ` +
+      (a.us_active_fires_top?.length ? "&middot; biggest: " + escapeHtml(a.us_active_fires_top[0].name || "?") : ""),
+      "NIFC WFIGS"));
+    cards.push(activeCard(
+      "Today's storm reports",
+      fmt(a.tornado_reports_today + a.hail_reports_today + a.wind_reports_today),
+      `${pill(`tornado ${fmt(a.tornado_reports_today)}`, a.tornado_reports_today > 0 ? "hot" : "")} ` +
+      `${pill(`hail ${fmt(a.hail_reports_today)}`, a.hail_reports_today > 5 ? "warn" : "")} ` +
+      `${pill(`wind ${fmt(a.wind_reports_today)}`, a.wind_reports_today > 5 ? "warn" : "")}`,
+      "SPC today + yesterday"));
+    cards.push(activeCard(
+      "Open EONET wildfires",
+      fmt(a.wildfires_count_eonet),
+      a.wildfires_count_eonet > 50 ? pill("global, very active", "hot") : pill("global, normal", "good"),
+      "NASA EONET"));
+    cards.push(activeCard(
+      "Open severe storms (EONET)",
+      fmt(a.severe_storms_count),
+      pill("global", "info"),
+      "NASA EONET"));
+    cards.push(activeCard(
+      "Smithsonian active volcanoes",
+      fmt(a.gvp_volcanoes_count),
+      (a.gvp_volcanoes_top?.length ?
+        a.gvp_volcanoes_top.slice(0, 3).map(v => pill(v.name || "?", "magenta")).join("")
+        : pill("quiet week", "good")),
+      "GVP weekly bulletin"));
+    cards.push(activeCard(
+      "M5+ quakes, 30d",
+      fmt(r.count_30d),
+      `M6+: ${fmt(r.m6_plus_30d)} · M7+: ${fmt(r.m7_plus_30d)} · PAGER: ${fmt(r.significant_30d_count)}`,
+      "USGS FDSN + significant"));
     if (r.biggest) {
       cards.push(activeCard(
         "Biggest quake (30d)",
         `M${fmt(r.biggest.mag, 1)}`,
-        escapeHtml(r.biggest.place || "")
-      ));
+        escapeHtml(r.biggest.place || ""),
+        "USGS"));
     }
     document.getElementById("active-grid").innerHTML = cards.join("");
   }
 
-  function projCard(title, proj, unitLabel) {
+  function projCard(title, proj, unit, source = "") {
     if (!proj || proj.error) {
       return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
              `<div class="big" style="font-size:14px;color:var(--accent-2)">unavailable</div>` +
-             `<div class="sub">${escapeHtml(proj?.error || "no data")}</div></div>`;
+             `<div class="sub">${escapeHtml(proj?.error || "no data")}</div>` +
+             (source ? `<div class="source">${escapeHtml(source)}</div>` : "") +
+             `</div>`;
     }
-    const ytdLabel = proj.ytd_count != null ? proj.ytd_count
-                  : proj.active_named_storms_ytd_lower_bound != null ? proj.active_named_storms_ytd_lower_bound
-                  : "-";
-    const ytdDescriptor = proj.active_named_storms_ytd_lower_bound != null ? "active YTD (lower bound)" : "YTD";
-    const climoSub = proj.climatological_annual != null
-                   ? ` &nbsp; climo: ${fmt(proj.climatological_annual)}`
-                   : (proj.climatological_annual_named != null
-                      ? ` &nbsp; climo: ${fmt(proj.climatological_annual_named)}`
-                      : "");
+    const projection = proj.projected_year_end_count != null ? proj.projected_year_end_count
+                    : proj.projected_year_end_acres != null  ? proj.projected_year_end_acres
+                    : proj.projected_year_end_dr_count != null ? proj.projected_year_end_dr_count
+                    : "-";
+    const projDisplay = (proj.projected_year_end_acres != null) ? fmtBig(projection) : fmt(projection);
+    const ytd = proj.ytd_count != null ? proj.ytd_count
+              : proj.active_named_storms_ytd_lower_bound != null ? proj.active_named_storms_ytd_lower_bound
+              : proj.active_acres_total != null ? proj.active_acres_total
+              : proj.ytd_climo_implied != null ? proj.ytd_climo_implied
+              : proj.ytd_major_disasters_dr != null ? proj.ytd_major_disasters_dr
+              : null;
+    const climo = proj.climatological_annual_named ?? proj.climo_dr_per_year ??
+                  proj.historical_mean_annual_acres ?? proj.climo_annual_tornadoes ??
+                  proj.climatological_annual;
+    const ytdLabel = proj.active_named_storms_ytd_lower_bound != null ? "active YTD"
+                  : proj.ytd_climo_implied != null ? "YTD (climo-implied)"
+                  : "YTD";
     return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
-      `<div class="big">${fmt(proj.projected_year_end_count)}<span style="font-size:14px;color:var(--text-3)"> ${escapeHtml(unitLabel)}</span></div>` +
-      `<div class="sub">${ytdLabel} ${escapeHtml(ytdDescriptor)} &middot; ` +
-      `&lambda;<sub>rest</sub>=${fmt(proj.lambda_remaining, 2)}${climoSub}</div></div>`;
+      `<div class="big">${projDisplay}<span style="font-size:13px;color:var(--text-3)"> ${escapeHtml(unit)}</span></div>` +
+      `<div class="sub">` +
+        (ytd != null ? `${(typeof ytd === 'number' && ytd > 1000) ? fmtBig(ytd) : fmt(ytd)} ${ytdLabel}` : "") +
+        (climo != null ? ` · climo ${fmtBig(climo)}` : "") +
+      `</div>` +
+      (source ? `<div class="source">${escapeHtml(source)}</div>` : "") +
+      `</div>`;
   }
 
   function renderProjections(summary) {
     const p = summary.projections || {};
     const cards = [];
-    cards.push(projCard("Atlantic named storms (yr-end)", p.atlantic_storms, "named"));
-    cards.push(projCard("Global M5+ quakes (yr-end)", p.quakes_m5, "events"));
-    cards.push(projCard("Global M6+ quakes (yr-end)", p.quakes_m6, "events"));
-    cards.push(projCard("Global M7+ quakes (yr-end)", p.quakes_m7, "events"));
-    cards.push(projCard("EONET wildfires (yr-end)", p.wildfires, "events"));
+    cards.push(projCard("Atlantic named storms", p.atlantic_storms, "named", "NHC + 1991-2020 climo"));
+    cards.push(projCard("Global M5+ quakes", p.quakes_m5, "events", "USGS YTD + Poisson"));
+    cards.push(projCard("Global M6+ quakes", p.quakes_m6, "events", "USGS YTD + Poisson"));
+    cards.push(projCard("Global M7+ quakes", p.quakes_m7, "events", "USGS YTD + Poisson"));
+    cards.push(projCard("EONET wildfires (events)", p.wildfires_count, "events", "NASA EONET YTD"));
+    cards.push(projCard("US wildfire acres", p.wildfires_acres, "acres", "NIFC + 2014-2024 climo"));
+    cards.push(projCard("US tornadoes", p.tornadoes, "tornadoes", "SPC monthly climo"));
+    cards.push(projCard("FEMA major disasters (DR)", p.fema_dr, "DR decls", "OpenFEMA YTD"));
     document.getElementById("proj-grid").innerHTML = cards.join("");
   }
 
-  async function loadSummary() {
+  function renderDrought(d) {
+    const target = document.getElementById("drought-card");
+    if (!d || d.error) {
+      target.innerHTML = `<div class="err">USDM unavailable: ${escapeHtml(d?.error || "no data")}</div>`;
+      return;
+    }
+    const segs = [
+      { key: "none_pct", label: "None", cls: "drought-none" },
+      { key: "d0_pct",   label: "D0 (Abnormally dry)", cls: "drought-d0" },
+      { key: "d1_pct",   label: "D1 (Moderate)", cls: "drought-d1" },
+      { key: "d2_pct",   label: "D2 (Severe)", cls: "drought-d2" },
+      { key: "d3_pct",   label: "D3 (Extreme)", cls: "drought-d3" },
+      { key: "d4_pct",   label: "D4 (Exceptional)", cls: "drought-d4" },
+    ];
+    const bars = segs.map(s => {
+      const v = d[s.key] || 0;
+      if (v <= 0) return "";
+      return `<div class="${s.cls}" style="width:${v}%" title="${escapeHtml(s.label)}: ${v}%">${v >= 5 ? v.toFixed(0) + '%' : ''}</div>`;
+    }).join("");
+    target.innerHTML = `<div class="card">
+        <h3>${escapeHtml(d.aoi.toUpperCase())} as of ${escapeHtml(d.map_date || "?")}</h3>
+        <div class="drought-bar">${bars}</div>
+        <div class="sub">D2+ (severe or worse): <strong>${fmt(d.d2_plus_pct)}%</strong> · D3+ (extreme or worse): <strong>${fmt(d.d3_plus_pct)}%</strong></div>
+        <div class="source">${escapeHtml(d.source || "")}</div>
+      </div>`;
+  }
+
+  function renderGdacs(summary) {
+    const target = document.getElementById("gdacs-table");
+    const g = summary.gdacs || {};
+    const events = g.events_top || [];
+    if (!events.length) {
+      target.innerHTML = '<div class="card">No orange or red GDACS events right now.</div>';
+      return;
+    }
+    const rows = events.map(e => {
+      const cls = e.alert_level === "Red" ? "hot" : e.alert_level === "Orange" ? "accent" : "warn";
+      return `<tr>` +
+        `<td>${pill(e.alert_level || "?", cls)}</td>` +
+        `<td>${escapeHtml(e.event_type || "?")}</td>` +
+        `<td>${escapeHtml(e.country || "?")}</td>` +
+        `<td>${escapeHtml(e.title || "?")}</td>` +
+        `<td class="muted">${escapeHtml((e.from_date || "").slice(0, 10))}</td>` +
+        `<td>${e.link ? `<a href="${escapeHtml(e.link)}" target="_blank" rel="noopener">GDACS</a>` : "-"}</td>` +
+        `</tr>`;
+    }).join("");
+    target.innerHTML = `<table><thead><tr>` +
+      `<th>Alert</th><th>Type</th><th>Country</th><th>Title</th><th>From</th><th></th>` +
+      `</tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  async function loadSignificant() {
     try {
-      const summary = await fetchJson("/api/summary");
-      renderActive(summary);
-      renderProjections(summary);
+      const sig = await fetchJson("/api/quakes/significant?window=month");
+      const target = document.getElementById("significant-table");
+      const events = sig.events || [];
+      if (!events.length) {
+        target.innerHTML = '<div class="card">No significant earthquakes in the last 30 days.</div>';
+        return;
+      }
+      const rows = events.slice(0, 20).map(q => {
+        const alertCls = q.alert === "red" ? "hot"
+                       : q.alert === "orange" ? "accent"
+                       : q.alert === "yellow" ? "warn"
+                       : q.alert === "green" ? "good" : "";
+        return `<tr>` +
+          `<td><span class="pill ${q.mag >= 7 ? 'hot' : q.mag >= 6 ? 'warn' : ''}">M${fmt(q.mag, 1)}</span></td>` +
+          `<td>${q.alert ? pill(q.alert.toUpperCase(), alertCls) : '<span class="muted">none</span>'}</td>` +
+          `<td>${escapeHtml(q.place || "?")}</td>` +
+          `<td class="muted">${escapeHtml((q.time_iso || "").replace("T", " ").slice(0, 16))} UTC</td>` +
+          `<td class="num">${fmt(q.felt) || "-"}</td>` +
+          `<td>${q.tsunami ? pill("tsunami", "hot") : ""} ${q.url ? `<a href="${escapeHtml(q.url)}" target="_blank" rel="noopener">USGS</a>` : ""}</td>` +
+          `</tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>` +
+        `<th>Mag</th><th>PAGER</th><th>Location</th><th>Time</th><th>Felt</th><th></th>` +
+        `</tr></thead><tbody>${rows}</tbody></table>`;
     } catch (e) {
-      const grid = document.getElementById("active-grid");
-      grid.innerHTML = `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("significant-table").innerHTML =
+        `<div class="err">Significant feed failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -266,7 +525,7 @@
         target.innerHTML = '<div class="card">No M5+ quakes in the last 30 days.</div>';
         return;
       }
-      const rows = q.quakes.slice(0, 25).map(qk => {
+      const rows = q.quakes.slice(0, 30).map(qk => {
         const cls = qk.mag >= 7 ? "hot" : qk.mag >= 6 ? "warn" : "";
         const tsuLabel = qk.tsunami ? pill("tsunami", "hot") : "";
         return `<tr>` +
@@ -281,7 +540,66 @@
         `<th>Magnitude</th><th>Location</th><th>Time</th><th>Depth</th><th>Source</th>` +
         `</tr></thead><tbody>${rows}</tbody></table>`;
     } catch (e) {
-      document.getElementById("quakes-table").innerHTML = `<div class="err">Quake fetch failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("quakes-table").innerHTML =
+        `<div class="err">Quake fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadFires() {
+    try {
+      const f = await fetchJson("/api/fires/active");
+      const target = document.getElementById("fires-table");
+      const incidents = f.incidents || [];
+      if (!incidents.length) {
+        target.innerHTML = '<div class="card">No active US wildfire incidents reporting acres right now.</div>';
+        return;
+      }
+      const rows = incidents.slice(0, 20).map(fi => {
+        const ctn = fi.percent_contained;
+        const ctnPill = ctn != null ? pill(`${fmt(ctn)}% contained`,
+          ctn >= 90 ? "good" : ctn >= 50 ? "warn" : "hot") : "";
+        return `<tr>` +
+          `<td><strong>${escapeHtml(fi.name || "?")}</strong></td>` +
+          `<td class="num">${fmtBig(fi.daily_acres)}</td>` +
+          `<td class="num muted">${fmtBig(fi.discovery_acres)}</td>` +
+          `<td>${ctnPill}</td>` +
+          `<td class="muted">${escapeHtml((fi.discovery_iso || "").slice(0, 10))}</td>` +
+          `</tr>`;
+      }).join("");
+      const totalAcres = f.active_acres_total || 0;
+      target.innerHTML = `<table><thead><tr>` +
+        `<th>Incident</th><th>Daily acres</th><th>At discovery</th><th>Containment</th><th>Discovered</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table>` +
+        `<div class="footer" style="margin-top:8px">Total active acres: <strong>${fmtBig(totalAcres)}</strong> across ${fmt(f.count)} incidents · source: ${escapeHtml(f.source || "")}</div>`;
+    } catch (e) {
+      document.getElementById("fires-table").innerHTML =
+        `<div class="err">NIFC feed failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadVolcanoes() {
+    try {
+      const v = await fetchJson("/api/volcanoes");
+      const target = document.getElementById("volcanoes-table");
+      const vols = v.volcanoes || [];
+      if (!vols.length) {
+        target.innerHTML = '<div class="card">GVP feed quiet this week.</div>';
+        return;
+      }
+      const rows = vols.slice(0, 20).map(vo => {
+        return `<tr>` +
+          `<td><strong>${escapeHtml(vo.name || "?")}</strong></td>` +
+          `<td>${escapeHtml(vo.country || "?")}</td>` +
+          `<td class="muted">${escapeHtml(vo.summary || "")}</td>` +
+          `<td>${vo.link ? `<a href="${escapeHtml(vo.link)}" target="_blank" rel="noopener">GVP</a>` : "-"}</td>` +
+          `</tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>` +
+        `<th>Volcano</th><th>Country</th><th>Week summary</th><th></th>` +
+        `</tr></thead><tbody>${rows}</tbody></table>`;
+    } catch (e) {
+      document.getElementById("volcanoes-table").innerHTML =
+        `<div class="err">GVP feed failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -294,7 +612,7 @@
         target.innerHTML = '<div class="card">No live disaster markets found right now.</div>';
         return;
       }
-      const rows = markets.slice(0, 50).map(mk => {
+      const rows = markets.slice(0, 80).map(mk => {
         const title = mk._event_title || mk.question || "?";
         const q = mk.question || "";
         const implied = mk._implied_p;
@@ -306,37 +624,104 @@
           const sign = edge > 0 ? "+" : "";
           edgeCell = `<td class="num ${cls}">${sign}${edge.toFixed(1)} pp</td>`;
         }
+        const usedPill = mk._model_used ? pill(mk._model_used, "info") : "";
         return `<tr>` +
           `<td>${escapeHtml(title)}<div class="muted" style="font-size:11px;margin-top:3px">${escapeHtml(q)}</div></td>` +
           `<td class="num">${pct(implied)}</td>` +
           `<td class="num">${pct(model)}</td>` +
           `${edgeCell}` +
-          `<td class="muted">${escapeHtml(mk._rationale || "")}</td>` +
+          `<td>${usedPill}<div class="muted" style="font-size:11px;margin-top:3px">${escapeHtml(mk._rationale || "")}</div></td>` +
           `</tr>`;
       }).join("");
+      const tally = Object.entries(m.by_model || {}).map(([k, v]) => `${k}=${v}`).join(" · ");
       target.innerHTML = `<table><thead><tr>` +
-        `<th>Market</th><th>Implied</th><th>Model</th><th>Edge</th><th>Rationale</th>` +
+        `<th>Market</th><th>Implied</th><th>Model</th><th>Edge</th><th>Model + rationale</th>` +
         `</tr></thead><tbody>${rows}</tbody></table>` +
-        `<div class="footer">${markets.length} markets &middot; storm proj: ${m.storm_projection?.projected_year_end_count ?? "?"} named ` +
-        `&middot; M5+ quake proj: ${m.quake_projections?.m5?.projected_year_end_count ?? "?"} ` +
-        `&middot; wildfire proj: ${m.wildfire_projection?.projected_year_end_count ?? "?"}</div>`;
+        `<div class="footer" style="margin-top:8px">${m.scored_count}/${m.count} scored · ${escapeHtml(tally)}</div>`;
     } catch (e) {
-      document.getElementById("markets-table").innerHTML = `<div class="err">Market fetch failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("markets-table").innerHTML =
+        `<div class="err">Market fetch failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
-  loadSummary();
+  async function loadBacktest() {
+    try {
+      const b = await fetchJson("/api/backtest?n_years=10");
+      const target = document.getElementById("backtest-table");
+      const sections = [];
+      if ((b.atlantic_storms || []).length) {
+        const rows = b.atlantic_storms.map(r => `<tr>` +
+          `<td>${r.year}</td><td class="muted">${r.as_of}</td>` +
+          `<td class="num">${fmt(r.projected_year_end_count)}</td>` +
+          `<td class="num">${fmt(r.actual_year_end_count)}</td>` +
+          `<td class="num ${Math.abs(r.error_count) <= 2 ? 'edge-buy' : Math.abs(r.error_count) <= 5 ? '' : 'edge-sell'}">${r.error_count > 0 ? '+' : ''}${r.error_count}</td>` +
+          `</tr>`).join("");
+        sections.push(
+          `<h3 style="margin:16px 0 6px;color:var(--text-2);font-size:13px">Atlantic named storms</h3>` +
+          `<table><thead><tr><th>Year</th><th>As of</th><th>Projected</th><th>Actual</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table>`
+        );
+      }
+      if ((b.wildfire_acres || []).length) {
+        const rows = b.wildfire_acres.map(r => `<tr>` +
+          `<td>${r.year}</td><td class="muted">${r.as_of}</td>` +
+          `<td class="num">${fmtBig(r.projected_year_end_acres)}</td>` +
+          `<td class="num">${fmtBig(r.actual_year_end_acres)}</td>` +
+          `<td class="num">${r.error_acres > 0 ? '+' : ''}${fmtBig(r.error_acres)}</td>` +
+          `</tr>`).join("");
+        sections.push(
+          `<h3 style="margin:16px 0 6px;color:var(--text-2);font-size:13px">US wildfire acres burned</h3>` +
+          `<table><thead><tr><th>Year</th><th>As of</th><th>Projected</th><th>Actual</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table>`
+        );
+      }
+      if (!sections.length) {
+        target.innerHTML = '<div class="card">No backtest data available.</div>';
+        return;
+      }
+      target.innerHTML = sections.join("") +
+        `<div class="footer" style="margin-top:8px"><strong>Method:</strong> ` +
+        Object.entries(b.method || {}).map(([k, v]) =>
+          `<div><em>${escapeHtml(k)}</em>: ${escapeHtml(v)}</div>`
+        ).join("") + `</div>`;
+    } catch (e) {
+      document.getElementById("backtest-table").innerHTML =
+        `<div class="err">Backtest fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadAll() {
+    try {
+      const summary = await fetchJson("/api/summary");
+      renderCritStrip(summary);
+      renderActive(summary);
+      renderProjections(summary);
+      renderDrought(summary.drought);
+      renderGdacs(summary);
+      setUpdated(summary.fetched_at);
+    } catch (e) {
+      document.getElementById("active-grid").innerHTML =
+        `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  loadAll();
+  loadSignificant();
   loadQuakes();
+  loadFires();
+  loadVolcanoes();
   loadMarkets();
+  loadBacktest();
 
-  document.getElementById("footer").textContent =
-    "Sources: USGS FDSN · NHC CurrentStorms · NWS api.weather.gov · NASA EONET · Polymarket Gamma. " +
-    "Models are climatology + Poisson — informational, not investment advice.";
-
-  // Refresh every 5 minutes
-  setInterval(loadSummary, 5 * 60 * 1000);
+  // Tick the "updated X ago" indicator every 5s
+  setInterval(() => setUpdated(window._lastFetch), 5000);
+  // Refresh the heavy sections every 5 minutes
+  setInterval(loadAll, 5 * 60 * 1000);
+  setInterval(loadSignificant, 10 * 60 * 1000);
   setInterval(loadQuakes, 5 * 60 * 1000);
+  setInterval(loadFires, 15 * 60 * 1000);
+  setInterval(loadVolcanoes, 6 * 60 * 60 * 1000);
   setInterval(loadMarkets, 5 * 60 * 1000);
+  setInterval(loadBacktest, 60 * 60 * 1000);
+})();
 </script>
 </body>
 </html>
