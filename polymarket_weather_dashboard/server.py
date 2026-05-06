@@ -24,6 +24,9 @@ from flask import Flask, jsonify, request, send_from_directory, make_response
 from scipy.stats import norm
 
 import weather_calibration as _wcal
+import weather_downscaling as _wds
+import weather_highres as _whr
+import weather_intraday as _wint
 import weather_pure as _wpure
 
 app = Flask(__name__, static_folder="static")
@@ -197,6 +200,21 @@ CREATE TABLE IF NOT EXISTS intraday_max (
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (icao, obs_date)
 );
+
+-- Full intraday METAR trajectory (vs intraday_max which only keeps the
+-- running peak). The conditional-probability narrowing in
+-- `weather_intraday` reads this to decide whether the day's peak is
+-- already past or whether an unobserved climb is still likely.
+CREATE TABLE IF NOT EXISTS intraday_obs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    icao        TEXT NOT NULL,
+    obs_date    TEXT NOT NULL,            -- station-local date
+    obs_time    TEXT NOT NULL,            -- ISO timestamp of the METAR
+    temp_f      REAL NOT NULL,
+    UNIQUE(icao, obs_date, obs_time)
+);
+CREATE INDEX IF NOT EXISTS idx_intraday_obs_lookup
+  ON intraday_obs(icao, obs_date, obs_time);
 """
 
 
@@ -1051,15 +1069,32 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
     def _fetch_climo():
         return "climatology", fetch_climatology(lat, lon, date_str)
 
-    # Launch all fetches in parallel: ensemble models + NWS + climatology
-    with ThreadPoolExecutor(max_workers=len(WEATHER_MODELS) + 2) as pool:
+    # High-res deterministic models that cover this point (HRRR for CONUS,
+    # AROME-FR for France, UKMO 2km, ICON-D2, HARMONIE-DINI). Empty list
+    # if the station is outside every high-res footprint, e.g. Sydney.
+    highres_targets = _whr.applicable_models(lat, lon)
+    highres_results: dict = {}
+
+    def _fetch_highres(model):
+        return model.id, _whr.fetch_highres_forecast(lat, lon, date_str, model)
+
+    # Launch all fetches in parallel: ensemble models + NWS + climatology + high-res
+    workers = len(WEATHER_MODELS) + 2 + len(highres_targets)
+    with ThreadPoolExecutor(max_workers=max(2, workers)) as pool:
         futures = {pool.submit(_fetch_one, m): m for m in WEATHER_MODELS.keys()}
         futures[pool.submit(_fetch_nws)] = "nws"
         futures[pool.submit(_fetch_climo)] = "climatology"
+        for hr in highres_targets:
+            futures[pool.submit(_fetch_highres, hr)] = "highres:" + hr.id
 
         for future in as_completed(futures):
             source_id = futures[future]
             try:
+                if source_id.startswith("highres:"):
+                    model_id, result = future.result()
+                    if result:
+                        highres_results[model_id] = result
+                    continue
                 model_id, result = future.result()
                 if result:
                     if model_id in WEATHER_MODELS:
@@ -1070,6 +1105,21 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
                     models_data[model_id] = result
             except Exception as e:
                 logger.warning("Forecast source %s failed: %s", source_id, e)
+
+    # Collapse the high-res forecasts (when any) into a single "highres_block"
+    # consensus member — keeps them from being out-voted by ECMWF's 51-member
+    # ensemble while still giving them a voice proportional to how many
+    # high-res systems agreed.
+    if highres_results:
+        block = _whr.synthesize_highres_member(highres_results)
+        if block:
+            # Promote block weight: each high-res model is sub-5km and
+            # generally beats global ensembles for next-day max in dense
+            # urban/coastal areas. Treat the block as if it had ~15
+            # ensemble members (still less than ECMWF's 51 but enough to
+            # matter for a station-local question).
+            block["members"] = max(15, len(highres_results) * 5)
+            models_data["highres_block"] = block
 
     if not models_data:
         return None
@@ -1118,6 +1168,7 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
 
     consensus_mean = round(weighted_mean / total_weight, 1)
     consensus_std = round(weighted_std / total_weight, 1) if weighted_std else 3.0
+    raw_consensus_mean = consensus_mean
 
     # If climatology is available, use it as a Bayesian prior to shrink
     # extreme forecasts toward the historical norm (10% weight)
@@ -1127,6 +1178,24 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
         consensus_mean = round(
             consensus_mean * (1 - climo_weight) + climo["mean"] * climo_weight, 1
         )
+
+    # Station downscaling: if we've fit a regression for this station,
+    # apply it to the consensus. The fit captures conditional biases
+    # (e.g. "model runs hot on clear afternoons in summer") that the
+    # mean-bias correction in the per-model loop can't see.
+    downscaling: dict = {}
+    if station:
+        try:
+            downscaling = fit_station_downscaling_model(station)
+            corrected = _wds.apply_downscaling(
+                downscaling, consensus_mean, date_str,
+                lead_days=max(0, (datetime.strptime(date_str, "%Y-%m-%d").date()
+                                  - datetime.now(timezone.utc).date()).days),
+            )
+            if corrected is not None:
+                consensus_mean = round(corrected, 1)
+        except Exception as e:
+            logger.warning("downscaling apply failed for %s: %s", station, e)
 
     # Empirical sigma floor: ensemble spread is famously under-dispersive,
     # so we take max(ensemble_std, residual_std) before inflating for lead.
@@ -1167,10 +1236,20 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
         "models": models_data,
         "lead_time_mult": round(lead_mult, 2),
         "raw_std": raw_consensus_std,
+        "raw_mean": raw_consensus_mean,
         "bias_corrected": bool(biases),
         "n_bias_models": len(biases),
         "empirical_sigma_floor": round(residual_floor, 2) if residual_floor else None,
         "n_residual_models": len(residuals_data) if residuals_data else 0,
+        "highres_models": list(highres_results.keys()),
+        "n_highres": len(highres_results),
+        "downscaling": {
+            "applied": downscaling.get("source") not in (None, "empty", "error"),
+            "n": downscaling.get("n", 0),
+            "source": downscaling.get("source"),
+            "r2": downscaling.get("r2"),
+            "delta_f": round(consensus_mean - raw_consensus_mean, 2),
+        } if downscaling else None,
     }
 
     # Snapshot the consensus and log per-model forecasts for future pairing
@@ -2257,20 +2336,36 @@ def compute_cross_correlations(city_key: str, target_date: str) -> list[dict]:
 #
 
 def update_intraday_max(icao: str):
-    """Poll METAR for the station and update the running daily max."""
+    """Poll METAR for the station and update the running daily max.
+
+    Also appends one row to `intraday_obs` per call so we keep the full
+    trajectory for the conditional-probability path. The trajectory is
+    keyed (icao, obs_date, obs_time) so duplicate METAR cycles on the
+    same minute coalesce.
+    """
     obs = fetch_metar(icao)
     if not obs or obs.get("temp_f") is None:
         return None
     temp_f = obs["temp_f"]
     # Determine local date from obs_time
+    obs_ts_iso = None
     try:
         obs_ts = obs.get("obs_time")
         if isinstance(obs_ts, (int, float)):
             obs_dt = datetime.fromtimestamp(obs_ts, tz=timezone.utc)
+            obs_ts_iso = obs_dt.isoformat()
+        elif isinstance(obs_ts, str):
+            obs_ts_iso = obs_ts
+            try:
+                obs_dt = datetime.fromisoformat(obs_ts.replace("Z", "+00:00"))
+            except ValueError:
+                obs_dt = datetime.now(timezone.utc)
         else:
             obs_dt = datetime.now(timezone.utc)
+            obs_ts_iso = obs_dt.isoformat()
     except Exception:
         obs_dt = datetime.now(timezone.utc)
+        obs_ts_iso = obs_dt.isoformat()
     obs_date = obs_dt.strftime("%Y-%m-%d")
 
     try:
@@ -2288,14 +2383,24 @@ def update_intraday_max(icao: str):
                        WHERE icao = ? AND obs_date = ?""",
                     (new_max, temp_f, icao, obs_date),
                 )
-                return new_max
+                result = new_max
             else:
                 conn.execute(
                     """INSERT INTO intraday_max (icao, obs_date, running_max, last_obs_f)
                        VALUES (?, ?, ?, ?)""",
                     (icao, obs_date, temp_f, temp_f),
                 )
-                return temp_f
+                result = temp_f
+            # Append to trajectory (idempotent on duplicate ts)
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO intraday_obs
+                       (icao, obs_date, obs_time, temp_f) VALUES (?, ?, ?, ?)""",
+                    (icao, obs_date, obs_ts_iso or obs_dt.isoformat(), float(temp_f)),
+                )
+            except Exception:
+                pass
+            return result
     except Exception as e:
         logger.warning("update_intraday_max %s: %s", icao, e)
     return None
@@ -2314,6 +2419,54 @@ def get_intraday_max(icao: str, obs_date: str) -> Optional[dict]:
     except Exception:
         pass
     return None
+
+
+def get_intraday_trajectory(icao: str, obs_date: str) -> list[dict]:
+    """Return the full ordered intraday METAR trajectory for one station+day."""
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT obs_time, temp_f FROM intraday_obs
+                   WHERE icao = ? AND obs_date = ?
+                   ORDER BY obs_time ASC""",
+                (icao, obs_date),
+            ).fetchall()
+        return [{"obs_time": r["obs_time"], "temp_f": r["temp_f"]} for r in rows]
+    except Exception:
+        return []
+
+
+def fit_station_downscaling_model(station: str, lookback_days: int = 180) -> dict:
+    """Fit (or retrieve cached) a downscaling regression for one station.
+
+    Pulls every paired (forecast, observed) row in `forecast_history` for
+    the station over the lookback window, hands them to
+    `weather_downscaling.fit_station_downscaling`, and caches the result
+    for an hour. Used by `fetch_multi_model_forecast` to apply a
+    station-level correction on top of the per-model bias.
+    """
+    cache_key = f"downscale_{station}_{lookback_days}"
+    cached = cache_get(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    fitted: dict
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT forecast_high, observed_high, target_date,
+                          CAST(julianday(target_date) - julianday(date(made_at)) AS INTEGER) AS lead_days
+                   FROM forecast_history
+                   WHERE station = ? AND observed_high IS NOT NULL
+                     AND target_date >= date('now', ?)""",
+                (station, f"-{lookback_days} days"),
+            ).fetchall()
+        fitted = _wds.fit_station_downscaling([dict(r) for r in rows])
+    except Exception as e:
+        logger.warning("fit_station_downscaling_model failed for %s: %s", station, e)
+        fitted = {"coef": None, "intercept": None, "r2": None,
+                  "n": 0, "source": "error", "residual_std": None}
+    cache_set(cache_key, fitted)
+    return fitted
 
 
 def estimate_hours_remaining(lat: float, lon: float) -> Optional[float]:
@@ -2475,18 +2628,31 @@ def compute_probability(forecast: dict, temp_info: dict) -> Optional[float]:
     return full.get("probability") if full else None
 
 
-def compute_probability_full(forecast: dict, temp_info: dict) -> Optional[dict]:
-    """Score a market with both Gaussian and empirical-CDF probabilities.
+def compute_probability_full(forecast: dict, temp_info: dict,
+                             intraday_context: Optional[dict] = None
+                             ) -> Optional[dict]:
+    """Score a market with Gaussian, empirical-CDF, and (optionally) an
+    intraday-conditioned probability.
 
-    The empirical reading uses the raw ensemble member temperatures stored
-    on the forecast dict (`forecast["ensemble"]`, populated by
-    `fetch_multi_model_forecast`). When available it's preferred because
-    it captures fat tails the Gaussian fit misses — exactly where the
-    dashboard's threshold-edge signals get most aggressive.
+    The empirical reading uses the raw ensemble member temperatures
+    stored on the forecast dict (populated by
+    `fetch_multi_model_forecast`). When `intraday_context` is supplied
+    we *also* compute a conditional probability that incorporates
+    today's running max + remaining hourly forecast — this is what
+    sharpens "P(YES) for above-80°F when running max is already 78 at
+    2pm" from 50% to 90%+.
 
-    Returns a dict with keys: probability (consensus), gaussian, empirical,
-    method, tail_warning, n_members. None if neither path produced a
-    number.
+    `intraday_context` shape:
+        {
+            "running_max": float,        # °F observed so far today
+            "hourly_temps": list[float], # 24-length forecast hourly °F
+            "hours_elapsed": int,        # how far into the day we are
+            "station_residual_std": float,  # optional, defaults to 2.5
+        }
+
+    Returns a dict whose `probability` field is the conditioned reading
+    when available, else the empirical, else the Gaussian. The other
+    paths are exposed alongside so callers can show all three.
     """
     if not forecast:
         return None
@@ -2495,7 +2661,28 @@ def compute_probability_full(forecast: dict, temp_info: dict) -> Optional[dict]:
     members = forecast.get("ensemble") or []
     if mean is None and not members:
         return None
-    return _wcal.blended_probability(temp_info, mean, std, members=members)
+    base = _wcal.blended_probability(temp_info, mean, std, members=members)
+    if not base:
+        return None
+
+    if intraday_context:
+        try:
+            cond_dist = _wint.conditional_max_distribution(
+                running_max_f=intraday_context.get("running_max"),
+                hourly_temps=intraday_context.get("hourly_temps"),
+                hours_elapsed=int(intraday_context.get("hours_elapsed") or 0),
+                station_residual_std=float(intraday_context.get("station_residual_std")
+                                            or 2.5),
+            )
+            cond_p = _wint.conditional_probability(temp_info, cond_dist) if cond_dist else None
+            if cond_p is not None:
+                base["intraday_conditional"] = cond_p
+                base["intraday_distribution"] = cond_dist
+                base["probability"] = cond_p
+                base["method"] = "intraday_conditional"
+        except Exception as e:
+            logger.warning("intraday probability compute failed: %s", e)
+    return base
 
 
 def categorize_market(question: str, tags: list) -> str:
@@ -3648,6 +3835,96 @@ def api_calibration():
         "brier_score": round(_wcal.brier_score(preds, outcomes) or 0.0, 4) if preds else None,
         "log_loss": round(_wcal.log_loss(preds, outcomes) or 0.0, 4) if preds else None,
         "reliability": _wcal.reliability_diagram(preds, outcomes, n_bins=10),
+    })
+
+
+@app.route("/api/downscaling/<city>")
+@require_auth
+def api_downscaling(city):
+    """Per-city station-downscaling regression: coefficients, R², residual
+    std, and out-of-sample-style MAE comparison against the raw forecast.
+
+    The endpoint is read-only: fitting happens inside the cache call.
+    """
+    city_key = (city or "").lower().strip()
+    info = STATION_MAP.get(city_key)
+    if not info:
+        return jsonify({"error": "unknown city"}), 404
+    fitted = fit_station_downscaling_model(city_key)
+
+    # Pull the same set of paired rows for an MAE benchmark
+    holdout = []
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT forecast_high, observed_high, target_date,
+                          CAST(julianday(target_date) - julianday(date(made_at)) AS INTEGER) AS lead_days
+                   FROM forecast_history
+                   WHERE station = ? AND observed_high IS NOT NULL
+                     AND target_date >= date('now', '-90 days')""",
+                (city_key,),
+            ).fetchall()
+        holdout = [dict(r) for r in rows]
+    except Exception:
+        pass
+    eval_block = _wds.evaluate_downscaling(fitted, holdout)
+    return jsonify({
+        "city": city_key,
+        "fit": fitted,
+        "evaluation_last_90d": eval_block,
+    })
+
+
+@app.route("/api/highres/<city>/<date>")
+@require_auth
+def api_highres(city, date):
+    """Per-city high-resolution model fan-out for a target date.
+
+    Returns each high-res model's daily-max forecast (HRRR for CONUS,
+    AROME-FR for France, UKMO 2 km for UK, ICON-D2 for Germany,
+    HARMONIE-DINI for Nordics) plus the synthesized block member that
+    feeds into the consensus.
+    """
+    city_key = (city or "").lower().strip()
+    info = STATION_MAP.get(city_key)
+    if not info:
+        return jsonify({"error": "unknown city"}), 404
+    lat, lon = info[0], info[1]
+    targets = _whr.applicable_models(lat, lon)
+    if not targets:
+        return jsonify({"city": city_key, "models": [], "block": None,
+                        "note": "no high-res models cover this lat/lon"})
+    results = _whr.fetch_all_highres_forecasts(lat, lon, date, models=targets)
+    block = _whr.synthesize_highres_member(results)
+    return jsonify({
+        "city": city_key,
+        "applicable_models": [m.id for m in targets],
+        "results": results,
+        "block": block,
+    })
+
+
+@app.route("/api/intraday_trajectory/<city>/<date>")
+@require_auth
+def api_intraday_trajectory(city, date):
+    """Full intraday METAR temperature trajectory for one city × date.
+
+    Used by the conditional-probability narrowing path and also by the
+    front-end to draw a "what's actually happened today vs the forecast"
+    chart on the per-market drill-down.
+    """
+    city_key = (city or "").lower().strip()
+    info = STATION_MAP.get(city_key)
+    if not info or len(info) < 3:
+        return jsonify({"error": "unknown city"}), 404
+    icao = info[2]
+    traj = get_intraday_trajectory(icao, date)
+    running = get_intraday_max(icao, date)
+    return jsonify({
+        "city": city_key, "icao": icao, "date": date,
+        "running_max": (running or {}).get("running_max"),
+        "obs_count": (running or {}).get("obs_count", 0),
+        "trajectory": traj,
     })
 
 
