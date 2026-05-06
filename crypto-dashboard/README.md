@@ -37,6 +37,7 @@ docker compose up --build crypto
 | `news_trade_scanner.py` | Trades-first / news-second correlation scanner. Looks at flagged suspicious trades, scans breaking news for matching topics, scores correlations. Runs every 20 min from `server.py`. |
 | `trading_bot.py` | Standalone reactive paper-trading bot. Monitors 5-minute windows for cross events, confirms with velocity/momentum/RSI/choppiness, runs entry/exit logic with daily loss limits. |
 | `email_alerts.py` | SMTP alert sender for high-confidence signals. SMTP creds come from `SMTP_HOST` / `SMTP_USER` / `SMTP_PASS` env vars. |
+| `long_term.py` | Long-horizon lens: daily bars + CoinMetrics on-chain metrics, cycle-phase classifier (Mayer / 200WMA), Sharpe/Sortino/drawdown/vol-regime, MVRV/NVT proxies, cycle-aware DCA recommender, drift-band rebalance plan, risk-off composite. Served at `/long-term`. Refreshed every 6 h by a background task in `server.py`. |
 
 **HTML / data**
 | File | Purpose |
@@ -72,6 +73,8 @@ docker compose up --build crypto
 | `DIVERGENCE_THRESHOLD` | `10` | Percentage points before a signal is flagged |
 | `SPORT_KEY` | `soccer_epl` | Used by the cross-market scanner |
 | `POLL_INTERVAL` | `300` | Seconds between scans |
+| `LONG_TERM_RF_RATE` | `0.04` | Risk-free rate used in Sharpe/Sortino on the `/long-term` page |
+| `GLASSNODE_API_KEY` | _(unset)_ | Optional. If set, the long-term module will pull richer on-chain metrics from Glassnode in addition to the free CoinMetrics Community tier |
 
 See `.env.example` for the full list.
 

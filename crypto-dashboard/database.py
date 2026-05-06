@@ -183,6 +183,85 @@ CREATE TABLE IF NOT EXISTS kalshi_credentials (
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ── Long-term holding tables ────────────────────────────────────────────────
+-- Daily OHLCV bars used by the long_term analytics module. Cheap to keep in
+-- the same DB as the rest of the dashboard data; ~5 KB per asset per year.
+CREATE TABLE IF NOT EXISTS crypto_daily_bars (
+    ticker     TEXT NOT NULL,
+    date       TEXT NOT NULL,           -- ISO YYYY-MM-DD
+    open       REAL NOT NULL,
+    high       REAL NOT NULL,
+    low        REAL NOT NULL,
+    close      REAL NOT NULL,
+    volume     REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (ticker, date)
+);
+
+-- Long, narrow on-chain metrics table — one row per (ticker, metric, date).
+-- Lets us add new metrics without schema migrations.
+CREATE TABLE IF NOT EXISTS crypto_onchain_metrics (
+    ticker  TEXT NOT NULL,
+    metric  TEXT NOT NULL,
+    date    TEXT NOT NULL,
+    value   REAL NOT NULL,
+    PRIMARY KEY (ticker, metric, date)
+);
+CREATE INDEX IF NOT EXISTS idx_onchain_ticker_metric ON crypto_onchain_metrics(ticker, metric);
+
+-- User holdings, lot-aware. One row per acquisition lot so we can track
+-- long-term vs short-term capital gains correctly.
+CREATE TABLE IF NOT EXISTS crypto_holdings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL,
+    ticker        TEXT NOT NULL,
+    qty           REAL NOT NULL,
+    cost_basis    REAL NOT NULL,        -- USD per unit at acquisition
+    acquired_at   TEXT NOT NULL,        -- ISO date
+    note          TEXT DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_holdings_user ON crypto_holdings(user_id);
+CREATE INDEX IF NOT EXISTS idx_holdings_user_ticker ON crypto_holdings(user_id, ticker);
+
+-- Per-user target portfolio weights. Sum should be ~1.0; we don't enforce it.
+CREATE TABLE IF NOT EXISTS crypto_target_weights (
+    user_id     TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    weight      REAL NOT NULL,
+    drift_band  REAL NOT NULL DEFAULT 0.05,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, ticker)
+);
+
+-- DCA schedule: one row per (user, ticker). The bot/cron consumes this.
+CREATE TABLE IF NOT EXISTS crypto_dca_schedule (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    frequency       TEXT NOT NULL DEFAULT 'weekly',  -- daily | weekly | monthly
+    base_amount_usd REAL NOT NULL,
+    use_multiplier  INTEGER NOT NULL DEFAULT 1,      -- apply cycle-aware multiplier?
+    active          INTEGER NOT NULL DEFAULT 1,
+    next_run_at     TEXT,
+    last_run_at     TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, ticker)
+);
+
+-- Long-term alert preferences (drawdown depth, MVRV cross, vol regime change).
+CREATE TABLE IF NOT EXISTS crypto_long_term_alerts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    ticker       TEXT NOT NULL,
+    alert_type   TEXT NOT NULL,         -- drawdown | mvrv_high | mvrv_low | vol_regime | risk_off
+    threshold    REAL,
+    last_fired_at TEXT,
+    active       INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, ticker, alert_type)
+);
+CREATE INDEX IF NOT EXISTS idx_lt_alerts_user ON crypto_long_term_alerts(user_id);
 """
 
 
@@ -828,6 +907,260 @@ def remove_clob_favorite(user_id: str, condition_id: str):
         c.execute(
             "DELETE FROM clob_favorites WHERE user_id = ? AND condition_id = ?",
             (user_id, condition_id),
+        )
+
+
+# ── Long-term: daily bars ───────────────────────────────────────────────────
+
+def upsert_daily_bars(rows: list[tuple]) -> None:
+    """Bulk upsert. rows: list of (ticker, date, open, high, low, close, volume)."""
+    if not rows:
+        return
+    with _conn() as c:
+        c.executemany(
+            """INSERT INTO crypto_daily_bars (ticker, date, open, high, low, close, volume)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 open=excluded.open, high=excluded.high, low=excluded.low,
+                 close=excluded.close, volume=excluded.volume""",
+            rows,
+        )
+
+
+def get_daily_bars(ticker: str, days: int = 365 * 4) -> list[Row]:
+    """Oldest→newest. `days` is just a window cap; we still return everything stored
+    if you have less than that."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT date, open, high, low, close, volume FROM crypto_daily_bars "
+            "WHERE ticker = ? AND date >= ? ORDER BY date ASC",
+            (ticker, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_latest_daily_bar_date(ticker: str) -> Optional[str]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT MAX(date) AS d FROM crypto_daily_bars WHERE ticker = ?",
+            (ticker,),
+        ).fetchone()
+    return row["d"] if row and row["d"] else None
+
+
+# ── Long-term: on-chain metrics ─────────────────────────────────────────────
+
+def upsert_onchain_metrics(rows: list[tuple]) -> None:
+    """Bulk upsert. rows: list of (ticker, metric, date, value)."""
+    if not rows:
+        return
+    with _conn() as c:
+        c.executemany(
+            """INSERT INTO crypto_onchain_metrics (ticker, metric, date, value)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(ticker, metric, date) DO UPDATE SET value=excluded.value""",
+            rows,
+        )
+
+
+def get_onchain_metric(ticker: str, metric: str, days: int = 365) -> list[Row]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT date, value FROM crypto_onchain_metrics "
+            "WHERE ticker = ? AND metric = ? AND date >= ? ORDER BY date ASC",
+            (ticker, metric, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_latest_onchain_date(ticker: str) -> Optional[str]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT MAX(date) AS d FROM crypto_onchain_metrics WHERE ticker = ?",
+            (ticker,),
+        ).fetchone()
+    return row["d"] if row and row["d"] else None
+
+
+# ── Long-term: holdings (lot-aware) ─────────────────────────────────────────
+
+def add_holding(user_id: str, ticker: str, qty: float, cost_basis: float,
+                acquired_at: str, note: str = "") -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_holdings (user_id, ticker, qty, cost_basis, acquired_at, note)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, ticker, qty, cost_basis, acquired_at, note),
+        )
+        return int(cur.lastrowid)
+
+
+def remove_holding(user_id: str, holding_id: int) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM crypto_holdings WHERE id = ? AND user_id = ?",
+            (holding_id, user_id),
+        )
+
+
+def get_holdings(user_id: str) -> list[Row]:
+    """All lots, oldest first — caller can roll up by ticker."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, ticker, qty, cost_basis, acquired_at, note "
+            "FROM crypto_holdings WHERE user_id = ? ORDER BY acquired_at ASC, id ASC",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_holdings_rollup(user_id: str) -> list[dict]:
+    """Sum qty and weighted-avg cost basis per ticker."""
+    lots = get_holdings(user_id)
+    rollup: dict[str, dict] = {}
+    for lot in lots:
+        t = lot["ticker"]
+        agg = rollup.setdefault(t, {"ticker": t, "qty": 0.0, "cost_total": 0.0, "lots": 0})
+        agg["qty"] += float(lot["qty"])
+        agg["cost_total"] += float(lot["qty"]) * float(lot["cost_basis"])
+        agg["lots"] += 1
+    out = []
+    for t, agg in rollup.items():
+        avg_cost = agg["cost_total"] / agg["qty"] if agg["qty"] else 0.0
+        out.append({
+            "ticker": t, "qty": agg["qty"],
+            "avg_cost_basis": avg_cost, "cost_total": agg["cost_total"],
+            "lots": agg["lots"],
+        })
+    return out
+
+
+# ── Long-term: target weights ───────────────────────────────────────────────
+
+def set_target_weight(user_id: str, ticker: str, weight: float, drift_band: float = 0.05) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_target_weights (user_id, ticker, weight, drift_band, updated_at)
+               VALUES (?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id, ticker) DO UPDATE SET
+                 weight=excluded.weight, drift_band=excluded.drift_band,
+                 updated_at=datetime('now')""",
+            (user_id, ticker, weight, drift_band),
+        )
+
+
+def remove_target_weight(user_id: str, ticker: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM crypto_target_weights WHERE user_id = ? AND ticker = ?",
+            (user_id, ticker),
+        )
+
+
+def get_target_weights(user_id: str) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ticker, weight, drift_band, updated_at "
+            "FROM crypto_target_weights WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+# ── Long-term: DCA schedule ─────────────────────────────────────────────────
+
+def upsert_dca_schedule(user_id: str, ticker: str, frequency: str, base_amount_usd: float,
+                        use_multiplier: bool = True, active: bool = True) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_dca_schedule
+                 (user_id, ticker, frequency, base_amount_usd, use_multiplier, active)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, ticker) DO UPDATE SET
+                 frequency=excluded.frequency,
+                 base_amount_usd=excluded.base_amount_usd,
+                 use_multiplier=excluded.use_multiplier,
+                 active=excluded.active""",
+            (user_id, ticker, frequency, base_amount_usd,
+             1 if use_multiplier else 0, 1 if active else 0),
+        )
+
+
+def remove_dca_schedule(user_id: str, ticker: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM crypto_dca_schedule WHERE user_id = ? AND ticker = ?",
+            (user_id, ticker),
+        )
+
+
+def get_dca_schedules(user_id: str) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, ticker, frequency, base_amount_usd, use_multiplier, active, "
+            "       next_run_at, last_run_at "
+            "FROM crypto_dca_schedule WHERE user_id = ? ORDER BY ticker",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def mark_dca_run(user_id: str, ticker: str, next_run_at: str) -> None:
+    with _conn() as c:
+        c.execute(
+            """UPDATE crypto_dca_schedule
+               SET last_run_at = datetime('now'), next_run_at = ?
+               WHERE user_id = ? AND ticker = ?""",
+            (next_run_at, user_id, ticker),
+        )
+
+
+# ── Long-term: alerts ───────────────────────────────────────────────────────
+
+def upsert_long_term_alert(user_id: str, ticker: str, alert_type: str,
+                           threshold: Optional[float], active: bool = True) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_long_term_alerts (user_id, ticker, alert_type, threshold, active)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, ticker, alert_type) DO UPDATE SET
+                 threshold=excluded.threshold, active=excluded.active""",
+            (user_id, ticker, alert_type, threshold, 1 if active else 0),
+        )
+
+
+def get_long_term_alerts(user_id: str | None = None) -> list[Row]:
+    with _conn() as c:
+        if user_id:
+            rows = c.execute(
+                "SELECT id, user_id, ticker, alert_type, threshold, last_fired_at, active "
+                "FROM crypto_long_term_alerts WHERE user_id = ? AND active = 1",
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT id, user_id, ticker, alert_type, threshold, last_fired_at, active "
+                "FROM crypto_long_term_alerts WHERE active = 1",
+            ).fetchall()
+    return _rows(rows)
+
+
+def mark_long_term_alert_fired(alert_id: int) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE crypto_long_term_alerts SET last_fired_at = datetime('now') WHERE id = ?",
+            (alert_id,),
+        )
+
+
+def remove_long_term_alert(user_id: str, ticker: str, alert_type: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM crypto_long_term_alerts "
+            "WHERE user_id = ? AND ticker = ? AND alert_type = ?",
+            (user_id, ticker, alert_type),
         )
 
 

@@ -33,6 +33,7 @@ from btc_analyzer import (
 import database as db
 import clob_trading as clob
 import kalshi_trading as kalshi_auth
+import long_term as lt
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -462,9 +463,63 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(price_updater()))
     _bg_tasks.add(asyncio.create_task(window_refresher()))
     _bg_tasks.add(asyncio.create_task(news_trade_monitor()))
+    _bg_tasks.add(asyncio.create_task(long_term_refresher()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
     print("Server started. Loading data in background...")
+
+
+async def long_term_refresher():
+    """Refresh daily bars + on-chain metrics on startup, then every 6h.
+    The first pass runs after a short delay so the short-term pipeline gets
+    its head start; subsequent passes are cheap (incremental upserts)."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            result = await asyncio.to_thread(lt.refresh_all)
+            print(f"[long-term] refresh: {result}")
+            # Fire any matching alerts (pure background — no user notification yet).
+            await asyncio.to_thread(_evaluate_long_term_alerts)
+        except Exception as e:
+            print(f"[long-term] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(6 * 3600)
+
+
+def _evaluate_long_term_alerts():
+    """Check all active alerts against current snapshots and mark fired ones.
+    This is a placeholder for a full notification pipeline — for now it just
+    records last_fired_at so the UI can display 'recently fired' state."""
+    try:
+        alerts = db.get_long_term_alerts()
+    except Exception:
+        return
+    snaps = {s["ticker"]: s for s in lt.all_snapshots()}
+    for a in alerts:
+        snap = snaps.get(a["ticker"])
+        if not snap or not snap.get("ready"):
+            continue
+        atype = a["alert_type"]
+        thresh = a["threshold"]
+        fired = False
+        if atype == "drawdown" and thresh is not None:
+            fired = (snap.get("current_dd") or 0) <= -abs(float(thresh))
+        elif atype == "mvrv_high" and thresh is not None:
+            mvrv = snap.get("mvrv")
+            fired = mvrv is not None and mvrv >= float(thresh)
+        elif atype == "mvrv_low" and thresh is not None:
+            mvrv = snap.get("mvrv")
+            fired = mvrv is not None and mvrv <= float(thresh)
+        elif atype == "vol_regime":
+            fired = snap.get("vol_regime") in ("elevated", "extreme")
+        elif atype == "risk_off" and thresh is not None:
+            fired = (snap.get("risk_off") or {}).get("score", 0) >= float(thresh)
+        if fired:
+            try:
+                db.mark_long_term_alert_fired(a["id"])
+                db.log_alert(a["user_id"], a["ticker"], f"long_term:{atype}",
+                             f"{atype} threshold reached", confidence=0.0)
+            except Exception:
+                pass
 
 
 async def load_all_assets():
@@ -4725,6 +4780,669 @@ async def websocket_endpoint(ws: WebSocket):
         print(f"  [WS] Connection error: {type(e).__name__}: {e}")
         async with _ws_lock:
             connected_ws.discard(ws)
+
+
+# ===================================================================
+# LONG-TERM HOLDING — analytics, portfolio, DCA, rebalance
+# ===================================================================
+
+@app.get("/api/long-term/snapshot")
+async def long_term_snapshot(request: Request):
+    """All-asset snapshot: cycle phase, drawdown, vol regime, MVRV, risk-off."""
+    snaps = await asyncio.to_thread(lt.all_snapshots)
+    return {"assets": snaps, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/long-term/asset/{ticker}")
+async def long_term_asset(ticker: str, request: Request):
+    ticker = ticker.upper()
+    if ticker not in lt.TICKER_MAP:
+        raise HTTPException(status_code=404, detail="Unknown ticker")
+    snap = await asyncio.to_thread(lt.asset_snapshot, ticker)
+    # Include a slim daily price series for charting (last 365 days only).
+    dates, closes = await asyncio.to_thread(lt.get_daily_closes, ticker, 365)
+    snap["series"] = {"dates": dates, "closes": [float(c) for c in closes]}
+    # Plus a couple of on-chain series if we have them.
+    if ticker in lt.ONCHAIN_COVERED:
+        for m in ("CapMrktCurUSD", "CapRealUSD", "AdrActCnt"):
+            d, v = await asyncio.to_thread(lt.get_onchain_series, ticker, m, 365)
+            if len(v) > 0:
+                snap.setdefault("onchain", {})[m] = {"dates": d, "values": [float(x) for x in v]}
+    return snap
+
+
+@app.post("/api/long-term/refresh")
+async def long_term_force_refresh(request: Request):
+    """Force a refresh of daily bars + on-chain metrics. Localhost or admin only."""
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    if user is None and client_host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    result = await asyncio.to_thread(lt.refresh_all)
+    return result
+
+
+# ── Holdings ────────────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/holdings")
+async def get_holdings(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    lots = db.get_holdings(user["id"])
+    rollup = db.get_holdings_rollup(user["id"])
+    # Mark each lot with current value + unrealized P&L.
+    enriched_lots = []
+    snaps = {s["ticker"]: s for s in lt.all_snapshots()}
+    for lot in lots:
+        price = (snaps.get(lot["ticker"]) or {}).get("price")
+        cur_val = float(lot["qty"]) * price if price else None
+        cost = float(lot["qty"]) * float(lot["cost_basis"])
+        pnl = (cur_val - cost) if cur_val is not None else None
+        # Long-term holding = >= 365 days. Used for capital-gains hinting.
+        try:
+            held_days = (datetime.now(timezone.utc).date() - datetime.fromisoformat(lot["acquired_at"]).date()).days
+        except Exception:
+            held_days = None
+        enriched_lots.append({
+            **dict(lot), "current_price": price, "current_value": cur_val,
+            "unrealized_pnl": pnl,
+            "long_term_eligible": (held_days is not None and held_days >= 365),
+            "held_days": held_days,
+        })
+    # Roll up with current price too.
+    enriched_rollup = []
+    for r in rollup:
+        price = (snaps.get(r["ticker"]) or {}).get("price")
+        cur_val = r["qty"] * price if price else None
+        enriched_rollup.append({
+            **r, "current_price": price, "current_value": cur_val,
+            "unrealized_pnl": (cur_val - r["cost_total"]) if cur_val is not None else None,
+        })
+    return {"lots": enriched_lots, "rollup": enriched_rollup}
+
+
+@app.post("/api/long-term/holdings")
+async def add_holding(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    ticker = str(payload.get("ticker", "")).upper()
+    if ticker not in lt.TICKER_MAP:
+        raise HTTPException(status_code=400, detail="Unknown ticker")
+    try:
+        qty = float(payload.get("qty"))
+        cost_basis = float(payload.get("cost_basis"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="qty and cost_basis must be numeric")
+    if qty <= 0 or cost_basis <= 0:
+        raise HTTPException(status_code=400, detail="qty and cost_basis must be positive")
+    acquired_at = str(payload.get("acquired_at") or datetime.now(timezone.utc).date().isoformat())
+    note = str(payload.get("note", ""))[:200]
+    holding_id = db.add_holding(user["id"], ticker, qty, cost_basis, acquired_at, note)
+    return {"id": holding_id}
+
+
+@app.delete("/api/long-term/holdings/{holding_id}")
+async def delete_holding(holding_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    db.remove_holding(user["id"], holding_id)
+    return {"ok": True}
+
+
+# ── Target weights ──────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/targets")
+async def get_targets(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_target_weights(user["id"])
+    return {"targets": [dict(r) for r in rows]}
+
+
+@app.post("/api/long-term/targets")
+async def set_targets(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    targets = payload.get("targets", [])
+    if not isinstance(targets, list):
+        raise HTTPException(status_code=400, detail="targets must be a list")
+    # Validate sum is roughly 1.0 (allow some slack for cash). Not enforced strictly.
+    total = sum(float(t.get("weight", 0)) for t in targets)
+    if total > 1.01:
+        raise HTTPException(status_code=400, detail=f"weights sum to {total:.3f}, must be <= 1.0")
+    for t in targets:
+        ticker = str(t.get("ticker", "")).upper()
+        if ticker not in lt.TICKER_MAP:
+            continue
+        weight = max(0.0, min(1.0, float(t.get("weight", 0))))
+        band = max(0.0, min(0.5, float(t.get("drift_band", 0.05))))
+        if weight == 0:
+            db.remove_target_weight(user["id"], ticker)
+        else:
+            db.set_target_weight(user["id"], ticker, weight, band)
+    return {"ok": True, "total_weight": total}
+
+
+# ── Rebalance ───────────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/rebalance")
+async def get_rebalance(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rollup = db.get_holdings_rollup(user["id"])
+    targets = db.get_target_weights(user["id"])
+    if not targets:
+        return {"error": "no target weights set", "legs": []}
+    # Use the smallest user-set drift band so the most sensitive ticker triggers first.
+    drift_band = min((float(t["drift_band"]) for t in targets), default=0.05)
+    plan = await asyncio.to_thread(
+        lt.rebalance_plan,
+        [{"ticker": r["ticker"], "qty": r["qty"]} for r in rollup],
+        [{"ticker": t["ticker"], "weight": t["weight"]} for t in targets],
+        drift_band,
+    )
+    return plan
+
+
+# ── DCA ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/dca")
+async def get_dca(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_dca_schedules(user["id"])
+    return {"schedules": [dict(r) for r in rows]}
+
+
+@app.post("/api/long-term/dca")
+async def upsert_dca(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    ticker = str(payload.get("ticker", "")).upper()
+    if ticker not in lt.TICKER_MAP:
+        raise HTTPException(status_code=400, detail="Unknown ticker")
+    frequency = str(payload.get("frequency", "weekly"))
+    if frequency not in ("daily", "weekly", "monthly"):
+        raise HTTPException(status_code=400, detail="frequency must be daily/weekly/monthly")
+    try:
+        amount = float(payload.get("base_amount_usd", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="base_amount_usd must be numeric")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="base_amount_usd must be positive")
+    use_mult = bool(payload.get("use_multiplier", True))
+    active = bool(payload.get("active", True))
+    db.upsert_dca_schedule(user["id"], ticker, frequency, amount, use_mult, active)
+    return {"ok": True}
+
+
+@app.delete("/api/long-term/dca/{ticker}")
+async def delete_dca(ticker: str, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    db.remove_dca_schedule(user["id"], ticker.upper())
+    return {"ok": True}
+
+
+@app.get("/api/long-term/dca/recommendations")
+async def dca_recommendations(request: Request):
+    """Today's suggested DCA amounts for each scheduled asset.
+    Returns the cycle-aware suggestion alongside the user's base amount so they
+    can override if they disagree."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    schedules = db.get_dca_schedules(user["id"])
+    out = []
+    for s in schedules:
+        if not s["active"]:
+            continue
+        base = float(s["base_amount_usd"])
+        if s["use_multiplier"]:
+            plan = await asyncio.to_thread(lt.dca_recommendation, s["ticker"], base)
+            out.append(plan.to_dict())
+        else:
+            out.append({
+                "ticker": s["ticker"], "base_amount_usd": base, "multiplier": 1.0,
+                "suggested_amount_usd": base, "reason": "fixed (multiplier disabled)",
+                "phase": None, "mayer": None, "dd": None, "vol_regime": None,
+            })
+    return {"recommendations": out, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+# ── Long-term alerts ────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/alerts")
+async def list_long_term_alerts(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_long_term_alerts(user["id"])
+    return {"alerts": [dict(r) for r in rows]}
+
+
+@app.post("/api/long-term/alerts")
+async def upsert_long_term_alert(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    ticker = str(payload.get("ticker", "")).upper()
+    if ticker not in lt.TICKER_MAP:
+        raise HTTPException(status_code=400, detail="Unknown ticker")
+    alert_type = str(payload.get("alert_type", ""))
+    if alert_type not in ("drawdown", "mvrv_high", "mvrv_low", "vol_regime", "risk_off"):
+        raise HTTPException(status_code=400, detail="invalid alert_type")
+    threshold = payload.get("threshold")
+    if threshold is not None:
+        try:
+            threshold = float(threshold)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="threshold must be numeric")
+    db.upsert_long_term_alert(user["id"], ticker, alert_type, threshold)
+    return {"ok": True}
+
+
+@app.delete("/api/long-term/alerts/{ticker}/{alert_type}")
+async def delete_long_term_alert(ticker: str, alert_type: str, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    db.remove_long_term_alert(user["id"], ticker.upper(), alert_type)
+    return {"ok": True}
+
+
+# ── HTML page ───────────────────────────────────────────────────────────────
+
+@app.get("/long-term", response_class=HTMLResponse)
+async def long_term_page(request: Request):
+    """Renders the long-term holding dashboard. Auth optional — read-only views
+    don't require login, but holdings/DCA/targets do (UI gates them)."""
+    return HTMLResponse(_long_term_html())
+
+
+def _long_term_html() -> str:
+    # Kept inline (single-file) to match the rest of the dashboard. The
+    # frontend is intentionally vanilla JS — no build step.
+    return r"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoEdge — Long-term Holding</title>
+<style>
+:root{--bg:#0a0d12;--card:#131820;--card2:#1a2029;--muted:#7d8a99;--text:#e6edf5;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--yellow:#eab308;--purple:#a855f7;--border:#222a36}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro',sans-serif;background:var(--bg);color:var(--text);line-height:1.4}
+.wrap{max-width:1400px;margin:0 auto;padding:20px}
+h1{margin:0 0 4px;font-size:1.5em}h2{margin:24px 0 12px;font-size:1.15em;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-size:.85em}
+.sub{color:var(--muted);font-size:.9em;margin-bottom:16px}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin:16px 0}
+.tab{padding:10px 14px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;font-size:.95em}
+.tab.active{color:var(--text);border-bottom-color:var(--blue)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.card h3{margin:0 0 8px;font-size:1em}
+.row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:.9em}
+.row .l{color:var(--muted)}.row .v{font-variant-numeric:tabular-nums;font-weight:500}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75em;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.p-capitulation{background:rgba(34,197,94,.18);color:var(--green)}
+.p-deep-bear{background:rgba(34,197,94,.18);color:var(--green)}
+.p-accumulation{background:rgba(59,130,246,.18);color:var(--blue)}
+.p-neutral{background:rgba(125,138,153,.18);color:var(--muted)}
+.p-expansion{background:rgba(234,179,8,.18);color:var(--yellow)}
+.p-euphoria{background:rgba(239,68,68,.18);color:var(--red)}
+.p-warming-up{background:rgba(125,138,153,.18);color:var(--muted)}
+.r-calm{color:var(--green)}.r-neutral{color:var(--muted)}.r-watchful{color:var(--yellow)}.r-defensive{color:var(--red)}
+table{width:100%;border-collapse:collapse;font-size:.9em}
+th,td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500;font-size:.8em;text-transform:uppercase}
+button{background:var(--blue);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:.85em;font-weight:500}
+button.ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+button.danger{background:var(--red)}
+button:hover{opacity:.85}
+input,select{background:var(--card2);color:var(--text);border:1px solid var(--border);padding:7px 10px;border-radius:6px;font-size:.9em;font-family:inherit}
+input:focus,select:focus{outline:0;border-color:var(--blue)}
+.err{color:var(--red);font-size:.85em;margin-top:6px}
+.ok{color:var(--green);font-size:.85em;margin-top:6px}
+.gain{color:var(--green)}.loss{color:var(--red)}
+.note{color:var(--muted);font-size:.8em;margin-top:6px;font-style:italic}
+.actionrow{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:8px 0}
+.field{display:flex;flex-direction:column;gap:3px}
+.field label{font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+.spark{height:32px;width:100%;display:block}
+.legend{font-size:.75em;color:var(--muted);margin-top:4px}
+hr{border:0;border-top:1px solid var(--border);margin:16px 0}
+.kbd{background:var(--card2);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:.85em}
+</style>
+</head><body><div class="wrap">
+<h1>Long-term Holding</h1>
+<div class="sub">Cycle phase, fundamentals, drawdown — the lens for months/years, not minutes.</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="overview">Overview</div>
+  <div class="tab" data-tab="portfolio">Portfolio</div>
+  <div class="tab" data-tab="targets">Targets &amp; Rebalance</div>
+  <div class="tab" data-tab="dca">DCA Plan</div>
+  <div class="tab" data-tab="alerts">Risk Alerts</div>
+</div>
+
+<section data-section="overview">
+  <h2>Asset overview</h2>
+  <div id="overview-grid" class="grid"></div>
+  <div class="note">MVRV/NVT shown only for BTC and ETH (free CoinMetrics tier). Others use price-only signals — still everything you need for cycle-aware DCA.</div>
+</section>
+
+<section data-section="portfolio" hidden>
+  <h2>Holdings</h2>
+  <div class="actionrow">
+    <div class="field"><label>Ticker</label>
+      <select id="h-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
+    </div>
+    <div class="field"><label>Quantity</label><input id="h-qty" type="number" step="any" min="0" placeholder="0.5"></div>
+    <div class="field"><label>Cost basis (USD/unit)</label><input id="h-cb" type="number" step="any" min="0" placeholder="42000"></div>
+    <div class="field"><label>Acquired</label><input id="h-date" type="date"></div>
+    <button id="h-add">Add lot</button>
+  </div>
+  <div id="h-msg"></div>
+  <table id="h-table"><thead><tr>
+    <th>Ticker</th><th>Qty</th><th>Avg cost</th><th>Cur. price</th><th>Value</th><th>P&amp;L</th><th>Lots</th></tr></thead><tbody></tbody></table>
+  <h2>Lot detail</h2>
+  <table id="h-lots"><thead><tr>
+    <th>Acquired</th><th>Ticker</th><th>Qty</th><th>Cost/u</th><th>P&amp;L</th><th>LT eligible</th><th></th></tr></thead><tbody></tbody></table>
+</section>
+
+<section data-section="targets" hidden>
+  <h2>Target weights</h2>
+  <div class="note">Weights should sum to 1.0 (or less, if you keep cash). Drift band = how far each leg can drift before rebalance triggers.</div>
+  <div id="t-rows"></div>
+  <button id="t-save">Save targets</button>
+  <div id="t-msg"></div>
+  <h2>Rebalance plan</h2>
+  <button id="t-refresh-rebalance" class="ghost">Recompute</button>
+  <div id="rebalance-out" style="margin-top:12px"></div>
+</section>
+
+<section data-section="dca" hidden>
+  <h2>DCA schedule</h2>
+  <div class="note">Set a base amount per asset. The recommender tilts it up in fear (Mayer &lt; 1, deep drawdown) and down in euphoria (Mayer &gt; 2.4). Set "Use multiplier" off to keep it perfectly fixed.</div>
+  <div class="actionrow">
+    <div class="field"><label>Ticker</label>
+      <select id="d-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
+    </div>
+    <div class="field"><label>Frequency</label>
+      <select id="d-freq"><option value="daily">Daily</option><option value="weekly" selected>Weekly</option><option value="monthly">Monthly</option></select>
+    </div>
+    <div class="field"><label>Base amount (USD)</label><input id="d-amt" type="number" step="any" min="0" value="100"></div>
+    <div class="field"><label><input id="d-mult" type="checkbox" checked> Use cycle multiplier</label></div>
+    <button id="d-add">Save</button>
+  </div>
+  <div id="d-msg"></div>
+  <table id="d-table"><thead><tr>
+    <th>Ticker</th><th>Freq</th><th>Base $</th><th>Multiplier</th><th>Suggested today</th><th>Phase</th><th>Reason</th><th></th></tr></thead><tbody></tbody></table>
+</section>
+
+<section data-section="alerts" hidden>
+  <h2>Risk-off alerts</h2>
+  <div class="note">Alerts fire when a threshold is crossed. They're recorded in <span class="kbd">crypto_alert_history</span>; wire to email/push by setting up the existing alert pipeline.</div>
+  <div class="actionrow">
+    <div class="field"><label>Ticker</label>
+      <select id="a-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
+    </div>
+    <div class="field"><label>Type</label>
+      <select id="a-type">
+        <option value="drawdown">Drawdown ≥</option>
+        <option value="mvrv_high">MVRV ≥</option>
+        <option value="mvrv_low">MVRV ≤</option>
+        <option value="risk_off">Risk-off score ≥</option>
+        <option value="vol_regime">Vol regime: elevated/extreme</option>
+      </select>
+    </div>
+    <div class="field"><label>Threshold</label><input id="a-thresh" type="number" step="any" placeholder="0.4 (40% dd) or 3.5 (mvrv)"></div>
+    <button id="a-add">Add alert</button>
+  </div>
+  <div id="a-msg"></div>
+  <table id="a-table"><thead><tr>
+    <th>Ticker</th><th>Type</th><th>Threshold</th><th>Last fired</th><th></th></tr></thead><tbody></tbody></table>
+</section>
+
+<script>
+const TICKERS = ["BTC","ETH","SOL","DOGE","XRP"];
+const fmt = (v, d=2) => v == null || isNaN(v) ? '—' : Number(v).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
+const pct = (v) => v == null || isNaN(v) ? '—' : (Number(v)*100).toFixed(1)+'%';
+const usd = (v) => v == null || isNaN(v) ? '—' : '$'+fmt(v);
+
+async function api(path, opts={}) {
+  const r = await fetch(path, {credentials:'include', headers: {'X-Requested-With':'XMLHttpRequest', 'Content-Type':'application/json'}, ...opts});
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`HTTP ${r.status}: ${text}`);
+  }
+  return r.json();
+}
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  const which = t.dataset.tab;
+  document.querySelectorAll('section').forEach(s => s.hidden = s.dataset.section !== which);
+  if (which === 'overview') loadOverview();
+  if (which === 'portfolio') loadPortfolio();
+  if (which === 'targets') loadTargets();
+  if (which === 'dca') loadDCA();
+  if (which === 'alerts') loadAlerts();
+});
+
+async function loadOverview(){
+  const grid = document.getElementById('overview-grid');
+  grid.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  try {
+    const d = await api('/api/long-term/snapshot');
+    grid.innerHTML = '';
+    for (const a of d.assets) {
+      const phase = (a.phase||'warming-up').replace(/-/g,'-');
+      const ro = a.risk_off || {};
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <h3>${a.ticker} <span class="pill p-${phase}">${phase}</span></h3>
+        <div class="row"><span class="l">Price</span><span class="v">${usd(a.price)}</span></div>
+        <div class="row"><span class="l">Mayer (px/200d)</span><span class="v">${a.mayer ?? '—'}</span></div>
+        <div class="row"><span class="l">Drawdown</span><span class="v ${a.current_dd<0?'loss':''}">${pct(a.current_dd)}</span></div>
+        <div class="row"><span class="l">30d vol (annualised)</span><span class="v">${pct(a.vol_30d)} <span class="legend">(${a.vol_regime})</span></span></div>
+        <div class="row"><span class="l">Sharpe (1y)</span><span class="v">${fmt(a.sharpe_1y)}</span></div>
+        <div class="row"><span class="l">Sortino (1y)</span><span class="v">${fmt(a.sortino_1y)}</span></div>
+        ${a.mvrv != null ? `<div class="row"><span class="l">MVRV</span><span class="v">${fmt(a.mvrv,2)}</span></div>`:''}
+        ${a.nvt != null ? `<div class="row"><span class="l">NVT (28d)</span><span class="v">${fmt(a.nvt,1)}</span></div>`:''}
+        <hr>
+        <div class="row"><span class="l">Risk-off</span><span class="v r-${ro.label||'neutral'}">${(ro.label||'—').toUpperCase()} (${fmt(ro.score,2)})</span></div>
+      `;
+      grid.appendChild(card);
+    }
+  } catch(e) { grid.innerHTML = `<div class="err">Failed: ${e.message}</div>`; }
+}
+
+async function loadPortfolio(){
+  const tbody = document.querySelector('#h-table tbody');
+  const lots = document.querySelector('#h-lots tbody');
+  tbody.innerHTML = lots.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const d = await api('/api/long-term/holdings');
+    tbody.innerHTML = ''; lots.innerHTML = '';
+    if (!d.rollup.length) { tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">No lots yet — add one above.</td></tr>'; }
+    for (const r of d.rollup) {
+      const tr = document.createElement('tr');
+      const pnlCls = (r.unrealized_pnl||0) >= 0 ? 'gain' : 'loss';
+      tr.innerHTML = `<td>${r.ticker}</td><td>${fmt(r.qty,6)}</td><td>${usd(r.avg_cost_basis)}</td>
+        <td>${usd(r.current_price)}</td><td>${usd(r.current_value)}</td>
+        <td class="${pnlCls}">${usd(r.unrealized_pnl)}</td><td>${r.lots}</td>`;
+      tbody.appendChild(tr);
+    }
+    for (const l of d.lots) {
+      const tr = document.createElement('tr');
+      const pnlCls = (l.unrealized_pnl||0) >= 0 ? 'gain' : 'loss';
+      tr.innerHTML = `<td>${l.acquired_at}</td><td>${l.ticker}</td><td>${fmt(l.qty,6)}</td>
+        <td>${usd(l.cost_basis)}</td><td class="${pnlCls}">${usd(l.unrealized_pnl)}</td>
+        <td>${l.long_term_eligible ? '✓ ('+l.held_days+'d)' : (l.held_days||'?')+'d'}</td>
+        <td><button class="ghost danger" data-del="${l.id}">×</button></td>`;
+      lots.appendChild(tr);
+    }
+    lots.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => {
+      await api('/api/long-term/holdings/'+b.dataset.del, {method:'DELETE'});
+      loadPortfolio();
+    });
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="7" class="err">${e.message}</td></tr>`; }
+}
+
+document.getElementById('h-add').onclick = async () => {
+  const msg = document.getElementById('h-msg'); msg.innerHTML='';
+  try {
+    await api('/api/long-term/holdings', {method:'POST', body: JSON.stringify({
+      ticker: document.getElementById('h-ticker').value,
+      qty: document.getElementById('h-qty').value,
+      cost_basis: document.getElementById('h-cb').value,
+      acquired_at: document.getElementById('h-date').value || undefined,
+    })});
+    msg.innerHTML = '<div class="ok">Lot added.</div>';
+    loadPortfolio();
+  } catch(e) { msg.innerHTML = '<div class="err">'+e.message+'</div>'; }
+};
+
+async function loadTargets(){
+  const rows = document.getElementById('t-rows'); rows.innerHTML='';
+  let existing = {};
+  try { (await api('/api/long-term/targets')).targets.forEach(t => existing[t.ticker] = t); } catch(e){}
+  for (const tk of TICKERS) {
+    const cur = existing[tk] || {weight:0, drift_band:0.05};
+    rows.insertAdjacentHTML('beforeend', `<div class="actionrow">
+      <div class="field" style="min-width:60px"><label>${tk}</label></div>
+      <div class="field"><label>Weight</label><input class="t-w" data-ticker="${tk}" type="number" step="0.01" min="0" max="1" value="${cur.weight||0}"></div>
+      <div class="field"><label>Drift band</label><input class="t-b" data-ticker="${tk}" type="number" step="0.01" min="0" max="0.5" value="${cur.drift_band||0.05}"></div>
+    </div>`);
+  }
+  await refreshRebalance();
+}
+
+document.getElementById('t-save').onclick = async () => {
+  const msg = document.getElementById('t-msg'); msg.innerHTML='';
+  const targets = TICKERS.map(tk => ({
+    ticker: tk,
+    weight: parseFloat(document.querySelector(`.t-w[data-ticker="${tk}"]`).value || 0),
+    drift_band: parseFloat(document.querySelector(`.t-b[data-ticker="${tk}"]`).value || 0.05),
+  }));
+  try {
+    const r = await api('/api/long-term/targets', {method:'POST', body: JSON.stringify({targets})});
+    msg.innerHTML = `<div class="ok">Saved (sum=${fmt(r.total_weight,2)}).</div>`;
+    refreshRebalance();
+  } catch(e) { msg.innerHTML = '<div class="err">'+e.message+'</div>'; }
+};
+
+document.getElementById('t-refresh-rebalance').onclick = refreshRebalance;
+
+async function refreshRebalance(){
+  const out = document.getElementById('rebalance-out');
+  out.innerHTML = '<div style="color:var(--muted)">Computing…</div>';
+  try {
+    const d = await api('/api/long-term/rebalance');
+    if (d.error) { out.innerHTML = `<div class="note">${d.error}</div>`; return; }
+    let html = `<div class="row"><span class="l">Portfolio total</span><span class="v">${usd(d.total_usd)}</span></div>
+      <div class="row"><span class="l">Max drift</span><span class="v">${pct(d.max_drift)}</span></div>
+      <div class="row"><span class="l">Action required?</span><span class="v">${d.rebalance_required ? '<span class="r-watchful">Yes</span>' : '<span class="r-calm">No</span>'}</span></div>
+      <table style="margin-top:10px"><thead><tr><th>Ticker</th><th>Current</th><th>Target</th><th>Drift</th><th>Action</th><th>Notional</th></tr></thead><tbody>`;
+    for (const leg of d.legs) {
+      const cls = leg.action === 'buy' ? 'gain' : leg.action === 'sell' ? 'loss' : '';
+      html += `<tr><td>${leg.ticker}</td><td>${pct(leg.current_weight)}</td><td>${pct(leg.target_weight)}</td>
+        <td>${pct(leg.drift)}</td><td class="${cls}">${leg.action.toUpperCase()}</td><td>${usd(leg.notional_usd)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    out.innerHTML = html;
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+async function loadDCA(){
+  const tbody = document.querySelector('#d-table tbody'); tbody.innerHTML='';
+  let recs = {};
+  try { (await api('/api/long-term/dca/recommendations')).recommendations.forEach(r => recs[r.ticker]=r); } catch(e){}
+  let schedules = [];
+  try { schedules = (await api('/api/long-term/dca')).schedules; } catch(e){}
+  if (!schedules.length) { tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">No DCA schedules yet.</td></tr>'; return; }
+  for (const s of schedules) {
+    const r = recs[s.ticker] || {};
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s.ticker}</td><td>${s.frequency}</td><td>${usd(s.base_amount_usd)}</td>
+      <td>${fmt(r.multiplier,2)}×</td><td><b>${usd(r.suggested_amount_usd)}</b></td>
+      <td><span class="pill p-${(r.phase||'neutral').replace(/-/g,'-')}">${r.phase||'—'}</span></td>
+      <td style="font-size:.8em;color:var(--muted)">${r.reason||''}</td>
+      <td><button class="ghost danger" data-del="${s.ticker}">×</button></td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => {
+    await api('/api/long-term/dca/'+b.dataset.del, {method:'DELETE'});
+    loadDCA();
+  });
+}
+
+document.getElementById('d-add').onclick = async () => {
+  const msg = document.getElementById('d-msg'); msg.innerHTML='';
+  try {
+    await api('/api/long-term/dca', {method:'POST', body: JSON.stringify({
+      ticker: document.getElementById('d-ticker').value,
+      frequency: document.getElementById('d-freq').value,
+      base_amount_usd: document.getElementById('d-amt').value,
+      use_multiplier: document.getElementById('d-mult').checked,
+    })});
+    msg.innerHTML = '<div class="ok">Saved.</div>';
+    loadDCA();
+  } catch(e) { msg.innerHTML = '<div class="err">'+e.message+'</div>'; }
+};
+
+async function loadAlerts(){
+  const tbody = document.querySelector('#a-table tbody'); tbody.innerHTML='';
+  try {
+    const d = await api('/api/long-term/alerts');
+    if (!d.alerts.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No alerts yet.</td></tr>'; return; }
+    for (const a of d.alerts) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${a.ticker}</td><td>${a.alert_type}</td><td>${a.threshold ?? '—'}</td>
+        <td>${a.last_fired_at || 'never'}</td>
+        <td><button class="ghost danger" data-tk="${a.ticker}" data-tp="${a.alert_type}">×</button></td>`;
+      tbody.appendChild(tr);
+    }
+    tbody.querySelectorAll('button[data-tk]').forEach(b => b.onclick = async () => {
+      await api(`/api/long-term/alerts/${b.dataset.tk}/${b.dataset.tp}`, {method:'DELETE'});
+      loadAlerts();
+    });
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" class="err">${e.message}</td></tr>`; }
+}
+
+document.getElementById('a-add').onclick = async () => {
+  const msg = document.getElementById('a-msg'); msg.innerHTML='';
+  try {
+    await api('/api/long-term/alerts', {method:'POST', body: JSON.stringify({
+      ticker: document.getElementById('a-ticker').value,
+      alert_type: document.getElementById('a-type').value,
+      threshold: document.getElementById('a-thresh').value || null,
+    })});
+    msg.innerHTML = '<div class="ok">Alert saved.</div>';
+    loadAlerts();
+  } catch(e) { msg.innerHTML = '<div class="err">'+e.message+'</div>'; }
+};
+
+loadOverview();
+</script>
+</div></body></html>
+"""
 
 
 # ===================================================================
