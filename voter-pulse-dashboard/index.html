@@ -85,6 +85,14 @@
   .ind .val { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 8px; line-height: 1.1; }
   .ind .val .units { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 4px; }
   .ind .yoy { font-size: 12px; margin-top: 4px; font-weight: 600; }
+  .ind .deltas { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .ind .delta {
+    font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px;
+    background: #21262d; color: var(--muted); white-space: nowrap;
+  }
+  .ind .delta .age { color: var(--muted); margin-right: 4px; font-weight: 500; }
+  .ind .delta.bad  { color: var(--bad); }
+  .ind .delta.good { color: var(--good); }
   .ind .when { color: var(--muted); font-size: 10px; margin-top: 4px; }
   .ind .spark { margin-top: 10px; }
   .ind .yoy.up.bad   { color: var(--bad); }
@@ -154,7 +162,11 @@
       </div>
       <div class="subscore-row" id="subscores"></div>
     </div>
-    <p class="footnote">Misery index (UNRATE + CPI YoY): <span id="misery">—</span>. Higher = more pain.</p>
+    <p class="footnote">
+      Misery index (UNRATE + CPI YoY): <span id="misery">—</span>. Higher = more pain.
+      <br>Inflation-expectations gap (UMich 1y minus realised CPI YoY):
+      <span id="expgap">—</span>. Positive = voters expect more pain than has hit.
+    </p>
   </section>
 
   <!-- POCKETBOOK -->
@@ -245,6 +257,8 @@ function setMood(mood) {
 
   const m = mood && mood.misery_index;
   document.getElementById("misery").textContent = m == null ? "—" : m.toFixed(1);
+  const eg = mood && mood.expectations_gap;
+  document.getElementById("expgap").textContent = eg == null ? "—" : (eg >= 0 ? "+" : "") + eg.toFixed(1) + " pp";
 }
 
 function formatComp(c) {
@@ -261,6 +275,13 @@ function isBadDirection(yoy, higherIsBetter) {
   return yoy > 0;
 }
 
+function deltaClass(value, higherIsBetter) {
+  if (value == null || higherIsBetter == null) return "";
+  if (Math.abs(value) < 0.05) return "";
+  const bad = isBadDirection(value, higherIsBetter);
+  return bad ? "bad" : "good";
+}
+
 function indicatorCard(s) {
   const latest = s.latest;
   const valStr = latest == null ? "—" : (
@@ -269,6 +290,7 @@ function indicatorCard(s) {
     fmt.num(latest.value, 1)
   );
   const yoy = s.yoy_pct;
+  const fy  = s.four_year_pct;
   let yoyCls = "flat";
   if (yoy != null) {
     const dir = yoy > 0.05 ? "up" : (yoy < -0.05 ? "down" : "flat");
@@ -277,12 +299,16 @@ function indicatorCard(s) {
     else yoyCls = `${dir} ${bad ? "bad" : "good"}`;
   }
   const yoyLabel = yoy == null ? "no YoY" : (fmt.pct(yoy, 1) + " YoY");
+  const fyLabel = fy == null
+    ? ""
+    : `<span class="delta ${deltaClass(fy, s.higher_is_better)}"><span class="age">4y</span>${fmt.pct(fy, 1)}</span>`;
   return `
     <div class="ind">
       <div class="name">${escapeHtml(s.label)}</div>
       <div class="sid">FRED ${escapeHtml(s.series_id)} · ${escapeHtml(s.units)}</div>
       <div class="val">${valStr}${s.units !== "$/gal" ? `<span class="units">${escapeHtml(s.units)}</span>` : ""}</div>
       <div class="yoy ${yoyCls}">${yoyLabel}</div>
+      <div class="deltas">${fyLabel}</div>
       <div class="when">as of ${fmt.date(latest && latest.date)}</div>
       <svg class="spark" width="100%" height="34" viewBox="0 0 200 34" preserveAspectRatio="none">
         ${sparklinePath(s.points || [])}

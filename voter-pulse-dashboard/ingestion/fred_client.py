@@ -48,7 +48,9 @@ SERIES: list[tuple[str, str, str, str, bool]] = [
     ("UNRATE",          "Unemployment rate",     "jobs",       "%",       False),
     ("LES1252881600Q",  "Real median weekly earnings", "jobs", "$ (real)", True),
     ("PAYEMS",          "Non-farm payrolls",     "jobs",       "thous.",  True),
+    ("DSPIC96",         "Real disposable income", "jobs",      "$bn (real)", True),
     ("UMCSENT",         "Consumer sentiment (UMich)", "sentiment", "index", True),
+    ("MICH",            "Inflation expectations (1y)", "sentiment", "%",  False),
 ]
 
 
@@ -64,20 +66,34 @@ class IndicatorSeries:
     def latest(self) -> tuple[str, float] | None:
         return self.points[-1] if self.points else None
 
-    def yoy_pct(self) -> float | None:
-        """Year-over-year percent change of the latest observation."""
-        if len(self.points) < 13:
+    def _delta_pct(self, years_back: int) -> float | None:
+        """Percent change vs the observation from `years_back` years ago.
+
+        We pick the closest observation whose ISO date is on-or-before
+        (latest_date - years_back). This makes the metric robust to the
+        differing cadences (weekly / monthly / quarterly) without faking
+        precision we don't have.
+        """
+        if not self.points:
             return None
         latest_date, latest_val = self.points[-1]
-        for d, v in reversed(self.points[:-1]):
-            if d[:4] == str(int(latest_date[:4]) - 1) and d[5:7] == latest_date[5:7]:
-                if v == 0:
-                    return None
-                return (latest_val - v) / v * 100.0
-        prior = self.points[-13][1]
-        if prior == 0:
+        target_year = int(latest_date[:4]) - years_back
+        target = f"{target_year:04d}{latest_date[4:]}"
+        prior_val: float | None = None
+        for d, v in self.points[:-1]:
+            if d <= target:
+                prior_val = v
+            else:
+                break
+        if prior_val is None or prior_val == 0:
             return None
-        return (latest_val - prior) / prior * 100.0
+        return (latest_val - prior_val) / prior_val * 100.0
+
+    def yoy_pct(self) -> float | None:
+        return self._delta_pct(1)
+
+    def four_year_pct(self) -> float | None:
+        return self._delta_pct(4)
 
     def to_dict(self, max_points: int = 240) -> dict:
         pts = self.points[-max_points:] if max_points else self.points
@@ -93,6 +109,7 @@ class IndicatorSeries:
                 if self.points else None
             ),
             "yoy_pct": self.yoy_pct(),
+            "four_year_pct": self.four_year_pct(),
         }
 
 

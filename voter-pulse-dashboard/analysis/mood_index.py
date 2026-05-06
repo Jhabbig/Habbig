@@ -137,6 +137,20 @@ def misery_index(rows: list[dict]) -> float | None:
     return unrate + cpi_yoy
 
 
+def expectations_gap(rows: list[dict]) -> float | None:
+    """UMich 1-yr inflation expectations minus realised CPI YoY.
+
+    Positive values mean voters expect more inflation than has actually
+    been delivered — a common "fear gap" that tracks sentiment.
+    """
+    by = _by_id(rows)
+    mich = _latest(by.get("MICH", {}))
+    cpi_yoy = _yoy(by.get("CPIAUCSL", {}))
+    if mich is None or cpi_yoy is None:
+        return None
+    return mich - cpi_yoy
+
+
 def compose(rows: list[dict]) -> dict:
     pb = pocketbook_score(rows)
     jb = jobs_score(rows)
@@ -151,6 +165,7 @@ def compose(rows: list[dict]) -> dict:
             "sentiment":  {"score": st.value, "components": st.components},
         },
         "misery_index": misery_index(rows),
+        "expectations_gap": expectations_gap(rows),
     }
 
 

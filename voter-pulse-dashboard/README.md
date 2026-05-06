@@ -15,9 +15,16 @@ Listens on `:7062`. Subdomain: `pulse.narve.ai` (registered in
    mortgage rate, Case-Shiller home-price index. Each card shows the latest
    reading, YoY change, and a 60-period sparkline.
 3. **Jobs & wages** — Unemployment rate (UNRATE), real median weekly
-   earnings (LES1252881600Q), non-farm payrolls (PAYEMS).
+   earnings (LES1252881600Q), non-farm payrolls (PAYEMS), real disposable
+   personal income (DSPIC96).
 4. **What people say** — University of Michigan Consumer Sentiment Index
-   (UMCSENT). Rescaled to a 0–100 mood contribution using its long-run range.
+   (UMCSENT) and 1-year inflation expectations (MICH). UMCSENT is rescaled
+   to a 0–100 mood contribution using its long-run range.
+
+Each card also surfaces a **4-year delta** badge — the comparison voters
+actually make at election time. The hero panel adds an
+**inflation-expectations gap** footnote (UMich 1y minus realised CPI YoY)
+to capture the "fear gap" that often drives sentiment.
 5. **Polymarket — the political mood** — live sentiment-relevant markets
    (right track / wrong track, presidential approval, recession odds,
    inflation/unemployment milestones, election outcomes), bucketed into
@@ -38,7 +45,9 @@ backwards-looking number that tracks "how it feels" most reliably.
 | Unemployment (UNRATE) | FRED | monthly |
 | Real median weekly earnings (LES1252881600Q) | FRED | quarterly |
 | Non-farm payrolls (PAYEMS) | FRED | monthly |
+| Real disposable personal income (DSPIC96) | FRED | monthly |
 | Consumer sentiment (UMCSENT) | FRED | monthly |
+| Inflation expectations 1y (MICH) | FRED | monthly |
 | Sentiment markets | Polymarket Gamma API | live (5 min cache) |
 
 All FRED series are pulled from the public CSV endpoint — no API key
