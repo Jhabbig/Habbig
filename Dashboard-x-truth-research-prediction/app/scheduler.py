@@ -44,9 +44,12 @@ async def run_pipeline() -> dict:
         keywords = yaml_config.get("scraping", {}).get("keywords", {}).get("prediction_keywords", [])
         limit = yaml_config.get("scraping", {}).get("limit_per_source", 100)
 
+        from app.keys_resolver import resolve_truthsocial_creds, resolve_twitter_creds
+
         try:
+            tw_creds = await resolve_twitter_creds()
             from app.scrapers.twitter import TwitterScraper
-            tw = TwitterScraper()
+            tw = TwitterScraper(bearer_token=tw_creds.bearer_token)
             if tw.is_available():
                 posts = await tw.fetch(keywords, limit)
                 all_posts.extend(posts)
@@ -56,8 +59,14 @@ async def run_pipeline() -> dict:
             stats["errors"].append(f"Twitter: {exc}")
 
         try:
+            ts_creds = await resolve_truthsocial_creds()
             from app.scrapers.truthsocial import TruthSocialScraper
-            ts = TruthSocialScraper()
+            ts = TruthSocialScraper(
+                username=ts_creds.username,
+                password=ts_creds.password,
+                access_token=ts_creds.access_token,
+                api_base_url=ts_creds.api_base_url,
+            )
             if ts.is_available():
                 posts = await ts.fetch(keywords, limit)
                 all_posts.extend(posts)
@@ -146,9 +155,12 @@ async def run_pipeline() -> dict:
 
         try:
             from app.credibility.engine import CredibilityEngine
+            from app.processing.paper_trade import TradeFilter, maybe_open_trade
             from app.processing.ranker import rank_prediction
             stats["sources_recomputed"] = await CredibilityEngine().recompute_all(session)
             unscore_result = await session.exec(select(Prediction).where(Prediction.ev_score.is_(None)))
+            trade_filter = TradeFilter()
+            opened_trades = []
             for pred in unscore_result.all():
                 try:
                     spr_result = await session.exec(select(SourcePredictionRecord).where(SourcePredictionRecord.prediction_id == pred.id))
@@ -159,9 +171,25 @@ async def run_pipeline() -> dict:
                         source = src_result.first()
                     rank_prediction(pred, source)
                     session.add(pred)
+                    # Now that the prediction has an EV score and risk flags, decide whether
+                    # it qualifies as a paper-trade entry. Stake is fixed at $1/signal.
+                    if spr is not None:
+                        opened = await maybe_open_trade(session, pred, source, spr.handle, trade_filter)
+                        if opened is not None:
+                            opened_trades.append(opened)
                 except Exception:
                     pass
+            stats["paper_trades_opened"] = len(opened_trades)
             await session.commit()
+            # Fan-out alerts after commit so we never notify about a trade that
+            # rolled back. Best-effort — failures are logged, not raised.
+            if opened_trades:
+                try:
+                    from app.notifications import notify_new_trades
+                    sent = await notify_new_trades(opened_trades)
+                    stats["telegram_alerts_sent"] = sent
+                except Exception as exc:
+                    logger.warning("Telegram notifications failed: %s", exc)
         except Exception as exc:
             logger.error("Credibility/scoring failed: %s", exc)
 

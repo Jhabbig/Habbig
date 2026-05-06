@@ -17,11 +17,17 @@ def _strip_html(text: str) -> str:
 
 
 class TruthSocialScraper(BaseScraper):
-    def __init__(self) -> None:
-        self._username = settings["TRUTHSOCIAL_USERNAME"]
-        self._password = settings["TRUTHSOCIAL_PASSWORD"]
-        self._token = settings["TRUTHSOCIAL_ACCESS_TOKEN"]
-        self._api_base = settings["TRUTHSOCIAL_API_BASE_URL"]
+    def __init__(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+        access_token: str | None = None,
+        api_base_url: str | None = None,
+    ) -> None:
+        self._username = username if username is not None else settings["TRUTHSOCIAL_USERNAME"]
+        self._password = password if password is not None else settings["TRUTHSOCIAL_PASSWORD"]
+        self._token = access_token if access_token is not None else settings["TRUTHSOCIAL_ACCESS_TOKEN"]
+        self._api_base = api_base_url if api_base_url is not None else settings["TRUTHSOCIAL_API_BASE_URL"]
 
     def is_available(self) -> bool:
         return bool(self._username and self._password) or bool(self._token)

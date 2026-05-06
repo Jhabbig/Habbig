@@ -121,6 +121,7 @@
         <button data-tab="best-bets" onclick="switchTab('best-bets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.bestBets">Best Bets</button>
         <button data-tab="leaderboard" onclick="switchTab('leaderboard')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.leaderboard">Leaderboard</button>
         <button data-tab="markets" onclick="switchTab('markets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.markets">Markets</button>
+        <button data-tab="performance" onclick="switchTab('performance')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)">Performance</button>
     </div>
 </nav>
 
@@ -180,6 +181,42 @@
     <div id="market-chart"></div>
 </div>
 
+<!-- =============== PERFORMANCE TAB =============== -->
+<div id="tab-performance" class="tab-panel">
+    <div class="mb-4 flex items-end justify-between">
+        <div>
+            <h2 class="text-lg font-semibold" style="color:var(--text-primary)">Paper-Trade Ledger</h2>
+            <p class="text-xs themed-text mt-0.5">$1 staked every time the system fires a tradeable signal. Settles when the market resolves.</p>
+        </div>
+    </div>
+    <div id="performance-content" hx-get="/performance" hx-trigger="load, every 60s" hx-swap="innerHTML">
+        <div class="text-center py-16 themed-muted">Loading...</div>
+    </div>
+
+    <div class="mt-8">
+        <h3 class="text-sm font-semibold mb-2" style="color:var(--text-primary)">Backtest the thresholds</h3>
+        <p class="text-xs themed-text mb-4">Replays every resolved prediction under the picked filter. Use this to tune the live trade rules.</p>
+        <div class="themed-card border themed-border rounded-xl p-4 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="text-[10px] uppercase tracking-wider themed-muted mb-1 block">Min EV</label>
+                    <input id="bt-min-ev" type="number" step="0.01" min="0" max="1" value="0.10" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase tracking-wider themed-muted mb-1 block">Min Credibility</label>
+                    <input id="bt-min-cred" type="number" step="0.01" min="0" max="1" value="0.55" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase tracking-wider themed-muted mb-1 block">Stake ($/signal)</label>
+                    <input id="bt-stake" type="number" step="1" min="1" max="1000" value="1" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)">
+                </div>
+            </div>
+            <button onclick="runBacktest()" class="mt-4 px-4 py-2 rounded-lg accent-bg text-white text-xs font-medium hover:opacity-90 transition-opacity">Run backtest</button>
+        </div>
+        <div id="bt-result" class="text-sm themed-text"></div>
+    </div>
+</div>
+
 </main>
 
 <script>
@@ -195,6 +232,37 @@ function switchTab(tab) {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     const panel = document.getElementById(`tab-${tab}`);
     if (panel) panel.classList.add('active');
+}
+
+// Backtest knob runner
+async function runBacktest() {
+    const ev = parseFloat(document.getElementById('bt-min-ev').value || '0.10');
+    const cred = parseFloat(document.getElementById('bt-min-cred').value || '0.55');
+    const stake = parseFloat(document.getElementById('bt-stake').value || '1');
+    const out = document.getElementById('bt-result');
+    out.innerHTML = '<span class="themed-muted">Running...</span>';
+    try {
+        const r = await fetch(`/backtest?min_ev=${ev}&min_credibility=${cred}&stake_usd=${stake}`, {credentials: 'same-origin'});
+        if (!r.ok) { out.innerHTML = '<span class="text-red-400">Backtest failed</span>'; return; }
+        const d = await r.json();
+        const pnlClass = (d.total_pnl_usd || 0) >= 0 ? 'text-green-400' : 'text-red-400';
+        const hr = d.hit_rate != null ? `${(d.hit_rate*100).toFixed(0)}%` : '—';
+        const roi = d.roi != null ? `${(d.roi*100).toFixed(1)}%` : '—';
+        let cats = '';
+        for (const [k,v] of Object.entries(d.by_category || {})) {
+            const cClass = v.pnl >= 0 ? 'text-green-400' : 'text-red-400';
+            cats += `<tr class="border-b border-white/5"><td class="px-3 py-1.5 text-xs">${k}</td><td class="px-3 py-1.5 text-xs">${v.n}</td><td class="px-3 py-1.5 text-xs">${v.wins}</td><td class="px-3 py-1.5 text-xs font-mono ${cClass}">${v.pnl >= 0 ? '+' : ''}${v.pnl.toFixed(2)}</td></tr>`;
+        }
+        out.innerHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Signals</div><div class="text-2xl font-bold text-gray-200">${d.n_signals}</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Hit rate</div><div class="text-2xl font-bold text-gray-200">${hr}</div><div class="text-xs text-gray-500 mt-1">${d.wins}W / ${d.losses}L</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">P&amp;L</div><div class="text-2xl font-bold ${pnlClass}">${(d.total_pnl_usd || 0) >= 0 ? '+' : ''}${(d.total_pnl_usd || 0).toFixed(2)}</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">ROI</div><div class="text-2xl font-bold text-gray-200">${roi}</div></div>
+            </div>` + (cats ? `<div class="rounded-xl border border-white/5 overflow-hidden"><table class="w-full"><thead class="themed-card"><tr><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Category</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">N</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Wins</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">P&amp;L</th></tr></thead><tbody>${cats}</tbody></table></div>` : '');
+    } catch (e) {
+        out.innerHTML = '<span class="text-red-400">Backtest failed</span>';
+    }
 }
 
 // Reset feed filters

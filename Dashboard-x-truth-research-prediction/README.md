@@ -1,6 +1,19 @@
 # Polymarket Prediction Intelligence Dashboard
 
-Scrapes X (Twitter) and TruthSocial for prediction-related posts, cross-references against live Polymarket odds, scores by EV and source credibility, surfaces the best betting opportunities.
+Scrapes X (Twitter) and TruthSocial for prediction-related posts, cross-references against live Polymarket and Kalshi odds, scores each prediction by best-side EV and source credibility, opens a $1 paper-trade for every tradeable signal, settles the ledger when markets resolve, and (optionally) DMs you on Telegram.
+
+Subdomain when running behind the narve.ai gateway: `truth.narve.ai` (port 18789).
+
+## What it does
+
+- **Scrapes X + TruthSocial** every 5 min for posts containing prediction-style language. Per-user API keys (Profile → API Keys) are used in addition to env-var keys.
+- **Matches predictions to markets** on Polymarket *and* Kalshi via Jaccard token-overlap (≥3 shared tokens, strict category gating).
+- **Scores credibility** per source — Bayesian-smoothed accuracy, decay-weighted by half-life, category-spread + dominance penalties, manual trust override.
+- **Picks the better side**: for every prediction with a matched market, computes the EV of buying YES vs buying NO at the live price, surfaces the higher-EV side as a `BUY YES` / `BUY NO` signal.
+- **Opens a paper-trade** ($1 stake) every time the system fires a signal that clears the EV + credibility filter. Settles when the market resolves. Running P&L visible in the Performance tab.
+- **Backtest harness** at `/backtest?min_ev=0.10&min_credibility=0.55&stake_usd=1` replays historical resolved predictions under tunable thresholds.
+- **Telegram alerts** on each new signal (per-user opt-in, bot token Fernet-encrypted at rest).
+- **DB-backed sessions** so a process restart no longer logs everyone out.
 
 ## Quick Start
 

@@ -31,6 +31,9 @@ class User(SQLModel, table=True):
     truthsocial_username: str = ""
     truthsocial_password: str = ""
     truthsocial_access_token: str = ""
+    telegram_bot_token: str = ""  # Fernet-encrypted (set via /profile/update)
+    telegram_chat_id: str = ""  # plain — chat IDs aren't secret on their own
+    telegram_alerts_enabled: bool = False
     preferred_platform: str = Field(default="polymarket")  # "polymarket" or "kalshi"
     preferred_theme: str = Field(default="dark")  # "dark" or "light"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -73,6 +76,7 @@ class Prediction(SQLModel, table=True):
     predicted_probability: Optional[float] = None
     market_implied_probability: Optional[float] = None
     ev_score: Optional[float] = None
+    bet_side: str = Field(default="YES")  # "YES" or "NO" — which side carries the EV
     global_credibility_at_time: float = 0.0
     category_credibility_at_time: Optional[float] = None
     risk_flag: bool = False
@@ -168,6 +172,36 @@ class MonthlyQuota(SQLModel, table=True):
     year_month: str = ""
     tweets_read: int = 0
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UserSession(SQLModel, table=True):
+    __tablename__ = "user_session"
+    token: str = Field(primary_key=True)
+    username: str = Field(index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PaperTrade(SQLModel, table=True):
+    """An open or closed simulated bet that the system would have taken given
+    its EV signal and the source's credibility at signal time."""
+    __tablename__ = "paper_trade"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    prediction_id: int = Field(foreign_key="prediction.id", index=True)
+    handle: str = Field(index=True)
+    market_slug: str = Field(index=True)
+    platform: str = Field(default="polymarket")
+    bet_side: str = Field(default="YES")
+    stake_usd: float = 1.0
+    entry_price: float = 0.5  # market YES price at entry, or NO price = 1 - YES if bet_side == "NO"
+    entry_ev_score: float = 0.0
+    entry_credibility: float = 0.0
+    opened_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved: bool = False
+    resolved_correct: Optional[bool] = None
+    pnl_usd: Optional[float] = None
+    closed_at: Optional[datetime] = None
 
 
 class CredibilitySnapshot(SQLModel, table=True):

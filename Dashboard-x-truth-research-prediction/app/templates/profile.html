@@ -84,6 +84,26 @@
             </div>
         </div>
 
+        <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4 pt-6 mt-6 border-t border-white/5">Telegram Alerts <span class="text-gray-600 normal-case font-normal">— optional</span></h2>
+        <p class="text-xs text-gray-500 mb-4">Get a Telegram message every time the system fires a tradeable signal (uses the same EV / credibility thresholds as the paper-trade ledger).</p>
+        <div class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5">Bot Token</label>
+                    <input type="password" name="telegram_bot_token" value="" placeholder="{{ '••••••••' if user.telegram_bot_token else 'From @BotFather' }}" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 font-mono focus:outline-none focus:border-[#2D64F3]/50 transition-all">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5">Chat ID</label>
+                    <input type="text" name="telegram_chat_id" value="{{ user.telegram_chat_id }}" placeholder="123456789" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 font-mono focus:outline-none focus:border-[#2D64F3]/50 transition-all">
+                </div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="telegram_alerts_enabled" value="true" {{ 'checked' if user.telegram_alerts_enabled }} class="rounded w-3.5 h-3.5 accent-[#2D64F3]">
+                <span class="text-xs text-gray-400">Send me alerts on new tradeable signals</span>
+            </label>
+            <p class="text-[10px] text-gray-600">Create a bot via <a href="https://t.me/BotFather" target="_blank" class="text-[#2D64F3]">@BotFather</a>, paste the token, then DM your bot once and find your chat ID at <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.</p>
+        </div>
+
         <div class="mt-6 pt-4 border-t border-white/5">
             <label class="block text-xs text-gray-500 mb-1.5">Confirm with your current password to save</label>
             <input type="password" name="confirm_password" required class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-[#2D64F3]/50 transition-all mb-3" placeholder="Enter current password">

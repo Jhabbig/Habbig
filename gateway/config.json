@@ -99,6 +99,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "truth": {
+      "subdomain": "truth",
+      "target": 18789,
+      "display_name": "Truth Research",
+      "description": "X / TruthSocial prediction-mining · EV signals · paper-trade ledger",
+      "accent": "#f43f5e",
+      "monthly_cents": 1499,
+      "annual_cents": 14900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_TRUTH_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_TRUTH_STRIPE_ANNUAL"
     }
   }
 }

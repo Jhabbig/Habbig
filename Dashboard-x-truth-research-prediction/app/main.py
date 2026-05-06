@@ -19,8 +19,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from cryptography.fernet import Fernet
-
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,8 +28,9 @@ from sqlmodel import func, select
 from app.config import settings, yaml_config
 from app.db import AsyncSession, engine, get_session, init_db
 from app.models import (
-    CredibilitySnapshot, MarketSnapshot, MonthlyQuota, Prediction, RawPost, Source, SourcePredictionRecord, User,
+    CredibilitySnapshot, MarketSnapshot, MonthlyQuota, PaperTrade, Prediction, RawPost, Source, SourcePredictionRecord, User, UserSession,
 )
+from app.security import decrypt_field as _decrypt_field, encrypt_field as _encrypt_field
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=getattr(logging, settings.get("LOG_LEVEL", "INFO")), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -40,48 +39,6 @@ ONE_YEAR_FROM_NOW = lambda: datetime.now(timezone.utc) + timedelta(days=365)
 _last_run_stats: dict = {}
 _SESSION_SECRET = secrets.token_hex(32)
 _CSRF_SECRET = secrets.token_hex(16)
-
-# ---------------------------------------------------------------------------
-# Fernet symmetric encryption for sensitive fields (e.g. truthsocial_password)
-# ---------------------------------------------------------------------------
-def _get_or_create_encryption_key() -> str:
-    """Get encryption key from env, or generate and persist to a local file."""
-    key = os.environ.get("ENCRYPTION_KEY")
-    if key:
-        return key
-    key_file = Path(__file__).parent.parent / ".encryption_key"
-    if key_file.exists():
-        return key_file.read_text().strip()
-    key = Fernet.generate_key().decode()
-    try:
-        key_file.write_text(key)
-        key_file.chmod(0o600)
-    except OSError:
-        pass  # non-fatal -- key still usable for this process lifetime
-    return key
-
-
-_ENCRYPTION_KEY = _get_or_create_encryption_key()
-_fernet = Fernet(_ENCRYPTION_KEY if isinstance(_ENCRYPTION_KEY, bytes) else _ENCRYPTION_KEY.encode())
-
-
-def _encrypt_field(value: str) -> str:
-    """Encrypt a string value. Returns empty string for empty input."""
-    if not value:
-        return ""
-    return _fernet.encrypt(value.encode()).decode()
-
-
-def _decrypt_field(value: str) -> str:
-    """Decrypt a Fernet-encrypted string. Returns original if decryption fails (legacy plaintext)."""
-    if not value:
-        return ""
-    try:
-        return _fernet.decrypt(value.encode()).decode()
-    except Exception:
-        import logging as _log
-        _log.getLogger(__name__).warning("Failed to decrypt field — possible key rotation or legacy plaintext")
-        return value
 
 # Rate limiting: track login attempts per IP
 _login_attempts: dict[str, list[float]] = collections.defaultdict(list)
@@ -92,6 +49,7 @@ _LOGIN_WINDOW_SECONDS = 300  # 5 minutes
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await _rehydrate_sessions()
     # Create default admin user if none exist
     async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.exec(select(func.count()).select_from(User))
@@ -271,23 +229,89 @@ def _check_rate_limit(ip: str) -> bool:
 
 
 # Active sessions: token -> (username, created_timestamp)
+# Persisted to UserSession table; this dict is a hot-path cache that is
+# rehydrated from DB on startup so a process restart no longer logs everyone out.
 _active_sessions: dict[str, tuple[str, float]] = {}
 _SESSION_MAX_AGE = 86400 * 7  # 7 days, matches cookie max_age
 _SESSION_MAX_SIZE = 5000  # cap to prevent unbounded memory growth
 
 
+async def _persist_session(token: str, username: str) -> None:
+    """Write a new session row to the DB (and add to the in-memory cache)."""
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(seconds=_SESSION_MAX_AGE)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        session.add(UserSession(token=token, username=username, created_at=now, last_seen_at=now, expires_at=expires))
+        await session.commit()
+    _active_sessions[token] = (username, now.timestamp())
+
+
+async def _drop_session(token: str) -> None:
+    _active_sessions.pop(token, None)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        existing = await session.exec(select(UserSession).where(UserSession.token == token))
+        row = existing.first()
+        if row:
+            await session.delete(row)
+            await session.commit()
+
+
+async def _rehydrate_sessions() -> None:
+    """Load non-expired sessions from DB into the cache (called at startup)."""
+    now = datetime.now(timezone.utc)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.exec(select(UserSession).where(UserSession.expires_at >= now))
+        for row in result.all():
+            _active_sessions[row.token] = (row.username, row.created_at.timestamp())
+        # Cull stale rows.
+        expired = await session.exec(select(UserSession).where(UserSession.expires_at < now))
+        for row in expired.all():
+            await session.delete(row)
+        await session.commit()
+    logger.info("Rehydrated %d active sessions from DB", len(_active_sessions))
+
+
+async def _rename_session_username(old: str, new: str, keep_token: str | None) -> None:
+    """Rename sessions from `old` to `new`, dropping all except `keep_token`.
+
+    Used after a successful username change so the active session keeps working
+    while every other session for the old username is invalidated.
+    """
+    # Update memory cache.
+    for tok in list(_active_sessions):
+        uname, ts = _active_sessions[tok]
+        if uname != old:
+            continue
+        if tok == keep_token:
+            _active_sessions[tok] = (new, ts)
+        else:
+            del _active_sessions[tok]
+    # Mirror to DB.
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.exec(select(UserSession).where(UserSession.username == old))
+        for row in result.all():
+            if row.token == keep_token:
+                row.username = new
+                session.add(row)
+            else:
+                await session.delete(row)
+        await session.commit()
+
+
 def _prune_expired_sessions() -> None:
-    """Remove sessions older than _SESSION_MAX_AGE. Also cap dict size."""
+    """Remove sessions older than _SESSION_MAX_AGE from the in-memory cache.
+
+    This is called per request and must stay synchronous + cheap. DB-side stale
+    rows are culled at startup by `_rehydrate_sessions`.
+    """
     now = time.time()
     expired = [t for t, (_, ts) in _active_sessions.items() if now - ts > _SESSION_MAX_AGE]
     for t in expired:
         del _active_sessions[t]
-    # Hard cap: if still too large, evict oldest sessions
     if len(_active_sessions) > _SESSION_MAX_SIZE:
         sorted_tokens = sorted(_active_sessions, key=lambda t: _active_sessions[t][1])
         for t in sorted_tokens[:len(_active_sessions) - _SESSION_MAX_SIZE]:
             del _active_sessions[t]
-    # Also prune login attempts
     stale = [ip for ip, attempts in _login_attempts.items()
              if not attempts or (now - attempts[-1]) > 600]
     for ip in stale:
@@ -380,7 +404,7 @@ async def login_submit(request: Request, session: AsyncSession = Depends(get_ses
         session.add(user)
         await session.commit()
         token = _make_session_token()
-        _active_sessions[token] = (username, time.time())
+        await _persist_session(token, username)
         resp = RedirectResponse("/", status_code=302)
         is_secure = request.url.scheme == "https"
         resp.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400 * 7, secure=is_secure)
@@ -437,8 +461,8 @@ async def logout(request: Request):
     if not _validate_csrf(request, csrf_token):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
     token = request.cookies.get("session")
-    if token and token in _active_sessions:
-        del _active_sessions[token]
+    if token:
+        await _drop_session(token)
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie("session")
     return resp
@@ -459,7 +483,7 @@ async def profile_page(request: Request, session: AsyncSession = Depends(get_ses
 
 
 @app.post("/profile/update", response_class=HTMLResponse)
-async def profile_update(request: Request, confirm_password: str = Form(""), new_username: str = Form(""), email: str = Form(""), twitter_bearer_token: str = Form(""), truthsocial_username: str = Form(""), truthsocial_password: str = Form(""), truthsocial_access_token: str = Form(""), preferred_platform: str = Form("polymarket"), preferred_theme: str = Form("dark"), csrf_token_field: str = Form("", alias="_csrf_token")):
+async def profile_update(request: Request, confirm_password: str = Form(""), new_username: str = Form(""), email: str = Form(""), twitter_bearer_token: str = Form(""), truthsocial_username: str = Form(""), truthsocial_password: str = Form(""), truthsocial_access_token: str = Form(""), telegram_bot_token: str = Form(""), telegram_chat_id: str = Form(""), telegram_alerts_enabled: str = Form(""), preferred_platform: str = Form("polymarket"), preferred_theme: str = Form("dark"), csrf_token_field: str = Form("", alias="_csrf_token")):
     csrf_token = _get_csrf_token(request)
     user = await _get_current_user(request)
     if not user:
@@ -498,6 +522,10 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
             db_user.truthsocial_password = _encrypt_field(truthsocial_password)
         if truthsocial_access_token:
             db_user.truthsocial_access_token = _encrypt_field(truthsocial_access_token) if truthsocial_access_token else None
+        if telegram_bot_token:
+            db_user.telegram_bot_token = _encrypt_field(telegram_bot_token)
+        db_user.telegram_chat_id = telegram_chat_id.strip()
+        db_user.telegram_alerts_enabled = telegram_alerts_enabled.lower() in ("1", "true", "on", "yes")
         db_user.preferred_platform = preferred_platform
         db_user.preferred_theme = preferred_theme
         db_user.updated_at = datetime.now(timezone.utc)
@@ -506,18 +534,8 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
 
         resp = templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Profile updated", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
         if new_username and new_username != user.username:
-            # Update current session for new username and invalidate all others
             current_token = request.cookies.get("session")
-            old_username = user.username
-            # Remove all sessions for the old username except the current one
-            stale = [t for t, (uname, _) in _active_sessions.items()
-                     if uname == old_username and t != current_token]
-            for t in stale:
-                del _active_sessions[t]
-            # Update the current session to the new username
-            if current_token and current_token in _active_sessions:
-                _, ts = _active_sessions[current_token]
-                _active_sessions[current_token] = (new_username, ts)
+            await _rename_session_username(user.username, new_username, current_token)
         return resp
 
 
@@ -699,7 +717,10 @@ async def best_bets(request: Request, session: AsyncSession = Depends(get_sessio
         pl = "X" if post.platform == "twitter" else "TS"
         poly = f'<a href="https://polymarket.com/event/{pred.market_slug}" target="_blank" class="text-xs text-blue-400 hover:text-blue-300">Polymarket &nearr;</a>' if pred.market_slug else ""
         rk = f'<span class="absolute -top-2 -left-2 w-7 h-7 rounded-full bg-[#2D64F3] flex items-center justify-center text-xs font-bold text-white shadow-lg">#{i+1}</span>'
-        cards.append(f'<div class="relative bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl p-5 border border-white/5 hover:border-white/10 transition-all">{rk}<h3 class="text-sm font-semibold text-gray-200 mb-3 pr-4">{_esc((pred.market_question or "Unmatched")[:80])}</h3><div class="flex items-center gap-2 mb-4 text-xs text-gray-500"><span class="font-medium text-gray-300">{_esc(pred.predicted_outcome)}</span><span>&middot;</span><span>@{_esc(post.author_handle)}</span><span class="px-1.5 py-0.5 rounded bg-white/5">{pl}</span></div><div class="{evc} text-3xl font-bold tracking-tight mb-4">{pred.ev_score:+.2f}<span class="text-sm font-normal text-gray-500 ml-1">EV</span></div><div class="grid grid-cols-2 gap-4 mb-4"><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Global</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(gc)} h-1.5 rounded-full" style="width:{int(gc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{gc:.2f}</div></div><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Category</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(catc)} h-1.5 rounded-full" style="width:{int(catc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{catc:.2f}</div></div></div><div class="flex justify-between text-xs text-gray-400 mb-3 py-2 border-t border-white/5"><span>Market: <span class="text-gray-300">{mp}</span></span><span>Predicted: <span class="text-gray-300">{pp}</span></span><span>Record: <span class="text-gray-300">{acc}</span></span></div><div class="flex justify-end">{poly}</div></div>')
+        side = (pred.bet_side or "YES").upper()
+        side_color = "bg-green-500/20 text-green-400 border-green-500/30" if side == "YES" else "bg-red-500/20 text-red-400 border-red-500/30"
+        side_badge = f'<span class="text-[10px] px-2 py-0.5 rounded-full border {side_color}">BUY {side}</span>'
+        cards.append(f'<div class="relative bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl p-5 border border-white/5 hover:border-white/10 transition-all">{rk}<h3 class="text-sm font-semibold text-gray-200 mb-3 pr-4">{_esc((pred.market_question or "Unmatched")[:80])}</h3><div class="flex items-center gap-2 mb-4 text-xs text-gray-500">{side_badge}<span>&middot;</span><span class="font-medium text-gray-300">{_esc(pred.predicted_outcome)}</span><span>&middot;</span><span>@{_esc(post.author_handle)}</span><span class="px-1.5 py-0.5 rounded bg-white/5">{pl}</span></div><div class="{evc} text-3xl font-bold tracking-tight mb-4">{pred.ev_score:+.2f}<span class="text-sm font-normal text-gray-500 ml-1">EV</span></div><div class="grid grid-cols-2 gap-4 mb-4"><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Global</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(gc)} h-1.5 rounded-full" style="width:{int(gc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{gc:.2f}</div></div><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Category</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(catc)} h-1.5 rounded-full" style="width:{int(catc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{catc:.2f}</div></div></div><div class="flex justify-between text-xs text-gray-400 mb-3 py-2 border-t border-white/5"><span>Market: <span class="text-gray-300">{mp}</span></span><span>Predicted: <span class="text-gray-300">{pp}</span></span><span>Record: <span class="text-gray-300">{acc}</span></span></div><div class="flex justify-end">{poly}</div></div>')
     return HTMLResponse(f'<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">{chr(10).join(cards)}</div>')
 
 
@@ -883,17 +904,125 @@ async def api_fx_rates(_user: str = Depends(require_auth)):
 
 
 # ---------------------------------------------------------------------------
+# Performance (paper-trade ledger) + Backtest
+# ---------------------------------------------------------------------------
+@app.get("/performance", response_class=HTMLResponse)
+async def performance(request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth)):
+    """Render the paper-trade summary card + recent ledger rows.
+
+    Shows the running P&L of "$1 every time the system fires a tradeable
+    signal" — answers the question "would following these picks have made
+    money?". The ledger is opened by the scheduler and settled by the resolver.
+    """
+    from app.processing.paper_trade import summary
+    s = await summary(session)
+    # Ledger — most recent 50 rows.
+    rows_result = await session.exec(select(PaperTrade).order_by(PaperTrade.opened_at.desc()).limit(50))
+    rows = rows_result.all()
+
+    pnl_color = "text-green-400" if (s["total_pnl_usd"] or 0) >= 0 else "text-red-400"
+    hr = f"{s['hit_rate']:.0%}" if s["hit_rate"] is not None else "—"
+    roi = f"{s['roi']:+.1%}" if s["roi"] is not None else "—"
+    open_count = s["open"]
+    settled = s["settled"]
+
+    summary_html = (
+        f'<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">'
+        f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Total P&amp;L (paper)</div><div class="{pnl_color} text-2xl font-bold">{s["total_pnl_usd"]:+.2f}</div><div class="text-xs text-gray-500 mt-1">on ${s["total_staked_usd"]:.0f} staked</div></div>'
+        f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">ROI</div><div class="text-2xl font-bold text-gray-200">{roi}</div></div>'
+        f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Hit rate</div><div class="text-2xl font-bold text-gray-200">{hr}</div><div class="text-xs text-gray-500 mt-1">{s["wins"]}W / {s["losses"]}L</div></div>'
+        f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Open / Settled</div><div class="text-2xl font-bold text-gray-200">{open_count} / {settled}</div></div>'
+        f'</div>'
+    )
+
+    if not rows:
+        return HTMLResponse(summary_html + '<div class="text-center py-12 text-gray-600 text-sm">No paper trades yet — the scheduler opens one whenever it sees a high-EV signal from a credible source.</div>')
+
+    ledger_rows = []
+    for t in rows:
+        pnl = t.pnl_usd
+        pcol = "text-green-400" if (pnl or 0) > 0 else "text-red-400" if (pnl or 0) < 0 else "text-gray-500"
+        pnl_str = f"{pnl:+.2f}" if pnl is not None else ("OPEN" if not t.resolved else "—")
+        side_color = "bg-green-500/20 text-green-400" if t.bet_side == "YES" else "bg-red-500/20 text-red-400"
+        ledger_rows.append(
+            f'<tr class="border-b border-white/5 hover:bg-white/[0.02]">'
+            f'<td class="px-4 py-2.5 text-xs text-gray-400 max-w-[300px]"><div class="truncate">{_esc(t.market_slug)}</div></td>'
+            f'<td class="px-4 py-2.5 text-xs"><span class="text-[10px] px-2 py-0.5 rounded-full {side_color}">BUY {t.bet_side}</span></td>'
+            f'<td class="px-4 py-2.5 text-xs text-gray-400 font-mono">{t.entry_price:.2f}</td>'
+            f'<td class="px-4 py-2.5 text-xs text-gray-400 font-mono">{t.entry_ev_score:+.2f}</td>'
+            f'<td class="px-4 py-2.5 text-xs text-gray-400 font-mono">{t.entry_credibility:.2f}</td>'
+            f'<td class="px-4 py-2.5 text-xs">@{_esc(t.handle)}</td>'
+            f'<td class="px-4 py-2.5 font-mono text-xs {pcol}">{pnl_str}</td>'
+            f'<td class="px-4 py-2.5 text-xs text-gray-500">{_time_ago(t.opened_at)}</td>'
+            f'</tr>'
+        )
+
+    table_html = (
+        '<div class="rounded-xl border border-white/5 overflow-hidden">'
+        '<table class="w-full"><thead class="bg-white/[0.02] border-b border-white/5"><tr>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Market</th>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Side</th>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Entry</th>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">EV</th>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Cred</th>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Source</th>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">P&amp;L</th>'
+        '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Opened</th>'
+        '</tr></thead><tbody>' + "\n".join(ledger_rows) + '</tbody></table></div>'
+    )
+
+    return HTMLResponse(summary_html + table_html)
+
+
+@app.get("/backtest")
+async def backtest_endpoint(
+    session: AsyncSession = Depends(get_session),
+    _user: str = Depends(require_auth),
+    min_ev: float = 0.10,
+    min_credibility: float = 0.55,
+    stake_usd: float = 1.0,
+):
+    """Replay every resolved prediction under the given thresholds and return P&L.
+
+    Used by the Performance tab to let users tune the (EV, credibility) knobs
+    against historical data before flipping them on for live paper-trading.
+    """
+    from app.processing.paper_trade import TradeFilter, backtest as run_backtest
+    filt = TradeFilter(
+        min_ev=max(0.0, min(1.0, min_ev)),
+        min_credibility=max(0.0, min(1.0, min_credibility)),
+        stake_usd=max(0.01, min(1000.0, stake_usd)),
+    )
+    return JSONResponse(await run_backtest(session, filt))
+
+
+# ---------------------------------------------------------------------------
 # Refresh / Health
 # ---------------------------------------------------------------------------
+# Per-user cooldown on the manual refresh button so a user can't repeatedly
+# trigger pipeline runs (each run hits Polymarket/Kalshi/Twitter externally).
+_REFRESH_COOLDOWN_SECONDS = 60
+_last_refresh_at: dict[str, float] = {}
+
+
 @app.get("/refresh", response_class=HTMLResponse)
-async def refresh(_user: str = Depends(require_auth)):
+async def refresh(request: Request, _user: str = Depends(require_auth)):
     global _last_run_stats
+    user_key = _user or "anon"
+    now = time.time()
+    last = _last_refresh_at.get(user_key, 0.0)
+    wait = _REFRESH_COOLDOWN_SECONDS - (now - last)
+    if wait > 0:
+        return HTMLResponse(f'<div class="text-amber-400 text-xs">Cooldown: try again in {int(wait)}s</div>')
+    _last_refresh_at[user_key] = now
     try:
         from app.scheduler import run_pipeline
         _last_run_stats = await run_pipeline()
         s = _last_run_stats
         ec = len(s.get("errors", []))
-        return HTMLResponse(f'<div class="flex items-center gap-3 text-xs"><span class="text-green-400">&#10003; Synced</span><span class="text-gray-500">{s.get("posts_fetched",0)} posts</span><span class="text-gray-500">{s.get("predictions_extracted",0)} preds</span><span class="text-gray-500">{s.get("markets_synced",0)} mkts</span>{"<span class=text-red-400>" + str(ec) + " err</span>" if ec else ""}</div>')
+        opens = s.get("paper_trades_opened", 0)
+        opens_html = f'<span class="text-gray-500">{opens} trades</span>' if opens else ""
+        return HTMLResponse(f'<div class="flex items-center gap-3 text-xs"><span class="text-green-400">&#10003; Synced</span><span class="text-gray-500">{s.get("posts_fetched",0)} posts</span><span class="text-gray-500">{s.get("predictions_extracted",0)} preds</span><span class="text-gray-500">{s.get("markets_synced",0)} mkts</span>{opens_html}{"<span class=text-red-400>" + str(ec) + " err</span>" if ec else ""}</div>')
     except Exception as exc:
         return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_esc(str(exc))}</div>')
 
