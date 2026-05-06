@@ -18,18 +18,99 @@ Three layers, mirroring the climate/world-state dashboards:
    changes (war, recession, legalization) so the dashboard is *actionable
    reading*, not just a wall of numbers.
 
-### Composite weighting (proposal — to revisit)
+## Methodology
 
-| Subscore | Weight | What it captures |
+### What we measure
+
+The Love Index is a **population-level prevalence-and-quality measure of close
+human connection** — how many people in a country have meaningful relationships,
+and how good those relationships are. It is *not* an intensity score (we can't
+measure how much one couple loves each other), and it is not a values judgement
+on family structure (cohabitation and marriage count equally as "partnership").
+
+Falsifiable claim: a country scoring 80 should, on average, have lonelier
+people, fewer stable unions, and lower relationship satisfaction than a country
+scoring 40. If we can't show that across multiple cuts of the data, the
+methodology is wrong.
+
+### Subscores
+
+| Subscore | Weight | Indicators | Tier |
+|---|---|---|---|
+| **Connection** | 35% | loneliness rate (↓good); social support (↑good); relationship satisfaction (where measured) | B |
+| **Partnership** | 30% | partnership rate = % adults in marriage OR cohabiting union (↑good, capped at 80th pctile); median union duration at dissolution (↑good) | A |
+| **Stability** | 25% | age at first union (U-shape penalty); separation rate per 1,000 existing unions (↓good) | A |
+| **Activity** | 10% | dating-app penetration; Google Trends "love"/"date" basket | C — indicative only |
+
+Things deliberately *not* in the index, with reasons:
+
+- **Crude marriage rate** — replaced by partnership rate. Sweden marries less but cohabits more; outcome is the same.
+- **Births outside marriage** — values-laden and doesn't track stability.
+- **Divorce rate per population** — replaced by separation per 1,000 existing unions; population denominator gets confounded by falling partnership rates.
+- **Condom imports** — too noisy as a romantic-activity proxy.
+
+### Direction of each metric
+
+| Metric | Direction | Reason |
 |---|---|---|
-| Connection | 35% | Loneliness, social-support, satisfaction with relationships |
-| Commitment | 25% | Marriage rate, 1 − (divorce / marriage), median union duration |
-| Family stability | 20% | Births in stable unions, single-parent share, age at first union |
-| Romantic activity | 20% | Dating-app penetration, "love"/"date" search interest, condom imports per capita |
+| Loneliness rate | ↓ better | direct measure of disconnection |
+| Social support | ↑ better | direct measure of connection |
+| Partnership rate | ↑ better, **capped** at 80th pctile | runaway-high rates can reflect coercion or absence of single-life options, not flourishing |
+| Median union duration | ↑ better | longer unions ≈ more stability |
+| Age at first union | U-shape | very young often forced; very late correlates with delayed family formation and loneliness |
+| Separation per 1,000 unions | ↓ better | cleaner denominator than crude divorce rate |
+| Dating-app penetration | ↑ indicative | high engagement = active romantic market — but also correlates with loneliness; flagged as ambiguous |
+| Search interest (love / date) | ↑ indicative | same caveat |
 
-Each subscore is z-scored within continent, then min-maxed to 0–100 globally.
-Continent-relative z avoids penalizing regions where the cultural baseline is
-different (e.g. cohabitation-heavy Nordics vs. marriage-heavy South Asia).
+### Normalization
+
+1. Within each subscore, convert each raw indicator to a **percentile rank
+   within income tier** (World Bank low / lower-mid / upper-mid / high).
+   Income predicts marriage / divorce / loneliness patterns more cleanly than
+   geography, and percentile rank is robust to the skewed distributions these
+   series often have.
+2. Average the indicators within a subscore (equal weight) → subscore
+   percentile (0–100).
+3. Composite Love Index = weighted average of subscore percentiles using the
+   table above.
+
+We do **not** z-score then min-max as in the previous draft. Z-scoring
+reshapes skewed distributions, and min-max means the worst country always
+sits at 0 even if the global state improves. Percentile rank within income
+tier is harder to game and easier to explain ("compared to peers at similar
+income").
+
+### Missing-data policy
+
+- **Subscore present**: ≥1 of its indicators must be measured. If only one of
+  two, the subscore carries a "low-confidence" flag.
+- **Country ranked**: ≥2 of the 3 Tier-A/B subscores must be present.
+  Activity alone is never enough.
+- **No imputation** of missing values. Missing subscores drop out of the
+  weighted average and remaining weights renormalize. The country detail
+  panel shows which subscores were used.
+
+### Sensitivity analysis (planned, before any public ranking)
+
+Publish a table showing how the top 20 changes under:
+
+- Weights perturbed ±10 percentage points
+- Each subscore dropped one at a time (leave-one-out)
+- Z-score-then-min-max swapped in for percentile rank
+- Income-tier grouping swapped for continental grouping
+
+Countries that shuffle wildly across these are flagged **unstable** in the UI
+rather than given a confident rank.
+
+### Contestable decisions (push back on these before backend work)
+
+The five calls above I'm least certain about:
+
+1. **Activity at 10%, badged "indicative only".** Alt: drop it from the index entirely and show it as a side-panel "Activity Watch". *(My pick: keep at 10% — you flagged it as interesting and the visible badge handles the credibility issue.)*
+2. **Partnership rate, not marriage rate.** Alt: marriage rate alone is cleaner Tier-A coverage; cohabitation data is patchy outside Europe. *(My pick: partnership; we lose ~20 countries of Tier-A coverage but the methodology is consistent across the panel.)*
+3. **Income-tier normalization, not continent.** Alt: continent is more recognizable to readers. *(My pick: income tier; the framing "vs peers at similar income" is more honest.)*
+4. **Drop births-outside-marriage entirely.** Alt: keep as a stability proxy in countries with clear cultural meaning. *(My pick: drop; it's a values trap.)*
+5. **Cap partnership rate at 80th percentile.** Alt: don't cap. *(My pick: cap; rewarding coercion-driven high rates would discredit the index.)*
 
 ## Data-source audit
 
@@ -109,13 +190,13 @@ can click through to the raw series.
 
 ## Open questions (please push back)
 
-1. Is "Love" the right umbrella, or should the public-facing name be
-   "Connection" / "Relationships"? (Affects which metrics feel on-brand.)
-2. Country-level only, or also regional / city where data allows?
-3. Do we publish the raw Love Index, or only the four subscores? (Composite
-   is more clickable but easier to argue with.)
-4. How heavily do we lean on Tier C? Cheap and live, but the methodology is
-   harder to defend.
+Methodology contestables are now in the *Contestable decisions* block above.
+Two open product questions remain:
+
+1. Is "Love" the right public-facing umbrella, or should it be "Connection"
+   or "Relationships"? Affects tone but not metrics.
+2. Country-level only, or also regional / city where data allows
+   (e.g. Eurostat NUTS-2 has good union-status coverage)?
 
 ## Run locally (wireframe only)
 
