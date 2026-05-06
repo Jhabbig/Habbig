@@ -62,9 +62,37 @@
 
   /* Score cell heatmap */
   .score { font-variant-numeric: tabular-nums; padding: 6px 10px;
-           border-radius: 4px; display: inline-block; min-width: 56px; text-align: right; }
+           border-radius: 4px; display: inline-flex; min-width: 56px;
+           align-items: center; justify-content: flex-end; gap: 6px; }
   .score.lead { box-shadow: inset 0 0 0 1px var(--accent); }
   .score.empty { color: var(--muted); }
+  .freshness { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .freshness.live { background: var(--green); box-shadow: 0 0 0 1px #56d36444; }
+  .freshness.curated { background: transparent; }
+  .freshness.stale { background: var(--amber); }
+  .freshness.missing { background: var(--grid); }
+
+  /* Sources panel */
+  .src-row { display: grid; grid-template-columns: 1fr 80px 110px 1fr;
+             gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .src-row:last-child { border-bottom: 0; }
+  .src-name { font-weight: 600; }
+  .src-name a { color: var(--accent); }
+  .src-state { font-size: 11px; padding: 2px 6px; border-radius: 3px;
+               font-weight: 600; text-align: center; }
+  .src-state.ok { background: #56d36422; color: var(--green); }
+  .src-state.fail { background: #f8514922; color: var(--red); }
+  .src-state.never { background: #30363d; color: var(--muted); }
+  .src-meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .src-error { color: var(--muted); font-size: 11px; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+  .refresh-btn { background: var(--panel-2); color: var(--fg);
+                 border: 1px solid var(--grid); padding: 4px 12px;
+                 border-radius: 4px; font-size: 12px; cursor: pointer;
+                 margin-left: auto; }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .refresh-btn[disabled] { opacity: 0.5; cursor: wait; }
 
   /* Frontier chart */
   .chart-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
@@ -181,6 +209,20 @@
     <h2>Live AI prediction markets</h2>
     <div class="sub">Polymarket questions matching AI keywords, sorted by 24h volume.</div>
     <div id="markets"></div>
+  </section>
+
+  <!-- Ingestion sources -->
+  <section class="panel" id="sources-panel">
+    <h2 style="display:flex;align-items:center;gap:12px">
+      Ingestion sources
+      <button id="refresh-btn" class="refresh-btn">Refresh now</button>
+    </h2>
+    <div class="sub">
+      Live scrapes that overlay the curated dataset. Green dots in the
+      leaderboard mean a value is from a live source; amber means the
+      curated value is older than 60 days; gray means missing.
+    </div>
+    <div id="sources"></div>
   </section>
 </main>
 
@@ -301,16 +343,32 @@ function renderLeaderboard() {
       `<td>${escapeHTML(m.released || "")}</td>`,
       `<td class="num">${m.context_k ?? ""}</td>`,
     ];
+    const meta = m.score_meta || {};
     const benchCells = benchmarks.map(b => {
       const s = (m.scores || {})[b.key];
-      if (s == null) return `<td class="num"><span class="score empty">—</span></td>`;
+      const cellMeta = meta[b.key] || {source: "missing"};
+      if (s == null) {
+        return `<td class="num"><span class="score empty"><span class="freshness missing"></span>—</span></td>`;
+      }
       const isBest = (bestPerBench[b.key] != null) && Math.abs(s - bestPerBench[b.key]) < 1e-9;
       const fmtFn = b.scale === "Elo" ? fmt.elo : fmt.pct;
       const pct = b.scale === "Elo"
         ? Math.max(0, Math.min(1, (s - 1100) / 350))
         : Math.max(0, Math.min(1, s / 100));
       const bg = `rgba(88,166,255,${0.05 + pct * 0.30})`;
-      return `<td class="num"><span class="score ${isBest?'lead':''}" style="background:${bg}">${fmtFn(s)}</span></td>`;
+
+      let freshClass = "curated";
+      let title = `curated · as of ${cellMeta.as_of || ""}`;
+      if (typeof cellMeta.source === "string" && cellMeta.source.startsWith("live:")) {
+        freshClass = "live";
+        const src = cellMeta.source.slice(5);
+        const ts = cellMeta.as_of ? new Date(cellMeta.as_of * 1000).toISOString().slice(0,16).replace("T"," ") : "";
+        title = `live from ${src} · ${ts} UTC` + (cellMeta.scraped_name ? ` · "${cellMeta.scraped_name}"` : "");
+      } else if (cellMeta.stale) {
+        freshClass = "stale";
+        title = `curated (stale) · as of ${cellMeta.as_of || ""}`;
+      }
+      return `<td class="num"><span class="score ${isBest?'lead':''}" style="background:${bg}" title="${escapeHTML(title)}"><span class="freshness ${freshClass}"></span>${fmtFn(s)}</span></td>`;
     });
     return `<tr class="row">${baseCells.concat(benchCells).join("")}</tr>`;
   }).join("");
@@ -506,6 +564,62 @@ async function loadMarkets() {
   }
 }
 
+// ── Sources panel ──────────────────────────────────────────────────────────
+async function loadSources() {
+  const wrap = $("#sources");
+  try {
+    const data = await fetchJSON("/api/sources");
+    const rows = data.sources || [];
+    if (rows.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No ingestion sources configured.</div>';
+      return;
+    }
+    const now = Date.now() / 1000;
+    wrap.innerHTML = rows.map(s => {
+      let state = "never", stateLabel = "never run";
+      if (s.fetched_at) {
+        if (s.ok) { state = "ok"; stateLabel = "ok"; }
+        else { state = "fail"; stateLabel = "failed"; }
+      }
+      const age = s.last_ok_at
+        ? Math.max(0, Math.floor((now - s.last_ok_at) / 60))
+        : null;
+      const ageLabel = age == null ? "—"
+                       : age < 60 ? `${age}m ago`
+                       : age < 60*24 ? `${Math.floor(age/60)}h ago`
+                       : `${Math.floor(age/(60*24))}d ago`;
+      const link = s.url ? `<a href="${escapeHTML(s.url)}" target="_blank" rel="noopener">${escapeHTML(s.name)}</a>` : escapeHTML(s.name);
+      return `<div class="src-row">
+        <div class="src-name">${link}<br><span style="color:var(--muted);font-size:11px">→ ${escapeHTML(s.benchmark)} · ${s.entries} entries</span></div>
+        <div class="src-state ${state}">${stateLabel}</div>
+        <div class="src-meta">last ok: ${ageLabel}</div>
+        <div class="src-error" title="${escapeHTML(s.error || '')}">${s.error ? escapeHTML(s.error) : ''}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load sources: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+async function triggerRefresh() {
+  const btn = $("#refresh-btn");
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  try {
+    const r = await fetch("/api/refresh", {method: "POST"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    await r.json();
+    await loadSources();
+    await loadModels();
+    await loadFrontier();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Refresh now";
+  }
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function boot() {
   try {
@@ -513,8 +627,11 @@ async function boot() {
     await loadFrontier();
     await loadTimeline();
     await loadLabs();
+    loadSources();
     loadMarkets();
+    $("#refresh-btn").addEventListener("click", triggerRefresh);
     setInterval(loadMarkets, 60_000);
+    setInterval(loadSources, 5 * 60_000);
   } catch (e) {
     console.error(e);
     $("#header-as-of").textContent = "load error: " + e.message;

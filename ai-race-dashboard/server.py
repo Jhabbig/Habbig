@@ -4,12 +4,18 @@
 Serves:
   - GET /                    → index.html
   - GET /api/labs            → curated lab snapshots
-  - GET /api/models          → frontier model leaderboard
+  - GET /api/models          → frontier model leaderboard (curated + live)
   - GET /api/benchmarks      → benchmark definitions
   - GET /api/timeline        → release timeline
   - GET /api/frontier        → best score per benchmark over time (line series)
   - GET /api/markets         → live Polymarket AI markets (cached)
+  - GET /api/sources         → ingestion source status (last fetch, errors)
+  - POST /api/refresh        → force refresh all ingestion sources
   - GET /api/health          → liveness probe
+
+A background thread refreshes ingestion sources hourly. Each cell in the
+leaderboard is tagged with provenance (`curated` or `live:<source>`) and a
+freshness flag.
 
 Runs behind the gateway (HMAC SSO header `x-gateway-secret`). DEV_MODE=1
 disables auth for local development.
@@ -32,6 +38,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import data as ai_data
+import live_data
+from ingestion import refresh_all
 
 app = FastAPI(title="AI Race Dashboard")
 
@@ -194,18 +202,28 @@ async def get_benchmarks():
 
 @app.get("/api/models")
 async def get_models():
-    rows = []
-    for m in ai_data.MODELS:
-        lab = ai_data.lab_by_key(m["lab_key"]) or {}
-        rows.append({
-            **m,
-            "lab_name": lab.get("name", m["lab_key"]),
-            "lab_color": lab.get("color", "#888"),
-        })
+    return _json(live_data.merged_models())
+
+
+@app.get("/api/sources")
+async def get_sources():
+    return _json({"sources": live_data.sources_status()})
+
+
+@app.post("/api/refresh")
+async def post_refresh():
+    import asyncio
+    results = await asyncio.to_thread(refresh_all, True)
     return _json({
-        "models": rows,
-        "benchmarks": ai_data.BENCHMARKS,
-        "as_of": ai_data.DATASET_AS_OF,
+        "refreshed": [
+            {
+                "source": r.get("source"),
+                "ok": r.get("ok"),
+                "entries": len(r.get("entries", [])),
+                "error": r.get("error"),
+            }
+            for r in results
+        ],
     })
 
 
@@ -224,32 +242,8 @@ async def get_timeline():
 
 @app.get("/api/frontier")
 async def get_frontier():
-    """For each benchmark, return the running max-score series over time.
-
-    Useful for a 'frontier capability' line chart per benchmark.
-    """
-    series: dict[str, list[dict]] = {b["key"]: [] for b in ai_data.BENCHMARKS}
-    by_release = sorted(ai_data.MODELS, key=lambda m: m.get("released") or "")
-    running: dict[str, float] = {}
-    for m in by_release:
-        for bench_key, score in (m.get("scores") or {}).items():
-            if score is None:
-                continue
-            if score > running.get(bench_key, -1):
-                running[bench_key] = score
-                series.setdefault(bench_key, []).append({
-                    "released": m["released"],
-                    "model": m["name"],
-                    "lab_key": m["lab_key"],
-                    "score": score,
-                })
-
-    leaders = ai_data.best_score_per_benchmark()
-    return _json({
-        "series": series,
-        "leaders": leaders,
-        "as_of": ai_data.DATASET_AS_OF,
-    })
+    """Running max-score series per benchmark, computed off merged scores."""
+    return _json(live_data.merged_frontier())
 
 
 @app.get("/api/markets")
@@ -257,6 +251,32 @@ async def get_markets():
     import asyncio
     markets = await asyncio.to_thread(fetch_ai_markets)
     return _json({"markets": markets, "count": len(markets)})
+
+
+# ── Background ingestion refresher ───────────────────────────────────────────
+_REFRESH_INTERVAL_S = 60 * 60  # 1 hour
+
+
+def _refresh_loop():
+    # Initial fetch shortly after startup so first request is already populated.
+    time.sleep(3)
+    while True:
+        try:
+            results = refresh_all(force=True)
+            ok = sum(1 for r in results if r.get("ok"))
+            logging.info("ingestion refresh: %d/%d ok", ok, len(results))
+        except Exception as e:  # noqa: BLE001
+            logging.warning("ingestion refresh loop error: %s", e)
+        time.sleep(_REFRESH_INTERVAL_S)
+
+
+@app.on_event("startup")
+def _start_refresher() -> None:
+    if os.environ.get("DISABLE_INGESTION") == "1":
+        logging.info("DISABLE_INGESTION=1 — skipping background refresher")
+        return
+    t = threading.Thread(target=_refresh_loop, name="ingestion-refresher", daemon=True)
+    t.start()
 
 
 if __name__ == "__main__":

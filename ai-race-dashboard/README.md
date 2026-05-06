@@ -51,7 +51,54 @@ DEV_MODE=1 python3 server.py        # → http://127.0.0.1:7070
 - `GET /api/health`
 - `GET /api/labs`
 - `GET /api/benchmarks`
-- `GET /api/models`
+- `GET /api/models` — curated rows merged with live scrapes; each cell carries
+  `score_meta` with provenance (`curated` / `live:<source>`), `as_of`, and a
+  `stale` flag.
 - `GET /api/timeline`
-- `GET /api/frontier` — running max-score series per benchmark
+- `GET /api/frontier` — running max-score series per benchmark, computed off
+  merged scores (live values bump the curve).
 - `GET /api/markets` — live Polymarket AI markets (60s cache)
+- `GET /api/sources` — per-source ingestion status (last fetch, errors,
+  entry count)
+- `POST /api/refresh` — force-refresh every ingestion source
+
+## Live ingestion (v2.1)
+
+The dashboard runs a background thread that refreshes ingestion sources
+once per hour. Each source is in `ingestion/`:
+
+| Source | File | Benchmark | TTL | Status |
+| --- | --- | --- | --- | --- |
+| LMArena (Chatbot Arena) | `ingestion/lmarena.py` | `lmarena_elo` | 1h | best-effort URL list — update if HF Space reorganizes |
+| HuggingFace Open LLM Leaderboard v2 | `ingestion/openllm.py` | `mmlu_pro`, `gpqa_diamond` | 1h | uses datasets-server rows API |
+| SWE-bench Verified | `ingestion/swebench.py` | `swe_bench_verified` | 6h | best-effort GitHub raw URLs |
+
+Each source is wrapped in a `TTLCache` (in-memory, thread-safe). On fetch
+failure the cache *retains the last successful payload* so the UI keeps
+showing live data with a "last_ok_at" timestamp until the next successful
+poll. The fetched scores are merged into `data.MODELS` by the
+`live_data.match_model()` matcher, which uses normalized names + an alias
+table to bridge identifiers like `claude-opus-4-5-20250930` ↔ `Claude Opus
+4.5`.
+
+When a public leaderboard restructures and our scrapers break:
+
+1. The dashboard keeps working — curated values become the fallback.
+2. `/api/sources` shows `ok: false` with the error message; the UI sources
+   panel surfaces this.
+3. To fix: update the URL constants at the top of the relevant
+   `ingestion/<source>.py`, then trigger `/api/refresh`.
+
+To disable live ingestion entirely (e.g. for sandboxed local dev), set
+`DISABLE_INGESTION=1`.
+
+## Per-cell freshness
+
+In the leaderboard, the small dot in each score cell is a freshness signal:
+
+- **green** — value is from a live scrape (hover for source + timestamp).
+- **none** — curated, recent (within 60 days of `as_of`).
+- **amber** — curated but the row's `as_of` is older than 60 days.
+- **gray** — no value reported.
+
+Adjust `live_data.STALE_DAYS_THRESHOLD` to taste.
