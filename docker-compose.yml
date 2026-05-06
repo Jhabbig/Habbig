@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       centralbank:
         condition: service_healthy
+      culture:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -150,6 +152,21 @@ services:
       timeout: 5s
       retries: 3
 
+  culture:
+    build: ./culture-dashboard
+    expose:
+      - "7070"
+    env_file: ./gateway/.env.production
+    volumes:
+      - culture-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7070/healthz',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   gateway-data:
   crypto-data:
+  culture-data:

@@ -99,6 +99,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "culture": {
+      "subdomain": "culture",
+      "target": 7070,
+      "display_name": "State of Culture",
+      "description": "Pop culture · memes · charts · attention · culture markets",
+      "accent": "#ec4899",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_CULTURE_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_CULTURE_STRIPE_ANNUAL"
     }
   }
 }
