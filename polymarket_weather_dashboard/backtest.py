@@ -1,27 +1,66 @@
 #!/usr/bin/env python3
-"""Backtest: replay historical weather forecasts vs observed outcomes.
+"""Walk-forward backtest for the weather dashboard.
 
-Reads weather_price_snapshots from data.db, fetches actual observed highs
-from Open-Meteo archive, resolves each market, and computes PnL at various
-edge thresholds.
+Major changes over the previous version:
+  * Pulls historical prices straight from Polymarket's CLOB
+    `prices-history` endpoint, so the backtest no longer depends on having
+    a `weather_price_snapshots` row at the right moment in time.
+  * Replays each market at multiple lead times (T-1, T-3, T-7, T-14 days)
+    instead of only the closest-to-truth snapshot, removing the optimistic
+    bias of "betting at the final price."
+  * Calibration metrics next to PnL: Brier score, log loss, per-bucket
+    reliability — the actual model question.
+  * Bootstrap 90% confidence interval on Sharpe at every edge threshold so
+    we know which tier numbers are real and which are tiny-sample noise.
+  * Per-(lead-time × station) breakdowns so the report tells you *where*
+    the edge is (or isn't), not just the overall average.
 
-Usage:  python3 backtest.py
-Output: prints a summary table + writes backtest_results.json
+Usage
+    python3 backtest.py                      # last 90d, all leads, all cities
+    python3 backtest.py --days 180           # extend window
+    python3 backtest.py --leads 1,3,7        # subset of leads
+    python3 backtest.py --no-network         # use only data.db, skip Polymarket fetch
+    python3 backtest.py --output out.json    # custom output path
+
+Output
+    Prints a multi-section table to stdout and writes the full structured
+    result to `backtest_results.json`.
 """
 
+from __future__ import annotations
+
+import argparse
 import json
+import logging
 import math
-import re
 import sqlite3
 import statistics
+import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 
-# ─── Station map (coords for Open-Meteo archive lookups) ─────────────────────
-STATION_MAP = {
+import weather_calibration as wcal
+import weather_pure as wpure
+
+try:
+    import polymarket_history as poly_hist
+except ImportError:
+    poly_hist = None
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+DEFAULT_LEADS_DAYS = (1, 3, 7, 14)
+DEFAULT_THRESHOLDS = (0.0, 0.02, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30)
+POLYMARKET_FEE = 0.02
+
+# Coordinates for each city we resolve. Same shape as server.py STATION_MAP
+# but trimmed to just lat/lon for backtest purposes.
+STATION_COORDS = {
     "new york":      (40.7772, -73.8726),
     "chicago":       (41.9742, -87.9073),
     "dallas":        (32.8471, -96.8518),
@@ -47,8 +86,10 @@ STATION_MAP = {
 }
 
 
-def fetch_observed_highs(lat, lon, start_date, end_date):
-    """Batch-fetch daily max temps from Open-Meteo archive."""
+# ─── Observed temps from Open-Meteo archive ───────────────────────────────────
+
+def fetch_observed_highs(lat: float, lon: float, start_date: str, end_date: str) -> dict:
+    """Batch-fetch daily max temps from Open-Meteo archive in °F."""
     try:
         resp = requests.get(
             "https://archive-api.open-meteo.com/v1/archive",
@@ -62,289 +103,416 @@ def fetch_observed_highs(lat, lon, start_date, end_date):
             timeout=30,
         )
         if resp.status_code != 200:
-            print(f"  Open-Meteo {resp.status_code} for ({lat},{lon}) {start_date}–{end_date}")
+            logger.warning("Open-Meteo %d for (%s,%s) %s..%s",
+                           resp.status_code, lat, lon, start_date, end_date)
             return {}
         daily = resp.json().get("daily", {})
         dates = daily.get("time", [])
         highs = daily.get("temperature_2m_max", [])
         return {d: h for d, h in zip(dates, highs) if h is not None}
-    except Exception as e:
-        print(f"  fetch error: {e}")
+    except requests.RequestException as e:
+        logger.warning("Open-Meteo fetch failed: %s", e)
         return {}
 
 
-def parse_threshold(question):
-    """Parse temperature threshold from market question.
+# ─── Snapshot loader (data.db) ────────────────────────────────────────────────
 
-    Returns (kind, value1, value2) where kind is:
-      'above'  -> temp >= value1
-      'below'  -> temp <= value1
-      'between' -> value1 <= temp <= value2
-      'exact'  -> temp == value1 (rare)
+def load_resolved_snapshots(conn: sqlite3.Connection, days: int) -> list[dict]:
+    """Pull every (market, last-snapshot) pair from the local DB.
+
+    The walk-forward path uses these as the *anchor* set: question, target
+    date, model_prob, and the latest-available yes_price (only used as a
+    fallback when Polymarket prices-history is unreachable).
     """
-    q = question.lower()
-
-    # "between 64-65°F" / "between 64 and 65"
-    m = re.search(r'between\s+(\d+)[–\-]\s*(\d+)', q)
-    if m:
-        return ('between', int(m.group(1)), int(m.group(2)))
-    m = re.search(r'between\s+(\d+)\s+and\s+(\d+)', q)
-    if m:
-        return ('between', int(m.group(1)), int(m.group(2)))
-
-    # "X°F or higher" / "above X" / "at least X"
-    m = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(higher|above|more)', q)
-    if m:
-        return ('above', int(m.group(1)), None)
-    m = re.search(r'(above|over|at\s+least|exceed)\s+(\d+)', q)
-    if m:
-        return ('above', int(m.group(2)), None)
-
-    # "X°F or below" / "under X" / "at most X"
-    m = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(below|lower|less)', q)
-    if m:
-        return ('below', int(m.group(1)), None)
-    m = re.search(r'(below|under|at\s+most)\s+(\d+)', q)
-    if m:
-        return ('below', int(m.group(2)), None)
-
-    return (None, None, None)
-
-
-def resolve_market(observed_high, threshold):
-    """Given observed temp and parsed threshold, return True if YES wins."""
-    kind, v1, v2 = threshold
-    if kind == 'above':
-        return observed_high >= v1
-    elif kind == 'below':
-        return observed_high <= v1
-    elif kind == 'between':
-        return v1 <= observed_high <= v2
-    return None
-
-
-def main():
-    conn = sqlite3.connect("data.db")
-    conn.row_factory = sqlite3.Row
-
-    # 1. Get all resolved markets (target_date in the past)
-    print("Loading resolved market snapshots...")
-    rows = conn.execute("""
-        SELECT market_id, question, city, target_date, yes_price, model_prob, edge, timestamp
-        FROM weather_price_snapshots
-        WHERE target_date < date('now')
-          AND city IS NOT NULL
-          AND model_prob IS NOT NULL
-          AND yes_price IS NOT NULL
-        ORDER BY market_id, timestamp DESC
-    """).fetchall()
-    print(f"  {len(rows)} total snapshots")
-
-    # 2. Take the LAST snapshot per market (closest to resolution)
-    last_snap = {}
+    rows = conn.execute(
+        """SELECT market_id, question, city, target_date,
+                  yes_price, model_prob, edge, timestamp
+           FROM weather_price_snapshots
+           WHERE target_date < date('now')
+             AND target_date >= date('now', ?)
+             AND city IS NOT NULL
+             AND model_prob IS NOT NULL
+             AND yes_price IS NOT NULL
+           ORDER BY market_id, timestamp DESC""",
+        (f"-{days} days",),
+    ).fetchall()
+    last_snap: dict = {}
     for r in rows:
         mid = r["market_id"]
-        if mid not in last_snap:  # Already sorted DESC
+        if mid not in last_snap:
             last_snap[mid] = dict(r)
-    print(f"  {len(last_snap)} unique markets with final snapshots")
+    return list(last_snap.values())
 
-    # 3. Group by city and fetch observed temps
-    print("\nFetching observed temperatures from Open-Meteo archive...")
-    city_dates = defaultdict(set)
-    for m in last_snap.values():
+
+def load_token_id_map(conn: sqlite3.Connection) -> dict:
+    """Best-effort: pull any cached token_id from data.db, if the schema
+    has been extended to store it. Older DBs won't have the column —
+    that's fine, the backtest still works with the live discovery path."""
+    try:
+        rows = conn.execute(
+            "SELECT market_id, token_id FROM weather_market_tokens"
+        ).fetchall()
+        return {r["market_id"]: r["token_id"] for r in rows if r["token_id"]}
+    except sqlite3.OperationalError:
+        return {}
+
+
+# ─── Walk-forward price replay ────────────────────────────────────────────────
+
+def fetch_walkforward_prices(market: dict, leads_days, token_cache: dict,
+                             use_network: bool = True) -> dict:
+    """For one market, fetch the YES price at each requested lead time.
+
+    Returns ``{lead_days: yes_price}``. When network access is disabled or
+    the Polymarket lookup fails we fall back to the single yes_price stored
+    in `weather_price_snapshots`, marking it as lead=0 so the caller can
+    still produce a (degraded) report.
+    """
+    out: dict = {}
+    target_date = market.get("target_date")
+    yes_price = market.get("yes_price")
+
+    if not use_network or poly_hist is None:
+        if yes_price is not None:
+            out[0] = float(yes_price)
+        return out
+
+    try:
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        if yes_price is not None:
+            out[0] = float(yes_price)
+        return out
+
+    target_unix = int(target_dt.timestamp())
+    market_id = market.get("market_id")
+    token_id = token_cache.get(market_id) or poly_hist.find_yes_token_id(market_id)
+    if token_id:
+        token_cache[market_id] = token_id
+        try:
+            prices = poly_hist.stitch_walkforward_prices(token_id, target_unix, leads_days)
+            for d, p in prices.items():
+                out[d] = float(p)
+        except Exception as e:
+            logger.debug("walkforward fetch failed for %s: %s", market_id, e)
+
+    if not out and yes_price is not None:
+        out[0] = float(yes_price)
+    return out
+
+
+# ─── PnL accounting for one (market, lead) pair ───────────────────────────────
+
+def evaluate_bet(yes_price: float, model_prob: float, yes_wins: bool) -> dict:
+    """Compute edge, side, raw PnL for a single bet.
+
+    Bet YES when model_prob > yes_price (model says YES is more likely
+    than market priced it). Otherwise bet NO. PnL excludes fees — the
+    caller layers those on at the threshold-aggregation step.
+    """
+    edge = model_prob - yes_price
+    if abs(edge) < 1e-9:
+        return {"edge": 0.0, "side": None, "pnl": None}
+    if edge > 0:
+        side = "YES"
+        pnl = (1.0 - yes_price) if yes_wins else -yes_price
+    else:
+        side = "NO"
+        no_price = 1.0 - yes_price
+        pnl = (1.0 - no_price) if not yes_wins else -no_price
+    return {"edge": round(edge, 4), "side": side, "pnl": round(pnl, 4)}
+
+
+# ─── Aggregation + summary ────────────────────────────────────────────────────
+
+def summarize_threshold(bets: list[dict], threshold: float, fee: float) -> dict:
+    """One row of the threshold table — counts, win%, gross/net PnL,
+    bootstrap Sharpe CI, max drawdown."""
+    filtered = [b for b in bets if abs(b["edge"]) >= threshold and b["pnl"] is not None]
+    if not filtered:
+        return {
+            "threshold": threshold, "bets": 0,
+        }
+    pnls = [b["pnl"] for b in filtered]
+    wins = sum(1 for p in pnls if p > 0)
+    gross = sum(pnls)
+    fees = len(pnls) * fee
+    net = gross - fees
+
+    cumulative, running, peak, max_dd = [], 0.0, 0.0, 0.0
+    for p in pnls:
+        running += p
+        cumulative.append(running)
+        peak = max(peak, running)
+        max_dd = min(max_dd, running - peak)
+
+    sharpe = wcal.bootstrap_sharpe(pnls)
+    return {
+        "threshold": threshold,
+        "bets": len(pnls),
+        "wins": wins,
+        "win_pct": round(wins / len(pnls) * 100, 1),
+        "gross_pnl": round(gross, 2),
+        "fees": round(fees, 2),
+        "net_pnl": round(net, 2),
+        "avg_pnl": round(gross / len(pnls), 4),
+        "net_avg_pnl": round(net / len(pnls), 4),
+        "sharpe_per_trade": sharpe,
+        "max_drawdown": round(max_dd, 2),
+    }
+
+
+def calibration_block(bets: list[dict]) -> dict:
+    """Brier, log-loss, and reliability diagram for the model's predictions.
+
+    The ``outcome`` is YES=1, NO=0 — independent of which side we bet.
+    This measures the model's calibration, which is the actual question
+    you'd answer to know whether a probabilistic forecast is honest.
+    """
+    preds = [b["model_prob"] for b in bets if b.get("model_prob") is not None]
+    outcomes = [1 if b.get("yes_wins") else 0 for b in bets if b.get("model_prob") is not None]
+    return {
+        "n": len(preds),
+        "brier": round(wcal.brier_score(preds, outcomes) or 0.0, 4) if preds else None,
+        "log_loss": round(wcal.log_loss(preds, outcomes) or 0.0, 4) if preds else None,
+        "reliability": wcal.reliability_diagram(preds, outcomes, n_bins=10),
+    }
+
+
+def per_lead_breakdown(bets: list[dict], thresholds, fee: float) -> dict:
+    by_lead: dict = defaultdict(list)
+    for b in bets:
+        by_lead[b["lead_days"]].append(b)
+    out: dict = {}
+    for d, blist in sorted(by_lead.items()):
+        out[d] = {
+            "n": len(blist),
+            "calibration": calibration_block(blist),
+            "by_threshold": {f"{t:.0%}": summarize_threshold(blist, t, fee) for t in thresholds},
+        }
+    return out
+
+
+def per_station_breakdown(bets: list[dict], threshold: float, fee: float) -> list:
+    by_city: dict = defaultdict(list)
+    for b in bets:
+        by_city[b["city"]].append(b)
+    out = []
+    for city, blist in sorted(by_city.items()):
+        s = summarize_threshold(blist, threshold, fee)
+        s["city"] = city
+        out.append(s)
+    out.sort(key=lambda r: -(r.get("net_pnl") or 0.0))
+    return out
+
+
+# ─── Pretty printing ──────────────────────────────────────────────────────────
+
+def _fmt_sharpe(s: dict) -> str:
+    if not s or s.get("point") is None:
+        return "—"
+    return f"{s['point']:+.2f} [{s['lo']:+.2f}, {s['hi']:+.2f}]"
+
+
+def print_report(out: dict) -> None:
+    print("=" * 88)
+    print("WEATHER DASHBOARD — WALK-FORWARD BACKTEST")
+    print("=" * 88)
+    print(f"Period:          {out['period']['start']} to {out['period']['end']}")
+    print(f"Markets:         {out['markets_resolved']}")
+    print(f"Cities:          {out['cities']}")
+    print(f"Bets (all leads): {out['n_bets']}")
+    print(f"Leads tested:    {out['leads_days']}")
+
+    cal = out["overall_calibration"]
+    print()
+    print(f"--- Overall calibration (n={cal['n']}) ---")
+    print(f"Brier score: {cal['brier']}   (lower is better; 0.25 is the constant-0.5 baseline)")
+    print(f"Log loss:    {cal['log_loss']}")
+    if cal["reliability"]:
+        print("Reliability bins (model says X% → actual rate):")
+        for bin_ in cal["reliability"]:
+            mark = "✓" if abs(bin_["miscalibration"]) < 0.10 else "✗"
+            print(f"  {bin_['bin_lo']:.0%}–{bin_['bin_hi']:.0%}: predicted={bin_['avg_predicted']:.1%}  "
+                  f"actual={bin_['actual_rate']:.1%}  miscal={bin_['miscalibration']:+.1%}  "
+                  f"n={bin_['n']}  {mark}")
+
+    print()
+    print("--- Threshold table (gross / net of {:.0%} fees) ---".format(POLYMARKET_FEE))
+    print(f"{'Edge ≥':>8} {'Bets':>6} {'Win%':>6} {'Gross':>9} {'Net':>9} {'Net Avg':>9} {'Sharpe (90% CI)':>26} {'Max DD':>8}")
+    for k, row in out["by_threshold"].items():
+        if not row.get("bets"):
+            continue
+        print(f"  {k:>6} {row['bets']:>6} {row['win_pct']:>5.1f}% "
+              f"{row['gross_pnl']:>+9.2f} {row['net_pnl']:>+9.2f} {row['net_avg_pnl']:>+9.4f} "
+              f"{_fmt_sharpe(row['sharpe_per_trade']):>26} {row['max_drawdown']:>+8.2f}")
+
+    print()
+    print("--- Per lead-time at edge ≥ 5% ---")
+    for d, block in out["by_lead"].items():
+        thr = block["by_threshold"].get("5%", {})
+        if not thr.get("bets"):
+            continue
+        print(f"  T-{d}d: bets={thr['bets']}  win%={thr['win_pct']:.1f}  net={thr['net_pnl']:+.2f}  "
+              f"sharpe={_fmt_sharpe(thr['sharpe_per_trade'])}")
+
+    print()
+    print("--- Per city at edge ≥ 5% ---")
+    for r in out["by_station"]:
+        if not r.get("bets"):
+            continue
+        print(f"  {r['city']:>15}: bets={r['bets']:>4}  win%={r['win_pct']:>5.1f}  "
+              f"net={r['net_pnl']:>+8.2f}  sharpe={_fmt_sharpe(r['sharpe_per_trade'])}")
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+def run_backtest(days: int, leads_days, db_path: str,
+                 use_network: bool, output_path: str) -> dict:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    logger.info("Loading resolved-market snapshots from %s ...", db_path)
+    snaps = load_resolved_snapshots(conn, days)
+    logger.info("  %d unique markets in window", len(snaps))
+
+    if not snaps:
+        logger.warning("No data — backtest cannot run. Has the snapshot loop been running?")
+        return {"period": {}, "markets_resolved": 0, "n_bets": 0,
+                "by_threshold": {}, "overall_calibration": {"n": 0}}
+
+    # Group target dates per city for one batched Open-Meteo archive call
+    city_dates: dict = defaultdict(set)
+    for m in snaps:
         city_dates[m["city"]].add(m["target_date"])
 
-    observed = {}  # (city, date) -> temp_f
+    logger.info("Fetching observed temps from Open-Meteo archive for %d cities ...",
+                len(city_dates))
+    observed: dict = {}
     for city, dates in sorted(city_dates.items()):
-        coords = STATION_MAP.get(city)
+        coords = STATION_COORDS.get(city)
         if not coords:
-            print(f"  {city}: no coords, skipping")
+            logger.info("  %s: no coords mapped — skipping", city)
             continue
         sorted_dates = sorted(dates)
-        lat, lon = coords
-        batch = fetch_observed_highs(lat, lon, sorted_dates[0], sorted_dates[-1])
+        batch = fetch_observed_highs(coords[0], coords[1], sorted_dates[0], sorted_dates[-1])
         for d in sorted_dates:
             if d in batch:
                 observed[(city, d)] = batch[d]
-        print(f"  {city}: {len([d for d in sorted_dates if (city, d) in observed])}/{len(sorted_dates)} dates resolved")
-        time.sleep(0.5)  # Be polite
+        logger.info("  %s: %d/%d dates resolved", city,
+                    sum(1 for d in sorted_dates if (city, d) in observed),
+                    len(sorted_dates))
+        time.sleep(0.5)
 
-    # 4. Resolve each market
-    print("\nResolving markets...")
-    results = []
-    unresolvable = {"no_threshold": 0, "no_observed": 0, "ambiguous": 0}
-    for mid, m in last_snap.items():
-        threshold = parse_threshold(m["question"])
+    token_cache = load_token_id_map(conn)
+    logger.info("Token id cache primed with %d entries", len(token_cache))
+
+    bets: list[dict] = []
+    skipped = {"no_threshold": 0, "no_observed": 0, "no_prices": 0,
+               "ambiguous": 0}
+
+    logger.info("Replaying markets (walk-forward) ...")
+    for m in snaps:
+        threshold = wpure.parse_threshold_for_resolution(m["question"])
         if threshold[0] is None:
-            unresolvable["no_threshold"] += 1
+            skipped["no_threshold"] += 1
             continue
         key = (m["city"], m["target_date"])
         if key not in observed:
-            unresolvable["no_observed"] += 1
+            skipped["no_observed"] += 1
             continue
-        obs = observed[key]
-        yes_wins = resolve_market(obs, threshold)
+        observed_high = observed[key]
+        yes_wins = wpure.resolve_market(observed_high, threshold)
         if yes_wins is None:
-            unresolvable["ambiguous"] += 1
+            skipped["ambiguous"] += 1
             continue
 
-        yes_price = m["yes_price"]
-        model_prob = m["model_prob"]
-        edge = m["edge"] or 0.0
-
-        # PnL if we bet $1 based on model signal
-        # Bet YES when edge > 0 (model says more likely than market)
-        # Bet NO when edge < 0 (model says less likely than market)
-        pnl = None
-        bet_side = None
-        if edge > 0:
-            # Buy YES at yes_price → payout $1 if YES wins, $0 if NO
-            bet_side = "YES"
-            pnl = (1.0 - yes_price) if yes_wins else -yes_price
-        elif edge < 0:
-            # Buy NO at (1 - yes_price) → payout $1 if NO wins, $0 if YES
-            bet_side = "NO"
-            no_price = 1.0 - yes_price
-            pnl = (1.0 - no_price) if not yes_wins else -no_price
-
-        results.append({
-            "market_id": mid,
-            "question": m["question"],
-            "city": m["city"],
-            "target_date": m["target_date"],
-            "observed_high": obs,
-            "threshold": threshold,
-            "yes_wins": yes_wins,
-            "yes_price": yes_price,
-            "model_prob": model_prob,
-            "edge": edge,
-            "edge_pct": round(edge * 100, 1),
-            "bet_side": bet_side,
-            "pnl": round(pnl, 4) if pnl is not None else None,
-        })
-
-    print(f"  Resolved: {len(results)}")
-    print(f"  Skipped: {unresolvable}")
-
-    # 5. Compute stats at various edge thresholds
-    print("\n" + "=" * 80)
-    print("BACKTEST RESULTS")
-    print("=" * 80)
-    if not results:
-        print("No resolved markets — nothing to report.")
-        return
-    print(f"Period: {min(r['target_date'] for r in results)} to {max(r['target_date'] for r in results)}")
-    print(f"Markets resolved: {len(results)}")
-    print(f"Cities: {len(set(r['city'] for r in results))}")
-    print(f"Observed temps available: {len(observed)}")
-
-    # Overall model calibration
-    print("\n--- Model Calibration ---")
-    bins = [(0, 0.1), (0.1, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 0.9), (0.9, 1.01)]
-    for lo, hi in bins:
-        in_bin = [r for r in results if lo <= r["model_prob"] < hi]
-        if not in_bin:
+        prices = fetch_walkforward_prices(m, leads_days, token_cache, use_network)
+        if not prices:
+            skipped["no_prices"] += 1
             continue
-        actual_rate = sum(1 for r in in_bin if r["yes_wins"]) / len(in_bin)
-        mid = (lo + hi) / 2
-        print(f"  Model says {lo:.0%}–{hi:.0%}: actual YES rate = {actual_rate:.1%}  (n={len(in_bin)})  {'✓ calibrated' if abs(actual_rate - mid) < 0.15 else '✗ off'}")
 
-    # PnL by edge threshold
-    print("\n--- PnL by Edge Threshold (bet $1 on every signal above threshold) ---")
-    print(f"{'Threshold':>10} {'Bets':>6} {'Wins':>6} {'Win%':>7} {'Total PnL':>10} {'Avg PnL':>9} {'Sharpe':>7} {'Max DD':>8}")
-    print("-" * 75)
+        for lead, yes_price in prices.items():
+            ev = evaluate_bet(yes_price, m["model_prob"], yes_wins)
+            bets.append({
+                "market_id": m["market_id"],
+                "question": m["question"],
+                "city": m["city"],
+                "target_date": m["target_date"],
+                "lead_days": int(lead),
+                "yes_price": float(yes_price),
+                "model_prob": float(m["model_prob"]),
+                "yes_wins": bool(yes_wins),
+                "observed_high": observed_high,
+                "edge": ev["edge"],
+                "side": ev["side"],
+                "pnl": ev["pnl"],
+            })
 
-    thresholds = [0.0, 0.02, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30]
-    summary = {}
-    for thr in thresholds:
-        bets = [r for r in results if r["pnl"] is not None and abs(r["edge"]) >= thr]
-        if not bets:
-            print(f"  {thr:>8.0%}   {'---':>6}")
-            continue
-        wins = sum(1 for b in bets if b["pnl"] > 0)
-        pnls = [b["pnl"] for b in bets]
-        total = sum(pnls)
-        avg = total / len(pnls)
-        std = statistics.stdev(pnls) if len(pnls) > 1 else 1.0
-        sharpe = (avg / std) * math.sqrt(252) if std > 0 else 0.0
+    logger.info("  %d (market, lead) pairs evaluated", len(bets))
+    logger.info("  skipped: %s", skipped)
 
-        # Max drawdown
-        cumulative = []
-        running = 0
-        for p in pnls:
-            running += p
-            cumulative.append(running)
-        peak = 0
-        max_dd = 0
-        for c in cumulative:
-            peak = max(peak, c)
-            max_dd = min(max_dd, c - peak)
+    if not bets:
+        return {"period": {"start": None, "end": None},
+                "markets_resolved": 0, "n_bets": 0,
+                "skipped": skipped, "overall_calibration": {"n": 0},
+                "by_threshold": {}, "by_lead": {}, "by_station": []}
 
-        win_pct = wins / len(bets) * 100
-        print(f"  {thr:>8.0%} {len(bets):>6} {wins:>6} {win_pct:>6.1f}% {total:>+10.2f} {avg:>+8.4f} {sharpe:>+7.2f} {max_dd:>+8.2f}")
-        summary[f"{thr:.0%}"] = {
-            "threshold": thr, "bets": len(bets), "wins": wins,
-            "win_pct": round(win_pct, 1), "total_pnl": round(total, 2),
-            "avg_pnl": round(avg, 4), "sharpe": round(sharpe, 2),
-            "max_drawdown": round(max_dd, 2),
-        }
-
-    # Fees impact
-    print("\n--- After Polymarket Fees (~2% per trade) ---")
-    FEE = 0.02
-    print(f"{'Threshold':>10} {'Bets':>6} {'Gross PnL':>10} {'Fees':>8} {'Net PnL':>10} {'Net Avg':>9}")
-    print("-" * 65)
-    for thr in thresholds:
-        bets = [r for r in results if r["pnl"] is not None and abs(r["edge"]) >= thr]
-        if not bets:
-            continue
-        gross = sum(b["pnl"] for b in bets)
-        fees = len(bets) * FEE
-        net = gross - fees
-        net_avg = net / len(bets)
-        print(f"  {thr:>8.0%} {len(bets):>6} {gross:>+10.2f} {fees:>8.2f} {net:>+10.2f} {net_avg:>+8.4f}")
-
-    # Best and worst bets
-    print("\n--- Top 5 Best Bets ---")
-    by_pnl = sorted([r for r in results if r["pnl"] is not None], key=lambda r: r["pnl"], reverse=True)
-    for r in by_pnl[:5]:
-        print(f"  PnL {r['pnl']:+.3f} | edge {r['edge_pct']:+.1f}% | {r['bet_side']} | obs={r['observed_high']:.1f}°F | {r['question'][:80]}")
-
-    print("\n--- Top 5 Worst Bets ---")
-    for r in by_pnl[-5:]:
-        print(f"  PnL {r['pnl']:+.3f} | edge {r['edge_pct']:+.1f}% | {r['bet_side']} | obs={r['observed_high']:.1f}°F | {r['question'][:80]}")
-
-    # Per-city breakdown
-    print("\n--- Per-City Performance (all edges) ---")
-    city_stats = defaultdict(lambda: {"bets": 0, "pnl": 0, "wins": 0})
-    for r in results:
-        if r["pnl"] is None:
-            continue
-        cs = city_stats[r["city"]]
-        cs["bets"] += 1
-        cs["pnl"] += r["pnl"]
-        cs["wins"] += 1 if r["pnl"] > 0 else 0
-    print(f"{'City':>15} {'Bets':>6} {'Win%':>7} {'PnL':>10}")
-    for city in sorted(city_stats, key=lambda c: city_stats[c]["pnl"], reverse=True):
-        cs = city_stats[city]
-        wp = cs["wins"] / cs["bets"] * 100 if cs["bets"] else 0
-        print(f"  {city:>13} {cs['bets']:>6} {wp:>6.1f}% {cs['pnl']:>+10.2f}")
-
-    # Save results
-    output = {
+    out = {
         "period": {
-            "start": min(r["target_date"] for r in results),
-            "end": max(r["target_date"] for r in results),
+            "start": min(b["target_date"] for b in bets),
+            "end":   max(b["target_date"] for b in bets),
         },
-        "markets_resolved": len(results),
-        "cities": len(set(r["city"] for r in results)),
-        "summary_by_threshold": summary,
-        "results": results,
+        "markets_resolved": len({b["market_id"] for b in bets}),
+        "cities": len({b["city"] for b in bets}),
+        "n_bets": len(bets),
+        "leads_days": list(leads_days),
+        "skipped": skipped,
+        "overall_calibration": calibration_block(bets),
+        "by_threshold": {f"{t:.0%}": summarize_threshold(bets, t, POLYMARKET_FEE)
+                          for t in DEFAULT_THRESHOLDS},
+        "by_lead": per_lead_breakdown(bets, DEFAULT_THRESHOLDS, POLYMARKET_FEE),
+        "by_station": per_station_breakdown(bets, threshold=0.05, fee=POLYMARKET_FEE),
+        "bets": bets,
     }
-    with open("backtest_results.json", "w") as f:
-        json.dump(output, f, indent=2, default=str)
-    print(f"\nFull results saved to backtest_results.json")
+
+    Path(output_path).write_text(json.dumps(out, indent=2, default=str))
+    logger.info("Full results saved to %s", output_path)
+    print_report(out)
+    return out
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--days", type=int, default=90,
+                   help="Lookback window in days (default 90).")
+    p.add_argument("--leads", type=str, default=",".join(str(d) for d in DEFAULT_LEADS_DAYS),
+                   help="Comma-separated lead times in days (default 1,3,7,14).")
+    p.add_argument("--db", type=str, default=str(Path(__file__).parent / "data.db"),
+                   help="Path to data.db.")
+    p.add_argument("--no-network", action="store_true",
+                   help="Skip the Polymarket prices-history fetch (use stored snapshot prices).")
+    p.add_argument("--output", type=str,
+                   default=str(Path(__file__).parent / "backtest_results.json"),
+                   help="Where to write the JSON output.")
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    leads = tuple(int(s) for s in args.leads.split(",") if s.strip())
+    if not leads:
+        logger.error("--leads must contain at least one integer")
+        return 2
+    try:
+        run_backtest(days=args.days, leads_days=leads, db_path=args.db,
+                     use_network=not args.no_network, output_path=args.output)
+        return 0
+    except Exception as e:
+        logger.exception("Backtest failed: %s", e)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

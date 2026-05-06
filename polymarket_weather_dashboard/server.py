@@ -23,6 +23,9 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory, make_response
 from scipy.stats import norm
 
+import weather_calibration as _wcal
+import weather_pure as _wpure
+
 app = Flask(__name__, static_folder="static")
 _flask_secret = os.environ.get("FLASK_SECRET")
 if not _flask_secret:
@@ -341,6 +344,77 @@ def log_activity(user_id: str, action: str, detail: str = None):
 
 
 init_db()
+
+
+# ─── Background-thread health tracking ────────────────────────────────────────
+#
+# Each background loop registers itself here on startup and records the
+# outcome of every iteration. /api/healthz exposes the snapshot so an
+# operator can see at a glance whether any loop has silently died.
+_thread_health: dict[str, dict] = {}
+_thread_health_lock = threading.Lock()
+
+
+def _register_thread(name: str, interval_seconds: int) -> None:
+    with _thread_health_lock:
+        _thread_health[name] = {
+            "name": name,
+            "interval_seconds": interval_seconds,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "last_attempt_at": None,
+            "last_success_at": None,
+            "last_error": None,
+            "consecutive_failures": 0,
+            "total_runs": 0,
+            "total_failures": 0,
+        }
+
+
+def _record_run(name: str, ok: bool, error: Optional[str] = None) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _thread_health_lock:
+        h = _thread_health.setdefault(name, {
+            "name": name, "interval_seconds": None, "started_at": now,
+            "consecutive_failures": 0, "total_runs": 0, "total_failures": 0,
+        })
+        h["last_attempt_at"] = now
+        h["total_runs"] += 1
+        if ok:
+            h["last_success_at"] = now
+            h["consecutive_failures"] = 0
+            h["last_error"] = None
+        else:
+            h["consecutive_failures"] += 1
+            h["total_failures"] += 1
+            h["last_error"] = error
+
+
+def _thread_health_snapshot() -> dict:
+    """Return a copy with derived staleness info for /api/healthz."""
+    now = datetime.now(timezone.utc)
+    with _thread_health_lock:
+        out = {}
+        for name, h in _thread_health.items():
+            entry = dict(h)
+            stale = None
+            last = entry.get("last_success_at")
+            interval = entry.get("interval_seconds") or 0
+            if last:
+                try:
+                    last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                    elapsed = (now - last_dt).total_seconds()
+                    entry["seconds_since_last_success"] = round(elapsed)
+                    # Stale if we missed >2 intervals plus a 60s grace
+                    if interval and elapsed > (2 * interval + 60):
+                        stale = True
+                    else:
+                        stale = False
+                except Exception:
+                    pass
+            entry["stale"] = stale
+            out[name] = entry
+        return out
+
 
 # ─── Cache ─────────────────────────────────────────────────────────────────────
 
@@ -1054,8 +1128,23 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
             consensus_mean * (1 - climo_weight) + climo["mean"] * climo_weight, 1
         )
 
-    # Inflate sigma based on lead time to resolution (skill decay)
-    lead_mult = lead_time_sigma_inflation(date_str)
+    # Empirical sigma floor: ensemble spread is famously under-dispersive,
+    # so we take max(ensemble_std, residual_std) before inflating for lead.
+    residual_floor = None
+    residuals_data: dict = {}
+    if station:
+        try:
+            residuals_data = get_model_residuals(station)
+            residual_floor = _wcal.consensus_sigma_floor(residuals_data)
+        except Exception:
+            residual_floor = None
+    if residual_floor is not None and residual_floor > consensus_std:
+        consensus_std = round(residual_floor, 1)
+
+    # Inflate sigma based on lead time to resolution (skill decay).
+    # When a station is supplied we use a curve fit from its own pairing
+    # history; otherwise the hand-tuned default applies.
+    lead_mult = lead_time_sigma_inflation(date_str, station=station)
     raw_consensus_std = consensus_std
     consensus_std = round(consensus_std * lead_mult, 1)
 
@@ -1080,6 +1169,8 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
         "raw_std": raw_consensus_std,
         "bias_corrected": bool(biases),
         "n_bias_models": len(biases),
+        "empirical_sigma_floor": round(residual_floor, 2) if residual_floor else None,
+        "n_residual_models": len(residuals_data) if residuals_data else 0,
     }
 
     # Snapshot the consensus and log per-model forecasts for future pairing
@@ -1459,6 +1550,69 @@ def get_model_biases(station: str, lookback_days: int = 30) -> dict[str, float]:
     return biases
 
 
+def get_model_residuals(station: str, lookback_days: int = 60) -> dict:
+    """Return per-model {bias, residual_std, n} from forecast_history.
+
+    Residual std is the empirical 1-sigma error of the model relative to
+    the observed high. The dashboard uses this as a sigma floor — the raw
+    ensemble spread is famously under-dispersive, and treating the larger
+    of (ensemble_std, residual_std) as the true sigma fixes the most
+    common over-confident-tail failure mode.
+    """
+    cache_key = f"residuals_{station}_{lookback_days}"
+    cached = cache_get(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    out: dict = {}
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT model, forecast_high, observed_high
+                   FROM forecast_history
+                   WHERE station = ? AND observed_high IS NOT NULL
+                     AND target_date >= date('now', ?)""",
+                (station, f"-{lookback_days} days"),
+            ).fetchall()
+        out = _wcal.fit_residual_std([dict(r) for r in rows])
+    except Exception as e:
+        logger.warning("get_model_residuals failed for %s: %s", station, e)
+    cache_set(cache_key, out)
+    return out
+
+
+_leadtime_curve_lock = threading.Lock()
+
+
+def fit_leadtime_curve_for_station(station: str, lookback_days: int = 90) -> dict:
+    """Fit sigma(lead_days) for one station from its own forecast_history.
+
+    The fit replaces the hand-tuned `1.0 + 0.12 * sqrt(days)` constant. We
+    cache the result for an hour because the underlying data only updates
+    on the bias-pairing pass (every 6h)."""
+    cache_key = f"leadtime_curve_{station}_{lookback_days}"
+    cached = cache_get(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    fit: dict
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT
+                       CAST(julianday(target_date) - julianday(date(made_at)) AS INTEGER) AS lead_days,
+                       (forecast_high - observed_high) AS residual
+                   FROM forecast_history
+                   WHERE station = ? AND observed_high IS NOT NULL
+                     AND target_date >= date('now', ?)""",
+                (station, f"-{lookback_days} days"),
+            ).fetchall()
+        fit = _wcal.fit_leadtime_sigma_curve([dict(r) for r in rows])
+    except Exception as e:
+        logger.warning("fit_leadtime_curve_for_station failed for %s: %s", station, e)
+        fit = {"k": 0.12, "intercept": 1.0, "by_lead": {}, "n": 0, "source": "default"}
+    cache_set(cache_key, fit)
+    return fit
+
+
 # ─── Forecast snapshots (spread trend) ─────────────────────────────────────────
 
 def snapshot_forecast(station: str, target_date: str, mean: float, std: float,
@@ -1729,10 +1883,11 @@ def fetch_nws_synoptic(lat: float, lon: float) -> Optional[dict]:
 
 # ─── Lead-time uncertainty ────────────────────────────────────────────────────
 
-def lead_time_sigma_inflation(target_date: str) -> float:
+def lead_time_sigma_inflation(target_date: str, station: Optional[str] = None) -> float:
     """Return a multiplier for the forecast sigma based on days until
-    resolution. Day 1: 1.0x, Day 5: ~1.4x, Day 10: ~2.0x. Reflects the
-    empirical decay of NWP skill with lead time.
+    resolution. When a station is supplied and we have enough historical
+    pairings, we fit the curve from data; otherwise fall back to the
+    hand-tuned `1.0 + 0.12 * sqrt(days)`. Cap at 3x in either case.
     """
     try:
         target = datetime.strptime(target_date, "%Y-%m-%d").date()
@@ -1740,7 +1895,13 @@ def lead_time_sigma_inflation(target_date: str) -> float:
         days = max(0, (target - today).days)
     except Exception:
         return 1.0
-    # Roughly: skill loss ~ 0.1 * sqrt(days). Cap at 3x.
+    if station:
+        try:
+            curve = fit_leadtime_curve_for_station(station)
+            if curve and curve.get("source") == "fitted":
+                return _wcal.leadtime_multiplier(curve, days)
+        except Exception:
+            pass
     return min(3.0, 1.0 + 0.12 * math.sqrt(days))
 
 
@@ -2223,6 +2384,7 @@ def _intraday_poll_loop():
     table and creates the real-time alpha edge.
     """
     import time as _time
+    _register_thread("intraday_poll", interval_seconds=300)
     _time.sleep(60)  # Wait 1 min for server to boot
     while True:
         try:
@@ -2248,8 +2410,10 @@ def _intraday_poll_loop():
                 except Exception as e:
                     logger.warning("intraday poll %s: %s", icao, e)
                 _time.sleep(2)  # Stagger requests
+            _record_run("intraday_poll", ok=True)
         except Exception as e:
             logger.error("Intraday poll loop error: %s", e)
+            _record_run("intraday_poll", ok=False, error=str(e))
         _time.sleep(300)  # 5 minutes
 
 
@@ -2301,57 +2465,37 @@ def _c_to_f(c):
 
 
 def compute_probability(forecast: dict, temp_info: dict) -> Optional[float]:
-    mean = forecast["mean"]
-    std = forecast["std"]
-    if mean is None or std is None:
+    """Backwards-compatible shim: returns the consensus probability only.
+
+    Internally delegates to `compute_probability_full`, which exposes both
+    the Gaussian and empirical-CDF estimates plus a tail-warning flag.
+    Callers that want the full breakdown should use that function directly.
+    """
+    full = compute_probability_full(forecast, temp_info)
+    return full.get("probability") if full else None
+
+
+def compute_probability_full(forecast: dict, temp_info: dict) -> Optional[dict]:
+    """Score a market with both Gaussian and empirical-CDF probabilities.
+
+    The empirical reading uses the raw ensemble member temperatures stored
+    on the forecast dict (`forecast["ensemble"]`, populated by
+    `fetch_multi_model_forecast`). When available it's preferred because
+    it captures fat tails the Gaussian fit misses — exactly where the
+    dashboard's threshold-edge signals get most aggressive.
+
+    Returns a dict with keys: probability (consensus), gaussian, empirical,
+    method, tail_warning, n_members. None if neither path produced a
+    number.
+    """
+    if not forecast:
         return None
-
-    # Convert Celsius thresholds to Fahrenheit (forecasts are always in F)
-    is_celsius = temp_info.get("unit", "F").upper().startswith("C")
-
-    threshold = temp_info.get("threshold")
-    is_over = temp_info.get("is_over")
-    lower = temp_info.get("temp_lower")
-    upper = temp_info.get("temp_upper")
-
-    if is_celsius:
-        if threshold is not None:
-            threshold = _c_to_f(threshold)
-        if lower is not None:
-            lower = _c_to_f(lower)
-        if upper is not None:
-            upper = _c_to_f(upper)
-        # Also scale std for range comparison (°C std * 1.8 = °F std)
-        # No -- std is already in °F from the forecast. Only thresholds need conversion.
-
-    def _safe_clamp(p):
-        # min(0.99, NaN) returns 0.99 in Python — leaving NaN forecasts to
-        # silently surface as confident 99% bets. Reject NaN/inf explicitly.
-        try:
-            pf = float(p)
-        except (TypeError, ValueError):
-            return None
-        if math.isnan(pf) or math.isinf(pf):
-            return None
-        return max(0.01, min(0.99, pf))
-
-    # Defensive: scipy's norm.cdf returns NaN when scale<=0 — treat that as
-    # "we cannot compute a probability" rather than fabricating one.
-    if std is None or std <= 0:
+    mean = forecast.get("mean")
+    std = forecast.get("std")
+    members = forecast.get("ensemble") or []
+    if mean is None and not members:
         return None
-
-    if threshold is not None:
-        if is_over:
-            prob = round(1.0 - norm.cdf(threshold, loc=mean, scale=std), 4)
-        else:
-            prob = round(norm.cdf(threshold, loc=mean, scale=std), 4)
-        return _safe_clamp(prob)
-    elif lower is not None and upper is not None:
-        prob = round(
-            norm.cdf(upper + 0.5, loc=mean, scale=std) - norm.cdf(lower - 0.5, loc=mean, scale=std), 4
-        )
-        return _safe_clamp(prob)
-    return None
+    return _wcal.blended_probability(temp_info, mean, std, members=members)
 
 
 def categorize_market(question: str, tags: list) -> str:
@@ -3446,6 +3590,91 @@ def api_accuracy():
     })
 
 
+@app.route("/api/healthz")
+def api_healthz():
+    """Operational health snapshot for the background loops.
+
+    Returns one entry per registered loop with `last_attempt_at`,
+    `last_success_at`, `consecutive_failures`, total counts, and a
+    derived `stale` flag (true if the loop has missed >2 intervals).
+
+    Public — no auth required so external monitors can poll it.
+    """
+    snap = _thread_health_snapshot()
+    any_stale = any(v.get("stale") for v in snap.values())
+    any_error = any(v.get("consecutive_failures", 0) > 0 for v in snap.values())
+    return jsonify({
+        "status": "stale" if any_stale else ("degraded" if any_error else "ok"),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "threads": snap,
+    })
+
+
+@app.route("/api/calibration")
+@require_auth
+def api_calibration():
+    """Model calibration over the last N days of resolved signals.
+
+    Joins `weather_signals_log` with `weather_resolutions` and returns
+    Brier score, log loss, and a 10-bucket reliability diagram. This is
+    the dashboard's answer to "is the model actually well-calibrated?".
+
+    Query params:
+        days  — lookback window (default 90, max 365)
+    """
+    days = max(7, min(365, int(request.args.get("days", 90))))
+    try:
+        with _get_conn(readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT s.market_id, s.model_prob, s.edge, s.category, r.actual_outcome
+                   FROM weather_signals_log s
+                   JOIN weather_resolutions r ON r.market_id = s.market_id
+                   WHERE r.actual_outcome IN ('YES','NO')
+                     AND s.timestamp >= datetime('now', ?)
+                     AND s.model_prob IS NOT NULL""",
+                (f"-{days} days",),
+            ).fetchall()
+    except Exception as e:
+        logger.warning("api_calibration query failed: %s", e)
+        rows = []
+
+    preds = [float(r["model_prob"]) for r in rows if r["model_prob"] is not None]
+    outcomes = [1 if r["actual_outcome"] == "YES" else 0 for r in rows
+                if r["model_prob"] is not None]
+
+    return jsonify({
+        "days": days,
+        "n": len(preds),
+        "brier_score": round(_wcal.brier_score(preds, outcomes) or 0.0, 4) if preds else None,
+        "log_loss": round(_wcal.log_loss(preds, outcomes) or 0.0, 4) if preds else None,
+        "reliability": _wcal.reliability_diagram(preds, outcomes, n_bins=10),
+    })
+
+
+@app.route("/api/leadtime_fit/<city>")
+@require_auth
+def api_leadtime_fit(city):
+    """Per-city fitted lead-time sigma curve from forecast_history.
+
+    Exposes the curve so users (and the frontend) can see whether the
+    fit is data-driven (`source: fitted`) or fell back to the hand-tuned
+    constant (`source: default`). Useful for spot-checking the model and
+    for showing per-city skill curves on the dashboard.
+    """
+    city_key = (city or "").lower().strip()
+    info = STATION_MAP.get(city_key)
+    if not info:
+        return jsonify({"error": "unknown city"}), 404
+    fit = fit_leadtime_curve_for_station(city_key)
+    residuals = get_model_residuals(city_key)
+    return jsonify({
+        "city": city_key,
+        "leadtime_curve": fit,
+        "model_residuals": residuals,
+        "consensus_sigma_floor": _wcal.consensus_sigma_floor(residuals),
+    })
+
+
 def snapshot_prices() -> int:
     """Take a snapshot of current market prices for historical tracking."""
     try:
@@ -4242,12 +4471,15 @@ def api_bot_stats():
 def _snapshot_loop():
     """Background thread: take price snapshots every 30 minutes."""
     import time as _time
+    _register_thread("snapshot_prices", interval_seconds=1800)
     _time.sleep(120)  # Wait 2 min for first data to load
     while True:
         try:
             snapshot_prices()
+            _record_run("snapshot_prices", ok=True)
         except Exception as e:
             logger.error("Snapshot loop error: %s", e)
+            _record_run("snapshot_prices", ok=False, error=str(e))
         _time.sleep(1800)  # 30 minutes
 
 
@@ -4259,6 +4491,7 @@ def _bias_pairing_loop():
     without ever getting closed out.
     """
     import time as _time
+    _register_thread("bias_pairing", interval_seconds=6 * 3600)
     _time.sleep(600)  # Wait 10 min after boot before first pairing
     while True:
         try:
@@ -4282,8 +4515,10 @@ def _bias_pairing_loop():
                 _time.sleep(2)  # Be polite to Open-Meteo
             if paired_total:
                 logger.info("Bias pairing pass: paired %d rows", paired_total)
+            _record_run("bias_pairing", ok=True)
         except Exception as e:
             logger.error("Bias pairing loop error: %s", e)
+            _record_run("bias_pairing", ok=False, error=str(e))
         _time.sleep(6 * 3600)  # 6 hours
 
 
