@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Major Disasters - narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220;
+    --bg-1: #0f172a;
+    --bg-2: #1e293b;
+    --border: #243042;
+    --text-1: #f1f5f9;
+    --text-2: #94a3b8;
+    --text-3: #64748b;
+    --accent: #f97316;        /* orange - disaster theme */
+    --accent-2: #ef4444;      /* red - critical */
+    --accent-3: #fbbf24;      /* yellow - warn */
+    --good: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg-0);
+    color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  }
+  header h1 {
+    margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em;
+  }
+  header .sub {
+    margin-top: 3px; color: var(--text-2); font-size: 12px;
+  }
+  main { padding: 18px 24px 80px; max-width: 1320px; margin: 0 auto; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    min-height: 96px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-3); font-weight: 600;
+  }
+  .card .big {
+    font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+  }
+  .card .sub {
+    color: var(--text-2); font-size: 12px; margin-top: 4px;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+    background: var(--bg-2); color: var(--text-2);
+    margin-right: 6px;
+  }
+  .pill.hot  { background: rgba(239, 68, 68, 0.15); color: var(--accent-2); }
+  .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--accent-3); }
+  .pill.good { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  .pill.accent { background: rgba(249, 115, 22, 0.15); color: var(--accent); }
+
+  section { margin: 28px 0 18px; }
+  section h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-2);
+    font-weight: 600;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--bg-2);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  td.edge-buy  { color: var(--good); font-weight: 600; }
+  td.edge-sell { color: var(--accent-2); font-weight: 600; }
+  td.muted { color: var(--text-3); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .err {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--accent-2);
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin: 10px 0;
+    font-size: 12px;
+  }
+  .footer {
+    color: var(--text-3);
+    font-size: 11px;
+    margin-top: 60px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Major Disasters</h1>
+  <div class="sub">Live event tracker + Polymarket edges - hurricanes, earthquakes, wildfires, severe weather</div>
+</header>
+<main>
+  <section>
+    <h2>Active threats</h2>
+    <div id="active-grid" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>Year-end projections</h2>
+    <div id="proj-grid" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>Recent significant earthquakes (M5+, last 30d)</h2>
+    <div id="quakes-table"></div>
+  </section>
+
+  <section>
+    <h2>Polymarket disaster markets</h2>
+    <div id="markets-table"></div>
+  </section>
+
+  <div class="footer" id="footer"></div>
+</main>
+
+<script>
+  const fmt = (n, d = 0) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const pct = (p) => p == null ? "-" : (p * 100).toFixed(1) + "%";
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function fetchJson(path) {
+    const r = await fetch(path, { credentials: "include" });
+    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    return r.json();
+  }
+
+  function pill(label, kind = "") {
+    return `<span class="pill ${kind}">${escapeHtml(label)}</span>`;
+  }
+
+  function activeCard(title, big, sub, kind = "") {
+    const bigClass = kind === "hot" ? "big" : "big";
+    const subKind = kind ? `class="pill ${kind}"` : "";
+    return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
+      `<div class="${bigClass}">${big}</div>` +
+      `<div class="sub">${sub}</div></div>`;
+  }
+
+  function renderActive(summary) {
+    const a = summary.active || {};
+    const r = summary.recent_quakes || {};
+    const cards = [];
+    cards.push(activeCard("Named storms", fmt(a.named_storms_count),
+      a.named_storms_count > 0
+        ? a.named_storms.map(s => pill(`${s.name || "?"} - ${s.classification || "?"}`, "hot")).join("")
+        : '<span class="pill good">none active</span>'));
+    cards.push(activeCard("NWS severe alerts", fmt(a.alerts_count),
+      a.alerts_count > 0
+        ? a.alerts_top.slice(0, 3).map(x => pill(x.event || "?", "warn")).join("")
+        : '<span class="pill good">all clear</span>'));
+    cards.push(activeCard("Open wildfires (EONET)", fmt(a.wildfires_count),
+      a.wildfires_count > 50 ? pill("very active", "hot") : pill("normal", "good")));
+    cards.push(activeCard("Open severe storms (EONET)", fmt(a.severe_storms_count), pill("global", "")));
+    cards.push(activeCard("Open volcanoes (EONET)", fmt(a.volcanoes_count), pill("erupting", a.volcanoes_count > 5 ? "warn" : "")));
+    cards.push(activeCard("M5+ quakes, 30d", fmt(r.count_30d),
+      `M6+: ${fmt(r.m6_plus_30d)} &nbsp; M7+: ${fmt(r.m7_plus_30d)}`));
+
+    if (r.biggest) {
+      cards.push(activeCard(
+        "Biggest quake (30d)",
+        `M${fmt(r.biggest.mag, 1)}`,
+        escapeHtml(r.biggest.place || "")
+      ));
+    }
+    document.getElementById("active-grid").innerHTML = cards.join("");
+  }
+
+  function projCard(title, proj, unitLabel) {
+    if (!proj || proj.error) {
+      return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
+             `<div class="big" style="font-size:14px;color:var(--accent-2)">unavailable</div>` +
+             `<div class="sub">${escapeHtml(proj?.error || "no data")}</div></div>`;
+    }
+    const ytdLabel = proj.ytd_count != null ? proj.ytd_count
+                  : proj.active_named_storms_ytd_lower_bound != null ? proj.active_named_storms_ytd_lower_bound
+                  : "-";
+    const ytdDescriptor = proj.active_named_storms_ytd_lower_bound != null ? "active YTD (lower bound)" : "YTD";
+    const climoSub = proj.climatological_annual != null
+                   ? ` &nbsp; climo: ${fmt(proj.climatological_annual)}`
+                   : (proj.climatological_annual_named != null
+                      ? ` &nbsp; climo: ${fmt(proj.climatological_annual_named)}`
+                      : "");
+    return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
+      `<div class="big">${fmt(proj.projected_year_end_count)}<span style="font-size:14px;color:var(--text-3)"> ${escapeHtml(unitLabel)}</span></div>` +
+      `<div class="sub">${ytdLabel} ${escapeHtml(ytdDescriptor)} &middot; ` +
+      `&lambda;<sub>rest</sub>=${fmt(proj.lambda_remaining, 2)}${climoSub}</div></div>`;
+  }
+
+  function renderProjections(summary) {
+    const p = summary.projections || {};
+    const cards = [];
+    cards.push(projCard("Atlantic named storms (yr-end)", p.atlantic_storms, "named"));
+    cards.push(projCard("Global M5+ quakes (yr-end)", p.quakes_m5, "events"));
+    cards.push(projCard("Global M6+ quakes (yr-end)", p.quakes_m6, "events"));
+    cards.push(projCard("Global M7+ quakes (yr-end)", p.quakes_m7, "events"));
+    cards.push(projCard("EONET wildfires (yr-end)", p.wildfires, "events"));
+    document.getElementById("proj-grid").innerHTML = cards.join("");
+  }
+
+  async function loadSummary() {
+    try {
+      const summary = await fetchJson("/api/summary");
+      renderActive(summary);
+      renderProjections(summary);
+    } catch (e) {
+      const grid = document.getElementById("active-grid");
+      grid.innerHTML = `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadQuakes() {
+    try {
+      const q = await fetchJson("/api/quakes?min_magnitude=5&days=30");
+      const target = document.getElementById("quakes-table");
+      if (!q.quakes || !q.quakes.length) {
+        target.innerHTML = '<div class="card">No M5+ quakes in the last 30 days.</div>';
+        return;
+      }
+      const rows = q.quakes.slice(0, 25).map(qk => {
+        const cls = qk.mag >= 7 ? "hot" : qk.mag >= 6 ? "warn" : "";
+        const tsuLabel = qk.tsunami ? pill("tsunami", "hot") : "";
+        return `<tr>` +
+          `<td><span class="pill ${cls}">M${fmt(qk.mag, 1)}</span> ${tsuLabel}</td>` +
+          `<td>${escapeHtml(qk.place || "")}</td>` +
+          `<td class="muted">${escapeHtml((qk.time_iso || "").replace("T", " ").slice(0, 16))} UTC</td>` +
+          `<td class="num">${fmt(qk.depth_km, 0)} km</td>` +
+          `<td>${qk.url ? `<a href="${escapeHtml(qk.url)}" target="_blank" rel="noopener">USGS</a>` : "-"}</td>` +
+          `</tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>` +
+        `<th>Magnitude</th><th>Location</th><th>Time</th><th>Depth</th><th>Source</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table>`;
+    } catch (e) {
+      document.getElementById("quakes-table").innerHTML = `<div class="err">Quake fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadMarkets() {
+    try {
+      const m = await fetchJson("/api/markets");
+      const target = document.getElementById("markets-table");
+      const markets = m.markets || [];
+      if (!markets.length) {
+        target.innerHTML = '<div class="card">No live disaster markets found right now.</div>';
+        return;
+      }
+      const rows = markets.slice(0, 50).map(mk => {
+        const title = mk._event_title || mk.question || "?";
+        const q = mk.question || "";
+        const implied = mk._implied_p;
+        const model = mk._model_p;
+        const edge = mk._edge_pp;
+        let edgeCell = '<td class="muted">-</td>';
+        if (edge != null) {
+          const cls = edge > 3 ? "edge-buy" : edge < -3 ? "edge-sell" : "";
+          const sign = edge > 0 ? "+" : "";
+          edgeCell = `<td class="num ${cls}">${sign}${edge.toFixed(1)} pp</td>`;
+        }
+        return `<tr>` +
+          `<td>${escapeHtml(title)}<div class="muted" style="font-size:11px;margin-top:3px">${escapeHtml(q)}</div></td>` +
+          `<td class="num">${pct(implied)}</td>` +
+          `<td class="num">${pct(model)}</td>` +
+          `${edgeCell}` +
+          `<td class="muted">${escapeHtml(mk._rationale || "")}</td>` +
+          `</tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>` +
+        `<th>Market</th><th>Implied</th><th>Model</th><th>Edge</th><th>Rationale</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table>` +
+        `<div class="footer">${markets.length} markets &middot; storm proj: ${m.storm_projection?.projected_year_end_count ?? "?"} named ` +
+        `&middot; M5+ quake proj: ${m.quake_projections?.m5?.projected_year_end_count ?? "?"} ` +
+        `&middot; wildfire proj: ${m.wildfire_projection?.projected_year_end_count ?? "?"}</div>`;
+    } catch (e) {
+      document.getElementById("markets-table").innerHTML = `<div class="err">Market fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  loadSummary();
+  loadQuakes();
+  loadMarkets();
+
+  document.getElementById("footer").textContent =
+    "Sources: USGS FDSN · NHC CurrentStorms · NWS api.weather.gov · NASA EONET · Polymarket Gamma. " +
+    "Models are climatology + Poisson — informational, not investment advice.";
+
+  // Refresh every 5 minutes
+  setInterval(loadSummary, 5 * 60 * 1000);
+  setInterval(loadQuakes, 5 * 60 * 1000);
+  setInterval(loadMarkets, 5 * 60 * 1000);
+</script>
+</body>
+</html>
