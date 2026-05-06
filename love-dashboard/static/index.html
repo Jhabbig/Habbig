@@ -9,14 +9,17 @@
     --bg-0: #0b1220;
     --bg-1: #0f172a;
     --bg-2: #1e293b;
+    --bg-3: #273349;
     --border: #243042;
+    --border-soft: #1b2533;
     --text-1: #f1f5f9;
     --text-2: #94a3b8;
     --text-3: #64748b;
-    --accent: #f472b6;       /* pink — love */
-    --accent-2: #f87171;     /* red — drop */
-    --good: #34d399;         /* green — gain */
+    --accent: #f472b6;
+    --accent-2: #f87171;
+    --good: #34d399;
     --warn: #fbbf24;
+    --info: #60a5fa;
     --tier-a: #34d399;
     --tier-b: #fbbf24;
     --tier-c: #94a3b8;
@@ -29,6 +32,10 @@
     font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; color: var(--text-2); }
+
   header {
     padding: 18px 24px;
     border-bottom: 1px solid var(--border);
@@ -39,41 +46,27 @@
     gap: 24px;
     flex-wrap: wrap;
   }
-  header h1 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-  }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
   header h1 .heart { color: var(--accent); }
-  header .sub {
-    margin-top: 3px;
-    color: var(--text-2);
-    font-size: 12px;
-  }
+  header .sub { margin-top: 3px; color: var(--text-2); font-size: 12px; max-width: 720px; }
   header .index-pill {
     display: flex;
     align-items: baseline;
-    gap: 10px;
-    padding: 8px 14px;
+    gap: 14px;
+    padding: 10px 16px;
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: 12px;
-  }
-  header .index-pill .num {
-    font-size: 26px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    color: var(--accent);
+    min-width: 240px;
   }
   header .index-pill .label {
-    font-size: 11px;
-    color: var(--text-3);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em;
   }
-  header .index-pill .delta { font-size: 12px; color: var(--good); }
-  header .index-pill .delta.neg { color: var(--accent-2); }
+  header .index-pill .num {
+    font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--accent); line-height: 1;
+  }
+  header .index-pill .delta { font-size: 12px; color: var(--text-2); }
+  header .index-pill .delta.custom { color: var(--warn); }
 
   main { padding: 18px 24px 80px; max-width: 1320px; margin: 0 auto; }
 
@@ -84,7 +77,10 @@
     margin-bottom: 22px;
   }
   .grid.two { grid-template-columns: 2fr 1fr; }
-  @media (max-width: 900px) { .grid.two { grid-template-columns: 1fr; } }
+  .grid.three { grid-template-columns: 1fr 1fr 1fr; }
+  @media (max-width: 980px) {
+    .grid.two, .grid.three { grid-template-columns: 1fr; }
+  }
 
   .card {
     background: var(--bg-1);
@@ -94,39 +90,18 @@
   }
   .card h3 {
     margin: 0 0 8px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
-    font-weight: 600;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-3); font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
   }
   .card .big {
-    font-size: 30px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
+    font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
   }
-  .card .sub {
-    color: var(--text-2);
-    font-size: 12px;
-    margin-top: 4px;
-  }
-  .card .bar {
-    margin-top: 10px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-2);
-    overflow: hidden;
-  }
-  .card .bar > span {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-    border-radius: 3px;
-  }
+  .card .sub { color: var(--text-2); font-size: 12px; margin-top: 4px; min-height: 32px; }
+  .card .bar { margin-top: 10px; height: 6px; border-radius: 3px; background: var(--bg-2); overflow: hidden; }
+  .card .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px;
+    transition: width 0.4s cubic-bezier(.2,.8,.2,1); }
+  .card .bar > span.disabled { background: var(--bg-3); }
 
   .pill {
     display: inline-block;
@@ -139,66 +114,137 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .pill.up { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  .pill.up   { background: rgba(52, 211, 153, 0.15); color: var(--good); }
   .pill.down { background: rgba(248, 113, 113, 0.15); color: var(--accent-2); }
   .pill.tier-a { background: rgba(52, 211, 153, 0.15); color: var(--tier-a); }
   .pill.tier-b { background: rgba(251, 191, 36, 0.15); color: var(--tier-b); }
   .pill.tier-c { background: rgba(148, 163, 184, 0.15); color: var(--tier-c); }
+  .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .pill.info { background: rgba(96, 165, 250, 0.15); color: var(--info); }
 
   .section-title {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-3);
-    margin: 22px 0 10px;
-    font-weight: 600;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-3); margin: 22px 0 10px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
   }
+  .section-title .right { color: var(--text-3); font-weight: 500; text-transform: none; letter-spacing: 0; font-size: 11px; }
 
   /* Map */
   .map-card { padding: 8px 8px 14px; }
-  .map-card .map-wrap {
+  .map-wrap {
     position: relative;
     background: var(--bg-2);
     border-radius: 8px;
     aspect-ratio: 2 / 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-3);
-    font-size: 12px;
     overflow: hidden;
   }
-  .map-card .legend {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    margin-top: 10px;
-    padding: 0 8px;
-    font-size: 11px;
-    color: var(--text-3);
+  .map-wrap svg { display: block; width: 100%; height: 100%; }
+  .map-wrap .country-shape { stroke: var(--border-soft); stroke-width: 0.4; cursor: pointer; transition: stroke 0.15s, opacity 0.15s; }
+  .map-wrap .country-shape.no-data { fill: var(--bg-3); }
+  .map-wrap .country-shape:hover { stroke: var(--accent); stroke-width: 1.2; }
+  .map-wrap .map-empty {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-3); font-size: 12px; padding: 20px; text-align: center;
   }
-  .map-card .legend .grad {
-    flex: 1;
-    height: 8px;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #1e293b, #7f1d3f, #be185d, #f472b6);
+  .map-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: rgba(15,23,42,0.96);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--text-1);
+    transform: translate(-50%, -120%);
+    white-space: nowrap;
+    z-index: 5;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+  .map-tooltip.on { opacity: 1; }
+  .legend { display: flex; gap: 6px; align-items: center; margin-top: 10px; padding: 0 8px; font-size: 11px; color: var(--text-3); }
+  .legend .grad {
+    flex: 1; height: 8px; border-radius: 4px;
+    background: linear-gradient(90deg, #1e293b, #5b1738, #be185d, #f472b6);
   }
 
-  /* Mover lists */
-  .mover-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
+  /* Sliders for weight customization */
+  .weights-card .sliders {
+    display: grid; grid-template-columns: 1fr; gap: 8px;
   }
-  .mover-row:last-child { border-bottom: none; }
-  .mover-row .country { display: flex; gap: 8px; align-items: center; }
-  .mover-row .flag { width: 18px; text-align: center; }
-  .mover-row .delta { font-weight: 600; font-size: 12px; }
-  .mover-row .delta.up { color: var(--good); }
-  .mover-row .delta.down { color: var(--accent-2); }
+  .weight-row { display: grid; grid-template-columns: 88px 1fr 38px; align-items: center; gap: 8px; font-size: 12px; }
+  .weight-row label { color: var(--text-2); }
+  .weight-row input[type=range] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--bg-3); outline: none; }
+  .weight-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); cursor: pointer; }
+  .weight-row input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer; }
+  .weight-row .val { color: var(--text-1); font-variant-numeric: tabular-nums; text-align: right; font-size: 11px; }
+  .weights-card .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .btn {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: rgba(244, 114, 182, 0.18); border-color: rgba(244, 114, 182, 0.55); color: var(--accent); }
+
+  /* Rankings table */
+  .rankings-card { padding: 0; overflow: hidden; }
+  .rankings-card .toolbar {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .rankings-card input[type=search] {
+    flex: 1; min-width: 180px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+  }
+  .rankings-card input[type=search]:focus { border-color: var(--accent); }
+  .rankings-card select {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    outline: none;
+  }
+  .rankings-card .table-wrap { max-height: 520px; overflow-y: auto; }
+  table.rankings { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.rankings th, table.rankings td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); text-align: left; }
+  table.rankings th {
+    position: sticky; top: 0;
+    background: var(--bg-1);
+    color: var(--text-3);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    user-select: none;
+    z-index: 2;
+  }
+  table.rankings th.sorted { color: var(--accent); }
+  table.rankings tbody tr { cursor: pointer; transition: background 0.1s; }
+  table.rankings tbody tr:hover { background: var(--bg-2); }
+  table.rankings td.rank { color: var(--text-3); font-variant-numeric: tabular-nums; width: 40px; }
+  table.rankings td.flag { width: 28px; }
+  table.rankings td.composite { font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+  table.rankings td.composite.unranked { color: var(--text-3); font-weight: 400; }
+  table.rankings td.score { font-variant-numeric: tabular-nums; color: var(--text-1); }
+  table.rankings td.score.missing { color: var(--text-3); }
+  table.rankings td.tier { color: var(--text-2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
 
   /* Insight feed */
   .insight {
@@ -210,23 +256,75 @@
     margin-bottom: 10px;
   }
   .insight.divergence { border-left-color: var(--warn); }
-  .insight.event { border-left-color: var(--good); }
+  .insight.outlier { border-left-color: var(--info); }
+  .insight.peer_leader { border-left-color: var(--good); }
+  .insight.coverage_gap { border-left-color: var(--text-3); }
   .insight .meta {
-    display: flex;
-    gap: 8px;
-    font-size: 10px;
-    color: var(--text-3);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    display: flex; gap: 8px; flex-wrap: wrap;
+    font-size: 10px; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.06em;
     margin-bottom: 6px;
   }
-  .insight .body { font-size: 13px; color: var(--text-1); }
-  .insight .body strong { color: var(--accent); font-weight: 600; }
-  .insight .action {
-    margin-top: 8px;
-    font-size: 11px;
-    color: var(--text-2);
+  .insight .title { font-weight: 600; font-size: 13px; color: var(--text-1); margin-bottom: 4px; }
+  .insight .body { font-size: 13px; color: var(--text-2); }
+  .insight .pointers { margin-top: 8px; font-size: 11px; color: var(--text-3); display: flex; gap: 12px; flex-wrap: wrap; }
+  .insight .pointers strong { color: var(--text-1); font-weight: 600; }
+
+  /* Drill-down modal */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(2px);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 100;
   }
+  .modal-backdrop.on { display: flex; }
+  .modal {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    width: min(720px, 92vw);
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 20px 24px;
+  }
+  .modal h2 { margin: 0 0 4px; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .modal .country-meta { color: var(--text-2); font-size: 12px; margin-bottom: 14px; }
+  .modal .composite-big {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 14px 16px; background: var(--bg-2); border-radius: 10px; margin-bottom: 18px;
+  }
+  .modal .composite-big .num { font-size: 38px; font-weight: 700; color: var(--accent); }
+  .modal .composite-big .label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; }
+  .modal .subscore-rows { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .modal .sub-row {
+    display: grid; grid-template-columns: 110px 1fr 80px; align-items: center; gap: 10px;
+    padding: 8px 10px; background: var(--bg-2); border-radius: 8px;
+  }
+  .modal .sub-row .name { color: var(--text-1); font-size: 13px; font-weight: 500; }
+  .modal .sub-row .name span { font-size: 10px; color: var(--text-3); display: block; }
+  .modal .sub-row .bar { height: 5px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
+  .modal .sub-row .bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s; }
+  .modal .sub-row .val { font-variant-numeric: tabular-nums; font-size: 13px; text-align: right; color: var(--text-1); }
+  .modal .sub-row .val .delta { display: block; font-size: 10px; color: var(--text-3); }
+  .modal .sub-row .val .delta.up { color: var(--good); }
+  .modal .sub-row .val .delta.down { color: var(--accent-2); }
+  .modal .raw {
+    margin-top: 18px; padding: 10px 12px; background: var(--bg-2); border-radius: 8px;
+    font-size: 12px; color: var(--text-2);
+  }
+  .modal .raw h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); font-weight: 600; }
+  .modal .raw dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; margin: 0; }
+  .modal .raw dt { color: var(--text-3); }
+  .modal .raw dd { margin: 0; font-variant-numeric: tabular-nums; color: var(--text-1); }
+  .modal .close-btn {
+    position: absolute; top: 14px; right: 18px;
+    background: transparent; border: none; color: var(--text-2);
+    font-size: 22px; cursor: pointer; line-height: 1;
+  }
+  .modal .close-btn:hover { color: var(--text-1); }
+  .modal-shell { position: relative; }
 
   /* Data quality */
   .dq {
@@ -242,23 +340,18 @@
   .dq th, .dq td {
     text-align: left;
     padding: 6px 8px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-soft);
   }
   .dq th { color: var(--text-3); font-weight: 600; font-size: 11px; text-transform: uppercase; }
 
-  footer {
-    color: var(--text-3);
-    font-size: 11px;
-    text-align: center;
-    margin-top: 30px;
-  }
+  footer { color: var(--text-3); font-size: 11px; text-align: center; margin-top: 30px; }
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1><span class="heart">♥</span> State of Love — narve.ai</h1>
-    <div class="sub" id="header-sub">Global view of marriage, divorce, intimacy &amp; connection</div>
+    <div class="sub" id="header-sub">Global view of marriage, divorce, intimacy &amp; connection.</div>
   </div>
   <div class="index-pill">
     <div>
@@ -267,7 +360,8 @@
     </div>
     <div>
       <div class="delta" data-coverage>loading…</div>
-      <div class="delta" id="as-of" style="color: var(--text-3);"></div>
+      <div class="delta" id="as-of"></div>
+      <div class="delta custom" id="weights-flag" style="display:none">⚙ custom weights</div>
     </div>
   </div>
 </header>
@@ -275,145 +369,614 @@
 <main>
 
   <!-- Subscores -->
-  <div class="section-title">Subscores</div>
+  <div class="section-title">Subscores
+    <span class="right" id="sub-coverage"></span>
+  </div>
   <div class="grid">
     <div class="card" data-subscore="connection">
-      <h3>Connection · 35% <span class="pill tier-b">Tier B — v1.1</span></h3>
+      <h3>Connection · <span data-weight>35</span>% <span class="pill tier-b">Tier B</span></h3>
       <div class="big">—</div>
-      <div class="sub">Loneliness ↓, social support ↑ (Gallup, Meta-Gallup)</div>
+      <div class="sub">WHR social-support index — proxy for population-level closeness.</div>
       <div class="bar"><span style="width: 0%"></span></div>
     </div>
     <div class="card" data-subscore="partnership">
-      <h3>Partnership · 30% <span class="pill tier-a">Tier A</span></h3>
+      <h3>Partnership · <span data-weight>30</span>% <span class="pill tier-a">Tier A</span></h3>
       <div class="big">—</div>
-      <div class="sub">Crude marriage rate (Eurostat) — partnership-rate proxy until cohabitation data wires in</div>
+      <div class="sub">Crude marriage rate (Eurostat). Capped at 80th pctile per methodology.</div>
       <div class="bar"><span style="width: 0%"></span></div>
     </div>
     <div class="card" data-subscore="stability">
-      <h3>Stability · 25% <span class="pill tier-a">Tier A</span></h3>
+      <h3>Stability · <span data-weight>25</span>% <span class="pill tier-a">Tier A</span></h3>
       <div class="big">—</div>
-      <div class="sub">Crude divorce rate (Eurostat) + adolescent fertility (World Bank), both inverted</div>
+      <div class="sub">Crude divorce rate + adolescent fertility, both inverted (lower = better).</div>
       <div class="bar"><span style="width: 0%"></span></div>
     </div>
     <div class="card" data-subscore="activity">
-      <h3>Activity · 10% <span class="pill tier-c">Tier C — v1.1</span></h3>
+      <h3>Activity · <span data-weight>10</span>% <span class="pill tier-c">Tier C — v1.1</span></h3>
       <div class="big">—</div>
-      <div class="sub">Dating-app penetration, "love"/"date" Trends basket</div>
+      <div class="sub">Dating-app penetration + Trends "love"/"date" basket. Indicative-only.</div>
       <div class="bar"><span style="width: 0%"></span></div>
     </div>
   </div>
 
-  <!-- Map + movers -->
+  <!-- Map + weights -->
   <div class="grid two">
     <div class="card map-card">
-      <h3>Love Index by country <span class="pill">2024</span></h3>
-      <div class="map-wrap">[ choropleth world map — click a country to drill down ]</div>
-      <div class="legend">
-        <span>0</span><div class="grad"></div><span>100</span>
+      <h3>Love Index by country
+        <span class="right" id="map-status">loading map…</span>
+      </h3>
+      <div class="map-wrap" id="map-wrap">
+        <div class="map-empty" id="map-empty">drawing world map…</div>
+      </div>
+      <div class="legend"><span>0</span><div class="grad"></div><span>100</span></div>
+    </div>
+
+    <div class="card weights-card">
+      <h3>Weight customization <span class="pill warn" id="weights-status">defaults</span></h3>
+      <div style="font-size: 11px; color: var(--text-3); margin-bottom: 12px;">Re-weight subscores and rankings update live. Weights renormalize to sum to 100%.</div>
+      <div class="sliders" id="sliders"></div>
+      <div class="actions">
+        <button class="btn primary" id="apply-weights">Apply</button>
+        <button class="btn" id="reset-weights">Reset to defaults</button>
       </div>
     </div>
+  </div>
 
-    <div class="card">
-      <h3>Top &amp; bottom <span class="pill" id="rank-pill">—</span></h3>
-      <div id="top-list"></div>
-      <div style="height: 8px"></div>
-      <div id="bottom-list"></div>
+  <!-- Insights + top/bottom -->
+  <div class="grid two">
+    <div>
+      <div class="section-title">Insight feed <span class="right" id="insights-count"></span></div>
+      <div id="insight-feed">
+        <div class="insight"><div class="body">Loading insights…</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">Top &amp; bottom <span class="right" id="movers-count"></span></div>
+      <div class="card">
+        <h3>Top 5</h3>
+        <div id="top-list"></div>
+      </div>
+      <div style="height: 12px"></div>
+      <div class="card">
+        <h3>Bottom 5</h3>
+        <div id="bottom-list"></div>
+      </div>
     </div>
   </div>
 
-  <!-- Insights -->
-  <div class="section-title">Insight feed</div>
-  <div id="insight-feed">
-    <div class="insight">
-      <div class="meta"><span>Pending</span><span class="pill">v1</span></div>
-      <div class="body">Insight rules (mover / divergence / event-overlay / outlier) compute against the latest snapshot. With v1 inputs (marriage, divorce, adolescent fertility) the feed will surface European movers and stability outliers; richer narratives unlock once Connection (WHR) and Activity (Trends) wire in.</div>
+  <!-- Rankings table -->
+  <div class="section-title">All countries <span class="right" id="table-count"></span></div>
+  <div class="card rankings-card">
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="Search country, region or ISO…" autocomplete="off" />
+      <select id="filter-tier">
+        <option value="">All income tiers</option>
+        <option value="H">High</option>
+        <option value="UM">Upper-middle</option>
+        <option value="LM">Lower-middle</option>
+        <option value="L">Low</option>
+      </select>
+      <select id="filter-status">
+        <option value="">Ranked + unranked</option>
+        <option value="ranked">Ranked only</option>
+        <option value="unranked">Unranked only</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table class="rankings">
+        <thead>
+          <tr>
+            <th data-sort="rank" class="sorted">#</th>
+            <th></th>
+            <th data-sort="name">Country</th>
+            <th data-sort="income_tier">Tier</th>
+            <th data-sort="composite">Index</th>
+            <th data-sort="connection">Conn</th>
+            <th data-sort="partnership">Part</th>
+            <th data-sort="stability">Stab</th>
+            <th data-sort="activity">Act</th>
+          </tr>
+        </thead>
+        <tbody id="rankings-body"><tr><td colspan="9" style="color:var(--text-3); padding: 18px; text-align: center;">loading…</td></tr></tbody>
+      </table>
     </div>
   </div>
+
+  <!-- Mover-row styling reused for top/bottom lists -->
+  <style>
+    .mover-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px; cursor: pointer; }
+    .mover-row:last-child { border-bottom: none; }
+    .mover-row:hover { color: var(--accent); }
+    .mover-row .country { display: flex; gap: 8px; align-items: center; }
+    .mover-row .flag { width: 18px; text-align: center; }
+    .mover-row .composite { font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+  </style>
 
   <!-- Data quality -->
   <div class="dq">
     <strong style="color: var(--text-1);">Data quality &amp; coverage</strong>
-    <div style="margin-top: 4px;">Every metric on this page is tagged Tier A (registry), B (survey), or C (proxy). Subscore tier mix is the worst tier across its inputs.</div>
-    <table>
-      <thead><tr><th>Source</th><th>Tier</th><th>Countries</th><th>Last updated</th><th>License</th></tr></thead>
-      <tbody>
-        <tr><td>Eurostat <code>demo_nind</code> (marriage rate)</td><td><span class="pill tier-a">A</span></td><td>34</td><td>live</td><td>CC-BY 4.0</td></tr>
-        <tr><td>Eurostat <code>demo_ndivind</code> (divorce rate)</td><td><span class="pill tier-a">A</span></td><td>34</td><td>live</td><td>CC-BY 4.0</td></tr>
-        <tr><td>World Bank WDI <code>SP.ADO.TFRT</code></td><td><span class="pill tier-a">A</span></td><td>~190</td><td>live</td><td>CC-BY 4.0</td></tr>
-        <tr><td>World Bank country &amp; income classification</td><td><span class="pill tier-a">A</span></td><td>~220</td><td>live</td><td>CC-BY 4.0</td></tr>
-        <tr><td>World Happiness Report (Gallup) — <em>v1.1</em></td><td><span class="pill tier-b">B</span></td><td>147</td><td>—</td><td>report-level open</td></tr>
-        <tr><td>Meta-Gallup Social Connections — <em>v1.1</em></td><td><span class="pill tier-b">B</span></td><td>142</td><td>—</td><td>open report</td></tr>
-        <tr><td>Google Trends — <em>v1.1</em></td><td><span class="pill tier-c">C</span></td><td>~120</td><td>—</td><td>display-only (Google ToS)</td></tr>
-        <tr><td>UN DESA Demographic Yearbook — <em>v1.1</em></td><td><span class="pill tier-a">A</span></td><td>198</td><td>—</td><td>UN open</td></tr>
-      </tbody>
+    <div style="margin-top: 4px;">Every metric carries a tier badge: A (registry), B (survey), C (proxy). Subscore tier mix is the worst tier across its inputs.</div>
+    <table id="sources-table">
+      <thead><tr><th>Source</th><th>Tier</th><th>Feeds</th><th>Status</th></tr></thead>
+      <tbody><tr><td colspan="4" style="color:var(--text-3); padding: 12px;">loading…</td></tr></tbody>
     </table>
   </div>
 
   <footer>
-    State of Love v1 — Eurostat + World Bank live data. See <code>love-dashboard/README.md</code> for the methodology and contestable decisions.
+    State of Love v2 — Eurostat + World Bank live; WHR Connection + insight rules engine + weight customization. See <code>love-dashboard/README.md</code> for the methodology.
   </footer>
 
 </main>
 
+<!-- Drill-down modal -->
+<div class="modal-backdrop" id="modal" tabindex="-1">
+  <div class="modal-shell">
+    <div class="modal" id="modal-body">
+      <button class="close-btn" id="modal-close">×</button>
+      <div id="modal-content">loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Map tooltip -->
+<div class="map-tooltip" id="map-tooltip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
+const SUBSCORES = ["connection", "partnership", "stability", "activity"];
+const SUB_LABELS = { connection: "Connection", partnership: "Partnership", stability: "Stability", activity: "Activity" };
+const TIER_LABELS = { H: "High", UM: "Upper-mid", LM: "Lower-mid", L: "Low" };
+
+let state = {
+  weights: null,         // null = use defaults; object = custom
+  countries: [],         // cached /api/countries response
+  countriesByISO: {},
+  summary: null,
+  insights: [],
+  sortKey: "rank",
+  sortDir: "asc",
+  filterTier: "",
+  filterStatus: "",
+  search: "",
+  worldGeo: null,
+};
+
 const ISO2_FLAG = c => c && c.length === 2
   ? String.fromCodePoint(...[...c.toUpperCase()].map(x => 0x1F1E6 + x.charCodeAt(0) - 65))
   : "🏳";
 
-function fmtScore(v) { return v == null ? "—" : Number(v).toFixed(1); }
-function setBig(card, val) {
-  const big = card.querySelector(".big");
-  const bar = card.querySelector(".bar > span");
-  if (val == null) { big.textContent = "—"; bar.style.width = "0%"; return; }
-  big.textContent = Number(val).toFixed(0);
-  bar.style.width = Math.max(0, Math.min(100, Number(val))) + "%";
+const fmt = (v, d=1) => v == null ? "—" : Number(v).toFixed(d);
+
+function weightQS() {
+  if (!state.weights) return "";
+  const p = new URLSearchParams();
+  for (const k of SUBSCORES) p.set(`w_${k}`, state.weights[k]);
+  return "?" + p.toString();
 }
 
-function moverRow(c, isUp) {
-  const row = document.createElement("div");
-  row.className = "mover-row";
-  row.innerHTML = `
-    <div class="country"><span class="flag">${ISO2_FLAG(c.iso2)}</span>${c.name}</div>
-    <span class="delta ${isUp ? "up" : "down"}">${fmtScore(c.composite)}</span>`;
-  return row;
+async function fetchJSON(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  return r.json();
 }
 
+// ---- summary + cards ----
 async function loadSummary() {
-  let data;
-  try {
-    const r = await fetch("/api/summary");
-    if (!r.ok) throw new Error(r.status);
-    data = await r.json();
-  } catch (err) {
-    document.querySelector("[data-coverage]").textContent = "data load failed";
-    console.error("summary fetch", err);
-    return;
-  }
-
-  document.querySelector("[data-global-index]").textContent = fmtScore(data.global_index);
+  let d;
+  try { d = await fetchJSON("/api/summary" + weightQS()); }
+  catch (err) { console.error(err); document.querySelector("[data-coverage]").textContent = "data load failed"; return; }
+  state.summary = d;
+  document.querySelector("[data-global-index]").textContent = fmt(d.global_index);
   document.querySelector("[data-coverage]").textContent =
-    `${data.n_countries} countries ranked`;
-  document.querySelector("#as-of").textContent = `as of ${data.as_of}`;
+    `${d.n_countries} of ${d.n_meta || "?"} countries ranked`;
+  document.querySelector("#as-of").textContent = `as of ${d.as_of}`;
+  document.querySelector("#weights-flag").style.display = d.weights_customized ? "" : "none";
 
   for (const card of document.querySelectorAll("[data-subscore]")) {
-    setBig(card, data.subscores_avg?.[card.dataset.subscore]);
+    const k = card.dataset.subscore;
+    const big = card.querySelector(".big");
+    const bar = card.querySelector(".bar > span");
+    const v = d.subscores_avg?.[k];
+    big.textContent = v == null ? "—" : Math.round(v);
+    bar.style.width = v == null ? "0%" : `${Math.min(100, Math.max(0, v))}%`;
+    bar.classList.toggle("disabled", v == null);
+    const w = (d.weights || {})[k];
+    if (w != null) card.querySelector("[data-weight]").textContent = Math.round(w * 100);
   }
 
-  const top = data.top.filter(c => c.composite != null).slice(0, 5);
-  const bottom = data.bottom.filter(c => c.composite != null).slice(0, 5);
+  const cov = d.subscore_coverage || {};
+  document.querySelector("#sub-coverage").textContent =
+    `coverage: connection ${cov.connection || 0}, partnership ${cov.partnership || 0}, stability ${cov.stability || 0}, activity ${cov.activity || 0}`;
+
+  document.querySelector("#header-sub").textContent = d.coverage_note ||
+    "Global view of marriage, divorce, intimacy & connection.";
+
+  renderMovers(d.top || [], d.bottom || []);
+}
+
+function renderMovers(top, bottom) {
+  const make = (rows) => {
+    const f = document.createDocumentFragment();
+    rows.slice(0, 5).forEach(c => {
+      const row = document.createElement("div");
+      row.className = "mover-row";
+      row.innerHTML = `
+        <div class="country"><span class="flag">${ISO2_FLAG(c.iso2)}</span>${c.name}</div>
+        <span class="composite">${fmt(c.composite)}</span>`;
+      row.onclick = () => openCountry(c.iso3);
+      f.appendChild(row);
+    });
+    return f;
+  };
   const topEl = document.getElementById("top-list");
   const botEl = document.getElementById("bottom-list");
   topEl.innerHTML = ""; botEl.innerHTML = "";
-  top.forEach(c => topEl.appendChild(moverRow(c, true)));
-  bottom.forEach(c => botEl.appendChild(moverRow(c, false)));
-  document.getElementById("rank-pill").textContent =
+  topEl.appendChild(make(top.filter(c => c.composite != null)));
+  botEl.appendChild(make(bottom.filter(c => c.composite != null)));
+  document.getElementById("movers-count").textContent =
     `${top.length}↑ / ${bottom.length}↓`;
-
-  const sub = document.getElementById("header-sub");
-  sub.textContent = data.coverage_note || sub.textContent;
 }
 
-loadSummary();
+// ---- countries table ----
+async function loadCountries() {
+  let d;
+  try { d = await fetchJSON("/api/countries" + weightQS()); }
+  catch { d = []; }
+  state.countries = d;
+  state.countriesByISO = Object.fromEntries(d.map(c => [c.iso3, c]));
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById("rankings-body");
+  let rows = state.countries.slice();
+  const q = state.search.trim().toLowerCase();
+  if (q) rows = rows.filter(c =>
+    (c.name || "").toLowerCase().includes(q) ||
+    (c.iso3 || "").toLowerCase().includes(q) ||
+    (c.iso2 || "").toLowerCase().includes(q) ||
+    (c.region || "").toLowerCase().includes(q));
+  if (state.filterTier) rows = rows.filter(c => c.income_tier === state.filterTier);
+  if (state.filterStatus === "ranked") rows = rows.filter(c => c.composite != null);
+  if (state.filterStatus === "unranked") rows = rows.filter(c => c.composite == null);
+
+  rows.sort((a, b) => {
+    if (state.sortKey === "rank" || state.sortKey === "composite") {
+      const av = a.composite, bv = b.composite;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return state.sortDir === "asc" ? bv - av : av - bv; // rank asc = best first
+    }
+    if (["connection","partnership","stability","activity"].includes(state.sortKey)) {
+      const av = a.subscores?.[state.sortKey], bv = b.subscores?.[state.sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return state.sortDir === "asc" ? bv - av : av - bv;
+    }
+    if (state.sortKey === "name" || state.sortKey === "income_tier") {
+      const av = (a[state.sortKey] || ""), bv = (b[state.sortKey] || "");
+      return state.sortDir === "asc"
+        ? String(av).localeCompare(String(bv))
+        : String(bv).localeCompare(String(av));
+    }
+    return 0;
+  });
+
+  tbody.innerHTML = "";
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="color:var(--text-3); padding: 24px; text-align:center;">no countries match — backend may still be fetching, or filters too narrow</td></tr>`;
+  }
+  let visualRank = 0;
+  rows.forEach(c => {
+    const tr = document.createElement("tr");
+    tr.onclick = () => openCountry(c.iso3);
+    const ranked = c.composite != null;
+    if (ranked) visualRank++;
+    const subCell = (k) => {
+      const v = c.subscores?.[k];
+      return `<td class="score ${v == null ? "missing" : ""}">${fmt(v, 0)}</td>`;
+    };
+    tr.innerHTML = `
+      <td class="rank">${ranked ? visualRank : "—"}</td>
+      <td class="flag">${ISO2_FLAG(c.iso2)}</td>
+      <td>${c.name}</td>
+      <td class="tier">${TIER_LABELS[c.income_tier] || ""}</td>
+      <td class="composite ${ranked ? "" : "unranked"}">${fmt(c.composite)}</td>
+      ${subCell("connection")}
+      ${subCell("partnership")}
+      ${subCell("stability")}
+      ${subCell("activity")}`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById("table-count").textContent = `${rows.length} shown`;
+  document.querySelectorAll("table.rankings th").forEach(th => {
+    th.classList.toggle("sorted", th.dataset.sort === state.sortKey);
+  });
+}
+
+document.getElementById("search").addEventListener("input", e => {
+  state.search = e.target.value; renderTable();
+});
+document.getElementById("filter-tier").addEventListener("change", e => {
+  state.filterTier = e.target.value; renderTable();
+});
+document.getElementById("filter-status").addEventListener("change", e => {
+  state.filterStatus = e.target.value; renderTable();
+});
+document.querySelectorAll("table.rankings th[data-sort]").forEach(th => {
+  th.addEventListener("click", () => {
+    const k = th.dataset.sort;
+    if (state.sortKey === k) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+    else { state.sortKey = k; state.sortDir = "asc"; }
+    renderTable();
+  });
+});
+
+// ---- weight sliders ----
+const DEFAULT_WEIGHTS = { connection: 0.35, partnership: 0.30, stability: 0.25, activity: 0.10 };
+
+function buildSliders() {
+  const c = document.getElementById("sliders");
+  c.innerHTML = "";
+  const init = state.weights || DEFAULT_WEIGHTS;
+  for (const k of SUBSCORES) {
+    const row = document.createElement("div");
+    row.className = "weight-row";
+    row.innerHTML = `
+      <label>${SUB_LABELS[k]}</label>
+      <input type="range" min="0" max="100" step="1" value="${Math.round(init[k]*100)}" data-w="${k}">
+      <span class="val" data-val="${k}">${Math.round(init[k]*100)}</span>`;
+    c.appendChild(row);
+  }
+  c.querySelectorAll("input[type=range]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      c.querySelector(`[data-val="${inp.dataset.w}"]`).textContent = inp.value;
+    });
+  });
+}
+
+document.getElementById("apply-weights").addEventListener("click", () => {
+  const w = {};
+  let s = 0;
+  document.querySelectorAll('#sliders input[type=range]').forEach(inp => {
+    w[inp.dataset.w] = Number(inp.value); s += Number(inp.value);
+  });
+  if (s <= 0) { alert("Set at least one weight above 0."); return; }
+  for (const k of SUBSCORES) w[k] /= s;
+  state.weights = w;
+  document.getElementById("weights-status").textContent = "custom";
+  document.getElementById("weights-status").classList.remove("warn");
+  document.getElementById("weights-status").classList.add("info");
+  refresh();
+});
+
+document.getElementById("reset-weights").addEventListener("click", () => {
+  state.weights = null;
+  document.getElementById("weights-status").textContent = "defaults";
+  document.getElementById("weights-status").classList.add("warn");
+  document.getElementById("weights-status").classList.remove("info");
+  buildSliders();
+  refresh();
+});
+
+// ---- insights ----
+async function loadInsights() {
+  let d;
+  try { d = await fetchJSON("/api/insights" + weightQS()); }
+  catch { d = []; }
+  state.insights = d;
+  const feed = document.getElementById("insight-feed");
+  feed.innerHTML = "";
+  document.getElementById("insights-count").textContent = `${d.length} active`;
+  if (!d.length) {
+    feed.innerHTML = `<div class="insight"><div class="body" style="color: var(--text-3)">No insights yet — needs at least one ranked country. Insights appear once the backend fills enough subscores.</div></div>`;
+    return;
+  }
+  d.forEach(i => {
+    const el = document.createElement("div");
+    el.className = "insight " + i.kind;
+    el.onclick = () => openCountry(i.iso3);
+    el.style.cursor = "pointer";
+    const pointers = (i.pointers || []).map(p => `<span><strong>${p.label}</strong>: ${typeof p.value === "number" ? p.value.toFixed ? p.value.toFixed(1) : p.value : p.value}</span>`).join("");
+    el.innerHTML = `
+      <div class="meta">
+        <span>${i.kind.replace("_", " ")}</span>
+        <span class="pill ${i.severity === "warn" ? "warn" : "info"}">${i.severity}</span>
+        <span class="pill">conf: ${i.confidence}</span>
+      </div>
+      <div class="title">${i.title}</div>
+      <div class="body">${i.body}</div>
+      ${pointers ? `<div class="pointers">${pointers}</div>` : ""}`;
+    feed.appendChild(el);
+  });
+}
+
+// ---- sources table ----
+async function loadSources() {
+  let d;
+  try { d = await fetchJSON("/api/sources"); }
+  catch { return; }
+  const tbody = document.querySelector("#sources-table tbody");
+  tbody.innerHTML = "";
+  Object.entries(d.feeds || {}).forEach(([name, f]) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><code>${name}</code> · ${f.covers}</td>
+      <td><span class="pill tier-${(f.tier || "c").toLowerCase()}">${f.tier}</span></td>
+      <td>${f.feeds || "—"}</td>
+      <td>${f.in_use ? '<span class="pill up">live</span>' : '<span class="pill">queued</span>'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ---- country drill-down modal ----
+async function openCountry(iso3) {
+  const modal = document.getElementById("modal");
+  const content = document.getElementById("modal-content");
+  modal.classList.add("on");
+  content.innerHTML = `<div style="color:var(--text-3)">loading ${iso3}…</div>`;
+  let d;
+  try { d = await fetchJSON(`/api/country/${iso3}` + weightQS()); }
+  catch (err) { content.innerHTML = `<div style="color:var(--accent-2)">Failed to load ${iso3}: ${err.message}</div>`; return; }
+  if (d.error) { content.innerHTML = `<div style="color:var(--text-2)">${d.error}</div>`; return; }
+  renderCountryDetail(d, content);
+}
+
+function renderCountryDetail(c, root) {
+  const subRow = (k) => {
+    const v = c.subscores?.[k];
+    const peer = c.peer_compare?.[k];
+    const delta = peer?.delta;
+    const deltaCls = delta == null ? "" : delta > 0 ? "up" : delta < 0 ? "down" : "";
+    const deltaStr = delta == null ? "" : (delta > 0 ? "+" : "") + delta.toFixed(1);
+    return `
+      <div class="sub-row">
+        <div class="name">${SUB_LABELS[k]}<span>${peer?.tier_n ? `${peer.tier_n} peers in tier` : "no peer data"}</span></div>
+        <div class="bar"><span style="width: ${v == null ? 0 : Math.min(100, Math.max(0, v))}%"></span></div>
+        <div class="val">${fmt(v, 0)}<span class="delta ${deltaCls}">${deltaStr ? "Δ peer " + deltaStr : ""}</span></div>
+      </div>`;
+  };
+  const rawEntries = Object.entries(c.raw || {})
+    .filter(([_, v]) => v != null)
+    .map(([k, v]) => `<dt>${k}</dt><dd>${typeof v === "number" ? v.toFixed(2) : v}</dd>`)
+    .join("");
+  root.innerHTML = `
+    <h2>${ISO2_FLAG(c.iso2)} ${c.name}</h2>
+    <div class="country-meta">
+      ${c.region ? c.region + " · " : ""}${TIER_LABELS[c.income_tier] || c.income_tier} income · ISO ${c.iso3}
+      · ${c.used.length} of 4 subscores present (${c.used.join(", ")})
+    </div>
+    <div class="composite-big">
+      <div>
+        <div class="label">Love Index</div>
+        <div class="num">${fmt(c.composite)}</div>
+      </div>
+      <div style="font-size: 11px; color: var(--text-3);">
+        Composite of present subscores using ${state.weights ? "your custom weights" : "default weights"}.
+        Each subscore is the country's percentile rank within its income tier.
+      </div>
+    </div>
+    <div class="subscore-rows">
+      ${SUBSCORES.map(subRow).join("")}
+    </div>
+    ${rawEntries ? `<div class="raw"><h4>Raw indicators</h4><dl>${rawEntries}</dl></div>` : ""}`;
+}
+
+document.getElementById("modal-close").addEventListener("click", () => {
+  document.getElementById("modal").classList.remove("on");
+});
+document.getElementById("modal").addEventListener("click", (e) => {
+  if (e.target.id === "modal") e.currentTarget.classList.remove("on");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") document.getElementById("modal").classList.remove("on");
+});
+
+// ---- D3 choropleth ----
+const WORLD_TOPO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+
+async function ensureWorldGeo() {
+  if (state.worldGeo) return state.worldGeo;
+  try {
+    const topo = await fetch(WORLD_TOPO_URL).then(r => r.json());
+    state.worldGeo = topojson.feature(topo, topo.objects.countries);
+    return state.worldGeo;
+  } catch (err) {
+    console.warn("world atlas fetch failed", err);
+    return null;
+  }
+}
+
+// Numeric ISO3 -> alpha3 (subset of world-atlas codes; comprehensive enough for our coverage)
+const NUM_TO_ISO3 = {"004":"AFG","008":"ALB","010":"ATA","012":"DZA","016":"ASM","020":"AND","024":"AGO","028":"ATG","031":"AZE","032":"ARG","036":"AUS","040":"AUT","044":"BHS","048":"BHR","050":"BGD","051":"ARM","052":"BRB","056":"BEL","060":"BMU","064":"BTN","068":"BOL","070":"BIH","072":"BWA","076":"BRA","084":"BLZ","086":"IOT","090":"SLB","092":"VGB","096":"BRN","100":"BGR","104":"MMR","108":"BDI","112":"BLR","116":"KHM","120":"CMR","124":"CAN","132":"CPV","136":"CYM","140":"CAF","144":"LKA","148":"TCD","152":"CHL","156":"CHN","158":"TWN","162":"CXR","166":"CCK","170":"COL","174":"COM","175":"MYT","178":"COG","180":"COD","184":"COK","188":"CRI","191":"HRV","192":"CUB","196":"CYP","203":"CZE","204":"BEN","208":"DNK","212":"DMA","214":"DOM","218":"ECU","222":"SLV","226":"GNQ","231":"ETH","232":"ERI","233":"EST","234":"FRO","238":"FLK","239":"SGS","242":"FJI","246":"FIN","250":"FRA","254":"GUF","258":"PYF","260":"ATF","262":"DJI","266":"GAB","268":"GEO","270":"GMB","275":"PSE","276":"DEU","288":"GHA","292":"GIB","296":"KIR","300":"GRC","304":"GRL","308":"GRD","312":"GLP","316":"GUM","320":"GTM","324":"GIN","328":"GUY","332":"HTI","334":"HMD","336":"VAT","340":"HND","344":"HKG","348":"HUN","352":"ISL","356":"IND","360":"IDN","364":"IRN","368":"IRQ","372":"IRL","376":"ISR","380":"ITA","384":"CIV","388":"JAM","392":"JPN","398":"KAZ","400":"JOR","404":"KEN","408":"PRK","410":"KOR","414":"KWT","417":"KGZ","418":"LAO","422":"LBN","426":"LSO","428":"LVA","430":"LBR","434":"LBY","438":"LIE","440":"LTU","442":"LUX","446":"MAC","450":"MDG","454":"MWI","458":"MYS","462":"MDV","466":"MLI","470":"MLT","474":"MTQ","478":"MRT","480":"MUS","484":"MEX","492":"MCO","496":"MNG","498":"MDA","499":"MNE","504":"MAR","508":"MOZ","512":"OMN","516":"NAM","520":"NRU","524":"NPL","528":"NLD","531":"CUW","533":"ABW","534":"SXM","535":"BES","540":"NCL","548":"VUT","554":"NZL","558":"NIC","562":"NER","566":"NGA","570":"NIU","574":"NFK","578":"NOR","580":"MNP","581":"UMI","583":"FSM","584":"MHL","585":"PLW","586":"PAK","591":"PAN","598":"PNG","600":"PRY","604":"PER","608":"PHL","612":"PCN","616":"POL","620":"PRT","624":"GNB","626":"TLS","630":"PRI","634":"QAT","638":"REU","642":"ROU","643":"RUS","646":"RWA","652":"BLM","654":"SHN","659":"KNA","660":"AIA","662":"LCA","663":"MAF","666":"SPM","670":"VCT","674":"SMR","678":"STP","682":"SAU","686":"SEN","688":"SRB","690":"SYC","694":"SLE","702":"SGP","703":"SVK","704":"VNM","705":"SVN","706":"SOM","710":"ZAF","716":"ZWE","724":"ESP","728":"SSD","729":"SDN","732":"ESH","740":"SUR","744":"SJM","748":"SWZ","752":"SWE","756":"CHE","760":"SYR","762":"TJK","764":"THA","768":"TGO","772":"TKL","776":"TON","780":"TTO","784":"ARE","788":"TUN","792":"TUR","795":"TKM","796":"TCA","798":"TUV","800":"UGA","804":"UKR","807":"MKD","818":"EGY","826":"GBR","831":"GGY","832":"JEY","833":"IMN","834":"TZA","840":"USA","850":"VIR","854":"BFA","858":"URY","860":"UZB","862":"VEN","876":"WLF","882":"WSM","887":"YEM","894":"ZMB"};
+
+function loveColor(score) {
+  if (score == null) return "#273349";
+  const t = Math.max(0, Math.min(100, score)) / 100;
+  return d3.interpolateRgb("#1e293b", "#f472b6")(0.15 + t * 0.85);
+}
+
+async function drawMap() {
+  const wrap = document.getElementById("map-wrap");
+  const status = document.getElementById("map-status");
+  status.textContent = "loading topology…";
+  const geo = await ensureWorldGeo();
+  if (!geo) {
+    status.textContent = "map unavailable (CDN blocked)";
+    document.getElementById("map-empty").textContent =
+      "World atlas couldn't load. Map will appear once jsdelivr is reachable; rankings table below still works.";
+    return;
+  }
+  status.textContent = "rendering…";
+  document.getElementById("map-empty").remove?.();
+  const empty = document.getElementById("map-empty"); if (empty) empty.remove();
+
+  const { width, height } = wrap.getBoundingClientRect();
+  const W = Math.max(600, width), H = Math.max(300, height);
+  let svg = d3.select(wrap).select("svg");
+  if (svg.empty()) svg = d3.select(wrap).append("svg").attr("viewBox", `0 0 ${W} ${H}`);
+  else svg.attr("viewBox", `0 0 ${W} ${H}`);
+  svg.selectAll("*").remove();
+
+  const projection = d3.geoNaturalEarth1().fitSize([W, H], geo);
+  const path = d3.geoPath(projection);
+  const tooltip = document.getElementById("map-tooltip");
+  const byISO3 = state.countriesByISO;
+
+  svg.append("g").selectAll("path")
+    .data(geo.features)
+    .enter()
+    .append("path")
+    .attr("class", "country-shape")
+    .attr("d", path)
+    .attr("fill", f => {
+      const iso3 = NUM_TO_ISO3[String(f.id).padStart(3, "0")];
+      const c = iso3 && byISO3[iso3];
+      return loveColor(c ? c.composite : null);
+    })
+    .classed("no-data", f => {
+      const iso3 = NUM_TO_ISO3[String(f.id).padStart(3, "0")];
+      return !(iso3 && byISO3[iso3] && byISO3[iso3].composite != null);
+    })
+    .on("mousemove", (ev, f) => {
+      const iso3 = NUM_TO_ISO3[String(f.id).padStart(3, "0")];
+      const c = iso3 && byISO3[iso3];
+      const r = wrap.getBoundingClientRect();
+      tooltip.style.left = (ev.clientX - r.left) + "px";
+      tooltip.style.top = (ev.clientY - r.top) + "px";
+      tooltip.classList.add("on");
+      if (c) {
+        tooltip.innerHTML = `<strong>${c.name}</strong> · ${TIER_LABELS[c.income_tier] || ""}<br>Index: ${fmt(c.composite)} · ${c.used.length}/4 subscores`;
+      } else {
+        tooltip.textContent = (f.properties && f.properties.name) || "no data";
+      }
+    })
+    .on("mouseleave", () => tooltip.classList.remove("on"))
+    .on("click", (_, f) => {
+      const iso3 = NUM_TO_ISO3[String(f.id).padStart(3, "0")];
+      if (iso3) openCountry(iso3);
+    });
+
+  status.textContent = `${geo.features.length} countries shaded`;
+}
+
+// ---- orchestrator ----
+async function refresh() {
+  await Promise.all([loadSummary(), loadCountries(), loadInsights()]);
+  // map relies on countries; redraw colors after reload
+  await drawMap();
+}
+
+async function init() {
+  buildSliders();
+  await refresh();
+  await loadSources();
+}
+
+init();
 </script>
 </body>
 </html>
