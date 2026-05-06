@@ -545,6 +545,12 @@ def _migrate_db():
         snap_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_market_snapshots)").fetchall()}
         if "market_type" not in snap_cols:
             conn.execute("ALTER TABLE sports_market_snapshots ADD COLUMN market_type TEXT DEFAULT 'h2h'")
+        # Watchlist alerts: per-item divergence threshold + cooldown timestamp.
+        wl_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_watchlist)").fetchall()}
+        if "alert_threshold_pp" not in wl_cols:
+            conn.execute("ALTER TABLE sports_watchlist ADD COLUMN alert_threshold_pp REAL")
+        if "last_alerted_at" not in wl_cols:
+            conn.execute("ALTER TABLE sports_watchlist ADD COLUMN last_alerted_at TEXT DEFAULT ''")
 
 _migrate_db()
 
@@ -1442,6 +1448,97 @@ def _log_near_reject(event: dict, pm: dict, home_score: float, away_score: float
     M_MATCH_REJECTS.labels(reason=reason).inc()
 
 
+# Sharp books — these are known to be the most efficient (lowest vig,
+# tightest correlation with closing line). Signals require at least one
+# sharp book to be present.
+SHARP_BOOK_KEYS = {"pinnacle", "betcris", "circa", "bookmakerxch", "betfair_ex_eu", "betfair_ex_uk"}
+
+# Liquidity gate: minimum Polymarket volume and maximum spread (in price
+# points, where 1.0 = 100%) for a signal to fire. The product is roughly
+# the cost-to-fill: a signal isn't actionable if you'd give back the edge
+# crossing the spread.
+MIN_POLY_VOLUME = 1000.0      # USD
+MAX_POLY_SPREAD = 0.05         # 5pp — below this we treat it as quotable
+SHARP_CONSENSUS_TOLERANCE = 2.0  # pp; sharps must agree within this band
+
+
+def _build_trade_urls(poly_slug: str | None, kalshi_event_ticker: str | None = None,
+                      kalshi_market_ticker: str | None = None) -> dict:
+    """Build deep-link URLs so the user can place orders on each venue.
+
+    Polymarket pattern: polymarket.com/market/<slug>
+    Kalshi pattern:     kalshi.com/markets/<ticker> (specific market) or
+                        kalshi.com/events/<event_ticker> (groups all sub-markets)
+    """
+    return {
+        "trade_poly_url": f"https://polymarket.com/market/{poly_slug}" if poly_slug else None,
+        "trade_kalshi_url": (
+            f"https://kalshi.com/markets/{kalshi_market_ticker.lower()}" if kalshi_market_ticker
+            else f"https://kalshi.com/events/{kalshi_event_ticker.lower()}" if kalshi_event_ticker
+            else None
+        ),
+    }
+
+
+def _signal_quality(event: dict, outcome_name: str, odds_prob: float,
+                    poly_prob: float, poly_market: dict) -> dict:
+    """Compute signal-quality flags for one outcome of a matched comparison.
+
+    Returns a dict with the de-vigged divergence, vig pct, and four boolean
+    gates (sharp_consensus_ok, liquidity_ok, not_stale, plus the combined
+    passes_all_gates). The matcher uses passes_all_gates to decide whether
+    to flag the signal — raw `divergence` and `is_signal` stay populated
+    for the legacy frontend.
+    """
+    consensus = event.get("consensus_probs") or {}
+    total = sum(consensus.values()) if consensus else 100.0
+    vig_pct = round(total - 100.0, 2) if consensus else 0.0
+    devigged_pct = (odds_prob / total) * 100.0 if total > 0 else odds_prob
+    devigged_div = round(devigged_pct - poly_prob, 2)
+
+    # Sharp-book consensus: which sharp books cover this outcome and do
+    # their probs agree within tolerance?
+    sharp_probs: list[tuple[str, float]] = []
+    for bk_key, bk_data in (event.get("bookmakers") or {}).items():
+        # Strip the "_h2h" / "_spreads" / "_totals" suffix added in parse_odds_events
+        bare = bk_key.rsplit("_", 1)[0] if "_" in bk_key else bk_key
+        if bare not in SHARP_BOOK_KEYS:
+            continue
+        oc = (bk_data.get("outcomes") or {}).get(outcome_name)
+        if oc and oc.get("implied_prob") is not None:
+            sharp_probs.append((bare, float(oc["implied_prob"])))
+
+    sharp_consensus_ok = bool(sharp_probs)
+    if len(sharp_probs) >= 2:
+        probs_only = [p for _, p in sharp_probs]
+        spread = max(probs_only) - min(probs_only)
+        sharp_consensus_ok = spread <= SHARP_CONSENSUS_TOLERANCE
+
+    # Liquidity gate
+    pm_volume = float(poly_market.get("volume") or 0.0)
+    pm_spread = float(poly_market.get("spread") or 0.0)
+    liquidity_ok = (pm_volume >= MIN_POLY_VOLUME) and (pm_spread <= MAX_POLY_SPREAD)
+
+    # Stale-data gate: a market that's never traded or has been completely
+    # flat for a week is almost certainly mispriced because nobody's there
+    # — not because we found a real edge.
+    last_trade = float(poly_market.get("last_trade_price") or 0.0)
+    one_day = float(poly_market.get("one_day_change") or 0.0)
+    one_week = float(poly_market.get("one_week_change") or 0.0)
+    not_stale = (last_trade > 0) and (pm_volume > 0) and not (one_day == 0 and one_week == 0)
+
+    return {
+        "divergence_raw": round(odds_prob - poly_prob, 2),
+        "divergence_devigged": devigged_div,
+        "vig_pct": vig_pct,
+        "sharp_books_present": [k for k, _ in sharp_probs],
+        "sharp_consensus_ok": sharp_consensus_ok,
+        "liquidity_ok": liquidity_ok,
+        "not_stale": not_stale,
+        "passes_all_gates": sharp_consensus_ok and liquidity_ok and not_stale,
+    }
+
+
 def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_markets: list[dict] | None = None) -> list[dict]:
     """
     Fuzzy-match odds events to Polymarket markets and compute divergence.
@@ -1560,14 +1657,16 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             if poly_prob <= 0.5 or poly_prob >= 99.5:
                 continue
 
-            divergence = odds_prob - poly_prob  # positive = poly is cheap
+            # Compute signal-quality flags (vig-adjustment, sharp consensus,
+            # liquidity, staleness). We use the DE-VIGGED divergence as the
+            # primary signal driver and gate on all four quality flags.
+            quality = _signal_quality(event, outcome_name, odds_prob, poly_prob, best_match)
+            divergence_raw = quality["divergence_raw"]
+            divergence = quality["divergence_devigged"]
             abs_div = abs(divergence)
 
-            # Half-Kelly criterion: f* = (b*p - q) / (2*b)
-            # where b = net decimal odds, p = de-vigged true prob, q = 1-p
-            # De-vig: divide sharp prob by the sharp book's total overround
-            all_consensus_vals = list(event.get("consensus_probs", {}).values()) if event.get("consensus_probs") else []
-            total_prob_raw = sum(all_consensus_vals) if all_consensus_vals else 100
+            # Half-Kelly criterion uses the de-vigged true prob.
+            total_prob_raw = sum(event.get("consensus_probs", {}).values()) or 100.0
             p = (odds_prob / total_prob_raw) if total_prob_raw > 0 else (odds_prob / 100)
             q = 1 - p
             if poly_prob > 0:
@@ -1594,6 +1693,13 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
 
             kalshi_divergence = round(odds_prob - kalshi_prob, 2) if kalshi_prob is not None else None
 
+            # Signal fires when devigged divergence clears threshold AND
+            # all four quality gates pass. Raw fields preserved for the UI.
+            is_signal = (
+                abs_div >= DIVERGENCE_THRESHOLD
+                and quality["passes_all_gates"]
+            )
+
             outcome_comparisons.append({
                 "outcome": outcome_name,
                 "outcome_name": outcome_name,  # alias for frontend
@@ -1605,13 +1711,20 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                 "kalshi_prob": kalshi_prob,
                 "kalshi_ticker": kalshi_ticker,
                 "kalshi_divergence": kalshi_divergence,
-                "divergence": round(divergence, 2),
-                "divergence_pct": round(divergence, 2),  # alias for frontend
+                "divergence": divergence,                # de-vigged (used for is_signal)
+                "divergence_raw": divergence_raw,        # raw, with vig — for transparency
+                "divergence_pct": divergence,            # alias for frontend
                 "abs_divergence": round(abs_div, 2),
                 "cheap_on": "Polymarket" if divergence > 0 else "Bookmaker",
                 "kelly_pct": kelly_pct,
                 "kelly_fraction": kelly_pct / 100 if kelly_pct else 0,  # 0-1 scale for frontend
-                "is_signal": abs_div >= DIVERGENCE_THRESHOLD,
+                "is_signal": is_signal,
+                # Signal quality breakdown (lets the UI explain why it did/didn't fire)
+                "vig_pct": quality["vig_pct"],
+                "sharp_books_present": quality["sharp_books_present"],
+                "sharp_consensus_ok": quality["sharp_consensus_ok"],
+                "liquidity_ok": quality["liquidity_ok"],
+                "not_stale": quality["not_stale"],
             })
 
         if not outcome_comparisons:
@@ -1761,6 +1874,10 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             # Kalshi data
             "kalshi_event": kalshi_match["event_ticker"] if kalshi_match else None,
             "kalshi_volume": kalshi_match["total_volume"] if kalshi_match else 0,
+            **_build_trade_urls(
+                best_match["slug"],
+                kalshi_match["event_ticker"] if kalshi_match else None,
+            ),
         })
 
     # Sort: signals first, then by max divergence
@@ -1948,6 +2065,7 @@ def compare_outrights(outright_odds: dict, poly_markets: list[dict]) -> list[dic
             "confidence_score": confidence_score_o,
             "kalshi_event": None,
             "kalshi_volume": 0,
+            **_build_trade_urls(best_match["slug"]),
         })
 
     comparisons.sort(key=lambda x: (-x["has_signal"], -x["max_divergence"]))
@@ -2008,6 +2126,229 @@ def _save_market_snapshots(sport: str, comparisons: list[dict]):
                 "INSERT INTO sports_market_snapshots (sport, event_name, outcome, book_prob, poly_prob, kalshi_prob, divergence, poly_volume, kalshi_volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+
+
+# ---------------------------------------------------------------------------
+# Track record — CLV, P&L simulation, calibration
+# ---------------------------------------------------------------------------
+#
+# These three computations turn the dashboard from "trust me bro" into a
+# verifiable product. They run against `sports_edge_history` (signals) and
+# `sports_market_snapshots` (line movement) — both already populated by the
+# main poll loop.
+#
+# - CLV (closing line value): for each signal, find the latest poly_prob
+#   snapshot before commence_time and compute the move in our betting
+#   direction. Positive = the market moved toward our prediction = we got
+#   the better number when we bet.
+# - P&L simulation: replay every resolved signal at threshold T with stake S,
+#   compute total profit, win rate, Sharpe, max drawdown.
+# - Calibration: bin signals by predicted divergence, compare empirical
+#   win rate to expected. A well-calibrated dashboard sits on the diagonal.
+
+def _compute_clv(sport: str | None = None, days: int = 30) -> dict:
+    """Compute closing line value across all signals in the window.
+
+    For each `sports_edge_history` row, find the most recent snapshot in
+    `sports_market_snapshots` taken before `commence_time` (or before
+    detected_at + 24h if commence_time is missing) for the same event +
+    outcome. CLV in pp = (poly_prob_close - poly_prob_signal) * direction,
+    where direction = +1 if we bet YES on Polymarket (divergence > 0),
+    -1 otherwise.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _get_db() as conn:
+        if sport:
+            rows = conn.execute(
+                """SELECT id, sport, home_team, away_team, outcome, sharp_prob, poly_prob,
+                          divergence, commence_time, detected_at
+                   FROM sports_edge_history
+                   WHERE detected_at >= ? AND sport = ?""",
+                (cutoff, sport),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, sport, home_team, away_team, outcome, sharp_prob, poly_prob,
+                          divergence, commence_time, detected_at
+                   FROM sports_edge_history
+                   WHERE detected_at >= ?""",
+                (cutoff,),
+            ).fetchall()
+
+        clv_values: list[float] = []
+        per_sport: dict[str, list[float]] = {}
+        for r in rows:
+            event_name = (r["home_team"] or "") + (" vs " + r["away_team"] if r["away_team"] else "")
+            close_cutoff = r["commence_time"] or r["detected_at"]
+            if not close_cutoff:
+                continue
+            snap = conn.execute(
+                """SELECT poly_prob FROM sports_market_snapshots
+                   WHERE sport = ? AND event_name = ? AND outcome = ?
+                         AND snapshot_at <= ? AND snapshot_at >= ?
+                   ORDER BY snapshot_at DESC LIMIT 1""",
+                (r["sport"], event_name, r["outcome"], close_cutoff, r["detected_at"]),
+            ).fetchone()
+            if not snap or snap["poly_prob"] is None or r["poly_prob"] is None:
+                continue
+            direction = 1.0 if (r["divergence"] or 0) > 0 else -1.0
+            clv_pp = (float(snap["poly_prob"]) - float(r["poly_prob"])) * direction
+            clv_values.append(clv_pp)
+            per_sport.setdefault(r["sport"] or "unknown", []).append(clv_pp)
+
+    def _summary(values: list[float]) -> dict:
+        if not values:
+            return {"n": 0, "mean": 0.0, "median": 0.0, "positive_rate": 0.0}
+        sorted_vs = sorted(values)
+        median = sorted_vs[len(sorted_vs) // 2]
+        return {
+            "n": len(values),
+            "mean": round(sum(values) / len(values), 3),
+            "median": round(median, 3),
+            "positive_rate": round(sum(1 for v in values if v > 0) / len(values), 3),
+        }
+
+    return {
+        "window_days": days,
+        "sport": sport,
+        "overall": _summary(clv_values),
+        "per_sport": {s: _summary(vs) for s, vs in per_sport.items()},
+    }
+
+
+def _compute_pnl_simulation(
+    sport: str | None = None,
+    days: int = 90,
+    threshold_pp: float = 5.0,
+    stake: float = 100.0,
+) -> dict:
+    """Replay all resolved signals and simulate fixed-stake betting.
+
+    Profit on a winning $stake bet at Polymarket = stake * (100/poly_prob - 1)
+    because Polymarket prices map directly to implied probability and the
+    payout multiplier is 1/price. Losses are -$stake.
+
+    Returns total PnL, win rate, Sharpe (per-bet, sqrt(N) annualization),
+    max drawdown, and the per-bet equity curve.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    params: list = [cutoff, threshold_pp]
+    sql = """SELECT detected_at, sport, divergence, poly_prob, resolution
+             FROM sports_edge_history
+             WHERE detected_at >= ?
+               AND ABS(divergence) >= ?
+               AND resolved = 1
+               AND resolution IN ('correct', 'incorrect')"""
+    if sport:
+        sql += " AND sport = ?"
+        params.append(sport)
+    sql += " ORDER BY detected_at ASC"
+
+    with _get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    bets: list[float] = []
+    for r in rows:
+        poly = float(r["poly_prob"] or 0)
+        if poly <= 0 or poly >= 100:
+            continue
+        if r["resolution"] == "correct":
+            profit = stake * (100.0 / poly - 1.0)
+        else:
+            profit = -stake
+        bets.append(profit)
+
+    n = len(bets)
+    if n == 0:
+        return {
+            "window_days": days, "threshold_pp": threshold_pp, "stake": stake,
+            "n_bets": 0, "total_pnl": 0.0, "win_rate": 0.0, "roi_pct": 0.0,
+            "sharpe": 0.0, "max_drawdown": 0.0, "equity_curve": [],
+        }
+
+    total_pnl = sum(bets)
+    wins = sum(1 for b in bets if b > 0)
+    win_rate = wins / n
+
+    # Equity curve + max drawdown
+    equity = []
+    running = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for b in bets:
+        running += b
+        peak = max(peak, running)
+        dd = peak - running
+        if dd > max_dd:
+            max_dd = dd
+        equity.append(round(running, 2))
+
+    # Per-bet Sharpe (no risk-free rate, since stakes are tiny vs portfolio).
+    if n > 1:
+        mean = total_pnl / n
+        var = sum((b - mean) ** 2 for b in bets) / (n - 1)
+        std = math.sqrt(var) if var > 0 else 0.0
+        sharpe = (mean / std) * math.sqrt(n) if std > 0 else 0.0
+    else:
+        sharpe = 0.0
+
+    return {
+        "window_days": days,
+        "threshold_pp": threshold_pp,
+        "stake": stake,
+        "sport": sport,
+        "n_bets": n,
+        "total_pnl": round(total_pnl, 2),
+        "win_rate": round(win_rate, 4),
+        "roi_pct": round((total_pnl / (n * stake)) * 100, 3) if n > 0 else 0.0,
+        "sharpe": round(sharpe, 3),
+        "max_drawdown": round(max_dd, 2),
+        "equity_curve": equity,
+    }
+
+
+def _compute_calibration(sport: str | None = None, days: int = 180) -> dict:
+    """Bin resolved signals by predicted divergence and report empirical win rate.
+
+    Bins: [1,5), [5,10), [10,15), [15,20), [20,inf). For each bin we report
+    the count, win rate, and the implied "expected" prob for a perfectly
+    calibrated model (= mean sharp_prob in the bin / 100, capped to [0,1]).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    params: list = [cutoff]
+    sql = """SELECT divergence, sharp_prob, resolution
+             FROM sports_edge_history
+             WHERE detected_at >= ?
+               AND resolved = 1
+               AND resolution IN ('correct', 'incorrect')"""
+    if sport:
+        sql += " AND sport = ?"
+        params.append(sport)
+    with _get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    bins = [(1, 5), (5, 10), (10, 15), (15, 20), (20, 1000)]
+    out: list[dict] = []
+    for lo, hi in bins:
+        bucket = [r for r in rows if lo <= abs(r["divergence"] or 0) < hi]
+        n = len(bucket)
+        if n == 0:
+            out.append({
+                "lo": lo, "hi": hi if hi < 1000 else None, "n": 0,
+                "win_rate": None, "expected": None,
+            })
+            continue
+        wins = sum(1 for r in bucket if r["resolution"] == "correct")
+        # Expected = mean of (sharp_prob / 100) — what our model says the
+        # win prob should be, on average, for signals in this bucket.
+        sharp_probs = [(r["sharp_prob"] or 0) / 100.0 for r in bucket]
+        expected = sum(sharp_probs) / n if sharp_probs else 0.0
+        out.append({
+            "lo": lo, "hi": hi if hi < 1000 else None, "n": n,
+            "win_rate": round(wins / n, 4),
+            "expected": round(max(0.0, min(1.0, expected)), 4),
+        })
+    return {"window_days": days, "sport": sport, "bins": out}
 
 
 # ---------------------------------------------------------------------------
@@ -3899,6 +4240,117 @@ def _send_alerts(sport: str, signals: list[dict]):
 
 
 # ---------------------------------------------------------------------------
+# Watchlist alerts — per-user-per-market divergence triggers
+# ---------------------------------------------------------------------------
+
+WATCHLIST_ALERT_COOLDOWN_SECS = 3600  # one ping per item per hour
+
+
+def _watchlist_market_key(comp: dict) -> str:
+    """Normalize a comparison to the same `market_key` shape the frontend
+    POSTs to /api/watchlist. Frontend convention: 'home|away'."""
+    home = (comp.get("home_team") or "").strip()
+    away = (comp.get("away_team") or "").strip()
+    return f"{home}|{away}"
+
+
+def _send_watchlist_alerts(sport: str, comparisons: list[dict]) -> None:
+    """Fire per-user alerts for watchlisted markets where divergence has
+    crossed the user's configured threshold (default: alert_threshold_pp
+    column on the row; falls back to the user's global min_edge).
+
+    Only triggers for items the user explicitly pinned, so it's
+    higher-signal than the broadcast _send_alerts feed.
+    """
+    if not comparisons:
+        return
+    by_key: dict[str, dict] = {_watchlist_market_key(c): c for c in comparisons}
+    if not by_key:
+        return
+
+    with _get_db() as conn:
+        rows = conn.execute(
+            """SELECT w.id, w.user_id, w.market_key, w.alert_threshold_pp, w.last_alerted_at,
+                      a.telegram_bot_token, a.telegram_chat_id, a.webhook_url, a.min_edge
+               FROM sports_watchlist w
+               LEFT JOIN sports_alert_config a ON a.user_id = w.user_id AND a.enabled = 1"""
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        comp = by_key.get(r["market_key"])
+        if not comp:
+            continue
+        threshold = r["alert_threshold_pp"]
+        if threshold is None or threshold <= 0:
+            threshold = float(r["min_edge"] or DIVERGENCE_THRESHOLD)
+        max_div = float(comp.get("max_divergence") or 0)
+        if max_div < threshold:
+            continue
+        # Cooldown
+        last = r["last_alerted_at"] or ""
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                if (now - last_dt).total_seconds() < WATCHLIST_ALERT_COOLDOWN_SECS:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        best_oc = max(comp.get("outcomes") or [{}],
+                      key=lambda o: abs(o.get("divergence_pct", 0) or 0), default={})
+        msg = (
+            f"Watchlist hit ({SPORTS.get(sport, sport)}): "
+            f"{comp.get('home_team', '')} vs {comp.get('away_team', '')} — "
+            f"{best_oc.get('outcome_name', '')} {best_oc.get('divergence_pct', 0):+.1f}pp "
+            f"(threshold {threshold:.1f}pp)"
+        )
+        trade_url = comp.get("trade_poly_url")
+        if trade_url:
+            msg += f"\n{trade_url}"
+
+        # Telegram
+        tg_token = _decrypt_field(r["telegram_bot_token"] or "")
+        tg_chat = r["telegram_chat_id"] or ""
+        if tg_token and tg_chat and re.fullmatch(r"\d+:[A-Za-z0-9_-]+", tg_token):
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                    json={"chat_id": tg_chat, "text": msg},
+                    timeout=10,
+                )
+                M_ALERT_SEND.labels(channel="telegram_watchlist", result="ok").inc()
+            except Exception as e:
+                M_ALERT_SEND.labels(channel="telegram_watchlist", result="error").inc()
+                log.warning("Watchlist Telegram error: %s", e)
+
+        # Webhook
+        webhook_url = r["webhook_url"] or ""
+        if webhook_url and _is_safe_webhook_url(webhook_url):
+            try:
+                requests.post(
+                    webhook_url,
+                    json={
+                        "text": msg, "kind": "watchlist", "sport": sport,
+                        "comparison": comp, "threshold_pp": threshold,
+                    },
+                    timeout=10,
+                )
+                M_ALERT_SEND.labels(channel="webhook_watchlist", result="ok").inc()
+            except Exception as e:
+                M_ALERT_SEND.labels(channel="webhook_watchlist", result="error").inc()
+                log.warning("Watchlist webhook error: %s", e)
+
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE sports_watchlist SET last_alerted_at = ? WHERE id = ?",
+                (now.isoformat(), r["id"]),
+            )
+
+
+# ---------------------------------------------------------------------------
 # Multi-sport scanning: scan all sports in background
 # ---------------------------------------------------------------------------
 
@@ -4134,6 +4586,7 @@ def _build_esports_comparisons(poly_markets: list[dict]) -> list[dict]:
             "confidence_score": 0,
             "kalshi_event": None,
             "kalshi_volume": 0,
+            **_build_trade_urls(pm["slug"]),
         })
 
     comparisons.sort(key=lambda x: -x["poly_volume"])
@@ -4216,6 +4669,7 @@ def _build_kalshi_comparisons(kalshi_parsed: list[dict], poly_markets: list[dict
             "confidence_score": 0,
             "kalshi_event": km["event_ticker"],
             "kalshi_volume": km["total_volume"],
+            **_build_trade_urls(None, km["event_ticker"]),
         })
 
     comparisons.sort(key=lambda x: -x["kalshi_volume"])
@@ -4387,7 +4841,15 @@ async def data_updater():
             try:
                 await asyncio.to_thread(_send_alerts, sport, signals)
             except Exception as alert_err:
+                M_POLL_ERRORS.labels(stage="send_alerts").inc()
                 print(f"Alert send error: {alert_err}", flush=True)
+
+            # Watchlist alerts: per-user pinned markets that crossed their threshold
+            try:
+                await asyncio.to_thread(_send_watchlist_alerts, sport, comparisons)
+            except Exception as wl_err:
+                M_POLL_ERRORS.labels(stage="send_watchlist_alerts").inc()
+                print(f"Watchlist alert error: {wl_err}", flush=True)
 
             # Build complete update in a local dict, then swap atomically
             update = {
@@ -5127,6 +5589,42 @@ async def list_watchlist(request: Request):
     return JSONResponse({"watchlist": [dict(r) for r in rows]})
 
 
+@app.patch("/api/watchlist/{item_id}")
+async def update_watchlist_threshold(item_id: int, request: Request):
+    """Set or clear the divergence-threshold (in pp) for a watchlist item.
+
+    POST body: {"alert_threshold_pp": 5.0} or {"alert_threshold_pp": null}.
+    A null/0/missing threshold disables per-item alerting (the item still
+    appears in the watchlist; broadcast alerts via /api/alerts still apply
+    if configured).
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw = body.get("alert_threshold_pp")
+    if raw is None or raw == "":
+        threshold = None
+    else:
+        try:
+            threshold = float(raw)
+            if threshold <= 0 or threshold > 100:
+                threshold = None
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid threshold"}, status_code=400)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "UPDATE sports_watchlist SET alert_threshold_pp = ? WHERE id = ? AND user_id = ?",
+            (threshold, item_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok", "alert_threshold_pp": threshold})
+
+
 # ---------------------------------------------------------------------------
 # Layout customization endpoints
 # ---------------------------------------------------------------------------
@@ -5509,6 +6007,134 @@ async def metrics():
     if not _PROM_ENABLED:
         return Response("# prometheus_client not installed\n", media_type="text/plain")
     return Response(_prom_generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# ---------------------------------------------------------------------------
+# Track-record endpoints (CLV, P&L simulation, calibration)
+# ---------------------------------------------------------------------------
+
+@app.get("/track-record", response_class=HTMLResponse)
+async def track_record_page(request: Request):
+    """Public-facing track-record page (CLV / P&L / calibration)."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("track_record"))
+
+
+@app.get("/player-props", response_class=HTMLResponse)
+async def player_props_page(request: Request):
+    """Kalshi player-prop browser."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("player_props"))
+
+
+@app.get("/api/track-record/clv")
+async def api_track_record_clv(request: Request):
+    """Closing line value across resolved signals.
+
+    Query params: sport (optional), days (default 30, capped to 365).
+    Auth required — public CLV exposure is a separate decision.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "30"))))
+    except ValueError:
+        days = 30
+    return JSONResponse(await asyncio.to_thread(_compute_clv, sport, days))
+
+
+@app.get("/api/track-record/pnl")
+async def api_track_record_pnl(request: Request):
+    """Replay signals at a given threshold and stake. Returns total PnL,
+    win rate, ROI, Sharpe, max drawdown, and the per-bet equity curve."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "90"))))
+    except ValueError:
+        days = 90
+    try:
+        threshold = max(0.0, min(50.0, float(request.query_params.get("threshold", "5"))))
+    except ValueError:
+        threshold = 5.0
+    try:
+        stake = max(1.0, min(10000.0, float(request.query_params.get("stake", "100"))))
+    except ValueError:
+        stake = 100.0
+    return JSONResponse(
+        await asyncio.to_thread(_compute_pnl_simulation, sport, days, threshold, stake)
+    )
+
+
+@app.get("/api/track-record/calibration")
+async def api_track_record_calibration(request: Request):
+    """Calibration plot data: win rate per divergence bucket vs predicted."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "180"))))
+    except ValueError:
+        days = 180
+    return JSONResponse(await asyncio.to_thread(_compute_calibration, sport, days))
+
+
+# ---------------------------------------------------------------------------
+# Kalshi player-prop surface (NBA pts/3pt/ast/reb today; extensible)
+# ---------------------------------------------------------------------------
+
+def _format_player_props(parsed_kalshi: list[dict]) -> list[dict]:
+    """Reshape parse_kalshi_markets output to a player-prop friendly schema."""
+    props: list[dict] = []
+    for ev in parsed_kalshi:
+        if ev.get("market_type") != "props":
+            continue
+        for player_name, data in (ev.get("teams") or {}).items():
+            props.append({
+                "event": ev.get("title", ""),
+                "ticker": data.get("ticker", ""),
+                "player": player_name,
+                "yes_bid": data.get("yes_bid"),
+                "yes_ask": data.get("yes_ask"),
+                "mid_price": data.get("mid_price"),
+                "implied_prob": data.get("implied_prob"),
+                "volume": data.get("volume", 0),
+            })
+    # Sort by volume desc — most-traded props are the actionable ones.
+    props.sort(key=lambda p: -(p.get("volume") or 0))
+    return props
+
+
+@app.get("/api/kalshi/player-props")
+async def api_kalshi_player_props(request: Request):
+    """Surface Kalshi player-prop markets for a given sport.
+
+    Returns Kalshi-side prices only — comparing against bookmaker player
+    props requires The Odds API's `player_props` market (paid tier) and is
+    not yet wired in. For now this lets users see what's tradeable and
+    compare manually against their book.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport", "basketball_nba")
+    if sport not in KALSHI_SERIES:
+        return JSONResponse({"error": "unknown sport", "sport": sport}, status_code=400)
+    raw = await asyncio.to_thread(fetch_kalshi_markets, sport)
+    parsed = parse_kalshi_markets(raw)
+    return JSONResponse({
+        "sport": sport,
+        "props": _format_player_props(parsed),
+    })
 
 
 # ---------------------------------------------------------------------------

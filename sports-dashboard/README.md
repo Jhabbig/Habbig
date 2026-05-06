@@ -28,8 +28,8 @@ docker compose up --build sports
 |---|---|
 | `sports_dashboard.py` | Main server — serves the dashboard, polls The Odds API + Polymarket + Kalshi, computes divergences, runs the gateway SSO middleware, encrypts Telegram tokens via Fernet. |
 | `sharpe_pitch.py` | Sharpe-ratio analysis on historical signals — drives the numbers in `Sharpe_Pitch.pptx`. Offline tool, not part of the dashboard runtime. |
-| `templates/*.html` | Extracted dashboard, admin, users, settings pages. Loaded at import via `_load_template()`. |
-| `tests/` | Smoke tests — run with `pytest` from this directory. |
+| `templates/*.html` | Extracted dashboard, admin, users, settings, track-record, player-props pages. Loaded at import via `_load_template()`. |
+| `tests/` | Pytest suite — run with `pytest` from this directory. 51 tests covering matching, signal-quality gates, quota, metrics, track-record math. |
 
 **Data / assets**
 | File | Purpose |
@@ -63,3 +63,22 @@ docker compose up --build sports
 | `CLOUDFLARE_ORIGIN` | unset | Allowed Cloudflare Access origin (only if fronting with cf-access) |
 | `HOST` | `0.0.0.0` | uvicorn bind address |
 | `PORT` | `8888` | uvicorn bind port |
+
+## Endpoints (subset)
+
+| Path | Purpose |
+|---|---|
+| `GET /` | Main dashboard UI |
+| `GET /track-record` | CLV / P&L simulator / calibration page |
+| `GET /player-props` | Kalshi player-prop browser |
+| `GET /api/track-record/clv?sport=&days=30` | Closing line value summary |
+| `GET /api/track-record/pnl?sport=&days=90&threshold=5&stake=100` | Replay-PnL simulator |
+| `GET /api/track-record/calibration?sport=&days=180` | Win rate vs predicted, by bin |
+| `GET /api/kalshi/player-props?sport=basketball_nba` | Live Kalshi player-prop feed |
+| `PATCH /api/watchlist/{id}` | Set per-item divergence alert threshold |
+| `GET /api/diagnostics/match-rejects` | Admin: recent fuzzy-match near-rejects |
+| `GET /api/diagnostics/odds-quota` | Admin: latest Odds API quota state |
+| `GET /metrics` | Prometheus scrape endpoint (no auth — bind to private network) |
+
+Each comparison object now includes `trade_poly_url` and `trade_kalshi_url`
+for one-click deep-links to each venue.

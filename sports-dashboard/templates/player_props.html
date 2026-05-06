@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Player Props (Kalshi) · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .controls { display: flex; gap: 12px; margin: 16px 0; }
+  select { background: var(--card); color: var(--fg); border: 1px solid var(--border);
+           border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { padding: 32px; text-align: center; color: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .ticker { font-family: ui-monospace, SFMono-Regular, monospace;
+            font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Kalshi Player Props</h1>
+  <p class="sub">
+    Live Kalshi player-prop markets. Compare against your sportsbook to find
+    edge. <a href="/">← Back to dashboard</a>
+  </p>
+  <div class="controls">
+    <label>Sport
+      <select id="sport">
+        <option value="basketball_nba" selected>NBA</option>
+        <option value="americanfootball_nfl">NFL</option>
+        <option value="icehockey_nhl">NHL</option>
+        <option value="baseball_mlb">MLB</option>
+      </select>
+    </label>
+  </div>
+  <div id="content">
+    <div class="empty">Loading…</div>
+  </div>
+</div>
+<script>
+function fmtPct(n, d=1) { return n == null ? "—" : Number(n).toFixed(d) + "%"; }
+function fmtUSD(n) { return n == null ? "—" : "$" + Number(n).toLocaleString(); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+
+async function load() {
+  const sport = document.getElementById("sport").value;
+  const r = await fetch(`/api/kalshi/player-props?sport=${encodeURIComponent(sport)}`);
+  if (!r.ok) {
+    document.getElementById("content").innerHTML =
+      '<div class="empty">' + (r.status === 401 ? 'Sign in required.' : 'Error ' + r.status) + '</div>';
+    return;
+  }
+  const d = await r.json();
+  const props = d.props || [];
+  if (!props.length) {
+    document.getElementById("content").innerHTML =
+      '<div class="empty">No live player props for this sport right now.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>Player / Prop</th><th>Event</th>' +
+    '<th class="num">YES Mid</th><th class="num">Bid</th><th class="num">Ask</th>' +
+    '<th class="num">Volume</th><th>Trade</th></tr></thead><tbody>';
+  for (const p of props) {
+    const tradeUrl = p.ticker ? `https://kalshi.com/markets/${p.ticker.toLowerCase()}` : "";
+    html += `<tr>
+      <td>${esc(p.player)}<div class="ticker">${esc(p.ticker)}</div></td>
+      <td>${esc(p.event)}</td>
+      <td class="num">${fmtPct(p.implied_prob)}</td>
+      <td class="num">${p.yes_bid != null ? "$" + Number(p.yes_bid).toFixed(2) : "—"}</td>
+      <td class="num">${p.yes_ask != null ? "$" + Number(p.yes_ask).toFixed(2) : "—"}</td>
+      <td class="num">${fmtUSD(p.volume)}</td>
+      <td>${tradeUrl ? '<a href="' + tradeUrl + '" target="_blank" rel="noopener">Trade →</a>' : ""}</td>
+    </tr>`;
+  }
+  html += "</tbody></table>";
+  document.getElementById("content").innerHTML = html;
+}
+document.getElementById("sport").addEventListener("change", load);
+load();
+</script>
+</body>
+</html>
