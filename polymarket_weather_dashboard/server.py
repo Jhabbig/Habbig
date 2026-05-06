@@ -29,6 +29,12 @@ import weather_highres as _whr
 import weather_intraday as _wint
 import weather_pure as _wpure
 
+# Phase 2 — in-app trade execution
+import credential_vault as _vault
+import paper_trading as _paper
+import trade_engine as _engine
+import trade_safety as _safety
+
 app = Flask(__name__, static_folder="static")
 _flask_secret = os.environ.get("FLASK_SECRET")
 if not _flask_secret:
@@ -215,6 +221,113 @@ CREATE TABLE IF NOT EXISTS intraday_obs (
 );
 CREATE INDEX IF NOT EXISTS idx_intraday_obs_lookup
   ON intraday_obs(icao, obs_date, obs_time);
+
+-- ─── Phase 2: in-app trade execution ──────────────────────────────────────
+-- Kalshi credentials (key_id + RSA private key) encrypted at rest with
+-- Fernet keyed on the server's .secret_key. Per-user — UNIQUE(user_id)
+-- so each user has at most one active enrollment.
+CREATE TABLE IF NOT EXISTS kalshi_credentials (
+    user_id      TEXT PRIMARY KEY,
+    key_id       TEXT NOT NULL,
+    ciphertext   TEXT NOT NULL,           -- Fernet token over JSON blob
+    is_demo      INTEGER DEFAULT 0,        -- 1 for demo-api.kalshi.co
+    label        TEXT,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    disabled_at  TEXT
+);
+
+-- Paper orders, fills, positions. Cents throughout to avoid float drift.
+CREATE TABLE IF NOT EXISTS paper_orders (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id               TEXT NOT NULL,
+    ticker                TEXT NOT NULL,
+    side                  TEXT NOT NULL CHECK (side IN ('yes','no')),
+    action                TEXT NOT NULL CHECK (action IN ('buy','sell')),
+    qty                   INTEGER NOT NULL CHECK (qty > 0),
+    type                  TEXT NOT NULL CHECK (type IN ('limit','market')),
+    limit_price_cents     INTEGER,
+    status                TEXT NOT NULL DEFAULT 'accepted',
+    filled_qty            INTEGER NOT NULL DEFAULT 0,
+    avg_fill_price_cents  INTEGER,
+    client_order_id       TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_paper_orders_user
+  ON paper_orders(user_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS paper_fills (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             TEXT NOT NULL,
+    order_id            INTEGER NOT NULL,
+    ticker              TEXT NOT NULL,
+    side                TEXT NOT NULL,
+    action              TEXT NOT NULL,
+    qty                 INTEGER NOT NULL,
+    price_cents         INTEGER NOT NULL,
+    realized_pnl_cents  INTEGER NOT NULL DEFAULT 0,
+    filled_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_paper_fills_user
+  ON paper_fills(user_id, filled_at);
+
+CREATE TABLE IF NOT EXISTS paper_positions (
+    user_id           TEXT NOT NULL,
+    ticker            TEXT NOT NULL,
+    side              TEXT NOT NULL,
+    qty               INTEGER NOT NULL,
+    avg_price_cents   INTEGER NOT NULL,
+    updated_at        TEXT NOT NULL,
+    PRIMARY KEY (user_id, ticker, side)
+);
+
+-- Live order log: every authenticated Kalshi call we make on behalf of
+-- a user. Body limited to 8KB. The kalshi_order_id is what we use for
+-- subsequent cancel / status calls.
+CREATE TABLE IF NOT EXISTS live_order_log (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           TEXT NOT NULL,
+    kalshi_order_id   TEXT,
+    ticker            TEXT NOT NULL,
+    side              TEXT NOT NULL,
+    action            TEXT NOT NULL,
+    qty               INTEGER NOT NULL,
+    type              TEXT NOT NULL,
+    limit_price_cents INTEGER,
+    status            TEXT NOT NULL,
+    http_status       INTEGER,
+    client_order_id   TEXT,
+    response_json     TEXT,
+    ts                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_live_order_log_user
+  ON live_order_log(user_id, ts);
+
+-- Per-user limits + kill switch. Defaults are conservative — user opt-in
+-- or admin override required to raise.
+CREATE TABLE IF NOT EXISTS trade_user_limits (
+    user_id              TEXT PRIMARY KEY,
+    max_order_usd        REAL,
+    max_daily_usd        REAL,
+    max_open_positions   INTEGER,
+    max_position_usd     REAL,
+    daily_loss_limit_usd REAL,
+    killed               INTEGER NOT NULL DEFAULT 0,
+    kill_reason          TEXT,
+    updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- Audit log — every place / cancel / reject decision the engine made.
+CREATE TABLE IF NOT EXISTS trade_audit (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id   TEXT NOT NULL,
+    action    TEXT NOT NULL,
+    detail    TEXT,                       -- JSON
+    ip_addr   TEXT,
+    ts        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_trade_audit_user ON trade_audit(user_id, ts);
 """
 
 
@@ -3926,6 +4039,324 @@ def api_intraday_trajectory(city, date):
         "obs_count": (running or {}).get("obs_count", 0),
         "trajectory": traj,
     })
+
+
+# ─── Phase 2: trade execution endpoints ──────────────────────────────────────
+#
+# All endpoints require auth. Live-mode endpoints additionally require an
+# enrolled Kalshi credential (POST /api/trade/enroll). Paper trading is
+# the default everywhere — `mode=live` must be set explicitly to fire a
+# real order.
+
+KALSHI_PUBLIC_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+
+
+def fetch_kalshi_orderbook(ticker: str) -> Optional[_paper.Orderbook]:
+    """Pull the public Kalshi orderbook for one ticker and return our
+    minimal `Orderbook` dataclass.
+
+    No auth needed for the orderbook endpoint. We cache for 5s — paper
+    fills against a stale book are still informative, and over-fetching
+    bumps us into rate limiting.
+    """
+    cache_key = f"kalshi_book_{ticker}"
+    cached = cache_get(cache_key, ttl=5)
+    if cached is not None:
+        return cached
+    try:
+        resp = requests.get(f"{KALSHI_PUBLIC_BASE}/markets/{ticker}/orderbook",
+                            timeout=8,
+                            headers={"User-Agent": "narve-weather/1.0"})
+        if resp.status_code != 200:
+            return None
+        data = resp.json() or {}
+        ob = data.get("orderbook") or {}
+        # Kalshi's public orderbook returns "yes" and "no" arrays of
+        # [price_cents, size] pairs sorted by best price first.
+        yes_arr = ob.get("yes") or []
+        no_arr = ob.get("no") or []
+        bids = [_paper.OrderbookLevel(price_cents=int(p), size=int(s))
+                for p, s in yes_arr if p is not None and s is not None]
+        # Asks are inferred from the NO side: a NO bid at price q is
+        # equivalent to a YES ask at (100 - q). Sort asks ascending.
+        asks = sorted(
+            [_paper.OrderbookLevel(price_cents=100 - int(p), size=int(s))
+             for p, s in no_arr if p is not None and s is not None],
+            key=lambda lvl: lvl.price_cents,
+        )
+        book = _paper.Orderbook(ticker=ticker, yes_bids=bids, yes_asks=asks)
+        cache_set(cache_key, book)
+        return book
+    except requests.RequestException as e:
+        logger.warning("kalshi orderbook fetch failed for %s: %s", ticker, e)
+        return None
+
+
+def _trade_user_id() -> Optional[str]:
+    """Resolve the authenticated user_id for trade calls.
+
+    `require_auth` already gates the route, but the engine wants the
+    user id explicitly so the safety + audit code stays decoupled
+    from Flask globals.
+    """
+    user = _get_user_from_request()
+    if not user:
+        return None
+    return user.get("id") or user.get("user_id") or user.get("email")
+
+
+def _client_ip() -> Optional[str]:
+    return request.headers.get("X-Forwarded-For", request.remote_addr)
+
+
+@app.route("/api/trade/enroll", methods=["POST"])
+@require_auth
+def api_trade_enroll():
+    """Enroll Kalshi credentials.
+
+    Body:
+        {
+            "key_id": "<uuid>",
+            "private_pem": "-----BEGIN RSA PRIVATE KEY-----\\n...",
+            "is_demo": false,
+            "label": "production keys"
+        }
+
+    Stores the PEM encrypted at rest. Replaces any existing enrollment
+    for this user (rotation) — never appends.
+    """
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    body = request.get_json(silent=True) or {}
+    key_id = (body.get("key_id") or "").strip()
+    pem = body.get("private_pem") or ""
+    is_demo = bool(body.get("is_demo", False))
+    label = (body.get("label") or "").strip()[:128]
+    if not key_id or not pem:
+        return jsonify({"error": "missing key_id or private_pem"}), 400
+    pem_bytes = pem.encode("utf-8") if isinstance(pem, str) else pem
+    try:
+        _vault.store_credentials(_get_conn, user_id, key_id, pem_bytes,
+                                 is_demo=is_demo, label=label)
+    except ValueError as e:
+        # Surface the validation error message — it's caller-safe.
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.warning("enroll failed for user %s: %s", user_id, e)
+        return jsonify({"error": "enrollment failed"}), 500
+    _engine._audit(_get_conn, user_id=user_id, action="enroll",
+                   detail={"key_id": key_id, "is_demo": is_demo, "label": label},
+                   ip_addr=_client_ip())
+    return jsonify({"ok": True, "is_demo": is_demo})
+
+
+@app.route("/api/trade/enroll", methods=["DELETE"])
+@require_auth
+def api_trade_disable_enroll():
+    """Soft-delete the user's enrollment. Idempotent."""
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    ok = _vault.disable_credentials(_get_conn, user_id)
+    _engine._audit(_get_conn, user_id=user_id, action="disable_enroll",
+                   detail={"changed": ok}, ip_addr=_client_ip())
+    return jsonify({"ok": True, "changed": ok})
+
+
+@app.route("/api/trade/limits", methods=["GET"])
+@require_auth
+def api_trade_get_limits():
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    limits = _safety.get_user_limits(_get_conn, user_id)
+    return jsonify({
+        "user_id": user_id,
+        "limits": {
+            "max_order_usd": limits.max_order_usd,
+            "max_daily_usd": limits.max_daily_usd,
+            "max_open_positions": limits.max_open_positions,
+            "max_position_usd": limits.max_position_usd,
+            "daily_loss_limit_usd": limits.daily_loss_limit_usd,
+            "killed": limits.killed,
+            "kill_reason": limits.kill_reason,
+        },
+        "daily_wagered_usd": _safety.get_daily_wagered_usd(_get_conn, user_id),
+        "daily_realized_pnl_usd": _safety.get_daily_realized_pnl(_get_conn, user_id),
+    })
+
+
+@app.route("/api/trade/limits", methods=["PUT"])
+@require_auth
+def api_trade_set_limits():
+    """Self-service limits update. Users can only TIGHTEN their own
+    limits; raising any cap requires admin (handled by a separate
+    /api/admin/trade/limits endpoint not yet wired)."""
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    body = request.get_json(silent=True) or {}
+    current = _safety.get_user_limits(_get_conn, user_id)
+    proposed = {}
+    # Only allow tightening
+    for field, lower_is_tighter in [
+        ("max_order_usd", True), ("max_daily_usd", True),
+        ("max_open_positions", True), ("max_position_usd", True),
+        ("daily_loss_limit_usd", True),
+    ]:
+        if field in body:
+            try:
+                v = float(body[field])
+            except (TypeError, ValueError):
+                return jsonify({"error": f"bad {field}"}), 400
+            cur = getattr(current, field)
+            if lower_is_tighter and v > cur:
+                return jsonify({"error": f"{field} can only be lowered self-service"}), 403
+            proposed[field] = v
+    if not proposed:
+        return jsonify({"ok": True, "changed": False})
+    _safety.set_user_limits(_get_conn, user_id, **proposed)
+    _engine._audit(_get_conn, user_id=user_id, action="limits_self_update",
+                   detail=proposed, ip_addr=_client_ip())
+    return jsonify({"ok": True, "changed": True, "applied": proposed})
+
+
+@app.route("/api/trade/place", methods=["POST"])
+@require_auth
+def api_trade_place():
+    """Place one order — paper by default, live with explicit mode.
+
+    Body:
+        {
+            "ticker": "KXHIGHNY-26MAY07-T75",
+            "side": "yes",
+            "action": "buy",
+            "qty": 1,
+            "type": "limit",
+            "limit_price_cents": 55,
+            "mode": "paper",
+            "client_order_id": "optional-idempotency-key"
+        }
+    """
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    body = request.get_json(silent=True) or {}
+    ticker = (body.get("ticker") or "").strip()
+    side = (body.get("side") or "").lower().strip()
+    action = (body.get("action") or "").lower().strip()
+    type_ = (body.get("type") or "limit").lower().strip()
+    mode = (body.get("mode") or "paper").lower().strip()
+    qty = body.get("qty")
+    limit_price_cents = body.get("limit_price_cents")
+    client_order_id = body.get("client_order_id")
+
+    book = None
+    if mode == "paper":
+        book = fetch_kalshi_orderbook(ticker)
+
+    res = _engine.place_order(
+        _get_conn, user_id=user_id, ticker=ticker, side=side, action=action,
+        qty=qty, type_=type_, limit_price_cents=limit_price_cents,
+        mode=mode, orderbook=book, client_order_id=client_order_id,
+        ip_addr=_client_ip(),
+    )
+    out = {
+        "ok": res.ok, "order_id": res.order_id,
+        "kalshi_order_id": res.kalshi_order_id,
+        "status": res.status, "fills": res.fills or [],
+    }
+    if not res.ok:
+        out["code"] = res.code
+        out["reason"] = res.reason
+        if res.extra:
+            out["extra"] = res.extra
+        return jsonify(out), 400
+    return jsonify(out)
+
+
+@app.route("/api/trade/orders", methods=["GET"])
+@require_auth
+def api_trade_orders():
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    status = request.args.get("status")
+    limit = max(1, min(500, int(request.args.get("limit", 100))))
+    return jsonify({
+        "user_id": user_id,
+        "orders": _paper.list_paper_orders(_get_conn, user_id, status=status, limit=limit),
+    })
+
+
+@app.route("/api/trade/orders/<int:order_id>", methods=["DELETE"])
+@require_auth
+def api_trade_cancel_paper(order_id):
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    res = _engine.cancel_order(_get_conn, user_id=user_id, mode="paper",
+                               order_id=order_id, ip_addr=_client_ip())
+    return jsonify(res)
+
+
+@app.route("/api/trade/live_orders/<kalshi_order_id>", methods=["DELETE"])
+@require_auth
+def api_trade_cancel_live(kalshi_order_id):
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    res = _engine.cancel_order(_get_conn, user_id=user_id, mode="live",
+                               kalshi_order_id=kalshi_order_id,
+                               ip_addr=_client_ip())
+    return jsonify(res)
+
+
+@app.route("/api/trade/positions", methods=["GET"])
+@require_auth
+def api_trade_positions():
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    return jsonify({
+        "user_id": user_id,
+        "paper_positions": _paper.list_paper_positions(_get_conn, user_id),
+    })
+
+
+@app.route("/api/trade/summary", methods=["GET"])
+@require_auth
+def api_trade_summary():
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    return jsonify(_engine.get_summary(_get_conn, user_id))
+
+
+@app.route("/api/trade/audit", methods=["GET"])
+@require_auth
+def api_trade_audit():
+    user_id = _trade_user_id()
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    limit = max(1, min(500, int(request.args.get("limit", 100))))
+    with _get_conn(readonly=True) as conn:
+        rows = conn.execute(
+            """SELECT id, action, detail, ip_addr, ts
+               FROM trade_audit WHERE user_id = ?
+               ORDER BY ts DESC LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["detail"] = json.loads(d["detail"]) if d.get("detail") else None
+        except (TypeError, ValueError):
+            pass
+        out.append(d)
+    return jsonify({"user_id": user_id, "audit": out})
 
 
 @app.route("/api/leadtime_fit/<city>")
