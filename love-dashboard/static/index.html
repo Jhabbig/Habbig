@@ -258,16 +258,16 @@
 <header>
   <div>
     <h1><span class="heart">♥</span> State of Love — narve.ai</h1>
-    <div class="sub">Global view of marriage, divorce, intimacy &amp; connection — wireframe (placeholder data)</div>
+    <div class="sub" id="header-sub">Global view of marriage, divorce, intimacy &amp; connection</div>
   </div>
   <div class="index-pill">
     <div>
       <div class="label">Global Love Index</div>
-      <div class="num">62.4</div>
+      <div class="num" data-global-index>—</div>
     </div>
     <div>
-      <div class="delta">+0.8 YoY</div>
-      <div class="delta neg">−1.2 vs 2014</div>
+      <div class="delta" data-coverage>loading…</div>
+      <div class="delta" id="as-of" style="color: var(--text-3);"></div>
     </div>
   </div>
 </header>
@@ -277,29 +277,29 @@
   <!-- Subscores -->
   <div class="section-title">Subscores</div>
   <div class="grid">
-    <div class="card">
-      <h3>Connection · 35% <span class="pill tier-b">Tier B</span></h3>
-      <div class="big">71</div>
+    <div class="card" data-subscore="connection">
+      <h3>Connection · 35% <span class="pill tier-b">Tier B — v1.1</span></h3>
+      <div class="big">—</div>
       <div class="sub">Loneliness ↓, social support ↑ (Gallup, Meta-Gallup)</div>
-      <div class="bar"><span style="width: 71%"></span></div>
+      <div class="bar"><span style="width: 0%"></span></div>
     </div>
-    <div class="card">
+    <div class="card" data-subscore="partnership">
       <h3>Partnership · 30% <span class="pill tier-a">Tier A</span></h3>
-      <div class="big">58</div>
-      <div class="sub">Partnership rate 56% (capped), median union duration 14.2 yrs</div>
-      <div class="bar"><span style="width: 58%"></span></div>
+      <div class="big">—</div>
+      <div class="sub">Crude marriage rate (Eurostat) — partnership-rate proxy until cohabitation data wires in</div>
+      <div class="bar"><span style="width: 0%"></span></div>
     </div>
-    <div class="card">
+    <div class="card" data-subscore="stability">
       <h3>Stability · 25% <span class="pill tier-a">Tier A</span></h3>
-      <div class="big">63</div>
-      <div class="sub">Age at first union 28.9 (U-shape OK); 18.4 separations / 1,000 unions</div>
-      <div class="bar"><span style="width: 63%"></span></div>
+      <div class="big">—</div>
+      <div class="sub">Crude divorce rate (Eurostat) + adolescent fertility (World Bank), both inverted</div>
+      <div class="bar"><span style="width: 0%"></span></div>
     </div>
-    <div class="card">
-      <h3>Activity · 10% <span class="pill tier-c">Tier C — indicative</span></h3>
-      <div class="big">57</div>
-      <div class="sub">Dating-app penetration 21%, "love"/"date" search +4% (Trends)</div>
-      <div class="bar"><span style="width: 57%"></span></div>
+    <div class="card" data-subscore="activity">
+      <h3>Activity · 10% <span class="pill tier-c">Tier C — v1.1</span></h3>
+      <div class="big">—</div>
+      <div class="sub">Dating-app penetration, "love"/"date" Trends basket</div>
+      <div class="bar"><span style="width: 0%"></span></div>
     </div>
   </div>
 
@@ -314,36 +314,20 @@
     </div>
 
     <div class="card">
-      <h3>Top movers (YoY)</h3>
-      <div class="mover-row"><div class="country"><span class="flag">🇮🇪</span>Ireland</div><span class="delta up">+7.2</span></div>
-      <div class="mover-row"><div class="country"><span class="flag">🇵🇹</span>Portugal</div><span class="delta up">+5.8</span></div>
-      <div class="mover-row"><div class="country"><span class="flag">🇨🇴</span>Colombia</div><span class="delta up">+4.1</span></div>
-      <div class="mover-row"><div class="country"><span class="flag">🇰🇷</span>South Korea</div><span class="delta down">−6.3</span></div>
-      <div class="mover-row"><div class="country"><span class="flag">🇯🇵</span>Japan</div><span class="delta down">−4.9</span></div>
-      <div class="mover-row"><div class="country"><span class="flag">🇮🇹</span>Italy</div><span class="delta down">−3.4</span></div>
+      <h3>Top &amp; bottom <span class="pill" id="rank-pill">—</span></h3>
+      <div id="top-list"></div>
+      <div style="height: 8px"></div>
+      <div id="bottom-list"></div>
     </div>
   </div>
 
   <!-- Insights -->
   <div class="section-title">Insight feed</div>
-  <div class="insight">
-    <div class="meta"><span>Mover</span><span class="pill tier-a">Tier A</span><span>2024 vs 2023</span></div>
-    <div class="body"><strong>South Korea</strong> Love Index fell 6.3 pts YoY — driven by a 9% drop in marriage rate and a record-low fertility (0.72). Connection subscore held flat.</div>
-    <div class="action">↳ click to see the full timeseries and 2010–2024 inflection points</div>
-  </div>
-  <div class="insight divergence">
-    <div class="meta"><span>Divergence</span><span class="pill tier-c">Tier C</span><span>rolling 12 mo</span></div>
-    <div class="body"><strong>United States:</strong> dating-app penetration +18% while marriage rate hit a 10-year low. Activity ↑, Commitment ↓ — widest gap in the dataset.</div>
-    <div class="action">↳ compare against UK, Canada, Australia (similar pattern, smaller magnitude)</div>
-  </div>
-  <div class="insight event">
-    <div class="meta"><span>Event overlay</span><span class="pill tier-a">Tier A</span><span>2015–2017</span></div>
-    <div class="body"><strong>Ireland</strong> marriage rate +21% in the 24 months after the 2015 same-sex marriage referendum — clearest legalization-driven inflection in the panel.</div>
-    <div class="action">↳ see other legalization events (DE 2017, AU 2017, TW 2019)</div>
-  </div>
-  <div class="insight">
-    <div class="meta"><span>Outlier</span><span class="pill tier-b">Tier B</span><span>continent z-score</span></div>
-    <div class="body"><strong>Finland</strong> sits +2.4σ above European peers on Connection despite middling Commitment — loneliness scores are the lowest in the panel.</div>
+  <div id="insight-feed">
+    <div class="insight">
+      <div class="meta"><span>Pending</span><span class="pill">v1</span></div>
+      <div class="body">Insight rules (mover / divergence / event-overlay / outlier) compute against the latest snapshot. With v1 inputs (marriage, divorce, adolescent fertility) the feed will surface European movers and stability outliers; richer narratives unlock once Connection (WHR) and Activity (Trends) wire in.</div>
+    </div>
   </div>
 
   <!-- Data quality -->
@@ -353,22 +337,83 @@
     <table>
       <thead><tr><th>Source</th><th>Tier</th><th>Countries</th><th>Last updated</th><th>License</th></tr></thead>
       <tbody>
-        <tr><td>UN DESA Demographic Yearbook</td><td><span class="pill tier-a">A</span></td><td>198</td><td>2023</td><td>UN open</td></tr>
-        <tr><td>Eurostat <code>demo_nind</code></td><td><span class="pill tier-a">A</span></td><td>34</td><td>2024-Q4</td><td>CC-BY 4.0</td></tr>
-        <tr><td>OECD Family Database</td><td><span class="pill tier-a">A</span></td><td>38</td><td>2024</td><td>OECD open</td></tr>
-        <tr><td>World Bank WDI</td><td><span class="pill tier-a">A</span></td><td>217</td><td>2024</td><td>CC-BY 4.0</td></tr>
-        <tr><td>World Happiness Report (Gallup)</td><td><span class="pill tier-b">B</span></td><td>147</td><td>2025</td><td>report-level open</td></tr>
-        <tr><td>Meta-Gallup Social Connections</td><td><span class="pill tier-b">B</span></td><td>142</td><td>2024</td><td>open report</td></tr>
-        <tr><td>Google Trends</td><td><span class="pill tier-c">C</span></td><td>~120</td><td>live</td><td>display-only (Google ToS)</td></tr>
-        <tr><td>Dating-app penetration (composite)</td><td><span class="pill tier-c">C</span></td><td>~40</td><td>2024-Q3</td><td>mixed / proprietary</td></tr>
+        <tr><td>Eurostat <code>demo_nind</code> (marriage rate)</td><td><span class="pill tier-a">A</span></td><td>34</td><td>live</td><td>CC-BY 4.0</td></tr>
+        <tr><td>Eurostat <code>demo_ndivind</code> (divorce rate)</td><td><span class="pill tier-a">A</span></td><td>34</td><td>live</td><td>CC-BY 4.0</td></tr>
+        <tr><td>World Bank WDI <code>SP.ADO.TFRT</code></td><td><span class="pill tier-a">A</span></td><td>~190</td><td>live</td><td>CC-BY 4.0</td></tr>
+        <tr><td>World Bank country &amp; income classification</td><td><span class="pill tier-a">A</span></td><td>~220</td><td>live</td><td>CC-BY 4.0</td></tr>
+        <tr><td>World Happiness Report (Gallup) — <em>v1.1</em></td><td><span class="pill tier-b">B</span></td><td>147</td><td>—</td><td>report-level open</td></tr>
+        <tr><td>Meta-Gallup Social Connections — <em>v1.1</em></td><td><span class="pill tier-b">B</span></td><td>142</td><td>—</td><td>open report</td></tr>
+        <tr><td>Google Trends — <em>v1.1</em></td><td><span class="pill tier-c">C</span></td><td>~120</td><td>—</td><td>display-only (Google ToS)</td></tr>
+        <tr><td>UN DESA Demographic Yearbook — <em>v1.1</em></td><td><span class="pill tier-a">A</span></td><td>198</td><td>—</td><td>UN open</td></tr>
       </tbody>
     </table>
   </div>
 
   <footer>
-    Wireframe v0 — numbers are placeholders. See <code>love-dashboard/README.md</code> for the metric plan and source audit.
+    State of Love v1 — Eurostat + World Bank live data. See <code>love-dashboard/README.md</code> for the methodology and contestable decisions.
   </footer>
 
 </main>
+
+<script>
+const ISO2_FLAG = c => c && c.length === 2
+  ? String.fromCodePoint(...[...c.toUpperCase()].map(x => 0x1F1E6 + x.charCodeAt(0) - 65))
+  : "🏳";
+
+function fmtScore(v) { return v == null ? "—" : Number(v).toFixed(1); }
+function setBig(card, val) {
+  const big = card.querySelector(".big");
+  const bar = card.querySelector(".bar > span");
+  if (val == null) { big.textContent = "—"; bar.style.width = "0%"; return; }
+  big.textContent = Number(val).toFixed(0);
+  bar.style.width = Math.max(0, Math.min(100, Number(val))) + "%";
+}
+
+function moverRow(c, isUp) {
+  const row = document.createElement("div");
+  row.className = "mover-row";
+  row.innerHTML = `
+    <div class="country"><span class="flag">${ISO2_FLAG(c.iso2)}</span>${c.name}</div>
+    <span class="delta ${isUp ? "up" : "down"}">${fmtScore(c.composite)}</span>`;
+  return row;
+}
+
+async function loadSummary() {
+  let data;
+  try {
+    const r = await fetch("/api/summary");
+    if (!r.ok) throw new Error(r.status);
+    data = await r.json();
+  } catch (err) {
+    document.querySelector("[data-coverage]").textContent = "data load failed";
+    console.error("summary fetch", err);
+    return;
+  }
+
+  document.querySelector("[data-global-index]").textContent = fmtScore(data.global_index);
+  document.querySelector("[data-coverage]").textContent =
+    `${data.n_countries} countries ranked`;
+  document.querySelector("#as-of").textContent = `as of ${data.as_of}`;
+
+  for (const card of document.querySelectorAll("[data-subscore]")) {
+    setBig(card, data.subscores_avg?.[card.dataset.subscore]);
+  }
+
+  const top = data.top.filter(c => c.composite != null).slice(0, 5);
+  const bottom = data.bottom.filter(c => c.composite != null).slice(0, 5);
+  const topEl = document.getElementById("top-list");
+  const botEl = document.getElementById("bottom-list");
+  topEl.innerHTML = ""; botEl.innerHTML = "";
+  top.forEach(c => topEl.appendChild(moverRow(c, true)));
+  bottom.forEach(c => botEl.appendChild(moverRow(c, false)));
+  document.getElementById("rank-pill").textContent =
+    `${top.length}↑ / ${bottom.length}↓`;
+
+  const sub = document.getElementById("header-sub");
+  sub.textContent = data.coverage_note || sub.textContent;
+}
+
+loadSummary();
+</script>
 </body>
 </html>

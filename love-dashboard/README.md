@@ -1,11 +1,14 @@
-# State of Love Dashboard (v0 — wireframe)
+# State of Love Dashboard (v1)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
-activity, and connection-quality signals as a happiness proxy. This v0 is
-**wireframe-only** — `static/index.html` is mocked with placeholder numbers
-so we can iterate on layout and metric selection before wiring a backend.
+activity, and connection-quality signals as a happiness proxy.
 
-Planned port: `7060`. Planned subdomain: `love.narve.ai`.
+**v1 status:** real backend (`server.py`) wired to Eurostat (marriage rate +
+divorce rate, EU + EFTA) and World Bank WDI (adolescent fertility globally).
+Connection (World Happiness Report) and Activity (Google Trends + dating-app
+penetration) land in v1.1.
+
+Port: `7060`. Planned subdomain: `love.narve.ai`.
 
 ## Plan
 
@@ -198,12 +201,53 @@ Two open product questions remain:
 2. Country-level only, or also regional / city where data allows
    (e.g. Eurostat NUTS-2 has good union-status coverage)?
 
-## Run locally (wireframe only)
+## Run locally
 
 ```bash
 cd love-dashboard
-python3 -m http.server 7060 --directory static
+pip install -r requirements.txt
+python3 server.py
 # → http://localhost:7060
 ```
 
-A real `server.py` + `Dockerfile` come once the metric set is locked.
+Or via Docker:
+
+```bash
+docker build -t love-dashboard .
+docker run --rm -p 7060:7060 love-dashboard
+```
+
+## Endpoints
+
+- `GET /api/health` — liveness
+- `GET /api/summary` — single page-load payload: global index, subscore averages, top/bottom 10
+- `GET /api/index` — every ranked country with subscores, raw indicators, and which subscores were used
+- `GET /api/country/<iso3>` — one country's record
+- `GET /api/sources` — methodology constants (weights, cap, min subscores) and feed status
+
+## Tests
+
+The methodology math is covered by an offline test that mocks the fetchers,
+so it runs without internet:
+
+```bash
+python3 test_methodology.py
+```
+
+Covers: weights sum to 1.0, percentile rank within income tier (top/bottom,
+inversion, cap, cross-tier independence), missing-data policy (≥2 of 3
+Tier-A/B subscores required), and weight renormalization when a subscore is
+missing.
+
+## v1.1 roadmap
+
+- **Connection subscore (Tier B)** — World Happiness Report appendix CSV
+  (social-support indicator) plus Meta-Gallup loneliness where available.
+- **Activity subscore (Tier C)** — Google Trends "love"/"date" basket + a
+  dating-app-penetration estimate from public investor decks.
+- **Global Partnership coverage** — UN DESA Demographic Yearbook XLSX
+  scraper for marriage / divorce data outside Europe.
+- **Insight rules** — implement Mover / Divergence / Event-overlay / Outlier
+  rule files; render the feed from rule output instead of a placeholder.
+- **D3 choropleth** — replace the map placeholder with a real world map
+  bound to `/api/index`, click-through opens a country-detail panel.
