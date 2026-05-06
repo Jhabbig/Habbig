@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>State of Love — narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220;
+    --bg-1: #0f172a;
+    --bg-2: #1e293b;
+    --border: #243042;
+    --text-1: #f1f5f9;
+    --text-2: #94a3b8;
+    --text-3: #64748b;
+    --accent: #f472b6;       /* pink — love */
+    --accent-2: #f87171;     /* red — drop */
+    --good: #34d399;         /* green — gain */
+    --warn: #fbbf24;
+    --tier-a: #34d399;
+    --tier-b: #fbbf24;
+    --tier-c: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg-0);
+    color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header h1 .heart { color: var(--accent); }
+  header .sub {
+    margin-top: 3px;
+    color: var(--text-2);
+    font-size: 12px;
+  }
+  header .index-pill {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 14px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  header .index-pill .num {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+  }
+  header .index-pill .label {
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  header .index-pill .delta { font-size: 12px; color: var(--good); }
+  header .index-pill .delta.neg { color: var(--accent-2); }
+
+  main { padding: 18px 24px 80px; max-width: 1320px; margin: 0 auto; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .grid.two { grid-template-columns: 2fr 1fr; }
+  @media (max-width: 900px) { .grid.two { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .card .big {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  .card .sub {
+    color: var(--text-2);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .card .bar {
+    margin-top: 10px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-2);
+    overflow: hidden;
+  }
+  .card .bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--bg-2);
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .pill.up { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  .pill.down { background: rgba(248, 113, 113, 0.15); color: var(--accent-2); }
+  .pill.tier-a { background: rgba(52, 211, 153, 0.15); color: var(--tier-a); }
+  .pill.tier-b { background: rgba(251, 191, 36, 0.15); color: var(--tier-b); }
+  .pill.tier-c { background: rgba(148, 163, 184, 0.15); color: var(--tier-c); }
+
+  .section-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+    margin: 22px 0 10px;
+    font-weight: 600;
+  }
+
+  /* Map */
+  .map-card { padding: 8px 8px 14px; }
+  .map-card .map-wrap {
+    position: relative;
+    background: var(--bg-2);
+    border-radius: 8px;
+    aspect-ratio: 2 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 12px;
+    overflow: hidden;
+  }
+  .map-card .legend {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 10px;
+    padding: 0 8px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .map-card .legend .grad {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #1e293b, #7f1d3f, #be185d, #f472b6);
+  }
+
+  /* Mover lists */
+  .mover-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .mover-row:last-child { border-bottom: none; }
+  .mover-row .country { display: flex; gap: 8px; align-items: center; }
+  .mover-row .flag { width: 18px; text-align: center; }
+  .mover-row .delta { font-weight: 600; font-size: 12px; }
+  .mover-row .delta.up { color: var(--good); }
+  .mover-row .delta.down { color: var(--accent-2); }
+
+  /* Insight feed */
+  .insight {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .insight.divergence { border-left-color: var(--warn); }
+  .insight.event { border-left-color: var(--good); }
+  .insight .meta {
+    display: flex;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .insight .body { font-size: 13px; color: var(--text-1); }
+  .insight .body strong { color: var(--accent); font-weight: 600; }
+  .insight .action {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
+  /* Data quality */
+  .dq {
+    margin-top: 24px;
+    padding: 14px 16px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .dq table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .dq th, .dq td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dq th { color: var(--text-3); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+
+  footer {
+    color: var(--text-3);
+    font-size: 11px;
+    text-align: center;
+    margin-top: 30px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span class="heart">♥</span> State of Love — narve.ai</h1>
+    <div class="sub">Global view of marriage, divorce, intimacy &amp; connection — wireframe (placeholder data)</div>
+  </div>
+  <div class="index-pill">
+    <div>
+      <div class="label">Global Love Index</div>
+      <div class="num">62.4</div>
+    </div>
+    <div>
+      <div class="delta">+0.8 YoY</div>
+      <div class="delta neg">−1.2 vs 2014</div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- Subscores -->
+  <div class="section-title">Subscores</div>
+  <div class="grid">
+    <div class="card">
+      <h3>Connection <span class="pill tier-b">Tier B</span></h3>
+      <div class="big">71</div>
+      <div class="sub">Loneliness ↓, social-support ↑ (Gallup, Meta-Gallup)</div>
+      <div class="bar"><span style="width: 71%"></span></div>
+    </div>
+    <div class="card">
+      <h3>Commitment <span class="pill tier-a">Tier A</span></h3>
+      <div class="big">58</div>
+      <div class="sub">Marriage rate 6.1‰, divorce/marriage 0.42 (UN DESA)</div>
+      <div class="bar"><span style="width: 58%"></span></div>
+    </div>
+    <div class="card">
+      <h3>Family stability <span class="pill tier-a">Tier A</span></h3>
+      <div class="big">63</div>
+      <div class="sub">Births in union 59%, age at first union 28.9 (OECD, UN WPP)</div>
+      <div class="bar"><span style="width: 63%"></span></div>
+    </div>
+    <div class="card">
+      <h3>Romantic activity <span class="pill tier-c">Tier C</span></h3>
+      <div class="big">57</div>
+      <div class="sub">Dating-app penetration 21%, "love" search +4% (Trends)</div>
+      <div class="bar"><span style="width: 57%"></span></div>
+    </div>
+  </div>
+
+  <!-- Map + movers -->
+  <div class="grid two">
+    <div class="card map-card">
+      <h3>Love Index by country <span class="pill">2024</span></h3>
+      <div class="map-wrap">[ choropleth world map — click a country to drill down ]</div>
+      <div class="legend">
+        <span>0</span><div class="grad"></div><span>100</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Top movers (YoY)</h3>
+      <div class="mover-row"><div class="country"><span class="flag">🇮🇪</span>Ireland</div><span class="delta up">+7.2</span></div>
+      <div class="mover-row"><div class="country"><span class="flag">🇵🇹</span>Portugal</div><span class="delta up">+5.8</span></div>
+      <div class="mover-row"><div class="country"><span class="flag">🇨🇴</span>Colombia</div><span class="delta up">+4.1</span></div>
+      <div class="mover-row"><div class="country"><span class="flag">🇰🇷</span>South Korea</div><span class="delta down">−6.3</span></div>
+      <div class="mover-row"><div class="country"><span class="flag">🇯🇵</span>Japan</div><span class="delta down">−4.9</span></div>
+      <div class="mover-row"><div class="country"><span class="flag">🇮🇹</span>Italy</div><span class="delta down">−3.4</span></div>
+    </div>
+  </div>
+
+  <!-- Insights -->
+  <div class="section-title">Insight feed</div>
+  <div class="insight">
+    <div class="meta"><span>Mover</span><span class="pill tier-a">Tier A</span><span>2024 vs 2023</span></div>
+    <div class="body"><strong>South Korea</strong> Love Index fell 6.3 pts YoY — driven by a 9% drop in marriage rate and a record-low fertility (0.72). Connection subscore held flat.</div>
+    <div class="action">↳ click to see the full timeseries and 2010–2024 inflection points</div>
+  </div>
+  <div class="insight divergence">
+    <div class="meta"><span>Divergence</span><span class="pill tier-c">Tier C</span><span>rolling 12 mo</span></div>
+    <div class="body"><strong>United States:</strong> dating-app penetration +18% while marriage rate hit a 10-year low. Activity ↑, Commitment ↓ — widest gap in the dataset.</div>
+    <div class="action">↳ compare against UK, Canada, Australia (similar pattern, smaller magnitude)</div>
+  </div>
+  <div class="insight event">
+    <div class="meta"><span>Event overlay</span><span class="pill tier-a">Tier A</span><span>2015–2017</span></div>
+    <div class="body"><strong>Ireland</strong> marriage rate +21% in the 24 months after the 2015 same-sex marriage referendum — clearest legalization-driven inflection in the panel.</div>
+    <div class="action">↳ see other legalization events (DE 2017, AU 2017, TW 2019)</div>
+  </div>
+  <div class="insight">
+    <div class="meta"><span>Outlier</span><span class="pill tier-b">Tier B</span><span>continent z-score</span></div>
+    <div class="body"><strong>Finland</strong> sits +2.4σ above European peers on Connection despite middling Commitment — loneliness scores are the lowest in the panel.</div>
+  </div>
+
+  <!-- Data quality -->
+  <div class="dq">
+    <strong style="color: var(--text-1);">Data quality &amp; coverage</strong>
+    <div style="margin-top: 4px;">Every metric on this page is tagged Tier A (registry), B (survey), or C (proxy). Subscore tier mix is the worst tier across its inputs.</div>
+    <table>
+      <thead><tr><th>Source</th><th>Tier</th><th>Countries</th><th>Last updated</th><th>License</th></tr></thead>
+      <tbody>
+        <tr><td>UN DESA Demographic Yearbook</td><td><span class="pill tier-a">A</span></td><td>198</td><td>2023</td><td>UN open</td></tr>
+        <tr><td>Eurostat <code>demo_nind</code></td><td><span class="pill tier-a">A</span></td><td>34</td><td>2024-Q4</td><td>CC-BY 4.0</td></tr>
+        <tr><td>OECD Family Database</td><td><span class="pill tier-a">A</span></td><td>38</td><td>2024</td><td>OECD open</td></tr>
+        <tr><td>World Bank WDI</td><td><span class="pill tier-a">A</span></td><td>217</td><td>2024</td><td>CC-BY 4.0</td></tr>
+        <tr><td>World Happiness Report (Gallup)</td><td><span class="pill tier-b">B</span></td><td>147</td><td>2025</td><td>report-level open</td></tr>
+        <tr><td>Meta-Gallup Social Connections</td><td><span class="pill tier-b">B</span></td><td>142</td><td>2024</td><td>open report</td></tr>
+        <tr><td>Google Trends</td><td><span class="pill tier-c">C</span></td><td>~120</td><td>live</td><td>display-only (Google ToS)</td></tr>
+        <tr><td>Dating-app penetration (composite)</td><td><span class="pill tier-c">C</span></td><td>~40</td><td>2024-Q3</td><td>mixed / proprietary</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    Wireframe v0 — numbers are placeholders. See <code>love-dashboard/README.md</code> for the metric plan and source audit.
+  </footer>
+
+</main>
+</body>
+</html>
