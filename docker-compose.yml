@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       centralbank:
         condition: service_healthy
+      regulators:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -146,6 +148,18 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7060/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  regulators:
+    build: ./regulators-dashboard
+    expose:
+      - "7080"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7080/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3

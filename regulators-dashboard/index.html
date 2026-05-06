@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Regulators Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --grid: #30363d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--grid); display: flex;
+           align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 24px; display: grid; grid-template-columns: 1fr; gap: 24px;
+         max-width: 1200px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+           padding: 20px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--muted);
+              text-transform: uppercase; letter-spacing: 0.05em; }
+  .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .chip { padding: 4px 10px; border-radius: 14px; font-size: 12px; font-weight: 500;
+          background: #0e1117; color: var(--muted); border: 1px solid var(--grid);
+          cursor: pointer; user-select: none; }
+  .chip:hover { color: var(--fg); border-color: var(--muted); }
+  .chip.active { background: var(--accent); color: #0e1117; border-color: var(--accent); }
+  .search { flex: 1; min-width: 200px; max-width: 360px; padding: 6px 10px; font-size: 13px;
+            background: #0e1117; color: var(--fg); border: 1px solid var(--grid);
+            border-radius: 4px; }
+  .search:focus { outline: none; border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--grid);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase;
+       letter-spacing: 0.03em; }
+  td.date { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .jx { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px;
+        font-weight: 700; letter-spacing: 0.05em; }
+  .jx.US { background: #1f6feb; color: #fff; }
+  .jx.UK { background: #8957e5; color: #fff; }
+  .jx.EU { background: #d29922; color: #0e1117; }
+  .jx.OTHER { background: #30363d; color: var(--muted); }
+  .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .title a:hover { text-decoration: underline; }
+  .summary { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .source-status { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px;
+                   color: var(--muted); margin-top: 12px; }
+  .source-status .src-ok::before { content: "● "; color: #56d364; }
+  .source-status .src-bad::before { content: "● "; color: #f85149; }
+  .empty { text-align: center; padding: 40px; color: var(--muted); }
+  .err { color: #f85149; }
+  .hint { font-size: 11px; color: var(--muted); margin-left: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Regulators Tracker</h1>
+  <span class="meta" id="meta">loading…</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>Action feed</h2>
+    <div class="filters">
+      <span class="hint">Jurisdiction:</span>
+      <span class="chip active" data-jx="">All</span>
+      <span class="chip" data-jx="US">US</span>
+      <span class="chip" data-jx="UK">UK</span>
+      <span class="chip" data-jx="EU">EU</span>
+      <input type="search" id="q" class="search" placeholder="Search title/summary…" />
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 110px">Date</th>
+          <th style="width: 60px">Jx</th>
+          <th style="width: 110px">Body</th>
+          <th>Headline</th>
+        </tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="4" class="empty">loading…</td></tr></tbody>
+    </table>
+    <div class="source-status" id="status"></div>
+  </section>
+</main>
+
+<script>
+let state = { jurisdiction: "", q: "" };
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso.slice(0, 10);
+  return d.toISOString().slice(0, 10);
+}
+
+async function load() {
+  const meta = document.getElementById("meta");
+  const rows = document.getElementById("rows");
+  const status = document.getElementById("status");
+
+  const params = new URLSearchParams();
+  if (state.jurisdiction) params.set("jurisdiction", state.jurisdiction);
+  if (state.q) params.set("q", state.q);
+
+  let data;
+  try {
+    const r = await fetch("/api/feed?" + params.toString());
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    data = await r.json();
+  } catch (e) {
+    meta.innerHTML = '<span class="err">load failed: ' + escapeHtml(e.message) + '</span>';
+    rows.innerHTML = '<tr><td colspan="4" class="empty err">feed load failed</td></tr>';
+    return;
+  }
+
+  const ts = new Date(data.fetched_at * 1000).toISOString().replace("T", " ").slice(0, 16);
+  meta.textContent = `${data.count} actions · last ${data.since_days} days · fetched ${ts} UTC`;
+
+  if (!data.items.length) {
+    rows.innerHTML = '<tr><td colspan="4" class="empty">No actions match the current filter.</td></tr>';
+  } else {
+    rows.innerHTML = data.items.map(it => {
+      const jxCls = ["US","UK","EU"].includes(it.jurisdiction) ? it.jurisdiction : "OTHER";
+      const jx = escapeHtml(it.jurisdiction || "—");
+      const link = it.link
+        ? `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.title)}</a>`
+        : escapeHtml(it.title);
+      const summary = it.summary
+        ? `<div class="summary">${escapeHtml(it.summary)}</div>`
+        : "";
+      return `
+        <tr>
+          <td class="date">${escapeHtml(fmtDate(it.published))}</td>
+          <td><span class="jx ${jxCls}">${jx}</span></td>
+          <td class="src">${escapeHtml(it.source)}</td>
+          <td class="title">${link}${summary}</td>
+        </tr>`;
+    }).join("");
+  }
+
+  status.innerHTML = data.sources.map(s => {
+    const cls = s.ok ? "src-ok" : "src-bad";
+    const label = s.ok ? `${s.code}: ${s.count}` : `${s.code}: unavailable`;
+    return `<span class="${cls}" title="${escapeHtml(s.rss_url)}">${escapeHtml(label)}</span>`;
+  }).join("");
+}
+
+document.querySelectorAll(".chip[data-jx]").forEach(el => {
+  el.addEventListener("click", () => {
+    document.querySelectorAll(".chip[data-jx]").forEach(c => c.classList.remove("active"));
+    el.classList.add("active");
+    state.jurisdiction = el.dataset.jx;
+    load();
+  });
+});
+
+let qTimer;
+document.getElementById("q").addEventListener("input", e => {
+  clearTimeout(qTimer);
+  qTimer = setTimeout(() => { state.q = e.target.value; load(); }, 250);
+});
+
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>
