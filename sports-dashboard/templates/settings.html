@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sharpe — Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #08090e;
+    --surface: #12141c;
+    --surface2: #1a1d2b;
+    --border: #2a2d42;
+    --border-light: #363a52;
+    --text: #f0f0f8;
+    --text-secondary: #a0a3b8;
+    --muted: #6b6f8a;
+    --green: #22c55e;
+    --green-dim: rgba(34,197,94,0.12);
+    --blue: #3b82f6;
+    --blue-dim: rgba(59,130,246,0.12);
+    --purple: #8b5cf6;
+    --red: #ef4444;
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .settings-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    background: rgba(18,20,28,0.85);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .settings-nav-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 800;
+    font-size: 1.2em;
+    letter-spacing: -0.5px;
+    text-decoration: none;
+    color: var(--text);
+  }
+  .settings-nav-logo-icon {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--green), var(--blue));
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .settings-nav-links {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .settings-nav-links a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.85em;
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+  .settings-nav-links a:hover { color: var(--text); }
+  .settings-nav-links a.active { color: var(--blue); }
+
+  .settings-container {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 32px 20px;
+  }
+  .settings-header {
+    margin-bottom: 32px;
+  }
+  .settings-header h1 {
+    font-size: 1.5em;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+  }
+  .settings-header p {
+    color: var(--text-secondary);
+    font-size: 0.88em;
+  }
+
+  .settings-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .settings-section-title {
+    font-size: 0.72em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+    margin-bottom: 20px;
+  }
+  .setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .setting-row:last-child { border-bottom: none; }
+  .setting-info {
+    flex: 1;
+  }
+  .setting-name {
+    font-weight: 600;
+    font-size: 0.9em;
+    margin-bottom: 2px;
+  }
+  .setting-desc {
+    font-size: 0.78em;
+    color: var(--muted);
+  }
+  .setting-control {
+    flex-shrink: 0;
+    margin-left: 20px;
+  }
+  .setting-control select, .setting-control input[type="number"] {
+    padding: 8px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85em;
+    min-width: 140px;
+  }
+  .setting-control select:focus, .setting-control input:focus {
+    outline: none;
+    border-color: var(--blue);
+  }
+
+  /* Toggle switch */
+  .toggle {
+    position: relative;
+    width: 44px;
+    height: 24px;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .toggle-slider::before {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 16px;
+    height: 16px;
+    background: var(--muted);
+    border-radius: 50%;
+    transition: all 0.2s;
+  }
+  .toggle input:checked + .toggle-slider {
+    background: var(--blue-dim);
+    border-color: var(--blue);
+  }
+  .toggle input:checked + .toggle-slider::before {
+    transform: translateX(20px);
+    background: var(--blue);
+  }
+
+  .save-bar {
+    position: sticky;
+    bottom: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.3);
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.3s;
+    pointer-events: none;
+  }
+  .save-bar.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: all;
+  }
+  .save-bar-text {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+  }
+  .save-btn {
+    padding: 10px 24px;
+    background: var(--green);
+    color: #000;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 0.85em;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .save-btn:hover { opacity: 0.9; }
+
+  .user-section {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 0;
+  }
+  .user-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue), var(--purple));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 1.1em;
+  }
+  .user-info { flex: 1; }
+  .user-name { font-weight: 700; font-size: 1em; }
+  .user-email { font-size: 0.82em; color: var(--muted); }
+
+  .logout-btn {
+    padding: 8px 16px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--red);
+    font-family: inherit;
+    font-size: 0.82em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .logout-btn:hover { background: rgba(239,68,68,0.1); border-color: var(--red); }
+</style>
+</head>
+<body>
+
+<nav class="settings-nav">
+  <a class="settings-nav-logo" href="/">
+    <div class="settings-nav-logo-icon">S</div>
+    <span>Sharpe</span>
+  </a>
+  <div class="settings-nav-links">
+    <a href="/">Dashboard</a>
+    <a href="/settings" class="active">Settings</a>
+  </div>
+</nav>
+
+<div class="settings-container">
+  <div class="settings-header">
+    <h1>Settings</h1>
+    <p>Customize your Sharpe experience</p>
+  </div>
+
+  <!-- Account -->
+  <div class="settings-section">
+    <div class="settings-section-title">Account</div>
+    <div class="user-section">
+      <div class="user-avatar" id="userAvatar">?</div>
+      <div class="user-info">
+        <div class="user-name" id="userName">Loading...</div>
+        <div class="user-email" id="userEmail"></div>
+      </div>
+      <a class="logout-btn" href="/api/logout">Sign Out</a>
+    </div>
+  </div>
+
+  <!-- Trading Preferences -->
+  <div class="settings-section">
+    <div class="settings-section-title">Trading Preferences</div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name">Default Sport</div>
+        <div class="setting-desc">Which sport to load when you open Sharpe</div>
+      </div>
+      <div class="setting-control">
+        <select id="defaultSport">
+          <option value="basketball_nba">NBA</option>
+          <option value="americanfootball_nfl">NFL</option>
+          <option value="icehockey_nhl">NHL</option>
+          <option value="baseball_mlb">MLB</option>
+          <option value="soccer_epl">EPL</option>
+          <option value="soccer_spain_la_liga">La Liga</option>
+          <option value="soccer_germany_bundesliga">Bundesliga</option>
+          <option value="soccer_italy_serie_a">Serie A</option>
+          <option value="soccer_france_ligue_one">Ligue 1</option>
+          <option value="soccer_uefa_champs_league">Champions League</option>
+          <option value="soccer_uefa_europa_league">Europa League</option>
+          <option value="mma_mixed_martial_arts">MMA</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name">Edge Threshold</div>
+        <div class="setting-desc">Minimum edge % to flag as an opportunity (default: 5%)</div>
+      </div>
+      <div class="setting-control">
+        <input type="number" id="threshold" min="1" max="50" step="0.5" value="5" style="width:80px" />
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name">Opportunity Alerts</div>
+        <div class="setting-desc">Get notified when new edges are found</div>
+      </div>
+      <div class="setting-control">
+        <label class="toggle">
+          <input type="checkbox" id="notifications" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Appearance -->
+  <div class="settings-section">
+    <div class="settings-section-title">Appearance</div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name">Theme</div>
+        <div class="setting-desc">Choose your preferred color scheme</div>
+      </div>
+      <div class="setting-control">
+        <select id="theme">
+          <option value="dark">Dark</option>
+          <option value="light" disabled>Light (Coming Soon)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Display & Language (units, conversions, language) -->
+  <div class="settings-section">
+    <div class="settings-section-title" data-i18n="pref.localization">Display &amp; Language</div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name" data-i18n="pref.language">Language</div>
+        <div class="setting-desc" data-i18n="pref.languageDesc">Interface language for menus and labels</div>
+      </div>
+      <div class="setting-control">
+        <select id="displayLanguage"></select>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name" data-i18n="pref.numberFormat">Number Format</div>
+        <div class="setting-desc" data-i18n="pref.formatDesc">How numbers are punctuated</div>
+      </div>
+      <div class="setting-control">
+        <select id="unitSystem">
+          <option value="american" data-i18n="pref.american">American (1,234.56)</option>
+          <option value="european" data-i18n="pref.european">European (1.234,56)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-name" data-i18n="pref.currency">Display Currency</div>
+        <div class="setting-desc" data-i18n="pref.currencyDesc">Convert market values to your preferred currency (live ECB rates)</div>
+      </div>
+      <div class="setting-control">
+        <select id="displayCurrency"></select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save bar -->
+  <div class="save-bar" id="saveBar">
+    <span class="save-bar-text" data-i18n="pref.unsaved">You have unsaved changes</span>
+    <button class="save-btn" onclick="saveSettings()" data-i18n="pref.saveChanges">Save Changes</button>
+  </div>
+</div>
+
+<script>
+const NARVE_CURRENCIES = [
+  ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
+  ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],['CNY','Chinese Yuan'],
+  ['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],['SEK','Swedish Krona'],['KRW','South Korean Won'],
+  ['SGD','Singapore Dollar'],['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
+  ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],['DKK','Danish Krone'],
+  ['PLN','Polish Zloty'],['THB','Thai Baht'],['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],
+  ['CZK','Czech Koruna'],['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
+  ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
+];
+const NARVE_LANGUAGES = [
+  ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+  ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+  ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+  ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
+  ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
+];
+const NARVE_I18N = {
+  en: {'pref.localization':'Display & Language','pref.language':'Language','pref.currency':'Display Currency','pref.numberFormat':'Number Format','pref.american':'American (1,234.56)','pref.european':'European (1.234,56)','pref.languageDesc':'Interface language for menus and labels','pref.currencyDesc':'Convert market values to your preferred currency (live ECB rates)','pref.formatDesc':'How numbers are punctuated','pref.unsaved':'You have unsaved changes','pref.saveChanges':'Save Changes','pref.savedOk':'Saved!'},
+  es: {'pref.localization':'Pantalla e idioma','pref.language':'Idioma','pref.currency':'Moneda de visualizaci\u00f3n','pref.numberFormat':'Formato de n\u00famero','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Idioma de la interfaz para men\u00fas y etiquetas','pref.currencyDesc':'Convierte los valores del mercado a tu moneda preferida (tasas BCE en vivo)','pref.formatDesc':'C\u00f3mo se punt\u00faan los n\u00fameros','pref.unsaved':'Tienes cambios sin guardar','pref.saveChanges':'Guardar cambios','pref.savedOk':'\u00a1Guardado!'},
+  de: {'pref.localization':'Anzeige & Sprache','pref.language':'Sprache','pref.currency':'Anzeigew\u00e4hrung','pref.numberFormat':'Zahlenformat','pref.american':'Amerikanisch (1,234.56)','pref.european':'Europ\u00e4isch (1.234,56)','pref.languageDesc':'Oberfl\u00e4chensprache f\u00fcr Men\u00fcs und Beschriftungen','pref.currencyDesc':'Marktwerte in Ihre bevorzugte W\u00e4hrung umrechnen (Live-EZB-Kurse)','pref.formatDesc':'Wie Zahlen formatiert werden','pref.unsaved':'Sie haben ungespeicherte \u00c4nderungen','pref.saveChanges':'\u00c4nderungen speichern','pref.savedOk':'Gespeichert!'},
+  fr: {'pref.localization':'Affichage et langue','pref.language':'Langue','pref.currency':'Devise d\u2019affichage','pref.numberFormat':'Format des nombres','pref.american':'Am\u00e9ricain (1,234.56)','pref.european':'Europ\u00e9en (1.234,56)','pref.languageDesc':'Langue de l\u2019interface pour les menus et les \u00e9tiquettes','pref.currencyDesc':'Convertir les valeurs de march\u00e9 dans votre devise pr\u00e9f\u00e9r\u00e9e (taux BCE en direct)','pref.formatDesc':'Comment les nombres sont ponctu\u00e9s','pref.unsaved':'Vous avez des modifications non enregistr\u00e9es','pref.saveChanges':'Enregistrer','pref.savedOk':'Enregistr\u00e9 !'},
+  it: {'pref.localization':'Visualizzazione e lingua','pref.language':'Lingua','pref.currency':'Valuta di visualizzazione','pref.numberFormat':'Formato numerico','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Lingua dell\u2019interfaccia per menu ed etichette','pref.currencyDesc':'Converti i valori di mercato nella tua valuta preferita (tassi BCE in tempo reale)','pref.formatDesc':'Come sono punteggiati i numeri','pref.unsaved':'Hai modifiche non salvate','pref.saveChanges':'Salva modifiche','pref.savedOk':'Salvato!'},
+  pt: {'pref.localization':'Exibi\u00e7\u00e3o e idioma','pref.language':'Idioma','pref.currency':'Moeda de exibi\u00e7\u00e3o','pref.numberFormat':'Formato num\u00e9rico','pref.american':'Americano (1,234.56)','pref.european':'Europeu (1.234,56)','pref.languageDesc':'Idioma da interface para menus e r\u00f3tulos','pref.currencyDesc':'Converter valores de mercado para sua moeda preferida (taxas BCE em tempo real)','pref.formatDesc':'Como os n\u00fameros s\u00e3o pontuados','pref.unsaved':'Voc\u00ea tem altera\u00e7\u00f5es n\u00e3o salvas','pref.saveChanges':'Salvar altera\u00e7\u00f5es','pref.savedOk':'Salvo!'},
+  nl: {'pref.localization':'Weergave en taal','pref.language':'Taal','pref.currency':'Weergavevaluta','pref.numberFormat':'Getalnotatie','pref.american':'Amerikaans (1,234.56)','pref.european':'Europees (1.234,56)','pref.languageDesc':'Taal van de interface voor menu\u2019s en labels','pref.currencyDesc':'Converteer marktwaardes naar je voorkeursvaluta (live ECB-koersen)','pref.formatDesc':'Hoe getallen worden geschreven','pref.unsaved':'Je hebt niet-opgeslagen wijzigingen','pref.saveChanges':'Wijzigingen opslaan','pref.savedOk':'Opgeslagen!'},
+  pl: {'pref.localization':'Wy\u015bwietlanie i j\u0119zyk','pref.language':'J\u0119zyk','pref.currency':'Waluta wy\u015bwietlania','pref.numberFormat':'Format liczb','pref.american':'Ameryka\u0144ski (1,234.56)','pref.european':'Europejski (1.234,56)','pref.languageDesc':'J\u0119zyk interfejsu dla menu i etykiet','pref.currencyDesc':'Konwertuj warto\u015bci rynkowe na preferowan\u0105 walut\u0119 (kursy EBC na \u017cywo)','pref.formatDesc':'Jak interpunkcja liczb','pref.unsaved':'Masz niezapisane zmiany','pref.saveChanges':'Zapisz zmiany','pref.savedOk':'Zapisano!'},
+  ja: {'pref.localization':'\u8868\u793a\u3068\u8a00\u8a9e','pref.language':'\u8a00\u8a9e','pref.currency':'\u8868\u793a\u901a\u8ca8','pref.numberFormat':'\u6570\u5024\u5f62\u5f0f','pref.american':'\u30a2\u30e1\u30ea\u30ab\u5f0f (1,234.56)','pref.european':'\u30e8\u30fc\u30ed\u30c3\u30d1\u5f0f (1.234,56)','pref.languageDesc':'\u30e1\u30cb\u30e5\u30fc\u3068\u30e9\u30d9\u30eb\u306e\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a00\u8a9e','pref.currencyDesc':'\u5e02\u5834\u4fa1\u5024\u3092\u5e0c\u671b\u306e\u901a\u8ca8\u306b\u5909\u63db\uff08\u30e9\u30a4\u30d6ECB\u30ec\u30fc\u30c8\uff09','pref.formatDesc':'\u6570\u5b57\u306e\u533a\u5207\u308a\u65b9','pref.unsaved':'\u672a\u4fdd\u5b58\u306e\u5909\u66f4\u304c\u3042\u308a\u307e\u3059','pref.saveChanges':'\u5909\u66f4\u3092\u4fdd\u5b58','pref.savedOk':'\u4fdd\u5b58\u3057\u307e\u3057\u305f\uff01'},
+  ko: {'pref.localization':'\ud45c\uc2dc \ubc0f \uc5b8\uc5b4','pref.language':'\uc5b8\uc5b4','pref.currency':'\ud45c\uc2dc \ud1b5\ud654','pref.numberFormat':'\uc22b\uc790 \ud615\uc2dd','pref.american':'\ubbf8\uad6d\uc2dd (1,234.56)','pref.european':'\uc720\ub7fd\uc2dd (1.234,56)','pref.languageDesc':'\uba54\ub274 \ubc0f \ub77c\ubca8\uc758 \uc778\ud130\ud398\uc774\uc2a4 \uc5b8\uc5b4','pref.currencyDesc':'\uc2dc\uc7a5 \uac00\uce58\ub97c \uc120\ud638\ud558\ub294 \ud1b5\ud654\ub85c \ubcc0\ud658 (\uc2e4\uc2dc\uac04 ECB \ud658\uc728)','pref.formatDesc':'\uc22b\uc790 \uad6c\ub450\uc810 \ubc29\uc2dd','pref.unsaved':'\uc800\uc7a5\ub418\uc9c0 \uc54a\uc740 \ubcc0\uacbd\uc0ac\ud56d\uc774 \uc788\uc2b5\ub2c8\ub2e4','pref.saveChanges':'\ubcc0\uacbd\uc0ac\ud56d \uc800\uc7a5','pref.savedOk':'\uc800\uc7a5\ub428!'},
+  zh: {'pref.localization':'\u663e\u793a\u4e0e\u8bed\u8a00','pref.language':'\u8bed\u8a00','pref.currency':'\u663e\u793a\u8d27\u5e01','pref.numberFormat':'\u6570\u5b57\u683c\u5f0f','pref.american':'\u7f8e\u5f0f (1,234.56)','pref.european':'\u6b27\u5f0f (1.234,56)','pref.languageDesc':'\u83dc\u5355\u548c\u6807\u7b7e\u7684\u754c\u9762\u8bed\u8a00','pref.currencyDesc':'\u5c06\u5e02\u573a\u4ef7\u503c\u8f6c\u6362\u4e3a\u60a8\u504f\u597d\u7684\u8d27\u5e01\uff08\u5b9e\u65f6\u6b27\u6d32\u592e\u884c\u6c47\u7387\uff09','pref.formatDesc':'\u6570\u5b57\u6807\u70b9\u65b9\u5f0f','pref.unsaved':'\u60a8\u6709\u672a\u4fdd\u5b58\u7684\u66f4\u6539','pref.saveChanges':'\u4fdd\u5b58\u66f4\u6539','pref.savedOk':'\u5df2\u4fdd\u5b58\uff01'},
+  ru: {'pref.localization':'\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u0438 \u044f\u0437\u044b\u043a','pref.language':'\u042f\u0437\u044b\u043a','pref.currency':'\u0412\u0430\u043b\u044e\u0442\u0430 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f','pref.numberFormat':'\u0424\u043e\u0440\u043c\u0430\u0442 \u0447\u0438\u0441\u0435\u043b','pref.american':'\u0410\u043c\u0435\u0440\u0438\u043a\u0430\u043d\u0441\u043a\u0438\u0439 (1,234.56)','pref.european':'\u0415\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u043a\u0438\u0439 (1.234,56)','pref.languageDesc':'\u042f\u0437\u044b\u043a \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0434\u043b\u044f \u043c\u0435\u043d\u044e \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u0435\u0439','pref.currencyDesc':'\u041a\u043e\u043d\u0432\u0435\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u044b\u043d\u043e\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432 \u043f\u0440\u0435\u0434\u043f\u043e\u0447\u0438\u0442\u0430\u0435\u043c\u0443\u044e \u0432\u0430\u043b\u044e\u0442\u0443','pref.formatDesc':'\u041a\u0430\u043a \u043f\u0443\u043d\u043a\u0442\u0443\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u0447\u0438\u0441\u043b\u0430','pref.unsaved':'\u0423 \u0432\u0430\u0441 \u0435\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f','pref.saveChanges':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','pref.savedOk':'\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e!'},
+  hi: {'pref.localization':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u0914\u0930 \u092d\u093e\u0937\u093e','pref.language':'\u092d\u093e\u0937\u093e','pref.currency':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u092e\u0941\u0926\u094d\u0930\u093e','pref.numberFormat':'\u0938\u0902\u0916\u094d\u092f\u093e \u092a\u094d\u0930\u093e\u0930\u0942\u092a','pref.american':'\u0905\u092e\u0947\u0930\u093f\u0915\u0940 (1,234.56)','pref.european':'\u092f\u0942\u0930\u094b\u092a\u0940\u092f (1.234,56)','pref.languageDesc':'\u092e\u0947\u0928\u0942 \u0914\u0930 \u0932\u0947\u092c\u0932 \u0915\u0947 \u0932\u093f\u090f \u0907\u0902\u091f\u0930\u092b\u093c\u0947\u0938 \u092d\u093e\u0937\u093e','pref.currencyDesc':'\u092c\u093e\u091c\u093c\u093e\u0930 \u092e\u0942\u0932\u094d\u092f\u094b\u0902 \u0915\u094b \u0905\u092a\u0928\u0940 \u092a\u0938\u0902\u0926\u0940\u0926\u093e \u092e\u0941\u0926\u094d\u0930\u093e \u092e\u0947\u0902 \u092c\u0926\u0932\u0947\u0902 (\u0932\u093e\u0907\u0935 ECB \u0926\u0930\u0947\u0902)','pref.formatDesc':'\u0938\u0902\u0916\u094d\u092f\u093e\u090f\u0901 \u0915\u0948\u0938\u0947 \u0932\u093f\u0916\u0940 \u091c\u093e\u0924\u0940 \u0939\u0948\u0902','pref.unsaved':'\u0906\u092a\u0915\u0947 \u092a\u093e\u0938 \u0905\u0938\u0939\u0947\u091c\u0947 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0939\u0948\u0902','pref.saveChanges':'\u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0938\u0939\u0947\u091c\u0947\u0902','pref.savedOk':'\u0938\u0939\u0947\u091c\u093e \u0917\u092f\u093e!'},
+  ar: {'pref.localization':'\u0627\u0644\u0639\u0631\u0636 \u0648\u0627\u0644\u0644\u063a\u0629','pref.language':'\u0627\u0644\u0644\u063a\u0629','pref.currency':'\u0639\u0645\u0644\u0629 \u0627\u0644\u0639\u0631\u0636','pref.numberFormat':'\u062a\u0646\u0633\u064a\u0642 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.american':'\u0623\u0645\u0631\u064a\u0643\u064a (1,234.56)','pref.european':'\u0623\u0648\u0631\u0648\u0628\u064a (1.234,56)','pref.languageDesc':'\u0644\u063a\u0629 \u0627\u0644\u0648\u0627\u062c\u0647\u0629 \u0644\u0644\u0642\u0648\u0627\u0626\u0645 \u0648\u0627\u0644\u062a\u0633\u0645\u064a\u0627\u062a','pref.currencyDesc':'\u062a\u062d\u0648\u064a\u0644 \u0642\u064a\u0645 \u0627\u0644\u0633\u0648\u0642 \u0625\u0644\u0649 \u0639\u0645\u0644\u062a\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629 (\u0623\u0633\u0639\u0627\u0631 ECB \u0627\u0644\u0645\u0628\u0627\u0634\u0631\u0629)','pref.formatDesc':'\u0643\u064a\u0641\u064a\u0629 \u0643\u062a\u0627\u0628\u0629 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.unsaved':'\u0644\u062f\u064a\u0643 \u062a\u063a\u064a\u064a\u0631\u0627\u062a \u063a\u064a\u0631 \u0645\u062d\u0641\u0648\u0638\u0629','pref.saveChanges':'\u062d\u0641\u0638 \u0627\u0644\u062a\u063a\u064a\u064a\u0631\u0627\u062a','pref.savedOk':'\u062a\u0645 \u0627\u0644\u062d\u0641\u0638!'},
+  bn: {'pref.localization':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u0993 \u09ad\u09be\u09b7\u09be','pref.language':'\u09ad\u09be\u09b7\u09be','pref.currency':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be','pref.numberFormat':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u09ac\u09bf\u09a8\u09cd\u09af\u09be\u09b8','pref.american':'\u0986\u09ae\u09c7\u09b0\u09bf\u0995\u09be\u09a8 (1,234.56)','pref.european':'\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09af\u09bc (1.234,56)','pref.languageDesc':'\u09ae\u09c7\u09a8\u09c1 \u0993 \u09b2\u09c7\u09ac\u09c7\u09b2\u09c7\u09b0 \u099c\u09a8\u09cd\u09af \u0987\u09a8\u09cd\u099f\u09be\u09b0\u09ab\u09c7\u09b8 \u09ad\u09be\u09b7\u09be','pref.currencyDesc':'\u09ac\u09be\u099c\u09be\u09b0 \u09ae\u09c2\u09b2\u09cd\u09af \u0986\u09aa\u09a8\u09be\u09b0 \u09aa\u099b\u09a8\u09cd\u09a6\u09c7\u09b0 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be\u09af\u09bc \u09b0\u09c2\u09aa\u09be\u09a8\u09cd\u09a4\u09b0 \u0995\u09b0\u09c1\u09a8 (\u09b2\u09be\u0987\u09ad ECB \u09b0\u09c7\u099f)','pref.formatDesc':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u09b2\u09c7\u0996\u09be \u09b9\u09af\u09bc','pref.unsaved':'\u0986\u09aa\u09a8\u09be\u09b0 \u0985\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u0986\u099b\u09c7','pref.saveChanges':'\u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','pref.savedOk':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4!'},
+  ur: {'pref.localization':'\u0688\u0633\u067e\u0644\u06cc \u0627\u0648\u0631 \u0632\u0628\u0627\u0646','pref.language':'\u0632\u0628\u0627\u0646','pref.currency':'\u0688\u0633\u067e\u0644\u06cc \u06a9\u0631\u0646\u0633\u06cc','pref.numberFormat':'\u0646\u0645\u0628\u0631 \u0641\u0627\u0631\u0645\u06cc\u0679','pref.american':'\u0627\u0645\u0631\u06cc\u06a9\u06cc (1,234.56)','pref.european':'\u06cc\u0648\u0631\u067e\u06cc (1.234,56)','pref.languageDesc':'\u0645\u06cc\u0646\u06cc\u0648\u0632 \u0627\u0648\u0631 \u0644\u06cc\u0628\u0644\u0632 \u06a9\u06cc \u0627\u0646\u0679\u0631\u0641\u06cc\u0633 \u0632\u0628\u0627\u0646','pref.currencyDesc':'\u0645\u0627\u0631\u06a9\u06cc\u0679 \u0642\u062f\u0631\u0648\u0646 \u06a9\u0648 \u0627\u067e\u0646\u06cc \u067e\u0633\u0646\u062f\u06cc\u062f\u06c1 \u06a9\u0631\u0646\u0633\u06cc \u0645\u06cc\u0646 \u062a\u0628\u062f\u06cc\u0644 \u06a9\u0631\u06cc\u0646 (\u0644\u0627\u0626\u06cc\u0648 ECB \u0634\u0631\u062d)','pref.formatDesc':'\u0646\u0645\u0628\u0631 \u06a9\u06cc\u0633\u06d2 \u0644\u06a9\u06be\u06d2 \u062c\u0627\u062a\u06d2 \u06c1\u06cc\u06ba','pref.unsaved':'\u0622\u067e \u06a9\u06cc \u063a\u06cc\u0631 \u0645\u062d\u0641\u0648\u0638 \u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u06c1\u06cc\u06ba','pref.saveChanges':'\u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','pref.savedOk':'\u0645\u062d\u0641\u0648\u0638 \u06c1\u0648 \u06af\u06cc\u0627!'},
+  id: {'pref.localization':'Tampilan & Bahasa','pref.language':'Bahasa','pref.currency':'Mata Uang Tampilan','pref.numberFormat':'Format Angka','pref.american':'Amerika (1,234.56)','pref.european':'Eropa (1.234,56)','pref.languageDesc':'Bahasa antarmuka untuk menu dan label','pref.currencyDesc':'Konversi nilai pasar ke mata uang pilihan Anda (kurs ECB langsung)','pref.formatDesc':'Cara penulisan angka','pref.unsaved':'Anda memiliki perubahan yang belum disimpan','pref.saveChanges':'Simpan Perubahan','pref.savedOk':'Tersimpan!'},
+  tr: {'pref.localization':'G\u00f6r\u00fcn\u00fcm ve Dil','pref.language':'Dil','pref.currency':'G\u00f6r\u00fcnt\u00fcleme Para Birimi','pref.numberFormat':'Say\u0131 Bi\u00e7imi','pref.american':'Amerikan (1,234.56)','pref.european':'Avrupa (1.234,56)','pref.languageDesc':'Men\u00fcler ve etiketler i\u00e7in aray\u00fcz dili','pref.currencyDesc':'Piyasa de\u011ferlerini tercih etti\u011finiz para birimine d\u00f6n\u00fc\u015ft\u00fcr\u00fcn (canl\u0131 ECB kurlar\u0131)','pref.formatDesc':'Say\u0131lar\u0131n yaz\u0131l\u0131\u015f bi\u00e7imi','pref.unsaved':'Kaydedilmemi\u015f de\u011fi\u015fiklikleriniz var','pref.saveChanges':'De\u011fi\u015fiklikleri Kaydet','pref.savedOk':'Kaydedildi!'},
+  vi: {'pref.localization':'Hi\u1ec3n th\u1ecb & Ng\u00f4n ng\u1eef','pref.language':'Ng\u00f4n ng\u1eef','pref.currency':'Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb','pref.numberFormat':'\u0110\u1ecbnh d\u1ea1ng s\u1ed1','pref.american':'Ki\u1ec3u M\u1ef9 (1,234.56)','pref.european':'Ki\u1ec3u Ch\u00e2u \u00c2u (1.234,56)','pref.languageDesc':'Ng\u00f4n ng\u1eef giao di\u1ec7n cho menu v\u00e0 nh\u00e3n','pref.currencyDesc':'Chuy\u1ec3n \u0111\u1ed5i gi\u00e1 tr\u1ecb th\u1ecb tr\u01b0\u1eddng sang ti\u1ec1n t\u1ec7 \u01b0a th\u00edch (t\u1ef7 gi\u00e1 ECB tr\u1ef1c ti\u1ebfp)','pref.formatDesc':'C\u00e1ch vi\u1ebft s\u1ed1','pref.unsaved':'B\u1ea1n c\u00f3 thay \u0111\u1ed5i ch\u01b0a l\u01b0u','pref.saveChanges':'L\u01b0u thay \u0111\u1ed5i','pref.savedOk':'\u0110\u00e3 l\u01b0u!'},
+  th: {'pref.localization':'\u0e01\u0e32\u0e23\u0e41\u0e2a\u0e14\u0e07\u0e1c\u0e25\u0e41\u0e25\u0e30\u0e20\u0e32\u0e29\u0e32','pref.language':'\u0e20\u0e32\u0e29\u0e32','pref.currency':'\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e41\u0e2a\u0e14\u0e07','pref.numberFormat':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.american':'\u0e41\u0e1a\u0e1a\u0e2d\u0e40\u0e21\u0e23\u0e34\u0e01\u0e31\u0e19 (1,234.56)','pref.european':'\u0e41\u0e1a\u0e1a\u0e22\u0e38\u0e42\u0e23\u0e1b (1.234,56)','pref.languageDesc':'\u0e20\u0e32\u0e29\u0e32\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e40\u0e21\u0e19\u0e39\u0e41\u0e25\u0e30\u0e1b\u0e49\u0e32\u0e22\u0e01\u0e33\u0e01\u0e31\u0e1a','pref.currencyDesc':'\u0e41\u0e1b\u0e25\u0e07\u0e21\u0e39\u0e25\u0e04\u0e48\u0e32\u0e15\u0e25\u0e32\u0e14\u0e40\u0e1b\u0e47\u0e19\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 (\u0e2d\u0e31\u0e15\u0e23\u0e32 ECB \u0e2a\u0e14)','pref.formatDesc':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e01\u0e32\u0e23\u0e40\u0e02\u0e35\u0e22\u0e19\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.unsaved':'\u0e04\u0e38\u0e13\u0e21\u0e35\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07\u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.saveChanges':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07','pref.savedOk':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e41\u0e25\u0e49\u0e27!'},
+};
+let _narveLang = localStorage.getItem('narve_language') || 'en';
+function t(key) {
+  const dict = NARVE_I18N[_narveLang] || NARVE_I18N.en;
+  return dict[key] || NARVE_I18N.en[key] || key;
+}
+function applyTranslations(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+}
+
+function populateCurrencyPicker() {
+  const sel = document.getElementById('displayCurrency');
+  if (!sel) return;
+  sel.innerHTML = NARVE_CURRENCIES.map(c =>
+    '<option value="' + c[0] + '">' + c[0] + ' \u2014 ' + c[1] + '</option>'
+  ).join('');
+  const saved = localStorage.getItem('narve_currency') || 'USD';
+  sel.value = saved;
+  const us = document.getElementById('unitSystem');
+  if (us) us.value = localStorage.getItem('narve_units') || 'american';
+}
+
+function populateLanguagePicker() {
+  const sel = document.getElementById('displayLanguage');
+  if (!sel) return;
+  sel.innerHTML = NARVE_LANGUAGES.map(l =>
+    '<option value="' + l[0] + '">' + l[1] + '</option>'
+  ).join('');
+  sel.value = _narveLang;
+}
+
+let originalSettings = {};
+let currentSettings = {};
+
+async function loadSettings() {
+  try {
+    const r = await fetch('/api/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    const d = await r.json();
+
+    document.getElementById('userName').textContent = d.username;
+    document.getElementById('userEmail').textContent = d.email;
+    document.getElementById('userAvatar').textContent = d.username.charAt(0).toUpperCase();
+
+    const s = d.settings;
+    document.getElementById('defaultSport').value = s.default_sport;
+    document.getElementById('threshold').value = s.divergence_threshold;
+    document.getElementById('notifications').checked = !!s.notifications_enabled;
+    document.getElementById('theme').value = s.theme || 'dark';
+
+    populateCurrencyPicker();
+    populateLanguagePicker();
+    document.documentElement.lang = _narveLang;
+    applyTranslations();
+    originalSettings = getFormSettings();
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function getFormSettings() {
+  return {
+    default_sport: document.getElementById('defaultSport').value,
+    divergence_threshold: parseFloat(document.getElementById('threshold').value),
+    notifications_enabled: document.getElementById('notifications').checked ? 1 : 0,
+    theme: document.getElementById('theme').value,
+    _narve_currency: document.getElementById('displayCurrency').value,
+    _narve_units: document.getElementById('unitSystem').value,
+    _narve_language: document.getElementById('displayLanguage').value,
+  };
+}
+
+function checkChanges() {
+  currentSettings = getFormSettings();
+  const changed = JSON.stringify(currentSettings) !== JSON.stringify(originalSettings);
+  document.getElementById('saveBar').classList.toggle('visible', changed);
+}
+
+// Live language switch (no save needed — instant feedback)
+document.addEventListener('change', e => {
+  if (e.target && e.target.id === 'displayLanguage') {
+    _narveLang = e.target.value;
+    localStorage.setItem('narve_language', _narveLang);
+    document.documentElement.lang = _narveLang;
+    applyTranslations();
+  }
+});
+
+async function saveSettings() {
+  const btn = document.querySelector('.save-btn');
+  const savingLabel = (NARVE_I18N[_narveLang] && NARVE_I18N[_narveLang]['pref.saveChanges']) || 'Saving...';
+  btn.textContent = savingLabel + '...';
+  try {
+    const formData = getFormSettings();
+    // Persist client-only display preferences locally.
+    localStorage.setItem('narve_currency', formData._narve_currency || 'USD');
+    localStorage.setItem('narve_units', formData._narve_units || 'american');
+    localStorage.setItem('narve_language', formData._narve_language || 'en');
+    // Strip them from the server payload.
+    const serverPayload = Object.assign({}, formData);
+    delete serverPayload._narve_currency;
+    delete serverPayload._narve_units;
+    delete serverPayload._narve_language;
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(serverPayload)
+    });
+    if (r.ok) {
+      originalSettings = getFormSettings();
+      document.getElementById('saveBar').classList.remove('visible');
+      btn.textContent = t('pref.savedOk');
+      setTimeout(() => { btn.textContent = t('pref.saveChanges'); }, 1500);
+    }
+  } catch(e) {
+    btn.textContent = 'Error \u2014 try again';
+    setTimeout(() => { btn.textContent = t('pref.saveChanges'); }, 2000);
+  }
+}
+
+// Listen for changes
+document.querySelectorAll('select, input').forEach(el => {
+  el.addEventListener('change', checkChanges);
+  el.addEventListener('input', checkChanges);
+});
+
+loadSettings();
+</script>
+</body>
+</html>

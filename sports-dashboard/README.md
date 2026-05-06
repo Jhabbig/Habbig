@@ -26,9 +26,10 @@ docker compose up --build sports
 **Python**
 | File | Purpose |
 |---|---|
-| `sports_dashboard.py` | Main server — serves the dashboard, polls The Odds API + Polymarket, computes divergences, runs the gateway SSO middleware, encrypts Telegram tokens via Fernet. |
-| `arbitrage_bot.py` | Standalone arbitrage scanner (logs only, no execution). Uses the same env config as the dashboard. |
-| `sharpe_pitch.py` | Sharpe-ratio analysis on historical signals — drives the numbers in `Sharpe_Pitch.pptx`. |
+| `sports_dashboard.py` | Main server — serves the dashboard, polls The Odds API + Polymarket + Kalshi, computes divergences, runs the gateway SSO middleware, encrypts Telegram tokens via Fernet. |
+| `sharpe_pitch.py` | Sharpe-ratio analysis on historical signals — drives the numbers in `Sharpe_Pitch.pptx`. Offline tool, not part of the dashboard runtime. |
+| `templates/*.html` | Extracted dashboard, admin, users, settings pages. Loaded at import via `_load_template()`. |
+| `tests/` | Smoke tests — run with `pytest` from this directory. |
 
 **Data / assets**
 | File | Purpose |
@@ -43,7 +44,8 @@ docker compose up --build sports
 |---|---|
 | `Dockerfile` | Container build for the `sports` service. |
 | `.dockerignore` | Excludes `*.db`, `*.pptx`, `.secret_key` from the Docker build context. |
-| `requirements.txt` | Python deps. |
+| `requirements.txt` | Pinned production Python deps. |
+| `requirements-dev.txt` | Dev/test deps (`pytest`, `python-pptx`, `rich`). Includes `requirements.txt`. |
 | `.env.example` | Reference for env vars. Copy to `.env` to use. |
 | `README.md` | This file. |
 
@@ -59,3 +61,5 @@ docker compose up --build sports
 | `GATEWAY_SSO_SECRET` | unset | Required when running behind the gateway |
 | `DEV_MODE` | unset | Set to `1` to bypass gateway auth for local dev |
 | `CLOUDFLARE_ORIGIN` | unset | Allowed Cloudflare Access origin (only if fronting with cf-access) |
+| `HOST` | `0.0.0.0` | uvicorn bind address |
+| `PORT` | `8888` | uvicorn bind port |
