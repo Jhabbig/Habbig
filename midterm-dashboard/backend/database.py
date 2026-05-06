@@ -214,6 +214,18 @@ CREATE TABLE IF NOT EXISTS midterm_market_race_verifications (
     note            TEXT,
     verified_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+-- Hot query path indexes. ``get_markets`` filters by combinations of
+-- (state, race_type, source) and (active, closed); ``get_all_markets``
+-- filters on (active, closed). Price history is queried per-market.
+-- Divergence snapshots are queried by race_key over time.
+CREATE INDEX IF NOT EXISTS idx_markets_state_race_type ON midterm_markets(state, race_type);
+CREATE INDEX IF NOT EXISTS idx_markets_source ON midterm_markets(source);
+CREATE INDEX IF NOT EXISTS idx_markets_active_closed ON midterm_markets(active, closed);
+CREATE INDEX IF NOT EXISTS idx_price_history_market_ts ON midterm_price_history(market_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_divergence_race_time ON midterm_divergence_snapshots(race_key, snapshot_time);
+CREATE INDEX IF NOT EXISTS idx_divergence_time ON midterm_divergence_snapshots(snapshot_time);
+CREATE INDEX IF NOT EXISTS idx_polling_state_type ON midterm_polling_data(state, poll_type, end_date);
 """
 
 
@@ -317,8 +329,57 @@ class Database:
                 )
 
     def upsert_markets_batch(self, markets: list[dict]):
+        """Upsert many markets in a single transaction (much faster than the
+        per-row variant when refreshing 100s of rows from a background task)."""
+        if not markets:
+            return
+        rows = []
         for market in markets:
-            self.upsert_market(market)
+            outcomes = market.get("outcomes", [])
+            if isinstance(outcomes, (list, dict)):
+                outcomes = json.dumps(outcomes)
+            rows.append((
+                market["source"],
+                market["source_id"],
+                market.get("event_id"),
+                market["title"],
+                market.get("event_title"),
+                market.get("slug"),
+                market.get("race_type"),
+                market.get("state"),
+                outcomes,
+                market.get("volume", 0),
+                market.get("liquidity", 0),
+                1 if market.get("active") else 0,
+                1 if market.get("closed") else 0,
+                market.get("end_date"),
+                market.get("last_updated"),
+            ))
+        with _lock:
+            with _get_conn() as conn:
+                conn.executemany(
+                    """INSERT INTO midterm_markets
+                        (source, source_id, event_id, title, event_title, slug,
+                         race_type, state, outcomes, volume, liquidity, active,
+                         closed, end_date, last_updated)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(source, source_id) DO UPDATE SET
+                         event_id=excluded.event_id,
+                         title=excluded.title,
+                         event_title=excluded.event_title,
+                         slug=excluded.slug,
+                         race_type=excluded.race_type,
+                         state=excluded.state,
+                         outcomes=excluded.outcomes,
+                         volume=excluded.volume,
+                         liquidity=excluded.liquidity,
+                         active=excluded.active,
+                         closed=excluded.closed,
+                         end_date=excluded.end_date,
+                         last_updated=excluded.last_updated
+                    """,
+                    rows,
+                )
 
     def get_markets(
         self,
@@ -434,6 +495,43 @@ class Database:
                         data.get("max_divergence"),
                         details_json,
                     ),
+                )
+
+    def record_divergence_batch(self, snapshots: list[dict]) -> None:
+        """Insert many divergence snapshots in one transaction.
+
+        Each item: ``{race_key, state, race_type, data}`` matching the
+        ``record_divergence`` signature. Used by the 5-minute background loop
+        so SQLite isn't lock-contended once per race.
+        """
+        if not snapshots:
+            return
+        rows = []
+        for snap in snapshots:
+            data = snap.get("data") or {}
+            details = data.get("details", {})
+            details_json = (
+                json.dumps(details) if isinstance(details, (dict, list)) else details
+            )
+            rows.append((
+                snap.get("race_key"),
+                snap.get("state"),
+                snap.get("race_type"),
+                data.get("polymarket"),
+                data.get("kalshi"),
+                data.get("predictit"),
+                data.get("polling"),
+                data.get("max_divergence"),
+                details_json,
+            ))
+        with _lock:
+            with _get_conn() as conn:
+                conn.executemany(
+                    """INSERT INTO midterm_divergence_snapshots
+                        (race_key, state, race_type, polymarket_prob, kalshi_prob,
+                         predictit_prob, polling_avg, max_divergence, divergence_details)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    rows,
                 )
 
     # === Human-review market match flags ====================================

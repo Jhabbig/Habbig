@@ -6,7 +6,12 @@ vote totals and margins. Used by the /data/historical endpoint so users can
 compare current prediction markets against historical baselines.
 
 Sources: state Secretaries of State, FEC, and Cook Political Report archives.
+
+``LAST_VERIFIED`` is bumped on each curation pass so the frontend can show
+data recency.
 """
+
+LAST_VERIFIED = "2026-05-06"
 
 # Schema: (year, race_type, state, winner, party, winner_pct, runner_up,
 #          runner_up_party, runner_up_pct, winner_votes, runner_up_votes, margin_pct)

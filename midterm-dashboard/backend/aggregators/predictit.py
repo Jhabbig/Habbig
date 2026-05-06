@@ -4,6 +4,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from ._retry import fetch_json_with_retry
+
 logger = logging.getLogger(__name__)
 
 PREDICTIT_API = "https://www.predictit.org/api/marketdata/all/"
@@ -28,17 +30,12 @@ class PredictItAggregator:
     async def fetch_election_markets(self) -> list[dict]:
         """Fetch all markets and filter for elections."""
         session = await self._get_session()
-        try:
-            async with session.get(PREDICTIT_API, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                if resp.status != 200:
-                    logger.error(f"PredictIt API error: {resp.status}")
-                    return []
-                data = await resp.json()
-                markets = data.get("markets", [])
-                return self._normalize_markets(markets)
-        except Exception as e:
-            logger.error(f"PredictIt fetch error: {e}")
+        data = await fetch_json_with_retry(
+            session, PREDICTIT_API, timeout=20, source_label="predictit",
+        )
+        if not data:
             return []
+        return self._normalize_markets(data.get("markets", []))
 
     def _normalize_markets(self, markets: list[dict]) -> list[dict]:
         normalized = []

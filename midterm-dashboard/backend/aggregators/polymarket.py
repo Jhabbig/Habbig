@@ -6,6 +6,8 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from ._retry import fetch_json_with_retry
+
 
 def _is_current_open_market(end_date_str: Optional[str], closed: bool, active: bool, max_years_out: float = 3.0) -> bool:
     """Return True only if market is open and has a near-term end date."""
@@ -60,28 +62,18 @@ class PolymarketAggregator:
         page = 0
 
         while page < max_pages:
-            try:
-                url = f"{GAMMA_API}/events"
-                params = {"tag_slug": "politics", "limit": limit, "offset": offset, "active": "true", "closed": "false"}
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 429:
-                        logger.warning("Polymarket rate limited, backing off")
-                        await asyncio.sleep(2)
-                        continue
-                    if resp.status != 200:
-                        logger.error(f"Polymarket API error: {resp.status}")
-                        break
-                    data = await resp.json()
-                    if not data:
-                        break
-                    markets.extend(data)
-                    if len(data) < limit:
-                        break
-                    offset += limit
-                    page += 1
-            except Exception as e:
-                logger.error(f"Polymarket fetch error at page {page}: {e}")
+            url = f"{GAMMA_API}/events"
+            params = {"tag_slug": "politics", "limit": limit, "offset": offset, "active": "true", "closed": "false"}
+            data = await fetch_json_with_retry(
+                session, url, params=params, timeout=15, source_label="polymarket-events",
+            )
+            if not data:
                 break
+            markets.extend(data)
+            if len(data) < limit:
+                break
+            offset += limit
+            page += 1
 
         logger.info(f"Polymarket fetched {len(markets)} politics events in {page + 1} pages")
         return markets
@@ -94,38 +86,31 @@ class PolymarketAggregator:
     async def fetch_price_history(self, token_id: str, interval: str = "1d", fidelity: int = 60) -> list[dict]:
         """Fetch historical prices for a token from CLOB API."""
         session = await self._get_session()
-        try:
-            url = f"{CLOB_API}/prices-history"
-            params = {"market": token_id, "interval": interval, "fidelity": fidelity}
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-                return [
-                    {
-                        "timestamp": point.get("t", 0),
-                        "price": float(point.get("p", 0)),
-                        "source": "polymarket"
-                    }
-                    for point in (data.get("history", []) if isinstance(data, dict) else data)
-                ]
-        except Exception as e:
-            logger.error(f"Polymarket price history error: {e}")
+        url = f"{CLOB_API}/prices-history"
+        params = {"market": token_id, "interval": interval, "fidelity": fidelity}
+        data = await fetch_json_with_retry(
+            session, url, params=params, timeout=15, source_label="polymarket-prices",
+        )
+        if not data:
             return []
+        return [
+            {
+                "timestamp": point.get("t", 0),
+                "price": float(point.get("p", 0)),
+                "source": "polymarket",
+            }
+            for point in (data.get("history", []) if isinstance(data, dict) else data)
+        ]
 
     async def fetch_orderbook(self, token_id: str) -> dict:
         """Fetch current orderbook for a token."""
         session = await self._get_session()
-        try:
-            url = f"{CLOB_API}/book"
-            params = {"token_id": token_id}
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return {}
-                return await resp.json()
-        except Exception as e:
-            logger.error(f"Polymarket orderbook error: {e}")
-            return {}
+        url = f"{CLOB_API}/book"
+        params = {"token_id": token_id}
+        data = await fetch_json_with_retry(
+            session, url, params=params, timeout=10, source_label="polymarket-book",
+        )
+        return data or {}
 
     def _normalize_markets(self, events: list[dict]) -> list[dict]:
         """Normalize Polymarket events into standardized market format."""

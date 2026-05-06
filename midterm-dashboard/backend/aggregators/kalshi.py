@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from ._retry import fetch_json_with_retry
+
 
 def _is_current_open_market(end_date_str: Optional[str], status: Optional[str], max_years_out: float = 3.0) -> bool:
     """Return True only if market is open and has a near-term end date."""
@@ -66,31 +68,23 @@ class KalshiAggregator:
         cursor = None
         pages = 0
         while pages < 10:
-            try:
-                url = f"{KALSHI_API}/events"
-                params = {"limit": 100, "status": "open"}
-                if cursor:
-                    params["cursor"] = cursor
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 429:
-                        logger.warning("Kalshi events rate limited")
-                        await asyncio.sleep(2)
-                        continue
-                    if resp.status != 200:
-                        logger.error(f"Kalshi events API error: {resp.status}")
-                        break
-                    data = await resp.json()
-                    events = data.get("events", [])
-                    if not events:
-                        break
-                    all_events.extend(events)
-                    cursor = data.get("cursor")
-                    if not cursor:
-                        break
-                    pages += 1
-            except Exception as e:
-                logger.error(f"Kalshi events fetch error: {e}")
+            url = f"{KALSHI_API}/events"
+            params = {"limit": 100, "status": "open"}
+            if cursor:
+                params["cursor"] = cursor
+            data = await fetch_json_with_retry(
+                session, url, params=params, timeout=15, source_label="kalshi-events",
+            )
+            if not data:
                 break
+            events = data.get("events", [])
+            if not events:
+                break
+            all_events.extend(events)
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+            pages += 1
 
         logger.info(f"Kalshi fetched {len(all_events)} events in {pages + 1} pages")
 
@@ -123,45 +117,26 @@ class KalshiAggregator:
         relevant_events = high_priority + low_priority[:50]
         logger.info(f"Kalshi: {len(high_priority)} high-priority + {min(len(low_priority), 50)} low-priority events (from {len(all_events)} total)")
 
-        # Fetch markets for relevant events with rate-limit backoff
-        rate_limit_hits = 0
+        # Fetch markets for relevant events. The retry helper handles 429s with
+        # exponential backoff per request.
         for event in relevant_events:
             event_ticker = event.get("event_ticker") or event.get("ticker")
             if not event_ticker:
                 continue
-            if rate_limit_hits >= 5:
-                logger.warning("Kalshi too many rate limits, stopping market fetch")
-                break
-            try:
-                url = f"{KALSHI_API}/markets"
-                params = {"event_ticker": event_ticker, "limit": 200}
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 429:
-                        rate_limit_hits += 1
-                        await asyncio.sleep(5)
-                        # Retry this event once after backoff
-                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as retry_resp:
-                            if retry_resp.status == 200:
-                                data = await retry_resp.json()
-                                markets = data.get("markets", [])
-                                if markets:
-                                    for m in markets:
-                                        m["_event_category"] = event.get("category", "")
-                                        m["_event_title"] = event.get("title", "")
-                                    all_markets[event_ticker] = markets
-                        continue
-                    if resp.status != 200:
-                        continue
-                    data = await resp.json()
-                    markets = data.get("markets", [])
-                    if markets:
-                        for m in markets:
-                            m["_event_category"] = event.get("category", "")
-                            m["_event_title"] = event.get("title", "")
-                        all_markets[event_ticker] = markets
-            except Exception as e:
-                logger.debug(f"Kalshi market fetch for {event_ticker}: {e}")
-            # Delay to avoid rate limits
+            url = f"{KALSHI_API}/markets"
+            params = {"event_ticker": event_ticker, "limit": 200}
+            data = await fetch_json_with_retry(
+                session, url, params=params, timeout=10,
+                source_label=f"kalshi-markets[{event_ticker}]",
+            )
+            if data:
+                markets = data.get("markets", [])
+                if markets:
+                    for m in markets:
+                        m["_event_category"] = event.get("category", "")
+                        m["_event_title"] = event.get("title", "")
+                    all_markets[event_ticker] = markets
+            # Small delay between events to be polite to the API.
             await asyncio.sleep(0.3)
 
         total_markets = sum(len(v) for v in all_markets.values())
@@ -197,38 +172,31 @@ class KalshiAggregator:
     async def fetch_orderbook(self, ticker: str) -> dict:
         """Fetch orderbook for a specific market."""
         session = await self._get_session()
-        try:
-            url = f"{KALSHI_API}/markets/{ticker}/orderbook"
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return {}
-                return await resp.json()
-        except Exception as e:
-            logger.error(f"Kalshi orderbook error: {e}")
-            return {}
+        url = f"{KALSHI_API}/markets/{ticker}/orderbook"
+        data = await fetch_json_with_retry(
+            session, url, timeout=10, source_label="kalshi-orderbook",
+        )
+        return data or {}
 
     async def fetch_market_history(self, ticker: str) -> list[dict]:
         """Fetch trade history for a market."""
         session = await self._get_session()
-        try:
-            url = f"{KALSHI_API}/markets/{ticker}/trades"
-            params = {"limit": 1000}
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-                trades = data.get("trades", [])
-                return [
-                    {
-                        "timestamp": t.get("created_time", ""),
-                        "price": t.get("yes_price", 0) / 100 if t.get("yes_price") else 0,
-                        "source": "kalshi"
-                    }
-                    for t in trades
-                ]
-        except Exception as e:
-            logger.error(f"Kalshi history error: {e}")
+        url = f"{KALSHI_API}/markets/{ticker}/trades"
+        params = {"limit": 1000}
+        data = await fetch_json_with_retry(
+            session, url, params=params, timeout=15, source_label="kalshi-trades",
+        )
+        if not data:
             return []
+        trades = data.get("trades", [])
+        return [
+            {
+                "timestamp": t.get("created_time", ""),
+                "price": t.get("yes_price", 0) / 100 if t.get("yes_price") else 0,
+                "source": "kalshi",
+            }
+            for t in trades
+        ]
 
     def _is_us_election_market(self, market: dict) -> bool:
         """Check if a market is a US election market."""

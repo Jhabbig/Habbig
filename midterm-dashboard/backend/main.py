@@ -7,6 +7,7 @@ import os
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -120,9 +121,29 @@ class AppState:
         self.background_tasks: list[asyncio.Task] = []
         # In-memory rate-limit store: {ip: [timestamps]}
         self.rate_limit_store: dict[str, list[float]] = defaultdict(list)
+        # Per-source fetch health, surfaced via /data/sources and /admin/data-status.
+        # Each value is {last_success, last_error, last_error_message, market_count}.
+        self.source_health: dict[str, dict] = {}
 
 
 state = AppState()
+
+
+def _record_source_success(source: str, count: int) -> None:
+    """Record a successful fetch for *source*."""
+    now = datetime.now(timezone.utc).isoformat()
+    s = state.source_health.setdefault(source, {})
+    s["last_success"] = now
+    s["last_fetch_count"] = count
+    s["last_error"] = s.get("last_error")  # preserve prior error timestamp
+
+
+def _record_source_error(source: str, message: str) -> None:
+    """Record a failed fetch for *source*."""
+    now = datetime.now(timezone.utc).isoformat()
+    s = state.source_health.setdefault(source, {})
+    s["last_error"] = now
+    s["last_error_message"] = message[:200]
 
 # ---------------------------------------------------------------------------
 # Auth helpers
@@ -247,12 +268,18 @@ async def data_refresh_loop():
                 kalshi_world = e
 
             # Store midterm markets
-            for label, data in [("Polymarket", poly_data), ("Kalshi", kalshi_data), ("PredictIt", pi_data)]:
+            for source_key, label, data in [
+                ("polymarket", "Polymarket", poly_data),
+                ("kalshi", "Kalshi", kalshi_data),
+                ("predictit", "PredictIt", pi_data),
+            ]:
                 if isinstance(data, list):
                     state.db.upsert_markets_batch(data)
                     logger.info(f"Stored {len(data)} {label} markets")
+                    _record_source_success(source_key, len(data))
                 else:
                     logger.error(f"{label} fetch error: {data}")
+                    _record_source_error(source_key, str(data))
 
             # Store polls
             if isinstance(poll_data, dict):
@@ -262,16 +289,23 @@ async def data_refresh_loop():
                 if all_polls:
                     state.db.store_polls_batch(all_polls)
                 logger.info(f"Stored {len(all_polls)} polls")
+                _record_source_success("538", len(all_polls))
             else:
                 logger.error(f"Polling fetch error: {poll_data}")
+                _record_source_error("538", str(poll_data))
 
             # Store world election markets
-            for label, data in [("Polymarket world", poly_world), ("Kalshi world", kalshi_world)]:
+            for source_key, label, data in [
+                ("polymarket_world", "Polymarket world", poly_world),
+                ("kalshi_world", "Kalshi world", kalshi_world),
+            ]:
                 if isinstance(data, list):
                     state.db.upsert_markets_batch(data)
                     logger.info(f"Stored {len(data)} {label} markets")
+                    _record_source_success(source_key, len(data))
                 else:
                     logger.error(f"{label} fetch error: {data}")
+                    _record_source_error(source_key, str(data))
 
         except Exception as e:
             logger.error(f"Data refresh error: {e}", exc_info=True)
@@ -299,7 +333,7 @@ async def divergence_calculator():
                 source = m.get("source", "unknown")
                 by_race[race_key][source].append(m)
 
-            count = 0
+            snapshots: list[dict] = []
             for race_key, sources in by_race.items():
                 # Unmatched markets get a unique per-source sentinel from
                 # market_race_key — never compare them across sources.
@@ -327,22 +361,22 @@ async def divergence_calculator():
                 if race_type == "house" and state_abbr and "-" in state_abbr:
                     state_abbr = state_abbr.split("-", 1)[0]
 
-                state.db.record_divergence(
-                    race_key=race_key,
-                    state=state_abbr,
-                    race_type=race_type,
-                    data={
+                snapshots.append({
+                    "race_key": race_key,
+                    "state": state_abbr,
+                    "race_type": race_type,
+                    "data": {
                         "polymarket": source_probs.get("polymarket"),
                         "kalshi": source_probs.get("kalshi"),
                         "predictit": source_probs.get("predictit"),
                         "polling": source_probs.get("polling"),
                         "max_divergence": round(max_div, 4),
                         "details": source_probs,
-                    }
-                )
-                count += 1
+                    },
+                })
 
-            logger.info(f"Divergence calculated for {count} races")
+            state.db.record_divergence_batch(snapshots)
+            logger.info(f"Divergence calculated for {len(snapshots)} races")
         except Exception as e:
             logger.error(f"Divergence calculator error: {e}", exc_info=True)
 
@@ -1268,15 +1302,32 @@ async def data_divergence_history(race_key: str, days: int = 30):
 
 @app.get("/data/sources")
 async def data_sources():
-    """Data sources and their status."""
+    """Data sources and their status, including last successful fetch timestamps."""
     all_markets = state.db.get_all_markets(active_only=True)
-    sources = defaultdict(lambda: {"market_count": 0, "status": "ok", "last_updated": None})
+    sources: dict[str, dict] = defaultdict(
+        lambda: {"market_count": 0, "status": "ok", "last_updated": None}
+    )
     for m in all_markets:
         s = m.get("source", "unknown")
         sources[s]["market_count"] += 1
         lu = m.get("last_updated")
         if lu and (sources[s]["last_updated"] is None or lu > sources[s]["last_updated"]):
             sources[s]["last_updated"] = lu
+
+    # Merge in per-fetch health tracked in memory by the refresh loop.
+    for src, health in state.source_health.items():
+        bucket = sources.setdefault(src, {"market_count": 0, "status": "ok", "last_updated": None})
+        bucket["last_success"] = health.get("last_success")
+        bucket["last_error"] = health.get("last_error")
+        bucket["last_error_message"] = health.get("last_error_message")
+        # Status = "stale" if the most recent attempt was an error newer than success
+        ls = health.get("last_success") or ""
+        le = health.get("last_error") or ""
+        if le and le > ls:
+            bucket["status"] = "error"
+        elif ls:
+            bucket["status"] = "ok"
+
     return {"sources": dict(sources)}
 
 
@@ -1341,7 +1392,7 @@ async def data_historical(
     can compare current prediction markets against prior outcomes.
     Filter by year, race_type (president/senate/governor), and/or state.
     """
-    from historical_results import get_results, HISTORICAL_RESULTS
+    from historical_results import get_results, HISTORICAL_RESULTS, LAST_VERIFIED
     results = get_results(year=year, race_type=race_type, state=state)
     # Available filter options
     all_years = sorted({r["year"] for r in HISTORICAL_RESULTS}, reverse=True)
@@ -1354,6 +1405,7 @@ async def data_historical(
             "race_types": all_types,
             "states": all_states,
         },
+        "last_verified": LAST_VERIFIED,
     }
 
 
@@ -1363,18 +1415,18 @@ async def data_race_context(race_key: str):
 
     race_key format: "{race_type}_{state}" e.g. "senate_GA", "governor_FL"
     """
-    from race_context import get_context, get_all_contexts
+    from race_context import get_context, LAST_VERIFIED
     ctx = get_context(*race_key.split("_", 1)) if "_" in race_key else None
     if ctx:
-        return {"race_key": race_key, **ctx}
-    return {"race_key": race_key, "found": False}
+        return {"race_key": race_key, "last_verified": LAST_VERIFIED, **ctx}
+    return {"race_key": race_key, "found": False, "last_verified": LAST_VERIFIED}
 
 
 @app.get("/data/race-contexts")
 async def data_race_contexts():
     """All race contexts."""
-    from race_context import get_all_contexts
-    return {"contexts": get_all_contexts()}
+    from race_context import get_all_contexts, LAST_VERIFIED
+    return {"contexts": get_all_contexts(), "last_verified": LAST_VERIFIED}
 
 
 @app.get("/data/district-profile/{state_abbr}")
@@ -1714,13 +1766,26 @@ async def admin_unverify_race(race_key: str, request: Request):
 async def admin_data_status(request: Request):
     await require_tier(request, "admin")
     all_markets = state.db.get_all_markets(active_only=True)
-    sources = defaultdict(lambda: {"market_count": 0, "status": "ok", "last_updated": None})
+    sources: dict[str, dict] = defaultdict(
+        lambda: {"market_count": 0, "status": "ok", "last_updated": None}
+    )
     for m in all_markets:
         s = m.get("source", "unknown")
         sources[s]["market_count"] += 1
         lu = m.get("last_updated")
         if lu and (sources[s]["last_updated"] is None or lu > sources[s]["last_updated"]):
             sources[s]["last_updated"] = lu
+    for src, health in state.source_health.items():
+        bucket = sources.setdefault(src, {"market_count": 0, "status": "ok", "last_updated": None})
+        bucket["last_success"] = health.get("last_success")
+        bucket["last_error"] = health.get("last_error")
+        bucket["last_error_message"] = health.get("last_error_message")
+        ls = health.get("last_success") or ""
+        le = health.get("last_error") or ""
+        if le and le > ls:
+            bucket["status"] = "error"
+        elif ls:
+            bucket["status"] = "ok"
     return {"sources": dict(sources)}
 
 

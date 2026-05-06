@@ -5,7 +5,14 @@ Provides background context for prediction markets so users can understand
 WHY odds are moving and make pattern-based judgments.
 
 2026 midterm cycle: Class II Senate seats (elected 2020) + governor races.
+
+This dataset is hand-curated. ``LAST_VERIFIED`` is bumped whenever we
+re-review the entries against current candidate filings, primary results,
+and ratings. The frontend surfaces it so users know the recency.
 """
+
+# ISO date of the last manual review. Bump on each curation pass.
+LAST_VERIFIED = "2026-05-06"
 
 # Each entry keyed by "{race_type}_{state}" matching the race_key format.
 # Fields:

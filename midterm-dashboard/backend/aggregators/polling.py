@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from ._retry import fetch_text_with_retry
+
 logger = logging.getLogger(__name__)
 
 # 538 CSV data feeds (may still be live post-shutdown)
@@ -59,16 +61,12 @@ class PollingAggregator:
     async def _fetch_538_csv(self, url: str, poll_type: str) -> list[dict]:
         """Fetch and parse a 538 CSV polling file."""
         session = await self._get_session()
-        try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    logger.warning(f"538 {poll_type} CSV returned {resp.status}")
-                    return []
-                text = await resp.text()
-                return self._parse_538_csv(text, poll_type)
-        except Exception as e:
-            logger.error(f"538 CSV fetch error ({poll_type}): {e}")
+        text = await fetch_text_with_retry(
+            session, url, timeout=30, source_label=f"538-{poll_type}",
+        )
+        if not text:
             return []
+        return self._parse_538_csv(text, poll_type)
 
     def _parse_538_csv(self, csv_text: str, poll_type: str) -> list[dict]:
         """Parse 538 CSV into normalized poll records."""
