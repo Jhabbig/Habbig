@@ -111,6 +111,40 @@
   .mood .comp .bar > div { height: 100%; background: var(--accent); border-radius: 2px; }
   .mood .comp .sub { font-size: 11px; color: var(--text-3); margin-top: 4px; }
 
+  /* Biggest movers strip */
+  .movers {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 22px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .movers .mover {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    flex: 1 1 0;
+    min-width: 200px;
+  }
+  .movers .name {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .movers .change {
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 3px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .movers .change.up { color: var(--good); }
+  .movers .change.down { color: var(--bad); }
+  .movers .ctx { color: var(--text-2); font-size: 11px; margin-top: 3px; }
+
   /* Cards */
   .grid {
     display: grid;
@@ -253,6 +287,8 @@
   <div class="components" id="moodComponents"></div>
 </div>
 
+<div class="movers" id="movers"></div>
+
 <div class="grid" id="cards"></div>
 
 <div class="section-title">Politics &amp; sentiment markets — Polymarket</div>
@@ -385,6 +421,25 @@ function renderMood(m) {
   wrap.innerHTML = html || '<div class="comp"><div class="sub">no data</div></div>';
 }
 
+function renderMovers(movers) {
+  const wrap = document.getElementById("movers");
+  if (!movers || !movers.length) { wrap.innerHTML = ""; wrap.style.display = "none"; return; }
+  wrap.style.display = "flex";
+  wrap.innerHTML = movers.map(mv => {
+    const dir = (mv.change || 0) >= 0 ? "up" : "down";
+    const cls = mv.is_good_for_voter ? "up" : "down";
+    const arrow = dir === "up" ? "▲" : "▼";
+    const flavor = mv.is_good_for_voter ? "good for voters" : "headwind for voters";
+    return `
+      <div class="mover">
+        <div class="name">Biggest 3-mo move · ${mv.label}</div>
+        <div class="change ${cls}">${arrow} ${mv.change_str}</div>
+        <div class="ctx">z=${mv.z_score} vs 10y · ${flavor}</div>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderCards(s) {
   const cards = [];
   const ind = s.indicators || {};
@@ -396,6 +451,10 @@ function renderCards(s) {
     const d12 = ind.sentiment.change_12m;
     const d3 = ind.sentiment.change_3m;
     const cls = v >= 90 ? "good" : v >= 70 ? "warn" : "bad";
+    const verdict = v >= 90 ? "buoyant"
+                  : v >= 70 ? "subdued"
+                  : v >= 60 ? "weak"
+                  : "depressed";
     cards.push(`
       <div class="card">
         <h3>Consumer sentiment (UMich)</h3>
@@ -404,9 +463,7 @@ function renderCards(s) {
           ${deltaPill(d3, { dp: 1, unit: " 3m" })}
           ${deltaPill(d12, { dp: 1, unit: " 12m" })}
         </div>
-        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
-          v >= 90 ? "buoyant" : v >= 70 ? "subdued" : "depressed"
-        }</span></div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${verdict}</span></div>
         ${sparkline(spark, { color: "#818cf8" })}
       </div>
     `);
@@ -509,8 +566,9 @@ function renderCards(s) {
   }
 
   // Misery
-  if (s.misery) {
+  if (s.misery && s.misery.score !== undefined) {
     const score = s.misery.score;
+    const spark = (s.misery.spark || []).map(o => o.value);
     const cls = score <= 6 ? "good" : score <= 9 ? "warn" : "bad";
     cards.push(`
       <div class="card">
@@ -520,6 +578,32 @@ function renderCards(s) {
         <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
           score <= 6 ? "comfortable" : score <= 9 ? "elevated" : "painful"
         }</span></div>
+        ${sparkline(spark, { color: "#ef4444" })}
+      </div>
+    `);
+  }
+
+  // Recession (NBER)
+  if (s.recession) {
+    const r = s.recession;
+    const cls = r.in_recession ? "bad" : "good";
+    const pillText = r.in_recession ? "IN RECESSION" : "not in recession";
+    let body;
+    if (r.in_recession) {
+      body = `Started ${dateNice(r.last_recession_start)} · NBER-dated`;
+    } else if (r.last_recession_end) {
+      const months = r.months_since_last_recession;
+      const years = months !== null && months !== undefined ? (months / 12).toFixed(1) : "—";
+      body = `Last recession ended ${dateNice(r.last_recession_end)} · ${years} years ago`;
+    } else {
+      body = "No prior recession in the series";
+    }
+    cards.push(`
+      <div class="card">
+        <h3>NBER recession indicator</h3>
+        <div class="big">${r.in_recession ? "Yes" : "No"}</div>
+        <div class="sub">${body}</div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${pillText}</span></div>
       </div>
     `);
   }
@@ -644,6 +728,7 @@ async function loadAll() {
   ]);
   if (summary) {
     renderMood(summary.mood);
+    renderMovers(summary.biggest_movers);
     renderCards(summary);
   } else {
     document.getElementById("moodVerdict").textContent = "Failed to load data.";

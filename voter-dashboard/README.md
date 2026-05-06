@@ -82,6 +82,13 @@ docker build -t voter-dashboard .
 docker run --rm -p 7053:7053 voter-dashboard
 ```
 
+## What's next
+
+See [`ROADMAP.md`](ROADMAP.md) for the v2 plan — partisan / demographic
+splits of UMich sentiment, state-level mood map, and an
+election-cycle regression that turns the mood index into an implied
+seat-change forecast for the incumbent's party.
+
 ## Notes
 
 - The mood index intentionally weights its five components equally. Picking

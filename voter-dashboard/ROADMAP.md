@@ -1,0 +1,180 @@
+# Voter Dashboard — v2 Roadmap
+
+v1 ships a single national mood index plus the indicators driving it. v2 is
+about making the dashboard *answer questions* instead of just *report
+numbers*: who is feeling what, where, and what does that imply for the next
+election cycle.
+
+## Guiding principles
+
+- **Stay keyless.** Every v1 source works without an API key. Hold that
+  line — anything that *requires* a paid endpoint goes behind a feature
+  flag, not the front page.
+- **Cuts beat composites.** A single national 0–100 number is a useful
+  starting point but a poor end state. v2 should let users slice by party,
+  state, age band and income quintile.
+- **Make claims, not displays.** A card that says "real wages are up 0.7%
+  YoY" is a fact. A card that says "this is the strongest real-wage growth
+  for the bottom income quintile since 2019" is a claim. Aim for claims.
+
+## v2 features, ranked by leverage
+
+### 1. Partisan + demographic UMich splits **(highest leverage, free)**
+
+UMich publishes the consumer-sentiment index broken out by political party
+and by demographic — these are separate FRED series, no new auth required:
+
+| Series ID    | Cut |
+|---           |---  |
+| `UMCSENT`    | All consumers (current v1) |
+| `UMCSENT1`   | Republican respondents |
+| `UMCSENT2`   | Democratic respondents |
+| `UMCSENT3`   | Independent respondents |
+| `UMCSENT_BL` | Bottom-third income |
+| `UMCSENT_TM` | Top-third income |
+
+(IDs above use UMich's table 32; verify the actual FRED IDs at fetch time —
+some are nested under `UMCSENT*` names, others under `UMICH/SOC*`.)
+
+Render:
+- A single sentiment card with three small sparklines stacked (R, D, I) so
+  you can see the partisan gap at a glance.
+- A "partisan gap" pill that quantifies (R − D) sentiment in points.
+- The same gap as a 30-year time series — historically the gap inverts on
+  election day, which is the most under-appreciated chart in US politics.
+
+### 2. State-level mood map
+
+National misery + sentiment hides huge variance. Surface it:
+- BLS Local Area Unemployment Statistics has state-level UNRATE
+  (`LAUST<FIPS>0000000000003` or via FRED state-level series like
+  `CAUR`, `TXUR`, `FLUR`).
+- BEA per-capita income via FRED state series.
+- AAA / EIA gasoline by state (EIA has weekly state-level retail prices,
+  keyless via FRED's `GASREG_<STATE>` family or scrape the EIA HTML).
+
+Render: choropleth of a state mood index using the same equal-weighted
+formula. Hover for the per-state mood card. Add a "swing-state mood" strip
+at the top for the seven 2024 swing states.
+
+### 3. Demographic cuts (age × income × education)
+
+Most pollsters publish sentiment cuts; the BLS publishes earnings cuts.
+For v2 the right move is:
+- BLS quarterly real earnings by income quintile (`LES1252881500` and
+  siblings).
+- Census ASEC poverty rate and median household income by age band.
+- Render as a small-multiples grid: 4 sparklines per indicator, one per
+  quintile.
+
+This is the single biggest "claim, not display" win — being able to say
+"real wages are up for the top quintile and down for the bottom" instead
+of "real wages are up 0.4%".
+
+### 4. Approval & "right-track / wrong-track" ingestion
+
+Approval polling is heterogeneously published; pulling it cleanly is real
+work. Order of preference:
+1. **Polymarket implied** — already in v1; treat as the headline number.
+2. **Silver Bulletin / 538 archives** — they used to publish a daily CSV
+   of poll-aggregate approval. Check whether the current home publishes
+   one. Cache aggressively (12h TTL) since it's daily.
+3. **Polling reports / RealClearPolitics scrape** — fragile, last resort.
+
+Render:
+- A "Job approval" card alongside sentiment: current %, 30-day change,
+  spark, and the Polymarket EOY-approval implied band underneath as a
+  cross-check.
+- "Right track / wrong track" similarly.
+
+### 5. Election-cycle context (the killer feature)
+
+This is what makes a *voter* dashboard distinct from a generic
+macro-mood page. Build a historical replay:
+
+- For every midterm and presidential cycle since 1960, plot:
+  - the mood index value 6 months before election day,
+  - the seat change for the incumbent's party in the House,
+  - the popular-vote spread.
+- Fit a simple regression: seat loss ≈ α + β × (mood deficit).
+- Surface a single number on the front page: *"Implied House seat change
+  for the incumbent party at current mood: −18 to −24 (90% CI)."*
+
+This is doable in a weekend with public data (House election results +
+historical UMich) and turns the dashboard from "interesting indicators"
+into something a campaign analyst would actually open.
+
+### 6. "What changed" feed
+
+A reverse-chronological feed of every notable indicator move:
+"CPI YoY printed 2.7% (down from 3.1% prior month)", "Initial jobless
+claims jumped to 248k vs 220k 4-wk avg", etc. Auto-populated from the
+existing biggest-movers logic, but persisted across reloads. Useful for
+people who check the dashboard daily.
+
+Implementation: append to a SQLite log on every successful fetch when a
+series prints; render the last 50 entries.
+
+### 7. Compare-to-history overlay
+
+On every card, a button that toggles "show this indicator's path during
+the last comparable period." For inflation, that's 1979–82. For a
+mortgage card, that's 2006–08. Useful for the "have we ever been here
+before" question.
+
+### 8. Polymarket: model-edge scoring
+
+Mirror the climate dashboard's pattern: parse the question of each
+politics market and attach a model probability where we can.
+
+- For approval markets ("Will X have ≥50% approval at year end?") —
+  drift forward from current Polymarket-implied or aggregator-implied
+  approval using the historical residual std.
+- For "right track / wrong track" markets — use the misery-index and
+  sentiment percentile as the model probability.
+- Display an *edge in pp* column like the climate page does.
+
+This is the highest-effort item and depends on (4) landing first.
+
+### 9. Push → poll → realtime
+
+v1 is pull-on-page-load with a 5-min auto-refresh. v2 should:
+- Move FRED fetches to a background poller that updates a shared cache
+  (same pattern as `crypto-dashboard`).
+- Add `Last-Modified` / `If-None-Match` headers to FRED requests to
+  short-circuit when nothing has changed.
+- Optionally an SSE endpoint for the front page so we can push updates
+  without the 5-min polling loop. This is mostly cosmetic — FRED data
+  doesn't move minute to minute.
+
+### 10. Composite-index transparency
+
+Right now the mood index is a black-box "55 / 100." v2 should:
+- Add `/api/mood/explain` returning a paragraph: "Sentiment is in the
+  62nd percentile vs the last 20y, jobs in the 88th, inflation in the
+  31st, …"
+- Click any sub-score bar in the banner to drill into that component's
+  full series.
+
+## Things explicitly out of scope for v2
+
+- **Custom polls.** The point is to consolidate, not replace, existing
+  polling.
+- **Per-state Polymarket coverage.** Polymarket doesn't have meaningful
+  state-level political markets.
+- **Live election forecasting.** The midterm-dashboard exists for that.
+  v2 should *link* to it, not duplicate it.
+
+## Suggested execution order
+
+A weekend each:
+
+1. Partisan + demographic UMich splits (item 1) — pure data add, biggest
+   feel-improvement per hour spent.
+2. Election-cycle regression (item 5) — turns the dashboard into a
+   product, not a display.
+3. State-level map (item 2) — visually impressive, well-bounded scope.
+4. Approval ingestion (item 4) — unlocks the model-edge story.
+5. Polymarket model-edge (item 8) — wraps it up.
+
+Items 6, 7, 9, 10 are quality-of-life and can land any time.

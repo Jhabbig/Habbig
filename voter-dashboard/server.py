@@ -307,6 +307,152 @@ def misery_index(unemployment: Optional[dict], cpi: Optional[dict]) -> Optional[
     }
 
 
+def misery_history(unemployment: Optional[dict], cpi: Optional[dict], months: int = 60) -> list[dict]:
+    """Build a misery-index sparkline by joining UNRATE level with CPI YoY by month.
+
+    Both series are monthly. We compute CPI YoY at each month from the full
+    history, then add it to the same-month unemployment rate. The two series
+    are released on different days, so we inner-join on (year, month)."""
+    if not unemployment or not cpi:
+        return []
+    u_obs = [o for o in unemployment["observations"] if o["value"] is not None]
+    c_obs = [o for o in cpi["observations"] if o["value"] is not None]
+    if len(c_obs) < 13 or not u_obs:
+        return []
+    # CPI YoY series keyed by (year, month)
+    yoys: dict[tuple[int, int], float] = {}
+    for i in range(12, len(c_obs)):
+        prev = c_obs[i - 12]["value"]
+        cur = c_obs[i]["value"]
+        if prev > 0:
+            y, m = c_obs[i]["date"][:4], c_obs[i]["date"][5:7]
+            yoys[(int(y), int(m))] = (cur / prev - 1.0) * 100
+    out: list[dict] = []
+    for o in u_obs:
+        y, m = int(o["date"][:4]), int(o["date"][5:7])
+        cpi_yoy = yoys.get((y, m))
+        if cpi_yoy is None:
+            continue
+        out.append({"date": o["date"], "value": round(o["value"] + cpi_yoy, 2)})
+    return out[-months:]
+
+
+def recession_state(usrec: Optional[dict]) -> Optional[dict]:
+    """Read the NBER recession indicator series.
+
+    USREC is 1 during NBER-dated recessions and 0 otherwise. We report the
+    current state, the most recent recession's start/end (if any), and how
+    many months it's been since the last recession ended."""
+    if not usrec:
+        return None
+    obs = [o for o in usrec["observations"] if o["value"] is not None]
+    if not obs:
+        return None
+    latest = obs[-1]
+    in_recession = bool(latest["value"])
+    # Find the most recent recession (run of 1s) by walking backwards
+    last_start: Optional[str] = None
+    last_end: Optional[str] = None
+    current_run_start: Optional[str] = None
+    for o in obs:
+        if o["value"] >= 0.5:
+            if current_run_start is None:
+                current_run_start = o["date"]
+        else:
+            if current_run_start is not None:
+                last_start = current_run_start
+                # The end is the previous month — but we just store the start
+                # of the next 0 row as "ended in" for readability.
+                last_end = o["date"]
+                current_run_start = None
+    if current_run_start is not None and in_recession:
+        last_start = current_run_start
+        last_end = None
+    # Months since the last recession ended (None if we're in one or never had one)
+    months_since: Optional[int] = None
+    if last_end and not in_recession:
+        ey, em = int(last_end[:4]), int(last_end[5:7])
+        ly, lm = int(latest["date"][:4]), int(latest["date"][5:7])
+        months_since = (ly - ey) * 12 + (lm - em)
+    return {
+        "in_recession": in_recession,
+        "as_of": latest["date"],
+        "last_recession_start": last_start,
+        "last_recession_end": last_end,
+        "months_since_last_recession": months_since,
+    }
+
+
+def biggest_movers(series: dict[str, dict], lookback_months: int = 3) -> list[dict]:
+    """Return the indicators whose latest reading has moved most vs N months ago.
+
+    For each tracked indicator we compute the % change (or pp change for
+    percentage-valued series) and z-score that change against the same series'
+    recent volatility. Returns the top 3 by absolute z-score, each tagged
+    'good' or 'bad' for the voter using FRED_SERIES[*].good."""
+    moves: list[dict] = []
+    # Map of series_id → (display name, value-kind, good-direction)
+    catalog = {
+        "UMCSENT":    ("Consumer sentiment",  "level", "high"),
+        "UNRATE":     ("Unemployment rate",   "pp",    "low"),
+        "GASREGW":    ("Gas price",           "pct",   "low"),
+        "MORTGAGE30US": ("Mortgage rate",     "pp",    "low"),
+        "ICSA":       ("Jobless claims",      "pct",   "low"),
+        "PSAVERT":    ("Saving rate",         "pp",    "high"),
+    }
+    for sid, (label, kind, good_dir) in catalog.items():
+        s = series.get(sid)
+        if not s:
+            continue
+        non_null = [o for o in s["observations"] if o["value"] is not None]
+        # Weekly series need ~12 obs to look back 3 months; monthly need 3.
+        cadence = 4 if sid in ("GASREGW", "MORTGAGE30US", "ICSA") else 1
+        n_back = lookback_months * cadence
+        if len(non_null) < n_back + 1:
+            continue
+        cur = non_null[-1]["value"]
+        prev = non_null[-(n_back + 1)]["value"]
+        if kind == "pct" and prev > 0:
+            change = (cur / prev - 1.0) * 100
+            change_str = f"{change:+.1f}%"
+        elif kind == "pp":
+            change = cur - prev
+            change_str = f"{change:+.2f} pp"
+        else:  # level
+            change = cur - prev
+            change_str = f"{change:+.1f}"
+        # Z-score the change against the rolling-window distribution of same-
+        # length changes over the last ~10 years (cadence × 120 obs).
+        window = non_null[-(cadence * 120):] if len(non_null) >= cadence * 120 else non_null
+        diffs: list[float] = []
+        for i in range(n_back, len(window)):
+            p = window[i - n_back]["value"]
+            c = window[i]["value"]
+            if kind == "pct" and p > 0:
+                diffs.append((c / p - 1.0) * 100)
+            else:
+                diffs.append(c - p)
+        if len(diffs) < 12:
+            continue
+        mean = sum(diffs) / len(diffs)
+        var = sum((d - mean) ** 2 for d in diffs) / len(diffs)
+        sigma = math.sqrt(var) if var > 0 else 1e-9
+        z = (change - mean) / sigma
+        # Direction relative to the voter
+        is_good = (change > 0) if good_dir == "high" else (change < 0)
+        moves.append({
+            "series_id": sid,
+            "label": label,
+            "change": round(change, 3),
+            "change_str": change_str,
+            "z_score": round(z, 2),
+            "abs_z": abs(z),
+            "is_good_for_voter": bool(is_good),
+        })
+    moves.sort(key=lambda m: m["abs_z"], reverse=True)
+    return [{k: v for k, v in m.items() if k != "abs_z"} for m in moves[:3]]
+
+
 def _percentile_from_history(observations: list[dict], target: float, lookback: int = 240) -> Optional[float]:
     """Return percentile (0-1) of ``target`` within last ``lookback`` non-null obs.
     Used to translate an absolute value into a 0-1 'how does this compare to the
@@ -591,10 +737,17 @@ def api_summary():
     earn_w = series.get("CES0500000013")
     unrate = series.get("UNRATE")
     icsa = series.get("ICSA")
+    usrec = series.get("USREC")
 
+    misery_now = misery_index(unrate, cpi)
     return jsonify({
         "mood": voter_mood_index(series),
-        "misery": misery_index(unrate, cpi),
+        "misery": {
+            **(misery_now or {}),
+            "spark": misery_history(unrate, cpi, months=60),
+        } if misery_now else None,
+        "recession": recession_state(usrec),
+        "biggest_movers": biggest_movers(series, lookback_months=3),
         "real_wages": {
             "hourly_yoy_pct": real_wage_yoy(earn_h, cpi),
             "weekly_yoy_pct": real_wage_yoy(earn_w, cpi),
