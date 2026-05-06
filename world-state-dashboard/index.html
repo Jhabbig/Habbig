@@ -2069,7 +2069,246 @@ body {
 .cb-input-row { display: flex; gap: 4px; margin-bottom: 8px; }
 .cb-input-row input { flex: 1; background: #050f1c; color: var(--text-1); border: 1px solid var(--border); padding: 5px 8px; font-family: inherit; font-size: 11px; }
 .cb-input-row button { background: rgba(30,200,120,0.15); color: #1ec878; border: 1px solid rgba(30,200,120,0.4); padding: 5px 12px; font-family: inherit; font-size: 10px; cursor: pointer; }
-</style>
+
+/* ──────────────────────────────────────────────────────────────────
+   Analyst Mode — entity-centric event view (timeline + dossier +
+   filter rail + map pins). Coexists with the existing dashboard;
+   none of the rules below override panel-grid / map / header CSS.
+   ────────────────────────────────────────────────────────────────── */
+
+/* Map markers — severity colors per Strike/Statement/etc. */
+.am-pin {
+  position: relative;
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.6);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.am-pin:hover { transform: scale(1.35); }
+.am-pin.sev-1 { background: var(--text-2); }
+.am-pin.sev-2 { background: var(--blue); }
+.am-pin.sev-3 { background: var(--orange); }
+.am-pin.sev-4 { background: var(--red); }
+.am-pin.sev-4::after {
+  content: ''; position: absolute; inset: -6px; border-radius: 50%;
+  border: 2px solid var(--red); opacity: 0.55;
+  animation: am-pulse 1.6s ease-out infinite;
+}
+@keyframes am-pulse {
+  0%   { transform: scale(0.6); opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0;   }
+}
+
+/* Timeline strip — fixed-bottom event density. */
+.am-timeline {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: 96px; background: var(--bg-1);
+  border-top: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-md);
+  display: flex; flex-direction: column; z-index: 90;
+  font-family: var(--font-ui);
+}
+.am-timeline.collapsed { height: 28px; }
+.am-tl-head {
+  height: 28px; padding: 0 14px;
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-2);
+}
+.am-tl-title { color: var(--text-1); font-weight: 600; }
+.am-tl-stat  { color: var(--text-2); font-family: var(--mono); }
+.am-tl-stat strong { color: var(--text-0); }
+.am-tl-spacer { flex: 1; }
+.am-tl-range-btn,
+.am-tl-collapse {
+  background: transparent; border: 1px solid var(--border-strong);
+  color: var(--text-1); font: inherit; font-size: 10px;
+  padding: 2px 8px; border-radius: var(--radius-xs); cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.am-tl-range-btn.active { background: var(--green-dim); border-color: var(--green); color: var(--green-bright); }
+.am-tl-range-btn:hover { background: rgba(255,255,255,0.04); }
+.am-tl-collapse { padding: 2px 6px; }
+.am-tl-canvas-wrap { flex: 1; padding: 4px 14px 8px; min-height: 0; }
+.am-tl-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+body { padding-bottom: 96px; }
+body.am-tl-collapsed { padding-bottom: 28px; }
+body.am-tl-hidden    { padding-bottom: 0; }
+
+/* Filter rail — right edge, collapsible. */
+.am-rail {
+  position: fixed; top: 64px; right: 0; bottom: 104px;
+  width: 240px; background: var(--bg-1);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-md);
+  display: flex; flex-direction: column; z-index: 80;
+  transform: translateX(0); transition: transform 180ms ease;
+  font-family: var(--font-ui);
+}
+.am-rail.hidden { transform: translateX(calc(100% - 30px)); }
+.am-rail-tab {
+  position: absolute; left: -28px; top: 50%; transform: translateY(-50%) rotate(-90deg);
+  transform-origin: center;
+  background: var(--bg-2); color: var(--text-1);
+  padding: 4px 12px; border: 1px solid var(--border-strong); border-bottom: none;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  cursor: pointer; border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+}
+.am-rail-head {
+  padding: 10px 14px; border-bottom: 1px solid var(--border-light);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-2); display: flex; align-items: center; justify-content: space-between;
+}
+.am-rail-head strong { color: var(--text-0); font-weight: 600; }
+.am-rail-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+.am-section { margin-bottom: 16px; }
+.am-section-title {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-2); margin-bottom: 6px; font-weight: 600;
+}
+.am-chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.am-chip {
+  background: var(--bg-2); color: var(--text-1);
+  border: 1px solid var(--border); padding: 3px 8px;
+  font: inherit; font-size: 10px; border-radius: 999px;
+  cursor: pointer; user-select: none;
+}
+.am-chip:hover { background: var(--bg-3); }
+.am-chip.active {
+  background: var(--green-dim); color: var(--green-bright);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+.am-search {
+  width: 100%; background: var(--bg-2); color: var(--text-0);
+  border: 1px solid var(--border); padding: 6px 8px;
+  font: inherit; font-size: 12px; border-radius: var(--radius-xs);
+}
+.am-search:focus { border-color: var(--blue); outline: none; }
+.am-search-results { margin-top: 4px; max-height: 160px; overflow-y: auto; }
+.am-search-result {
+  padding: 5px 8px; cursor: pointer; border-radius: var(--radius-xs);
+  font-size: 11px; color: var(--text-1);
+}
+.am-search-result:hover { background: var(--bg-2); color: var(--text-0); }
+.am-search-result .kind {
+  color: var(--text-2); font-size: 9px; text-transform: uppercase;
+  margin-left: 6px; letter-spacing: 0.05em;
+}
+.am-pinboards { display: flex; flex-direction: column; gap: 4px; }
+.am-pinboard {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--bg-2); border: 1px solid var(--border);
+  padding: 5px 8px; border-radius: var(--radius-xs); font-size: 11px;
+  cursor: pointer; color: var(--text-1);
+}
+.am-pinboard:hover { border-color: var(--border-strong); color: var(--text-0); }
+.am-pinboard .am-pin-del {
+  background: transparent; border: none; color: var(--text-2);
+  cursor: pointer; padding: 0 2px; font-size: 13px; line-height: 1;
+}
+.am-pinboard .am-pin-del:hover { color: var(--red); }
+.am-rail-foot { padding: 10px 14px; border-top: 1px solid var(--border-light); }
+.am-btn {
+  width: 100%; background: var(--bg-2); color: var(--text-0);
+  border: 1px solid var(--border-strong); padding: 6px 10px;
+  font: inherit; font-size: 11px; border-radius: var(--radius-xs);
+  cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.am-btn:hover { background: var(--bg-3); border-color: var(--green); color: var(--green-bright); }
+.am-btn-primary { background: var(--green-dim); border-color: rgba(74,222,128,0.45); color: var(--green-bright); }
+
+/* Dossier drawer — slides in from the right. */
+.am-drawer {
+  position: fixed; top: 64px; right: 0; bottom: 104px;
+  width: 420px; max-width: 100vw;
+  background: var(--bg-1); border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(110%); transition: transform 220ms ease;
+  z-index: 110; display: flex; flex-direction: column;
+  font-family: var(--font-ui);
+}
+.am-drawer.open { transform: translateX(0); }
+.am-drawer-head {
+  padding: 14px 18px; border-bottom: 1px solid var(--border-light);
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+.am-drawer-head h3 {
+  font-size: 15px; font-weight: 600; color: var(--text-0); letter-spacing: -0.01em;
+}
+.am-drawer-head .kind {
+  display: inline-block; background: var(--bg-2);
+  color: var(--text-2); border: 1px solid var(--border);
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  margin-top: 4px;
+}
+.am-drawer-close {
+  background: transparent; border: none; color: var(--text-2);
+  font-size: 22px; cursor: pointer; padding: 0; line-height: 1;
+}
+.am-drawer-close:hover { color: var(--text-0); }
+.am-drawer-body { flex: 1; overflow-y: auto; padding: 14px 18px 24px; }
+.am-d-section { margin-bottom: 18px; }
+.am-d-section-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-2); margin-bottom: 6px; font-weight: 600;
+  display: flex; justify-content: space-between;
+}
+.am-event-card {
+  background: var(--bg-2); border: 1px solid var(--border-light);
+  border-left: 3px solid var(--text-2);
+  padding: 8px 10px; margin-bottom: 6px; border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.am-event-card:hover { border-color: var(--border-strong); }
+.am-event-card.sev-2 { border-left-color: var(--blue); }
+.am-event-card.sev-3 { border-left-color: var(--orange); }
+.am-event-card.sev-4 { border-left-color: var(--red); }
+.am-ec-meta {
+  display: flex; gap: 8px; font-size: 9px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-2); margin-bottom: 3px;
+}
+.am-ec-type { color: var(--text-1); font-weight: 600; }
+.am-ec-summary { color: var(--text-0); font-size: 12px; line-height: 1.4; }
+.am-ec-actors {
+  margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;
+}
+.am-actor-pill {
+  background: var(--bg-3); color: var(--text-1);
+  border: 1px solid var(--border-light);
+  padding: 1px 6px; border-radius: 999px; font-size: 9px;
+  cursor: pointer;
+}
+.am-actor-pill:hover { color: var(--text-0); border-color: var(--blue); }
+.am-actor-pill .role { color: var(--text-2); margin-left: 3px; }
+.am-source {
+  font-size: 10px; color: var(--text-2); margin-top: 5px;
+  display: flex; gap: 6px; align-items: center;
+}
+.am-source a { color: var(--blue); text-decoration: none; }
+.am-source a:hover { text-decoration: underline; }
+.am-conf {
+  font-family: var(--mono); color: var(--text-2);
+  background: var(--bg-3); padding: 0 4px; border-radius: 2px;
+}
+.am-graph {
+  background: var(--bg-2); border: 1px solid var(--border-light);
+  border-radius: var(--radius-xs); padding: 8px;
+}
+.am-graph-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 0; font-size: 11px; cursor: pointer;
+  border-bottom: 1px solid var(--border-light);
+}
+.am-graph-row:last-child { border-bottom: none; }
+.am-graph-row:hover { color: var(--green-bright); }
+.am-graph-weight {
+  font-family: var(--mono); color: var(--text-2); font-size: 10px;
+}
+
 </head>
 <body>
 
@@ -2222,6 +2461,65 @@ body {
 <div class="country-modal" id="country-modal">
   <div class="cm-dialog" id="cm-dialog">
     <!-- Populated by JS -->
+  </div>
+</div>
+
+<!-- ── Analyst Mode: Filter Rail ───────────────────── -->
+<aside class="am-rail" id="am-rail">
+  <button class="am-rail-tab" id="am-rail-tab" type="button">Analyst</button>
+  <div class="am-rail-head">
+    <strong>Analyst</strong>
+    <span class="am-tl-stat" id="am-stat-summary">—</span>
+  </div>
+  <div class="am-rail-body">
+    <div class="am-section">
+      <div class="am-section-title">Event types</div>
+      <div class="am-chip-row" id="am-type-chips">
+        <!-- populated by JS -->
+      </div>
+    </div>
+    <div class="am-section">
+      <div class="am-section-title">Search actor</div>
+      <input class="am-search" id="am-search" placeholder="Country, org, person…" autocomplete="off" />
+      <div class="am-search-results" id="am-search-results"></div>
+    </div>
+    <div class="am-section">
+      <div class="am-section-title">Pinboards</div>
+      <div class="am-pinboards" id="am-pinboards"></div>
+    </div>
+  </div>
+  <div class="am-rail-foot">
+    <button class="am-btn am-btn-primary" id="am-save-pinboard" type="button">Save current view</button>
+  </div>
+</aside>
+
+<!-- ── Analyst Mode: Dossier Drawer ────────────────── -->
+<aside class="am-drawer" id="am-drawer" aria-hidden="true">
+  <div class="am-drawer-head">
+    <div>
+      <h3 id="am-drawer-title">—</h3>
+      <span class="kind" id="am-drawer-kind"></span>
+    </div>
+    <button class="am-drawer-close" id="am-drawer-close" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div class="am-drawer-body" id="am-drawer-body"><!-- populated by JS --></div>
+</aside>
+
+<!-- ── Analyst Mode: Timeline Strip ────────────────── -->
+<div class="am-timeline" id="am-timeline">
+  <div class="am-tl-head">
+    <span class="am-tl-title">Timeline</span>
+    <span class="am-tl-stat" id="am-tl-counts">— events</span>
+    <span class="am-tl-spacer"></span>
+    <button class="am-tl-range-btn" data-range="3600"   type="button">1h</button>
+    <button class="am-tl-range-btn" data-range="21600"  type="button">6h</button>
+    <button class="am-tl-range-btn active" data-range="86400" type="button">24h</button>
+    <button class="am-tl-range-btn" data-range="604800" type="button">7d</button>
+    <button class="am-tl-range-btn" data-range="2592000" type="button">30d</button>
+    <button class="am-tl-collapse" id="am-tl-collapse" type="button" aria-label="Collapse">_</button>
+  </div>
+  <div class="am-tl-canvas-wrap">
+    <canvas class="am-tl-canvas" id="am-tl-canvas"></canvas>
   </div>
 </div>
 
@@ -6983,6 +7281,482 @@ function togglePinMap() {
   <span>layers: <span id="layer-count">5</span>/16</span> &nbsp;·&nbsp;
   <span>sources: osint · opensky · celestrak · eonet</span>
 </div>
+
+<!-- ──────────────────────────────────────────────────────────────────
+     Analyst Mode bootstrap — runs after the main IIFE so it can use
+     `globeMap` and other globals exposed by the dashboard.
+     ────────────────────────────────────────────────────────────────── -->
+<script>
+(function() {
+  'use strict';
+
+  const TYPES = ['Strike','Incident','Movement','Sanction','Deal','Election',
+                 'Protest','Disaster','Outage','Statement'];
+
+  const state = {
+    events: [],
+    timeline: null,
+    pinboards: [],
+    filters: {
+      types: new Set(TYPES),
+      actor: null,
+      since: nowSec() - 86400,
+      window: 86400,
+    },
+    markers: [],
+    railOpen: true,
+  };
+
+  function nowSec() { return Math.floor(Date.now() / 1000); }
+
+  function fmtAgo(ts) {
+    const sec = Math.max(1, Math.floor(Date.now()/1000 - ts));
+    if (sec < 60) return sec + 's ago';
+    if (sec < 3600) return Math.floor(sec/60) + 'm ago';
+    if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
+    return Math.floor(sec/86400) + 'd ago';
+  }
+
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+
+  // ── Filter rail ─────────────────────────────────────────────────────
+  function renderTypeChips() {
+    const row = document.getElementById('am-type-chips');
+    if (!row) return;
+    row.innerHTML = TYPES.map(t =>
+      `<button class="am-chip ${state.filters.types.has(t) ? 'active' : ''}" data-type="${t}" type="button">${t}</button>`
+    ).join('');
+    row.querySelectorAll('.am-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.type;
+        if (state.filters.types.has(t)) state.filters.types.delete(t);
+        else state.filters.types.add(t);
+        btn.classList.toggle('active');
+        loadEvents();
+      });
+    });
+  }
+
+  function bindRail() {
+    const tab = document.getElementById('am-rail-tab');
+    const rail = document.getElementById('am-rail');
+    tab?.addEventListener('click', () => {
+      state.railOpen = !state.railOpen;
+      rail.classList.toggle('hidden', !state.railOpen);
+    });
+    document.getElementById('am-search')?.addEventListener('input', debounce(searchEntities, 200));
+    document.getElementById('am-save-pinboard')?.addEventListener('click', savePinboard);
+
+    document.getElementById('am-drawer-close')?.addEventListener('click', closeDrawer);
+
+    document.querySelectorAll('.am-tl-range-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.am-tl-range-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        state.filters.window = parseInt(b.dataset.range, 10);
+        state.filters.since = nowSec() - state.filters.window;
+        loadEvents();
+        loadTimeline();
+      });
+    });
+
+    document.getElementById('am-tl-collapse')?.addEventListener('click', () => {
+      const tl = document.getElementById('am-timeline');
+      tl.classList.toggle('collapsed');
+      document.body.classList.toggle('am-tl-collapsed', tl.classList.contains('collapsed'));
+    });
+  }
+
+  function debounce(fn, ms) {
+    let t; return function(...a) { clearTimeout(t); t = setTimeout(() => fn.apply(this, a), ms); };
+  }
+
+  // ── Search ──────────────────────────────────────────────────────────
+  async function searchEntities() {
+    const q = document.getElementById('am-search').value.trim();
+    const out = document.getElementById('am-search-results');
+    if (!q) { out.innerHTML = ''; return; }
+    try {
+      const r = await fetch('/api/analyst/entities?q=' + encodeURIComponent(q));
+      const d = await r.json();
+      out.innerHTML = (d.entities || []).map(e =>
+        `<div class="am-search-result" data-id="${escHtml(e.id)}">${escHtml(e.name)}<span class="kind">${escHtml(e.kind)}</span></div>`
+      ).join('');
+      out.querySelectorAll('.am-search-result').forEach(el => {
+        el.addEventListener('click', () => openEntity(el.dataset.id));
+      });
+    } catch (e) { console.error('entity search failed', e); }
+  }
+
+  // ── Events feed + map pins ─────────────────────────────────────────
+  async function loadEvents() {
+    const types = Array.from(state.filters.types);
+    if (!types.length) {
+      state.events = [];
+      renderPins();
+      updateStats();
+      return;
+    }
+    const params = new URLSearchParams({
+      since: String(state.filters.since),
+      types: types.join(','),
+      limit: '300',
+    });
+    if (state.filters.actor) params.set('actor', state.filters.actor);
+    try {
+      const r = await fetch('/api/analyst/events?' + params.toString());
+      const d = await r.json();
+      state.events = d.events || [];
+      renderPins();
+      updateStats();
+    } catch (e) { console.error('events fetch failed', e); }
+  }
+
+  function updateStats() {
+    const stat = document.getElementById('am-stat-summary');
+    if (stat) stat.textContent = state.events.length + ' evts';
+    const counts = document.getElementById('am-tl-counts');
+    if (counts) counts.innerHTML = '<strong>' + state.events.length + '</strong> events · ' + Array.from(state.filters.types).length + '/' + TYPES.length + ' types';
+  }
+
+  function renderPins() {
+    if (typeof globeMap === 'undefined' || !globeMap) return;
+    state.markers.forEach(m => m.remove());
+    state.markers = [];
+    state.events.forEach(ev => {
+      if (ev.lat == null || ev.lon == null) return;
+      const el = document.createElement('div');
+      el.className = 'am-pin sev-' + (ev.severity || 1);
+      el.title = ev.type + ' · ' + ev.summary;
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        openEvent(ev.id);
+      });
+      try {
+        const m = new maplibregl.Marker({ element: el })
+          .setLngLat([ev.lon, ev.lat])
+          .addTo(globeMap);
+        state.markers.push(m);
+      } catch (err) { /* map not ready */ }
+    });
+  }
+
+  // ── Timeline ────────────────────────────────────────────────────────
+  async function loadTimeline() {
+    const span = state.filters.window;
+    // Bucket size: ~50 buckets across the window.
+    const bucket = Math.max(60, Math.floor(span / 50));
+    const params = new URLSearchParams({
+      since: String(nowSec() - span),
+      until: String(nowSec()),
+      bucket: String(bucket),
+    });
+    try {
+      const r = await fetch('/api/analyst/timeline?' + params.toString());
+      state.timeline = await r.json();
+      drawTimeline();
+    } catch (e) { console.error('timeline fetch failed', e); }
+  }
+
+  function drawTimeline() {
+    const c = document.getElementById('am-tl-canvas');
+    if (!c || !state.timeline) return;
+    const ctx = c.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    c.width = Math.floor(w * dpr); c.height = Math.floor(h * dpr);
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+
+    const tl = state.timeline;
+    const buckets = tl.buckets || [];
+    if (!buckets.length) {
+      ctx.fillStyle = '#6c6f78';
+      ctx.font = '10px Inter, system-ui';
+      ctx.fillText('No events in range', 6, 14);
+      return;
+    }
+
+    // Compute totals per bucket and per-type colors
+    const colors = {
+      Strike: '#f87171', Incident: '#fb923c', Movement: '#facc15',
+      Sanction: '#818cf8', Deal: '#4ade80', Election: '#60a5fa',
+      Protest: '#fb923c', Disaster: '#f87171', Outage: '#fb923c',
+      Statement: '#6c6f78',
+    };
+    const totals = new Array(buckets.length).fill(0);
+    const series = tl.series || {};
+    Object.values(series).forEach(arr => {
+      arr.forEach((v, i) => totals[i] += v);
+    });
+    const max = Math.max(1, ...totals);
+    const barW = w / buckets.length;
+
+    // Draw stacked bars (per type)
+    buckets.forEach((_, i) => {
+      let y0 = h;
+      Object.keys(series).forEach(type => {
+        const v = series[type][i] || 0;
+        if (!v) return;
+        const barH = (v / max) * (h - 6);
+        ctx.fillStyle = colors[type] || '#6c6f78';
+        ctx.fillRect(i * barW + 0.5, y0 - barH, Math.max(1, barW - 1), barH);
+        y0 -= barH;
+      });
+    });
+
+    // Tick marks (start, mid, end)
+    ctx.fillStyle = '#6c6f78';
+    ctx.font = '9px JetBrains Mono, monospace';
+    const fmt = ts => {
+      const d = new Date(ts * 1000);
+      if (state.filters.window <= 86400)
+        return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      return (d.getMonth()+1) + '/' + d.getDate();
+    };
+    ctx.fillText(fmt(buckets[0]), 2, h - 1);
+    const midText = fmt(buckets[Math.floor(buckets.length/2)]);
+    ctx.fillText(midText, w/2 - 14, h - 1);
+    const endText = fmt(buckets[buckets.length - 1]);
+    ctx.fillText(endText, w - 36, h - 1);
+  }
+
+  // ── Dossier drawer ──────────────────────────────────────────────────
+  function openDrawer() {
+    const d = document.getElementById('am-drawer');
+    d.classList.add('open');
+    d.setAttribute('aria-hidden', 'false');
+  }
+  function closeDrawer() {
+    const d = document.getElementById('am-drawer');
+    d.classList.remove('open');
+    d.setAttribute('aria-hidden', 'true');
+  }
+
+  async function openEntity(entityId) {
+    try {
+      const r = await fetch('/api/analyst/entity/' + encodeURIComponent(entityId));
+      if (!r.ok) return;
+      const d = await r.json();
+      renderEntityDossier(d);
+      openDrawer();
+      // Pan map to entity if it has coords.
+      if (d.entity && d.entity.lat != null && typeof globeMap !== 'undefined') {
+        try { globeMap.flyTo({ center: [d.entity.lon, d.entity.lat], zoom: 4, speed: 1.4 }); } catch(e) {}
+      }
+    } catch (e) { console.error('entity fetch failed', e); }
+  }
+
+  async function openEvent(eventId) {
+    try {
+      const r = await fetch('/api/analyst/event/' + eventId);
+      if (!r.ok) return;
+      const ev = await r.json();
+      renderEventDossier(ev);
+      openDrawer();
+    } catch (e) { console.error('event fetch failed', e); }
+  }
+
+  function eventCardHtml(ev) {
+    const sev = ev.severity || 1;
+    const sources = (ev.sources || []).map(s =>
+      `<div class="am-source">via <strong>${escHtml(s.publisher)}</strong>${s.url ? ` · <a href="${escHtml(s.url)}" target="_blank" rel="noopener">source</a>` : ''}</div>`
+    ).join('');
+    const actors = (ev.actors || []).map(a =>
+      `<span class="am-actor-pill" data-id="${escHtml(a.id)}">${escHtml(a.name)}<span class="role">${escHtml(a.role)}</span></span>`
+    ).join('');
+    return `
+      <div class="am-event-card sev-${sev}" data-event-id="${ev.id}">
+        <div class="am-ec-meta">
+          <span class="am-ec-type">${escHtml(ev.type)}</span>
+          <span>${fmtAgo(ev.occurred_at)}</span>
+          <span class="am-conf">${Math.round((ev.confidence||0)*100)}%</span>
+        </div>
+        <div class="am-ec-summary">${escHtml(ev.summary)}</div>
+        ${actors ? `<div class="am-ec-actors">${actors}</div>` : ''}
+        ${sources}
+      </div>
+    `;
+  }
+
+  function bindDossierClicks(root) {
+    root.querySelectorAll('.am-actor-pill').forEach(el => {
+      el.addEventListener('click', () => openEntity(el.dataset.id));
+    });
+    root.querySelectorAll('.am-graph-row').forEach(el => {
+      el.addEventListener('click', () => openEntity(el.dataset.id));
+    });
+    root.querySelectorAll('.am-event-card').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.eventId;
+        if (id) openEvent(parseInt(id, 10));
+      });
+    });
+  }
+
+  function renderEntityDossier(d) {
+    document.getElementById('am-drawer-title').textContent = d.entity.name;
+    document.getElementById('am-drawer-kind').textContent = d.entity.kind;
+    const body = document.getElementById('am-drawer-body');
+    const events = d.events || [];
+    const graph = (d.graph && d.graph.edges) || [];
+    const nodeMap = {};
+    (d.graph && d.graph.nodes || []).forEach(n => nodeMap[n.id] = n);
+
+    body.innerHTML = `
+      <div class="am-d-section">
+        <div class="am-d-section-title">
+          <span>Recent events</span>
+          <span class="am-tl-stat">${events.length}</span>
+        </div>
+        ${events.length ? events.map(eventCardHtml).join('') : '<div class="am-tl-stat">No events on file.</div>'}
+      </div>
+      <div class="am-d-section">
+        <div class="am-d-section-title">
+          <span>Co-occurring entities</span>
+          <span class="am-tl-stat">${graph.length}</span>
+        </div>
+        ${graph.length ? `<div class="am-graph">${graph.slice(0, 12).map(e => {
+          const other = nodeMap[e.target];
+          const name = other ? other.name : e.target;
+          return `<div class="am-graph-row" data-id="${escHtml(e.target)}"><span>${escHtml(name)}</span><span class="am-graph-weight">${e.weight}×</span></div>`;
+        }).join('')}</div>` : '<div class="am-tl-stat">No co-occurrences yet.</div>'}
+      </div>
+      <div class="am-d-section">
+        <div class="am-d-section-title"><span>Filter feed by ${escHtml(d.entity.name)}</span></div>
+        <button class="am-btn" id="am-filter-by-entity" type="button">Apply as feed filter</button>
+      </div>
+    `;
+    document.getElementById('am-filter-by-entity')?.addEventListener('click', () => {
+      state.filters.actor = d.entity.id;
+      loadEvents();
+    });
+    bindDossierClicks(body);
+  }
+
+  function renderEventDossier(ev) {
+    document.getElementById('am-drawer-title').textContent = ev.summary;
+    document.getElementById('am-drawer-kind').textContent = ev.type + ' · ' + fmtAgo(ev.occurred_at);
+    const body = document.getElementById('am-drawer-body');
+    body.innerHTML = `
+      <div class="am-d-section">
+        <div class="am-d-section-title"><span>Confidence / severity</span></div>
+        <div>Confidence: <span class="am-conf">${Math.round((ev.confidence||0)*100)}%</span> · Severity: <strong>${ev.severity}</strong></div>
+      </div>
+      <div class="am-d-section">
+        <div class="am-d-section-title"><span>Actors</span><span class="am-tl-stat">${(ev.actors||[]).length}</span></div>
+        <div class="am-ec-actors">${(ev.actors||[]).map(a =>
+          `<span class="am-actor-pill" data-id="${escHtml(a.id)}">${escHtml(a.name)}<span class="role">${escHtml(a.role)}</span></span>`
+        ).join('')}</div>
+      </div>
+      <div class="am-d-section">
+        <div class="am-d-section-title"><span>Sources</span><span class="am-tl-stat">${(ev.sources||[]).length}</span></div>
+        ${(ev.sources||[]).map(s =>
+          `<div class="am-source">via <strong>${escHtml(s.publisher)}</strong>${s.url ? ` · <a href="${escHtml(s.url)}" target="_blank" rel="noopener">${escHtml(s.title)}</a>` : ` · ${escHtml(s.title)}`}</div>`
+        ).join('')}
+      </div>
+    `;
+    bindDossierClicks(body);
+  }
+
+  // ── Pinboards ───────────────────────────────────────────────────────
+  async function loadPinboards() {
+    try {
+      const r = await fetch('/api/analyst/pinboards');
+      const d = await r.json();
+      state.pinboards = d.pinboards || [];
+      renderPinboards();
+    } catch (e) { console.error('pinboard list failed', e); }
+  }
+
+  function renderPinboards() {
+    const wrap = document.getElementById('am-pinboards');
+    if (!wrap) return;
+    if (!state.pinboards.length) {
+      wrap.innerHTML = '<div class="am-tl-stat" style="font-size:10px">No saved views yet.</div>';
+      return;
+    }
+    wrap.innerHTML = state.pinboards.map(p =>
+      `<div class="am-pinboard" data-id="${p.id}">
+         <span>${escHtml(p.name)}</span>
+         <button class="am-pin-del" data-id="${p.id}" type="button" aria-label="Delete">&times;</button>
+       </div>`
+    ).join('');
+    wrap.querySelectorAll('.am-pinboard').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.classList.contains('am-pin-del')) return;
+        const id = parseInt(el.dataset.id, 10);
+        applyPinboard(state.pinboards.find(p => p.id === id));
+      });
+    });
+    wrap.querySelectorAll('.am-pin-del').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id, 10);
+        await fetch('/api/analyst/pinboards/' + id, { method: 'DELETE' });
+        loadPinboards();
+      });
+    });
+  }
+
+  async function savePinboard() {
+    const name = prompt('Name this view:');
+    if (!name) return;
+    const filters = {
+      types: Array.from(state.filters.types),
+      actor: state.filters.actor,
+      window: state.filters.window,
+    };
+    try {
+      await fetch('/api/analyst/pinboards', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name, filters }),
+      });
+      loadPinboards();
+    } catch (e) { console.error('pinboard save failed', e); }
+  }
+
+  function applyPinboard(p) {
+    if (!p) return;
+    const f = p.filters || {};
+    if (Array.isArray(f.types) && f.types.length) {
+      state.filters.types = new Set(f.types);
+    }
+    state.filters.actor = f.actor || null;
+    if (f.window) {
+      state.filters.window = f.window;
+      state.filters.since = nowSec() - f.window;
+      document.querySelectorAll('.am-tl-range-btn').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.range, 10) === f.window);
+      });
+    }
+    renderTypeChips();
+    loadEvents();
+    loadTimeline();
+  }
+
+  // ── Bootstrap ───────────────────────────────────────────────────────
+  function init() {
+    bindRail();
+    renderTypeChips();
+    loadPinboards();
+    loadEvents();
+    loadTimeline();
+    setInterval(loadEvents, 60 * 1000);
+    setInterval(loadTimeline, 60 * 1000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
 
 </body>
 </html>

@@ -29,6 +29,10 @@ from infrastructure_data import (
     OIL_RARE_EARTH_FIELDS as _INFRA_FIELDS,
 )
 import cross_dashboard
+import analyst_db
+import event_extractor
+
+analyst_db.init_db()
 
 app = FastAPI(title="World State Dashboard")
 
@@ -151,7 +155,34 @@ def fetch_news():
     with _cache_lock:
         NEWS_CACHE["data"] = all_items[:60]
         NEWS_CACHE["fetched_at"] = now
+
+    # Extract typed events into the analyst DB. Cheap (regex-based) so we run
+    # it inline; failures here must never break the news endpoint.
+    try:
+        _ingest_events_from_news(all_items[:60])
+    except Exception as e:
+        logging.warning("event ingestion failed: %s", e)
+
     return NEWS_CACHE["data"]
+
+
+def _ingest_events_from_news(items):
+    candidates = event_extractor.extract_batch(items)
+    for ev in candidates:
+        src = ev["source"]
+        try:
+            source_id = analyst_db.upsert_source(
+                publisher=src["publisher"], title=src["title"], url=src["url"],
+                snippet=src["snippet"], published_at=src["published_at"],
+            )
+            analyst_db.insert_event(
+                event_type=ev["type"], summary=ev["summary"],
+                occurred_at=ev["occurred_at"], lat=ev["lat"], lon=ev["lon"],
+                confidence=ev["confidence"], severity=ev["severity"],
+                actors=ev["actors"], source_ids=[source_id],
+            )
+        except Exception as e:
+            logging.warning("event persist failed: %s", e)
 
 
 # ── Polymarket (prediction markets) ──────────────────────────────────────────
@@ -8757,6 +8788,135 @@ async def get_national_debt():
 async def get_cross_dashboard():
     data = await cross_dashboard.fetch_all()
     return _json(data)
+
+
+# ── Analyst Mode ────────────────────────────────────────────────────────────
+# Entity-centric event store powering the timeline strip, dossier drawer,
+# link-analysis graph, and pinboards. Backed by analyst_db (SQLite).
+
+def _parse_csv_param(s: str | None) -> list[str]:
+    if not s:
+        return []
+    return [p.strip() for p in s.split(",") if p.strip()]
+
+
+def _parse_bbox(s: str | None):
+    if not s:
+        return None
+    try:
+        parts = [float(x) for x in s.split(",")]
+        if len(parts) != 4:
+            return None
+        return (parts[0], parts[1], parts[2], parts[3])
+    except ValueError:
+        return None
+
+
+def _parse_float(s: str | None) -> float | None:
+    if s in (None, ""):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+@app.get("/api/analyst/events")
+async def analyst_events(request: Request):
+    qp = request.query_params
+    fetch_news()  # ensure ingestion has run at least once
+    events = analyst_db.query_events(
+        since=_parse_float(qp.get("since")),
+        until=_parse_float(qp.get("until")),
+        types=_parse_csv_param(qp.get("types")) or None,
+        actor_id=qp.get("actor") or None,
+        bbox=_parse_bbox(qp.get("bbox")),
+        limit=min(500, int(qp.get("limit") or 200)),
+    )
+    return _json({"events": events, "count": len(events)})
+
+
+@app.get("/api/analyst/event/{event_id}")
+async def analyst_event(event_id: int):
+    ev = analyst_db.get_event(event_id)
+    if not ev:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return _json(ev)
+
+
+@app.get("/api/analyst/entity/{entity_id:path}")
+async def analyst_entity(entity_id: str, request: Request):
+    fetch_news()
+    ent = analyst_db.get_entity(entity_id)
+    if not ent:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    qp = request.query_params
+    recent = analyst_db.query_events(
+        actor_id=entity_id,
+        since=_parse_float(qp.get("since")),
+        limit=min(200, int(qp.get("limit") or 50)),
+    )
+    graph = analyst_db.entity_graph(entity_id, depth=1, limit_per_hop=15)
+    return _json({"entity": ent, "events": recent, "graph": graph})
+
+
+@app.get("/api/analyst/entities")
+async def analyst_search_entities(request: Request):
+    q = (request.query_params.get("q") or "").strip()
+    if len(q) < 1:
+        return _json({"entities": []})
+    results = analyst_db.search_entities(q, limit=20)
+    return _json({"entities": results})
+
+
+@app.get("/api/analyst/timeline")
+async def analyst_timeline(request: Request):
+    qp = request.query_params
+    fetch_news()
+    now = time.time()
+    since = _parse_float(qp.get("since")) or (now - 7 * 24 * 3600)
+    until = _parse_float(qp.get("until")) or now
+    bucket = max(60, int(qp.get("bucket") or 3600))
+    bbox = _parse_bbox(qp.get("bbox"))
+    return _json(analyst_db.timeline_buckets(since, until, bucket, bbox))
+
+
+@app.get("/api/analyst/graph/{entity_id:path}")
+async def analyst_graph(entity_id: str, request: Request):
+    qp = request.query_params
+    depth = max(1, min(2, int(qp.get("depth") or 1)))
+    return _json(analyst_db.entity_graph(entity_id, depth=depth))
+
+
+@app.get("/api/analyst/pinboards")
+async def analyst_list_pinboards():
+    return _json({"pinboards": analyst_db.list_pinboards()})
+
+
+@app.post("/api/analyst/pinboards")
+async def analyst_create_pinboard(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    name = (body.get("name") or "").strip()[:120]
+    filters = body.get("filters") or {}
+    if not name or not isinstance(filters, dict):
+        return JSONResponse({"error": "name and filters required"}, status_code=400)
+    pin_id = analyst_db.create_pinboard(name, filters)
+    return _json({"id": pin_id})
+
+
+@app.delete("/api/analyst/pinboards/{pin_id}")
+async def analyst_delete_pinboard(pin_id: int):
+    deleted = analyst_db.delete_pinboard(pin_id)
+    return _json({"deleted": deleted})
+
+
+@app.get("/api/analyst/stats")
+async def analyst_stats():
+    fetch_news()  # warm
+    return _json(analyst_db.stats())
 
 
 if __name__ == "__main__":

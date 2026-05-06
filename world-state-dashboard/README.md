@@ -27,8 +27,10 @@ docker compose up --build world
 **Python**
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI app — RSS news polling (defusedxml), X feed (optional), infrastructure map endpoints, gateway SSO middleware. |
+| `server.py` | FastAPI app — RSS news polling (defusedxml), X feed (optional), infrastructure map endpoints, gateway SSO middleware, Analyst Mode endpoints. |
 | `infrastructure_data.py` | Hand-curated coordinates for undersea cables, oil/gas pipelines, oil/rare-earth fields. Imported by `server.py`. |
+| `analyst_db.py` | SQLite-backed entity/event/source/pinboard store for Analyst Mode. Schema, CRUD, dedupe, timeline buckets, link-analysis subgraph, baseline gazetteer. |
+| `event_extractor.py` | Heuristic event extractor — turns RSS/X items into typed events (Strike, Statement, Movement, Sanction, …) with actor matching against `analyst_db`'s gazetteer. Pure-stdlib; no LLM dependency. |
 
 **Frontend**
 | File | Purpose |
@@ -57,3 +59,34 @@ docker compose up --build world
 
 - All XML parsing goes through `defusedxml` to avoid XXE — required dependency.
 - When neither `GATEWAY_SSO_SECRET` nor `DEV_MODE=1` is set, the server rejects every request.
+
+## Analyst Mode
+
+Entity-centric event view layered on top of the existing dashboard. Data flows
+from `fetch_news()` → `event_extractor.extract_batch()` → `analyst_db` so every
+RSS poll opportunistically promotes typed events into the store.
+
+UI additions (`index.html`):
+
+- **Timeline strip** (fixed bottom) — stacked event-density chart over the active window (1h/6h/24h/7d/30d).
+- **Filter rail** (right edge) — event-type chips, actor search, saved pinboards.
+- **Map pins** — severity-colored markers (sev-4 pulses) for each event with geo.
+- **Dossier drawer** — slides in on actor / event click; lists recent events, sources with provenance, and co-occurring entities (link analysis).
+- **Pinboards** — save current filters as a named view, restore in one click.
+
+API surface (`/api/analyst/*`):
+
+| Path | Notes |
+|---|---|
+| `GET  /events`            | `since`, `until`, `types=Strike,Statement,...`, `actor`, `bbox=W,S,E,N`, `limit`. |
+| `GET  /event/{id}`        | Full event with hydrated actors + sources. |
+| `GET  /entity/{id}`       | Dossier: entity, recent events, 1-hop co-occurrence graph. |
+| `GET  /entities?q=`       | Alias / name search. |
+| `GET  /timeline`          | Bucketed counts by type for stacked-bar timeline. |
+| `GET  /graph/{id}`        | Pure subgraph (no events). |
+| `GET/POST/DELETE /pinboards` | Saved views (filters + window). |
+| `GET  /stats`             | Row counts. |
+
+Storage: `analyst.db` (SQLite, gitignored). Re-seeded with a baseline gazetteer
+of ~30 states/orgs on first run. Heuristic extractor runs inline with the news
+poll — failures never break the news endpoint.
