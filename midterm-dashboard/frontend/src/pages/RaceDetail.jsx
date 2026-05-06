@@ -6,6 +6,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Ca
 import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb, Flag, ShieldCheck, X } from 'lucide-react'
 import { sourceColors, sourceLabels, partyColor, OutcomeBar } from '../lib/raceTheme.jsx'
 import { useDataStream } from '../lib/useDataStream.js'
+import ForecastBadge from '../components/ForecastBadge.jsx'
 
 export default function RaceDetail() {
   const { raceKey } = useParams()
@@ -205,6 +206,11 @@ export default function RaceDetail() {
       <Link to="/races" className="flex items-center gap-1 text-stone-500 hover:text-stone-700 text-sm mb-4">
         <ArrowLeft className="h-4 w-4" /> Back to Races
       </Link>
+
+      {/* narve.ai house forecast — single ensemble probability */}
+      <div className="mb-6">
+        <ForecastBadge raceKey={race.race_key || raceKey} />
+      </div>
 
       {/* Header */}
       <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-6">

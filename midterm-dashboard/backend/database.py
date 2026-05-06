@@ -595,6 +595,35 @@ class Database:
                 pass
         return d
 
+    def get_latest_divergence_per_race(self) -> list[dict]:
+        """One row per race_key — the most recent divergence snapshot.
+
+        Used by the forecast summary endpoint so we don't have to fan out a
+        query per race. The window function makes this a single index-driven
+        scan rather than ``N`` separate ``ORDER BY ... LIMIT 1`` queries.
+        """
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """WITH ranked AS (
+                       SELECT *,
+                              ROW_NUMBER() OVER (
+                                  PARTITION BY race_key ORDER BY snapshot_time DESC
+                              ) AS rn
+                       FROM midterm_divergence_snapshots
+                   )
+                   SELECT * FROM ranked WHERE rn = 1"""
+            ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("divergence_details"), str):
+                try:
+                    d["divergence_details"] = json.loads(d["divergence_details"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            out.append(d)
+        return out
+
     # === Human-review market match flags ====================================
 
     def flag_market_as_wrong(

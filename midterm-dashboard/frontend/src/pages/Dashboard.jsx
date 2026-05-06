@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtVolume } from '../lib/settings'
-import { AlertTriangle, ArrowRight, BarChart3, Newspaper, TrendingUp } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, Newspaper, TrendingUp, Sparkles } from 'lucide-react'
+import { useDataStream } from '../lib/useDataStream.js'
 
 const SOURCE_COLORS = {
   polymarket: { bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-500', hex: '#8b5cf6' },
@@ -198,34 +199,109 @@ function PollsSection({ polls, loading }) {
   )
 }
 
+function TopForecasts({ forecasts, loading }) {
+  if (loading) {
+    return (
+      <div className="bg-gradient-to-br from-stone-900 to-stone-800 text-white rounded-xl p-5 mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Sparkles className="h-4 w-4 text-amber-300" />
+          <h3 className="text-sm font-semibold tracking-wide">narve.ai forecasts</h3>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-stone-700/50 rounded-lg animate-pulse" />)}
+        </div>
+      </div>
+    )
+  }
+  if (!forecasts?.length) return null
+
+  return (
+    <div className="bg-gradient-to-br from-stone-900 via-stone-800 to-stone-900 text-white rounded-xl p-5 mb-6 shadow-lg">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-amber-300" />
+          <h3 className="text-sm font-semibold tracking-wide">narve.ai forecasts</h3>
+          <span className="text-[10px] text-stone-400 uppercase tracking-wider">Top {forecasts.length}</span>
+        </div>
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {forecasts.map((f) => {
+          const lean = f.forecast_d >= 0.5 ? 'D' : 'R'
+          const leanPct = (lean === 'D' ? f.forecast_d : 1 - f.forecast_d) * 100
+          const color = lean === 'D' ? '#3b82f6' : '#ef4444'
+          return (
+            <Link
+              key={f.race_key}
+              to={`/race/${f.race_key}`}
+              className="bg-stone-800/60 hover:bg-stone-700/60 transition-colors rounded-lg p-3 border border-stone-700"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-stone-400 uppercase tracking-wider">
+                  {f.race_type} · {f.state}
+                </span>
+                <span className="text-[10px] text-stone-500">{f.n_sources} src</span>
+              </div>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xl font-bold tabular-nums" style={{ color }}>
+                  {lean}
+                </span>
+                <span className="text-xl font-bold tabular-nums">{leanPct.toFixed(1)}%</span>
+              </div>
+              <div className="mt-2 h-1 bg-stone-700 rounded-full overflow-hidden flex">
+                <div className="bg-blue-500" style={{ width: `${f.forecast_d * 100}%` }} />
+                <div className="bg-rose-500 flex-1" />
+              </div>
+              <div className="text-[10px] text-stone-400 mt-1.5 truncate">
+                {f.race_key.replace(/_/g, ' · ')}
+              </div>
+            </Link>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+
 export default function Dashboard() {
   const [overview, setOverview] = useState(null)
   const [divergences, setDivergences] = useState([])
   const [races, setRaces] = useState([])
   const [polls, setPolls] = useState([])
+  const [forecasts, setForecasts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [forecastsLoading, setForecastsLoading] = useState(true)
   const [pollsLoading, setPollsLoading] = useState(true)
 
+  function fetchAll() {
+    Promise.all([
+      api.overview().catch(() => null),
+      api.divergence().catch(() => []),
+      api.races().catch(() => []),
+    ]).then(([ov, div, rc]) => {
+      setOverview(ov)
+      setDivergences(Array.isArray(div) ? div.slice(0, 8) : (div?.divergences || []).slice(0, 8))
+      setRaces(Array.isArray(rc) ? rc : (rc?.races || []))
+    }).finally(() => setLoading(false))
+
+    api.recentPolls().then(data => setPolls(data?.polls || []))
+      .catch(() => {}).finally(() => setPollsLoading(false))
+
+    // High-confidence forecasts only — surface the races we're most opinionated on.
+    api.forecasts({ min_confidence: 0.4, limit: 6 })
+      .then((data) => setForecasts(data?.forecasts || []))
+      .catch(() => setForecasts([]))
+      .finally(() => setForecastsLoading(false))
+  }
+
   useEffect(() => {
-    function fetchAll() {
-      Promise.all([
-        api.overview().catch(() => null),
-        api.divergence().catch(() => []),
-        api.races().catch(() => []),
-      ]).then(([ov, div, rc]) => {
-        setOverview(ov)
-        setDivergences(Array.isArray(div) ? div.slice(0, 8) : (div?.divergences || []).slice(0, 8))
-        setRaces(Array.isArray(rc) ? rc : (rc?.races || []))
-      }).finally(() => setLoading(false))
-
-      api.recentPolls().then(data => setPolls(data?.polls || []))
-        .catch(() => {}).finally(() => setPollsLoading(false))
-    }
-
     fetchAll()
     const interval = setInterval(fetchAll, 60 * 1000) // refresh every 60s
     return () => clearInterval(interval)
   }, [])
+
+  // Refresh on backend pushes too — gives sub-minute latency when live.
+  useDataStream(() => fetchAll())
 
   return (
     <div>
@@ -233,6 +309,9 @@ export default function Dashboard() {
         <h1 className="text-3xl font-semibold text-stone-800 mb-1">2026 Midterms</h1>
         <p className="text-stone-500 text-sm">Real-time prediction market odds, polling data, and source divergence analysis.</p>
       </div>
+
+      {/* narve.ai house forecasts — top high-confidence calls. */}
+      <TopForecasts forecasts={forecasts} loading={forecastsLoading} />
 
       {/* Compact control cards */}
       <div className="grid grid-cols-2 gap-4 mb-6">

@@ -1564,6 +1564,127 @@ async def data_historical(
     }
 
 
+# In-process cache for backtest weights so /data/forecasts doesn't recompute
+# the per-source Brier numbers on every request. Refreshed every 10 minutes;
+# the coverage / Brier values change at most as often as new resolved races
+# show up in the historical dataset.
+_BACKTEST_CACHE: dict = {"ts": 0.0, "data": None}
+_BACKTEST_CACHE_TTL = 600.0
+
+
+async def _backtest_summary_cached() -> dict:
+    now = time.time()
+    if _BACKTEST_CACHE["data"] and (now - _BACKTEST_CACHE["ts"]) < _BACKTEST_CACHE_TTL:
+        return _BACKTEST_CACHE["data"]
+    # Look back further than the public default so weights stabilize from a
+    # larger sample once 2026 races start resolving.
+    data = await data_backtest(since_days=180)
+    _BACKTEST_CACHE["data"] = data
+    _BACKTEST_CACHE["ts"] = now
+    return data
+
+
+@app.get("/data/forecast/{race_key}")
+async def data_forecast(race_key: str):
+    """narve.ai house forecast for a single race.
+
+    The forecast is a Brier-weighted ensemble of every source that has a
+    probability for this race. Sources without enough resolved-race coverage
+    fall back to static priors. Returns the schema documented in
+    ``forecast.forecast_for_race``.
+    """
+    from forecast import forecast_for_race
+
+    snap = state.db.get_latest_divergence(race_key)
+    if not snap:
+        return {
+            "race_key": race_key,
+            "forecast_d": None,
+            "confidence": 0.0,
+            "sources_used": [],
+            "source_probs": {},
+            "weights": {},
+            "spread": None,
+            "n_sources": 0,
+            "method": "default_weights",
+            "available": False,
+        }
+
+    bt = await _backtest_summary_cached()
+    source_probs: dict[str, float] = {}
+    for src, col in (
+        ("polymarket", "polymarket_prob"),
+        ("kalshi", "kalshi_prob"),
+        ("predictit", "predictit_prob"),
+        ("polling", "polling_avg"),
+    ):
+        v = snap.get(col)
+        if v is not None:
+            try:
+                source_probs[src] = float(v)
+            except (TypeError, ValueError):
+                pass
+    details = snap.get("divergence_details") or {}
+    if isinstance(details, dict):
+        for src in ("manifold", "metaculus"):
+            v = details.get(src)
+            if v is not None:
+                try:
+                    source_probs[src] = float(v)
+                except (TypeError, ValueError):
+                    pass
+
+    f = forecast_for_race(
+        race_key=race_key,
+        source_probs=source_probs,
+        brier=bt.get("brier"),
+        coverage=bt.get("coverage"),
+    )
+    f["race_type"] = snap.get("race_type")
+    f["state"] = snap.get("state")
+    f["snapshot_time"] = snap.get("snapshot_time")
+    f["available"] = f["forecast_d"] is not None
+    return f
+
+
+@app.get("/data/forecasts")
+async def data_forecasts(
+    race_type: Optional[str] = None,
+    min_confidence: float = 0.0,
+    limit: int = 200,
+):
+    """narve.ai house forecasts across every active race.
+
+    Sorted by absolute confidence × volume of source agreement so the most
+    "interesting" races bubble up. Filters by ``race_type`` if provided.
+    """
+    from forecast import forecast_many
+
+    snaps = state.db.get_latest_divergence_per_race()
+    bt = await _backtest_summary_cached()
+    rows = forecast_many(
+        snaps,
+        brier=bt.get("brier"),
+        coverage=bt.get("coverage"),
+    )
+
+    if race_type:
+        rows = [r for r in rows if (r.get("race_type") or "").lower() == race_type.lower()]
+    rows = [r for r in rows if r.get("forecast_d") is not None and (r.get("confidence") or 0) >= min_confidence]
+
+    # Sort: high confidence first, then most polarized (closest to 0 or 1).
+    def sort_key(r):
+        f = r.get("forecast_d") or 0.5
+        return (-(r.get("confidence") or 0), -abs(f - 0.5))
+
+    rows.sort(key=sort_key)
+    return {
+        "forecasts": rows[:limit],
+        "total": len(rows),
+        "method": rows[0].get("method") if rows else "default_weights",
+    }
+
+
 @app.get("/data/backtest")
 async def data_backtest(since_days: int = 30):
     """Per-source backtest against the curated historical-results dataset.
