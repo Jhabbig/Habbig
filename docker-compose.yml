@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       centralbank:
         condition: service_healthy
+      whales:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -150,6 +152,21 @@ services:
       timeout: 5s
       retries: 3
 
+  whales:
+    build: ./whale-tracker-dashboard
+    expose:
+      - "8053"
+    env_file: ./gateway/.env.production
+    volumes:
+      - whales-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8053/healthz',timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
 volumes:
   gateway-data:
   crypto-data:
+  whales-data:

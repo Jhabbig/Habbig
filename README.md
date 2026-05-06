@@ -16,6 +16,7 @@ See `CONTRIBUTING.md` for the contributor quick-start (Docker + manual).
 | `stock-dashboard/` | 8050 | Stock market signal dashboard (StockSignal). |
 | `midterm-dashboard/` | 8051 | US midterm election predictions (FastAPI + React). |
 | `top-traders-dashboard/` | 8052 | Polymarket whale tracking + insider detection. |
+| `whale-tracker-dashboard/` | 8053 | TradFi whale tracking — SEC EDGAR insider, activist & M&A signals. |
 | `polymarket_weather_dashboard/` | 5050 | Weather-market dashboard UI (Flask + PWA). |
 | `sports-dashboard/` | 8888 | Sports arbitrage signals (The Odds API vs Polymarket). |
 | `world-state-dashboard/` | 7050 | Geopolitical feed + infrastructure map. |

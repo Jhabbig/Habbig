@@ -99,6 +99,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "whale_tracker": {
+      "subdomain": "whales",
+      "target": 8053,
+      "display_name": "Whale Tracker",
+      "description": "TradFi insider, activist & M&A signals from SEC EDGAR",
+      "accent": "#14b8a6",
+      "monthly_cents": 1999,
+      "annual_cents": 19900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_WHALE_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_WHALE_STRIPE_ANNUAL"
     }
   }
 }
