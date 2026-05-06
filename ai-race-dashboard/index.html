@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Race Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel-2: #0e1117;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --grid: #30363d;
+    --green: #56d364;
+    --red: #f85149;
+    --amber: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { padding: 16px 24px; border-bottom: 1px solid var(--grid);
+           display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  header .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+                 background: #1f6feb22; color: var(--accent); border: 1px solid #1f6feb55; }
+
+  main { padding: 24px; display: grid; grid-template-columns: 1fr; gap: 24px;
+         max-width: 1280px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+           padding: 20px; }
+  .panel h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--muted);
+              text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+
+  .banner { background: #d2992211; border: 1px solid #d2992255; color: #e6edf3;
+            padding: 10px 14px; border-radius: 6px; font-size: 12px; }
+  .banner b { color: var(--amber); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid);
+           white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase;
+       user-select: none; cursor: pointer; }
+  th.sorted { color: var(--fg); }
+  th .arrow { font-size: 9px; color: var(--accent); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.row:hover { background: #ffffff05; }
+
+  .lab-chip { display: inline-flex; align-items: center; gap: 6px;
+              padding: 2px 8px; border-radius: 999px; font-size: 11px;
+              border: 1px solid var(--grid); background: #0e1117; }
+  .lab-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .open-badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
+                font-size: 10px; font-weight: 600; background: #56d36422; color: #56d364;
+                border: 1px solid #56d36455; margin-left: 6px; }
+
+  /* Score cell heatmap */
+  .score { font-variant-numeric: tabular-nums; padding: 6px 10px;
+           border-radius: 4px; display: inline-block; min-width: 56px; text-align: right; }
+  .score.lead { box-shadow: inset 0 0 0 1px var(--accent); }
+  .score.empty { color: var(--muted); }
+
+  /* Frontier chart */
+  .chart-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chart-toolbar button { background: var(--panel-2); color: var(--fg);
+                          border: 1px solid var(--grid); padding: 4px 10px;
+                          border-radius: 4px; font-size: 12px; cursor: pointer; }
+  .chart-toolbar button.active { border-color: var(--accent); color: var(--accent); }
+  svg#frontier-chart { width: 100%; height: 320px; }
+  svg#frontier-chart .axis { stroke: var(--grid); }
+  svg#frontier-chart text { fill: var(--muted); font-size: 10px;
+                            font-family: -apple-system, sans-serif; }
+  svg#frontier-chart .point text { fill: var(--fg); font-size: 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px;
+            font-size: 11px; color: var(--muted); }
+  .legend .item { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* Timeline */
+  .timeline { display: flex; flex-direction: column; gap: 0; }
+  .ev { display: grid; grid-template-columns: 110px 1fr; gap: 16px;
+        padding: 10px 0; border-bottom: 1px solid var(--grid); align-items: start; }
+  .ev:last-child { border-bottom: 0; }
+  .ev .when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ev .title { font-weight: 600; }
+  .ev .blurb { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* Lab cards */
+  .labs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+               gap: 12px; }
+  .lab-card { background: var(--panel-2); border: 1px solid var(--grid);
+              border-radius: 6px; padding: 14px; }
+  .lab-card .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .lab-card .name { font-weight: 600; font-size: 14px; }
+  .lab-card .country { color: var(--muted); font-size: 11px; }
+  .lab-card dl { display: grid; grid-template-columns: max-content 1fr;
+                 gap: 4px 12px; margin: 0; font-size: 12px; }
+  .lab-card dt { color: var(--muted); }
+  .lab-card dd { margin: 0; }
+
+  /* Markets */
+  .market-row { display: grid; grid-template-columns: 1fr 90px 90px;
+                gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+                align-items: center; }
+  .market-row:last-child { border-bottom: 0; }
+  .market-q { font-size: 13px; }
+  .market-q .end { color: var(--muted); font-size: 11px; margin-top: 2px; display: block; }
+  .market-prob { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+  .market-vol { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right;
+                font-size: 12px; }
+  .empty-state { color: var(--muted); font-size: 12px; padding: 16px 0; text-align: center; }
+
+  footer { color: var(--muted); font-size: 11px; padding: 16px 24px;
+           border-top: 1px solid var(--grid); text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AI Race</h1>
+  <span class="pill" id="header-pill">curated · live markets</span>
+  <span class="meta" id="header-as-of"></span>
+</header>
+
+<main>
+  <div class="panel banner">
+    <b>Note:</b> Frontier-model scores, lab valuations and timeline entries are
+    a hand-curated snapshot — every row carries an <code>as_of</code> date
+    and source label in <code>data.py</code>. Polymarket markets below are
+    pulled live (≤60s cache). Verify before trading.
+  </div>
+
+  <!-- Frontier model leaderboard -->
+  <section class="panel" id="leaderboard">
+    <h2>Frontier model leaderboard</h2>
+    <div class="sub">
+      Click a column header to sort. Highlighted cells are the current best
+      score on that benchmark across the table.
+    </div>
+    <div style="overflow-x:auto">
+      <table id="models-table">
+        <thead><tr id="models-thead"></tr></thead>
+        <tbody id="models-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Frontier capability chart -->
+  <section class="panel" id="frontier">
+    <h2>Capability frontier over time</h2>
+    <div class="sub">
+      Running maximum score on each benchmark. Step-ups are the moments
+      a new model raised the public ceiling.
+    </div>
+    <div class="chart-toolbar" id="bench-buttons"></div>
+    <svg id="frontier-chart" viewBox="0 0 800 320" preserveAspectRatio="none"></svg>
+    <div class="legend" id="frontier-legend"></div>
+  </section>
+
+  <!-- Timeline -->
+  <section class="panel" id="timeline-panel">
+    <h2>Release timeline</h2>
+    <div class="sub">Major frontier releases since ChatGPT.</div>
+    <div class="timeline" id="timeline"></div>
+  </section>
+
+  <!-- Labs -->
+  <section class="panel" id="labs-panel">
+    <h2>Lab snapshots</h2>
+    <div class="sub">Last-known valuation, headline model, compute posture.</div>
+    <div class="labs-grid" id="labs"></div>
+  </section>
+
+  <!-- Markets -->
+  <section class="panel" id="markets-panel">
+    <h2>Live AI prediction markets</h2>
+    <div class="sub">Polymarket questions matching AI keywords, sorted by 24h volume.</div>
+    <div id="markets"></div>
+  </section>
+</main>
+
+<footer>
+  AI Race Dashboard · curated values in <code>data.py</code> · live markets via Polymarket Gamma API
+</footer>
+
+<script>
+"use strict";
+
+// ── small utilities ─────────────────────────────────────────────────────────
+const $ = (sel) => document.querySelector(sel);
+const fmt = {
+  pct: (v) => v == null ? "" : v.toFixed(1),
+  elo: (v) => v == null ? "" : Math.round(v).toString(),
+  k: (v) => v == null ? "" : (v >= 1000 ? (v/1000).toFixed(0)+"M" : v+"K"),
+  usd: (v) => v == null ? "—" : "$" + (v >= 1000 ? (v/1000).toFixed(1)+"T" : v+"B"),
+  date: (d) => d ? d.slice(0,10) : "",
+  vol: (v) => {
+    if (!v) return "—";
+    if (v >= 1e6) return "$" + (v/1e6).toFixed(1) + "M";
+    if (v >= 1e3) return "$" + (v/1e3).toFixed(0) + "K";
+    return "$" + Math.round(v);
+  },
+};
+
+async function fetchJSON(path) {
+  const r = await fetch(path, {headers: {"Accept":"application/json"}});
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+function escapeHTML(s) {
+  return String(s ?? "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+// ── State ───────────────────────────────────────────────────────────────────
+let STATE = {
+  models: [],
+  benchmarks: [],
+  bestPerBench: {},      // bench_key → max score across models
+  sortKey: "lmarena_elo",
+  sortAsc: false,
+  frontierBench: "swe_bench_verified",
+  frontierData: {},      // bench_key → series
+};
+
+// ── Models leaderboard ─────────────────────────────────────────────────────
+function computeBest(models, benchmarks) {
+  const best = {};
+  for (const b of benchmarks) {
+    let max = -Infinity;
+    for (const m of models) {
+      const s = (m.scores || {})[b.key];
+      if (s != null && s > max) max = s;
+    }
+    if (max > -Infinity) best[b.key] = max;
+  }
+  return best;
+}
+
+function renderLeaderboard() {
+  const {models, benchmarks, bestPerBench, sortKey, sortAsc} = STATE;
+
+  const baseCols = [
+    {key: "name", label: "Model"},
+    {key: "lab_name", label: "Lab"},
+    {key: "released", label: "Released"},
+    {key: "context_k", label: "Ctx (k)"},
+  ];
+  const benchCols = benchmarks.map(b => ({key: b.key, label: b.name, bench: true}));
+  const cols = baseCols.concat(benchCols);
+
+  // Header
+  const thead = $("#models-thead");
+  thead.innerHTML = cols.map(c => {
+    const sortedClass = (c.key === sortKey) ? "sorted" : "";
+    const arrow = (c.key === sortKey) ? `<span class="arrow">${sortAsc ? "▲" : "▼"}</span>` : "";
+    return `<th class="${sortedClass}" data-key="${c.key}" data-bench="${c.bench?1:0}">${escapeHTML(c.label)}${arrow}</th>`;
+  }).join("");
+  thead.querySelectorAll("th").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.key;
+      if (STATE.sortKey === k) STATE.sortAsc = !STATE.sortAsc;
+      else { STATE.sortKey = k; STATE.sortAsc = false; }
+      renderLeaderboard();
+    });
+  });
+
+  // Sort
+  const sorted = models.slice().sort((a,b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (av === undefined && a.scores) av = a.scores[sortKey];
+    if (bv === undefined && b.scores) bv = b.scores[sortKey];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === "number" && typeof bv === "number") {
+      return sortAsc ? av - bv : bv - av;
+    }
+    return sortAsc
+      ? String(av).localeCompare(String(bv))
+      : String(bv).localeCompare(String(av));
+  });
+
+  // Body
+  const tbody = $("#models-tbody");
+  tbody.innerHTML = sorted.map(m => {
+    const labCell = `<span class="lab-chip">
+        <span class="lab-dot" style="background:${escapeHTML(m.lab_color)}"></span>
+        ${escapeHTML(m.lab_name)}</span>` +
+        (m.open_weights ? '<span class="open-badge">open</span>' : "");
+    const baseCells = [
+      `<td><b>${escapeHTML(m.name)}</b><br><span style="color:var(--muted);font-size:11px">${escapeHTML(m.kind || "")}</span></td>`,
+      `<td>${labCell}</td>`,
+      `<td>${escapeHTML(m.released || "")}</td>`,
+      `<td class="num">${m.context_k ?? ""}</td>`,
+    ];
+    const benchCells = benchmarks.map(b => {
+      const s = (m.scores || {})[b.key];
+      if (s == null) return `<td class="num"><span class="score empty">—</span></td>`;
+      const isBest = (bestPerBench[b.key] != null) && Math.abs(s - bestPerBench[b.key]) < 1e-9;
+      const fmtFn = b.scale === "Elo" ? fmt.elo : fmt.pct;
+      const pct = b.scale === "Elo"
+        ? Math.max(0, Math.min(1, (s - 1100) / 350))
+        : Math.max(0, Math.min(1, s / 100));
+      const bg = `rgba(88,166,255,${0.05 + pct * 0.30})`;
+      return `<td class="num"><span class="score ${isBest?'lead':''}" style="background:${bg}">${fmtFn(s)}</span></td>`;
+    });
+    return `<tr class="row">${baseCells.concat(benchCells).join("")}</tr>`;
+  }).join("");
+}
+
+async function loadModels() {
+  const data = await fetchJSON("/api/models");
+  STATE.models = data.models;
+  STATE.benchmarks = data.benchmarks;
+  STATE.bestPerBench = computeBest(data.models, data.benchmarks);
+  $("#header-as-of").textContent = "as of " + (data.as_of || "");
+  renderLeaderboard();
+}
+
+// ── Frontier chart ─────────────────────────────────────────────────────────
+function renderFrontierButtons() {
+  const wrap = $("#bench-buttons");
+  wrap.innerHTML = STATE.benchmarks.map(b => {
+    const active = (b.key === STATE.frontierBench) ? "active" : "";
+    return `<button class="${active}" data-key="${b.key}">${escapeHTML(b.name)}</button>`;
+  }).join("");
+  wrap.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      STATE.frontierBench = btn.dataset.key;
+      renderFrontierButtons();
+      renderFrontierChart();
+    });
+  });
+}
+
+function monthToNum(s) {
+  // "2025-08" or "2025-08-01" → 2025 + 7/12
+  const parts = s.split("-");
+  const y = +parts[0], m = +(parts[1] || "1");
+  return y + (m - 1) / 12;
+}
+
+function renderFrontierChart() {
+  const series = STATE.frontierData[STATE.frontierBench] || [];
+  const bench = STATE.benchmarks.find(b => b.key === STATE.frontierBench);
+  const svg = $("#frontier-chart");
+  const W = 800, H = 320, pad = {l:48, r:16, t:16, b:36};
+
+  if (series.length < 1) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#8b949e">no data</text>`;
+    return;
+  }
+
+  const xs = series.map(p => monthToNum(p.released));
+  const ys = series.map(p => p.score);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs) + 0.05;
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  const yPad = (yMax - yMin) * 0.15 || 5;
+  const y0 = yMin - yPad, y1 = yMax + yPad;
+  const xRange = xMax - xMin || 1;
+
+  const sx = v => pad.l + ((v - xMin) / xRange) * (W - pad.l - pad.r);
+  const sy = v => pad.t + (1 - (v - y0) / (y1 - y0)) * (H - pad.t - pad.b);
+
+  // axis ticks
+  const yTicks = 4;
+  let axisHTML = "";
+  for (let i = 0; i <= yTicks; i++) {
+    const v = y0 + ((y1 - y0) * i) / yTicks;
+    const y = sy(v);
+    axisHTML += `<line class="axis" x1="${pad.l}" x2="${W-pad.r}" y1="${y}" y2="${y}" stroke-dasharray="2 4"/>`;
+    axisHTML += `<text x="${pad.l-8}" y="${y+3}" text-anchor="end">${v.toFixed(0)}</text>`;
+  }
+  // x ticks: years
+  const yearStart = Math.floor(xMin), yearEnd = Math.ceil(xMax);
+  for (let y = yearStart; y <= yearEnd; y++) {
+    const x = sx(y);
+    if (x < pad.l - 1 || x > W - pad.r + 1) continue;
+    axisHTML += `<line class="axis" x1="${x}" x2="${x}" y1="${pad.t}" y2="${H-pad.b}" stroke-dasharray="2 4"/>`;
+    axisHTML += `<text x="${x}" y="${H-pad.b+14}" text-anchor="middle">${y}</text>`;
+  }
+
+  // path (step-up)
+  let d = "";
+  let prevY = null;
+  for (let i = 0; i < series.length; i++) {
+    const x = sx(monthToNum(series[i].released));
+    const y = sy(series[i].score);
+    if (i === 0) d += `M${x.toFixed(1)} ${y.toFixed(1)}`;
+    else d += ` L${x.toFixed(1)} ${prevY.toFixed(1)} L${x.toFixed(1)} ${y.toFixed(1)}`;
+    prevY = y;
+  }
+  // extend last segment to right edge
+  if (series.length > 0) {
+    const x = sx(xMax);
+    d += ` L${x.toFixed(1)} ${prevY.toFixed(1)}`;
+  }
+
+  let pointsHTML = "";
+  for (const p of series) {
+    const x = sx(monthToNum(p.released));
+    const y = sy(p.score);
+    pointsHTML += `<g class="point">
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="#58a6ff"/>
+      <title>${escapeHTML(p.model)} (${escapeHTML(p.released)}) — ${p.score}</title>
+    </g>`;
+  }
+
+  const ylabel = bench ? `${bench.name} (${bench.scale})` : "";
+  svg.innerHTML = `
+    ${axisHTML}
+    <path d="${d}" stroke="#58a6ff" stroke-width="2" fill="none"/>
+    ${pointsHTML}
+    <text x="${pad.l}" y="${pad.t-2}" fill="#e6edf3" font-size="11">${escapeHTML(ylabel)}</text>
+  `;
+
+  // legend = each step-up
+  $("#frontier-legend").innerHTML = series.map(p =>
+    `<span class="item"><b>${escapeHTML(p.released)}</b> · ${escapeHTML(p.model)} <span style="color:var(--muted)">→ ${p.score}</span></span>`
+  ).join("");
+}
+
+async function loadFrontier() {
+  const data = await fetchJSON("/api/frontier");
+  STATE.frontierData = data.series || {};
+  renderFrontierButtons();
+  renderFrontierChart();
+}
+
+// ── Timeline ───────────────────────────────────────────────────────────────
+async function loadTimeline() {
+  const data = await fetchJSON("/api/timeline");
+  const events = (data.events || []).slice().reverse();  // newest first
+  $("#timeline").innerHTML = events.map(ev => `
+    <div class="ev">
+      <div class="when">${escapeHTML(ev.date)}</div>
+      <div>
+        <div class="title">
+          <span class="lab-chip">
+            <span class="lab-dot" style="background:${escapeHTML(ev.lab_color)}"></span>
+            ${escapeHTML(ev.lab_name)}
+          </span>
+          ${escapeHTML(ev.title)}
+        </div>
+        <div class="blurb">${escapeHTML(ev.blurb)}</div>
+      </div>
+    </div>
+  `).join("");
+}
+
+// ── Labs ───────────────────────────────────────────────────────────────────
+async function loadLabs() {
+  const data = await fetchJSON("/api/labs");
+  $("#labs").innerHTML = (data.labs || []).map(lab => `
+    <div class="lab-card">
+      <div class="head">
+        <span class="lab-dot" style="background:${escapeHTML(lab.color)};width:12px;height:12px"></span>
+        <div>
+          <div class="name">${escapeHTML(lab.name)}</div>
+          <div class="country">${escapeHTML(lab.country)} · founded ${lab.founded}</div>
+        </div>
+      </div>
+      <dl>
+        <dt>Lead</dt><dd>${escapeHTML(lab.lead)}</dd>
+        <dt>Headline</dt><dd>${escapeHTML(lab.headline_model)}${lab.open_weights?'<span class="open-badge">open</span>':''}</dd>
+        <dt>Valuation</dt><dd>${fmt.usd(lab.valuation_usd_b)} <span style="color:var(--muted)">(${escapeHTML(lab.valuation_as_of)})</span></dd>
+        <dt>Compute</dt><dd>${escapeHTML(lab.compute_note)}</dd>
+        <dt>Site</dt><dd><a href="${escapeHTML(lab.homepage)}" target="_blank" rel="noopener">${escapeHTML(lab.homepage.replace(/^https?:\/\//,''))}</a></dd>
+      </dl>
+    </div>
+  `).join("");
+}
+
+// ── Markets ───────────────────────────────────────────────────────────────
+async function loadMarkets() {
+  const wrap = $("#markets");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/markets");
+    const m = data.markets || [];
+    if (m.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No matching AI markets right now.</div>';
+      return;
+    }
+    wrap.innerHTML = m.map(row => {
+      const pct = (row.top_price * 100).toFixed(0) + "%";
+      const link = row.url ? `<a href="${escapeHTML(row.url)}" target="_blank" rel="noopener">${escapeHTML(row.question)}</a>` : escapeHTML(row.question);
+      const end = row.end_date ? '<span class="end">ends ' + escapeHTML(row.end_date.slice(0,10)) + '</span>' : '';
+      return `<div class="market-row">
+        <div class="market-q">${link}<br>${end}<span class="end">→ ${escapeHTML(row.top_outcome)}</span></div>
+        <div class="market-prob">${pct}</div>
+        <div class="market-vol">${fmt.vol(row.volume_24h)}/24h</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load markets: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+async function boot() {
+  try {
+    await loadModels();
+    await loadFrontier();
+    await loadTimeline();
+    await loadLabs();
+    loadMarkets();
+    setInterval(loadMarkets, 60_000);
+  } catch (e) {
+    console.error(e);
+    $("#header-as-of").textContent = "load error: " + e.message;
+  }
+}
+boot();
+</script>
+</body>
+</html>

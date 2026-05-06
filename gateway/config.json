@@ -99,6 +99,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "airace": {
+      "subdomain": "ai",
+      "target": 7070,
+      "display_name": "AI Race",
+      "description": "Frontier model leaderboard · capability frontier · live AI prediction markets",
+      "accent": "#a78bfa",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_AIRACE_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_AIRACE_STRIPE_ANNUAL"
     }
   }
 }
