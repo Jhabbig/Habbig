@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Voter Mood — narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220;
+    --bg-1: #0f172a;
+    --bg-2: #1e293b;
+    --border: #243042;
+    --text-1: #f1f5f9;
+    --text-2: #94a3b8;
+    --text-3: #64748b;
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad:  #f87171;
+    --accent: #818cf8;
+    --accent-2: #f472b6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg-0);
+    color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  }
+  header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header .sub {
+    margin-top: 3px;
+    color: var(--text-2);
+    font-size: 12px;
+  }
+  main { padding: 18px 24px 80px; max-width: 1320px; margin: 0 auto; }
+
+  /* Mood banner */
+  .mood {
+    background: linear-gradient(135deg, var(--bg-1), var(--bg-2));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 22px;
+    margin-bottom: 22px;
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) 2fr;
+    gap: 22px;
+    align-items: center;
+  }
+  .mood .score {
+    font-size: 64px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .mood .score .of100 { font-size: 16px; color: var(--text-3); font-weight: 500; margin-left: 4px; }
+  .mood .label {
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .mood .verdict {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .mood .components {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+  }
+  .mood .comp {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .mood .comp .name {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .mood .comp .val {
+    font-size: 18px;
+    font-weight: 600;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .mood .comp .bar {
+    height: 4px;
+    background: var(--bg-2);
+    border-radius: 2px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .mood .comp .bar > div { height: 100%; background: var(--accent); border-radius: 2px; }
+  .mood .comp .sub { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+
+  /* Cards */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .card .big {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  .card .big small { font-size: 14px; color: var(--text-2); font-weight: 500; }
+  .card .sub {
+    color: var(--text-2);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--bg-2);
+    color: var(--text-2);
+  }
+  .pill.good { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .pill.bad  { background: rgba(248, 113, 113, 0.15); color: var(--bad); }
+
+  .delta {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    margin-left: 6px;
+  }
+  .delta.up { color: var(--good); }
+  .delta.down { color: var(--bad); }
+  .delta.neutral { color: var(--text-3); }
+
+  /* Markets table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--text-3);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--bg-1);
+    position: sticky;
+    top: 0;
+  }
+  tr:hover td { background: var(--bg-2); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .market-q { font-weight: 500; color: var(--text-1); }
+  .market-event { color: var(--text-3); font-size: 11px; }
+
+  .section-title {
+    margin: 28px 0 10px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+
+  .spark {
+    height: 56px;
+    width: 100%;
+    margin-top: 10px;
+  }
+  .empty {
+    color: var(--text-3);
+    font-style: italic;
+    padding: 20px;
+    text-align: center;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .toolbar input, .toolbar select {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .toolbar input { flex: 1; min-width: 200px; }
+
+  @media (max-width: 720px) {
+    .mood { grid-template-columns: 1fr; }
+    .mood .score { font-size: 48px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Voter Mood &amp; Lived Experience</h1>
+  <div class="sub">How American voters feel and how their day-to-day lives are going · UMich sentiment · BLS &amp; FRED · Polymarket politics</div>
+</header>
+<main>
+
+<div class="mood" id="mood">
+  <div>
+    <div class="label">Voter mood index</div>
+    <div class="score"><span id="moodScore">—</span><span class="of100"> / 100</span></div>
+    <div class="verdict" id="moodVerdict">Loading…</div>
+  </div>
+  <div class="components" id="moodComponents"></div>
+</div>
+
+<div class="grid" id="cards"></div>
+
+<div class="section-title">Politics &amp; sentiment markets — Polymarket</div>
+<div class="toolbar">
+  <input id="search" placeholder="Search markets…" />
+  <select id="sort">
+    <option value="liquidity">Sort: most liquidity</option>
+    <option value="volume">Sort: most volume</option>
+    <option value="end">Sort: ends soonest</option>
+  </select>
+</div>
+<div id="markets"></div>
+
+<div class="section-title">Sources</div>
+<div class="card" style="font-size:12px;color:var(--text-2);line-height:1.7">
+  Consumer sentiment: <a href="http://www.sca.isr.umich.edu/" target="_blank">University of Michigan / Surveys of Consumers</a> via FRED.
+  Unemployment, CPI, earnings, savings: <a href="https://www.bls.gov/" target="_blank">U.S. Bureau of Labor Statistics</a> &amp; <a href="https://www.bea.gov/" target="_blank">BEA</a> via FRED.
+  Gas prices: <a href="https://www.eia.gov/" target="_blank">EIA</a> via FRED.
+  Mortgage rates: <a href="https://www.freddiemac.com/pmms" target="_blank">Freddie Mac PMMS</a> via FRED.
+  Initial claims: <a href="https://www.dol.gov/" target="_blank">DOL</a> via FRED.
+  Recession dating: <a href="https://www.nber.org/research/business-cycle-dating" target="_blank">NBER</a> via FRED.
+  Markets: <a href="https://gamma-api.polymarket.com" target="_blank">Polymarket Gamma</a>.
+  &nbsp;Series fetched live from <a href="https://fred.stlouisfed.org" target="_blank">fred.stlouisfed.org</a>.
+</div>
+
+</main>
+
+<script>
+function fmt(x, dp = 2) {
+  if (x === null || x === undefined || Number.isNaN(x)) return "—";
+  return Number(x).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function fmtInt(x) {
+  if (x === null || x === undefined || Number.isNaN(x)) return "—";
+  return Math.round(Number(x)).toLocaleString();
+}
+function pctSigned(x, dp = 1) {
+  if (x === null || x === undefined || Number.isNaN(x)) return "—";
+  const sign = x > 0 ? "+" : "";
+  return sign + Number(x).toFixed(dp) + "%";
+}
+function dateNice(d) {
+  if (!d) return "";
+  const [y, m, day] = d.split("-");
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[parseInt(m, 10) - 1]} ${parseInt(day, 10)}, ${y}`;
+}
+
+function sparkline(values, opts = {}) {
+  const w = opts.width || 260;
+  const h = opts.height || 56;
+  const color = opts.color || "#818cf8";
+  if (!values || values.length < 2) return "";
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = (max - min) || 1;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = h - ((v - min) / range) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}" />
+  </svg>`;
+}
+
+async function getJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch (e) {
+    console.warn("fetch failed", url, e);
+    return null;
+  }
+}
+
+function deltaPill(value, opts = {}) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "";
+  const goodIsLow = opts.goodIsLow || false;
+  const isUp = value > 0;
+  const isGood = goodIsLow ? !isUp : isUp;
+  const cls = value === 0 ? "neutral" : (isGood ? "up" : "down");
+  const arrow = value === 0 ? "·" : (isUp ? "▲" : "▼");
+  const dp = opts.dp ?? 2;
+  const unit = opts.unit ?? "";
+  return `<span class="delta ${cls}">${arrow} ${(isUp ? "+" : "")}${Number(value).toFixed(dp)}${unit}</span>`;
+}
+
+function moodVerdict(score) {
+  if (score === null || score === undefined) return "—";
+  if (score >= 70) return "Voters are doing well by recent-history standards.";
+  if (score >= 55) return "Mood is above average but uneven across the components.";
+  if (score >= 45) return "Mood is roughly mid-pack vs the last 20 years.";
+  if (score >= 30) return "Voters are squeezed — multiple components are running below normal.";
+  return "Voters' lived experience is rough vs the recent baseline.";
+}
+
+function renderMood(m) {
+  const score = m && typeof m.score_0_100 === "number" ? m.score_0_100 : null;
+  document.getElementById("moodScore").textContent = score === null ? "—" : Math.round(score);
+  document.getElementById("moodVerdict").textContent = moodVerdict(score);
+
+  const labels = {
+    sentiment:  { name: "Sentiment", suffix: "" },
+    jobs:       { name: "Jobs",      suffix: "% unemp." },
+    inflation:  { name: "Inflation", suffix: "% YoY" },
+    real_wages: { name: "Real wages",suffix: "% YoY" },
+    gas:        { name: "Gas",       suffix: " /gal" },
+  };
+  const order = ["sentiment", "jobs", "inflation", "real_wages", "gas"];
+  const wrap = document.getElementById("moodComponents");
+  if (!m || !m.components) { wrap.innerHTML = '<div class="comp"><div class="sub">no data</div></div>'; return; }
+  const html = order.filter(k => m.components[k]).map(k => {
+    const c = m.components[k];
+    const pct = Math.max(0, Math.min(1, c.score_0_1)) * 100;
+    const valStr = (k === "gas")
+      ? `$${Number(c.value).toFixed(2)}`
+      : (k === "inflation" || k === "real_wages")
+        ? pctSigned(c.value, 1)
+        : (k === "jobs" ? `${Number(c.value).toFixed(1)}%` : Number(c.value).toFixed(1));
+    return `
+      <div class="comp">
+        <div class="name">${labels[k].name}</div>
+        <div class="val">${valStr}</div>
+        <div class="bar"><div style="width:${pct.toFixed(0)}%"></div></div>
+        <div class="sub">${(pct).toFixed(0)} / 100</div>
+      </div>
+    `;
+  }).join("");
+  wrap.innerHTML = html || '<div class="comp"><div class="sub">no data</div></div>';
+}
+
+function renderCards(s) {
+  const cards = [];
+  const ind = s.indicators || {};
+
+  // Sentiment
+  if (ind.sentiment && ind.sentiment.latest) {
+    const v = ind.sentiment.latest.value;
+    const spark = (ind.sentiment.spark || []).map(o => o.value);
+    const d12 = ind.sentiment.change_12m;
+    const d3 = ind.sentiment.change_3m;
+    const cls = v >= 90 ? "good" : v >= 70 ? "warn" : "bad";
+    cards.push(`
+      <div class="card">
+        <h3>Consumer sentiment (UMich)</h3>
+        <div class="big">${fmt(v, 1)}</div>
+        <div class="sub">${dateNice(ind.sentiment.latest.date)} · 1966 Q1 = 100
+          ${deltaPill(d3, { dp: 1, unit: " 3m" })}
+          ${deltaPill(d12, { dp: 1, unit: " 12m" })}
+        </div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
+          v >= 90 ? "buoyant" : v >= 70 ? "subdued" : "depressed"
+        }</span></div>
+        ${sparkline(spark, { color: "#818cf8" })}
+      </div>
+    `);
+  }
+
+  // Inflation (CPI YoY)
+  if (ind.inflation && ind.inflation.latest_yoy_pct !== null && ind.inflation.latest_yoy_pct !== undefined) {
+    const yoy = ind.inflation.latest_yoy_pct;
+    const spark = (ind.inflation.spark || []).map(o => o.value);
+    const cls = yoy <= 2.5 ? "good" : yoy <= 4 ? "warn" : "bad";
+    cards.push(`
+      <div class="card">
+        <h3>Headline inflation (CPI YoY)</h3>
+        <div class="big">${pctSigned(yoy, 1)}</div>
+        <div class="sub">${dateNice(ind.inflation.as_of)} · headline CPI-U
+        </div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
+          yoy <= 2.5 ? "near target" : yoy <= 4 ? "above target" : "running hot"
+        }</span></div>
+        ${sparkline(spark, { color: "#fbbf24" })}
+      </div>
+    `);
+  }
+
+  // Unemployment
+  if (ind.unemployment && ind.unemployment.latest) {
+    const v = ind.unemployment.latest.value;
+    const spark = (ind.unemployment.spark || []).map(o => o.value);
+    const d12 = ind.unemployment.change_12m;
+    const cls = v <= 4 ? "good" : v <= 5.5 ? "warn" : "bad";
+    cards.push(`
+      <div class="card">
+        <h3>Unemployment rate</h3>
+        <div class="big">${fmt(v, 1)}<small>%</small></div>
+        <div class="sub">${dateNice(ind.unemployment.latest.date)} · civilian, U-3
+          ${deltaPill(d12, { dp: 1, unit: "pp 12m", goodIsLow: true })}
+        </div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
+          v <= 4 ? "tight labor market" : v <= 5.5 ? "loosening" : "weak"
+        }</span></div>
+        ${sparkline(spark, { color: "#34d399" })}
+      </div>
+    `);
+  }
+
+  // Real wages
+  const rw = s.real_wages || {};
+  if (rw.hourly_yoy_pct !== null && rw.hourly_yoy_pct !== undefined) {
+    const cls = rw.hourly_yoy_pct >= 1 ? "good" : rw.hourly_yoy_pct >= 0 ? "warn" : "bad";
+    cards.push(`
+      <div class="card">
+        <h3>Real wages (hourly, YoY)</h3>
+        <div class="big">${pctSigned(rw.hourly_yoy_pct, 1)}</div>
+        <div class="sub">Avg hourly earnings deflated by headline CPI
+          ${rw.weekly_yoy_pct !== null && rw.weekly_yoy_pct !== undefined ? `· weekly ${pctSigned(rw.weekly_yoy_pct, 1)}` : ""}
+        </div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
+          rw.hourly_yoy_pct >= 1 ? "rising" : rw.hourly_yoy_pct >= 0 ? "treading water" : "shrinking"
+        }</span></div>
+      </div>
+    `);
+  }
+
+  // Gas prices
+  if (ind.gas && ind.gas.latest) {
+    const v = ind.gas.latest.value;
+    const spark = (ind.gas.spark || []).map(o => o.value);
+    const d12 = ind.gas.change_12w;
+    cards.push(`
+      <div class="card">
+        <h3>Gas — US regular avg</h3>
+        <div class="big">$${fmt(v, 2)}<small>/gal</small></div>
+        <div class="sub">${dateNice(ind.gas.latest.date)} · weekly EIA survey
+          ${deltaPill(d12, { dp: 2, unit: " 12w", goodIsLow: true })}
+        </div>
+        ${sparkline(spark, { color: "#f472b6" })}
+      </div>
+    `);
+  }
+
+  // Mortgage
+  if (ind.mortgage && ind.mortgage.latest) {
+    const v = ind.mortgage.latest.value;
+    const spark = (ind.mortgage.spark || []).map(o => o.value);
+    const d52 = ind.mortgage.change_52w;
+    const cls = v <= 5 ? "good" : v <= 6.5 ? "warn" : "bad";
+    cards.push(`
+      <div class="card">
+        <h3>30-year fixed mortgage</h3>
+        <div class="big">${fmt(v, 2)}<small>%</small></div>
+        <div class="sub">${dateNice(ind.mortgage.latest.date)} · Freddie Mac PMMS
+          ${deltaPill(d52, { dp: 2, unit: "pp 52w", goodIsLow: true })}
+        </div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
+          v <= 5 ? "affordable" : v <= 6.5 ? "stretched" : "punishing"
+        }</span></div>
+        ${sparkline(spark, { color: "#60a5fa" })}
+      </div>
+    `);
+  }
+
+  // Misery
+  if (s.misery) {
+    const score = s.misery.score;
+    const cls = score <= 6 ? "good" : score <= 9 ? "warn" : "bad";
+    cards.push(`
+      <div class="card">
+        <h3>Misery index</h3>
+        <div class="big">${fmt(score, 1)}</div>
+        <div class="sub">Unemployment ${fmt(s.misery.unemployment_rate, 1)}% + CPI YoY ${pctSigned(s.misery.cpi_yoy_pct, 1)}</div>
+        <div class="sub" style="margin-top:6px"><span class="pill ${cls}">${
+          score <= 6 ? "comfortable" : score <= 9 ? "elevated" : "painful"
+        }</span></div>
+      </div>
+    `);
+  }
+
+  // Jobless claims
+  if (ind.claims && ind.claims.latest) {
+    const v = ind.claims.latest.value;
+    const spark = (ind.claims.spark || []).map(o => o.value);
+    const wk4 = ind.claims.four_week_avg;
+    cards.push(`
+      <div class="card">
+        <h3>Initial jobless claims</h3>
+        <div class="big">${fmtInt(v)}</div>
+        <div class="sub">${dateNice(ind.claims.latest.date)} · weekly
+          ${wk4 ? ` · 4-wk avg ${fmtInt(wk4)}` : ""}
+        </div>
+        ${sparkline(spark, { color: "#facc15" })}
+      </div>
+    `);
+  }
+
+  // Savings
+  if (ind.savings && ind.savings.latest) {
+    const v = ind.savings.latest.value;
+    const spark = (ind.savings.spark || []).map(o => o.value);
+    const d12 = ind.savings.change_12m;
+    cards.push(`
+      <div class="card">
+        <h3>Personal saving rate</h3>
+        <div class="big">${fmt(v, 1)}<small>%</small></div>
+        <div class="sub">${dateNice(ind.savings.latest.date)} · BEA
+          ${deltaPill(d12, { dp: 1, unit: "pp 12m" })}
+        </div>
+        ${sparkline(spark, { color: "#34d399" })}
+      </div>
+    `);
+  }
+
+  // Hourly wages level (for reference, not just YoY)
+  if (ind.wages_hourly && ind.wages_hourly.latest) {
+    const v = ind.wages_hourly.latest.value;
+    const yoy = ind.wages_hourly.yoy_pct;
+    const spark = (ind.wages_hourly.spark || []).map(o => o.value);
+    cards.push(`
+      <div class="card">
+        <h3>Avg hourly earnings (private)</h3>
+        <div class="big">$${fmt(v, 2)}<small>/hr</small></div>
+        <div class="sub">${dateNice(ind.wages_hourly.latest.date)} · nominal
+          ${deltaPill(yoy, { dp: 1, unit: "% YoY" })}
+        </div>
+        ${sparkline(spark, { color: "#34d399" })}
+      </div>
+    `);
+  }
+
+  document.getElementById("cards").innerHTML = cards.join("") || '<div class="empty">No data loaded.</div>';
+}
+
+let allMarkets = [];
+
+function renderMarkets(markets) {
+  if (!markets || markets.length === 0) {
+    document.getElementById("markets").innerHTML =
+      '<div class="card empty">No politics markets matched the sentiment filter.</div>';
+    return;
+  }
+  const q = (document.getElementById("search").value || "").trim().toLowerCase();
+  const sortBy = document.getElementById("sort").value;
+  let rows = markets.filter(m => {
+    if (!q) return true;
+    return ((m.question || "") + " " + (m.event_title || "")).toLowerCase().includes(q);
+  });
+  if (sortBy === "liquidity") rows.sort((a,b) => (b.liquidity || 0) - (a.liquidity || 0));
+  else if (sortBy === "volume") rows.sort((a,b) => (b.volume || 0) - (a.volume || 0));
+  else if (sortBy === "end") rows.sort((a,b) => {
+    const ad = a.end_date ? new Date(a.end_date).getTime() : Infinity;
+    const bd = b.end_date ? new Date(b.end_date).getTime() : Infinity;
+    return ad - bd;
+  });
+  rows = rows.slice(0, 200);
+  const body = rows.map(m => {
+    const url = m.slug ? `https://polymarket.com/market/${m.slug}` : "#";
+    const impPct = m.implied_p !== null && m.implied_p !== undefined
+      ? `${(m.implied_p * 100).toFixed(0)}%`
+      : "—";
+    const endStr = m.end_date ? new Date(m.end_date).toISOString().slice(0, 10) : "—";
+    return `
+      <tr>
+        <td>
+          <div class="market-q"><a href="${url}" target="_blank">${m.question || "(untitled)"}</a></div>
+          <div class="market-event">${m.event_title || ""}</div>
+        </td>
+        <td class="num">${impPct}</td>
+        <td class="num">$${fmtInt(m.liquidity)}</td>
+        <td class="num">$${fmtInt(m.volume)}</td>
+        <td class="num">${endStr}</td>
+      </tr>
+    `;
+  }).join("");
+  document.getElementById("markets").innerHTML = `
+    <div class="card" style="padding:0;overflow:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th class="num">Implied</th>
+            <th class="num">Liquidity</th>
+            <th class="num">Volume</th>
+            <th class="num">Ends</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function loadAll() {
+  const [summary, marketsResp] = await Promise.all([
+    getJSON("/api/summary"),
+    getJSON("/api/markets"),
+  ]);
+  if (summary) {
+    renderMood(summary.mood);
+    renderCards(summary);
+  } else {
+    document.getElementById("moodVerdict").textContent = "Failed to load data.";
+  }
+  allMarkets = (marketsResp && marketsResp.markets) || [];
+  renderMarkets(allMarkets);
+}
+
+document.getElementById("search").addEventListener("input", () => renderMarkets(allMarkets));
+document.getElementById("sort").addEventListener("change", () => renderMarkets(allMarkets));
+
+loadAll();
+// Refresh every 5 minutes — markets move, FRED data is cached server-side anyway.
+setInterval(loadAll, 5 * 60 * 1000);
+</script>
+</body>
+</html>

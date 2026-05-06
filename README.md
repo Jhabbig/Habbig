@@ -20,6 +20,7 @@ See `CONTRIBUTING.md` for the contributor quick-start (Docker + manual).
 | `sports-dashboard/` | 8888 | Sports arbitrage signals (The Odds API vs Polymarket). |
 | `world-state-dashboard/` | 7050 | Geopolitical feed + infrastructure map. |
 | `Dashboard-x-truth-research-prediction/` | 18789 | X / TruthSocial prediction-mining dashboard. |
+| `voter-dashboard/` | 7053 | Voter mood — sentiment, inflation, jobs, real wages, gas, mortgage, plus Polymarket politics markets. |
 | `polymarket_weather_bot/` | — | Headless weather-market trading bot (no UI). |
 | `polymarket-bot/` | — | 5-minute up/down trading bot (single file, tightly coupled to crypto-dashboard). |
 | `deploy/` | — | Systemd unit files for the Ubuntu production box. |

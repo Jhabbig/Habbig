@@ -99,6 +99,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "voter": {
+      "subdomain": "mood",
+      "target": 7053,
+      "display_name": "Voter Mood",
+      "description": "How voters feel and how their lives are going · sentiment, inflation, jobs, real wages",
+      "accent": "#818cf8",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": null,
+      "stripe_price_annual": null
     }
   }
 }
