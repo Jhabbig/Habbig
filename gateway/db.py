@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS stripe_events (
     processed_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS superuser_keys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key             TEXT UNIQUE NOT NULL,
+    name            TEXT NOT NULL,
+    dashboards      TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER,
+    last_used_at    INTEGER,
+    active          INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS user_positions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL,
@@ -159,6 +170,8 @@ CREATE INDEX IF NOT EXISTS idx_stripe_events_processed ON stripe_events(processe
 CREATE INDEX IF NOT EXISTS idx_positions_user ON user_positions(user_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON user_positions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_positions_platform ON user_positions(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_superuser_keys ON superuser_keys(key);
+CREATE INDEX IF NOT EXISTS idx_superuser_active ON superuser_keys(active);
 """
 
 
@@ -1168,3 +1181,114 @@ def rebuild_positions_for_user(user_id: int) -> int:
         )
         count += 1
     return count
+
+
+# ── Superuser key operations ─────────────────────────────────────────────────
+
+def generate_superuser_key() -> str:
+    """Generate a 32-character URL-safe random superuser key."""
+    return secrets.token_urlsafe(24)
+
+
+def create_superuser_key(name: str, dashboards: list[str] | None = None, expires_in_days: int | None = None) -> str:
+    """Create a new superuser key.
+
+    Args:
+        name: Human-readable name for the key
+        dashboards: List of dashboard keys this superuser can access (empty = all)
+        expires_in_days: Number of days until key expires (None = never expires)
+
+    Returns:
+        The generated superuser key
+    """
+    key = generate_superuser_key()
+    now = int(time.time())
+    expires_at = None
+    if expires_in_days is not None:
+        expires_at = now + (expires_in_days * 86400)
+
+    dashboards_str = ",".join(dashboards) if dashboards else ""
+
+    with conn() as c:
+        c.execute(
+            """INSERT INTO superuser_keys (key, name, dashboards, created_at, expires_at, active)
+               VALUES (?, ?, ?, ?, ?, 1)""",
+            (key, name, dashboards_str, now, expires_at),
+        )
+    return key
+
+
+def validate_superuser_key(key: str) -> dict | None:
+    """Check if a superuser key is valid and active.
+
+    Returns:
+        dict with key info if valid, None otherwise
+    """
+    now = int(time.time())
+    with conn() as c:
+        row = c.execute(
+            """SELECT id, name, dashboards, created_at, expires_at, last_used_at
+               FROM superuser_keys
+               WHERE key = ? AND active = 1
+               AND (expires_at IS NULL OR expires_at > ?)""",
+            (key, now),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    # Update last_used_at
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET last_used_at = ? WHERE key = ?", (now, key))
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+        "last_used_at": row["last_used_at"],
+    }
+
+
+def has_superuser_key_access(key: str, dashboard_key: str) -> bool:
+    """Check if a superuser key grants access to a specific dashboard."""
+    key_info = validate_superuser_key(key)
+    if key_info is None:
+        return False
+
+    # Empty dashboards list means access to all dashboards
+    if not key_info["dashboards"]:
+        return True
+
+    return dashboard_key in key_info["dashboards"]
+
+
+def list_superuser_keys() -> list[dict]:
+    """List all superuser keys (excluding the actual key values)."""
+    with conn() as c:
+        rows = c.execute(
+            """SELECT id, name, dashboards, created_at, expires_at, last_used_at, active
+               FROM superuser_keys
+               ORDER BY created_at DESC"""
+        ).fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "last_used_at": row["last_used_at"],
+            "active": bool(row["active"]),
+        }
+        for row in rows
+    ]
+
+
+def revoke_superuser_key(key_id: int) -> bool:
+    """Revoke a superuser key by ID. Returns True if successful."""
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,))
+        return c.total_changes > 0
