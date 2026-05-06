@@ -73,6 +73,7 @@ async def api_feed(
     days: int = 90,
     jurisdiction: str = "",
     source: str = "",
+    tag: str = "",
     q: str = "",
     force: bool = False,
 ) -> JSONResponse:
@@ -86,6 +87,17 @@ async def api_feed(
     if source:
         wanted = {s.strip().upper() for s in source.split(",") if s.strip()}
         items = [it for it in items if it.get("source") in wanted]
+    if tag:
+        wanted = {t.strip().lower() for t in tag.split(",") if t.strip()}
+        # Match if primary_tag is wanted, or any element of tags is wanted.
+        # 'other' matches items with no positive tags.
+        def tag_hit(it: dict) -> bool:
+            if "other" in wanted and not it.get("tags"):
+                return True
+            if it.get("primary_tag") in wanted:
+                return True
+            return any(t in wanted for t in it.get("tags", []))
+        items = [it for it in items if tag_hit(it)]
     if q:
         needle = q.lower().strip()
         if needle:

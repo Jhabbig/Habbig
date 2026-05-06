@@ -12,6 +12,8 @@ import logging
 import time
 from threading import Lock
 
+from analysis.classifier import classify_item
+
 from . import esma_rss, fca_rss, sec_rss
 
 log = logging.getLogger(__name__)
@@ -59,6 +61,10 @@ def _fetch_all(max_per_source: int, since_days: int | None) -> dict:
                 "count": 0,
                 "error": str(exc),
             })
+
+    # Tag every item via the v0.1 classifier (in-place).
+    for it in items:
+        classify_item(it)
 
     # Newest first — items missing a published date sink to the bottom.
     items.sort(key=lambda x: x.get("published") or "", reverse=True)

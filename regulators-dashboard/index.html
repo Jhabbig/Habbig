@@ -48,6 +48,16 @@
   .jx.UK { background: #8957e5; color: #fff; }
   .jx.EU { background: #d29922; color: #0e1117; }
   .jx.OTHER { background: #30363d; color: var(--muted); }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px;
+         font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+         cursor: help; white-space: nowrap; }
+  .tag.enforcement { background: #f85149; color: #fff; }
+  .tag.rulemaking  { background: #1f6feb; color: #fff; }
+  .tag.guidance    { background: #2ea043; color: #fff; }
+  .tag.speech      { background: #8957e5; color: #fff; }
+  .tag.personnel   { background: #d29922; color: #0e1117; }
+  .tag.other       { background: #30363d; color: var(--muted); }
+  .tag-extra { color: var(--muted); font-size: 10px; margin-left: 4px; cursor: help; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -77,23 +87,34 @@
       <span class="chip" data-jx="EU">EU</span>
       <input type="search" id="q" class="search" placeholder="Search title/summary…" />
     </div>
+    <div class="filters">
+      <span class="hint">Type:</span>
+      <span class="chip active" data-tag="">All</span>
+      <span class="chip" data-tag="enforcement">Enforcement</span>
+      <span class="chip" data-tag="rulemaking">Rulemaking</span>
+      <span class="chip" data-tag="guidance">Guidance</span>
+      <span class="chip" data-tag="speech">Speech</span>
+      <span class="chip" data-tag="personnel">Personnel</span>
+      <span class="chip" data-tag="other">Other</span>
+    </div>
     <table>
       <thead>
         <tr>
-          <th style="width: 110px">Date</th>
-          <th style="width: 60px">Jx</th>
-          <th style="width: 110px">Body</th>
+          <th style="width: 100px">Date</th>
+          <th style="width: 50px">Jx</th>
+          <th style="width: 90px">Body</th>
+          <th style="width: 110px">Type</th>
           <th>Headline</th>
         </tr>
       </thead>
-      <tbody id="rows"><tr><td colspan="4" class="empty">loading…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
     </table>
     <div class="source-status" id="status"></div>
   </section>
 </main>
 
 <script>
-let state = { jurisdiction: "", q: "" };
+let state = { jurisdiction: "", tag: "", q: "" };
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -114,6 +135,7 @@ async function load() {
 
   const params = new URLSearchParams();
   if (state.jurisdiction) params.set("jurisdiction", state.jurisdiction);
+  if (state.tag) params.set("tag", state.tag);
   if (state.q) params.set("q", state.q);
 
   let data;
@@ -123,7 +145,7 @@ async function load() {
     data = await r.json();
   } catch (e) {
     meta.innerHTML = '<span class="err">load failed: ' + escapeHtml(e.message) + '</span>';
-    rows.innerHTML = '<tr><td colspan="4" class="empty err">feed load failed</td></tr>';
+    rows.innerHTML = '<tr><td colspan="5" class="empty err">feed load failed</td></tr>';
     return;
   }
 
@@ -131,7 +153,7 @@ async function load() {
   meta.textContent = `${data.count} actions · last ${data.since_days} days · fetched ${ts} UTC`;
 
   if (!data.items.length) {
-    rows.innerHTML = '<tr><td colspan="4" class="empty">No actions match the current filter.</td></tr>';
+    rows.innerHTML = '<tr><td colspan="5" class="empty">No actions match the current filter.</td></tr>';
   } else {
     rows.innerHTML = data.items.map(it => {
       const jxCls = ["US","UK","EU"].includes(it.jurisdiction) ? it.jurisdiction : "OTHER";
@@ -142,11 +164,30 @@ async function load() {
       const summary = it.summary
         ? `<div class="summary">${escapeHtml(it.summary)}</div>`
         : "";
+
+      const primary = it.primary_tag || "other";
+      const primaryMatches = (it.matched_phrases && it.matched_phrases[primary]) || [];
+      const primaryHover = primaryMatches.length
+        ? `matched: ${primaryMatches.join(", ")}`
+        : "no keywords matched";
+      const primaryChip = `<span class="tag ${escapeHtml(primary)}" title="${escapeHtml(primaryHover)}">${escapeHtml(primary)}</span>`;
+
+      const extraTags = (it.tags || []).filter(t => t !== primary);
+      let extraEl = "";
+      if (extraTags.length) {
+        const tip = extraTags.map(t => {
+          const ms = (it.matched_phrases && it.matched_phrases[t]) || [];
+          return `${t}: ${ms.join(", ")}`;
+        }).join(" · ");
+        extraEl = `<span class="tag-extra" title="${escapeHtml(tip)}">+${extraTags.length}</span>`;
+      }
+
       return `
         <tr>
           <td class="date">${escapeHtml(fmtDate(it.published))}</td>
           <td><span class="jx ${jxCls}">${jx}</span></td>
           <td class="src">${escapeHtml(it.source)}</td>
+          <td>${primaryChip}${extraEl}</td>
           <td class="title">${link}${summary}</td>
         </tr>`;
     }).join("");
@@ -164,6 +205,15 @@ document.querySelectorAll(".chip[data-jx]").forEach(el => {
     document.querySelectorAll(".chip[data-jx]").forEach(c => c.classList.remove("active"));
     el.classList.add("active");
     state.jurisdiction = el.dataset.jx;
+    load();
+  });
+});
+
+document.querySelectorAll(".chip[data-tag]").forEach(el => {
+  el.addEventListener("click", () => {
+    document.querySelectorAll(".chip[data-tag]").forEach(c => c.classList.remove("active"));
+    el.classList.add("active");
+    state.tag = el.dataset.tag;
     load();
   });
 });

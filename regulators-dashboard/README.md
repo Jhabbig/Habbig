@@ -12,7 +12,8 @@ Port: **7080**.
 
 | Version | View | Data source |
 |---|---|---|
-| **v0** | **Action feed** — unified table of last 90 days across SEC / FCA / ESMA: date, jurisdiction badge, body, headline (links to source), summary. Jurisdiction chips and free-text search. Per-source status row. | RSS — `defusedxml`-parsed |
+| **v0**   | **Action feed** — unified table of last 90 days across SEC / FCA / ESMA: date, jurisdiction badge, body, headline (links to source), summary. Jurisdiction chips and free-text search. Per-source status row. | RSS — `defusedxml`-parsed |
+| **v0.1** | **Type classifier** — every item tagged as `enforcement` / `rulemaking` / `guidance` / `speech` / `personnel` / `other` via rule-based keyword matching on title + summary. Color-coded chip per row; matched phrases shown on hover; type-filter chips. Multi-tag honest (an item matching two categories surfaces both). | rules — `analysis/classifier_keywords.py` |
 
 All views graceful-degrade when their data source is unreachable (the
 per-source status row flips to red; other sources keep working).
@@ -22,13 +23,14 @@ per-source status row flips to red; other sources keep working).
 | Path | Cache | Purpose |
 |---|---|---|
 | `GET /` | — | Dashboard UI |
-| `GET /api/feed?days=90&jurisdiction=&source=&q=` | 30 min | Unified action feed with filters |
+| `GET /api/feed?days=90&jurisdiction=&source=&tag=&q=` | 30 min | Unified action feed with filters |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
   - `days` — clamp 1..365, default 90
   - `jurisdiction` — comma-separated codes (`US,UK,EU`), case-insensitive
   - `source` — comma-separated source codes (`SEC,FCA,ESMA`), case-insensitive
+  - `tag` — comma-separated category tags (`enforcement,rulemaking,guidance,speech,personnel,other`), matches `primary_tag` or any element of `tags`. The literal `other` matches items where the classifier scored zero.
   - `q` — case-insensitive substring match on title or summary
 
 ## Run locally
@@ -53,7 +55,8 @@ Smoke-test individual modules:
 python3 -m ingestion.sec_rss          # SEC press releases
 python3 -m ingestion.fca_rss          # FCA news
 python3 -m ingestion.esma_rss         # ESMA news
-python3 -m ingestion.unified_feed     # merged feed + per-source status
+python3 -m ingestion.unified_feed     # merged feed + per-source status + classifier tags
+python3 -m analysis.classifier        # 11 fixture headlines across all 6 categories
 ```
 
 ## Files
@@ -66,8 +69,11 @@ regulators-dashboard/
 │   ├── sec_rss.py                  SEC press-release feed (US)
 │   ├── fca_rss.py                  FCA news feed (UK)
 │   ├── esma_rss.py                 ESMA news feed (EU)
-│   └── unified_feed.py             Per-source try/except + 30-min cache
-├── index.html                      Single-file UI: filter chips + action table, no JS deps
+│   └── unified_feed.py             Per-source try/except + 30-min cache + classifier hook
+├── analysis/
+│   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
+│   └── classifier.py               Rule-based scorer + 11 fixture self-test
+├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7080
 ├── requirements.txt                fastapi, uvicorn, defusedxml
 ├── .env.example
@@ -103,12 +109,34 @@ short-circuiting, sorts by `published` desc, and caches 30 min. The
 per-source status (with `ok` flag and error string) is exposed in the API
 response so the UI can render which feeds are healthy.
 
+### v0.1 — type classifier
+
+`analysis/classifier.py` runs after the merge step. For each item it
+computes `score(category) = Σ (weight × count)` over the phrase dictionary
+in `classifier_keywords.py` (six categories), then attaches:
+
+  - `primary_tag` — single highest-scoring category, or `"other"` if none
+  - `tags` — every category scoring `> 0`, sorted desc by score
+  - `matched_phrases` — `{category: [phrase, …]}` showing the top-5 matches
+    per category that fired, surfaced as a hover tooltip on the chip in the
+    UI so a reader can sanity-check why an item got tagged what it did
+
+Multi-tag is honest: a "Wells notice followed by settlement" headline
+scores high on `enforcement`; a "speech announcing proposed rule" scores
+on both `speech` and `rulemaking` — both surface, with `primary_tag`
+picking the highest scorer.
+
+**Tuning is one-file**: edit `classifier_keywords.py` and re-run
+`python3 -m analysis.classifier` to see the fixture pass-rate. Avoid
+single-word phrases that collide with English stop-words ("its", "names")
+— the file's docstring spells out the gotchas.
+
 ## Roadmap
 
 | Step | Status | Adds |
 |---|---|---|
 | **v0**   | ✓ done | Action feed (SEC + FCA + ESMA, RSS) |
-| v0.1 | open  | Auto-classifier — type tag (`enforcement` / `rulemaking` / `speech` / `guidance` / `personnel`) via keyword rules; matched phrases shown inline. Same transparent rule-based pattern as `centralbank-dashboard/analysis/stance_keywords.py`. |
+| **v0.1** | ✓ done | Auto-classifier — type tag (`enforcement` / `rulemaking` / `speech` / `guidance` / `personnel` / `other`) via keyword rules; matched phrases shown on hover; type-filter chips |
 | v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
 | v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
 | v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |
@@ -140,9 +168,13 @@ response so the UI can render which feeds are healthy.
   v0 still loads with SEC + FCA showing data; confirm the new URL on
   https://www.esma.europa.eu/news-publications and update
   `ingestion/esma_rss.py`.
-- **No type/severity tags in v0.** Every item is rendered raw; classifier
-  lands in v0.1. Until then, "Wells notice" and "annual report
-  publication" are visually equivalent — sort by date and read.
+- **Classifier is rule-based and Anglophone.** It matches headlines as
+  written by SEC / FCA / ESMA in English. Translated headlines from
+  jurisdictions added later (BaFin, JFSA, FINMA) will need their own
+  phrase dictionaries — the architecture supports this; the dictionary
+  doesn't yet.
+- **Severity scoring lands in v0.2.** Until then, "$200M settlement" and
+  "$5,000 fine" both render as `enforcement` with no magnitude signal.
 - **Polymarket overlay coverage is thin** outside crypto ETFs and
   big-name settlements, so v0.5 will only annotate a small fraction of
   action cards. That's expected.
