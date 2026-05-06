@@ -7,13 +7,18 @@ one broken scraper never takes the dashboard down.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
+import os
 import time
 from typing import Awaitable, Callable
+
+import httpx
 
 import cache
 import dedup
 import index_calc
+import surge_calc
 from models import Item
 
 log = logging.getLogger(__name__)
@@ -86,7 +91,6 @@ async def phash_worker(stop: asyncio.Event, period: int = 120) -> None:
 
 async def index_history_worker(stop: asyncio.Event, period: int = 600) -> None:
     """Snapshot the composite index every `period` seconds (default 10 min)."""
-    import json as _json
     while not stop.is_set():
         try:
             snap = index_calc.compute()
@@ -100,3 +104,51 @@ async def index_history_worker(stop: asyncio.Event, period: int = 600) -> None:
             await asyncio.wait_for(stop.wait(), timeout=period)
         except asyncio.TimeoutError:
             pass
+
+
+async def surge_worker(stop: asyncio.Event, period: int = 300) -> None:
+    """Detect surges, fire webhooks (with cooldown), prune old history."""
+    webhook = os.environ.get("SURGE_WEBHOOK_URL", "").strip()
+    threshold = surge_calc.webhook_threshold()
+    cooldown = surge_calc.cooldown_seconds()
+    while not stop.is_set():
+        try:
+            surges = surge_calc.compute(limit=50)
+            if webhook:
+                for s in surges:
+                    if s["z_score"] < threshold:
+                        continue
+                    if cache.recent_alert(s["source"], s["key"], cooldown):
+                        continue
+                    await _fire_webhook(webhook, s)
+                    cache.record_alert(
+                        s["source"], s["key"], s["z_score"],
+                        _json.dumps({k: v for k, v in s.items() if k != "trajectory"}),
+                    )
+            removed = cache.prune_history(days=7)
+            if removed:
+                log.info("pruned %d old item_history rows", removed)
+        except Exception as e:  # noqa: BLE001
+            log.warning("surge worker hiccup: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=period)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def _fire_webhook(url: str, surge: dict) -> None:
+    payload = {
+        "type": "culture.surge",
+        "source": surge.get("source"),
+        "section": surge.get("section"),
+        "title": surge.get("title"),
+        "url": surge.get("url"),
+        "z_score": surge.get("z_score"),
+        "score": surge.get("score"),
+        "ts": time.time(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            await c.post(url, json=payload)
+    except Exception as e:  # noqa: BLE001
+        log.warning("surge webhook POST failed: %s", e)

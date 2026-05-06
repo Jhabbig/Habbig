@@ -61,10 +61,11 @@ dashboard still renders, that section just shows "No data".
 |---|---|
 | `server.py` | FastAPI app + SSO middleware + REST endpoints. |
 | `models.py` | `Item` dataclass — uniform shape every scraper returns. |
-| `cache.py` | SQLite cache. Atomic per-source replace, freshness tracking, phash & index history. |
-| `scheduler.py` | Background refresh loop + phash worker + index-history snapshotter. |
+| `cache.py` | SQLite cache. Atomic per-source replace, freshness tracking, phash, index history, item history, surge alerts. |
+| `scheduler.py` | Background refresh loop + phash worker + index-history snapshotter + surge/alert worker. |
 | `dedup.py` | Perceptual-hash worker + greedy clustering. |
 | `index_calc.py` | Composite culture index — log-scaled, weighted. |
+| `surge_calc.py` | Per-item z-score against trailing window — picks the rising items. |
 | `scrapers/__init__.py` | Registry. Add a new module here to add a source. |
 | `scrapers/_http.py` | Shared httpx client + UA. |
 | `scrapers/tiktok.py` | TikTok trending — Apify / RapidAPI / unofficial. |
@@ -110,12 +111,33 @@ The composite index is snapshotted every 10 minutes into the
 N hours of points. The dashboard renders a 60×200 SVG sparkline next to the
 current score.
 
+## Surge alerts
+
+After each scraper sweep, every item's score is appended to `item_history`.
+Once an item has ≥4 points in the last 7 days, the surge worker computes a
+z-score against its trailing window. Items with positive z are returned by
+`GET /api/surges`, ranked highest first; the dashboard renders the top 8 in
+a "Rising now" panel with per-item trajectory sparklines.
+
+Only useful for **recurring** items — Spotify chart positions, Wikipedia
+pageviews, NYT bestsellers, Lyst ranks, Pinterest trends, Polymarket
+markets. One-shot items (Reddit posts, news headlines, KYM new entries)
+won't generate surges since there's no baseline.
+
+If `SURGE_WEBHOOK_URL` is set, items crossing `SURGE_Z_THRESHOLD`
+(default 2.5) trigger a webhook POST with a per-item cooldown
+(`SURGE_ALERT_COOLDOWN_HOURS`, default 6) so one sustained surge
+doesn't spam.
+
+`item_history` is auto-pruned to the last 7 days every cycle.
+
 ## API
 
 | Endpoint | Returns |
 |---|---|
 | `GET /api/index` | Composite + per-section scores, calibration. |
 | `GET /api/index/history?hours=72` | Time series of overall score (max 30d). |
+| `GET /api/surges?limit=20` | Items with positive z-score vs trailing 7-day baseline, with their full trajectory. |
 | `GET /api/section/{section}` | Top items in a section, deduped across sources. Pass `?dedup_results=false` to see the raw rows. |
 | `GET /api/source/{source}` | Top items from one source (debug). |
 | `POST /api/refresh?source=…` | Kick all scrapers (or one). |

@@ -33,8 +33,11 @@ from fastapi.responses import HTMLResponse, JSONResponse      # noqa: E402
 import cache                                                   # noqa: E402
 import dedup                                                   # noqa: E402
 import index_calc                                              # noqa: E402
+import surge_calc                                              # noqa: E402
 from models import SECTIONS                                    # noqa: E402
-from scheduler import Scheduler, index_history_worker, phash_worker  # noqa: E402
+from scheduler import (                                        # noqa: E402
+    Scheduler, index_history_worker, phash_worker, surge_worker,
+)
 from scrapers import registry                                  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -99,6 +102,8 @@ async def on_startup() -> None:
         phash_worker(_workers_stop), name="culture-phash"))
     _worker_tasks.append(asyncio.create_task(
         index_history_worker(_workers_stop), name="culture-history"))
+    _worker_tasks.append(asyncio.create_task(
+        surge_worker(_workers_stop), name="culture-surges"))
 
 
 @app.on_event("shutdown")
@@ -127,6 +132,15 @@ async def api_index() -> JSONResponse:
 async def api_index_history(hours: int = 72) -> JSONResponse:
     hours = max(1, min(hours, 24 * 30))
     return JSONResponse({"hours": hours, "points": cache.index_history(hours)})
+
+
+@app.get("/api/surges")
+async def api_surges(limit: int = 20) -> JSONResponse:
+    limit = max(1, min(limit, 100))
+    return JSONResponse({
+        "items": surge_calc.compute(limit=limit),
+        "threshold": surge_calc.webhook_threshold(),
+    })
 
 
 @app.get("/api/section/{section}")

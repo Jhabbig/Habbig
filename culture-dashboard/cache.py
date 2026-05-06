@@ -76,6 +76,28 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_index_history_ts
                 ON index_history(ts DESC);
+
+            CREATE TABLE IF NOT EXISTS item_history (
+                source   TEXT NOT NULL,
+                key      TEXT NOT NULL,
+                ts       REAL NOT NULL,
+                score    REAL NOT NULL,
+                velocity REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (source, key, ts)
+            );
+            CREATE INDEX IF NOT EXISTS idx_item_history_lookup
+                ON item_history(source, key, ts DESC);
+
+            CREATE TABLE IF NOT EXISTS surge_alerts (
+                source       TEXT NOT NULL,
+                key          TEXT NOT NULL,
+                alerted_at   REAL NOT NULL,
+                z_score      REAL NOT NULL,
+                payload_json TEXT,
+                PRIMARY KEY (source, key, alerted_at)
+            );
+            CREATE INDEX IF NOT EXISTS idx_surge_alerts_recent
+                ON surge_alerts(source, key, alerted_at DESC);
         """)
         # Add phash column to existing DBs that predate the schema bump.
         try:
@@ -127,6 +149,12 @@ def replace_source(source: str, items: Iterable[Item]) -> None:
                 " score, velocity, fetched_at, extra_json) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 rows,
+            )
+            # Append a history snapshot so surge detection has a time series.
+            c.executemany(
+                "INSERT OR IGNORE INTO item_history (source, key, ts, score, velocity) "
+                "VALUES (?,?,?,?,?)",
+                [(r[1], r[2], now, r[7], r[8]) for r in rows],
             )
         c.execute(
             "INSERT INTO source_runs (source, last_run, last_ok) VALUES (?, ?, 1) "
@@ -220,6 +248,80 @@ def index_history(hours: int = 72) -> list[dict]:
                 d["sections"] = {}
             out.append(d)
         return out
+
+
+def items_with_history(min_points: int = 3, hours: int = 168) -> list[dict]:
+    """Return current rows joined with their score history (last `hours`).
+
+    Only includes items that have at least `min_points` history rows — surge
+    detection needs a baseline to compute against.
+    """
+    cutoff = time.time() - hours * 3600
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT source, key, COUNT(*) AS n FROM item_history "
+            "WHERE ts >= ? GROUP BY source, key HAVING n >= ?",
+            (cutoff, min_points),
+        )
+        eligible = [(r["source"], r["key"]) for r in cur.fetchall()]
+        if not eligible:
+            return []
+
+        # Pull the items and their history. SQLite has no array binding, so
+        # we use a temp table for the join — much faster than per-item queries.
+        c.execute("CREATE TEMP TABLE IF NOT EXISTS _surge_keys (source TEXT, key TEXT)")
+        c.execute("DELETE FROM _surge_keys")
+        c.executemany("INSERT INTO _surge_keys VALUES (?, ?)", eligible)
+
+        items = {(r["source"], r["key"]): _row_to_dict(r) for r in c.execute(
+            "SELECT i.* FROM items i JOIN _surge_keys k "
+            "ON i.source = k.source AND i.key = k.key"
+        ).fetchall()}
+
+        history: dict[tuple[str, str], list[dict]] = {}
+        for r in c.execute(
+            "SELECT h.source, h.key, h.ts, h.score FROM item_history h "
+            "JOIN _surge_keys k ON h.source = k.source AND h.key = k.key "
+            "WHERE h.ts >= ? ORDER BY h.ts ASC",
+            (cutoff,),
+        ).fetchall():
+            history.setdefault((r["source"], r["key"]), []).append(
+                {"ts": r["ts"], "score": r["score"]}
+            )
+
+    out = []
+    for skey, item in items.items():
+        item["history"] = history.get(skey, [])
+        out.append(item)
+    return out
+
+
+def recent_alert(source: str, key: str, within_seconds: float) -> bool:
+    cutoff = time.time() - within_seconds
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT 1 FROM surge_alerts WHERE source = ? AND key = ? "
+            "AND alerted_at >= ? LIMIT 1",
+            (source, key, cutoff),
+        )
+        return cur.fetchone() is not None
+
+
+def record_alert(source: str, key: str, z_score: float, payload_json: str) -> None:
+    with _txn() as c:
+        c.execute(
+            "INSERT INTO surge_alerts (source, key, alerted_at, z_score, payload_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (source, key, time.time(), z_score, payload_json),
+        )
+
+
+def prune_history(days: int = 7) -> int:
+    """Delete item_history rows older than `days`. Returns rows removed."""
+    cutoff = time.time() - days * 86400
+    with _txn() as c:
+        cur = c.execute("DELETE FROM item_history WHERE ts < ?", (cutoff,))
+        return cur.rowcount
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
