@@ -4,3 +4,5 @@ httpx
 defusedxml
 feedparser
 pytrends
+Pillow
+imagehash

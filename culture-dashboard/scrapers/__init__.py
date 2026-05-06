@@ -22,9 +22,12 @@ from . import (
     google_trends,
     instagram,
     kym,
+    lyst_index,
     markets,
     music_charts,
     news,
+    nyt_bestsellers,
+    pinterest_trends,
     reddit_memes,
     spotify_charts,
     steam_top,
@@ -45,5 +48,6 @@ def registry() -> list[ScraperSpec]:
         google_trends, wikipedia, youtube_trending, x_trending,
         box_office, music_charts, spotify_charts, steam_top,
         markets, news, urban_dictionary, substack,
+        nyt_bestsellers, lyst_index, pinterest_trends,
     ]
     return [(m.NAME, m.fetch, m.REFRESH_SECONDS) for m in modules]

@@ -52,12 +52,15 @@ def init_db() -> None:
                 velocity    REAL NOT NULL DEFAULT 0,
                 fetched_at  REAL NOT NULL,
                 extra_json  TEXT,
+                phash       TEXT,
                 PRIMARY KEY (source, key)
             );
             CREATE INDEX IF NOT EXISTS idx_items_section
                 ON items(section, score DESC);
             CREATE INDEX IF NOT EXISTS idx_items_source
                 ON items(source, fetched_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_items_phash
+                ON items(phash) WHERE phash IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS source_runs (
                 source      TEXT PRIMARY KEY,
@@ -65,7 +68,20 @@ def init_db() -> None:
                 last_ok     INTEGER NOT NULL DEFAULT 0,
                 last_error  TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS index_history (
+                ts            REAL PRIMARY KEY,
+                overall       REAL,
+                sections_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_index_history_ts
+                ON index_history(ts DESC);
         """)
+        # Add phash column to existing DBs that predate the schema bump.
+        try:
+            c.execute("ALTER TABLE items ADD COLUMN phash TEXT")
+        except sqlite3.OperationalError:
+            pass
 
 
 @contextmanager
@@ -156,6 +172,54 @@ def list_runs() -> list[dict]:
             "ORDER BY source"
         )
         return [dict(r) for r in cur.fetchall()]
+
+
+def items_missing_phash(limit: int = 50) -> list[dict]:
+    """Items that have an image URL but no perceptual hash yet."""
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT source, key, image FROM items "
+            "WHERE image IS NOT NULL AND phash IS NULL "
+            "ORDER BY fetched_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def set_phash(source: str, key: str, phash: str) -> None:
+    with _txn() as c:
+        c.execute(
+            "UPDATE items SET phash = ? WHERE source = ? AND key = ?",
+            (phash, source, key),
+        )
+
+
+def record_index_snapshot(overall: float | None, sections_json: str) -> None:
+    with _txn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO index_history (ts, overall, sections_json) "
+            "VALUES (?, ?, ?)",
+            (time.time(), overall, sections_json),
+        )
+
+
+def index_history(hours: int = 72) -> list[dict]:
+    cutoff = time.time() - hours * 3600
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT ts, overall, sections_json FROM index_history "
+            "WHERE ts >= ? ORDER BY ts ASC",
+            (cutoff,),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            try:
+                d["sections"] = json.loads(d.pop("sections_json"))
+            except json.JSONDecodeError:
+                d["sections"] = {}
+            out.append(d)
+        return out
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

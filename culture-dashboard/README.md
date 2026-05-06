@@ -34,6 +34,7 @@ populate as scrapers finish (15-60s typical).
 | `markets` | Culture-bucket prediction markets | Polymarket (pop culture / entertainment / awards / …) |
 | `news` | Top headlines + sentiment | BBC, NYT, Guardian, AP, Reuters RSS |
 | `language` | Slang + emerging ideas | Urban Dictionary WotD, Substack leaderboards |
+| `lifestyle` | Books / fashion / search trends | NYT bestsellers, Lyst Index (quarterly), Pinterest trends |
 
 The composite **culture index** is a log-scaled, weight-blended 0-100 score
 across sections. Tunable in `index_calc.py:CALIBRATION`.
@@ -60,8 +61,9 @@ dashboard still renders, that section just shows "No data".
 |---|---|
 | `server.py` | FastAPI app + SSO middleware + REST endpoints. |
 | `models.py` | `Item` dataclass — uniform shape every scraper returns. |
-| `cache.py` | SQLite cache. Atomic per-source replace, freshness tracking. |
-| `scheduler.py` | Background refresh loop. Per-source cadence; failures isolated. |
+| `cache.py` | SQLite cache. Atomic per-source replace, freshness tracking, phash & index history. |
+| `scheduler.py` | Background refresh loop + phash worker + index-history snapshotter. |
+| `dedup.py` | Perceptual-hash worker + greedy clustering. |
 | `index_calc.py` | Composite culture index — log-scaled, weighted. |
 | `scrapers/__init__.py` | Registry. Add a new module here to add a source. |
 | `scrapers/_http.py` | Shared httpx client + UA. |
@@ -81,17 +83,40 @@ dashboard still renders, that section just shows "No data".
 | `scrapers/news.py` | News RSS + dictionary-sentiment. |
 | `scrapers/urban_dictionary.py` | Urban Dictionary WotD. |
 | `scrapers/substack.py` | Substack section leaderboards. |
-| `index.html` | Single-page UI, vanilla JS, no build step. |
+| `scrapers/nyt_bestsellers.py` | NYT bestsellers (API or HTML). |
+| `scrapers/lyst_index.py` | Lyst Index quarterly fashion ranking. |
+| `scrapers/pinterest_trends.py` | Pinterest trends (extracted from page JSON). |
+| `index.html` | Single-page UI + sparkline + dupes badges, vanilla JS, no build step. |
 | `Dockerfile` | Container build for the `culture` service. |
 | `requirements.txt` | Python deps. |
 | `.env.example` | Reference for env vars. |
+
+## Cross-platform meme dedup
+
+Items with images get a 64-bit perceptual hash (`imagehash.dhash`) computed
+in the background after each scraper sweep. At read time `/api/section/{s}`
+groups items whose hashes are within Hamming distance 8 (tunable via
+`CULTURE_PHASH_MAX_DISTANCE`) — the highest-scoring item becomes the
+representative, the rest land in `extra.dupes` as `[{source, url, title}, …]`
+so the UI can render "also on tiktok, reddit_memes …".
+
+`Pillow` and `imagehash` are required deps; if either is missing the dedup
+logic becomes a no-op and items pass through ungrouped.
+
+## Culture index history
+
+The composite index is snapshotted every 10 minutes into the
+`index_history` table. `GET /api/index/history?hours=72` returns the last
+N hours of points. The dashboard renders a 60×200 SVG sparkline next to the
+current score.
 
 ## API
 
 | Endpoint | Returns |
 |---|---|
 | `GET /api/index` | Composite + per-section scores, calibration. |
-| `GET /api/section/{section}` | Top items in a section. |
+| `GET /api/index/history?hours=72` | Time series of overall score (max 30d). |
+| `GET /api/section/{section}` | Top items in a section, deduped across sources. Pass `?dedup_results=false` to see the raw rows. |
 | `GET /api/source/{source}` | Top items from one source (debug). |
 | `POST /api/refresh?source=…` | Kick all scrapers (or one). |
 | `GET /api/health` | Per-source freshness + last error. |

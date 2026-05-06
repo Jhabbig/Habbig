@@ -37,12 +37,19 @@
   @media (max-width: 800px) { .top-row { grid-template-columns: 1fr; } }
 
   .index-card { background: var(--panel); border: 1px solid var(--border);
-                border-radius: 10px; padding: 22px; }
+                border-radius: 10px; padding: 22px; display: flex;
+                flex-direction: column; gap: 6px; }
   .index-card .label { color: var(--muted); font-size: 12px;
                        text-transform: uppercase; letter-spacing: 0.08em; }
   .index-card .value { font-size: 56px; font-weight: 700; line-height: 1;
                        margin-top: 4px; color: var(--accent); }
-  .index-card .meta { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .index-card .meta { color: var(--muted); font-size: 12px; }
+  .spark { width: 100%; height: 60px; margin-top: 6px; }
+  .spark-empty { color: var(--muted); font-size: 11px;
+                 text-align: center; padding: 16px 0; font-style: italic; }
+  .dupes { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .dupes a { color: var(--muted); text-decoration: underline dotted; }
+  .dupes a:hover { color: var(--accent); }
 
   .breakdown { background: var(--panel); border: 1px solid var(--border);
                border-radius: 10px; padding: 18px; }
@@ -103,6 +110,9 @@
       <div class="label">Culture index</div>
       <div class="value" id="overall">—</div>
       <div class="meta" id="overall-meta">computing…</div>
+      <svg class="spark" id="spark" viewBox="0 0 200 60" preserveAspectRatio="none"
+           aria-hidden="true"></svg>
+      <div class="spark-empty" id="spark-empty">history will appear after first hour</div>
     </div>
     <div class="breakdown">
       <h2>Section signal</h2>
@@ -123,9 +133,36 @@ const SECTION_META = {
   markets:       { title: "Culture markets",sub: "Polymarket — pop culture" },
   news:          { title: "News & sentiment", sub: "Top headlines · positive − negative" },
   language:      { title: "Language & ideas", sub: "Slang, Substack rising" },
-  lifestyle:     { title: "Lifestyle",      sub: "Books / fashion / food (slow)" },
+  lifestyle:     { title: "Lifestyle",      sub: "NYT bestsellers · Lyst · Pinterest" },
 };
-const ORDER = ["memes", "attention", "entertainment", "markets", "news", "language"];
+const ORDER = ["memes", "attention", "entertainment", "markets", "news", "language", "lifestyle"];
+
+function drawSpark(points) {
+  const svg = document.getElementById("spark");
+  const empty = document.getElementById("spark-empty");
+  const vals = (points || []).map(p => p.overall).filter(v => v != null);
+  if (vals.length < 2) {
+    svg.innerHTML = "";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+  const W = 200, H = 60, pad = 4;
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = (max - min) || 1;
+  const step = (W - 2 * pad) / (vals.length - 1);
+  const path = vals.map((v, i) => {
+    const x = pad + i * step;
+    const y = H - pad - ((v - min) / range) * (H - 2 * pad);
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const last = vals[vals.length - 1];
+  const lastY = H - pad - ((last - min) / range) * (H - 2 * pad);
+  svg.innerHTML = `
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+    <circle cx="${(W - pad).toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.5"
+            fill="var(--accent)"/>`;
+}
 
 const fmt = n => {
   if (n == null) return "—";
@@ -136,12 +173,17 @@ const fmt = n => {
 };
 
 async function loadIndex() {
-  const r = await fetch("/api/index");
+  const [r, rh] = await Promise.all([
+    fetch("/api/index"),
+    fetch("/api/index/history?hours=72"),
+  ]);
   const data = await r.json();
+  const history = await rh.json();
   document.getElementById("overall").textContent =
     data.overall == null ? "—" : data.overall.toFixed(1);
   document.getElementById("overall-meta").textContent =
     "weighted across " + Object.keys(data.sections).length + " sections";
+  drawSpark(history.points);
 
   const bars = document.getElementById("bars");
   bars.innerHTML = "";
@@ -183,6 +225,17 @@ async function loadSection(section) {
     if (it.score != null) metaBits.push("score " + fmt(it.score));
     if (it.extra && it.extra.author) metaBits.push("@" + it.extra.author);
     if (it.extra && it.extra.sub) metaBits.push("r/" + it.extra.sub);
+    let dupesHtml = "";
+    const dupes = it.extra && it.extra.dupes;
+    if (dupes && dupes.length) {
+      const links = dupes.slice(0, 4).map(d =>
+        d.url
+          ? `<a href="${d.url}" target="_blank" rel="noopener noreferrer">${d.source}</a>`
+          : d.source
+      ).join(", ");
+      dupesHtml = `<div class="dupes">also on ${links}` +
+        (dupes.length > 4 ? ` +${dupes.length - 4}` : "") + `</div>`;
+    }
     li.innerHTML = `
       <div class="rank">${i + 1}</div>
       ${it.image
@@ -190,7 +243,7 @@ async function loadSection(section) {
                 referrerpolicy="no-referrer"
                 onerror="this.classList.add('empty');this.removeAttribute('src')">`
         : `<div class="thumb empty"></div>`}
-      <div class="title">${titleHtml}<div class="meta">${metaBits.join(" · ")}</div></div>`;
+      <div class="title">${titleHtml}<div class="meta">${metaBits.join(" · ")}</div>${dupesHtml}</div>`;
     ul.appendChild(li);
   });
   card.appendChild(ul);

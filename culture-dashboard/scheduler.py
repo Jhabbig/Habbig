@@ -12,6 +12,8 @@ import time
 from typing import Awaitable, Callable
 
 import cache
+import dedup
+import index_calc
 from models import Item
 
 log = logging.getLogger(__name__)
@@ -67,3 +69,34 @@ class Scheduler:
         except Exception as e:  # noqa: BLE001 — isolate scraper failures
             log.warning("scraper %s failed: %s", name, e)
             cache.record_failure(name, str(e))
+
+
+async def phash_worker(stop: asyncio.Event, period: int = 120) -> None:
+    """Background worker that hashes any newly-arrived images."""
+    while not stop.is_set():
+        try:
+            await dedup.compute_missing_phashes(limit=30)
+        except Exception as e:  # noqa: BLE001
+            log.warning("phash worker hiccup: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=period)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def index_history_worker(stop: asyncio.Event, period: int = 600) -> None:
+    """Snapshot the composite index every `period` seconds (default 10 min)."""
+    import json as _json
+    while not stop.is_set():
+        try:
+            snap = index_calc.compute()
+            cache.record_index_snapshot(
+                snap.get("overall"),
+                _json.dumps(snap.get("sections", {})),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("index snapshot failed: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=period)
+        except asyncio.TimeoutError:
+            pass

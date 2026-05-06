@@ -31,9 +31,10 @@ from fastapi import FastAPI, HTTPException, Request           # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse      # noqa: E402
 
 import cache                                                   # noqa: E402
+import dedup                                                   # noqa: E402
 import index_calc                                              # noqa: E402
 from models import SECTIONS                                    # noqa: E402
-from scheduler import Scheduler                                # noqa: E402
+from scheduler import Scheduler, index_history_worker, phash_worker  # noqa: E402
 from scrapers import registry                                  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -48,8 +49,10 @@ _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
 if not _sso_secret and not _DEV_MODE:
     log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — all requests will 503")
 
-# Scheduler singleton — populated on startup.
+# Scheduler singleton + auxiliary workers — populated on startup.
 _scheduler: Scheduler | None = None
+_workers_stop = asyncio.Event()
+_worker_tasks: list[asyncio.Task] = []
 
 
 @app.middleware("http")
@@ -92,12 +95,22 @@ async def on_startup() -> None:
     # Kick a first refresh in the background so the dashboard isn't empty
     # for new deploys. Don't block startup on it.
     asyncio.create_task(_scheduler.run_once())
+    _worker_tasks.append(asyncio.create_task(
+        phash_worker(_workers_stop), name="culture-phash"))
+    _worker_tasks.append(asyncio.create_task(
+        index_history_worker(_workers_stop), name="culture-history"))
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    _workers_stop.set()
     if _scheduler:
         await _scheduler.stop()
+    for t in _worker_tasks:
+        try:
+            await asyncio.wait_for(t, timeout=2)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -110,12 +123,21 @@ async def api_index() -> JSONResponse:
     return JSONResponse(index_calc.compute())
 
 
+@app.get("/api/index/history")
+async def api_index_history(hours: int = 72) -> JSONResponse:
+    hours = max(1, min(hours, 24 * 30))
+    return JSONResponse({"hours": hours, "points": cache.index_history(hours)})
+
+
 @app.get("/api/section/{section}")
-async def api_section(section: str, limit: int = 50) -> JSONResponse:
+async def api_section(section: str, limit: int = 50, dedup_results: bool = True) -> JSONResponse:
     if section not in SECTIONS:
         raise HTTPException(404, f"unknown section: {section}")
     limit = max(1, min(limit, 200))
-    return JSONResponse({"section": section, "items": cache.get_section(section, limit)})
+    # Pull more than `limit` so dedup doesn't shrink the list below the cap.
+    raw = cache.get_section(section, min(limit * 2, 200))
+    items = dedup.cluster_items(raw) if dedup_results else raw
+    return JSONResponse({"section": section, "items": items[:limit]})
 
 
 @app.get("/api/source/{source}")
