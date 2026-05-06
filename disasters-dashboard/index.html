@@ -14,10 +14,10 @@
     --text-1: #f1f5f9;
     --text-2: #94a3b8;
     --text-3: #64748b;
-    --accent: #f97316;        /* orange - dashboard theme */
-    --accent-2: #ef4444;      /* red - critical */
-    --accent-3: #fbbf24;      /* yellow - warn */
-    --accent-4: #38bdf8;      /* sky - info */
+    --accent: #f97316;
+    --accent-2: #ef4444;
+    --accent-3: #fbbf24;
+    --accent-4: #38bdf8;
     --good: #34d399;
     --magenta: #c084fc;
   }
@@ -49,14 +49,12 @@
     gap: 12px;
     margin: 0 0 22px;
   }
-  .crit-strip .crit {
+  .crit {
     background: var(--bg-1);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    display: flex; flex-direction: column; gap: 4px;
   }
   .crit .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
   .crit .num { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
@@ -79,17 +77,18 @@
     border-radius: 12px;
     padding: 14px 16px;
     min-height: 96px;
+    position: relative;
   }
   .card h3 {
     margin: 0 0 8px;
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--text-3); font-weight: 600;
   }
-  .card .big {
-    font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
-  }
+  .card .big { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
   .card .sub { color: var(--text-2); font-size: 12px; margin-top: 4px; }
   .card .source { color: var(--text-3); font-size: 10px; margin-top: 8px; font-style: italic; }
+  .card .ci { color: var(--text-3); font-size: 11px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .spark { position: absolute; right: 12px; top: 12px; }
 
   .pill {
     display: inline-block;
@@ -105,36 +104,26 @@
   .pill.accent  { background: rgba(249, 115, 22, 0.15); color: var(--accent); }
   .pill.info    { background: rgba(56, 189, 248, 0.15); color: var(--accent-4); }
   .pill.magenta { background: rgba(192, 132, 252, 0.15); color: var(--magenta); }
+  .pill.tiny    { font-size: 9px; padding: 1px 5px; }
 
   section { margin: 28px 0 18px; }
   section h2 {
     margin: 0 0 12px;
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-2);
-    font-weight: 600;
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-2); font-weight: 600;
+    display: flex; align-items: baseline; gap: 12px;
   }
   section h2 small { font-size: 10px; color: var(--text-3); text-transform: none; letter-spacing: 0; font-style: italic; }
 
   table {
-    width: 100%;
-    border-collapse: collapse;
+    width: 100%; border-collapse: collapse;
     background: var(--bg-1);
     border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
     font-size: 13px;
   }
-  th, td {
-    padding: 8px 12px;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-    vertical-align: top;
-  }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
   th {
     background: var(--bg-2);
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
@@ -153,10 +142,7 @@
     background: rgba(239, 68, 68, 0.08);
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: var(--accent-2);
-    padding: 10px 14px;
-    border-radius: 8px;
-    margin: 10px 0;
-    font-size: 12px;
+    padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 12px;
   }
 
   .drought-bar { display: flex; height: 18px; border-radius: 4px; overflow: hidden; margin: 8px 0; background: var(--bg-2); }
@@ -167,6 +153,54 @@
   .drought-d2   { background: #f97316; }
   .drought-d3   { background: #ef4444; }
   .drought-d4   { background: #991b1b; color: white; }
+
+  /* SVG map */
+  .map-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .map-svg  { display: block; width: 100%; background: #060c1a; cursor: crosshair; }
+  .map-svg .grat { stroke: rgba(148,163,184,0.10); stroke-width: 0.5; fill: none; }
+  .map-svg .grat-major { stroke: rgba(148,163,184,0.20); }
+  .map-svg .grat-label { fill: rgba(148,163,184,0.5); font-size: 9px; font-family: monospace; }
+  .map-svg .marker:hover { stroke: white; stroke-width: 1.5; }
+  .map-legend { padding: 8px 14px; font-size: 11px; color: var(--text-2); display: flex; gap: 14px; flex-wrap: wrap; border-top: 1px solid var(--border); background: var(--bg-2); }
+  .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 999px; vertical-align: middle; margin-right: 5px; }
+
+  /* Tooltip floating div for map markers */
+  #map-tooltip {
+    position: fixed; pointer-events: none; display: none;
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 12px;
+    color: var(--text-1); max-width: 320px; z-index: 1000;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+  }
+  #map-tooltip .tt-title { font-weight: 600; margin-bottom: 4px; }
+  #map-tooltip .tt-sub   { color: var(--text-2); font-size: 11px; }
+
+  /* Source-health table */
+  .sources-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 8px;
+  }
+  .src {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .src-dot { width: 9px; height: 9px; border-radius: 999px; flex-shrink: 0; }
+  .src-dot.GREEN  { background: var(--good); }
+  .src-dot.YELLOW { background: var(--accent-3); }
+  .src-dot.RED    { background: var(--accent-2); }
+  .src-dot.UNKNOWN{ background: var(--text-3); }
+  .src .name { font-family: monospace; font-size: 11px; color: var(--text-2); flex: 1; word-break: break-all; }
+  .src .meta { color: var(--text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+  /* Sparkline mini-chart inside projection cards */
+  .sparkline { stroke: var(--accent-4); fill: none; stroke-width: 1.5; }
+  .sparkline-area { fill: rgba(56,189,248,0.15); }
+  .sparkline-baseline { stroke: rgba(148,163,184,0.3); stroke-width: 0.5; stroke-dasharray: 2 2; }
 
   .footer {
     color: var(--text-3); font-size: 11px;
@@ -181,14 +215,22 @@
   <div class="row">
     <div>
       <h1>Major Disasters</h1>
-      <div class="sub">Live tracker + Polymarket edges across hurricanes, earthquakes, wildfires, severe weather, volcanoes, drought, and FEMA declarations</div>
+      <div class="sub">Live tracker + Polymarket edges &middot; 18 upstream feeds &middot; NB-overdispersion models &middot; Kelly position sizer</div>
     </div>
     <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
   </div>
 </header>
 <main>
-  <!-- Critical events strip (GDACS red/orange + USGS PAGER red/orange) -->
   <div class="crit-strip" id="crit-strip"></div>
+
+  <section>
+    <h2>Live world map <small>active threats geocoded; click a marker for details</small></h2>
+    <div class="map-card">
+      <svg id="world-map" class="map-svg" viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="map-legend" id="map-legend"></div>
+    </div>
+  </section>
+  <div id="map-tooltip"></div>
 
   <section>
     <h2>Active threats <small>now</small></h2>
@@ -196,7 +238,7 @@
   </section>
 
   <section>
-    <h2>Year-end projections <small>YTD + Poisson / climo prior</small></h2>
+    <h2>Year-end projections <small>YTD + NB(mu, alpha) overdispersion / climo prior with 80% credible intervals</small></h2>
     <div id="proj-grid" class="grid"></div>
   </section>
 
@@ -211,17 +253,17 @@
   </section>
 
   <section>
-    <h2>Significant earthquakes <small>USGS PAGER · last 30 days</small></h2>
+    <h2>Significant earthquakes <small>USGS PAGER &middot; last 30 days</small></h2>
     <div id="significant-table"></div>
   </section>
 
   <section>
-    <h2>Recent earthquakes M5+ <small>USGS · last 30 days</small></h2>
+    <h2>Recent earthquakes M5+ <small>USGS &middot; last 30 days</small></h2>
     <div id="quakes-table"></div>
   </section>
 
   <section>
-    <h2>Active US wildfires <small>NIFC WFIGS · DailyAcres &gt; 0</small></h2>
+    <h2>Active US wildfires <small>NIFC WFIGS &middot; sorted by daily acres</small></h2>
     <div id="fires-table"></div>
   </section>
 
@@ -231,30 +273,39 @@
   </section>
 
   <section>
-    <h2>Polymarket disaster markets <small>scored markets first, by absolute edge</small></h2>
+    <h2>Polymarket disaster markets <small>scored markets first &middot; edge + 1/4-Kelly sizer + trade-out deep-link</small></h2>
     <div id="markets-table"></div>
   </section>
 
   <section>
-    <h2>Backtest <small>year-end projections vs realised for 2014-2024</small></h2>
+    <h2>Backtest <small>year-end projections vs realised &middot; 2014-2024</small></h2>
     <div id="backtest-table"></div>
+  </section>
+
+  <section>
+    <h2>Source health <small>per-upstream freshness, latency, success rate</small></h2>
+    <div id="sources-grid" class="sources-grid"></div>
   </section>
 
   <div class="footer" id="footer">
     <h4>Sources</h4>
-    NHC <code>CurrentStorms.json</code> (tropical cyclones) ·
-    USGS FDSN <code>event/1</code> (earthquakes) ·
-    USGS <code>significant_month.geojson</code> (PAGER alerts) ·
-    NASA EONET v3 (wildfires / severe storms / volcanoes / floods) ·
-    NIFC WFIGS Current (US wildfire incidents + acres) ·
-    NWS <code>api.weather.gov/alerts/active</code> (severe-weather alerts) ·
-    SPC daily storm reports + monthly tornado climatology ·
-    Smithsonian GVP weekly volcanic activity bulletin ·
-    GDACS RSS (severity-coded global events) ·
-    USDM (US Drought Monitor categorical %) ·
-    OpenFEMA <code>DisasterDeclarationsSummaries</code> ·
-    Polymarket Gamma API.<br/>
-    Models are climatology + Poisson + Normal approximations - informational, not investment advice.
+    NHC <code>CurrentStorms.json</code> &middot;
+    NRL ATCF (all-basin tropical cyclones) &middot;
+    USGS FDSN <code>event/1</code> &middot;
+    USGS <code>significant_month</code> (PAGER) &middot;
+    NASA EONET v3 &middot;
+    NIFC WFIGS Current &middot;
+    NWS <code>alerts/active</code> (severe + flood subset) &middot;
+    SPC daily storm reports + monthly tornado climo + convective outlooks D1-D3 &middot;
+    Smithsonian GVP &middot;
+    GDACS RSS &middot;
+    USDM CategoricalPercent &middot;
+    NOAA tsunami unified feed &middot;
+    ReliefWeb v1 disasters &middot;
+    AirNow zipCode current AQI &middot;
+    OpenFEMA &middot;
+    Polymarket Gamma.<br/>
+    Models: Negative-binomial year-end count tails (overdispersion-aware); Normal(mu, sigma) for acres-burned. Backtest is leave-one-out climo prior. Kelly 1/4 fraction clamped to &plusmn;25%. Informational, not investment advice.
   </div>
 </main>
 
@@ -283,19 +334,143 @@
   function pill(label, kind = "") {
     return `<span class="pill ${kind}">${escapeHtml(label)}</span>`;
   }
-
   function critTile(label, n, kind) {
     return `<div class="crit ${kind}"><div class="label">${escapeHtml(label)}</div><div class="num">${fmt(n)}</div></div>`;
   }
 
-  function activeCard(title, big, sub, source = "") {
-    return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
-      `<div class="big">${big}</div>` +
-      `<div class="sub">${sub}</div>` +
-      (source ? `<div class="source">${escapeHtml(source)}</div>` : "") +
-      `</div>`;
+  // ─── Map (inline SVG, equirectangular projection) ───────────────────────────
+  const MAP_W = 1200, MAP_H = 600;
+  const lonToX = (lon) => ((lon + 180) / 360) * MAP_W;
+  const latToY = (lat) => ((90 - lat) / 180) * MAP_H;
+  const CATEGORY_COLOR = {
+    quake:             "#fbbf24",  // yellow
+    quake_significant: "#ef4444",  // red
+    storm:             "#38bdf8",  // sky
+    wildfire_us:       "#f97316",  // orange
+    eonet_wildfires:   "#fb923c",  // light orange
+    eonet_severeStorms:"#a78bfa",  // violet
+    eonet_volcanoes:   "#c084fc",  // magenta
+    eonet_floods:      "#60a5fa",  // blue
+    gdacs:             "#ef4444",  // red
+  };
+  const SEVERITY_RADIUS = { critical: 7, high: 5, med: 4, low: 3 };
+
+  function renderMap(geojson) {
+    const svg = document.getElementById("world-map");
+    svg.innerHTML = "";
+
+    // Graticule
+    const grid = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    grid.setAttribute("class", "grat");
+    for (let lon = -180; lon <= 180; lon += 30) {
+      const x = lonToX(lon);
+      const isMajor = (lon === 0 || lon === -180 || lon === 180);
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", x); line.setAttribute("x2", x);
+      line.setAttribute("y1", 0); line.setAttribute("y2", MAP_H);
+      line.setAttribute("class", isMajor ? "grat-major" : "");
+      grid.appendChild(line);
+      const lab = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      lab.setAttribute("x", x + 2); lab.setAttribute("y", MAP_H - 4);
+      lab.setAttribute("class", "grat-label");
+      lab.textContent = `${lon}°`;
+      grid.appendChild(lab);
+    }
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const y = latToY(lat);
+      const isMajor = (lat === 0);
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", 0); line.setAttribute("x2", MAP_W);
+      line.setAttribute("y1", y); line.setAttribute("y2", y);
+      line.setAttribute("class", isMajor ? "grat-major" : "");
+      grid.appendChild(line);
+      const lab = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      lab.setAttribute("x", 4); lab.setAttribute("y", y - 2);
+      lab.setAttribute("class", "grat-label");
+      lab.textContent = `${lat}°`;
+      grid.appendChild(lab);
+    }
+    svg.appendChild(grid);
+
+    // Markers
+    const markers = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    (geojson.features || []).forEach(f => {
+      const [lon, lat] = f.geometry.coordinates || [];
+      if (lon == null || lat == null) return;
+      const props = f.properties || {};
+      const cx = lonToX(lon), cy = latToY(lat);
+      const cat = props.category || "quake";
+      const color = CATEGORY_COLOR[cat] || "#94a3b8";
+      const radius = SEVERITY_RADIUS[props.severity || "med"] || 4;
+
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", cx); c.setAttribute("cy", cy);
+      c.setAttribute("r", radius);
+      c.setAttribute("fill", color);
+      c.setAttribute("fill-opacity", 0.65);
+      c.setAttribute("stroke", color);
+      c.setAttribute("stroke-opacity", 0.9);
+      c.setAttribute("stroke-width", 0.8);
+      c.setAttribute("class", "marker");
+      c.dataset.props = JSON.stringify(props);
+      markers.appendChild(c);
+    });
+    svg.appendChild(markers);
+
+    // Legend
+    const legend = document.getElementById("map-legend");
+    const counts = geojson.by_category || {};
+    const order = ["quake_significant", "quake", "storm", "wildfire_us", "eonet_wildfires", "eonet_severeStorms", "eonet_volcanoes", "eonet_floods", "gdacs"];
+    legend.innerHTML = order.filter(k => counts[k]).map(k => {
+      return `<span><span class="legend-dot" style="background:${CATEGORY_COLOR[k] || '#94a3b8'}"></span>${escapeHtml(k)} (${fmt(counts[k])})</span>`;
+    }).join("");
+
+    // Tooltip
+    const tt = document.getElementById("map-tooltip");
+    svg.addEventListener("mousemove", (e) => {
+      if (e.target && e.target.classList && e.target.classList.contains("marker")) {
+        try {
+          const p = JSON.parse(e.target.dataset.props);
+          const sub = [
+            p.label ? p.label : "",
+            p.alert_level ? `alert: ${p.alert_level}` : "",
+            p.alert ? `PAGER: ${p.alert}` : "",
+            p.intensity_kt ? `${p.intensity_kt} kt` : "",
+            p.acres ? `${fmtBig(p.acres)} acres` : "",
+            p.country ? p.country : "",
+            p.time ? new Date(p.time).toUTCString().replace("GMT", "UTC") : "",
+          ].filter(Boolean).join(" · ");
+          tt.innerHTML = `<div class="tt-title">${escapeHtml(p.title || p.label || "?")}</div><div class="tt-sub">${escapeHtml(sub)}</div>`;
+          tt.style.display = "block";
+          tt.style.left = (e.clientX + 12) + "px";
+          tt.style.top = (e.clientY + 12) + "px";
+        } catch (err) { /* ignore */ }
+      } else {
+        tt.style.display = "none";
+      }
+    });
+    svg.addEventListener("mouseleave", () => { tt.style.display = "none"; });
+    svg.addEventListener("click", (e) => {
+      if (e.target && e.target.classList && e.target.classList.contains("marker")) {
+        try {
+          const p = JSON.parse(e.target.dataset.props);
+          if (p.url) window.open(p.url, "_blank", "noopener");
+        } catch (err) { /* ignore */ }
+      }
+    });
   }
 
+  async function loadMap() {
+    try {
+      const geojson = await fetchJson("/api/map_features");
+      renderMap(geojson);
+    } catch (e) {
+      const svg = document.getElementById("world-map");
+      svg.innerHTML = `<text x="20" y="40" fill="#ef4444" font-size="14">Map fetch failed: ${escapeHtml(e.message)}</text>`;
+    }
+  }
+
+  // ─── Cards / sparklines ─────────────────────────────────────────────────────
   function setUpdated(iso) {
     const d = iso ? new Date(iso) : new Date();
     const ago = Math.round((Date.now() - d.getTime()) / 1000);
@@ -304,88 +479,138 @@
     document.getElementById("updated").classList.toggle("stale", ago > 600);
   }
 
-  function renderCritStrip(summary) {
+  function buildSparkline(values, target_value = null, w = 80, h = 24) {
+    if (!values || !values.length) return "";
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const dx = w / Math.max(values.length - 1, 1);
+    const pts = values.map((v, i) => {
+      const x = i * dx;
+      const y = h - ((v - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const path = `M${pts.join(" L")}`;
+    const areaPath = `${path} L${w},${h} L0,${h} Z`;
+    let baseline = "";
+    if (target_value != null && target_value >= min && target_value <= max) {
+      const y = h - ((target_value - min) / range) * h;
+      baseline = `<line class="sparkline-baseline" x1="0" y1="${y.toFixed(1)}" x2="${w}" y2="${y.toFixed(1)}"/>`;
+    }
+    return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+           `<path class="sparkline-area" d="${areaPath}"/>` +
+           `<path class="sparkline" d="${path}"/>${baseline}</svg>`;
+  }
+
+  function critStrip(summary) {
     const r = summary.recent_quakes || {};
     const g = summary.gdacs || {};
     const a = summary.active || {};
     const tiles = [
-      critTile("GDACS red events", g.by_alert?.Red || 0, "red"),
-      critTile("GDACS orange events", g.by_alert?.Orange || 0, "orange"),
+      critTile("GDACS red", g.by_alert?.Red || 0, "red"),
+      critTile("GDACS orange", g.by_alert?.Orange || 0, "orange"),
+      critTile("Tsunami active", a.tsunami_active || 0, a.tsunami_active > 0 ? "red" : "yellow"),
       critTile("M7+ quakes / 30d", r.m7_plus_30d || 0, "red"),
       critTile("M6+ quakes / 30d", r.m6_plus_30d || 0, "orange"),
-      critTile("USGS PAGER / 30d", r.significant_30d_count || 0, "yellow"),
+      critTile("PAGER / 30d", r.significant_30d_count || 0, "yellow"),
       critTile("Active named storms", a.named_storms_count || 0, a.named_storms_count > 0 ? "orange" : "yellow"),
-      critTile("US severe alerts", a.alerts_count || 0, a.alerts_count > 50 ? "red" : a.alerts_count > 0 ? "orange" : "yellow"),
-      critTile("Active US wildfires", a.us_active_fires || 0, a.us_active_fires > 100 ? "orange" : "yellow"),
+      critTile("All-basin TC", a.all_basin_storm_count || 0, "yellow"),
+      critTile("Severe alerts", a.alerts_count || 0, a.alerts_count > 50 ? "red" : a.alerts_count > 0 ? "orange" : "yellow"),
+      critTile("Flood alerts", a.flood_alerts || 0, a.flood_alerts > 50 ? "red" : a.flood_alerts > 5 ? "orange" : "yellow"),
+      critTile("Active US fires", a.us_active_fires || 0, a.us_active_fires > 100 ? "orange" : "yellow"),
+      critTile("ReliefWeb ongoing", a.reliefweb_count || 0, "yellow"),
     ];
     document.getElementById("crit-strip").innerHTML = tiles.join("");
   }
 
-  function renderActive(summary) {
+  function activeCard(title, big, sub, source = "", spark = "") {
+    return `<div class="card">${spark ? `<div class="spark">${spark}</div>` : ""}` +
+      `<h3>${escapeHtml(title)}</h3>` +
+      `<div class="big">${big}</div>` +
+      `<div class="sub">${sub}</div>` +
+      (source ? `<div class="source">${escapeHtml(source)}</div>` : "") +
+      `</div>`;
+  }
+
+  function activeGrid(summary) {
     const a = summary.active || {};
     const r = summary.recent_quakes || {};
     const cards = [];
     cards.push(activeCard(
-      "Named storms",
-      fmt(a.named_storms_count),
+      "Named storms (Atlantic + East Pac)", fmt(a.named_storms_count),
       a.named_storms_count > 0
         ? a.named_storms.map(s => pill(`${s.name || "?"} - ${s.classification || "?"}`, "hot")).join("")
         : '<span class="pill good">none active</span>',
       "NHC CurrentStorms"));
     cards.push(activeCard(
-      "NWS severe alerts",
-      fmt(a.alerts_count),
+      "All-basin tropical cyclones", fmt(a.all_basin_storm_count),
+      a.all_basin_storms?.length
+        ? a.all_basin_storms.slice(0, 3).map(s => pill(`${s.basin} ${s.name || "?"}`, "info")).join("")
+        : '<span class="pill good">quiet globally</span>',
+      "NRL ATCF"));
+    cards.push(activeCard(
+      "NWS severe alerts", fmt(a.alerts_count),
       a.alerts_count > 0
-        ? Object.entries(a.alerts_by_event || {}).slice(0, 4)
-            .map(([ev, n]) => pill(`${ev} (${n})`, "warn")).join("")
+        ? Object.entries(a.alerts_by_event || {}).slice(0, 4).map(([ev, n]) => pill(`${ev} (${n})`, "warn")).join("")
         : '<span class="pill good">all clear</span>',
       "api.weather.gov"));
     cards.push(activeCard(
-      "Active US wildfires",
-      fmt(a.us_active_fires),
+      "Flood alerts", fmt(a.flood_alerts),
+      `${pill(`flash ${fmt(a.flash_flood_alerts)}`, a.flash_flood_alerts > 0 ? "hot" : "")} ` +
+      `${pill(`storm surge ${fmt(a.storm_surge_alerts)}`, a.storm_surge_alerts > 0 ? "hot" : "")}`,
+      "NWS flood subset"));
+    cards.push(activeCard(
+      "Active US wildfires", fmt(a.us_active_fires),
       `<strong>${fmtBig(a.us_active_acres)} acres</strong> currently burning ` +
       (a.us_active_fires_top?.length ? "&middot; biggest: " + escapeHtml(a.us_active_fires_top[0].name || "?") : ""),
       "NIFC WFIGS"));
     cards.push(activeCard(
-      "Today's storm reports",
-      fmt(a.tornado_reports_today + a.hail_reports_today + a.wind_reports_today),
+      "Tsunami warnings", fmt(a.tsunami_active),
+      a.tsunami_active > 0
+        ? Object.entries(a.tsunami_by_severity || {}).map(([s, n]) => pill(`${s} (${n})`, s === "Warning" ? "hot" : s === "Advisory" ? "warn" : "info")).join("")
+        : '<span class="pill good">none active</span>',
+      "NOAA tsunami.gov"));
+    cards.push(activeCard(
+      "Today's storm reports", fmt(a.tornado_reports_today + a.hail_reports_today + a.wind_reports_today),
       `${pill(`tornado ${fmt(a.tornado_reports_today)}`, a.tornado_reports_today > 0 ? "hot" : "")} ` +
       `${pill(`hail ${fmt(a.hail_reports_today)}`, a.hail_reports_today > 5 ? "warn" : "")} ` +
       `${pill(`wind ${fmt(a.wind_reports_today)}`, a.wind_reports_today > 5 ? "warn" : "")}`,
       "SPC today + yesterday"));
     cards.push(activeCard(
-      "Open EONET wildfires",
-      fmt(a.wildfires_count_eonet),
+      "SPC convective outlook",
+      a.spc_outlook?.horizon_highest || "TSTM",
+      `Highest in 3-day horizon: ${escapeHtml(a.spc_outlook?.horizon_highest || "?")} on ${escapeHtml(a.spc_outlook?.horizon_day || "?")}`,
+      "SPC day1/2/3 GeoJSON"));
+    cards.push(activeCard(
+      "Open EONET wildfires", fmt(a.wildfires_count_eonet),
       a.wildfires_count_eonet > 50 ? pill("global, very active", "hot") : pill("global, normal", "good"),
       "NASA EONET"));
     cards.push(activeCard(
-      "Open severe storms (EONET)",
-      fmt(a.severe_storms_count),
-      pill("global", "info"),
-      "NASA EONET"));
-    cards.push(activeCard(
-      "Smithsonian active volcanoes",
-      fmt(a.gvp_volcanoes_count),
+      "Smithsonian active volcanoes", fmt(a.gvp_volcanoes_count),
       (a.gvp_volcanoes_top?.length ?
         a.gvp_volcanoes_top.slice(0, 3).map(v => pill(v.name || "?", "magenta")).join("")
         : pill("quiet week", "good")),
-      "GVP weekly bulletin"));
+      "GVP weekly"));
     cards.push(activeCard(
-      "M5+ quakes, 30d",
-      fmt(r.count_30d),
+      "M5+ quakes, 30d", fmt(r.count_30d),
       `M6+: ${fmt(r.m6_plus_30d)} · M7+: ${fmt(r.m7_plus_30d)} · PAGER: ${fmt(r.significant_30d_count)}`,
       "USGS FDSN + significant"));
     if (r.biggest) {
       cards.push(activeCard(
-        "Biggest quake (30d)",
-        `M${fmt(r.biggest.mag, 1)}`,
-        escapeHtml(r.biggest.place || ""),
-        "USGS"));
+        "Biggest quake (30d)", `M${fmt(r.biggest.mag, 1)}`,
+        escapeHtml(r.biggest.place || ""), "USGS"));
+    }
+    if (a.reliefweb_count > 0) {
+      const top = Object.entries(a.reliefweb_top_countries || {}).slice(0, 3);
+      cards.push(activeCard(
+        "ReliefWeb ongoing", fmt(a.reliefweb_count),
+        top.map(([c, n]) => pill(`${c} (${n})`, "info")).join(""),
+        "ReliefWeb v1"));
     }
     document.getElementById("active-grid").innerHTML = cards.join("");
   }
 
-  function projCard(title, proj, unit, source = "") {
+  function projCard(title, proj, unit, source = "", historicalSeries = []) {
     if (!proj || proj.error) {
       return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
              `<div class="big" style="font-size:14px;color:var(--accent-2)">unavailable</div>` +
@@ -395,9 +620,9 @@
     }
     const projection = proj.projected_year_end_count != null ? proj.projected_year_end_count
                     : proj.projected_year_end_acres != null  ? proj.projected_year_end_acres
-                    : proj.projected_year_end_dr_count != null ? proj.projected_year_end_dr_count
-                    : "-";
-    const projDisplay = (proj.projected_year_end_acres != null) ? fmtBig(projection) : fmt(projection);
+                    : proj.projected_year_end_dr_count != null ? proj.projected_year_end_dr_count : "-";
+    const isAcres = proj.projected_year_end_acres != null;
+    const projDisplay = isAcres ? fmtBig(projection) : fmt(projection);
     const ytd = proj.ytd_count != null ? proj.ytd_count
               : proj.active_named_storms_ytd_lower_bound != null ? proj.active_named_storms_ytd_lower_bound
               : proj.active_acres_total != null ? proj.active_acres_total
@@ -408,29 +633,45 @@
                   proj.historical_mean_annual_acres ?? proj.climo_annual_tornadoes ??
                   proj.climatological_annual;
     const ytdLabel = proj.active_named_storms_ytd_lower_bound != null ? "active YTD"
-                  : proj.ytd_climo_implied != null ? "YTD (climo-implied)"
-                  : "YTD";
-    return `<div class="card"><h3>${escapeHtml(title)}</h3>` +
+                  : proj.ytd_climo_implied != null ? "YTD (climo-implied)" : "YTD";
+    const ci80 = proj.ci_80;
+    const spark = (historicalSeries && historicalSeries.length > 1)
+      ? buildSparkline(historicalSeries, projection)
+      : "";
+    return `<div class="card">${spark}` +
+      `<h3>${escapeHtml(title)}</h3>` +
       `<div class="big">${projDisplay}<span style="font-size:13px;color:var(--text-3)"> ${escapeHtml(unit)}</span></div>` +
       `<div class="sub">` +
         (ytd != null ? `${(typeof ytd === 'number' && ytd > 1000) ? fmtBig(ytd) : fmt(ytd)} ${ytdLabel}` : "") +
         (climo != null ? ` · climo ${fmtBig(climo)}` : "") +
       `</div>` +
+      (ci80 ? `<div class="ci">80% CI: ${fmt(ci80[0])} - ${fmt(ci80[1])}` +
+              (proj.alpha ? ` &middot; &alpha;=${proj.alpha.toFixed(3)}` : "") + `</div>` : "") +
       (source ? `<div class="source">${escapeHtml(source)}</div>` : "") +
       `</div>`;
   }
 
-  function renderProjections(summary) {
+  // Historical series (hand-curated for sparklines on projection cards)
+  const HIST_ATLANTIC_STORMS  = [8, 11, 15, 17, 15, 18, 30, 21, 14, 20, 18];
+  const HIST_NIFC_ACRES       = [3595613, 10125149, 5509995, 10026086, 8767492, 4664364, 10122336, 7125643, 7534403, 2693910, 8924884];
+  const HIST_TORNADOES        = [911, 1281, 1057, 1525, 1126, 1517, 1075, 1376, 1331, 1426, 1735];
+  const HIST_FEMA_DR          = [45, 43, 60, 59, 58, 62, 59, 50, 90, 56, 73];
+
+  function projectionsGrid(summary) {
     const p = summary.projections || {};
     const cards = [];
-    cards.push(projCard("Atlantic named storms", p.atlantic_storms, "named", "NHC + 1991-2020 climo"));
-    cards.push(projCard("Global M5+ quakes", p.quakes_m5, "events", "USGS YTD + Poisson"));
-    cards.push(projCard("Global M6+ quakes", p.quakes_m6, "events", "USGS YTD + Poisson"));
-    cards.push(projCard("Global M7+ quakes", p.quakes_m7, "events", "USGS YTD + Poisson"));
-    cards.push(projCard("EONET wildfires (events)", p.wildfires_count, "events", "NASA EONET YTD"));
-    cards.push(projCard("US wildfire acres", p.wildfires_acres, "acres", "NIFC + 2014-2024 climo"));
-    cards.push(projCard("US tornadoes", p.tornadoes, "tornadoes", "SPC monthly climo"));
-    cards.push(projCard("FEMA major disasters (DR)", p.fema_dr, "DR decls", "OpenFEMA YTD"));
+    cards.push(projCard("Atlantic named storms", p.atlantic_storms, "named",
+      "NB(mu, alpha=0.04) + NHC + 1991-2020 climo", HIST_ATLANTIC_STORMS));
+    cards.push(projCard("Global M5+ quakes", p.quakes_m5, "events", "USGS + Poisson", []));
+    cards.push(projCard("Global M6+ quakes", p.quakes_m6, "events", "USGS + NB(0.006)", []));
+    cards.push(projCard("Global M7+ quakes", p.quakes_m7, "events", "USGS + NB(0.020)", []));
+    cards.push(projCard("EONET wildfires (events)", p.wildfires_count, "events", "EONET YTD + NB(0.030)", []));
+    cards.push(projCard("US wildfire acres", p.wildfires_acres, "acres",
+      "NIFC + 2014-2024 climo", HIST_NIFC_ACRES));
+    cards.push(projCard("US tornadoes", p.tornadoes, "tornadoes",
+      "SPC monthly climo + NB(0.039)", HIST_TORNADOES));
+    cards.push(projCard("FEMA DR declarations", p.fema_dr, "DR decls",
+      "OpenFEMA + NB(0.020)", HIST_FEMA_DR));
     document.getElementById("proj-grid").innerHTML = cards.join("");
   }
 
@@ -463,8 +704,7 @@
 
   function renderGdacs(summary) {
     const target = document.getElementById("gdacs-table");
-    const g = summary.gdacs || {};
-    const events = g.events_top || [];
+    const events = summary.gdacs?.events_top || [];
     if (!events.length) {
       target.innerHTML = '<div class="card">No orange or red GDACS events right now.</div>';
       return;
@@ -490,15 +730,9 @@
       const sig = await fetchJson("/api/quakes/significant?window=month");
       const target = document.getElementById("significant-table");
       const events = sig.events || [];
-      if (!events.length) {
-        target.innerHTML = '<div class="card">No significant earthquakes in the last 30 days.</div>';
-        return;
-      }
+      if (!events.length) { target.innerHTML = '<div class="card">No significant earthquakes in the last 30 days.</div>'; return; }
       const rows = events.slice(0, 20).map(q => {
-        const alertCls = q.alert === "red" ? "hot"
-                       : q.alert === "orange" ? "accent"
-                       : q.alert === "yellow" ? "warn"
-                       : q.alert === "green" ? "good" : "";
+        const alertCls = q.alert === "red" ? "hot" : q.alert === "orange" ? "accent" : q.alert === "yellow" ? "warn" : q.alert === "green" ? "good" : "";
         return `<tr>` +
           `<td><span class="pill ${q.mag >= 7 ? 'hot' : q.mag >= 6 ? 'warn' : ''}">M${fmt(q.mag, 1)}</span></td>` +
           `<td>${q.alert ? pill(q.alert.toUpperCase(), alertCls) : '<span class="muted">none</span>'}</td>` +
@@ -521,10 +755,7 @@
     try {
       const q = await fetchJson("/api/quakes?min_magnitude=5&days=30");
       const target = document.getElementById("quakes-table");
-      if (!q.quakes || !q.quakes.length) {
-        target.innerHTML = '<div class="card">No M5+ quakes in the last 30 days.</div>';
-        return;
-      }
+      if (!q.quakes || !q.quakes.length) { target.innerHTML = '<div class="card">No M5+ quakes in the last 30 days.</div>'; return; }
       const rows = q.quakes.slice(0, 30).map(qk => {
         const cls = qk.mag >= 7 ? "hot" : qk.mag >= 6 ? "warn" : "";
         const tsuLabel = qk.tsunami ? pill("tsunami", "hot") : "";
@@ -536,12 +767,9 @@
           `<td>${qk.url ? `<a href="${escapeHtml(qk.url)}" target="_blank" rel="noopener">USGS</a>` : "-"}</td>` +
           `</tr>`;
       }).join("");
-      target.innerHTML = `<table><thead><tr>` +
-        `<th>Magnitude</th><th>Location</th><th>Time</th><th>Depth</th><th>Source</th>` +
-        `</tr></thead><tbody>${rows}</tbody></table>`;
+      target.innerHTML = `<table><thead><tr><th>Magnitude</th><th>Location</th><th>Time</th><th>Depth</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`;
     } catch (e) {
-      document.getElementById("quakes-table").innerHTML =
-        `<div class="err">Quake fetch failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("quakes-table").innerHTML = `<div class="err">Quake fetch failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -550,14 +778,10 @@
       const f = await fetchJson("/api/fires/active");
       const target = document.getElementById("fires-table");
       const incidents = f.incidents || [];
-      if (!incidents.length) {
-        target.innerHTML = '<div class="card">No active US wildfire incidents reporting acres right now.</div>';
-        return;
-      }
+      if (!incidents.length) { target.innerHTML = '<div class="card">No active US wildfire incidents reporting acres right now.</div>'; return; }
       const rows = incidents.slice(0, 20).map(fi => {
         const ctn = fi.percent_contained;
-        const ctnPill = ctn != null ? pill(`${fmt(ctn)}% contained`,
-          ctn >= 90 ? "good" : ctn >= 50 ? "warn" : "hot") : "";
+        const ctnPill = ctn != null ? pill(`${fmt(ctn)}% contained`, ctn >= 90 ? "good" : ctn >= 50 ? "warn" : "hot") : "";
         return `<tr>` +
           `<td><strong>${escapeHtml(fi.name || "?")}</strong></td>` +
           `<td class="num">${fmtBig(fi.daily_acres)}</td>` +
@@ -566,14 +790,10 @@
           `<td class="muted">${escapeHtml((fi.discovery_iso || "").slice(0, 10))}</td>` +
           `</tr>`;
       }).join("");
-      const totalAcres = f.active_acres_total || 0;
-      target.innerHTML = `<table><thead><tr>` +
-        `<th>Incident</th><th>Daily acres</th><th>At discovery</th><th>Containment</th><th>Discovered</th>` +
-        `</tr></thead><tbody>${rows}</tbody></table>` +
-        `<div class="footer" style="margin-top:8px">Total active acres: <strong>${fmtBig(totalAcres)}</strong> across ${fmt(f.count)} incidents · source: ${escapeHtml(f.source || "")}</div>`;
+      target.innerHTML = `<table><thead><tr><th>Incident</th><th>Daily acres</th><th>At discovery</th><th>Containment</th><th>Discovered</th></tr></thead><tbody>${rows}</tbody></table>` +
+        `<div class="footer" style="margin-top:8px">Total active acres: <strong>${fmtBig(f.active_acres_total || 0)}</strong> across ${fmt(f.count)} incidents · source: ${escapeHtml(f.source || "")}</div>`;
     } catch (e) {
-      document.getElementById("fires-table").innerHTML =
-        `<div class="err">NIFC feed failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("fires-table").innerHTML = `<div class="err">NIFC feed failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -582,24 +802,16 @@
       const v = await fetchJson("/api/volcanoes");
       const target = document.getElementById("volcanoes-table");
       const vols = v.volcanoes || [];
-      if (!vols.length) {
-        target.innerHTML = '<div class="card">GVP feed quiet this week.</div>';
-        return;
-      }
-      const rows = vols.slice(0, 20).map(vo => {
-        return `<tr>` +
-          `<td><strong>${escapeHtml(vo.name || "?")}</strong></td>` +
-          `<td>${escapeHtml(vo.country || "?")}</td>` +
-          `<td class="muted">${escapeHtml(vo.summary || "")}</td>` +
-          `<td>${vo.link ? `<a href="${escapeHtml(vo.link)}" target="_blank" rel="noopener">GVP</a>` : "-"}</td>` +
-          `</tr>`;
-      }).join("");
-      target.innerHTML = `<table><thead><tr>` +
-        `<th>Volcano</th><th>Country</th><th>Week summary</th><th></th>` +
-        `</tr></thead><tbody>${rows}</tbody></table>`;
+      if (!vols.length) { target.innerHTML = '<div class="card">GVP feed quiet this week.</div>'; return; }
+      const rows = vols.slice(0, 20).map(vo => `<tr>` +
+        `<td><strong>${escapeHtml(vo.name || "?")}</strong></td>` +
+        `<td>${escapeHtml(vo.country || "?")}</td>` +
+        `<td class="muted">${escapeHtml(vo.summary || "")}</td>` +
+        `<td>${vo.link ? `<a href="${escapeHtml(vo.link)}" target="_blank" rel="noopener">GVP</a>` : "-"}</td>` +
+        `</tr>`).join("");
+      target.innerHTML = `<table><thead><tr><th>Volcano</th><th>Country</th><th>Week summary</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     } catch (e) {
-      document.getElementById("volcanoes-table").innerHTML =
-        `<div class="err">GVP feed failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("volcanoes-table").innerHTML = `<div class="err">GVP feed failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -608,10 +820,7 @@
       const m = await fetchJson("/api/markets");
       const target = document.getElementById("markets-table");
       const markets = m.markets || [];
-      if (!markets.length) {
-        target.innerHTML = '<div class="card">No live disaster markets found right now.</div>';
-        return;
-      }
+      if (!markets.length) { target.innerHTML = '<div class="card">No live disaster markets found right now.</div>'; return; }
       const rows = markets.slice(0, 80).map(mk => {
         const title = mk._event_title || mk.question || "?";
         const q = mk.question || "";
@@ -624,23 +833,33 @@
           const sign = edge > 0 ? "+" : "";
           edgeCell = `<td class="num ${cls}">${sign}${edge.toFixed(1)} pp</td>`;
         }
+        let kellyCell = '<td class="muted">-</td>';
+        if (mk._kelly) {
+          const k = mk._kelly;
+          const cls = k.side === "YES" ? "edge-buy" : "edge-sell";
+          kellyCell = `<td class="num ${cls}">${escapeHtml(k.side)} ${k.suggested_bankroll_pct}% &middot; $${fmt(k.suggested_dollars_at_10k, 0)}</td>`;
+        }
+        let tradeCell = '<td class="muted">-</td>';
+        if (mk._trade_url) {
+          tradeCell = `<td><a href="${escapeHtml(mk._trade_url)}" target="_blank" rel="noopener">Trade →</a></td>`;
+        }
         const usedPill = mk._model_used ? pill(mk._model_used, "info") : "";
         return `<tr>` +
           `<td>${escapeHtml(title)}<div class="muted" style="font-size:11px;margin-top:3px">${escapeHtml(q)}</div></td>` +
           `<td class="num">${pct(implied)}</td>` +
           `<td class="num">${pct(model)}</td>` +
-          `${edgeCell}` +
+          `${edgeCell}${kellyCell}` +
           `<td>${usedPill}<div class="muted" style="font-size:11px;margin-top:3px">${escapeHtml(mk._rationale || "")}</div></td>` +
+          `${tradeCell}` +
           `</tr>`;
       }).join("");
       const tally = Object.entries(m.by_model || {}).map(([k, v]) => `${k}=${v}`).join(" · ");
       target.innerHTML = `<table><thead><tr>` +
-        `<th>Market</th><th>Implied</th><th>Model</th><th>Edge</th><th>Model + rationale</th>` +
+        `<th>Market</th><th>Implied</th><th>Model</th><th>Edge</th><th>1/4-Kelly @ $10k</th><th>Model + rationale</th><th></th>` +
         `</tr></thead><tbody>${rows}</tbody></table>` +
         `<div class="footer" style="margin-top:8px">${m.scored_count}/${m.count} scored · ${escapeHtml(tally)}</div>`;
     } catch (e) {
-      document.getElementById("markets-table").innerHTML =
-        `<div class="err">Market fetch failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("markets-table").innerHTML = `<div class="err">Market fetch failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -673,36 +892,51 @@
           `<table><thead><tr><th>Year</th><th>As of</th><th>Projected</th><th>Actual</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table>`
         );
       }
-      if (!sections.length) {
-        target.innerHTML = '<div class="card">No backtest data available.</div>';
-        return;
-      }
+      if (!sections.length) { target.innerHTML = '<div class="card">No backtest data.</div>'; return; }
       target.innerHTML = sections.join("") +
         `<div class="footer" style="margin-top:8px"><strong>Method:</strong> ` +
-        Object.entries(b.method || {}).map(([k, v]) =>
-          `<div><em>${escapeHtml(k)}</em>: ${escapeHtml(v)}</div>`
-        ).join("") + `</div>`;
+        Object.entries(b.method || {}).map(([k, v]) => `<div><em>${escapeHtml(k)}</em>: ${escapeHtml(v)}</div>`).join("") + `</div>`;
     } catch (e) {
-      document.getElementById("backtest-table").innerHTML =
-        `<div class="err">Backtest fetch failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("backtest-table").innerHTML = `<div class="err">Backtest fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadSources() {
+    try {
+      const s = await fetchJson("/api/sources");
+      const sources = s.sources || [];
+      const target = document.getElementById("sources-grid");
+      if (!sources.length) { target.innerHTML = '<div class="card">No upstream calls recorded yet.</div>'; return; }
+      target.innerHTML = sources.map(src => {
+        const ageOk = src.last_ok_age_s != null ? `${src.last_ok_age_s}s` : "never";
+        const lat = src.latency_ema_ms != null ? `${src.latency_ema_ms}ms` : "?";
+        const okPct = src.calls_total ? Math.round((src.calls_ok / src.calls_total) * 100) : 0;
+        return `<div class="src">
+          <div class="src-dot ${escapeHtml(src.status)}"></div>
+          <div class="name">${escapeHtml(src.source)}</div>
+          <div class="meta">${escapeHtml(ageOk)} · ${escapeHtml(lat)} · ${okPct}% ok (${src.calls_total})</div>
+        </div>`;
+      }).join("");
+    } catch (e) {
+      document.getElementById("sources-grid").innerHTML = `<div class="err">Sources feed failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
   async function loadAll() {
     try {
       const summary = await fetchJson("/api/summary");
-      renderCritStrip(summary);
-      renderActive(summary);
-      renderProjections(summary);
+      critStrip(summary);
+      activeGrid(summary);
+      projectionsGrid(summary);
       renderDrought(summary.drought);
       renderGdacs(summary);
       setUpdated(summary.fetched_at);
     } catch (e) {
-      document.getElementById("active-grid").innerHTML =
-        `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;
+      document.getElementById("active-grid").innerHTML = `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
+  loadMap();
   loadAll();
   loadSignificant();
   loadQuakes();
@@ -710,17 +944,18 @@
   loadVolcanoes();
   loadMarkets();
   loadBacktest();
+  loadSources();
 
-  // Tick the "updated X ago" indicator every 5s
   setInterval(() => setUpdated(window._lastFetch), 5000);
-  // Refresh the heavy sections every 5 minutes
-  setInterval(loadAll, 5 * 60 * 1000);
+  setInterval(loadMap,         5 * 60 * 1000);
+  setInterval(loadAll,         5 * 60 * 1000);
   setInterval(loadSignificant, 10 * 60 * 1000);
-  setInterval(loadQuakes, 5 * 60 * 1000);
-  setInterval(loadFires, 15 * 60 * 1000);
-  setInterval(loadVolcanoes, 6 * 60 * 60 * 1000);
-  setInterval(loadMarkets, 5 * 60 * 1000);
-  setInterval(loadBacktest, 60 * 60 * 1000);
+  setInterval(loadQuakes,      5 * 60 * 1000);
+  setInterval(loadFires,       15 * 60 * 1000);
+  setInterval(loadVolcanoes,   6 * 60 * 60 * 1000);
+  setInterval(loadMarkets,     5 * 60 * 1000);
+  setInterval(loadBacktest,    60 * 60 * 1000);
+  setInterval(loadSources,     30 * 1000);
 })();
 </script>
 </body>

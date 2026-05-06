@@ -32,6 +32,8 @@ import math
 import re
 from typing import Optional
 
+from .kelly import position_size
+from .negbin import ALPHA, nb_between, nb_cdf_at_least, nb_quantile_band
 from .poisson import p_at_least, p_between
 
 # ─── Threshold parsers ─────────────────────────────────────────────────────────
@@ -200,40 +202,59 @@ def _quake_threshold_from_title(tl: str) -> Optional[float]:
 
 # ─── Scorers ───────────────────────────────────────────────────────────────────
 
-def _score_count_market(text: str, ytd: int, lam: float, label: str) -> tuple[Optional[float], str]:
-    """Generic Poisson-tail count-market scorer.
+def _score_count_market(text: str, ytd: int, lam: float, label: str,
+                          alpha_key: str = "") -> tuple[Optional[float], str]:
+    """Count-market scorer with negative-binomial tail.
 
     Tries 'between N and M' first, then 'at least N', then 'fewer than N'.
     Parses thresholds with _at_least/_between/_fewer_than which already
     handle the suffix "million/thousand" for unit-scaled markets.
+
+    Uses the negative-binomial tail with empirical dispersion ``alpha``
+    when ``alpha_key`` is supplied (recommended for tornadoes / storms /
+    wildfires which are systematically overdispersed). Falls back to plain
+    Poisson when ``alpha_key`` is unrecognised or 0.
     """
+    alpha = ALPHA.get(alpha_key, 0.0)
+    family = f"NB(mu, alpha={alpha:.3f})" if alpha > 0 else f"Poisson(lambda)"
+
     bw = _between(text)
     if bw is not None:
         lo, hi = bw
-        # For Poisson-count markets, lo and hi must be integers
         try:
             ilo = int(round(lo - ytd))
             ihi = int(round(hi - ytd))
         except (TypeError, ValueError):
             return None, ""
-        p = p_between(lam, max(ilo, 0), max(ihi, 0))
+        ilo = max(ilo, 0)
+        ihi = max(ihi, 0)
+        if alpha > 0:
+            p = nb_between(ilo, ihi, lam, alpha)
+        else:
+            p = p_between(lam, ilo, ihi)
         if p is None:
             return None, ""
-        return p, f"{label} YTD {ytd} + Poisson(lambda={lam}); P({lo:.0f} <= total <= {hi:.0f})"
+        return p, f"{label} YTD {ytd} + {family}; P({lo:.0f} <= total <= {hi:.0f})"
     n = _at_least(text)
     if n is not None:
-        needed = int(round(n - ytd))
-        p = p_at_least(lam, max(needed, 0))
+        needed = max(int(round(n - ytd)), 0)
+        if alpha > 0:
+            p = nb_cdf_at_least(needed, lam, alpha)
+        else:
+            p = p_at_least(lam, needed)
         if p is None:
             return None, ""
-        return p, f"{label} YTD {ytd} + Poisson(lambda={lam}); need {needed} more for >= {int(n)}"
+        return p, f"{label} YTD {ytd} + {family}; need {needed} more for >= {int(n)}"
     n = _fewer_than(text)
     if n is not None:
-        needed = int(round(n - ytd))
-        p = p_at_least(lam, max(needed, 0))
+        needed = max(int(round(n - ytd)), 0)
+        if alpha > 0:
+            p = nb_cdf_at_least(needed, lam, alpha)
+        else:
+            p = p_at_least(lam, needed)
         if p is None:
             return None, ""
-        return 1.0 - p, f"{label} YTD {ytd} + Poisson(lambda={lam}); P(total < {int(n)})"
+        return 1.0 - p, f"{label} YTD {ytd} + {family}; P(total < {int(n)})"
     return None, ""
 
 
@@ -244,7 +265,8 @@ def _score_storm_market(title: str, proj: dict) -> tuple[Optional[float], str]:
     lam = proj.get("lambda_remaining")
     if lam is None:
         return None, ""
-    return _score_count_market(title, ytd, lam, "Atlantic named storms:")
+    return _score_count_market(title, ytd, lam, "Atlantic named storms:",
+                                alpha_key="atlantic_named_storms")
 
 
 def _score_hurricane_market(title: str, proj: dict) -> tuple[Optional[float], str]:
@@ -255,11 +277,10 @@ def _score_hurricane_market(title: str, proj: dict) -> tuple[Optional[float], st
     lam_named = proj.get("lambda_remaining")
     if lam_named is None:
         return None, ""
-    # Climo: ~7 hurricanes / 14 named -> 0.5 conversion. Use this for both
-    # the YTD lower bound (active * 0.5) and the remaining-lambda.
     ytd_h = int(round(ytd_named * 0.5))
     lam_h = lam_named * 0.5
-    return _score_count_market(title, ytd_h, lam_h, "Atlantic hurricanes (~50% of named):")
+    return _score_count_market(title, ytd_h, lam_h, "Atlantic hurricanes (~50% of named):",
+                                alpha_key="atlantic_hurricanes")
 
 
 def _score_major_hurricane_market(title: str, proj: dict) -> tuple[Optional[float], str]:
@@ -271,7 +292,8 @@ def _score_major_hurricane_market(title: str, proj: dict) -> tuple[Optional[floa
     if lam_named is None:
         return None, ""
     return _score_count_market(title, int(round(ytd_named * 0.21)),
-                                lam_named * 0.21, "Atlantic major hurricanes (~21% of named):")
+                                lam_named * 0.21, "Atlantic major hurricanes (~21% of named):",
+                                alpha_key="atlantic_major_hurricanes")
 
 
 def _score_quake_market(title: str, projections_by_mag: dict) -> tuple[Optional[float], str]:
@@ -289,7 +311,13 @@ def _score_quake_market(title: str, projections_by_mag: dict) -> tuple[Optional[
     lam = proj.get("lambda_remaining")
     if lam is None:
         return None, ""
-    return _score_count_market(title, ytd, lam, f"M{nearest}+ quakes:")
+    alpha_key = (
+        "global_m5" if nearest <= 5.5
+        else "global_m6" if nearest <= 6.5
+        else "global_m7"
+    )
+    return _score_count_market(title, ytd, lam, f"M{nearest}+ quakes:",
+                                alpha_key=alpha_key)
 
 
 def _score_wildfire_count_market(title: str, proj: dict) -> tuple[Optional[float], str]:
@@ -299,7 +327,8 @@ def _score_wildfire_count_market(title: str, proj: dict) -> tuple[Optional[float
     lam = proj.get("lambda_remaining")
     if lam is None:
         return None, ""
-    return _score_count_market(title, ytd, lam, "EONET wildfires:")
+    return _score_count_market(title, ytd, lam, "EONET wildfires:",
+                                alpha_key="wildfire_count")
 
 
 def _score_wildfire_acres_market(title: str, acres_proj: dict) -> tuple[Optional[float], str]:
@@ -373,7 +402,18 @@ def _score_fema_market(title: str, fema_proj: dict) -> tuple[Optional[float], st
     lam = fema_proj.get("lambda_dr_remaining")
     if lam is None:
         return None, ""
-    return _score_count_market(title, ytd, lam, "FEMA major-disaster (DR) declarations:")
+    return _score_count_market(title, ytd, lam, "FEMA major-disaster (DR) declarations:",
+                                alpha_key="fema_dr")
+
+
+def _polymarket_deep_link(market: dict) -> Optional[str]:
+    """Build a deep-link URL to the Polymarket market on polymarket.com."""
+    slug = market.get("slug") or market.get("_event_slug")
+    if not slug:
+        return None
+    if slug.startswith("http"):
+        return slug
+    return f"https://polymarket.com/event/{slug}"
 
 
 # ─── Public entry point ───────────────────────────────────────────────────────
@@ -447,6 +487,8 @@ def enrich_markets(
         if implied is not None and model_p is not None:
             edge_pp = round((model_p - implied) * 100, 1)
 
+        kelly = position_size(model_p, implied) if model_p is not None and implied is not None else None
+
         out.append({
             **m,
             "_implied_p": implied,
@@ -454,6 +496,8 @@ def enrich_markets(
             "_edge_pp": edge_pp,
             "_rationale": rationale,
             "_model_used": model_used,
+            "_kelly": kelly,
+            "_trade_url": _polymarket_deep_link(m),
         })
     # Sort: scored markets first (by absolute edge desc), unscored last
     out.sort(key=lambda r: (
