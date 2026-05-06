@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voter Pulse — narve.ai</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel-2: #0e1117;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #ec4899;
+    --grid: #30363d;
+    --good: #56d364;
+    --warn: #d29922;
+    --bad:  #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--grid);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .tag { color: var(--accent); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 11px; }
+  header .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+  main {
+    padding: 24px;
+    display: grid; grid-template-columns: 1fr; gap: 24px;
+    max-width: 1240px; margin: 0 auto;
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--grid); border-radius: 10px;
+    padding: 20px;
+  }
+  .panel h2 {
+    margin: 0 0 14px; font-size: 12px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.07em;
+  }
+  .panel .desc { color: var(--muted); font-size: 12px; margin-top: -8px; margin-bottom: 14px; }
+
+  /* ── Mood hero ─────────────────────────────────────────────────────────── */
+  .hero { display: grid; grid-template-columns: 280px 1fr; gap: 24px; align-items: center; }
+  @media (max-width: 720px) { .hero { grid-template-columns: 1fr; } }
+  .gauge {
+    position: relative; width: 240px; height: 240px; margin: 0 auto;
+  }
+  .gauge svg { transform: rotate(-90deg); width: 100%; height: 100%; }
+  .gauge .track { stroke: var(--grid); }
+  .gauge .fill  { stroke-linecap: round; transition: stroke-dashoffset 0.6s; }
+  .gauge-label {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  .gauge-label .num { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .gauge-label .word { color: var(--muted); margin-top: 6px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+  .subscore-row { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .subscore {
+    border: 1px solid var(--grid); border-radius: 8px; padding: 14px; background: var(--panel-2);
+  }
+  .subscore h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+                 letter-spacing: 0.06em; color: var(--muted); display: flex; justify-content: space-between; }
+  .subscore .bar { height: 10px; border-radius: 5px; background: #21262d; overflow: hidden; }
+  .subscore .bar > div { height: 100%; background: linear-gradient(90deg, var(--bad), var(--warn) 50%, var(--good)); }
+  .subscore .components { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+  @media (max-width: 540px) { .subscore .components { grid-template-columns: 1fr; } }
+  .subscore .components .row { display: flex; justify-content: space-between; font-size: 12px; }
+  .subscore .components .row .lbl { color: var(--muted); }
+
+  /* ── Indicator cards ──────────────────────────────────────────────────── */
+  .ind-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .ind {
+    background: var(--panel-2); border: 1px solid var(--grid); border-radius: 8px; padding: 14px;
+  }
+  .ind .name { font-weight: 600; font-size: 13px; }
+  .ind .sid { color: var(--muted); font-size: 10px; margin-top: 1px; letter-spacing: 0.04em; }
+  .ind .val { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 8px; line-height: 1.1; }
+  .ind .val .units { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .ind .yoy { font-size: 12px; margin-top: 4px; font-weight: 600; }
+  .ind .when { color: var(--muted); font-size: 10px; margin-top: 4px; }
+  .ind .spark { margin-top: 10px; }
+  .ind .yoy.up.bad   { color: var(--bad); }
+  .ind .yoy.down.bad { color: var(--good); }
+  .ind .yoy.up.good  { color: var(--good); }
+  .ind .yoy.down.good { color: var(--bad); }
+  .ind .yoy.flat { color: var(--muted); }
+
+  /* ── Markets table ────────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--grid); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .q { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .q a { color: var(--accent); text-decoration: none; }
+  .q a:hover { text-decoration: underline; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .pill.approval     { background: #1f3a5f; color: #79c0ff; }
+  .pill.right_track  { background: #3a1f5f; color: #d2a8ff; }
+  .pill.recession    { background: #5f1f1f; color: #ffa198; }
+  .pill.inflation    { background: #5f4a1f; color: #ffd58a; }
+  .pill.unemployment { background: #1f5f4a; color: #7ee2b8; }
+  .pill.election     { background: #3a3a3a; color: #c9d1d9; }
+  .price-bar { height: 18px; border-radius: 3px; background: #21262d; position: relative; overflow: hidden; min-width: 140px; }
+  .price-bar > div { height: 100%; background: var(--accent); }
+  .price-bar > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+
+  .footnote { color: var(--muted); font-size: 11px; margin-top: 14px; }
+  .err { color: var(--bad); font-size: 13px; }
+  .skeleton { color: var(--muted); padding: 24px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <span class="tag">narve.ai</span>
+  <h1>Voter Pulse</h1>
+  <span class="meta">How voters feel and how their lives are going.</span>
+  <span class="meta" id="updated">loading…</span>
+</header>
+
+<main>
+  <!-- HERO: composite mood -->
+  <section class="panel">
+    <h2>National mood</h2>
+    <p class="desc">Composite of pocketbook, jobs, and consumer-sentiment signals. 0 = bleak, 100 = good.</p>
+    <div class="hero">
+      <div class="gauge">
+        <svg viewBox="0 0 100 100">
+          <circle class="track" cx="50" cy="50" r="42" stroke-width="10" fill="none" />
+          <circle class="fill"  cx="50" cy="50" r="42" stroke-width="10" fill="none"
+                  stroke="url(#g)" stroke-dasharray="263.89" stroke-dashoffset="263.89" id="gaugeFill" />
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%"  stop-color="#f85149"/>
+              <stop offset="50%" stop-color="#d29922"/>
+              <stop offset="100%" stop-color="#56d364"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <div class="gauge-label">
+          <div class="num" id="moodNum">—</div>
+          <div class="word" id="moodWord">loading</div>
+        </div>
+      </div>
+      <div class="subscore-row" id="subscores"></div>
+    </div>
+    <p class="footnote">Misery index (UNRATE + CPI YoY): <span id="misery">—</span>. Higher = more pain.</p>
+  </section>
+
+  <!-- POCKETBOOK -->
+  <section class="panel">
+    <h2>Pocketbook — cost of living</h2>
+    <p class="desc">What people pay for the things they buy every week.</p>
+    <div class="ind-grid" id="grid-pocketbook"><div class="skeleton">loading…</div></div>
+  </section>
+
+  <!-- JOBS -->
+  <section class="panel">
+    <h2>Jobs &amp; wages</h2>
+    <p class="desc">How easy it is to find work and whether paychecks are keeping up.</p>
+    <div class="ind-grid" id="grid-jobs"><div class="skeleton">loading…</div></div>
+  </section>
+
+  <!-- SENTIMENT -->
+  <section class="panel">
+    <h2>What people say</h2>
+    <p class="desc">Survey-based read on how households feel.</p>
+    <div class="ind-grid" id="grid-sentiment"><div class="skeleton">loading…</div></div>
+  </section>
+
+  <!-- POLITICS / MARKETS -->
+  <section class="panel">
+    <h2>Polymarket — the political mood</h2>
+    <p class="desc">Approval, right-track, recession and election-year markets, sorted by 24h volume.</p>
+    <div id="markets"><div class="skeleton">loading…</div></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const fmt = {
+  num:  (v, d=2) => v == null ? "—" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }),
+  pct:  (v, d=1) => v == null ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(d) + "%",
+  money: v => v == null ? "—" : "$" + Number(v).toFixed(2),
+  date: s => {
+    if (!s) return "—";
+    const d = new Date(s);
+    return isNaN(d) ? s : d.toISOString().slice(0, 10);
+  },
+};
+
+const GROUPS = {
+  pocketbook: "grid-pocketbook",
+  jobs:       "grid-jobs",
+  sentiment:  "grid-sentiment",
+};
+
+const HIGHER_BETTER_GROUPS = {
+  pocketbook: false, // higher prices/rates = bad
+  jobs:       null,  // mixed
+  sentiment:  true,
+};
+
+function setMood(mood) {
+  const v = mood && mood.overall != null ? mood.overall : null;
+  const num = document.getElementById("moodNum");
+  const word = document.getElementById("moodWord");
+  num.textContent = v == null ? "—" : Math.round(v);
+  word.textContent = (mood && mood.label) || "—";
+  const fill = document.getElementById("gaugeFill");
+  const C = 2 * Math.PI * 42;
+  const off = v == null ? C : C * (1 - Math.max(0, Math.min(100, v)) / 100);
+  fill.setAttribute("stroke-dasharray", String(C));
+  fill.setAttribute("stroke-dashoffset", String(off));
+
+  const wrap = document.getElementById("subscores");
+  wrap.innerHTML = "";
+  const subs = (mood && mood.subscores) || {};
+  for (const [name, sub] of Object.entries(subs)) {
+    const score = sub.score;
+    const div = document.createElement("div");
+    div.className = "subscore";
+    const compsHtml = (sub.components || []).map(c => `
+      <div class="row">
+        <span class="lbl">${escapeHtml(c.label)}</span>
+        <span>${formatComp(c)}</span>
+      </div>`).join("");
+    div.innerHTML = `
+      <h3><span>${name}</span><span>${score == null ? "—" : Math.round(score)}</span></h3>
+      <div class="bar"><div style="width: ${score == null ? 0 : Math.max(0, Math.min(100, score))}%"></div></div>
+      <div class="components">${compsHtml}</div>`;
+    wrap.appendChild(div);
+  }
+
+  const m = mood && mood.misery_index;
+  document.getElementById("misery").textContent = m == null ? "—" : m.toFixed(1);
+}
+
+function formatComp(c) {
+  const u = c.units || "";
+  if (u === "%")     return fmt.pct(c.value, 1);
+  if (u === "$/gal") return fmt.money(c.value);
+  if (u === "$ (real)") return fmt.pct(c.value, 1); // we only carry the YoY for wages
+  return fmt.num(c.value, 1) + (u ? " " + u : "");
+}
+
+function isBadDirection(yoy, higherIsBetter) {
+  if (yoy == null || higherIsBetter == null) return null;
+  if (higherIsBetter) return yoy < 0;
+  return yoy > 0;
+}
+
+function indicatorCard(s) {
+  const latest = s.latest;
+  const valStr = latest == null ? "—" : (
+    s.units === "$/gal" ? fmt.money(latest.value) :
+    s.units === "%"     ? fmt.num(latest.value, 2) :
+    fmt.num(latest.value, 1)
+  );
+  const yoy = s.yoy_pct;
+  let yoyCls = "flat";
+  if (yoy != null) {
+    const dir = yoy > 0.05 ? "up" : (yoy < -0.05 ? "down" : "flat");
+    const bad = isBadDirection(yoy, s.higher_is_better);
+    if (dir === "flat") yoyCls = "flat";
+    else yoyCls = `${dir} ${bad ? "bad" : "good"}`;
+  }
+  const yoyLabel = yoy == null ? "no YoY" : (fmt.pct(yoy, 1) + " YoY");
+  return `
+    <div class="ind">
+      <div class="name">${escapeHtml(s.label)}</div>
+      <div class="sid">FRED ${escapeHtml(s.series_id)} · ${escapeHtml(s.units)}</div>
+      <div class="val">${valStr}${s.units !== "$/gal" ? `<span class="units">${escapeHtml(s.units)}</span>` : ""}</div>
+      <div class="yoy ${yoyCls}">${yoyLabel}</div>
+      <div class="when">as of ${fmt.date(latest && latest.date)}</div>
+      <svg class="spark" width="100%" height="34" viewBox="0 0 200 34" preserveAspectRatio="none">
+        ${sparklinePath(s.points || [])}
+      </svg>
+    </div>`;
+}
+
+function sparklinePath(points) {
+  if (!points.length) return "";
+  const pts = points.slice(-60);
+  const xs = pts.map((_, i) => (i / Math.max(1, pts.length - 1)) * 200);
+  const ys = pts.map(p => p.value);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const range = yMax - yMin || 1;
+  const path = pts.map((p, i) => {
+    const x = xs[i].toFixed(2);
+    const y = (32 - ((p.value - yMin) / range) * 30).toFixed(2);
+    return (i ? "L" : "M") + x + "," + y;
+  }).join(" ");
+  return `<path d="${path}" fill="none" stroke="#ec4899" stroke-width="1.5"/>`;
+}
+
+function renderIndicators(series) {
+  for (const groupId of Object.values(GROUPS)) {
+    const el = document.getElementById(groupId);
+    if (el) el.innerHTML = "";
+  }
+  for (const s of series) {
+    const target = GROUPS[s.group];
+    if (!target) continue;
+    const el = document.getElementById(target);
+    if (el) el.insertAdjacentHTML("beforeend", indicatorCard(s));
+  }
+  for (const id of Object.values(GROUPS)) {
+    const el = document.getElementById(id);
+    if (el && !el.children.length) el.innerHTML = '<div class="skeleton">no data yet</div>';
+  }
+}
+
+function renderMarkets(payload) {
+  const root = document.getElementById("markets");
+  const markets = (payload && payload.markets) || [];
+  if (!markets.length) {
+    root.innerHTML = '<div class="skeleton">no live sentiment markets right now</div>';
+    return;
+  }
+  const rows = markets.slice(0, 30).map(m => {
+    const yes = Math.round(m.yes_price * 100);
+    const link = m.url
+      ? `<a href="${escapeAttr(m.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(m.question)}</a>`
+      : escapeHtml(m.question);
+    return `
+      <tr>
+        <td><span class="pill ${escapeAttr(m.category)}">${escapeHtml(m.category.replace(/_/g, " "))}</span></td>
+        <td class="q">${link}</td>
+        <td class="num">
+          <div class="price-bar"><div style="width:${yes}%"></div><span>${yes}%</span></div>
+        </td>
+        <td class="num">${m.volume_24h ? "$" + Math.round(m.volume_24h).toLocaleString() : "—"}</td>
+        <td class="num">${fmt.date(m.end_date)}</td>
+      </tr>`;
+  }).join("");
+  root.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th><th>Question</th>
+          <th class="num">YES price</th><th class="num">24h volume</th><th class="num">Closes</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+async function load() {
+  try {
+    const r = await fetch("/api/summary", { credentials: "same-origin" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    setMood(data.mood);
+    renderIndicators((data.life && data.life.series) || []);
+    renderMarkets(data.markets);
+    const fetchedAt = data.life && data.life.fetched_at;
+    document.getElementById("updated").textContent = "updated " + fmt.date(new Date(fetchedAt * 1000).toISOString());
+  } catch (err) {
+    document.getElementById("updated").textContent = "load failed";
+    document.getElementById("markets").innerHTML = `<div class="err">Could not load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>

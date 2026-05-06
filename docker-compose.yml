@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       centralbank:
         condition: service_healthy
+      voter-pulse:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -146,6 +148,18 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7060/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  voter-pulse:
+    build: ./voter-pulse-dashboard
+    expose:
+      - "7062"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7062/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3

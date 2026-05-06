@@ -99,6 +99,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+    },
+    "voter_pulse": {
+      "subdomain": "pulse",
+      "target": 7062,
+      "display_name": "Voter Pulse",
+      "description": "How voters feel and how their lives are going — pocketbook, jobs, sentiment, political markets",
+      "accent": "#ec4899",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_VOTER_PULSE_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_VOTER_PULSE_STRIPE_ANNUAL"
     }
   }
 }

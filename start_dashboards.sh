@@ -13,6 +13,7 @@
 #   8888 — Sports Dashboard          (sports-dashboard/sports_dashboard.py)
 #   7050 — World State Dashboard     (world-state-dashboard/server.py)
 #   7060 — Central Bank Dashboard    (centralbank-dashboard/server.py)
+#   7062 — Voter Pulse Dashboard     (voter-pulse-dashboard/server.py)
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,7 +26,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-ALL_PORTS="7000 8000 8050 8051 8052 5050 8888 7050 7060"
+ALL_PORTS="7000 8000 8050 8051 8052 5050 8888 7050 7060 7062"
 
 # Kill dashboard processes — prefer PID files, fall back to port scan
 cleanup() {
@@ -114,15 +115,23 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 8. Central Bank Dashboard (port 7060)
-    echo -e "${GREEN}[8/9]${NC} Starting Central Bank Dashboard on port 7060..."
+    echo -e "${GREEN}[8/10]${NC} Starting Central Bank Dashboard on port 7060..."
     cd "$SCRIPT_DIR/centralbank-dashboard"
     PORT=7060 python3 -m uvicorn server:app --host 127.0.0.1 --port 7060 > /tmp/dashboard_centralbank.log 2>&1 &
     echo $! > /tmp/dashboard_centralbank.pid
     echo "       PID: $(cat /tmp/dashboard_centralbank.pid)"
     cd "$SCRIPT_DIR"
 
-    # 9. Gateway (port 7000) — starts last so upstreams are up first
-    echo -e "${GREEN}[9/9]${NC} Starting Gateway on port 7000..."
+    # 9. Voter Pulse Dashboard (port 7062)
+    echo -e "${GREEN}[9/10]${NC} Starting Voter Pulse Dashboard on port 7062..."
+    cd "$SCRIPT_DIR/voter-pulse-dashboard"
+    PORT=7062 python3 -m uvicorn server:app --host 127.0.0.1 --port 7062 > /tmp/dashboard_voter_pulse.log 2>&1 &
+    echo $! > /tmp/dashboard_voter_pulse.pid
+    echo "       PID: $(cat /tmp/dashboard_voter_pulse.pid)"
+    cd "$SCRIPT_DIR"
+
+    # 10. Gateway (port 7000) — starts last so upstreams are up first
+    echo -e "${GREEN}[10/10]${NC} Starting Gateway on port 7000..."
     cd "$SCRIPT_DIR/gateway"
     python3 server.py > /tmp/dashboard_gateway.log 2>&1 &
     echo $! > /tmp/dashboard_gateway.pid
@@ -144,6 +153,7 @@ start_all() {
     echo -e "  ${GREEN}Sports Dashboard:${NC}      http://localhost:8888"
     echo -e "  ${GREEN}World State Dashboard:${NC} http://localhost:7050"
     echo -e "  ${GREEN}Central Bank Dashboard:${NC} http://localhost:7060"
+    echo -e "  ${GREEN}Voter Pulse Dashboard:${NC} http://localhost:7062"
     echo ""
     echo -e "  Local subdomain test: http://crypto.localhost:7000"
     echo -e "  Logs: /tmp/dashboard_*.log"
@@ -163,6 +173,7 @@ status() {
     echo -e "  Port 8888 (Sports):   $(lsof -ti :8888 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7050 (World):    $(lsof -ti :7050 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7060 (CB):       $(lsof -ti :7060 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
+    echo -e "  Port 7062 (Pulse):    $(lsof -ti :7062 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo ""
 }
 

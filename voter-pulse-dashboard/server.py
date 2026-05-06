@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Voter Pulse Dashboard — FastAPI backend.
+
+Surface:
+  GET /            → index.html
+  GET /api/summary → mood index + every life indicator + sentiment markets
+  GET /api/life    → just the FRED indicators
+  GET /api/markets → just the Polymarket sentiment markets
+  GET /api/mood    → just the composite mood score
+  GET /healthz
+
+Auth: same gateway-SSO pattern as world-state-dashboard / centralbank.
+Set DEV_MODE=1 to bypass when running locally.
+"""
+
+from __future__ import annotations
+
+import hmac
+import logging
+import os
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from analysis import mood_index
+from ingestion import fred_client, polymarket_client
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+app = FastAPI(title="Voter Pulse Dashboard")
+
+HTML_PATH = Path(__file__).parent / "index.html"
+
+_sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+if not _sso_secret and not _DEV_MODE:
+    log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — all requests will 503")
+
+
+@app.middleware("http")
+async def security_and_auth(request: Request, call_next):
+    if request.url.path != "/healthz":
+        if _sso_secret:
+            client_secret = request.headers.get("x-gateway-secret", "")
+            if not hmac.compare_digest(client_secret, _sso_secret):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        elif not _DEV_MODE:
+            return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
+    if _sso_secret:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> HTMLResponse:
+    return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/api/life")
+async def api_life(force: bool = False) -> JSONResponse:
+    return JSONResponse(fred_client.get_cached(force=force))
+
+
+@app.get("/api/markets")
+async def api_markets(force: bool = False) -> JSONResponse:
+    return JSONResponse(polymarket_client.get_cached(force=force))
+
+
+@app.get("/api/mood")
+async def api_mood(force: bool = False) -> JSONResponse:
+    life = fred_client.get_cached(force=force)
+    composed = mood_index.compose(life["series"])
+    composed["label"] = mood_index.label_for(composed["overall"])
+    return JSONResponse(composed)
+
+
+@app.get("/api/summary")
+async def api_summary(force: bool = False) -> JSONResponse:
+    life = fred_client.get_cached(force=force)
+    markets = polymarket_client.get_cached(force=force)
+    composed = mood_index.compose(life["series"])
+    composed["label"] = mood_index.label_for(composed["overall"])
+    return JSONResponse({
+        "mood": composed,
+        "life": life,
+        "markets": markets,
+    })
+
+
+@app.get("/healthz")
+async def healthz() -> dict:
+    return {"ok": True}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        app,
+        host=os.environ.get("BIND_HOST", "0.0.0.0"),
+        port=int(os.environ.get("PORT", "7062")),
+    )
