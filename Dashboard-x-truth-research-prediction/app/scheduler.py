@@ -110,7 +110,7 @@ async def run_pipeline() -> dict:
 
             for post in new_posts_result.all():
                 try:
-                    for ext in extractor.extract(post.content):
+                    for ext in await extractor.extract_async(post.content):
                         candidate_markets = markets_by_category.get(ext.category, [])
                         matched_market, _ = match_to_market(f"{ext.raw_text} {post.content[:200]}", candidate_markets)
                         market_slug = matched_market["market_slug"] if matched_market else None

@@ -7,6 +7,7 @@ Subdomain when running behind the narve.ai gateway: `truth.narve.ai` (port 18789
 ## What it does
 
 - **Scrapes X + TruthSocial** every 5 min for posts containing prediction-style language. Per-user API keys (Profile → API Keys) are used in addition to env-var keys.
+- **Two-stage prediction extraction**: precise regex first (free, fast), then Claude (LLM fallback) for natural-language predictions the regex misses. Results are cached by content hash so repeat posts cost nothing. Defaults to `claude-opus-4-7`; swap to `claude-haiku-4-5` via `LLM_EXTRACTOR_MODEL` for ~5× lower cost.
 - **Matches predictions to markets** on Polymarket *and* Kalshi via Jaccard token-overlap (≥3 shared tokens, strict category gating).
 - **Scores credibility** per source — Bayesian-smoothed accuracy, decay-weighted by half-life, category-spread + dominance penalties, manual trust override.
 - **Picks the better side**: for every prediction with a matched market, computes the EV of buying YES vs buying NO at the live price, surfaces the higher-EV side as a `BUY YES` / `BUY NO` signal.

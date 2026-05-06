@@ -138,7 +138,8 @@ def infer_category(text: str) -> str:
 
 
 class PredictionExtractor:
-    def extract(self, content: str) -> list[ExtractionResult]:
+    def _extract_regex(self, content: str) -> list[ExtractionResult]:
+        """Precise regex / pattern path. High precision, low recall."""
         if not content or len(content.split()) < 10:
             return []
         for fp in FALSE_POSITIVE_PATTERNS:
@@ -172,9 +173,47 @@ class PredictionExtractor:
         if m:
             return [ExtractionResult("Yes", None, m.group(0).strip(), "conditional", infer_category(content))]
 
+        return []
+
+    def _extract_keyword_fallback(self, content: str) -> list[ExtractionResult]:
+        """Last-resort keyword match. Low precision — used only when no LLM is available."""
         content_lower = content.lower()
         for kw in _prediction_keywords:
             if kw.lower() in content_lower:
                 return [ExtractionResult("Yes", None, content[:200], "keyword", infer_category(content))]
-
         return []
+
+    def extract(self, content: str) -> list[ExtractionResult]:
+        """Synchronous regex + keyword fallback (legacy callers + unit tests)."""
+        if not content or len(content.split()) < 10:
+            return []
+        results = self._extract_regex(content)
+        if results:
+            return results
+        return self._extract_keyword_fallback(content)
+
+    async def extract_async(self, content: str) -> list[ExtractionResult]:
+        """Regex first, LLM second, keyword last.
+
+        The regex path is fast and free; we only pay the LLM when nothing
+        precise matched. Keyword fallback is below the LLM because it produces
+        a generic "Yes" with no probability and noisy categorization — fine as
+        a fallback when the LLM is unavailable, but the LLM strictly dominates it.
+        """
+        if not content or len(content.split()) < 10:
+            return []
+        for fp in FALSE_POSITIVE_PATTERNS:
+            if fp.search(content):
+                return []
+        results = self._extract_regex(content)
+        if results:
+            return results
+        try:
+            from app.processing import llm_extractor
+            if llm_extractor.is_available():
+                llm_results = await llm_extractor.extract(content)
+                if llm_results:
+                    return llm_results
+        except Exception as exc:
+            logger.warning("LLM extractor invocation failed: %s", exc)
+        return self._extract_keyword_fallback(content)

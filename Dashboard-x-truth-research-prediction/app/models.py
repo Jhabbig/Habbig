@@ -204,6 +204,21 @@ class PaperTrade(SQLModel, table=True):
     closed_at: Optional[datetime] = None
 
 
+class ExtractionCache(SQLModel, table=True):
+    """Cache of LLM extraction results, keyed by content hash + model.
+
+    Posts are scraped multiple times across pipeline runs, and the same trending
+    quote often appears verbatim across many accounts. Caching by content hash
+    lets us skip the LLM call on every duplicate for free.
+    """
+    __tablename__ = "extraction_cache"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    content_hash: str = Field(index=True)  # sha256 of the post content
+    model: str = Field(default="")  # e.g. "claude-opus-4-7"
+    predictions_json: str = Field(default="[]", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class CredibilitySnapshot(SQLModel, table=True):
     __tablename__ = "credibility_snapshot"
     id: Optional[int] = Field(default=None, primary_key=True)
