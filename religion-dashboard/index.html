@@ -93,6 +93,50 @@
   .news-item .title a:hover { text-decoration: underline; }
   .news-item .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
   .news-item .summary { color: var(--fg); font-size: 12px; margin-top: 4px; }
+  .registry-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .registry-controls input { background: #0e1117; color: var(--fg); border: 1px solid var(--grid);
+                             padding: 6px 10px; border-radius: 4px; font-size: 13px; min-width: 200px; }
+  .registry-controls input:focus { outline: none; border-color: var(--accent); }
+  .registry-controls .count { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .registry-table { width: 100%; font-size: 13px; }
+  .registry-table th { cursor: pointer; user-select: none; }
+  .registry-table th.sorted { color: var(--accent); }
+  .registry-table td.summary { color: var(--muted); font-size: 12px; max-width: 460px; }
+  .fam-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+              background: #21262d; color: var(--fg); border: 1px solid var(--grid); }
+  .fam-Christian   { background:#0d3868; color:#9ed1ff; border-color:#1a528f; }
+  .fam-Islamic     { background:#0e3a26; color:#7ee2a8; border-color:#1d5a3d; }
+  .fam-Hindu       { background:#5a3a16; color:#f7b955; border-color:#6e4a1d; }
+  .fam-Buddhist    { background:#3a2660; color:#d2a8ff; border-color:#4a3580; }
+  .fam-Jewish      { background:#243a5c; color:#9bc4ff; border-color:#2c4a73; }
+  .fam-Iranian     { background:#5a1d1d; color:#ffb3b0; border-color:#6e2424; }
+  .fam-East-Asian  { background:#4a4012; color:#f7d76b; border-color:#5e521b; }
+  .fam-Indigenous  { background:#2e4a1c; color:#a8d97e; border-color:#3d6326; }
+  .fam-NRM         { background:#3a1a4a; color:#dba8ff; border-color:#4d2362; }
+  .fam-Sikh--Jain  { background:#5c2e16; color:#f0b58a; border-color:#73391b; }
+  .timeline { position: relative; height: 200px; background: #0e1117; border: 1px solid var(--grid);
+              border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+  .timeline .axis { position: absolute; bottom: 18px; left: 0; right: 0; height: 1px; background: var(--grid); }
+  .timeline .tick { position: absolute; bottom: 0; height: 18px; color: var(--muted); font-size: 10px;
+                    transform: translateX(-50%); white-space: nowrap; }
+  .timeline .tick::before { content: ""; position: absolute; bottom: 18px; left: 50%; width: 1px;
+                            height: 4px; background: var(--grid); }
+  .timeline .dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; transform: translate(-50%, 50%);
+                   cursor: pointer; transition: transform 0.1s; }
+  .timeline .dot:hover { transform: translate(-50%, 50%) scale(2); z-index: 10; }
+  .timeline .dot[data-fam="Christian"]   { background: #58a6ff; }
+  .timeline .dot[data-fam="Islamic"]     { background: #56d364; }
+  .timeline .dot[data-fam="Hindu"]       { background: #f0883e; }
+  .timeline .dot[data-fam="Buddhist"]    { background: #d2a8ff; }
+  .timeline .dot[data-fam="Jewish"]      { background: #79c0ff; }
+  .timeline .dot[data-fam="Iranian"]     { background: #ff8a8a; }
+  .timeline .dot[data-fam="East Asian"]  { background: #f7d76b; }
+  .timeline .dot[data-fam="Indigenous"]  { background: #a8d97e; }
+  .timeline .dot[data-fam="NRM"]         { background: #dba8ff; }
+  .timeline .dot[data-fam="Sikh / Jain"] { background: #f0b58a; }
+  .timeline-tooltip { position: absolute; background: #161b22; border: 1px solid var(--grid);
+                      border-radius: 4px; padding: 6px 10px; font-size: 12px; pointer-events: none;
+                      max-width: 240px; z-index: 20; display: none; }
   .err { color: #f85149; }
   .empty { color: var(--muted); font-style: italic; }
   .footnote { color: var(--muted); font-size: 11px; margin-top: 12px; }
@@ -120,6 +164,30 @@
     <h2>World religions — adherents (millions)</h2>
     <div id="religions">loading…</div>
     <p class="footnote">Source: Pew Research Center, baseline 2020 estimates. Growth = annualised change in share of world population.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Full registry — 100 traditions, sects &amp; movements</h2>
+    <div class="timeline" id="timeline"></div>
+    <div class="registry-controls">
+      <input id="reg-search" placeholder="Search name, region, summary…" type="search">
+      <div id="reg-families"></div>
+      <span class="count" id="reg-count">100 / 100</span>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="registry-table" id="reg-table">
+        <thead><tr>
+          <th data-sort="name">Name</th>
+          <th data-sort="family">Family</th>
+          <th data-sort="adherents_m" class="num">Adherents (M)</th>
+          <th data-sort="founded">Founded</th>
+          <th data-sort="origin">Origin</th>
+          <th class="summary">Summary</th>
+        </tr></thead>
+        <tbody id="reg-body"></tbody>
+      </table>
+    </div>
+    <p class="footnote">Sources: Pew, World Religion Database, ARDA, Britannica, official censuses. Denominational counts have wide error bars; some categories overlap (e.g., Pentecostal/Evangelical) — do not sum to world total.</p>
   </section>
 
   <section class="panel">
@@ -179,9 +247,10 @@ async function fetchJson(url) {
 
 async function load() {
   const meta = document.getElementById("meta");
-  const [sumR, relR, cultR, freeR, mktR, newsR] = await Promise.allSettled([
+  const [sumR, relR, fullR, cultR, freeR, mktR, newsR] = await Promise.allSettled([
     fetchJson("/api/summary"),
     fetchJson("/api/religions"),
+    fetchJson("/api/religions-full"),
     fetchJson("/api/cults"),
     fetchJson("/api/freedom"),
     fetchJson("/api/markets"),
@@ -190,6 +259,11 @@ async function load() {
 
   if (sumR.status === "fulfilled") renderSummary(sumR.value);
   if (relR.status === "fulfilled") renderReligions(relR.value);
+  if (fullR.status === "fulfilled") {
+    window._registry = fullR.value;
+    renderTimeline(fullR.value.religions);
+    initRegistry(fullR.value);
+  }
   if (cultR.status === "fulfilled") { window._cults = cultR.value; renderCults(""); }
   if (freeR.status === "fulfilled") renderFreedom(freeR.value);
   if (mktR.status === "fulfilled") renderMarkets(mktR.value);
@@ -211,7 +285,8 @@ async function load() {
 function renderSummary(s) {
   const root = document.getElementById("summary");
   const cards = [
-    {label: "Tracked adherents", value: fmt.m(s.world_population_m), sub: s.religions_tracked + " traditions"},
+    {label: "Tracked adherents", value: fmt.m(s.world_population_m), sub: s.religions_tracked + " top-level traditions"},
+    {label: "Registry size", value: s.registry_size || "—", sub: "denominations / sects / movements"},
     {label: "Cults / NRMs tracked", value: s.cults_tracked, sub: s.cults_active + " active · " + s.cults_defunct + " defunct"},
     {label: "Countries of Particular Concern", value: s.cpc_countries, sub: "USCIRF 2024"},
     {label: "Special Watch List", value: s.swl_countries, sub: "USCIRF 2024"},
@@ -251,6 +326,143 @@ function renderReligions(d) {
   }
 
   root.innerHTML = rows + subBlocks;
+}
+
+// ─── Registry (100 traditions) ───────────────────────────────────────────
+
+const REG = { sortKey: "adherents_m", sortDir: -1, family: "", q: "" };
+
+function initRegistry(d) {
+  // Family filter chips
+  const famBox = document.getElementById("reg-families");
+  famBox.innerHTML = '<button data-fam="" class="active" style="background:#21262d;color:var(--fg);border:1px solid var(--grid);padding:4px 10px;border-radius:999px;font-size:12px;cursor:pointer;margin-right:4px">All</button>'
+    + d.families.map(f => `<button data-fam="${escapeHtml(f)}" style="background:#21262d;color:var(--fg);border:1px solid var(--grid);padding:4px 10px;border-radius:999px;font-size:12px;cursor:pointer;margin-right:4px">${escapeHtml(f)}</button>`).join("");
+  famBox.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => {
+      famBox.querySelectorAll("button").forEach(x => x.style.background = "#21262d");
+      b.style.background = "var(--accent)";
+      b.style.color = "#0e1117";
+      REG.family = b.dataset.fam;
+      renderRegistry();
+    });
+  });
+  famBox.querySelectorAll("button")[0].style.background = "var(--accent)";
+  famBox.querySelectorAll("button")[0].style.color = "#0e1117";
+
+  // Search box
+  document.getElementById("reg-search").addEventListener("input", e => {
+    REG.q = e.target.value.toLowerCase().trim();
+    renderRegistry();
+  });
+
+  // Sortable headers
+  document.querySelectorAll("#reg-table th[data-sort]").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.sort;
+      if (REG.sortKey === k) REG.sortDir = -REG.sortDir;
+      else { REG.sortKey = k; REG.sortDir = (k === "adherents_m" ? -1 : 1); }
+      document.querySelectorAll("#reg-table th").forEach(x => x.classList.remove("sorted"));
+      th.classList.add("sorted");
+      renderRegistry();
+    });
+  });
+
+  renderRegistry();
+}
+
+function renderRegistry() {
+  const d = window._registry;
+  if (!d) return;
+  let list = d.religions.slice();
+  if (REG.family) list = list.filter(r => r.family === REG.family);
+  if (REG.q) {
+    list = list.filter(r =>
+      r.name.toLowerCase().includes(REG.q)
+      || (r.origin || "").toLowerCase().includes(REG.q)
+      || (r.summary || "").toLowerCase().includes(REG.q)
+      || (r.family || "").toLowerCase().includes(REG.q)
+    );
+  }
+  const k = REG.sortKey, dir = REG.sortDir;
+  list.sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+
+  document.getElementById("reg-count").textContent = `${list.length} / ${d.total}`;
+  const body = document.getElementById("reg-body");
+  body.innerHTML = list.map(r => {
+    const famCls = "fam-" + r.family.replace(/[\s/]+/g, "-");
+    return `<tr>
+      <td><strong>${escapeHtml(r.name)}</strong></td>
+      <td><span class="fam-pill ${famCls}">${escapeHtml(r.family)}</span></td>
+      <td class="num">${r.adherents_m < 1 ? r.adherents_m.toFixed(3).replace(/\.?0+$/,"") : r.adherents_m.toFixed(1).replace(/\.0$/,"")}</td>
+      <td>${escapeHtml(r.founded)}</td>
+      <td>${escapeHtml(r.origin)}</td>
+      <td class="summary">${escapeHtml(r.summary)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderTimeline(religions) {
+  // Parse "founded" into a numeric year. Negative for BCE, 0 for 'ancient'/'pre-Buddhist'.
+  function parseYear(s) {
+    if (!s) return null;
+    const m1 = s.match(/(\d+)\s*BCE/i);
+    if (m1) return -parseInt(m1[1], 10);
+    const m2 = s.match(/(\d+)/);
+    if (m2) return parseInt(m2[1], 10);
+    if (/ancient|pre-/i.test(s)) return -2000;
+    return null;
+  }
+  const dots = religions
+    .map(r => ({...r, year: parseYear(r.founded)}))
+    .filter(r => r.year !== null);
+
+  const minY = -2000, maxY = 2025;
+  const tl = document.getElementById("timeline");
+  // Use a non-linear scale: cluster ancient/BCE on the left, expand recent centuries.
+  // Power scale: t = ((y - minY) / (maxY - minY)) ^ 1.6 squashes ancient and stretches modern.
+  function xPct(y) {
+    const t = (y - minY) / (maxY - minY);
+    return Math.pow(Math.max(0, Math.min(1, t)), 1.6) * 100;
+  }
+  const ticks = [-2000, -500, 0, 500, 1000, 1500, 1700, 1850, 1950, 2000];
+  let html = '<div class="axis"></div>';
+  for (const y of ticks) {
+    const lbl = y < 0 ? Math.abs(y) + " BCE" : (y === 0 ? "1 CE" : y);
+    html += `<div class="tick" style="left:${xPct(y).toFixed(2)}%">${lbl}</div>`;
+  }
+  // Vertical jitter so dots don't stack
+  const buckets = {};
+  dots.forEach(r => {
+    const bx = Math.floor(xPct(r.year) * 2);
+    buckets[bx] = (buckets[bx] || 0) + 1;
+    r._row = (buckets[bx] - 1) % 10;
+  });
+  for (const r of dots) {
+    const x = xPct(r.year);
+    const yPx = 24 + r._row * 12;
+    html += `<div class="dot" data-fam="${escapeHtml(r.family)}" data-name="${escapeHtml(r.name)}" data-year="${r.year}" data-summary="${escapeHtml(r.summary)}" style="left:${x.toFixed(2)}%; top:${yPx}px"></div>`;
+  }
+  html += '<div class="timeline-tooltip" id="tl-tip"></div>';
+  tl.innerHTML = html;
+
+  const tip = document.getElementById("tl-tip");
+  tl.querySelectorAll(".dot").forEach(dot => {
+    dot.addEventListener("mouseenter", e => {
+      const y = parseInt(dot.dataset.year, 10);
+      const yLbl = y < 0 ? Math.abs(y) + " BCE" : y;
+      tip.innerHTML = `<strong>${escapeHtml(dot.dataset.name)}</strong> — ${yLbl}<br><span style="color:var(--muted)">${escapeHtml(dot.dataset.summary)}</span>`;
+      tip.style.display = "block";
+      const r = dot.getBoundingClientRect();
+      const tlR = tl.getBoundingClientRect();
+      tip.style.left = Math.min(tlR.width - 250, Math.max(0, r.left - tlR.left + 10)) + "px";
+      tip.style.top = Math.max(0, r.top - tlR.top - 60) + "px";
+    });
+    dot.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
 }
 
 function renderCults(filter) {

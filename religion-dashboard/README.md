@@ -14,6 +14,7 @@ Listens on `:7062`. Subdomain: `religion.narve.ai` (registered in
 | --- | --- | --- |
 | World religions adherent counts | Pew Research, baseline 2020 estimates | curated — bumped on new edition |
 | Sub-tradition breakdowns | Pew + World Religion Database | curated |
+| Full registry (100 traditions) | Pew + WRD + ARDA + Britannica + official censuses | curated |
 | Religious-freedom designations | USCIRF Annual Report 2024 (CPC / SWL / EPC) | curated — bumped each annual report |
 | Cults / NRMs watchlist | Britannica, ICSA, FBI case files, court records | curated |
 | Markets | Polymarket Gamma — `religion`, `pope`, `vatican`, `catholic`, `papacy` tags | live, 5-min cache |
@@ -44,7 +45,8 @@ python3 server.py
 
 - `GET /api/health` — liveness
 - `GET /api/summary` — page-load totals (no live calls)
-- `GET /api/religions` — world religions adherent counts + sub-traditions
+- `GET /api/religions` — world religions adherent counts + sub-traditions (Pew top-8)
+- `GET /api/religions-full` — 100-tradition registry (filterable: `?family=`, `?q=`)
 - `GET /api/cults` — curated NRM / cult watchlist (filterable: `?status=`, `?risk=`)
 - `GET /api/freedom` — USCIRF 2024 designations (CPC / SWL / EPC)
 - `GET /api/markets` — Polymarket religion-tagged markets (live)

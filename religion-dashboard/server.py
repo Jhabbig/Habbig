@@ -356,6 +356,30 @@ def api_religions():
     })
 
 
+@app.route("/api/religions-full")
+def api_religions_full():
+    """100-tradition registry (denominations / sects / movements)."""
+    family = (request.args.get("family") or "").strip()
+    q = (request.args.get("q") or "").strip().lower()
+    items = list(rd.RELIGIONS_FULL)
+    if family:
+        items = [r for r in items if r.get("family") == family]
+    if q:
+        items = [r for r in items
+                 if q in r["name"].lower()
+                 or q in r["origin"].lower()
+                 or q in r["summary"].lower()]
+    families = sorted({r["family"] for r in rd.RELIGIONS_FULL})
+    return jsonify({
+        "fetched_at": int(time.time()),
+        "source": "Pew, World Religion Database, ARDA, Britannica + official censuses",
+        "count": len(items),
+        "total": len(rd.RELIGIONS_FULL),
+        "families": families,
+        "religions": items,
+    })
+
+
 @app.route("/api/cults")
 def api_cults():
     status = (request.args.get("status") or "").strip().lower()
@@ -415,6 +439,7 @@ def api_summary():
         "fetched_at": int(time.time()),
         "world_population_m": total_m,
         "religions_tracked": len(rd.WORLD_RELIGIONS),
+        "registry_size": len(rd.RELIGIONS_FULL),
         "cults_tracked": len(cults),
         "cults_active": sum(1 for c in cults if "active" in (c.get("status") or "").lower()),
         "cults_defunct": sum(1 for c in cults if (c.get("status") or "").lower() == "defunct"),
