@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trading add-on · narve.ai</title>
+  <meta name="description" content="Configure the narve.ai Trading add-on — Kelly fraction, auto-execute, daily caps, and per-loss cooldown.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="stylesheet" href="{{ static: pages/settings_integrations.css }}">
+  <link rel="stylesheet" href="{{ static: pages/settings_trading_addon.css }}">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+    {{ raw_sidebar }}
+
+    <main class="main-content" id="main">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/settings" class="breadcrumb-item" style="text-decoration:none;color:inherit">Settings</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Trading add-on</span>
+      </nav>
+
+      <header class="page-header">
+        <h1 class="page-title">Trading add-on</h1>
+        <p class="page-subtitle">
+          Tune how the Trading add-on sizes bets, when (or whether) it places them
+          automatically, and the limits that keep a bad streak from cascading. All
+          changes apply instantly — narve.ai never moves funds without your action.
+        </p>
+      </header>
+
+      <div class="content-area">
+        <div id="ta-root" class="si-card-stack">
+
+          <!-- ── Card 1: Subscription status ─────────────────────── -->
+          <section class="settings-card si-card" aria-labelledby="ta-sub-title">
+            <div class="settings-section">
+              <div class="si-header">
+                <div class="si-header-text">
+                  <div class="settings-section-title" id="ta-sub-title">Subscription</div>
+                  <div class="settings-section-desc">
+                    The Trading add-on costs &pound;25/month or &pound;252/year.
+                    Unlocks Kelly sizing across every market, Polymarket wallet
+                    validation, Kalshi auto-connect, and custom alert rules.
+                  </div>
+                </div>
+                <span class="si-pill" id="ta-sub-pill" data-status="loading">Loading&hellip;</span>
+              </div>
+
+              <div class="si-actions">
+                <a href="/enquire" class="btn btn-primary" id="ta-subscribe-btn" hidden>Add &pound;25/mo</a>
+                <a href="/enquire" class="btn" id="ta-manage-btn" hidden>Contact to manage</a>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Empty state when not subscribed ─────────────────── -->
+          <section class="settings-card si-card ta-empty" id="ta-empty-state" hidden aria-live="polite">
+            <div class="settings-section">
+              <div class="settings-section-title">Add-on not active</div>
+              <div class="settings-section-desc">
+                Subscribe to unlock the configuration below. Once active, your
+                preferences here drive every Kelly recommendation, auto-execute
+                decision, and risk limit narve.ai applies on your behalf.
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Card 2: Kelly calculator config ─────────────────── -->
+          <section class="settings-card si-card ta-config" data-card="kelly" aria-labelledby="ta-kelly-title">
+            <div class="settings-section">
+              <div class="settings-section-title" id="ta-kelly-title">Kelly sizing</div>
+              <div class="settings-section-desc">
+                The Kelly criterion converts your edge over the market into a
+                recommended stake. Full Kelly is mathematically optimal but
+                volatile; Half (the default) trades growth for variance.
+              </div>
+
+              <div class="ta-field">
+                <span class="ta-field-label">Fraction</span>
+                <div class="ta-segmented" role="radiogroup" aria-label="Kelly fraction" id="ta-kelly-fraction">
+                  <button type="button" role="radio" data-value="1.0" aria-pressed="false">Full</button>
+                  <button type="button" role="radio" data-value="0.5" aria-pressed="true">Half</button>
+                  <button type="button" role="radio" data-value="0.25" aria-pressed="false">Quarter</button>
+                </div>
+              </div>
+
+              <div class="ta-field">
+                <label class="ta-field-label" for="ta-max-cap">
+                  Max stake cap <span class="ta-field-hint">(% of bankroll)</span>
+                </label>
+                <div class="ta-slider-row">
+                  <input type="range" id="ta-max-cap" min="1" max="25" step="1" value="25" aria-label="Max stake cap percentage of bankroll">
+                  <output class="ta-slider-value" for="ta-max-cap" id="ta-max-cap-value">25%</output>
+                </div>
+                <div class="ta-field-desc">
+                  Kelly's suggestion is capped at this percent of bankroll, no
+                  matter how strong the edge. Use a tighter cap to smooth
+                  drawdowns in long markets.
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Card 3: Auto-execute ────────────────────────────── -->
+          <section class="settings-card si-card ta-config" data-card="auto-execute" aria-labelledby="ta-auto-title">
+            <div class="settings-section">
+              <div class="settings-section-title" id="ta-auto-title">Auto-execute</div>
+              <div class="settings-section-desc">
+                When on, narve.ai places bets automatically on connected accounts
+                once your edge crosses the threshold below. Off by default —
+                turning it on requires explicit confirmation.
+              </div>
+
+              <div class="ta-field ta-checkbox-row">
+                <label class="ta-checkbox">
+                  <input type="checkbox" id="ta-auto-execute">
+                  <span>Auto-place bets when narve EV &geq; <input type="number" id="ta-auto-execute-min-ev" min="1" max="50" step="0.5" value="10" aria-label="Minimum EV percentage to trigger auto-execute" disabled>%</span>
+                </label>
+              </div>
+              <div class="ta-field-desc">
+                Auto-execute respects every limit configured in Risk limits below.
+                Even one breached limit blocks the trade.
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Card 4: Risk limits ─────────────────────────────── -->
+          <section class="settings-card si-card ta-config" data-card="risk" aria-labelledby="ta-risk-title">
+            <div class="settings-section">
+              <div class="settings-section-title" id="ta-risk-title">Risk limits</div>
+              <div class="settings-section-desc">
+                Hard ceilings that override Kelly's recommendation. Leave blank
+                for no cap. Caps apply to manual bets placed from narve.ai too,
+                not just auto-execute.
+              </div>
+
+              <div class="ta-field">
+                <label class="ta-field-label" for="ta-daily-cap">Daily spend cap</label>
+                <div class="ta-bankroll-row">
+                  <input type="number" id="ta-daily-cap" min="0" step="1" inputmode="decimal" placeholder="e.g. 500" aria-label="Daily spend cap amount">
+                  <div class="si-currency-toggle" role="radiogroup" aria-label="Currency" id="ta-currency-toggle">
+                    <button type="button" role="radio" data-currency="USD" aria-pressed="true">$</button>
+                    <button type="button" role="radio" data-currency="GBP" aria-pressed="false">&pound;</button>
+                  </div>
+                </div>
+                <div class="ta-field-desc">Total bet notional in this currency, reset at 00:00 UTC.</div>
+              </div>
+
+              <div class="ta-field">
+                <label class="ta-field-label" for="ta-max-position">Max position size</label>
+                <input type="number" id="ta-max-position" min="0" step="1" inputmode="decimal" placeholder="e.g. 250" aria-label="Max single-position size">
+                <div class="ta-field-desc">Single-bet notional ceiling in your selected currency.</div>
+              </div>
+
+              <div class="ta-field">
+                <label class="ta-field-label" for="ta-cooldown">Cooldown after loss</label>
+                <div class="ta-cooldown-row">
+                  <input type="number" id="ta-cooldown" min="0" max="1440" step="5" inputmode="numeric" placeholder="e.g. 60" aria-label="Cooldown in minutes">
+                  <span class="ta-field-suffix">minutes</span>
+                </div>
+                <div class="ta-field-desc">Block new bets for this long after any losing position resolves.</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Save-bar ────────────────────────────────────────── -->
+          <div class="save-bar" id="ta-save-bar">
+            <span class="save-bar-status" id="ta-save-status" role="status" aria-live="polite"></span>
+            <button type="button" class="btn" id="ta-reset-btn">Reset to defaults</button>
+            <button type="button" class="btn btn-primary" id="ta-save-btn">Save changes</button>
+          </div>
+
+        </div>
+      </div>
+    </main>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Trading add-on</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
+  </div>
+
+  <!-- ── Auto-execute confirmation modal ──────────────────────── -->
+  <div class="nv-modal" id="ta-auto-modal" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="ta-auto-modal-title">
+    <div class="nv-modal__backdrop" data-close></div>
+    <div class="nv-modal__panel" role="document">
+      <h2 class="nv-modal__title" id="ta-auto-modal-title">Turn on auto-execute?</h2>
+      <p class="nv-modal__sub">
+        narve.ai will place bets on your connected Polymarket and Kalshi
+        accounts whenever narve's edge crosses your EV threshold. You can
+        still review every trade in the activity log. Risk limits configured
+        below always apply. Turn off any time.
+      </p>
+      <div class="nv-modal__actions">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn btn-primary" id="ta-auto-modal-confirm">Yes, enable auto-execute</button>
+      </div>
+    </div>
+  </div>
+
+{{ raw_sitemap }}
+<script src="/_gateway_static/js/toast.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/density.js?v=1" defer></script>
+<script src="/_gateway_static/settings_trading_addon.js" defer></script>
+<script src="/_gateway_static/js/cmdk.js" defer></script>
+<script src="/_gateway_static/js/share_menu.js" defer></script>
+</body>
+</html>

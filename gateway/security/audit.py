@@ -62,6 +62,11 @@ class AuditAction:
     SYSTEM_JOB_RETRY        = "system.job_retry"
     SYSTEM_CONFIG_CHANGE    = "system.config_change"
 
+    # Forensic — reverse-lookup of a leaked email watermark to a user.
+    # Hit OR miss is logged so the trail records the fingerprint an
+    # admin attempted, not just successful resolutions.
+    EMAIL_WATERMARK_TRACE   = "email.watermark_trace"
+
     # Auth (admin-specific)
     ADMIN_LOGIN       = "admin.login"
     ADMIN_LOGOUT      = "admin.logout"
@@ -103,6 +108,7 @@ ACTION_LABELS = {
     AuditAction.SYSTEM_PIPELINE_TRIGGER: "Manually triggered pipeline",
     AuditAction.SYSTEM_JOB_RETRY: "Retried failed job",
     AuditAction.SYSTEM_CONFIG_CHANGE: "Changed system configuration",
+    AuditAction.EMAIL_WATERMARK_TRACE: "Traced email watermark to recipient",
     AuditAction.ADMIN_LOGIN: "Admin login",
     AuditAction.ADMIN_LOGOUT: "Admin logout",
     AuditAction.ADMIN_2FA_SETUP: "Set up 2FA",

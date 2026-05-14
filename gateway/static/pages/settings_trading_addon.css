@@ -1,0 +1,240 @@
+/* Per-page CSS for /settings/trading-addon. Sits on top of gateway.css,
+ * components.css, and pages/settings_integrations.css. */
+
+.si-card-stack {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6, 24px);
+}
+
+.ta-config[hidden] { display: none !important; }
+.ta-empty[hidden] { display: none !important; }
+.ta-empty .settings-section-desc { margin-top: var(--space-2, 8px); }
+
+.ta-field {
+  margin-top: var(--space-4, 16px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.ta-field-label { font-size: var(--text-sm); color: var(--text-secondary); font-weight: 500; }
+.ta-field-hint { color: var(--text-tertiary); font-weight: 400; }
+.ta-field-desc { font-size: var(--text-xs); color: var(--text-tertiary); line-height: 1.5; }
+.ta-field-suffix { font-size: var(--text-sm); color: var(--text-secondary); }
+
+.ta-field input[type="number"] {
+  width: 100%;
+  max-width: 200px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 16px;
+}
+
+.ta-field input[type="number"]:focus,
+.ta-field input[type="number"]:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+  border-color: var(--text-primary);
+}
+
+.ta-field input[type="number"]:disabled {
+  color: var(--text-tertiary);
+  border-color: var(--border-subtle);
+  background: var(--bg-inset);
+  cursor: not-allowed;
+}
+
+.ta-segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.ta-segmented button {
+  padding: 0 var(--space-4, 16px);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  border-right: 1px solid var(--border-default);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  min-width: 56px;
+  min-height: 44px;
+}
+
+.ta-segmented button:last-child { border-right: 0; }
+
+.ta-segmented button[aria-pressed="true"] {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  font-weight: 500;
+}
+
+.ta-segmented button:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: -2px;
+}
+
+.ta-slider-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  max-width: 360px;
+}
+
+.ta-slider-row input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border-default);
+  border-radius: var(--radius-full);
+  outline: none;
+  margin: 0;
+  min-height: 24px;
+  padding: 10px 0;
+  background-clip: content-box;
+}
+
+.ta-slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--text-primary);
+  border: 2px solid var(--bg-base);
+  cursor: pointer;
+}
+
+.ta-slider-row input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--text-primary);
+  border: 2px solid var(--bg-base);
+  cursor: pointer;
+  border-style: solid;
+}
+
+.ta-slider-row input[type="range"]:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}
+
+.ta-slider-value {
+  font-family: ui-monospace, "Geist Mono", SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  min-width: 48px;
+  text-align: right;
+}
+
+.ta-checkbox-row { margin-top: var(--space-4, 16px); }
+
+.ta-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.ta-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--text-primary);
+}
+
+.ta-checkbox input[type="number"] {
+  width: 72px;
+  padding: 4px 8px;
+  margin: 0 4px;
+  vertical-align: baseline;
+}
+
+.ta-bankroll-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2, 8px);
+  align-items: stretch;
+  max-width: 320px;
+}
+
+.ta-bankroll-row input[type="number"] { max-width: none; }
+
+.ta-cooldown-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+#ta-save-bar { margin-top: var(--space-4, 16px); }
+
+#ta-auto-modal {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 1000);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4, 16px);
+}
+
+#ta-auto-modal[hidden] { display: none; }
+
+#ta-auto-modal .nv-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+#ta-auto-modal .nv-modal__panel {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  max-height: calc(100vh - var(--space-8, 32px));
+  overflow-y: auto;
+}
+
+#ta-auto-modal .nv-modal__sub {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4, 16px);
+  line-height: 1.5;
+}
+
+#ta-auto-modal .nv-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-4, 16px);
+}
+
+@media (max-width: 640px) {
+  #ta-auto-modal { padding: 0; align-items: flex-end; }
+  #ta-auto-modal .nv-modal__panel {
+    max-width: 100%;
+    max-height: 90vh;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    padding-bottom: calc(var(--space-6, 28px) + env(safe-area-inset-bottom));
+  }
+
+  .ta-bankroll-row { max-width: 100%; }
+  .ta-slider-row { max-width: 100%; }
+  .ta-segmented button { flex: 1; }
+}

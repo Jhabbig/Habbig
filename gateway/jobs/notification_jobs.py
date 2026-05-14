@@ -366,6 +366,13 @@ async def check_market_movers(
                 "top_source": mover["top_source"],
                 "unsubscribe_url": f"{app_url}/unsubscribe?type=digest",
             }
+            # Per-recipient watermark — Pro intelligence email forensic
+            # attribution. Different market_ids hash distinctly.
+            from email_system import watermark as _wm
+            _wm.annotate_context(
+                context, user["id"],
+                template=f"market_mover_alert:{m.id}",
+            )
 
             try:
                 await enqueue_email(

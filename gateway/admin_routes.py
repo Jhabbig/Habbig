@@ -709,6 +709,83 @@ async def email_reset(request: Request, key: str):
     return RedirectResponse("/admin/emails", status_code=302)
 
 
+# ── /admin/trace-watermark ──────────────────────────────────────────────
+#
+# Forensic reverse-lookup for per-recipient email watermarks. Pro
+# intelligence emails carry an HMAC-derived 6-char hex fingerprint in
+# the footer + invisible zero-width run in the body; this endpoint maps
+# a leaked fingerprint back to the recipient. See
+# ``email_system/watermark.py`` for the scheme.
+#
+# Admin-gated (any admin role — incident response shouldn't require a
+# super-admin escalation). Every lookup is audit-logged via the standard
+# ``EMAIL_WATERMARK_TRACE`` audit action so the trail of "who looked up
+# which subscriber" is preserved.
+
+
+async def trace_watermark_route(request: Request):
+    """GET /admin/trace-watermark?id=<watermark>.
+
+    Returns JSON with the user_id, email, template, and timestamp of
+    the email carrying the supplied watermark fingerprint. Returns 404
+    if the fingerprint is unknown, 400 if the query string is missing
+    or malformed.
+    """
+    admin = _require_admin_user(request)
+    raw = (request.query_params.get("id") or "").strip().lower()
+    if not raw or not re.fullmatch(r"[0-9a-f]{4,12}", raw):
+        return JSONResponse(
+            {"error": "missing or malformed id (expected 4-12 hex chars)"},
+            status_code=400,
+        )
+
+    from email_system import watermark as _wm
+    detail = _wm.trace_watermark_detail(raw)
+
+    # Always audit: even a miss is interesting (someone tried to look up
+    # a forged fingerprint).
+    try:
+        from security import audit as _a
+        action = getattr(_a.AuditAction, "EMAIL_WATERMARK_TRACE", None) \
+            or _a.AuditAction.SYSTEM_CONFIG_CHANGE
+        _audit(
+            action,
+            admin=admin, request=request,
+            target_type="email_watermark", target_id=raw,
+            after=detail or {"hit": False},
+        )
+    except Exception:
+        log.warning("audit of trace_watermark failed", exc_info=True)
+
+    if not detail:
+        return JSONResponse({"error": "watermark not found"}, status_code=404)
+
+    # Enrich with the recipient's email + username for the responder UI.
+    user_row = None
+    try:
+        with db.conn() as c:
+            user_row = c.execute(
+                "SELECT id, email, username FROM users WHERE id = ?",
+                (detail["user_id"],),
+            ).fetchone()
+    except Exception:
+        log.warning("trace_watermark user lookup failed", exc_info=True)
+
+    payload = {
+        "watermark": detail["watermark"],
+        "user_id": detail["user_id"],
+        "email": user_row["email"] if user_row else None,
+        "username": user_row["username"] if user_row else None,
+        "template": detail["template"],
+        "email_id": detail["email_id"],
+        "created_at": detail["created_at"],
+        "created_at_iso": _dt.datetime.utcfromtimestamp(
+            detail["created_at"]
+        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(payload)
+
+
 # ── Cache admin ──────────────────────────────────────────────────────────
 #
 # Surfaces the sync TTL cache (cache/ttl.py) to admins: total items, live
@@ -1708,6 +1785,12 @@ def register(app) -> None:
     app.add_api_route(
         "/admin/emails/{key}/reset", email_reset,
         methods=["POST"], include_in_schema=False,
+    )
+
+    # Forensic reverse-lookup for per-recipient email watermarks.
+    app.add_api_route(
+        "/admin/trace-watermark", trace_watermark_route,
+        methods=["GET"], include_in_schema=False,
     )
 
     # Cache observability + nuclear clear button.

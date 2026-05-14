@@ -328,6 +328,285 @@ class TestZipBuild(unittest.TestCase):
         self.assertGreaterEqual(manifest["row_counts"]["conversations"], 1)
 
 
+# ── Subproduct-coverage tests (audit #4 follow-up) ────────────────────────────
+
+
+class TestSubproductTablesCovered(unittest.TestCase):
+    """Every user-scoped table from a subproduct migration must appear in
+    the export — either by name in the bundle or, if the table happens to
+    not exist on this test DB, gracefully as an empty list.
+
+    The regression we're guarding against: someone adds a new
+    ``user_xyz`` table and forgets to wire it into the export. The audit
+    flagged user_positions; we sweep the rest in one go.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT id FROM users WHERE email = 'export-cover@test.com'"
+            ).fetchone()
+        if row:
+            cls.user_id = row["id"]
+        else:
+            cls.user_id = db.create_user(
+                "export-cover@test.com", "ExpCov1!", "export_cover_user"
+            )
+
+    def test_collect_returns_every_expected_bundle_key(self):
+        """Catch the audit-#4 regression in one place — if a key is
+        missing from the bundle, the matching ZIP section silently
+        disappears too. Test names rather than rows so a fresh user
+        with no subproduct data still exercises the wiring."""
+        from exports.generator import _collect
+
+        bundle = _collect(self.user_id)
+
+        for expected_key in (
+            "account",
+            "subscriptions",
+            "saved_predictions",
+            "viewed_markets",
+            "followed_sources",
+            "topics",
+            "conversations",
+            "conversation_messages",
+            "market_alerts",
+            "notifications",
+            "sessions",
+            "bet_history",
+            "api_keys",
+            "telegram_links",
+            "email_unsubscribes",
+            "backtests",
+            "feedback",
+            "gifted_subscriptions",
+            # New subproduct-scoped sections — audit #4 carryover.
+            "user_positions",
+            "user_predictions",
+            "user_prediction_stats",
+            "user_trading_addon_settings",
+            "user_market_credentials",
+            "polymarket_connections",
+            "kalshi_connections",
+            "whale_watchlist",
+            "notifications_feed",
+            "notification_preferences",
+            "push_subscriptions",
+            "engagement_events",
+            "user_onboarding",
+            "user_first_week_goals",
+            "changelog_seen",
+            "market_takes",
+            "take_votes",
+            "user_follows",
+            "collections",
+            "collection_follows",
+            "saved_views",
+            "webhook_subscriptions",
+            "feedback_items",
+            "feedback_votes",
+            "feedback_comments",
+            "cancellation_attempts",
+            "subscription_pauses",
+            "user_invite_tokens",
+            "referrals",
+            "affiliate_accounts",
+            "weekly_reports",
+            "discord_user_connections",
+            "telegram_connections",
+            "embed_widgets",
+            "data_export_requests",
+            "audit_log",
+        ):
+            self.assertIn(
+                expected_key, bundle,
+                f"export bundle missing key {expected_key!r} — "
+                f"new user-scoped table not wired into _collect()",
+            )
+
+    def test_user_positions_in_zip(self):
+        """Audit #4 carryover: user_positions must be in the ZIP."""
+        from exports.generator import build_zip, EXPORT_DIR
+
+        target = EXPORT_DIR / f"cover-{self.user_id}.zip"
+        if target.exists():
+            target.unlink()
+        build_zip(self.user_id, target)
+        with zipfile.ZipFile(target) as zf:
+            names = set(zf.namelist())
+        self.assertIn("trading/positions.json", names)
+        self.assertIn("trading/positions.csv", names)
+
+
+class TestSensitiveFieldRedaction(unittest.TestCase):
+    """Tokens, IP addresses, session hashes, encrypted broker credentials,
+    and webhook signing secrets MUST NOT appear in the ZIP.
+
+    We construct rows with the sensitive columns populated, build the
+    archive, and assert the values never show up. This is the test we
+    actually care about: a missing row is a feature gap, but a leaked
+    secret is a security incident.
+    """
+
+    SECRETS = {
+        "kalshi_token": "K-SECRET-TOKEN-CANARY-XYZ",
+        "polymarket_wallet": "0xWALLET-CANARY-12345",
+        "session_token_hash": "HASH-CANARY-9999",
+        "webhook_secret": "WHSEC-CANARY-DEADBEEF",
+        "audit_ip": "203.0.113.99",
+        "audit_ua": "Mozilla/AdminCanary",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT id FROM users WHERE email = 'export-redact@test.com'"
+            ).fetchone()
+        if row:
+            cls.user_id = row["id"]
+        else:
+            cls.user_id = db.create_user(
+                "export-redact@test.com", "ExpRed1!", "export_redact_user"
+            )
+
+        now = int(time.time())
+        with db.conn() as c:
+            # Seed user_market_credentials with a fake Kalshi token + wallet.
+            try:
+                c.execute(
+                    "INSERT INTO user_market_credentials "
+                    "(user_id, source, kalshi_token, polymarket_wallet_address, "
+                    "connected_at, last_used_at, is_active) "
+                    "VALUES (?, 'kalshi', ?, ?, ?, ?, 1)",
+                    (
+                        cls.user_id,
+                        cls.SECRETS["kalshi_token"],
+                        cls.SECRETS["polymarket_wallet"],
+                        now,
+                        now,
+                    ),
+                )
+            except Exception:
+                pass  # Table or column may not exist on every test schema.
+
+            # Seed a webhook_subscription with a signing secret.
+            try:
+                c.execute(
+                    "INSERT INTO webhook_subscriptions "
+                    "(user_id, url, events, secret, created_at, is_active) "
+                    "VALUES (?, 'https://example.test/hook', '[]', ?, ?, 1)",
+                    (cls.user_id, cls.SECRETS["webhook_secret"], now),
+                )
+            except Exception:
+                pass
+
+            # Seed a user_sessions row with a token_hash canary.
+            try:
+                c.execute(
+                    "INSERT INTO user_sessions "
+                    "(user_id, token_hash, created_at, expires_at, "
+                    "last_active_at, ip_address, user_agent, revoked) "
+                    "VALUES (?, ?, ?, ?, ?, '198.51.100.1', 'Test-UA', 0)",
+                    (
+                        cls.user_id,
+                        cls.SECRETS["session_token_hash"],
+                        now,
+                        now + 3600,
+                        now,
+                    ),
+                )
+            except Exception:
+                pass
+
+            # Seed an audit_log row targeting this user.
+            try:
+                c.execute(
+                    "INSERT INTO audit_log "
+                    "(timestamp, admin_user_id, admin_email, action, "
+                    "target_type, target_id, ip_address, user_agent) "
+                    "VALUES (?, 999, 'admin@narve.ai', 'admin.suspend', "
+                    "'user', ?, ?, ?)",
+                    (
+                        now,
+                        str(cls.user_id),
+                        cls.SECRETS["audit_ip"],
+                        cls.SECRETS["audit_ua"],
+                    ),
+                )
+            except Exception:
+                pass
+
+    def setUp(self):
+        from exports.generator import EXPORT_DIR
+        self.target = EXPORT_DIR / f"redact-{self.user_id}.zip"
+        if self.target.exists():
+            self.target.unlink()
+
+    def _zip_text(self) -> str:
+        """Concatenate every text-ish file in the ZIP. Lets us assert
+        secrets don't leak through ANY section (CSV, JSON, Markdown,
+        README, manifest) in one sweep."""
+        from exports.generator import build_zip
+        build_zip(self.user_id, self.target)
+        out = []
+        with zipfile.ZipFile(self.target) as zf:
+            for name in zf.namelist():
+                if name.endswith((".json", ".csv", ".md", ".txt")):
+                    out.append(zf.read(name).decode("utf-8", errors="replace"))
+        return "\n".join(out)
+
+    def test_zip_is_valid_json_throughout(self):
+        """Every .json file in the export must parse cleanly."""
+        from exports.generator import build_zip
+        build_zip(self.user_id, self.target)
+        with zipfile.ZipFile(self.target) as zf:
+            for name in zf.namelist():
+                if name.endswith(".json"):
+                    try:
+                        json.loads(zf.read(name))
+                    except json.JSONDecodeError as e:
+                        self.fail(f"{name} is not valid JSON: {e}")
+
+    def test_kalshi_token_not_in_export(self):
+        text = self._zip_text()
+        self.assertNotIn(self.SECRETS["kalshi_token"], text,
+                         "Kalshi bearer token leaked into GDPR export")
+
+    def test_polymarket_wallet_not_in_export(self):
+        text = self._zip_text()
+        self.assertNotIn(self.SECRETS["polymarket_wallet"], text,
+                         "Polymarket wallet address leaked into GDPR export")
+
+    def test_session_token_hash_not_in_export(self):
+        text = self._zip_text()
+        self.assertNotIn(self.SECRETS["session_token_hash"], text,
+                         "Session token hash leaked into GDPR export")
+
+    def test_webhook_secret_not_in_export(self):
+        text = self._zip_text()
+        self.assertNotIn(self.SECRETS["webhook_secret"], text,
+                         "Webhook signing secret leaked into GDPR export")
+
+    def test_audit_log_ip_address_not_in_export(self):
+        text = self._zip_text()
+        self.assertNotIn(self.SECRETS["audit_ip"], text,
+                         "Admin IP from audit_log leaked into GDPR export")
+
+    def test_audit_log_user_agent_not_in_export(self):
+        text = self._zip_text()
+        self.assertNotIn(self.SECRETS["audit_ua"], text,
+                         "Admin user-agent from audit_log leaked into export")
+
+    def test_password_hash_not_in_export(self):
+        """Belt + braces alongside the existing TestZipBuild check."""
+        text = self._zip_text()
+        self.assertNotIn("password_hash", text)
+        self.assertNotIn("password_salt", text)
+
+
 # ── API routes ───────────────────────────────────────────────────────────────
 
 
