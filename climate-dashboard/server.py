@@ -65,30 +65,47 @@ PORT = int(os.environ.get("PORT", "7052"))
 _cache: "OrderedDict[str, dict]" = OrderedDict()
 _cache_lock = threading.Lock()
 
-# Per-key TTL overrides (seconds). Climate data updates monthly/daily so we cache
-# generously — re-pulling NASA CSVs every minute would be wasteful and rude.
-_TTL_DEFAULT = 60 * 60  # 1h
+# Per-key TTL overrides (seconds). Climate data is slow-moving (monthly /
+# daily cadence at the source), so all climate fetchers cache for 24h. The
+# stale snapshot is kept beyond the TTL and re-served on fetch failure
+# (see ``cache_get_stale``) so we degrade gracefully rather than 500'ing.
+_TTL_DEFAULT = 60 * 60 * 24  # 24h
 _TTL: dict[str, int] = {
-    "gistemp": 60 * 60 * 12,        # GISTEMP updates monthly, refresh twice a day
-    "co2": 60 * 60 * 12,            # NOAA Mauna Loa updates monthly
-    "methane": 60 * 60 * 12,        # NOAA GML CH4 updates monthly
-    "sea_ice": 60 * 60 * 6,         # NSIDC updates daily
-    "sst": 60 * 60 * 3,             # OISST daily
-    "oni": 60 * 60 * 12,            # CPC ONI updates monthly
-    "polymarket": 60 * 5,            # Markets move — refresh every 5 min
+    "gistemp": 60 * 60 * 24,        # GISTEMP updates monthly
+    "co2": 60 * 60 * 24,            # NOAA Mauna Loa CO2 updates monthly
+    "co2_global": 60 * 60 * 24,     # NOAA globally-averaged CO2 monthly
+    "methane": 60 * 60 * 24,        # NOAA GML CH4 updates monthly
+    "sea_ice": 60 * 60 * 24,        # NSIDC updates daily
+    "sst": 60 * 60 * 24,            # OISST daily
+    "oni": 60 * 60 * 24,            # CPC ONI updates monthly
+    "polymarket": 60 * 5,           # Markets move — refresh every 5 min
 }
 
 
 def cache_get(key: str):
+    """Return cached data if still within its TTL. Expired entries are NOT
+    evicted — they remain available to ``cache_get_stale`` as a fallback."""
     with _cache_lock:
         entry = _cache.get(key)
         if not entry:
             return None
         ttl = _TTL.get(key, _TTL_DEFAULT)
         if time.time() - entry["t"] > ttl:
-            _cache.pop(key, None)
             return None
         _cache.move_to_end(key)
+        return entry["data"]
+
+
+def cache_get_stale(key: str):
+    """Return whatever's in the cache regardless of TTL.
+
+    Used as a fallback when a live fetch fails — better to serve last week's
+    NOAA CSV than a 500.
+    """
+    with _cache_lock:
+        entry = _cache.get(key)
+        if not entry:
+            return None
         return entry["data"]
 
 
@@ -105,7 +122,8 @@ def cache_set(key: str, data) -> None:
 _USER_AGENT = "polymarket-climate-dashboard/1.0 (+https://climate.narve.ai)"
 
 
-def _http_get(url: str, *, timeout: int = 20, params: Optional[dict] = None) -> Optional[requests.Response]:
+def _http_get(url: str, *, timeout: int = 15, params: Optional[dict] = None) -> Optional[requests.Response]:
+    """GET with a 15s default timeout. Returns None on any failure (no 500s)."""
     try:
         r = requests.get(url, params=params, timeout=timeout, headers={"User-Agent": _USER_AGENT})
         if r.status_code == 200:
@@ -214,13 +232,19 @@ GISTEMP_URL = "https://data.giss.nasa.gov/gistemp/tabledata_v4/GLB.Ts+dSST.csv"
 
 
 def fetch_gistemp() -> Optional[dict]:
-    """Return monthly global temperature anomaly series (vs 1951-1980 baseline, °C)."""
+    """Return monthly global temperature anomaly series (vs 1951-1980 baseline, °C).
+
+    Falls back to the last cached snapshot if the upstream fetch fails.
+    """
     cached = cache_get("gistemp")
     if cached is not None:
         return cached
-    r = _http_get(GISTEMP_URL, timeout=30)
+    r = _http_get(GISTEMP_URL, timeout=15)
     if not r:
-        return None
+        stale = cache_get_stale("gistemp")
+        if stale is not None:
+            logger.warning("GISTEMP: serving stale snapshot")
+        return stale
     text = r.text
     # GISTEMP CSV has 2 header rows then "Year,Jan,Feb,..." then yearly rows
     lines = text.splitlines()
@@ -279,12 +303,16 @@ CO2_DAILY_URL = "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_trend_mlo.csv"
 
 
 def fetch_co2() -> Optional[dict]:
+    """Monthly Mauna Loa CO2 (ppm). Stale-cache fallback on fetch failure."""
     cached = cache_get("co2")
     if cached is not None:
         return cached
-    r = _http_get(CO2_MONTHLY_URL, timeout=30)
+    r = _http_get(CO2_MONTHLY_URL, timeout=15)
     if not r:
-        return None
+        stale = cache_get_stale("co2")
+        if stale is not None:
+            logger.warning("CO2: serving stale snapshot")
+        return stale
     series: list[dict] = []
     for line in r.text.splitlines():
         line = line.strip()
@@ -328,13 +356,19 @@ CH4_MONTHLY_URL = "https://gml.noaa.gov/webdata/ccgg/trends/ch4/ch4_mm_gl.csv"
 
 
 def fetch_methane() -> Optional[dict]:
-    """Monthly globally-averaged methane (CH4) in ppb. Same shape as CO2."""
+    """Monthly globally-averaged methane (CH4) in ppb. Same shape as CO2.
+
+    Stale-cache fallback on fetch failure.
+    """
     cached = cache_get("methane")
     if cached is not None:
         return cached
-    r = _http_get(CH4_MONTHLY_URL, timeout=30)
+    r = _http_get(CH4_MONTHLY_URL, timeout=15)
     if not r:
-        return None
+        stale = cache_get_stale("methane")
+        if stale is not None:
+            logger.warning("Methane: serving stale snapshot")
+        return stale
     series: list[dict] = []
     for line in r.text.splitlines():
         line = line.strip()
@@ -489,20 +523,28 @@ def _parse_seaice_csv(text: str) -> list[dict]:
 
 
 def fetch_sea_ice() -> Optional[dict]:
+    """Daily NSIDC Arctic + Antarctic sea ice extent.
+
+    If both hemispheres fail to fetch, falls back to the last cached snapshot.
+    If only one fails, we still return the other (rather than 0 data).
+    """
     cached = cache_get("sea_ice")
     if cached is not None:
         return cached
     out = {"source": "NSIDC Sea Ice Index G02135 v4.0",
            "units": "million km²",
            "fetched_at": datetime.now(timezone.utc).isoformat()}
-    rn = _http_get(SEA_ICE_URL_NORTH, timeout=30)
+    rn = _http_get(SEA_ICE_URL_NORTH, timeout=15)
     if rn:
         out["arctic"] = _parse_seaice_csv(rn.text)
-    rs = _http_get(SEA_ICE_URL_SOUTH, timeout=30)
+    rs = _http_get(SEA_ICE_URL_SOUTH, timeout=15)
     if rs:
         out["antarctic"] = _parse_seaice_csv(rs.text)
     if not out.get("arctic") and not out.get("antarctic"):
-        return None
+        stale = cache_get_stale("sea_ice")
+        if stale is not None:
+            logger.warning("Sea ice: serving stale snapshot")
+        return stale
     cache_set("sea_ice", out)
     return out
 
@@ -514,16 +556,23 @@ SST_URL = "https://climatereanalyzer.org/clim/sst_daily/json/oisst2.1_world2_sst
 
 
 def fetch_sst() -> Optional[dict]:
+    """Daily world-mean SST. Stale-cache fallback on fetch failure."""
     cached = cache_get("sst")
     if cached is not None:
         return cached
-    r = _http_get(SST_URL, timeout=30)
+    r = _http_get(SST_URL, timeout=15)
     if not r:
-        return None
+        stale = cache_get_stale("sst")
+        if stale is not None:
+            logger.warning("SST: serving stale snapshot")
+        return stale
     try:
         data = r.json()
     except Exception:
-        return None
+        stale = cache_get_stale("sst")
+        if stale is not None:
+            logger.warning("SST: malformed JSON, serving stale snapshot")
+        return stale
     # Format: [{name: "1981", data: [v, v, ..., 366]}, ..., {name: "2026", data: [...]}, {name: "1982-2011 mean", ...}]
     out = {
         "source": "NOAA OISST v2.1 (world 60S-60N) via climatereanalyzer.org",
@@ -543,12 +592,16 @@ ONI_URL = "https://psl.noaa.gov/data/correlation/oni.data"
 
 
 def fetch_oni() -> Optional[dict]:
+    """Monthly Oceanic Niño Index. Stale-cache fallback on fetch failure."""
     cached = cache_get("oni")
     if cached is not None:
         return cached
-    r = _http_get(ONI_URL, timeout=30)
+    r = _http_get(ONI_URL, timeout=15)
     if not r:
-        return None
+        stale = cache_get_stale("oni")
+        if stale is not None:
+            logger.warning("ONI: serving stale snapshot")
+        return stale
     text = r.text
     series: list[dict] = []
     for line in text.splitlines():
@@ -1122,6 +1175,88 @@ def edges_for_markets(markets: list[dict],
     return out
 
 
+# ─── 12-month-ahead forecast helper ────────────────────────────────────────────
+
+def _linear_forecast_12mo(points: list[tuple[float, float]],
+                          *,
+                          months_ahead: int = 12) -> Optional[dict]:
+    """Fit a linear regression on (decimal_date, value) and project N months ahead.
+
+    Returns ``{slope_per_year, intercept, residual_std, forecast: [{decimal_date,
+    value, lo95, hi95}, ...]}`` or ``None`` when the input is too short. The 95%
+    confidence band is flat ``±1.96 σ`` — fine for a short 12-month horizon.
+    """
+    if not points or len(points) < 6:
+        return None
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    den = sum((xs[i] - mx) ** 2 for i in range(n))
+    if den == 0:
+        return None
+    slope = num / den
+    intercept = my - slope * mx
+    resid = [ys[i] - (intercept + slope * xs[i]) for i in range(n)]
+    sigma = math.sqrt(sum(r * r for r in resid) / n) if n > 0 else 0.0
+    last_x = xs[-1]
+    forecast: list[dict] = []
+    for k in range(1, months_ahead + 1):
+        x = last_x + (k / 12.0)
+        y = intercept + slope * x
+        forecast.append({
+            "decimal_date": round(x, 4),
+            "value": round(y, 3),
+            "lo95": round(y - 1.96 * sigma, 3),
+            "hi95": round(y + 1.96 * sigma, 3),
+        })
+    return {
+        "slope_per_year": round(slope, 4),
+        "intercept": round(intercept, 4),
+        "residual_std": round(sigma, 4),
+        "months_ahead": months_ahead,
+        "fit_window_n": n,
+        "forecast": forecast,
+    }
+
+
+def _co2_to_points(co2: dict) -> list[tuple[float, float]]:
+    return [(s["decimal_date"], s["ppm"]) for s in (co2.get("monthly") or [])[-24:]]
+
+
+def _methane_to_points(ch4: dict) -> list[tuple[float, float]]:
+    return [(s["decimal_date"], s["ppb"]) for s in (ch4.get("monthly") or [])[-24:]]
+
+
+def _gistemp_to_points(gist: dict) -> list[tuple[float, float]]:
+    pts: list[tuple[float, float]] = []
+    for s in (gist.get("monthly") or [])[-24:]:
+        x = s["year"] + (s["month"] - 0.5) / 12.0
+        pts.append((x, s["anomaly_c"]))
+    return pts
+
+
+def _sea_ice_to_points(series: list[dict]) -> list[tuple[float, float]]:
+    """Reduce a daily series to a 24mo monthly mean for forecasting."""
+    if not series:
+        return []
+    by_ym: dict[tuple[int, int], list[float]] = {}
+    for s in series[-(365 * 3):]:  # last ~3y of daily data is plenty
+        by_ym.setdefault((s["year"], s["month"]), []).append(s["extent_mkm2"])
+    monthly = []
+    for (y, mo), vs in sorted(by_ym.items()):
+        x = y + (mo - 0.5) / 12.0
+        monthly.append((x, sum(vs) / len(vs)))
+    return monthly[-24:]
+
+
+def _oni_to_points(oni: dict) -> list[tuple[float, float]]:
+    return [(s["year"] + (s["month"] - 0.5) / 12.0, s["oni"])
+            for s in (oni.get("monthly") or [])[-24:]]
+
+
 # ─── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1162,66 +1297,281 @@ def api_markets():
 
 
 @app.route("/api/temperature")
+@app.route("/api/temperature-anomaly")
 def api_temperature():
+    """GISTEMP annual + monthly. Empty payload (never 500) if upstream is down."""
     g = fetch_gistemp()
     if not g:
-        return jsonify({"error": "GISTEMP fetch failed"}), 503
+        return jsonify({
+            "source": "NASA GISTEMP v4 (GLB.Ts+dSST)",
+            "units": "°C",
+            "monthly": [],
+            "annual": [],
+            "projection": None,
+            "error": "GISTEMP fetch failed",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
     proj = annual_record_pace_projection(g)
     return jsonify({**g, "projection": proj})
 
 
 @app.route("/api/co2")
 def api_co2():
+    """Monthly Mauna Loa CO2, full series + last 24mo window."""
     c = fetch_co2()
     if not c:
-        return jsonify({"error": "CO2 fetch failed"}), 503
+        return jsonify({
+            "source": "NOAA GML Mauna Loa (co2_mm_mlo)",
+            "units": "ppm",
+            "monthly": [],
+            "monthly_recent": [],
+            "latest": None,
+            "projection": None,
+            "error": "CO2 fetch failed",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
     proj = co2_year_end_projection(c)
-    return jsonify({**c, "projection": proj})
+    monthly = c.get("monthly") or []
+    return jsonify({**c, "projection": proj, "monthly_recent": monthly[-24:]})
 
 
 @app.route("/api/methane")
 def api_methane():
+    """Monthly globally-averaged CH4, full series + last 24mo window."""
     m = fetch_methane()
     if not m:
-        return jsonify({"error": "Methane fetch failed"}), 503
+        return jsonify({
+            "source": "NOAA GML globally-averaged CH4 (ch4_mm_gl)",
+            "units": "ppb",
+            "monthly": [],
+            "monthly_recent": [],
+            "latest": None,
+            "projection": None,
+            "thresholds": None,
+            "error": "Methane fetch failed",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
     proj = methane_year_end_projection(m)
     thresholds = methane_threshold_probs(proj)
-    return jsonify({**m, "projection": proj, "thresholds": thresholds})
+    monthly = m.get("monthly") or []
+    return jsonify({**m, "projection": proj, "thresholds": thresholds,
+                    "monthly_recent": monthly[-24:]})
 
 
 @app.route("/api/sea-ice")
 def api_sea_ice():
+    """NSIDC sea ice extent. Use ``?hemisphere=north|south`` to scope to one
+    pole; default returns both. Daily series is trimmed to the last 365 days."""
     s = fetch_sea_ice()
+    hemisphere = (request.args.get("hemisphere") or "").strip().lower()
     if not s:
-        return jsonify({"error": "Sea ice fetch failed"}), 503
+        return jsonify({
+            "source": "NSIDC Sea Ice Index G02135 v4.0",
+            "units": "million km²",
+            "arctic_recent": [],
+            "antarctic_recent": [],
+            "error": "Sea ice fetch failed",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
     rec = sea_ice_record_check(s)
-    # Trim arrays sent to the client — frontend only needs last ~3y for plots
-    arctic = s.get("arctic") or []
-    antarctic = s.get("antarctic") or []
-    return jsonify({
+    arctic = (s.get("arctic") or [])[-365:]
+    antarctic = (s.get("antarctic") or [])[-365:]
+    base = {
         "source": s["source"],
         "units": s["units"],
         "fetched_at": s["fetched_at"],
-        "arctic_recent": arctic[-1100:],
-        "antarctic_recent": antarctic[-1100:],
         "record_check": rec,
-    })
+    }
+    if hemisphere in ("north", "arctic", "n"):
+        base["arctic_recent"] = arctic
+        base["hemisphere"] = "north"
+    elif hemisphere in ("south", "antarctic", "s"):
+        base["antarctic_recent"] = antarctic
+        base["hemisphere"] = "south"
+    else:
+        base["arctic_recent"] = arctic
+        base["antarctic_recent"] = antarctic
+        base["hemisphere"] = "both"
+    return jsonify(base)
 
 
 @app.route("/api/sst")
 def api_sst():
+    """Daily world-mean SST. Trims each year to the last 12 months of values."""
     s = fetch_sst()
     if not s:
-        return jsonify({"error": "SST fetch failed"}), 503
-    return jsonify(s)
+        return jsonify({
+            "source": "NOAA OISST v2.1 (world 60S-60N) via climatereanalyzer.org",
+            "units": "°C",
+            "series": [],
+            "error": "SST fetch failed",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
+    # Series is an array of {name, data}. Most clients only need the current
+    # year + climatology mean — keep all entries but cap "data" arrays to the
+    # last 366 daily points so payloads stay small.
+    series_raw = s.get("series") or []
+    series_trim = []
+    for entry in series_raw:
+        if not isinstance(entry, dict):
+            continue
+        d = entry.get("data") or []
+        if isinstance(d, list) and len(d) > 366:
+            entry = {**entry, "data": d[-366:]}
+        series_trim.append(entry)
+    return jsonify({**s, "series": series_trim})
 
 
 @app.route("/api/regime")
+@app.route("/api/enso")
 def api_regime():
+    """ONI (3mo running mean of NINO3.4). ``state`` = El Niño / La Niña / Neutral.
+    Returns the last 24 monthly readings under ``monthly_recent``."""
     o = fetch_oni()
     if not o:
-        return jsonify({"error": "ONI fetch failed"}), 503
-    return jsonify(o)
+        return jsonify({
+            "source": "NOAA CPC Oceanic Niño Index (ONI, 3-month running)",
+            "monthly": [],
+            "monthly_recent": [],
+            "latest": None,
+            "state": None,
+            "error": "ONI fetch failed",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
+    monthly = o.get("monthly") or []
+    return jsonify({**o, "monthly_recent": monthly[-24:]})
+
+
+# ─── Forecast endpoints (12mo-ahead, used for Polymarket edges) ────────────────
+
+@app.route("/api/co2/forecast")
+def api_co2_forecast():
+    c = fetch_co2()
+    if not c:
+        return jsonify({"error": "CO2 fetch failed", "forecast": None})
+    f = _linear_forecast_12mo(_co2_to_points(c))
+    return jsonify({
+        "metric": "co2",
+        "units": "ppm",
+        "fit_window_months": 24,
+        "model": f,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.route("/api/methane/forecast")
+def api_methane_forecast():
+    m = fetch_methane()
+    if not m:
+        return jsonify({"error": "Methane fetch failed", "forecast": None})
+    f = _linear_forecast_12mo(_methane_to_points(m))
+    return jsonify({
+        "metric": "methane",
+        "units": "ppb",
+        "fit_window_months": 24,
+        "model": f,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.route("/api/temperature/forecast")
+@app.route("/api/temperature-anomaly/forecast")
+def api_temperature_forecast():
+    g = fetch_gistemp()
+    if not g:
+        return jsonify({"error": "GISTEMP fetch failed", "forecast": None})
+    f = _linear_forecast_12mo(_gistemp_to_points(g))
+    return jsonify({
+        "metric": "temperature_anomaly",
+        "units": "°C",
+        "baseline": "1951-1980",
+        "fit_window_months": 24,
+        "model": f,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.route("/api/sea-ice/forecast")
+def api_sea_ice_forecast():
+    """Hemisphere-aware sea-ice forecast. ``?hemisphere=north`` (default) or
+    ``south``. Reduces the daily series to a 24-month monthly-mean window
+    before fitting."""
+    s = fetch_sea_ice()
+    hemisphere = (request.args.get("hemisphere") or "north").strip().lower()
+    if not s:
+        return jsonify({"error": "Sea ice fetch failed", "forecast": None})
+    if hemisphere in ("south", "antarctic", "s"):
+        series = s.get("antarctic") or []
+        hem = "south"
+    else:
+        series = s.get("arctic") or []
+        hem = "north"
+    f = _linear_forecast_12mo(_sea_ice_to_points(series))
+    return jsonify({
+        "metric": "sea_ice_extent",
+        "hemisphere": hem,
+        "units": "million km²",
+        "fit_window_months": 24,
+        "model": f,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.route("/api/sst/forecast")
+def api_sst_forecast():
+    """SST forecast computed from the current-year daily series. We fold the
+    Climate Reanalyzer JSON into a monthly-mean trace before fitting."""
+    s = fetch_sst()
+    if not s:
+        return jsonify({"error": "SST fetch failed", "forecast": None})
+    series = s.get("series") or []
+    # Find the highest-numbered year entry that has data.
+    pts: list[tuple[float, float]] = []
+    cur_year_entries = []
+    for entry in series:
+        name = (entry.get("name") if isinstance(entry, dict) else "") or ""
+        if name.isdigit():
+            cur_year_entries.append((int(name), entry.get("data") or []))
+    if not cur_year_entries:
+        return jsonify({"error": "SST data missing", "forecast": None})
+    cur_year_entries.sort()
+    # Use the last 24 months — aggregate the last two years.
+    for year, daily in cur_year_entries[-2:]:
+        # Daily values map day-of-year 1..366. Aggregate by approximate month.
+        bucket: dict[int, list[float]] = {}
+        for i, v in enumerate(daily, start=1):
+            if v is None:
+                continue
+            # Approximate: day-of-year → month (30.4-day months)
+            month = max(1, min(12, int((i - 1) / 30.5) + 1))
+            bucket.setdefault(month, []).append(float(v))
+        for mo in sorted(bucket):
+            x = year + (mo - 0.5) / 12.0
+            pts.append((x, sum(bucket[mo]) / len(bucket[mo])))
+    f = _linear_forecast_12mo(pts)
+    return jsonify({
+        "metric": "sst",
+        "units": "°C",
+        "fit_window_months": 24,
+        "model": f,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.route("/api/enso/forecast")
+@app.route("/api/regime/forecast")
+def api_enso_forecast():
+    o = fetch_oni()
+    if not o:
+        return jsonify({"error": "ONI fetch failed", "forecast": None})
+    f = _linear_forecast_12mo(_oni_to_points(o))
+    return jsonify({
+        "metric": "oni",
+        "units": "°C (NINO3.4 anomaly)",
+        "fit_window_months": 24,
+        "model": f,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 @app.route("/api/summary")
