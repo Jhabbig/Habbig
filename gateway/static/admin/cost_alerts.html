@@ -1,0 +1,552 @@
+<!-- /admin/cost-alerts — Anthropic AI spend monitoring.
+     Wrapped by admin_shell. Body-only fragment.
+
+     Four sections:
+       1. Hero "AI Cost Alerts" (Instrument Serif Italic) + month-to-date
+          and trailing-24h cost cards (Geist Mono numbers).
+       2. Kill-switch card with a super-admin toggle form. Server-rendered
+          (raw_kill_switch) so the page works without JS — the JS path
+          below upgrades the form to a fetch() with the CSRF header.
+       3. Last-30d cost bar chart (monochrome SVG, hover via <title>).
+       4. Recent cost alerts table (last 50) + per-feature breakdown
+          (calls / cost / avg cost per call, 24h window).
+
+     Backend renders the initial snapshot. The JS at the bottom polls
+     /admin/api/ai-cost/refresh every 10s to keep the chart + numbers
+     fresh without requiring a hard reload after an alert fires.
+-->
+
+<div class="cost-alerts-page">
+
+  <header class="cost-alerts__hero">
+    <h2 class="cost-alerts__display">AI Cost Alerts</h2>
+    <p class="cost-alerts__lede">
+      Anthropic spend across every narve.ai feature. Month-to-date totals,
+      per-feature cost, alert history, and the global kill-switch.
+    </p>
+  </header>
+
+  <!-- ── Headline numbers ─────────────────────────────────────────── -->
+  <section class="cost-alerts__stats" aria-label="Cost summary">
+    <div class="cost-alerts__stat">
+      <div class="cost-alerts__stat-label">Spend · month-to-date</div>
+      <div class="cost-alerts__stat-value" id="cost-alerts-mtd">{{ raw_mtd_total }}</div>
+    </div>
+    <div class="cost-alerts__stat">
+      <div class="cost-alerts__stat-label">Spend · trailing 24h</div>
+      <div class="cost-alerts__stat-value" id="cost-alerts-24h">{{ raw_trailing_24h }}</div>
+    </div>
+    <div class="cost-alerts__stat">
+      <div class="cost-alerts__stat-label">Calls · 24h</div>
+      <div class="cost-alerts__stat-value" id="cost-alerts-calls">{{ raw_total_calls_24h }}</div>
+    </div>
+    <div class="cost-alerts__stat">
+      <div class="cost-alerts__stat-label">Features active · 24h</div>
+      <div class="cost-alerts__stat-value" id="cost-alerts-features">{{ raw_feature_count }}</div>
+    </div>
+  </section>
+
+  <!-- ── Kill switch ──────────────────────────────────────────────── -->
+  {{ raw_kill_switch }}
+
+  <!-- ── 30-day spend chart ───────────────────────────────────────── -->
+  <section class="cost-alerts__card" aria-labelledby="cost-alerts-chart-title">
+    <header class="cost-alerts__card-head">
+      <h3 id="cost-alerts-chart-title" class="cost-alerts__card-title">Daily spend</h3>
+      <span class="cost-alerts__card-sub">Last 30 days · hover bars for totals</span>
+    </header>
+    <div class="cost-alerts__chart-wrap" id="cost-alerts-chart">{{ raw_chart }}</div>
+  </section>
+
+  <!-- ── Per-feature breakdown ────────────────────────────────────── -->
+  <section class="cost-alerts__card" aria-labelledby="cost-alerts-features-title">
+    <header class="cost-alerts__card-head">
+      <h3 id="cost-alerts-features-title" class="cost-alerts__card-title">Per-feature spend</h3>
+      <span class="cost-alerts__card-sub">Trailing 24h · sorted by cost</span>
+    </header>
+    <div class="cost-alerts__table-wrap nv-table-wrap">
+      <table class="cost-alerts__table">
+        <thead>
+          <tr>
+            <th scope="col">Feature</th>
+            <th scope="col" class="num">Calls (24h)</th>
+            <th scope="col" class="num">Cost (24h)</th>
+            <th scope="col" class="num">Avg cost / call</th>
+          </tr>
+        </thead>
+        <tbody id="cost-alerts-feature-body">{{ raw_feature_rows }}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Alert history ────────────────────────────────────────────── -->
+  <section class="cost-alerts__card" aria-labelledby="cost-alerts-alerts-title">
+    <header class="cost-alerts__card-head">
+      <h3 id="cost-alerts-alerts-title" class="cost-alerts__card-title">Recent cost alerts</h3>
+      <span class="cost-alerts__card-sub" id="cost-alerts-alert-count">{{ raw_alert_count }} on record · most recent first</span>
+    </header>
+    <div class="cost-alerts__table-wrap nv-table-wrap">
+      <table class="cost-alerts__table">
+        <thead>
+          <tr>
+            <th scope="col">Sent</th>
+            <th scope="col">Day</th>
+            <th scope="col" class="num">Threshold</th>
+            <th scope="col" class="num">Total cost</th>
+          </tr>
+        </thead>
+        <tbody id="cost-alerts-alert-body">{{ raw_alert_rows }}</tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<style>
+  /* ── Page frame ─────────────────────────────────────────────────── */
+  .cost-alerts-page {
+    padding: var(--space-8) var(--space-6);
+    max-width: 1280px;
+    margin: 0 auto;
+    font-family: var(--font-body);
+  }
+
+  /* ── Hero ───────────────────────────────────────────────────────── */
+  .cost-alerts__hero { margin-bottom: var(--space-8, 32px); }
+  .cost-alerts__display {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(40px, 5.5vw, 64px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-3, 12px);
+    color: var(--text-primary);
+  }
+  .cost-alerts__lede {
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 60ch;
+  }
+
+  /* ── Stat cards ─────────────────────────────────────────────────── */
+  .cost-alerts__stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-3, 12px);
+    margin-bottom: var(--space-6, 24px);
+  }
+  .cost-alerts__stat {
+    padding: var(--space-6);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .cost-alerts__stat-label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: var(--space-2, 8px);
+  }
+  .cost-alerts__stat-value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  @media (max-width: 720px) {
+    .cost-alerts__stats { grid-template-columns: repeat(2, 1fr); }
+    .cost-alerts__stat-value { font-size: 22px; }
+  }
+
+  /* ── Kill switch ────────────────────────────────────────────────── */
+  .cost-alerts__ks {
+    padding: var(--space-6);
+    border-radius: var(--radius-md, 8px);
+    margin-bottom: var(--space-6, 24px);
+    border: 1px solid var(--border-default, var(--border-strong));
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .cost-alerts__ks-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3, 12px);
+    margin-bottom: var(--space-3, 12px);
+  }
+  .cost-alerts__ks-title {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .cost-alerts__ks-pill {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    letter-spacing: 0.08em;
+    border: 1px solid currentColor;
+  }
+  .cost-alerts__ks--off .cost-alerts__ks-pill {
+    color: var(--text-tertiary);
+  }
+  .cost-alerts__ks--on {
+    border-color: var(--text-primary);
+    background: var(--text-primary);
+    color: var(--bg-base);
+  }
+  .cost-alerts__ks--on .cost-alerts__ks-title,
+  .cost-alerts__ks--on .cost-alerts__ks-headline,
+  .cost-alerts__ks--on .cost-alerts__ks-meta,
+  .cost-alerts__ks--on .cost-alerts__ks-note {
+    color: var(--bg-base);
+  }
+  .cost-alerts__ks--on .cost-alerts__ks-pill { color: var(--bg-base); }
+  .cost-alerts__ks-headline {
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.5;
+    margin: 0 0 var(--space-3, 12px);
+    color: var(--text-primary);
+  }
+  .cost-alerts__ks-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-3, 12px);
+  }
+  .cost-alerts__ks-form { margin: 0; }
+  .cost-alerts__ks-btn {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 10px 18px;
+    border-radius: var(--radius-sm, 6px);
+    background: var(--text-primary);
+    color: var(--bg-base);
+    border: 1px solid var(--text-primary);
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+  .cost-alerts__ks-btn:hover { opacity: 0.85; }
+  .cost-alerts__ks-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .cost-alerts__ks--on .cost-alerts__ks-btn {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border-color: var(--bg-base);
+  }
+  .cost-alerts__ks-note {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+
+  /* ── Card ───────────────────────────────────────────────────────── */
+  .cost-alerts__card {
+    margin-bottom: var(--space-6, 24px);
+    padding: var(--space-6);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .cost-alerts__card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4, 16px);
+    margin-bottom: var(--space-4, 16px);
+    flex-wrap: wrap;
+  }
+  .cost-alerts__card-title {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .cost-alerts__card-sub {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+
+  /* ── Bar chart ──────────────────────────────────────────────────── */
+  .cost-alerts__chart-wrap {
+    width: 100%;
+    height: 220px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .cost-alerts__chart {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: visible;
+  }
+  .cost-alerts__chart-bar {
+    fill: var(--text-primary);
+    opacity: 0.85;
+    transition: opacity 0.12s ease;
+  }
+  .cost-alerts__chart-bar:hover { opacity: 1; }
+  .cost-alerts__chart-axis {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+  .cost-alerts__chart-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-tertiary);
+  }
+
+  /* ── Tables ─────────────────────────────────────────────────────── */
+  .cost-alerts__table-wrap { overflow-x: auto; }
+  .cost-alerts__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-ui);
+    font-size: 13px;
+  }
+  .cost-alerts__table thead th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-ghost, var(--border-default));
+  }
+  .cost-alerts__table thead th.num,
+  .cost-alerts__cell-num {
+    text-align: right;
+    font-family: var(--font-mono);
+  }
+  .cost-alerts__table tbody td {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-ghost, var(--border-default));
+    color: var(--text-primary);
+  }
+  .cost-alerts__cell-mono { font-family: var(--font-mono); font-size: 12px; }
+  .cost-alerts__cell-strong { font-weight: 600; }
+  .cost-alerts__cell-muted { color: var(--text-secondary); }
+  .cost-alerts__empty {
+    text-align: center;
+    color: var(--text-tertiary);
+    font-style: italic;
+    padding: 24px 14px !important;
+  }
+
+  @media (max-width: 720px) {
+    .cost-alerts-page { padding: var(--space-6) var(--space-4); }
+    .cost-alerts__chart-wrap { height: 160px; }
+    .cost-alerts__table thead th,
+    .cost-alerts__table tbody td { padding: 10px; }
+  }
+</style>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Live refresh ───────────────────────────────────────────────────
+  // Poll the JSON endpoint every 10s and re-render the headline numbers
+  // + chart. The tables get re-rendered too so newly fired alerts show
+  // up without forcing the operator to refresh manually.
+  var REFRESH_MS = 10000;
+  var ENDPOINT = '/admin/api/ai-cost/refresh';
+
+  function fmtUsd(n) {
+    if (n == null) return '$0.00';
+    return '$' + Number(n).toLocaleString('en-US', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+  }
+  function fmtUsdMicro(n) {
+    if (n == null) return '$0.0000';
+    return Number(n) < 0.01
+      ? '$' + Number(n).toFixed(4)
+      : fmtUsd(n);
+  }
+  function fmtTs(ts) {
+    if (!ts) return '—';
+    try {
+      var d = new Date(Number(ts) * 1000);
+      return d.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+    } catch (e) { return '—'; }
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function renderChart(daily) {
+    if (!daily || !daily.length) {
+      return '<div class="cost-alerts__chart-empty">No spend recorded yet.</div>';
+    }
+    var maxCost = daily.reduce(function (acc, d) {
+      return Math.max(acc, Number(d.cost_usd || 0));
+    }, 0) || 1;
+    var W = 100, H = 36, gap = 0.3;
+    var barW = Math.max(0.5, (W - gap * (daily.length - 1)) / daily.length);
+    var bars = daily.map(function (d, i) {
+      var cost = Number(d.cost_usd || 0);
+      var h = (cost / maxCost) * H;
+      if (cost > 0) h = Math.max(h, 0.4);
+      var x = i * (barW + gap);
+      var y = H - h;
+      var title = d.day + ' — ' + fmtUsd(cost);
+      return '<rect x="' + x.toFixed(2) + '" y="' + y.toFixed(2) +
+        '" width="' + barW.toFixed(2) + '" height="' + h.toFixed(2) +
+        '" class="cost-alerts__chart-bar" data-day="' + escapeHtml(d.day) +
+        '" data-cost="' + cost.toFixed(4) + '"><title>' +
+        escapeHtml(title) + '</title></rect>';
+    }).join('');
+    var svg = '<svg class="cost-alerts__chart" viewBox="0 0 ' + W + ' ' + H +
+      '" preserveAspectRatio="none" role="img" aria-label="Daily AI spend, last 30 days">' +
+      bars + '</svg>';
+    var axis = '<div class="cost-alerts__chart-axis"><span>' +
+      escapeHtml(daily[0].day) + '</span><span>' +
+      escapeHtml(daily[daily.length - 1].day) + '</span></div>';
+    return svg + axis;
+  }
+
+  function renderFeatureRows(features) {
+    if (!features || !features.length) {
+      return '<tr><td colspan="4" class="cost-alerts__empty">' +
+        'No Claude calls in the last 24 hours.</td></tr>';
+    }
+    return features.map(function (f) {
+      return '<tr>' +
+        '<td>' + escapeHtml(f.feature) + '</td>' +
+        '<td class="cost-alerts__cell-num">' + (Number(f.calls) || 0) + '</td>' +
+        '<td class="cost-alerts__cell-num">' + escapeHtml(fmtUsd(f.cost_usd)) + '</td>' +
+        '<td class="cost-alerts__cell-num cost-alerts__cell-muted">' +
+        escapeHtml(fmtUsdMicro(f.avg_cost_per_call)) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderAlertRows(alerts) {
+    if (!alerts || !alerts.length) {
+      return '<tr><td colspan="4" class="cost-alerts__empty">' +
+        'No cost alerts logged. Spend has stayed under threshold.</td></tr>';
+    }
+    return alerts.map(function (a) {
+      return '<tr>' +
+        '<td class="cost-alerts__cell-mono">' + escapeHtml(fmtTs(a.sent_at)) + '</td>' +
+        '<td class="cost-alerts__cell-mono">' + escapeHtml(a.alert_date) + '</td>' +
+        '<td class="cost-alerts__cell-num">' + escapeHtml(fmtUsd(a.threshold_usd)) + '</td>' +
+        '<td class="cost-alerts__cell-num cost-alerts__cell-strong">' +
+        escapeHtml(fmtUsd(a.total_cost_usd)) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function setText(id, value) {
+    var el = document.getElementById(id);
+    if (el && el.textContent !== value) el.textContent = value;
+  }
+  function setHtml(id, html) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  }
+
+  function applySnapshot(data) {
+    if (!data) return;
+    setText('cost-alerts-mtd', fmtUsd(data.mtd_usd));
+    setText('cost-alerts-24h', fmtUsd(data.trailing_24h_usd));
+    var calls = (data.features || []).reduce(function (acc, f) {
+      return acc + (Number(f.calls) || 0);
+    }, 0);
+    setText('cost-alerts-calls', String(calls));
+    setText('cost-alerts-features', String((data.features || []).length));
+    setText('cost-alerts-alert-count',
+      (data.alerts || []).length + ' on record · most recent first');
+    setHtml('cost-alerts-chart', renderChart(data.daily));
+    setHtml('cost-alerts-feature-body', renderFeatureRows(data.features));
+    setHtml('cost-alerts-alert-body', renderAlertRows(data.alerts));
+  }
+
+  function tick() {
+    fetch(ENDPOINT, { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(applySnapshot)
+      .catch(function () { /* network blip — wait for next tick */ });
+  }
+  setInterval(tick, REFRESH_MS);
+
+  // ── Kill-switch progressive enhancement ──────────────────────────
+  // The form submits via standard POST as a fallback; this wires it up
+  // to a JSON fetch so the toggle confirms inline. The CSRF token is
+  // already in the form's hidden input — we forward it via the header.
+  var form = document.getElementById('cost-alerts-ks-form');
+  if (form) {
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var btn = form.querySelector('button[type="submit"]');
+      var activeField = form.querySelector('input[name="active"]');
+      var csrfField = form.querySelector('input[name="_csrf"]');
+      var willActivate = activeField && activeField.value === 'true';
+      var reason = null;
+      if (willActivate) {
+        reason = window.prompt(
+          'Reason for activating the kill-switch (shown to operators):'
+        ) || '';
+      } else if (!window.confirm(
+        'Deactivate kill-switch? Uncached Claude calls will resume.'
+      )) {
+        return;
+      }
+      if (btn) btn.disabled = true;
+      fetch('/admin/ai-cost/kill-switch', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': csrfField ? csrfField.value : '',
+        },
+        body: JSON.stringify({ active: willActivate, reason: reason }),
+      }).then(function (r) {
+        if (!r.ok) {
+          return r.json().catch(function () { return {}; }).then(function (err) {
+            window.alert((err && err.detail) || 'Toggle failed (' + r.status + ')');
+            if (btn) btn.disabled = false;
+          });
+        }
+        window.location.reload();
+      }).catch(function () {
+        window.alert('Network error — try again.');
+        if (btn) btn.disabled = false;
+      });
+    });
+  }
+})();
+</script>
