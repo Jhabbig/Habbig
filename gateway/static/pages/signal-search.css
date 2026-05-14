@@ -1,160 +1,657 @@
-/* Per-page CSS for static/signal-search.html — extracted from the
- * previous inline <style> block by the foundation bundle
- * auto-migration. Rules live here unchanged; if anything in
- * this file should instead live in gateway.css or
- * components.css, lift it in a follow-up pass — but do NOT
- * rewrite selectors here without a visual QA pass. */
+/* /signal-search — editorial result-feed layout.
+ *
+ * Layout:  full-width single-column result cards (no grid, no second column
+ *          inside the feed — results are read sequentially top → bottom),
+ *          generous padding throughout.
+ * Type:    hero        = --font-display (Instrument Serif Italic)
+ *          body copy   = --font-body    (Source Serif 4 / Georgia editorial)
+ *          metadata    = --font-mono    (Geist Mono — source, timestamp)
+ *          chips + UI  = --font-ui      (Inter — chips, buttons, sidebar)
+ *
+ * The sticky search bar pins to the top on scroll; the page wraps in a
+ * desktop two-column grid (feed left, filter rail right). On mobile the
+ * filter rail collapses to a full-width <details> drawer above the feed.
+ *
+ * History: redesigned 2026-05-14 for editorial result-feed pattern with
+ * Instrument Serif hero + Inter sticky search + Georgia body. Supersedes
+ * the prior topic-tile / two-column layout.
+ */
 
-.ss-container { max-width: 960px; margin: 0 auto; padding: 28px 0; }
+/* ── Page wrapper ───────────────────────────────────────────── */
+.ss-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+  font-family: var(--font-ui);
+}
 
-    /* Section cards — replaces the old flat layout that the user
-       described as "wtf is this". Each major chunk (topics list,
-       admin token panel) is now a bordered surface with a head row
-       so it matches the rest of the app's card aesthetic. */
-    .ss-card {
-      background: var(--bg-surface, var(--surface));
-      border: 1px solid var(--border-strong, var(--border-default, var(--border)));
-      border-radius: 10px;
-      padding: 24px 28px;
-      margin-bottom: 20px;
-    }
-    .ss-card-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-      margin-bottom: 18px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border-ghost, rgba(0,0,0,0.06));
-    }
-    .ss-card-title {
-      font-size: var(--text-md);
-      font-weight: 600;
-      margin: 0 0 4px;
-      letter-spacing: -0.005em;
-      color: var(--text-primary);
-    }
-    .ss-card-subtitle {
-      font-size: var(--text-sm);
-      color: var(--text-secondary);
-      margin: 0;
-    }
+@media (max-width: 720px) {
+  .ss-container { padding: var(--space-6) var(--space-4); }
+}
 
-    /* Legacy classes kept so any cached HTML still styles cleanly. */
-    .ss-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
-    .ss-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
-    .ss-add-btn { padding: 10px 20px; border-radius: var(--radius-sm, 6px); font-size: var(--text-sm); font-weight: 600; background: var(--cta-bg, var(--text-primary)); color: var(--interactive-text); border: none; cursor: pointer; }
-    .ss-add-btn:hover { opacity: 0.9; }
-    .ss-topics { display: flex; flex-direction: column; gap: 16px; }
-    .ss-topic { background: var(--bg-base, var(--bg-overlay)); border: 1px solid var(--border-default, var(--border)); border-radius: var(--radius, 8px); padding: 20px; }
-    .ss-topic-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
-    .ss-topic-name { font-size: var(--text-lg); font-weight: 600; }
-    .ss-topic-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 16px; margin-bottom: 16px; }
-    .ss-topic-actions { display: flex; gap: 8px; }
-    .ss-topic-actions button { padding: 6px 14px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); transition: all 0.15s; }
-    .ss-topic-actions button:hover { border-color: var(--accent); color: var(--accent); }
-    .ss-topic-actions .ss-pull { border-color: var(--accent); color: var(--accent); }
-    .ss-topic-actions .ss-delete { border-color: var(--red); color: var(--red); }
-    .ss-analysis { margin-top: 16px; padding: 16px; background: var(--surface-hover); border-radius: var(--radius-sm); }
-    .ss-analysis-toggle { font-size: var(--text-sm); color: var(--accent); cursor: pointer; font-weight: 500; }
-    .ss-analysis-body { display: none; margin-top: 12px; }
-    .ss-analysis-body.open { display: block; }
-    .ss-signal { display: inline-block; padding: 3px 10px; border-radius: var(--radius-lg); font-size: var(--text-xs); font-weight: 600; }
-    .ss-signal-bullish { background: var(--interactive-ghost); color: var(--positive); }
-    .ss-signal-bearish { background: var(--interactive-ghost); color: var(--text-secondary); }
-    .ss-signal-mixed { background: var(--interactive-ghost); color: var(--text-secondary); }
-    .ss-signal-unclear { background: var(--surface-hover); color: var(--text-muted); }
-    .ss-confidence { font-size: var(--text-xs); color: var(--text-muted); margin-left: 8px; }
-    .ss-empty { text-align: center; padding: 48px 24px; color: var(--text-muted); }
-    .ss-empty-icon { font-size: var(--text-4xl); margin-bottom: 16px; opacity: 0.3; }
+/* ── Hero — Instrument Serif Italic, page-level feature head ─ */
+.ss-hero {
+  margin: 0 0 var(--space-6);
+  padding: 0 0 var(--space-6);
+  border-bottom: 1px solid var(--border-subtle, var(--border-default));
+}
+.ss-hero__title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: var(--weight-normal, 400);
+  font-size: var(--text-5xl);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-3);
+}
+.ss-hero__subtitle {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 56ch;
+}
+@media (max-width: 640px) {
+  .ss-hero__title { font-size: var(--text-4xl); }
+}
 
-    /* ── Super-admin: X bearer token panel ───────────────────────── */
-    .ss-admin-card {
-      background: var(--bg-surface, var(--surface));
-      border: 1px solid var(--border-strong, var(--border-default, var(--border)));
-      border-radius: 10px;
-      padding: 24px 28px;
-      margin-top: 28px;
-    }
-    .ss-admin-badge {
-      display: inline-block;
-      font-size: 10.5px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      padding: 2px 8px;
-      border: 1px solid var(--border-strong, var(--border-default, var(--border)));
-      border-radius: var(--radius-xs);
-      color: var(--text-tertiary, var(--text-muted));
-      margin-bottom: 12px;
-    }
-    .ss-admin-state {
-      font-size: 12px;
-      color: var(--text-secondary);
-      margin: 0 0 16px;
-      font-variant-numeric: tabular-nums;
-    }
-    .ss-admin-state code {
-      background: var(--bg-base, var(--bg-overlay));
-      padding: 1px 6px;
-      border-radius: var(--radius-xs);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11.5px;
-    }
-    .ss-admin-form {
-      display: flex;
-      gap: 12px;
-      align-items: flex-end;
-      flex-wrap: wrap;
-    }
-    .ss-admin-form input[type="password"],
-    .ss-admin-form input[type="text"] {
-      flex: 1 1 320px;
-      padding: 10px 12px;
-      border: 1px solid var(--border-strong, var(--border-default, var(--border)));
-      border-radius: var(--radius-sm);
-      background: var(--bg-base, var(--bg-overlay));
-      color: var(--text-primary);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: var(--text-sm);
-    }
-    .ss-admin-form button {
-      padding: 10px 18px;
-      border-radius: var(--radius-sm);
-      font-size: var(--text-sm);
-      font-weight: 600;
-      cursor: pointer;
-      border: 1px solid var(--border-strong, var(--border-default, var(--border)));
-      background: var(--bg-base, transparent);
-      color: var(--text-primary);
-    }
-    .ss-admin-form button.primary {
-      background: var(--cta-bg, var(--text-primary));
-      color: var(--interactive-text);
-      border-color: transparent;
-    }
-    .ss-admin-form button.danger {
-      color: var(--red, #ef4444);
-      border-color: var(--red, #ef4444);
-      background: transparent;
-    }
-    .ss-admin-status {
-      margin: 8px 0 0;
-      font-size: 12px;
-      min-height: 16px;
-      color: var(--text-secondary);
-    }
+/* ── Sticky search bar — Inter, 16px input, 44px height ────── */
+.ss-searchbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky, 200);
+  background: var(--bg-base);
+  padding-block: var(--space-4);
+  margin-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-subtle, var(--border-default));
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ss-searchbar__input {
+  flex: 1 1 280px;
+  font-family: var(--font-ui);
+  font-size: 16px;                          /* mobile no-zoom floor */
+  font-weight: var(--weight-normal, 400);
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface, var(--bg-base));
+  color: var(--text-primary);
+  transition: border-color var(--duration-fast, 0.12s) var(--ease, cubic-bezier(0.2,0,0,1));
+}
+.ss-searchbar__input::placeholder { color: var(--text-tertiary, var(--text-secondary)); }
+.ss-searchbar__input:focus { outline: none; border-color: var(--text-primary); }
+.ss-searchbar__input:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 
-    /* Modal */
-    .ss-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 999; align-items: center; justify-content: center; padding: 24px; }
-    .ss-modal-overlay.open { display: flex; }
-    .ss-modal { background: var(--surface); border: 1px solid var(--border-strong, var(--border)); border-radius: var(--radius); padding: 32px; max-width: 480px; width: 100%; box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
-    .ss-modal-title { font-size: var(--text-xl); font-weight: 700; margin-bottom: 20px; }
-    .ss-modal label { display: block; font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); margin: 16px 0 6px; }
-    .ss-modal input, .ss-modal select { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); background: var(--bg-overlay); color: var(--text-primary); }
-    .ss-modal input:focus, .ss-modal select:focus { outline: none; border-color: var(--accent); }
-    .ss-modal input:focus-visible, .ss-modal select:focus-visible { outline: 2px solid var(--ring, var(--text-primary)); outline-offset: 2px; }
-    .ss-modal-actions { display: flex; gap: 12px; margin-top: 24px; }
-    .ss-modal-actions button { flex: 1; padding: 12px; border-radius: var(--radius-sm); font-size: var(--text-base); font-weight: 600; cursor: pointer; }
-    .ss-modal-save { background: var(--cta-bg); color: var(--interactive-text); border: none; }
-    .ss-modal-cancel { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+.ss-searchbar__cta {
+  font-family: var(--font-ui);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold, 600);
+  background: var(--cta-bg, var(--text-primary));
+  color: var(--interactive-text);
+  border: none;
+  cursor: pointer;
+  min-height: 44px;
+}
+.ss-searchbar__cta:hover { opacity: 0.9; }
+
+/* ── Two-column grid: feed (left) + filter rail (right) ─────── */
+.ss-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: var(--space-7);
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .ss-grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+}
+
+/* ── Result feed — full-width single column at every breakpoint ─ */
+.ss-feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.ss-result {
+  width: 100%;
+  background: var(--bg-surface, var(--bg-overlay));
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-6);
+  transition: border-color var(--duration-base, 0.2s) var(--ease, cubic-bezier(0.2,0,0,1));
+}
+.ss-result:hover { border-color: var(--border-strong, var(--text-primary)); }
+
+.ss-result__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.ss-result__title {
+  font-family: var(--font-ui);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/* Source attribution + timestamp — Geist Mono per spec. */
+.ss-result__meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary, var(--text-secondary));
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editorial body copy — Georgia / Source Serif 4. */
+.ss-result__body {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.65;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-5);
+}
+
+/* Confidence + EV chips — Inter sans. */
+.ss-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.ss-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: 0.01em;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-base, transparent);
+  color: var(--text-secondary);
+  min-height: 24px;
+}
+.ss-chip__label {
+  font-weight: var(--weight-medium, 500);
+  color: var(--text-tertiary, var(--text-secondary));
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+.ss-chip__value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* Card action row — Inter buttons. */
+.ss-result__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-ghost, var(--border-subtle));
+}
+.ss-result__actions button {
+  font-family: var(--font-ui);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium, 500);
+  cursor: pointer;
+  border: 1px solid var(--border-default, var(--border-strong));
+  background: var(--bg-base, transparent);
+  color: var(--text-secondary);
+  transition: border-color var(--duration-fast, 0.12s) var(--ease, cubic-bezier(0.2,0,0,1)),
+              color var(--duration-fast, 0.12s) var(--ease, cubic-bezier(0.2,0,0,1));
+  min-height: 32px;
+}
+.ss-result__actions button:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
+/* AI analysis pane — body text in editorial serif. */
+.ss-result__analysis {
+  margin-top: var(--space-5);
+  padding: var(--space-5);
+  background: var(--bg-inset, var(--bg-surface));
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-ghost, var(--border-subtle));
+}
+.ss-result__analysis-toggle {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: var(--weight-medium, 500);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ss-result__analysis-body {
+  display: none;
+  margin-top: var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.65;
+  color: var(--text-primary);
+}
+.ss-result__analysis-body.open { display: block; }
+
+/* ── Filter rail — Inter sans throughout ───────────────────── */
+.ss-filters {
+  font-family: var(--font-ui);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-5);
+}
+@media (min-width: 961px) {
+  .ss-filters {
+    position: sticky;
+    top: calc(var(--space-8) + 60px); /* below the sticky search bar */
+    align-self: flex-start;
+  }
+}
+.ss-filters__title {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, var(--text-secondary));
+  margin: 0 0 var(--space-3);
+}
+.ss-filters__group { margin-bottom: var(--space-5); }
+.ss-filters__group:last-child { margin-bottom: 0; }
+.ss-filters__label {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium, 500);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+.ss-filters__select {
+  width: 100%;
+  font-family: var(--font-ui);
+  font-size: 16px;                          /* mobile no-zoom floor */
+  padding: var(--space-2) var(--space-3);
+  min-height: 44px;
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+.ss-filters__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  min-height: 32px;
+}
+
+/* Mobile: collapse the filter rail into a <details> drawer. */
+.ss-filters > summary {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold, 600);
+  color: var(--text-primary);
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  list-style: none;
+  padding: var(--space-1) 0;
+}
+.ss-filters > summary::-webkit-details-marker { display: none; }
+.ss-filters > summary::after {
+  content: "+";
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  color: var(--text-tertiary, var(--text-secondary));
+}
+.ss-filters[open] > summary::after { content: "−"; }
+.ss-filters > summary + * { margin-top: var(--space-4); }
+
+@media (min-width: 961px) {
+  /* On desktop the rail is always visible — neutralise <details>. */
+  .ss-filters > summary { display: none; }
+  .ss-filters[open] > summary + * { margin-top: 0; }
+}
+
+/* ── Empty state — italic Instrument Serif copy ─────────────── */
+.ss-empty {
+  text-align: center;
+  padding: var(--space-8) var(--space-5);
+  color: var(--text-secondary);
+}
+.ss-empty__title {
+  font-family: var(--font-ui);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold, 600);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-2);
+}
+.ss-empty__body {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-xl);
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin: 0 auto;
+  max-width: 48ch;
+}
+/* Legacy empty-state classes still rendered by some cached HTML. */
+.ss-empty .empty-state-row__title,
+.ss-empty .ss-empty__title {
+  font-family: var(--font-ui);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold, 600);
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+.ss-empty .empty-state-row__body {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-xl);
+  line-height: 1.45;
+  color: var(--text-secondary);
+  max-width: 48ch;
+  margin: 0 auto;
+}
+.ss-empty-icon { display: none; }
+
+/* ── Add-topic CTA (used inside the sticky search bar) ──────── */
+.ss-add-btn {
+  font-family: var(--font-ui);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold, 600);
+  background: var(--cta-bg, var(--text-primary));
+  color: var(--interactive-text);
+  border: none;
+  cursor: pointer;
+  min-height: 44px;
+}
+.ss-add-btn:hover { opacity: 0.9; }
+
+/* ── Admin (super-admin only) X-token card — preserved ──────── */
+.ss-admin-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-6);
+  margin-top: var(--space-6);
+  font-family: var(--font-ui);
+}
+.ss-admin-badge {
+  display: inline-block;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary, var(--text-secondary));
+  margin-bottom: var(--space-3);
+}
+.ss-card-title {
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: -0.005em;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-1);
+}
+.ss-card-subtitle {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.ss-admin-state {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4);
+  font-variant-numeric: tabular-nums;
+}
+.ss-admin-state code {
+  background: var(--bg-inset, var(--bg-base));
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.ss-admin-form {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.ss-admin-form input[type="password"],
+.ss-admin-form input[type="text"] {
+  flex: 1 1 320px;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-sm);
+  background: var(--bg-base, var(--bg-surface));
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 16px;                          /* mobile no-zoom floor */
+  min-height: 44px;
+}
+.ss-admin-form button {
+  font-family: var(--font-ui);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold, 600);
+  cursor: pointer;
+  border: 1px solid var(--border-default, var(--border-strong));
+  background: var(--bg-base, transparent);
+  color: var(--text-primary);
+  min-height: 44px;
+}
+.ss-admin-form button.primary {
+  background: var(--cta-bg, var(--text-primary));
+  color: var(--interactive-text);
+  border-color: transparent;
+}
+.ss-admin-form button.danger {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+  background: transparent;
+}
+.ss-admin-status {
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  min-height: 16px;
+  color: var(--text-secondary);
+}
+
+/* ── Modal — Inter chrome ───────────────────────────────────── */
+.ss-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: var(--z-modal, 1000);
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+.ss-modal-overlay.open { display: flex; }
+.ss-modal {
+  background: var(--bg-surface, var(--surface));
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-6);
+  max-width: 480px;
+  width: 100%;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.18));
+  font-family: var(--font-ui);
+}
+.ss-modal-title {
+  font-family: var(--font-ui);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold, 700);
+  margin-bottom: var(--space-5);
+}
+.ss-modal label {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium, 500);
+  color: var(--text-secondary);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.ss-modal input, .ss-modal select {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  background: var(--bg-base, var(--bg-overlay));
+  color: var(--text-primary);
+  min-height: 44px;
+}
+.ss-modal input:focus, .ss-modal select:focus { outline: none; border-color: var(--text-primary); }
+.ss-modal input:focus-visible, .ss-modal select:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.ss-modal-actions { display: flex; gap: var(--space-3); margin-top: var(--space-6); }
+.ss-modal-actions button {
+  flex: 1;
+  font-family: var(--font-ui);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold, 600);
+  cursor: pointer;
+  min-height: 44px;
+}
+.ss-modal-save { background: var(--cta-bg, var(--text-primary)); color: var(--interactive-text); border: none; }
+.ss-modal-cancel { background: transparent; border: 1px solid var(--border-default, var(--border-strong)); color: var(--text-secondary); }
+
+/* ── Legacy aliases — keep older DOM nodes from cached HTML styled.
+ *    These mirror .ss-result__* so any in-flight render still looks right. */
+.ss-topics { display: flex; flex-direction: column; gap: var(--space-5); }
+.ss-topic {
+  width: 100%;
+  background: var(--bg-surface, var(--bg-overlay));
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-6);
+  transition: border-color var(--duration-base, 0.2s) var(--ease, cubic-bezier(0.2,0,0,1));
+}
+.ss-topic:hover { border-color: var(--border-strong, var(--text-primary)); }
+.ss-topic-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-3); }
+.ss-topic-name { font-family: var(--font-ui); font-size: var(--text-lg); font-weight: var(--weight-semibold, 600); color: var(--text-primary); }
+.ss-topic-meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary, var(--text-secondary));
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  font-variant-numeric: tabular-nums;
+}
+.ss-topic-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.ss-topic-actions button {
+  font-family: var(--font-ui);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium, 500);
+  cursor: pointer;
+  border: 1px solid var(--border-default, var(--border-strong));
+  background: var(--bg-base, transparent);
+  color: var(--text-secondary);
+  min-height: 32px;
+}
+.ss-topic-actions button:hover { border-color: var(--text-primary); color: var(--text-primary); }
+.ss-analysis {
+  margin-top: var(--space-5);
+  padding: var(--space-5);
+  background: var(--bg-inset, var(--bg-surface));
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-ghost, var(--border-subtle));
+}
+.ss-analysis-toggle {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: var(--weight-medium, 500);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ss-analysis-body {
+  display: none;
+  margin-top: var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.65;
+  color: var(--text-primary);
+}
+.ss-analysis-body.open { display: block; }
+.ss-signal {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold, 600);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full, 999px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-base, transparent);
+  color: var(--text-secondary);
+}
+.ss-confidence { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-tertiary); margin-left: var(--space-2); }
+.ss-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default, var(--border-strong));
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
+}
+.ss-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-ghost, var(--border-subtle));
+}

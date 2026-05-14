@@ -22,28 +22,64 @@
     <main class="main-content" id="main" tabindex="-1" role="main">
     <div class="ss-container">
 
-      <header class="page-header">
-        <h1 class="page-title">Signal Search</h1>
-        <p class="page-subtitle">Save topics, auto-pull X posts, extract predictions with AI analysis.</p>
+      <header class="ss-hero">
+        <h1 class="ss-hero__title">Signal Search</h1>
+        <p class="ss-hero__subtitle">Save topics, auto-pull X posts, extract predictions with AI analysis.</p>
       </header>
 
-      <section class="ss-card">
-        <div class="ss-card-head">
-          <div>
-            <h2 class="ss-card-title">Your topics</h2>
-            <p class="ss-card-subtitle">Up to 10 saved topics. Each runs on its own pull schedule.</p>
-          </div>
-          <button class="ss-add-btn" onclick="openModal()" type="button">+ Add Topic</button>
-        </div>
+      <div class="ss-searchbar" role="search">
+        <input class="ss-searchbar__input"
+               id="ss-search-input"
+               type="search"
+               placeholder="Search saved signals, sources, predictions…"
+               aria-label="Search signals">
+        <button class="ss-add-btn" onclick="openModal()" type="button">+ Add Topic</button>
+      </div>
 
-        <div id="topics-container" class="ss-topics">
-          <div class="ss-empty" id="empty-state">
-            <div class="ss-empty-icon">&#x1F50D;</div>
-            <div class="empty-state-row__title">No topics yet</div>
-            <p class="empty-state-row__body">Add your first topic to start tracking predictions from X.</p>
+      <div class="ss-grid">
+
+        <section class="ss-feed" aria-label="Signal results">
+          <div id="topics-container" class="ss-topics">
+            <div class="ss-empty" id="empty-state">
+              <div class="ss-empty__title">No signals yet</div>
+              <p class="ss-empty__body">Add your first topic and we'll start surfacing predictions worth reading.</p>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+
+        <aside class="ss-filters">
+          <details>
+            <summary>Filters</summary>
+            <h3 class="ss-filters__title">Refine</h3>
+
+            <div class="ss-filters__group">
+              <label class="ss-filters__label" for="ss-filter-source">Source</label>
+              <select class="ss-filters__select" id="ss-filter-source">
+                <option value="">All sources</option>
+                <option value="x">X / Twitter</option>
+              </select>
+            </div>
+
+            <div class="ss-filters__group">
+              <label class="ss-filters__label" for="ss-filter-confidence">Confidence</label>
+              <select class="ss-filters__select" id="ss-filter-confidence">
+                <option value="">Any</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+
+            <div class="ss-filters__group">
+              <label class="ss-filters__label">Signal</label>
+              <label class="ss-filters__check"><input type="checkbox" value="bullish"> Bullish</label>
+              <label class="ss-filters__check"><input type="checkbox" value="bearish"> Bearish</label>
+              <label class="ss-filters__check"><input type="checkbox" value="mixed"> Mixed</label>
+            </div>
+          </details>
+        </aside>
+
+      </div>
 
       {{ raw_admin_x_token_panel }}
 
@@ -75,6 +111,7 @@
   </div>
 
 {{ raw_sitemap }}
+<script src="/_gateway_static/skeletons.js" defer></script>
 <script>
 function openModal() { document.getElementById('add-modal').classList.add('open'); }
 function closeModal() { document.getElementById('add-modal').classList.remove('open'); }
@@ -117,18 +154,18 @@ function toggleAnalysis(el) {
 // Build a topic card using DOM APIs only. textContent escapes everything,
 // so attacker-controlled topic names / keywords cannot inject script.
 function buildTopicCard(t) {
-  var card = document.createElement('div');
-  card.className = 'ss-topic';
+  var card = document.createElement('article');
+  card.className = 'ss-result ss-topic';
 
   var head = document.createElement('div');
-  head.className = 'ss-topic-head';
-  var name = document.createElement('div');
-  name.className = 'ss-topic-name';
+  head.className = 'ss-result__head ss-topic-head';
+  var name = document.createElement('h2');
+  name.className = 'ss-result__title ss-topic-name';
   name.textContent = t.name;
   head.appendChild(name);
 
   var actions = document.createElement('div');
-  actions.className = 'ss-topic-actions';
+  actions.className = 'ss-result__actions ss-topic-actions';
   var pullBtn = document.createElement('button');
   pullBtn.className = 'ss-pull';
   pullBtn.textContent = 'Pull now';
@@ -143,33 +180,46 @@ function buildTopicCard(t) {
   card.appendChild(head);
 
   var meta = document.createElement('div');
-  meta.className = 'ss-topic-meta';
+  meta.className = 'ss-result__meta ss-topic-meta';
   var ago = t.last_pulled_at
     ? Math.round((Date.now() / 1000 - t.last_pulled_at) / 60) + ' min ago'
     : 'Never';
-  var kwSpan = document.createElement('span');
-  // .join uses textContent path — safe because keywords are also assigned via textContent
-  kwSpan.textContent = 'Keywords: ' + (Array.isArray(t.keywords) ? t.keywords.join(', ') : '');
+  var srcSpan = document.createElement('span');
+  srcSpan.textContent = '@x.com';
   var ageSpan = document.createElement('span');
-  ageSpan.textContent = 'Last pulled: ' + ago;
-  var postsSpan = document.createElement('span');
-  postsSpan.textContent = 'Posts: ' + (t.posts_found_total | 0);
-  var predSpan = document.createElement('span');
-  predSpan.textContent = 'Predictions: ' + (t.predictions_extracted_total | 0);
-  meta.appendChild(kwSpan);
+  ageSpan.textContent = 'Pulled ' + ago;
+  var kwSpan = document.createElement('span');
+  kwSpan.textContent = 'Keywords: ' + (Array.isArray(t.keywords) ? t.keywords.join(', ') : '');
+  meta.appendChild(srcSpan);
   meta.appendChild(ageSpan);
-  meta.appendChild(postsSpan);
-  meta.appendChild(predSpan);
+  meta.appendChild(kwSpan);
   card.appendChild(meta);
 
+  // Chips: confidence + EV — Inter sans per spec.
+  var chips = document.createElement('div');
+  chips.className = 'ss-chips';
+  var posts = (t.posts_found_total | 0);
+  var preds = (t.predictions_extracted_total | 0);
+  function chip(label, value) {
+    var c = document.createElement('span');
+    c.className = 'ss-chip';
+    var l = document.createElement('span'); l.className = 'ss-chip__label'; l.textContent = label;
+    var v = document.createElement('span'); v.className = 'ss-chip__value'; v.textContent = value;
+    c.appendChild(l); c.appendChild(v);
+    return c;
+  }
+  chips.appendChild(chip('Posts', String(posts)));
+  chips.appendChild(chip('Predictions', String(preds)));
+  card.appendChild(chips);
+
   var analysis = document.createElement('div');
-  analysis.className = 'ss-analysis';
+  analysis.className = 'ss-result__analysis ss-analysis';
   var toggle = document.createElement('span');
-  toggle.className = 'ss-analysis-toggle';
+  toggle.className = 'ss-result__analysis-toggle ss-analysis-toggle';
   toggle.textContent = 'Show AI analysis';
   toggle.addEventListener('click', function() { toggleAnalysis(toggle); });
   var body = document.createElement('div');
-  body.className = 'ss-analysis-body';
+  body.className = 'ss-result__analysis-body ss-analysis-body';
   body.id = 'analysis-' + (t.id | 0);
   body.textContent = 'Loading...';
   analysis.appendChild(toggle);
@@ -180,19 +230,42 @@ function buildTopicCard(t) {
 }
 
 function loadTopics() {
+  var container = document.getElementById('topics-container');
+  // Use narveSkel for the loading state per spec.
+  if (window.narveSkel && window.narveSkel.show) {
+    window.narveSkel.show('topics-container', 'detail-panel', 3);
+  }
   fetch('/api/topics').then(function(r) { return r.json(); }).then(function(data) {
-    var container = document.getElementById('topics-container');
     var empty = document.getElementById('empty-state');
-    // Clear existing children safely.
+    if (empty && empty.parentNode !== container) {
+      // empty-state was wiped by skeleton render; reconstruct.
+      empty = null;
+    }
     while (container.firstChild) container.removeChild(container.firstChild);
     if (!data.topics || data.topics.length === 0) {
-      container.appendChild(empty);
-      empty.style.display = '';
+      // Rebuild the empty-state node — it may have been removed by the
+      // skeleton render replacing innerHTML.
+      var es = document.createElement('div');
+      es.className = 'ss-empty';
+      es.id = 'empty-state';
+      var t = document.createElement('div');
+      t.className = 'ss-empty__title';
+      t.textContent = 'No signals yet';
+      var b = document.createElement('p');
+      b.className = 'ss-empty__body';
+      b.textContent = "Add your first topic and we'll start surfacing predictions worth reading.";
+      es.appendChild(t);
+      es.appendChild(b);
+      container.appendChild(es);
       return;
     }
     data.topics.forEach(function(t) {
       container.appendChild(buildTopicCard(t));
     });
+  }).catch(function() {
+    if (window.narveSkel && window.narveSkel.error) {
+      window.narveSkel.error('topics-container', "Couldn't load signals.", loadTopics);
+    }
   });
 }
 
