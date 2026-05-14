@@ -1000,6 +1000,85 @@ async def cache_stats_json(request: Request):
     return JSONResponse(ttl_cache.stats())
 
 
+# ── /admin/api/sentry ──────────────────────────────────────────────────────
+#
+# Recent-errors widget on the admin System Health tab. Pulls from the
+# Sentry HTTP API via observability.sentry_api, which memoises the result
+# for 5 minutes — so upstream Sentry rate limits aren't tripped even if
+# every admin reloads the tab on a tight loop. ``force_refresh=1`` lets
+# an admin manually break the cache; that path is rate-limited to 12
+# refreshes per hour per admin (one Sentry API call per 5 min ≈ 12/hr).
+
+_sentry_refresh_rate_limit: dict[str, list[float]] = {}
+_sentry_refresh_lock = None  # lazy init — module import shouldn't need threading
+
+
+def _sentry_refresh_allowed(admin_id: str) -> bool:
+    """Return True if this admin can force-refresh; record the attempt.
+
+    Bounds at 12 calls/hour per admin to stay well under Sentry's 40 req/s
+    org-wide limit even if multiple admins refresh in parallel.
+    """
+    global _sentry_refresh_lock
+    if _sentry_refresh_lock is None:
+        import threading
+        _sentry_refresh_lock = threading.Lock()
+    now = time.time()
+    cutoff = now - 3600
+    with _sentry_refresh_lock:
+        bucket = _sentry_refresh_rate_limit.setdefault(admin_id, [])
+        # Drop expired timestamps.
+        bucket[:] = [t for t in bucket if t >= cutoff]
+        if len(bucket) >= 12:
+            return False
+        bucket.append(now)
+        return True
+
+
+async def sentry_summary_json(request: Request):
+    """JSON snapshot of recent Sentry errors. Admin-only.
+
+    Query params:
+        refresh=1  — bypass the 5-minute cache (rate-limited per admin).
+
+    Response shape:
+        {enabled, dashboard_url, count_24h, recent: [...], error, cached_at}
+
+    Never exposes ``SENTRY_AUTH_TOKEN`` — only the public dashboard URL
+    and per-issue permalinks (which are public Sentry web URLs).
+    """
+    admin = _require_admin_user(request)
+
+    force_refresh = False
+    try:
+        if request.query_params.get("refresh") in ("1", "true", "yes"):
+            admin_id = str(
+                (isinstance(admin, dict) and (admin.get("email") or admin.get("user_id")))
+                or "unknown"
+            )
+            if _sentry_refresh_allowed(admin_id):
+                force_refresh = True
+            # If the rate limit is tripped we silently fall back to the
+            # cached payload — the UI still gets data, just not fresh.
+    except Exception:
+        log.warning("sentry refresh param parse failed", exc_info=True)
+
+    try:
+        from observability.sentry_api import fetch_sentry_summary
+        payload = await fetch_sentry_summary(force_refresh=force_refresh)
+    except Exception as e:
+        log.warning("fetch_sentry_summary crashed: %s", e, exc_info=True)
+        payload = {
+            "enabled": False,
+            "dashboard_url": "",
+            "count_24h": 0,
+            "recent": [],
+            "error": "Internal error fetching Sentry summary",
+            "cached_at": int(time.time()),
+        }
+    return JSONResponse(payload)
+
+
 async def cache_clear(request: Request):
     admin = _require_admin_user(request)
     from cache import ttl_invalidate
@@ -1911,6 +1990,13 @@ def register(app) -> None:
     app.add_api_route(
         "/admin/cache/clear", cache_clear,
         methods=["POST"], include_in_schema=False,
+    )
+
+    # Sentry recent-errors widget on the admin System Health tab.
+    # Cached server-side for 5 minutes; auth token never leaves the server.
+    app.add_api_route(
+        "/admin/api/sentry", sentry_summary_json,
+        methods=["GET"], include_in_schema=False,
     )
 
     # Backup health + recovery drill history. Surfaces what's in
