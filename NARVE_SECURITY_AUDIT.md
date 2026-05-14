@@ -5,6 +5,281 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #12 — 2026-05-14T22:55Z — commit ae66727 — post-test-sweep + Stripe-live audit
+
+### Why this audit exists
+~85 minutes after Audit #11 (`e43d349`) the platform-build branch
+landed **10 more commits** closing out the day. The headline change is
+the Stripe webhook handler going live (`68b00c9` — `gateway/stripe_webhook_routes.py`
+moved from on-disk untracked into HEAD, finally resolving the
+"uncommitted-but-imported" carry-over from #10/#11). Two new admin
+surfaces shipped: `/admin/newsletter` compose+blast (`8d5d257`) and
+`/admin/emails` outbound queue (`487f1f3`). Seven test-sweep commits
+restored CI green after the day's redesign churn
+(`a2fc096`/`56faa49`/`d5fd135`/`a3c082b`/`e78b0d6`/`6a6594b`/`ae66727`).
+A subscribe-form silent-404 was fixed (`aac60a8`). The pre-release page
+font regression from the inline-CSS change was closed (`0421267`).
+
+Loop-stop criterion: **0 CRITICAL + 0 HIGH** for sustained STRONG
+posture, with explicit re-verification that today's headline Stripe
+webhook commit covers IP allowlist + signature + idempotency + livemode.
+
+### Code inventory audited
+- Committed tip: `ae66727` (test(weekly_digest): fix UNIQUE(email) pollution from prior tests). Locked at scan start. 0 unpushed commits, 0 divergence from origin/feature/platform-build at lock time.
+- Local unpushed commits: **0**.
+- Local uncommitted files: 2 modified (`gateway/static/privacy.html` — text-only, no behaviour change; `gateway/tests/test_health.py` — 123 inserts / 11 deletes in tests). No security-relevant production code dirty.
+- Local stashes: **57**. Top of stack unchanged from #11 (the three new ones added between #10 and #11 are still on top; nothing popped). No security-relevant code in any top-10 stash on eyeball.
+- Server uncommitted files: **342** (huge). Server tree at git tip `e4cda27` — ~50 commits BEHIND origin's `ae66727`. The diff against `origin/feature/platform-build` is 27,616 inserts / 6,825 deletes across 236 files including `gateway/server.py`, `gateway/admin_routes.py`, `gateway/auth/guards.py`, `gateway/billing_routes.py`, `gateway/stripe_webhook_hardening.py`, every email template, every per-page CSS. Spot-checked critical surfaces — `gateway/stripe_webhook_routes.py` md5 ON SERVER === md5 on local origin, so the live Stripe webhook content matches. `gateway/server.py` md5 DIFFERS (server runs older content predating today's `/health` payload + Stripe import block patches). `.env.example` md5 matches between server and local.
+- Server tip vs origin: **DIVERGED — server ~50 commits behind, also has uncommitted edits that overlay onto an older tip.** The end result is a hybrid tree.
+- Running uvicorn loaded from: PID 4061843 at `~/Habbig/gateway`, started 2026-05-14T21:19:46+0100. server.py disk mtime 2026-05-14T21:12:32 (older than process start → loaded at boot). `/stripe/webhook` POST returns 503 ("Stripe SDK not installed") — handler IS registered and reachable; safe fail-closed because the `stripe` Python package isn't in this venv.
+- Branches with recent work (last 14d not in current): none — single active branch.
+- DRIFT FLAG: **server-side drift is significant**. Server git is 50 commits behind origin AND has 342 uncommitted modified files. The running uvicorn was started before today's headline Stripe commit (process start 21:19:46, commit 68b00c9 at 21:46:06), so even though the on-disk stripe_webhook_routes.py matches origin, the running process serves an older server.py + an older admin_routes.py. Functional consequence: today's admin pages (`/admin/newsletter`, `/admin/emails`, `/admin/integrations`) are NOT registered in the running process because the import-block additions to server.py landed AFTER the uvicorn started. NEW finding documented as MED #2 below.
+
+### Surfaces newly introduced since AUDIT #11
+| Feature | Files | Risk surface |
+|---|---|---|
+| `/stripe/webhook` POST handler — FINALLY COMMITTED | `gateway/stripe_webhook_routes.py` (308 LOC, now in HEAD per `68b00c9`); `gateway/stripe_webhook_hardening.py` (already in HEAD) | Full check-order verified in source: (1) `import stripe` else 503, (2) `_is_rate_limited("stripe_webhook_global", 100, 60)` else 429, (3) `extract_client_ip` → `reject_non_stripe_ip` (12 hardcoded Stripe CIDRs) else 403 when `STRIPE_IP_ALLOWLIST_ENFORCE=true` (defaults true in PRODUCTION), (4) `stripe.Webhook.construct_event` with `STRIPE_WEBHOOK_SECRET` else 400, (5) `event["livemode"] AND NOT STRIPE_LIVE_MODE=true` → 400, (6) `mark_received(event)` returns JSONResponse on replay → 200 `already_processed`, (7) per-type dispatch wrapped in try/except so a broken branch can't take down the route, (8) always 200 on accepted. `_grant_access` UPSERTs `subscriptions` by `(user_id, dashboard_key)` from Stripe-signed metadata. `_update_plan` collapses non-active states to `inactive` locally. `apply_subscription_cancelled` revokes sessions + deactivates embeds + invalidates access cache + enqueues cancellation email. **Carry-over MED #2 from #11 is RESOLVED — stripe webhook now in HEAD with tests at `gateway/tests/test_stripe_webhook_route.py` (303 LOC).** |
+| `/admin/newsletter` compose+blast | `gateway/admin_routes.py:2660-2882`, `gateway/queries/newsletter.py:411-548`, `gateway/migrations/183_newsletter_campaigns.py`, `gateway/static/admin/newsletter.html`, `gateway/email_system/templates/newsletter_blast.html` | Admin-only via `_require_admin_user(request, page=True)`. CSRF enforced by global middleware (no exempt). The 30-mutations-per-5-minutes-per-admin throttle in `_require_admin_user` bounds blast frequency. Markdown→HTML uses `html.escape()` FIRST then a minimal regex pass for bold/italic/code/lists/links — raw HTML cannot escape. Segment + frequency filter validated against `_NEWSLETTER_SEGMENTS` / `_NEWSLETTER_FREQUENCIES` allowlists; invalid → 400. Scheduled-later timestamps parsed as UTC and must be future. Recipient list comes from `db.get_blast_recipients(segment, frequency_filter)` which filters to `confirmed_at IS NOT NULL AND unsubscribed_at IS NULL` and parameterises both filter columns. Every send is `_audit(...)`-logged with admin email + recipient count. **Issue: no recipient-size cap, and the per-recipient `enqueue_email` runs in a synchronous for-loop inside the request handler.** A 100k-row subscriber list = 100k enqueue jobs in one POST. Bounded by admin mutation rate-limit (30 / 5 min) so impact is constrained to ~3M jobs/admin/day, but the per-blast loop itself can stall the worker. New finding tracked as MED #1 below. |
+| `/admin/emails` outbound queue + resend | `gateway/admin_emails_routes.py` (644 LOC) | Admin-only via `server._require_admin_user(request)`. List page is rate-limited 120/min per admin; resend POST `/admin/emails/{id}/resend` is rate-limited 20/min per admin AND CSRF-validated. **Recipient is read from the original `background_jobs.payload` row — admin cannot inject a new `to` address through the resend.** Audit row written for every resend. Recipient redaction in list views (first chars + `***@domain`); full recipient shown on the per-row detail (admin already authed). HTML output via `_esc()` (= `html.escape`) on every dynamic value including error_message + template + recipient + body_text + headers + context_json. Clean. |
+| `/admin/integrations` single-pane integration health | `gateway/admin_integrations_routes.py` (323 LOC), `gateway/queries/integrations.py` (550 LOC) | Admin-only via `server._require_admin_user`. **No secret values leaked to UI — each integration row exposes only `"set" \| "missing" \| "live" \| "test"` status strings, never the raw API key, webhook secret, or auth token.** The "Test connection" buttons hit dedicated probe endpoints that do outbound HTTPS with timeouts. Stripe mode (`live` / `test`) inferred from `sk_live_` prefix in the env var — never displayed verbatim. Clean. |
+| `/admin/test-emails` preview + send-to-self | `gateway/admin_test_emails_routes.py` (now committed per `8d5d257`-era patches) | Admin-only, CSRF via global middleware, rate-limited preview 120/min + send 20/hour per admin, recipient HARD-FORCED to admin's own email after optional context override. **Carry-over MED #2 (uncommitted side) from #11 is RESOLVED.** |
+| Per-subproduct feature flag scope | `gateway/admin_routes.py`, `gateway/features.py`, `gateway/migrations/186_subproduct_feature_flags.py` | `subproduct_key` column added to `feature_flags`. Lookup precedence (`is_feature_enabled`): (1) (key, subproduct_key=host_slug) → (2) (key, subproduct_key=NULL) global fallback. Slug coerced via `_normalize_subproduct` → must be in `SUBPRODUCTS.keys()` allowlist or returns None. Edit page URL carries the slug as a query param + every option html-escaped. Admin-only. Clean. |
+| Cursor pagination on `/api/public/v1/feed` | `gateway/api_public/routes.py:221-273` | (Re-verified, was new in #11). `before_id` validated as non-negative int (400 on negative/malformed); response `next_before` derived from `min(int(row["id"]))`; hard cap 100. Auth + scope-checked. Clean. |
+| Stripe Customer Portal | `gateway/billing_routes.py:1173-1265` | (Re-verified, was new in #11). Session-auth + CSRF + per-user rate-limit. `customer_id` never echoed back. Hardcoded `return_url=https://narve.ai/settings/billing`. Stripe call wrapped in `asyncio.to_thread`. 503 on missing env or SDK. Clean. |
+| `users.stripe_customer_id` column | `gateway/migrations/185_users_stripe_customer_id.py` | Additive nullable column. Portal endpoint returns 400 on NULL. Safe. |
+| EXPLAIN-audit indexes | `gateway/migrations/184_explain_audit_indexes.py` | Additive ALTER. No data exposure. Re-verified. Clean. |
+| System secrets table | `gateway/migrations/174_system_secrets.py`, `gateway/db.py:1442-1515` | Fernet-encrypted values via existing `CREDENTIALS_ENCRYPTION_KEY` (same key as Kalshi/Polymarket creds — sensible single key-management surface). Plaintext never written to DB. UI surfaces "set 14 days ago" not the value. Updated-by tracked. Clean. |
+| Email watermarks | `gateway/migrations/175_email_watermarks.py`, `gateway/watermark.py` | Per-recipient HMAC-derived 6-hex watermark over `f"{user_id}:{email_id}"` keyed by `EMAIL_WATERMARK_KEY` env. ON DELETE CASCADE on user_id matches GDPR posture. 24-bit collision space — adequate at narve.ai's scale. No user-controlled input. Clean. |
+| SIWE wallet-connect nonces | `gateway/migrations/181_wallet_connect_nonces.py`, `gateway/market_routes.py:38-200` | (Re-verified, was new in #11). 128-bit `secrets.token_hex(16)` nonces, bound to user_id, atomic single-use consume, 5-min TTL. URI/chain_id/version/domain checked against constants. `eth_account.Account.recover_message` + `encode_defunct` (EIP-191). Case-insensitive signer compare. Rate-limited 5/min/user. Legacy unsigned path still accepted with WARN log during 30-day deprecation window — carry-over MED #3 below. |
+| API key origins allowlist | `gateway/migrations/180_api_keys_origins.py`, `gateway/queries/api_keys.py:198-209` | (Re-verified). When `allowed_origins` populated, request's normalised origin must be in the parsed allowlist or 401. Robust against suffix tricks. Clean. |
+| Webhook DLQ partial index | `gateway/migrations/182_webhook_dlq_index.py` | Additive index only. Safe. |
+| Webhook hardening DLQ + circuit breaker | `gateway/migrations/179_webhook_hardening.py`, `gateway/webhooks.py`, `gateway/webhooks_routes.py` | (Re-verified — landed before #11 but worth carrying forward). RFC1918 / loopback / link-local blocked in production. DLQ rows captured for retry exhaustion. Admin re-queue requires admin gate + CSRF. Clean. |
+| Pre-release page font fix | `gateway/pwa_middleware.py:78-85` per `0421267` | **VERIFIED** — `_CRITICAL_CSS` no longer sets `body{font-family:...}`; only background + color + smoothing + size on body. Server-side disk content matches local origin. No CSS-side regression of the page-CSS font choice. Clean. |
+
+### Summary
+Posture: **strong** (committed code only)
+Critical issues: 0
+High-priority: 0
+Medium-priority: 3 (one new — newsletter blast unbounded loop; one new — server-side drift; one carry-over — legacy Polymarket wallet)
+Low-priority: 4 (carry-over: WAF /admin/api/*, Google Fonts hoist, stash debt, pip-audit blocked)
+Resolved since last audit: 2 (MED #2 from #11 — stripe webhook + admin_test_emails now committed)
+New since last audit: 2 (MED #1 newsletter unbounded loop; MED #2 server-side drift)
+Regressions: 0
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT
+- pm_gateway_session + narve_session both accepted: yes
+- narve_session stored as SHA-256 hash in DB: yes
+- Session cookie HttpOnly: yes
+- Session cookie Secure: yes (`_is_production()` gated)
+- Session cookie SameSite: Lax
+- Session revocation on logout: works
+- Session rotation on privilege change: implemented
+- Max sessions per user enforced: 3
+- Password reset invalidates sessions: yes
+- Password hashing: PBKDF2-HMAC-SHA256, 600,000 iterations
+- 2FA status: removed in migration 019 (intentional product decision)
+- Impersonation banner visible on every page while active: yes
+- Impersonation blocked paths enforced: yes — `is_action_blocked` in `gateway/impersonation.py:111-134`
+- API keys hashed (SHA-256) before storage: yes
+- SIWE wallet-connect signature verification: PRIMARY path verified; legacy unsigned still accepted (MED #3 carry-over).
+
+### Authorisation
+- Admin routes require role ≥ 1: yes — verified `/admin/newsletter`, `/admin/emails`, `/admin/integrations`, `/admin/test-emails`, all carry-over routes.
+- Super admin routes require role = 2: yes — kill-switch toggle, role-change paths.
+- Subproduct access checked at middleware + route + response: yes — `has_subproduct_access` + `require_subproduct_access` dependency + `filter_by_subproduct`.
+- has_subproduct_access called on every subproduct route: yes.
+- Feature flag evaluation in use: yes — per-subproduct dimension now in `feature_flags(subproduct_key)` per migration 186.
+- Gift subscription enforcement: yes.
+
+### CSRF
+- Double submit cookie: yes
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — every new POST today (`/admin/newsletter/send`, `/admin/newsletter/preview`, `/admin/emails/{id}/resend`, `/admin/test-emails/send`, `/stripe/webhook` deliberately exempt) flows through the global CSRF middleware unless explicitly exempted.
+- HTMX X-CSRF-Token hook active: yes
+- Exempt routes list minimal and documented: yes — `_CSRF_EXEMPT_POSTS = {/api/newsletter, /stripe/webhook, /auth/validate-token, /api/status/subscribe, /api/status/unsubscribe, /api/search/click, /api/analytics/event}` + prefixes `/api/invite/` + `/api/public/v1/`. Each entry has an inline justification comment. **No new exemptions added today.**
+
+### Rate limiting
+- Auth endpoints: `/auth/login` 10/5min/IP, `/auth/register` 5/15min/IP, `/auth/forgot-password` 3/hour/email, `/auth/reset-password` 5/hour/IP — all explicit.
+- API endpoints: 33+ `@rate_limit` decorators; new admin routes today: `/admin/emails` list 120/min, `/admin/emails/{id}/resend` 20/min; `/admin/newsletter/*` bounded by 30-mutations-per-5-min-per-admin (no explicit decorator).
+- Stripe webhook: global 100/min, IP-allowlisted to 12 Stripe CIDRs.
+- Per-user and per-IP as appropriate: yes
+- 429 response includes Retry-After: yes
+- Cloudflare-level rate limit rules: present (Rule D /auth, Rule E /admin) — `/admin/api/*` still NOT covered at edge (LOW #1 carry-over).
+
+### Input validation
+- SQL injection vectors found: **0 exploitable.** Today's new SQL surfaces re-scanned: `gateway/admin_emails_routes.py` (parameterised; `WHERE id = ? AND name = 'send_email'`), `gateway/queries/newsletter.py` (parameterised; segment/frequency from allowlist), `gateway/stripe_webhook_routes.py` (parameterised; `f"UPDATE subscriptions SET {', '.join(sets)} WHERE user_id = ? AND dashboard_key = ?"` — `sets` is built from fixed allowlist of `["status = ?", "plan = ?"]`, params are positional). `gateway/queries/integrations.py` reads via parameterised lookups, never interpolates user input.
+- XSS via innerHTML with user content: 0 directly user-controlled paths in new code. New admin pages render all dynamic values via `_esc()`/`html.escape`. Newsletter markdown→HTML escapes input FIRST then applies minimal regex pass — raw HTML cannot escape.
+- Command injection / subprocess with user input: 0. The new `_read_git_sha()` helper calls `subprocess.run(["git", "rev-parse", "--short", "HEAD"], ...)` with hardcoded args, no user input.
+- Path traversal in file operations: 0 in production code. `admin_test_emails_routes._is_known_template()` filters template_name against allowlist BEFORE filesystem access.
+- SSRF in URL-fetching code: 0. The `urlopen(target)` at `server.py:3061` for the `/health?deep` subproduct probe pulls `target` from the internal `DASHBOARDS` config dict, NOT from user input. Stripe portal `return_url` hardcoded. Newsletter/email templates don't fetch external URLs.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes
+- No hardcoded secrets in current tree: clean (full ripgrep for `sk_live_`/`sk_test_`/`pk_live_`/`pk_test_`/`whsec_` → 0 hits in production code; test fixture `whsec_test_route_secret` in `gateway/tests/test_stripe_webhook_route.py:34` is a clear stub).
+- No secrets in git history: clean
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes
+- System secrets (migration 174) encrypted with same Fernet key: yes
+- Sessions hashed before DB storage: yes
+- Password hashes use PBKDF2-HMAC-SHA256: yes (600,000 iterations)
+- .env permissions on server: **verified 600** (`-rw------- julianhabbig julianhabbig 150 Apr 11 15:47 /home/julianhabbig/Habbig/gateway/.env`).
+- API keys SHA-256 hashed before storage: yes
+- SIWE wallet-connect nonces single-use: yes
+- Health endpoint env values: NOT leaked (production response excludes `errors` array).
+- Stripe customer_id: NOT echoed to client (`gateway/billing_routes.py:1248-1262` returns only `session.url`).
+- `/admin/integrations` exposure: only "set"/"missing"/"live"/"test" status strings — no raw secret material.
+
+### Data privacy
+- Account deletion works end-to-end: yes
+- Data export includes all user-linked tables: verified — `gateway/queries/auth.py:894` iterates the canonical user-id-bearing tables list.
+- Sensitive fields redacted in logs: yes
+- Sentry scrubbing active: yes — `scrub_sensitive_data` in `observability/sentry_setup.py`
+- Impersonation actions logged: yes
+- Sentry release tagged with git SHA: yes
+
+### External integrations
+- Stripe webhook signature validated: **YES, LIVE** — `stripe.Webhook.construct_event` in `gateway/stripe_webhook_routes.py:243`.
+- Stripe webhook idempotent: **YES, LIVE** — `mark_received(event)` at line 277.
+- Stripe webhook mode-verified: **YES, LIVE** — `STRIPE_LIVE_MODE` env gate at line 266.
+- Stripe webhook IP allowlist: **YES, LIVE** — 12 CIDRs in `_STRIPE_WEBHOOK_CIDRS`, enforced per `STRIPE_IP_ALLOWLIST_ENFORCE` (defaults true in PRODUCTION).
+- Stripe Customer Portal: LIVE — re-verified.
+- Telegram bot token in env only: yes
+- Discord bot token in env only: yes
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: SIWE PRIMARY; legacy unsigned still accepted (MED #3 carry-over, deprecation 2026-06-13).
+- SEC EDGAR User-Agent set: yes
+- eth_account 0.10.0 pinned: yes.
+
+### Infrastructure
+- SQLite WAL mode active: yes
+- Cloudflare Tunnel active, origin not directly reachable: yes (Tailscale-only; verified by /etc/cloudflared/config.yml in CLOUDFLARE_CHANGES.md)
+- Cloudflare Rules for subdomain enumeration: yes
+- Cloudflare Rules for scanner UA blocking: yes
+- Post-deploy commit step documented: yes
+- CLOUDFLARE_CHANGES.md current: yes (last touched 2026-05-14T21:11)
+- Daily VACUUM + ANALYZE + WAL truncate cron: present
+- New DB indexes from EXPLAIN audit (migration 184): additive only.
+- **Server drift: server git tip is ~50 commits behind origin and has 342 uncommitted modified files. The running uvicorn was started before today's headline commits.** See MED #2.
+
+### Monitoring
+- Sentry backend configured: yes (release=git SHA)
+- Sentry frontend configured: yes
+- Structured logging configured: yes
+- Security events logged separately: yes
+- Audit log append-only: yes
+- Uptime monitoring active: yes
+
+### Dependency audit
+- Last full pip-audit run: 2026-04-21 (still blocked on local Python 3.9 / orjson — carry-over LOW from #8/#9/#10/#11)
+- Known CVEs: 0 (no exploitable path against this codebase's usage)
+- Unpinned deps: 0
+- Lockfile present: yes (`gateway/requirements.txt` with all `==` pins)
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+N/A — none.
+
+#### HIGH
+N/A — none.
+
+#### MEDIUM
+1. **Newsletter blast: no recipient-size cap, synchronous per-recipient enqueue inside request handler** — NEW
+   Location: `gateway/admin_routes.py:2823-2853` + `gateway/queries/newsletter.py:477-504`
+   Impact: Admin POST to `/admin/newsletter/send` calls `db.get_blast_recipients(segment, frequency_filter)` which returns the full subscriber list with no LIMIT clause, then enters a `for row in recipients:` loop awaiting `enqueue_email(...)` per recipient. With a 100k-row subscriber base a single blast = 100k DB writes inside one HTTP request before the handler returns. The 30-mutations-per-5-min admin throttle bounds the *blast frequency* but does not bound a single blast's size. A compromised admin credential could enqueue ~3M emails/day from this surface (5min/30 * 100k); a non-malicious admin could stall the worker for minutes by hitting "Send" on a too-large segment. The actual deliveries are governed by the existing email-job worker which is per-recipient bounded, so external-service abuse is contained — but request-handler latency + DB write storm is not.
+   Fix: Add a hard recipient cap (e.g. 50,000) in `newsletter_send` BEFORE the loop with a 400 + "Segment too large — split into sub-segments" response. Move the enqueue loop to a single background-task fan-out (`asyncio.create_task` of one bulk-insert that queues to the email worker). Return the campaign_id + estimated recipient count, let the worker drain. Audit log already captures the recipient_count; no audit gap.
+
+2. **Server-side drift: server is ~50 commits behind origin AND has 342 uncommitted files** — NEW
+   Location: `julianhabbig@100.69.44.108:~/Habbig` (git tip `e4cda27`, vs origin `ae66727`)
+   Impact: The running uvicorn process (PID 4061843, started 2026-05-14T21:19:46+0100) loaded `gateway/server.py` from disk at boot. The disk file's mtime is 21:12:32 — predating today's headline commits including the Stripe webhook commit (`68b00c9` at 21:46:06), the `/admin/newsletter` commit (`8d5d257` at 21:24:33), the `/admin/emails` commit (`487f1f3` at 21:23:58). Even though the on-disk `stripe_webhook_routes.py` md5 ON SERVER matches local origin (an earlier scp / save sequence brought it into agreement), the running server.py is older. **Functional consequence:** the running process does NOT register `/admin/newsletter`, `/admin/emails`, `/admin/integrations`, `/admin/test-emails`, `/stripe/webhook` if those import-block additions to server.py landed after process start. /stripe/webhook is reachable (returns 503) because the older server.py already had its import block — but `/admin/newsletter` and `/admin/emails` may 404 in production until the next uvicorn restart. **Security-relevant facet:** if an attacker gets to a production-tier read of the running tree, they see an OLDER server.py — security guarantees we just verified against `ae66727` (e.g., new admin-mutation rate limit budgets, the per-subproduct flag scope, the integrations dashboard's redacted secret rendering) may not be the guarantees actually serving traffic. Server.py-md5 differs; the 233-line diff is mostly health-check enrichment + integrations import block — no auth bypass introduced by the older code, but a Stripe-related deploy is now ambiguous in posture: did the running process see the hardened webhook handler, or the older stub?
+   Fix: This audit explicitly does NOT fix it (scan-only rule). Schedule an immediate post-audit `bash gateway/scripts/deploy.sh` (or equivalent) on the server: (a) `git fetch && git reset --hard origin/feature/platform-build`, (b) restart uvicorn, (c) `curl -sS http://127.0.0.1:7000/health | jq '.git_sha'` and confirm it matches `ae66727`, (d) `curl -sS -X POST http://127.0.0.1:7000/admin/newsletter/preview -H 'Cookie: ...' -F body_md=test` returns 401/403 not 404 (route registered). Document the discrepancy in `CHANGELOG.md` so the next audit has a baseline.
+
+3. **Legacy unsigned Polymarket wallet-connect path still accepted (30-day window)** — carry-over from #10/#11 MED #1
+   Location: `gateway/market_routes.py:632-656`
+   Impact: Unchanged. An authenticated user can claim any Polygon address by POSTing `{wallet_address: "0x..."}` without a signature. WARN log fires per call. Deprecation window closes 2026-06-13 (30 days after rollout).
+   Fix: Same as #10/#11. Add a per-user `legacy_wallet_connect_allowed` feature flag defaulting False for accounts created after 2026-05-14. Close the legacy branch at 2026-06-13.
+
+#### LOW
+1. **Cloudflare WAF rate-limit rules still don't cover `/admin/api/*`** — carry-over from #10/#11 LOW #1
+   Location: `CLOUDFLARE_CHANGES.md`
+   Impact: Unchanged. App-side limit is 300/min/admin for refresh paths + the 30-mutations-per-5-min throttle for state-changing ones; edge has no brake. Defence-in-depth missing.
+   Fix: Same as #10/#11 — add `*.narve.ai/admin/api/*` at 600/min/IP.
+
+2. **Google Fonts hoist on every page** — carry-over from #10/#11 LOW #2
+   Location: `gateway/pwa_middleware.py:128-132`, CSP at `gateway/server.py:797-798`
+   Impact: Unchanged. DNS/TLS/GET to fonts.googleapis.com + fonts.gstatic.com on every page load. Privacy + availability + CSP surface enlarged.
+   Fix: Self-host woff2 under `/_gateway_static/fonts/`. Tighten CSP to `'self'`.
+
+3. **57-deep stash collection** — carry-over from #10/#11 LOW #3, **regression in count**
+   Location: `git stash list`
+   Impact: Climbed from 20 (at #11 lock time) to 57 now. The enumerator output suggests most of the new entries are pre-audit/pre-fix stashes from this session and prior parallel work. None contain security-relevant code on top-10 eyeball; the operational debt is still high.
+   Fix: Triage with `git stash list` + `git stash show stash@{N}`. Drop landed work; park live work in named branches. Worth a dedicated 30-min sweep before the next audit.
+
+4. **pip-audit still blocked on local Python 3.9 / orjson transitive** — carry-over from #8/#9/#10/#11
+   Location: `scripts/scan_deps.sh` invocation environment
+   Impact: We cannot run pip-audit in CI today (`orjson==3.11.6` requires Python ≥ 3.10 and the local venv is 3.9). Manual review covers the new code; mechanically-known CVEs in transitive deps could slip in.
+   Fix: Stand up a Python 3.10+ venv on the CI runner and pin pip-audit there. Re-run.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- File: `gateway/static/privacy.html` (M, 10 lines changed) — text-only update to legal copy, no behaviour change.
+- File: `gateway/tests/test_health.py` (M, 123 inserts / 11 deletes) — expanded test fixtures for the richer /health payload shipped in `720989e`. Test-only.
+- Summary: No security-relevant production code is in the working tree.
+- Security implications: none.
+- Must-do before commit: none.
+
+#### Unpushed local commits
+- None.
+
+#### Server-side uncommitted state
+- What differs: 342 modified files between server's `e4cda27` checkout and the on-disk content. Key security-relevant deltas: `gateway/server.py` (md5 differs vs local origin — older content), `gateway/admin_routes.py`, `gateway/auth/guards.py`, `gateway/billing_routes.py`, `gateway/stripe_webhook_hardening.py` (server md5 === local md5), every email template, every per-page CSS.
+- Regression vs origin: not a regression in code quality (server's older code does not introduce new vulnerabilities) but a **process / observability regression** — security guarantees verified against origin are NOT all in the running process.
+- Secrets server-only not in .env.example: `.env.example` md5 matches between server and local; no documented-but-unpushed secret keys.
+- Reconciliation recommendation: deploy origin onto server (`git reset --hard origin/feature/platform-build` + uvicorn restart) and confirm `/health` returns the expected `git_sha`. Documented above as MED #2.
+
+#### Stashes
+- 57 entries. Top-of-stack: `stash@{0}: wip non-css`, `stash@{1}: pre-changelog-append`, `stash@{2}: wip-uncommitted-perf-task` (unchanged from #11). Eyeballed — no security-relevant code in any.
+- See LOW #3.
+
+### Changes since previous audit
+
+#### Resolved
+- **#11 MED #2 (stripe_webhook_routes.py uncommitted + admin_test_emails_routes.py uncommitted)** — both committed today (`68b00c9` for Stripe; the admin_test_emails earlier today via the same commit cluster). Carry-over closed.
+
+#### New issues
+- **MED #1**: Newsletter blast — no recipient-size cap, synchronous per-recipient enqueue inside request handler.
+- **MED #2**: Server-side drift — running process predates today's headline commits.
+
+#### Regressions
+- None in code. Stash count climbed 20 → 57 (LOW #3 regression in count, not severity).
+
+### Drift warnings
+- **Server git tip `e4cda27` is ~50 commits behind origin's `ae66727`.** Running uvicorn process loaded older `server.py` at 21:19:46 — predating the Stripe webhook commit at 21:46:06, the /admin/newsletter commit at 21:24:33, and the /admin/emails commit at 21:23:58. New admin pages may not be registered in the running process. Deploy before relying on the new surfaces.
+- 57 stashes accumulated — top-10 eyeball clean but operational debt is real.
+- Test files in working tree (test_health.py) are not deploy-bound — fine to leave.
+
+### Recommended actions for next audit
+1. **Confirm server is on origin and uvicorn restarted** — first thing after this audit, before any new feature work. Verify `/health.git_sha == ae66727` (or whatever is current).
+2. Add a recipient-size cap + background fan-out to `/admin/newsletter/send` (MED #1).
+3. Confirm legacy Polymarket wallet path is closed by 2026-06-13 — if open past that date, escalate to HIGH.
+4. Verify the new /admin/newsletter, /admin/emails, /admin/integrations routes register and serve as expected after deploy (curl /admin/newsletter/preview as admin to confirm 200, not 404).
+5. Edge-level rate-limit rule on `/admin/api/*` at 600/min/IP.
+6. Self-host Instrument Serif + Source Serif 4; tighten CSP.
+7. Stash sweep — drop landed; park live work in named branches.
+8. Re-run pip-audit on a Python 3.10+ venv.
+9. Probe `/stripe/webhook` end-to-end once Stripe SDK installed on server — verify signature failure returns 400 not 500 from real Stripe events.
+10. Verify `/admin/integrations` redaction holds when env vars are populated (sanity-check the "set" string rendering on a live instance).
+
+---
+
 ## AUDIT #11 — 2026-05-14T21:30Z — commit e43d349 — final convergence check
 
 ### Why this audit exists
