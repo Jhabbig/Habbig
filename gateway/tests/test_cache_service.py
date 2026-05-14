@@ -28,7 +28,18 @@ from cache.service import (  # noqa: E402
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # Python 3.9's default-loop policy returns a closed loop after some
+    # other test in the run called asyncio.run() (which closes its loop
+    # on exit). Spin up a fresh loop per call so the suite is robust to
+    # whatever order pytest collected things in.
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 
 class TestMemoryBackend(unittest.TestCase):

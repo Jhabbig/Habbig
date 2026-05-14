@@ -108,7 +108,12 @@ class CacheService:
     def __init__(self) -> None:
         self._redis: Any = None
         self._memory = _MemoryBackend()
-        self._connect_lock = asyncio.Lock()
+        # asyncio.Lock() in Python 3.9 binds to the current event loop at
+        # construction time, which fails outside a running loop (e.g. at
+        # CacheService() construction during a sync test that has already
+        # called asyncio.run() and closed its loop). Build it lazily on
+        # first use, when we're guaranteed to be inside an event loop.
+        self._connect_lock: Optional[asyncio.Lock] = None
         self._connect_attempted = False
         self._redis_url = os.environ.get("REDIS_URL", "").strip()
         self._hits = 0
@@ -127,6 +132,8 @@ class CacheService:
         """Connect to Redis on first use. Idempotent; failure is sticky."""
         if self._connect_attempted or not self._redis_url:
             return
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
         async with self._connect_lock:
             if self._connect_attempted:
                 return
