@@ -7591,8 +7591,8 @@ def _switcher_snippet(dashboard_key: str, user_id: int, apex: str = "") -> str:
     })
     return (
         f'<script>window.__hbSwitcher={cfg_json};</script>'
-        f'<script src="/_gateway_static/switcher.js"></script>'
-        f'<script src="/_gateway_static/trade.js"></script>'
+        f'<script src="/_gateway_static/switcher.js" defer></script>'
+        f'<script src="/_gateway_static/trade.js" defer></script>'
     )
 
 
