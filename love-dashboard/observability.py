@@ -15,10 +15,44 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 
 log = logging.getLogger("love.observability")
+
+
+@lru_cache(maxsize=1)
+def detect_release() -> str:
+    """Resolve the Sentry release string for this process.
+
+    Order of precedence:
+      1. ``NARVE_RELEASE`` env var (set explicitly by the deploy pipeline).
+      2. ``git rev-parse --short HEAD`` against the repo root — works
+         automatically on any host where the working tree is a git checkout.
+      3. ``"unknown"`` as a last-resort fallback so init never crashes.
+    """
+    env = os.getenv("NARVE_RELEASE", "").strip()
+    if env:
+        return env
+    try:
+        # __file__ lives at <repo>/love-dashboard/observability.py
+        repo_root = Path(__file__).resolve().parents[1]
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(repo_root),
+            text=True,
+            timeout=2,
+            stderr=subprocess.DEVNULL,
+        )
+        sha = out.strip()
+        if sha:
+            return sha
+    except Exception:
+        pass
+    return "unknown"
 
 
 # Headers we never want Sentry to see. x-gateway-secret authenticates the
@@ -119,7 +153,7 @@ def init_sentry(platform: str = "love") -> bool:
             traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
             profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.1")),
             environment=os.getenv("NARVE_ENV", os.getenv("ENVIRONMENT", "production")),
-            release=os.getenv("NARVE_RELEASE", os.getenv("APP_VERSION", "unknown")),
+            release=detect_release(),
             before_send=scrub_sensitive_data,
             send_default_pii=False,
         )

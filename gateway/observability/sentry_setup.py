@@ -84,13 +84,17 @@ def init_sentry(platform: str = "backend") -> bool:
     except ImportError:
         pass
 
+    # Local import to avoid a circular dependency:
+    # observability/__init__.py imports from this module.
+    from observability import detect_release
+
     sentry_sdk.init(
         dsn=dsn,
         integrations=integrations,
         traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
         profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.1")),
         environment=os.getenv("ENVIRONMENT", "production"),
-        release=os.getenv("APP_VERSION", "1.0.0"),
+        release=detect_release(),
         before_send=scrub_sensitive_data,
         send_default_pii=False,
     )
