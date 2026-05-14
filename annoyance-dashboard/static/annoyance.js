@@ -401,13 +401,138 @@ async function refresh() {
   renderEntities(entities);
   renderSources(sources);
 
+  // Repoll happiness data if that view is currently open.
+  const happinessView = document.getElementById("happiness-view");
+  if (happinessView && !happinessView.hasAttribute("hidden")) {
+    refreshHappiness();
+  }
+
   document.getElementById("last-update").textContent =
     "updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+
+
+// ── Happiness view (decision #7 unlock, 2026-05-14) ───────────────
+//
+// Reuses spikeCardHTML for spike rendering, adds the `.positive` class
+// for the thicker-border CSS treatment. Monochrome — no colour change.
+
+function happinessSpikeCardHTML(s) {
+  const inner = spikeCardHTML(s);
+  return inner.replace('class="spike-card"', 'class="spike-card positive"');
+}
+
+function renderHappinessSpikes(payload) {
+  const list = document.getElementById("happiness-spikes-list");
+  if (!list) return;
+  const spikes = (payload && payload.spikes) || [];
+  if (!spikes.length) {
+    list.innerHTML = '<div class="empty-small">no happiness spikes detected yet</div>';
+    return;
+  }
+  list.innerHTML = spikes.map(happinessSpikeCardHTML).join("");
+  list.querySelectorAll(".blur-wrap[data-sensitive='true']").forEach((el) => {
+    el.addEventListener("click", onBlurReveal);
+  });
+  list.querySelectorAll(".flag-btn").forEach((el) => {
+    el.addEventListener("click", onFlagClick);
+  });
+  list.querySelectorAll(".market-toggle").forEach((el) => {
+    el.addEventListener("click", onMarketToggle);
+  });
+
+  const valueEl = document.getElementById("happiness-value");
+  const metaEl = document.getElementById("happiness-meta");
+  if (valueEl) {
+    const latest = spikes[0];
+    if (latest && latest.avg_annoyance != null) {
+      valueEl.textContent = Math.round(latest.avg_annoyance);
+      if (metaEl) metaEl.textContent = `${spikes.length} positive spikes in view`;
+    } else {
+      valueEl.textContent = spikes.length;
+      if (metaEl) metaEl.textContent = "positive-polarity spikes (last 24h)";
+    }
+  }
+}
+
+function renderHappinessEntities(payload) {
+  const list = document.getElementById("happiness-entities-list");
+  if (!list) return;
+  const entities = (payload && payload.entities) || [];
+  if (!entities.length) {
+    list.innerHTML = '<div class="empty-small">no positive entity data yet</div>';
+    return;
+  }
+  list.innerHTML = entities.map((e) => {
+    const link = `/entity/${encodeURIComponent(e.entity)}`;
+    return `
+      <a class="entity-row positive" href="${link}">
+        <div class="entity-name">${escapeHtml(e.entity)}</div>
+        <div class="entity-count">${e.positive_count} mentions</div>
+        <div class="entity-score">${Math.round(e.avg_score)}</div>
+      </a>
+    `;
+  }).join("");
+}
+
+async function refreshHappiness() {
+  const [spikes, entities] = await Promise.all([
+    fetchJSON("/api/happiness/spikes?limit=10"),
+    fetchJSON("/api/happiness/entities?limit=10"),
+  ]);
+  renderHappinessSpikes(spikes);
+  renderHappinessEntities(entities);
+}
+
+// ── View toggle (annoyance ↔ happiness) ───────────────────────────
+
+function activateView(view) {
+  const annoyance = document.getElementById("annoyance-view");
+  const happiness = document.getElementById("happiness-view");
+  const tabA = document.getElementById("tab-annoyance");
+  const tabH = document.getElementById("tab-happiness");
+  if (!annoyance || !happiness || !tabA || !tabH) return;
+
+  if (view === "happiness") {
+    annoyance.setAttribute("hidden", "");
+    annoyance.classList.remove("view-active");
+    happiness.removeAttribute("hidden");
+    happiness.classList.add("view-active");
+    tabA.classList.remove("tab-active");
+    tabH.classList.add("tab-active");
+    refreshHappiness();
+  } else {
+    happiness.setAttribute("hidden", "");
+    happiness.classList.remove("view-active");
+    annoyance.removeAttribute("hidden");
+    annoyance.classList.add("view-active");
+    tabH.classList.remove("tab-active");
+    tabA.classList.add("tab-active");
+  }
+}
+
+function wireTabHandlers() {
+  document.querySelectorAll(".tab[data-view]").forEach((tab) => {
+    tab.addEventListener("click", (e) => {
+      e.preventDefault();
+      const v = tab.dataset.view;
+      if (!v) return;
+      activateView(v);
+      try { history.replaceState(null, "", `#${v}`); } catch { /* ignore */ }
+    });
+  });
 }
 
 (async function init() {
   // Auth first so spike cards know whether to show the flag button.
   await refreshAuth();
+  wireTabHandlers();
+  const initialView = (location.hash || "").replace(/^#/, "") === "happiness"
+    ? "happiness" : "annoyance";
+  activateView(initialView);
   await refresh();
+  // Happiness data is fetched lazily inside activateView('happiness') and on
+  // every refresh tick if the happiness view is currently open.
   setInterval(refresh, REFRESH_MS);
 })();

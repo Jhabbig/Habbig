@@ -42,6 +42,8 @@ import db
 import aggregator
 import rate_limiter
 import spike_detector
+import happiness  # decision #7 unlock (2026-05-14): positive-polarity sibling
+import migrations  # layered post-init schema (polarity column on spikes)
 from classifier import classify_pending_posts
 from sources.reddit import RedditSource
 from sources.bluesky import BlueskySource
@@ -200,6 +202,25 @@ async def spike_detector_loop() -> None:
         await asyncio.sleep(config.SPIKE_DETECTOR_LOOP_SECONDS)
 
 
+async def happiness_detector_loop() -> None:
+    """Decision #7 unlock: positive-polarity spike detector. Same cadence as
+    spike_detector_loop but offset further so logs stay readable.
+    Fail-soft — one bad tick logs and continues.
+    """
+    offset = config.SPIKE_DETECTOR_OFFSET_SECONDS + 15
+    interval = config.SPIKE_DETECTOR_LOOP_SECONDS
+    log.info("happiness_detector_loop: starting, interval=%ds (offset=%ds)", interval, offset)
+    await asyncio.sleep(offset)
+    while True:
+        try:
+            fired = await happiness.detect_and_record()
+            if fired:
+                log.info("happiness_detector: fired %d positive spikes", len(fired))
+        except Exception:
+            log.exception("happiness_detector_loop: unhandled error")
+        await asyncio.sleep(interval)
+
+
 # ── Lifespan ─────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -207,6 +228,9 @@ async def lifespan(app: FastAPI):
     auth.assert_bound_to_localhost(config.HOST)
     log.info("annoyance dashboard: starting on %s:%d", config.HOST, config.PORT)
     db.init_db()
+    # Decision #7 unlock: layered post-init migrations (polarity column on
+    # spikes + supporting index). Idempotent; must run before happiness loop.
+    migrations.run_all()
     log.info("db initialized at %s", config.DB_PATH)
 
     # Kill-switches (config.{REDDIT,BLUESKY,CLASSIFIER}_LOOP_ENABLED) let
@@ -227,6 +251,12 @@ async def lifespan(app: FastAPI):
         log.warning("classifier_loop disabled via CLASSIFIER_ENABLED=false")
     tasks.append(asyncio.create_task(aggregator_loop(), name="aggregator_loop"))
     tasks.append(asyncio.create_task(spike_detector_loop(), name="spike_detector_loop"))
+    # Decision #7 unlock — positive-polarity sibling. Gated on the same
+    # CLASSIFIER_ENABLED kill-switch because both depend on sentiment labels.
+    if config.CLASSIFIER_ENABLED:
+        tasks.append(asyncio.create_task(happiness_detector_loop(), name="happiness_detector_loop"))
+    else:
+        log.warning("happiness_detector_loop disabled (CLASSIFIER_ENABLED=false)")
     tasks.append(asyncio.create_task(retention_loop(), name="retention_loop"))
     try:
         yield
@@ -316,6 +346,38 @@ async def api_spikes(request: Request, limit: int = 20) -> JSONResponse:
         log.exception("/api/spikes failed")
         spikes = []
     return JSONResponse({"spikes": spikes})
+
+
+@app.get("/api/happiness/spikes")
+async def api_happiness_spikes(request: Request, limit: int = 20) -> JSONResponse:
+    """Positive-polarity spikes. Mirrors /api/spikes shape; same paywall +
+    rate-limit guard. Decision #7 (2026-05-14 unlock).
+    """
+    _guard_api(request)
+    limit = max(1, min(limit, 200))
+    try:
+        spikes = happiness.recent_happiness_spikes(limit=limit)
+    except Exception:
+        log.exception("/api/happiness/spikes failed")
+        spikes = []
+    return JSONResponse({"spikes": spikes, "polarity": "positive"})
+
+
+@app.get("/api/happiness/entities")
+async def api_happiness_entities(request: Request, limit: int = 20, days: int = 30) -> JSONResponse:
+    """Entities with >= 5 positive-sentiment mentions in the last ``days``.
+    min_mentions is fixed at 5 (not user-tunable) so the endpoint can't
+    enumerate entities below the spike-detection threshold.
+    """
+    _guard_api(request)
+    limit = max(1, min(limit, 100))
+    days = max(1, min(days, 365))
+    try:
+        entities = happiness.top_happiness_entities(limit=limit, days=days, min_mentions=5)
+    except Exception:
+        log.exception("/api/happiness/entities failed")
+        entities = []
+    return JSONResponse({"entities": entities, "polarity": "positive", "days": days})
 
 
 @app.get("/api/entities/top")
@@ -442,6 +504,10 @@ async def admin_trigger(request: Request, loop: str) -> JSONResponse:
     if loop == "spike_detector":
         fired = await spike_detector.detect_and_record()
         return JSONResponse({"loop": "spike_detector", "fired": fired})
+
+    if loop == "happiness":
+        fired = await happiness.detect_and_record()
+        return JSONResponse({"loop": "happiness", "fired": fired})
 
     raise HTTPException(status_code=400, detail="unknown loop")
 

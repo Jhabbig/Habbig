@@ -184,12 +184,14 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("spikes", "sample_excerpts_json", "ALTER TABLE spikes ADD COLUMN sample_excerpts_json TEXT"),
     ("spikes", "confidence_score", "ALTER TABLE spikes ADD COLUMN confidence_score REAL"),
     ("spikes", "sources_json", "ALTER TABLE spikes ADD COLUMN sources_json TEXT"),
+    ("spikes", "polarity", "ALTER TABLE spikes ADD COLUMN polarity TEXT NOT NULL DEFAULT 'negative'"),
 ]
 
 # Indexes that reference columns added by _COLUMN_MIGRATIONS. Run AFTER
 # those migrations so the columns exist.
 _POST_MIGRATION_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_classifications_sensitive ON classifications(is_sensitive)",
+    "CREATE INDEX IF NOT EXISTS idx_spikes_polarity ON spikes(polarity, detected_at)",
 ]
 
 
@@ -446,43 +448,96 @@ def insert_spike(
     sample_excerpts: Optional[list[str]] = None,
     confidence_score: Optional[float] = None,
     sources_breakdown: Optional[list[dict]] = None,
+    polarity: str = "negative",
 ) -> Optional[int]:
-    """Insert a spike, dedup by (entity, detected_hour). Returns the new spike id
-    if newly inserted, or None on dedup hit. The `sample_excerpts` list is cached
-    at insertion so spike cards stay readable after the 30-day raw-content TTL
-    scrubs the underlying posts.
+    """Insert a spike. ``polarity`` is one of 'negative' / 'positive' / 'neutral'.
+    Pre-existing rows default to 'negative' (annoyance view). Happiness
+    detector passes 'positive'. Falls back to legacy INSERT on pre-migration
+    schemas.
     """
+    if polarity not in ("negative", "positive", "neutral"):
+        polarity = "negative"
     with cursor() as cur:
+        has_polarity = any(
+            r[1] == "polarity"
+            for r in cur.execute("PRAGMA table_info(spikes)").fetchall()
+        )
         try:
-            cur.execute(
-                """INSERT INTO spikes
-                   (entity, detected_hour, detected_at, z_score, multiple_of_baseline,
-                    avg_annoyance, count, sample_post_ids_json, summary,
-                    sample_excerpts_json, confidence_score, sources_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (entity, detected_hour, now_iso(), z_score, multiple_of_baseline,
-                 avg_annoyance, count, json.dumps(sample_post_ids), summary,
-                 json.dumps(sample_excerpts or []),
-                 confidence_score,
-                 json.dumps(sources_breakdown or [])),
-            )
+            if has_polarity:
+                cur.execute(
+                    """INSERT INTO spikes
+                       (entity, detected_hour, detected_at, z_score, multiple_of_baseline,
+                        avg_annoyance, count, sample_post_ids_json, summary,
+                        sample_excerpts_json, confidence_score, sources_json, polarity)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (entity, detected_hour, now_iso(), z_score, multiple_of_baseline,
+                     avg_annoyance, count, json.dumps(sample_post_ids), summary,
+                     json.dumps(sample_excerpts or []),
+                     confidence_score,
+                     json.dumps(sources_breakdown or []),
+                     polarity),
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO spikes
+                       (entity, detected_hour, detected_at, z_score, multiple_of_baseline,
+                        avg_annoyance, count, sample_post_ids_json, summary,
+                        sample_excerpts_json, confidence_score, sources_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (entity, detected_hour, now_iso(), z_score, multiple_of_baseline,
+                     avg_annoyance, count, json.dumps(sample_post_ids), summary,
+                     json.dumps(sample_excerpts or []),
+                     confidence_score,
+                     json.dumps(sources_breakdown or [])),
+                )
             return cur.lastrowid
         except sqlite3.IntegrityError:
             return None
 
 
-def get_recent_spikes(limit: int = 20) -> list[dict]:
+def get_recent_spikes(limit: int = 20, *, polarity: Optional[str] = None) -> list[dict]:
+    """Most recent spikes. ``polarity`` filter is optional; None returns all
+    (byte-for-byte unchanged from before the decision-#7 unlock). Falls back
+    to no-filter on pre-migration schemas."""
     with cursor() as cur:
-        rows = cur.execute(
-            """SELECT id, entity, detected_hour, detected_at, z_score,
-                      multiple_of_baseline, avg_annoyance, count,
-                      sample_post_ids_json, sample_excerpts_json,
-                      summary, confidence_score, sources_json
-               FROM spikes
-               ORDER BY detected_at DESC
-               LIMIT ?""",
-            (limit,),
-        ).fetchall()
+        has_polarity = any(
+            r[1] == "polarity"
+            for r in cur.execute("PRAGMA table_info(spikes)").fetchall()
+        )
+        if polarity and has_polarity:
+            rows = cur.execute(
+                """SELECT id, entity, detected_hour, detected_at, z_score,
+                          multiple_of_baseline, avg_annoyance, count,
+                          sample_post_ids_json, sample_excerpts_json,
+                          summary, confidence_score, sources_json, polarity
+                   FROM spikes
+                   WHERE polarity = ?
+                   ORDER BY detected_at DESC
+                   LIMIT ?""",
+                (polarity, limit),
+            ).fetchall()
+        elif has_polarity:
+            rows = cur.execute(
+                """SELECT id, entity, detected_hour, detected_at, z_score,
+                          multiple_of_baseline, avg_annoyance, count,
+                          sample_post_ids_json, sample_excerpts_json,
+                          summary, confidence_score, sources_json, polarity
+                   FROM spikes
+                   ORDER BY detected_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = cur.execute(
+                """SELECT id, entity, detected_hour, detected_at, z_score,
+                          multiple_of_baseline, avg_annoyance, count,
+                          sample_post_ids_json, sample_excerpts_json,
+                          summary, confidence_score, sources_json
+                   FROM spikes
+                   ORDER BY detected_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
     out = []
     for r in rows:
         d = dict(r)
@@ -832,3 +887,68 @@ def _hour_bump(hour_iso: str, hours: int) -> str:
 
 def current_hour_iso() -> str:
     return bucket_hour(now_iso())
+
+
+
+def get_top_positive_entities(min_mentions: int = 5, days: int = 30, limit: int = 20) -> list[dict]:
+    """Entities with the most positive-sentiment classifications in the last days.
+
+    Positive polarity is derived from ``classifications.sentiment = 'positive'``
+    — the classifier has been emitting this label since day one.
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
+    with cursor() as cur:
+        rows = cur.execute(
+            """SELECT c.entities_json, c.annoyance_score
+               FROM classifications c
+               JOIN posts p ON p.id = c.post_id
+               WHERE c.sentiment = 'positive'
+                 AND c.classified_at >= ?""",
+            (cutoff,),
+        ).fetchall()
+    from collections import defaultdict
+    counts: dict[str, int] = defaultdict(int)
+    score_sum: dict[str, float] = defaultdict(float)
+    for r in rows:
+        try:
+            entities = json.loads(r["entities_json"] or "[]")
+        except Exception:
+            continue
+        score = float(r["annoyance_score"] or 0.0)
+        seen_in_row: set[str] = set()
+        for e in entities:
+            if not isinstance(e, dict):
+                continue
+            name = (e.get("name") or "").strip()
+            esent = e.get("sentiment") or "positive"
+            if esent in ("angry", "frustrated"):
+                continue
+            if not name or name in seen_in_row:
+                continue
+            seen_in_row.add(name)
+            counts[name] += 1
+            score_sum[name] += score
+    out = [
+        {"entity": name, "positive_count": cnt,
+         "avg_score": round(score_sum[name] / cnt, 2) if cnt else 0.0}
+        for name, cnt in counts.items() if cnt >= min_mentions
+    ]
+    out.sort(key=lambda r: r["positive_count"], reverse=True)
+    return out[:limit]
+
+
+def get_positive_classifications_in_hour(hour_iso: str) -> list[dict]:
+    """Subset of get_classifications_in_hour filtered to sentiment='positive'."""
+    next_hour = _hour_bump(hour_iso, 1)
+    with cursor() as cur:
+        rows = cur.execute(
+            """SELECT c.post_id, c.annoyance_score, c.sentiment, c.primary_topic,
+                      c.entities_json, p.posted_at, p.source, p.source_channel, p.content
+               FROM classifications c
+               JOIN posts p ON p.id = c.post_id
+               WHERE p.posted_at >= ? AND p.posted_at < ?
+                 AND c.sentiment = 'positive'""",
+            (hour_iso, next_hour),
+        ).fetchall()
+    return [dict(r) for r in rows]

@@ -608,3 +608,53 @@ a.entity-row {
 a.entity-row:hover {
   border-color: var(--text-dim);
 }
+
+
+/* ── Decision #7 unlock: Happiness view & polarity styling ───────────
+   The happiness view is a sibling section toggled via the `hidden`
+   attribute. Stays monochrome — positive polarity is signaled by border
+   WEIGHT (2px instead of 1px) plus a subtle top-edge brightening, never
+   by colour. Switching to green would break narve's monochrome rule.
+*/
+
+.view[hidden] { display: none; }
+
+.view-active { display: block; }
+
+/* Positive spike card — same shape as the annoyance card with a thicker
+   outline. 2px border at the same neutral colour reads as "different
+   polarity" without introducing chroma. */
+.spike-card.positive {
+  border-width: 2px;
+  border-color: var(--text-dim);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+.spike-card.positive .spike-metric {
+  color: var(--text);
+}
+
+/* Entity row in happiness panel — thicker bottom border so the list
+   reads as the "positive" twin of the annoyance entities list. */
+a.entity-row.positive {
+  border-bottom-width: 2px;
+}
+
+/* Happiness hero card mirrors the annoyance index-card layout but the
+   right column is descriptive copy rather than a chart. */
+.happiness-hero {
+  padding-bottom: 28px;
+}
+
+.happiness-blurb {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  margin: 8px 0 0;
+}
+
+.happiness-blurb.muted {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  margin-top: 12px;
+}

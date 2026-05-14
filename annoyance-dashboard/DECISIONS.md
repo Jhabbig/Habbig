@@ -10,7 +10,7 @@ All 17 decisions plus sub-decisions are final. Do not re-litigate.
 4. **Access:** hard paywall
 5. **Auth:** crypto-dashboard SSO pattern (server.py:81-127)
 6. **Notifications:** email only
-7. **Positioning:** one product, two views (happiness/annoyance toggle)
+7. **Positioning:** one product, two views (happiness/annoyance toggle). Live as of 2026-05-14 — ternary polarity (positive/negative/neutral); see sub-decision E.
 8. **All entity types equal**
 9. **Spike target:** 5-10/day
 10. **Confidence UI:** blended z + backtest, 0-100 bar
@@ -32,6 +32,13 @@ spikes.sample_excerpts_json cached at insertion (first 200 chars x 3 sample post
 
 ### C: Market Routing Scaffold
 entity_markets.json scaffolded from config.ALIASES with placeholder search-URL; real curation post-merge.
+
+### E: Happiness View Unlock (2026-05-14)
+- The classifier already emits ``sentiment`` ∈ {angry, frustrated, neutral, positive}. Ternary polarity derived by mapping {angry, frustrated} → negative, neutral → neutral, positive → positive. **No classifier rewrite.** No incremental Claude spend; the data is already present in ``classifications.sentiment``.
+- Schema: a single ``polarity`` column on the ``spikes`` table, default ``'negative'``. Backward-compat — every pre-existing spike row stays in the annoyance view. Migration: ``annoyance-dashboard/migrations/_001_add_polarity.py`` (idempotent ALTER TABLE + index). Same change mirrored in ``db._COLUMN_MIGRATIONS``.
+- Detector: ``happiness.py`` is a positive-polarity sibling of ``spike_detector.py``. Same z + multiple + warmup gates, walks ``classifications.sentiment = 'positive'`` rows.
+- Endpoints: ``GET /api/happiness/spikes`` (filters ``polarity='positive'``) and ``GET /api/happiness/entities`` (entities with ≥5 positive mentions in last 30d). Same paywall + rate-limit guard.
+- UI: ``static/index.html`` ships the second view section ``#happiness-view``; tab toggle is SPA-style (URL hash ``#annoyance`` / ``#happiness``). Stays monochrome — polarity signaled by border weight (2px on ``.spike-card.positive``), never colour.
 
 ## Additional Clarifications
 

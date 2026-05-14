@@ -26,13 +26,12 @@
     <span class="dashname">Index</span>
   </div>
 
-  <!-- Decision #7: one product, two views. Annoyance is live; happiness
-       is the stub that lights up once the second half ships. -->
+  <!-- Decision #7 (live 2026-05-14): one product, two views — Annoyance
+       (default) and Happiness. SPA-style tabs against #annoyance /
+       #happiness; annoyance.js wires the click handler. -->
   <nav class="tab-strip" aria-label="Index view">
-    <a href="/" class="tab tab-active">Annoyance</a>
-    <span class="tab tab-disabled"
-          title="Coming soon — happiness index under construction"
-          aria-disabled="true">Happiness</span>
+    <a class="tab tab-active" id="tab-annoyance" href="#annoyance" data-view="annoyance">Annoyance</a>
+    <a class="tab" id="tab-happiness" href="#happiness" data-view="happiness">Happiness</a>
   </nav>
 
   <div class="status">
@@ -42,40 +41,94 @@
 </header>
 
 <main>
-  <section class="hero">
-    <div class="index-card">
-      <div class="label">Current annoyance index</div>
-      <div id="index-value" class="big-number">—</div>
-      <div id="index-meta" class="meta">waiting for first aggregation</div>
-    </div>
-    <div class="chart-card">
-      <div class="label">Last 24 hours</div>
-      <canvas id="index-chart"></canvas>
-      <div id="chart-empty" class="empty-placeholder">Collecting data… first index appears within ~10 minutes after Reddit + classifier cycles.</div>
-    </div>
-  </section>
+  <!-- ── Annoyance view (default) ──────────────────────────────────── -->
+  <div id="annoyance-view" class="view view-active">
+    <section class="hero">
+      <div class="index-card">
+        <div class="label">Current annoyance index</div>
+        <div id="index-value" class="big-number">—</div>
+        <div id="index-meta" class="meta">waiting for first aggregation</div>
+      </div>
+      <div class="chart-card">
+        <div class="label">Last 24 hours</div>
+        <canvas id="index-chart"></canvas>
+        <div id="chart-empty" class="empty-placeholder">Collecting data… first index appears within ~10 minutes after Reddit + classifier cycles.</div>
+      </div>
+    </section>
 
-  <section class="grid">
-    <div class="panel">
-      <div class="panel-head">
-        <div class="label">Recent spikes</div>
-        <div class="sub">auto-attributed anomalies</div>
+    <section class="grid">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="label">Recent spikes</div>
+          <div class="sub">auto-attributed anomalies</div>
+        </div>
+        <div id="spikes-list" class="spikes-list">
+          <div class="empty-small">no spikes detected yet</div>
+        </div>
       </div>
-      <div id="spikes-list" class="spikes-list">
-        <div class="empty-small">no spikes detected yet</div>
-      </div>
-    </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <div class="label">Top entities this hour</div>
-        <div class="sub">ranked by volume × anger</div>
+      <div class="panel">
+        <div class="panel-head">
+          <div class="label">Top entities this hour</div>
+          <div class="sub">ranked by volume × anger</div>
+        </div>
+        <div id="entities-list" class="entities-list">
+          <div class="empty-small">no entity data yet</div>
+        </div>
       </div>
-      <div id="entities-list" class="entities-list">
-        <div class="empty-small">no entity data yet</div>
+    </section>
+  </div>
+
+  <!-- ── Happiness view (decision #7 unlock, 2026-05-14) ──────────────
+       Mirrors the annoyance section. Positive-polarity spike cards reuse
+       the same JS renderer with a `positive` class for the thicker-border
+       treatment. Stays monochrome — no green chroma. -->
+  <div id="happiness-view" class="view" hidden>
+    <section class="hero">
+      <div class="index-card happiness-hero">
+        <div class="label">Happiness Map</div>
+        <div id="happiness-value" class="big-number">—</div>
+        <div id="happiness-meta" class="meta">positive-sentiment signal across tracked entities</div>
       </div>
-    </div>
-  </section>
+      <div class="chart-card">
+        <div class="label">What this is</div>
+        <p class="happiness-blurb">
+          The positive-polarity counterpart to the Annoyance Index. Same
+          ingest pipeline, same Claude classifier — sentiment is read as
+          ternary (positive / negative / neutral) and the happiness view
+          surfaces entities trending on the positive axis: celebrations,
+          breakthroughs, milestones, recoveries.
+        </p>
+        <p class="happiness-blurb muted">
+          Border weight on a card indicates polarity: thin = annoyance,
+          thick = happiness. No colour change — readability under monochrome
+          is the rule.
+        </p>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="label">Recent happiness spikes</div>
+          <div class="sub">positive-polarity anomalies</div>
+        </div>
+        <div id="happiness-spikes-list" class="spikes-list">
+          <div class="empty-small">no happiness spikes detected yet</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="label">Top positive entities · 30d</div>
+          <div class="sub">ranked by positive-mention count</div>
+        </div>
+        <div id="happiness-entities-list" class="entities-list">
+          <div class="empty-small">no positive entity data yet</div>
+        </div>
+      </div>
+    </section>
+  </div>
 </main>
 
 <footer class="footer">
