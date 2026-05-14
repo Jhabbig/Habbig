@@ -533,6 +533,12 @@ async def api_account_delete(request: Request):
     user = current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    # AUDIT 2026-05-14 — mirror the 3/hour cap from /account/delete (form
+    # handler in server.py). A compromised session that flipped the
+    # deletion flag could otherwise loop schedule→cancel→schedule to spam
+    # the deletion_confirmation transactional email queue.
+    if server._is_rate_limited(f"account-delete-api:{user['user_id']}", 3, 3600):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     try:
         body = await request.json()
     except Exception:
@@ -583,6 +589,10 @@ async def api_account_delete_cancel(request: Request):
     user = current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    # AUDIT 2026-05-14 — share the deletion-API budget so the cancel/
+    # schedule pair can't loop without tripping a single 3/hour cap.
+    if server._is_rate_limited(f"account-delete-api:{user['user_id']}", 3, 3600):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     now = int(time.time())
     with db.conn() as c:
         c.execute(

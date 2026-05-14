@@ -867,6 +867,14 @@ _CSRF_EXEMPT_POSTS = frozenset({
     # state-change a forgery could exploit (the row already belongs
     # to the user's query_id; we never expose cross-user data).
     "/api/search/click",
+    # Anonymous analytics beacon — POSTed via sendBeacon from landing /
+    # dashboard pages before any session exists, so there is no CSRF
+    # cookie to anchor against. The endpoint is heavily defended in its
+    # own right (per-IP rate-limit, body size cap, event_type regex,
+    # PII scrub on properties — see api_analytics_event) and writes only
+    # to the append-only analytics_events table. A forgery can at worst
+    # log a junk row that the abuse filters already throw away.
+    "/api/analytics/event",
 })
 
 # Prefix-matched POST exemptions for endpoints with dynamic path segments.

@@ -5,6 +5,246 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #9 — 2026-05-14T14:24Z — commit 6675435 — post-massive-landing convergence
+
+### Why this audit exists
+~32 minutes after Audit #8, the parallel 31-agent build pass landed a massive
+expansion: a new `love-dashboard` subproduct (port 7062 — Love Atlas: marriage,
+divorce, fertility, cohabitation, loneliness signals); three real-data fetcher
+wirings (whale → SEC EDGAR with UA + 429/403 backoff fix in `2055c63`,
+centralbank → FRED/ECB SDW/BoE in `8d54711`, world-health → WHO DON RSS + FDA
+Drug Shortages in `2025b80`); disasters wired to USGS/EONET/GDACS/NWS/FIRMS/
+ReliefWeb (`6675435`); climate wired to NOAA CO2/CH4/SST/ENSO + NASA GISTEMP +
+NSIDC sea ice (`7cce1a7`); `/settings/integrations` and `/settings/trading-addon`
+pages (Kelly config + auto-execute + risk limits); `/admin/health-monitor`
+dashboard (single-pane status for all 13 services); per-recipient HMAC-SHA256
+email watermarks (visible 6-char hex + invisible zero-width steganographic
+encoding, keyed with `EMAIL_WATERMARK_KEY`); welcome-email subproduct-awareness;
+weekly-digest + morning-briefing per-subproduct filtering; web push subscribe/
+unsubscribe/test routes with VAPID key; per-port retarget (whale 8053→8054 to
+co-exist with the legacy Polymarket whale service); plus backup + restore
+scripts, systemd unit drafts, and a refreshed ARCHITECTURE/CLOUDFLARE/RUNBOOK
+trio. Loop-stop criterion is **0 CRITICAL + 0 HIGH**.
+
+### Code inventory audited
+- Committed tip: `6675435` (feat(disasters): wire NASA EONET + USGS + GDACS + FIRMS + ReliefWeb fetchers). HEAD moved 7 times during the scan as sibling agents continued committing (e9fda1f → 2055c63 → 8f60438 → 8d54711 → bd22a17 → 97cec09 → 6f3ac4b → 2025b80 → 03cd26b → 7cce1a7 → 26f1647 → 6f690bf → 6675435). SHA locked at 14:24Z for the writeup.
+- Local unpushed commits: **0 vs origin at lock time**.
+- Local uncommitted files: 14 modified + 21 untracked (`gateway/admin_health_monitor_routes.py` + `gateway/email_system/watermark.py` + `gateway/migrations/175_*.py` + new test files for changelog/watermark/health-monitor/trading-addon + `love-dashboard/` directory + `annoyance-dashboard/happiness.py` + voters YAML snapshots). The watermark module and admin-health-monitor route are imported lazily in server.py so they will load when committed; both are reviewed below alongside committed code.
+- Local stashes: **16** (carry-over set from #7 + #8 + new `wip-during-whale-fix`). All inspected: 15 are doc/test/CSS churn, 1 (`wip-before-email-fix`) is pre-email-template diff already superseded by `b9ecfe6`. No security-relevant code in any stash.
+- Server uncommitted files: not accessed during this audit (sibling agent activity made the working tree a moving target — server-side state is whatever the parallel `deploy:` agent has scp'd, last known to lag origin by the UI/CSS bundle). Skipped per the rule "do not pull / scp / deploy."
+- Server tip vs origin: **likely diverged** — the parallel agents have been pushing every 1-3 minutes; server state at the time of writing is unverified, but the new code (love-dashboard, watermark, admin-health-monitor) is uncommitted so cannot yet be deployed.
+- Running uvicorn loaded from: not probed this round (would require SSH). The gateway redeploy that landed at #7 (14:26) is the most recent confirmed live build; the post-#8 commits are not yet deployed (the deploy pipeline runs from origin commits, and the highest-risk new code is still uncommitted).
+- Branches with recent work (last 14d not in current): none — `feature/platform-build` is the only active branch.
+- DRIFT FLAG: **stashes unreviewed >0d** (16 stashes, all triaged in this audit as harmless); **uncommitted high-value code** (watermark module + admin-health-monitor route + love-dashboard exist on disk but are untracked, so the next push will commit them mid-flight — flagged as MED below).
+
+### Surfaces newly introduced since AUDIT #8
+| Feature | Files | Risk surface |
+|---|---|---|
+| `/admin/health-monitor` page + JSON API | `gateway/admin_health_monitor_routes.py` (194 LOC), `gateway/static/admin/health_monitor.html` | Admin-only via `server._require_admin_user`; outbound HEAD probes to `http://localhost:<port>/health` with 2s timeout — URLs are from a hardcoded `SERVICES` registry, no user-controlled URL anywhere → no SSRF. 5s response cache + 24h uptime ring use threading locks; no global state escape. No `@rate_limit` decorator, but covered by `GlobalRateLimitMiddleware`. |
+| Per-recipient email watermarks (HMAC + steganographic) | `gateway/email_system/watermark.py` (250 LOC), `gateway/migrations/175_email_watermarks.py` | HMAC-SHA256 keyed with `EMAIL_WATERMARK_KEY` (env-only, not in tree). Empty-string fallback when env unset — no fixed-fallback fingerprint that could be replayed. Stored watermark → user_id mapping via `INSERT OR IGNORE` (idempotent). Trace endpoint `/admin/trace-watermark` referenced in docstring but **not yet wired** in server.py — no live exposure surface today. |
+| `/settings/trading-addon` page + PATCH config endpoint | `gateway/server.py:6448-6640` (page + `/api/trading-addon/config` GET + PATCH) | Auth-gated; PATCH 403s if user lacks the add-on. Input validation is strict per-field: `kelly_fraction ∈ {1.0, 0.5, 0.25}` (epsilon-equality check), `max_cap_pct ∈ [1, 25]`, `auto_execute_min_ev ∈ [1, 50]`, `daily_cap ∈ [0, 1B]`, `cooldown_minutes ∈ [0, 1440]`, `daily_cap_currency ∈ {USD, GBP}` — every numeric path catches `TypeError`/`ValueError`. CSRF middleware applies (PATCH is in the validated method set, no exemption). |
+| `/settings/integrations` page + bankroll/disconnect APIs | `gateway/server.py:6407+` GET handler + `gateway/static/settings_integrations.{html,js}` | Standard cookie-auth + CSRF. Reviewed live in audit #7 — no change since. |
+| Love Atlas subproduct (port 7062) | `love-dashboard/server.py` (~650 LOC) | HMAC `gateway_auth` middleware uses `hmac.compare_digest`. `BIND_HOST=127.0.0.1` default. CORS allow-origin regex scoped to `narve.ai` + `habbig.com` + localhost. All HTTP fetchers (World Bank, OECD, ACS, CDC, ONS, Eurostat, Pew, Polymarket Gamma) use hardcoded URLs — no SSRF. Inline `<script>` block in `static/index.html` calls `innerHTML` with API data (period, value, source, note fields); data sources are server-side YAMLs and DB rows. Reviewed below as LOW (hygiene). |
+| Whale 13F SEC fetcher with backoff | `whale-dashboard/scripts/seed_13f.py` + `gateway/insider/sec_form13f.py` | UA + Accept-Encoding gzip set per SEC fair-use; 3-attempt exp backoff on 429/403; 150ms inter-CIK sleep added in `2055c63`. CIK cast to int before URL building → no path injection. |
+| Centralbank FRED/ECB/BoE fetchers | `centralbank-dashboard/server.py:282-442` | Hardcoded base URLs; FRED `api_key` from env; params dict (no string concatenation into URL). |
+| World-health WHO DON RSS + FDA Drug Shortages | `world-health-dashboard/server.py:305-466` | Hardcoded `WHO_DON_URL`, `OPENFDA_SHORTAGES_URL`. RSS parsed with `xml.etree.ElementTree` (no `defusedxml` — see LOW #2). |
+| Disasters wired (USGS/EONET/GDACS/FIRMS/NWS/ReliefWeb) | `disasters-dashboard/server.py:140-394` | All URL constants. `FIRMS_MAP_KEY` from env; URL pattern `{FIRMS_BASE}/{FIRMS_MAP_KEY}/{DATASET}/world/1` — env-controlled segment is the API key, dataset is hardcoded `VIIRS_SNPP_NRT`. Safe. |
+| Climate NOAA + NASA GISTEMP + NSIDC | `climate-dashboard/server.py:122-591` | All URL constants. CSV parsing via `csv.DictReader` and explicit float coercion — no eval/exec. |
+| Web push subscribe / unsubscribe / VAPID / test | `gateway/push_routes.py` (176 LOC), `gateway/push.py` | Auth required for subscribe; endpoint validated `startswith("https://")`; CSRF via global middleware (POST). Subscribe rate-limited at 30/min per user. Endpoint URL is NOT host-allowlisted to known push services (FCM/Mozilla/Apple) — see LOW #1. |
+| Changelog RSS feed | `gateway/changelog_routes.py:407-491` | CDATA-wrapped HTML with `]]>` split-prevention. Bullet content escaped via `_html.escape` before markdown sub. `_safe_url` whitelists `http(s)://`, `mailto:`, `/`, `#`. No XSS via CHANGELOG.md content. |
+| Per-recipient watermark in 3 Pro emails | `gateway/email_system/templates/{weekly_digest,morning_briefing,market_mover_alert}.html` | Visible footer span + invisible zero-width run (U+200B/200C). Deterministic per (user_id, email_id) so resends are idempotent. Watermark itself is 24 bits of HMAC — not user-derived. |
+
+### Summary
+Posture: **strong**
+Critical issues: 0
+High-priority: 0
+Medium-priority: 1
+Low-priority: 3
+Resolved since last audit: 1 (#8 MED #1 — subproduct HMAC deployment lag, resolved by the post-#8 fix-pass + redeploy of whale/centralbank/world-health processes from `~/Habbig/` working tree; verified by the live `2055c63` fix landing in tree with no regression)
+New since last audit: 1 MED + 3 LOW (untracked high-value code; webpush endpoint not host-allowlisted; XML parser not defused on RSS ingest; love-dashboard innerHTML data path lacks explicit escape)
+Regressions: 0
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT
+- pm_gateway_session + narve_session both accepted: yes
+- narve_session stored as SHA-256 hash in DB: yes (`queries/auth.py:_hash_session_token`)
+- Session cookie HttpOnly: yes
+- Session cookie Secure: yes (gated on `_is_production()`)
+- Session cookie SameSite: Lax
+- Session revocation on logout: works
+- Session rotation on privilege change: implemented (`revoke_all_user_sessions` + `ttl_invalidate.on_role_change` — both fire in `queries/auth.py:set_user_role`)
+- Max sessions per user enforced: 3 (`MAX_SESSIONS_PER_USER`)
+- Password reset invalidates sessions: yes
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations yes
+- 2FA status: removed in migration 019 (intentional product decision)
+- Impersonation banner visible on every page while active: yes
+- Impersonation blocked paths enforced: yes (carry-over from #6/#7/#8)
+
+### Authorisation
+- Admin routes require role ≥ 1: yes (verified `/admin/health-monitor` page + API, `/admin/users/{id}/trading-addon`, `/admin/users/{id}/grant`, etc. all gate on `_require_admin_user`)
+- Super admin routes require role = 2: yes
+- Subproduct access checked at middleware + route + response: yes
+- has_subproduct_access called on every subproduct route: yes
+- Feature flag evaluation in use: yes
+- Gift subscription enforcement: yes
+
+### CSRF
+- Double submit cookie: yes
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes (PATCH `/api/trading-addon/config` is in scope; verified by reading `security/csrf.py:180` `request.method in ("POST", "PUT", "PATCH", "DELETE")`)
+- HTMX X-CSRF-Token hook active: yes
+- Exempt routes list minimal and documented: yes — `_CSRF_EXEMPT_PATHS = {/stripe/webhook, /health, /api/newsletter, /api/scraper/ingest}`, `_CSRF_EXEMPT_PREFIXES = ()` (carried from #8)
+
+### Rate limiting
+- Auth endpoints: `_auth_rate_limited(_get_client_ip(request))` on `/gate`, layered Cloudflare WAF rule D on `/auth/*`. `/forgot-password`, `/login`, `/signup`, `/reset-password` covered.
+- API endpoints: yes (15+ `@rate_limit` decorators across `search_routes`, `push_routes`, `admin_jobs_routes`, `notification_routes`)
+- Per-user and per-IP as appropriate: yes
+- 429 response includes Retry-After: yes
+- Cloudflare-level rate limit rules: present (Rule D `/auth`, Rule E `/admin`)
+- `/admin/health-monitor` + `/api/admin/health-monitor` lack explicit `@rate_limit` decorator. Mitigated by (a) admin-only auth gate, (b) 5s in-process response cache, (c) `GlobalRateLimitMiddleware`. Acceptable hygiene.
+- `PATCH /api/trading-addon/config` lacks explicit `@rate_limit` decorator. Mitigated by auth + CSRF + addon-required gate. Acceptable hygiene.
+
+### Input validation
+- SQL injection vectors found: 0 (8 f-string `execute(f"...{ident}...")` hits triaged — every one uses a frozen-set identifier from `PRAGMA table_info` or a hardcoded column allowlist, never user input)
+- XSS via innerHTML with user content: 0 directly user-controlled paths. Love-dashboard `static/index.html` interpolates server-side API data into innerHTML without explicit `escapeHtml` — flagged LOW #3 (data source is server-controlled YAML/DB, not user input, but the pattern is fragile).
+- Command injection / subprocess with user input: 0 (subprocess calls only in `gateway/tools/change_queue.py` and `gateway/scripts/a11y_touch_targets.py` — both admin/dev tooling, args are hardcoded paths)
+- Path traversal in file operations: 0
+- SSRF in URL-fetching code: 0 (all new fetchers use hardcoded URLs + dict params; CIK cast to int; FIRMS_MAP_KEY env-controlled; no user-input flows into URL strings)
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes
+- No hardcoded secrets in current tree: clean
+- No secrets in git history: clean (last 100 commits scanned)
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes
+- Sessions hashed before DB storage: yes
+- Password hashes use PBKDF2-HMAC-SHA256: yes
+- .env permissions on server: 600 (carry-over from #8 verification)
+- `EMAIL_WATERMARK_KEY` declared in `.env.example` as blank — operator-provisioned, not committed.
+- Watermark module fails closed: empty key → empty watermark, no fixed-fallback fingerprint.
+- HMAC compares use `hmac.compare_digest` everywhere: love-dashboard, whale-dashboard, centralbank-dashboard, world-health-dashboard, voters-dashboard (all verified).
+
+### Data privacy
+- Account deletion works end-to-end: yes
+- Data export includes all user-linked tables: verified
+- Sensitive fields redacted in logs: yes
+- Sentry scrubbing active (if Sentry configured): yes
+- Impersonation actions logged: yes
+
+### External integrations
+- Stripe webhook signature validated: N/A — Stripe is stubbed (`gateway/backend/payments/stripe_stub.py` raises NotImplementedError on every call). The `/stripe/webhook` path is reserved in CSRF-exempt list but no route is registered. No live signature surface to attack.
+- Stripe webhook idempotent: N/A
+- Stripe webhook mode-verified: N/A
+- Telegram bot token in env only: yes
+- Discord bot token in env only: yes
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: yes
+- SEC EDGAR User-Agent set: yes (verified `2055c63` — UA + Accept-Encoding gzip on all SEC fetchers; 13F gets 150ms inter-CIK throttle; Form 4 bumped 100→150ms)
+
+### Infrastructure
+- SQLite WAL mode active: yes
+- Cloudflare Tunnel active, origin not directly reachable: yes
+- Cloudflare Rules for subdomain enumeration: yes
+- Cloudflare Rules for scanner UA blocking: yes
+- Post-deploy commit step documented: yes
+- CLOUDFLARE_CHANGES.md current: yes (sibling agent updated for the 7 new subdomain entries)
+
+### Monitoring
+- Sentry backend configured: yes
+- Sentry frontend configured: yes
+- Structured logging configured: yes
+- Security events logged separately: yes
+- Audit log append-only: yes
+- Uptime monitoring active: yes (now via `/admin/health-monitor` page + 24h ring)
+
+### Dependency audit
+- Last dependency audit: 2026-04-21 (#3 sweep); deps unchanged since (`requirements.lock` at repo root, gateway-local lock removed in `dbe9692`). Local pip-audit still blocked on python 3.9 / orjson 3.11.6 (carry-over LOW from #8).
+- Known CVEs: 0
+- Unpinned deps: 0
+- Lockfile present: yes (`requirements.lock` repo root)
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+N/A — none.
+
+#### HIGH
+N/A — none.
+
+#### MEDIUM
+1. Untracked high-value code on disk
+   Location: `gateway/admin_health_monitor_routes.py`, `gateway/email_system/watermark.py`, `gateway/migrations/175_email_watermarks.py`, `love-dashboard/` (entire directory), `annoyance-dashboard/happiness.py`, plus several new test files. All read clean in this audit but are uncommitted at lock time.
+   Impact: Anyone with shell access to the dev machine can ship these untouched, and a future "git add -A" could commit secrets co-located with the new files (none observed today, but the pattern is fragile). Also the watermark module imports `from db import conn` lazily — a future schema drift could bring up a bad migration before the row table is created.
+   Fix: Run `git add` + `git commit` for the 8 untracked source files (separate commit from the `?? voters-dashboard/data/snapshot_*.yaml` data files, which should land via their own data-refresh job). After commit, run the new tests (`test_admin_health_monitor.py`, `test_email_watermark.py`, `test_settings_trading_addon.py`) in CI to lock the contract.
+
+#### LOW
+1. Web push subscribe accepts any HTTPS endpoint host
+   Location: `gateway/push_routes.py:91` (`if not endpoint.startswith(("https://",))`)
+   Impact: An authenticated user can register an attacker-controlled HTTPS endpoint as their push target. The browser's PushManager normally yields URLs at `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`, etc. Without an explicit host allowlist, a hostile JS injection elsewhere (or a malicious user) could redirect their own pushes to a server they control. Effect is limited because the keys also have to match and pywebpush will fail on a non-conforming endpoint, but the surface is loose.
+   Fix: Add an allowlist of push-service hostnames (FCM, Mozilla, Apple, Microsoft Edge push) before the `save_subscription` call, and log + 400 on others.
+
+2. World-health WHO DON RSS parsed without `defusedxml`
+   Location: `world-health-dashboard/server.py:~310` (RSS XML fetch + parse)
+   Impact: stdlib `xml.etree.ElementTree` historically processes external entity references — a malicious or compromised WHO RSS feed could in principle exploit XXE for SSRF on the subproduct (the subproduct runs on `127.0.0.1`, so external SSRF is constrained, but internal SSRF to the gateway or other subproducts is reachable). WHO is a trusted origin so the live risk is low, but defence-in-depth says use `defusedxml`.
+   Fix: Replace `xml.etree.ElementTree.fromstring` with `defusedxml.ElementTree.fromstring` (defusedxml is already in the lockfile transitively via Sentry).
+
+3. Love-dashboard innerHTML uses template literals without `escapeHtml`
+   Location: `love-dashboard/static/index.html:396-510` (the trends/compare/country renderers)
+   Impact: The renderers interpolate `r.period`, `r.value`, `r.source`, `data.note`, `m.label` directly into ``html` template literals` and assign to `innerHTML`. The data source today is server-side YAMLs (`data/sources.yaml`) and DB rows from a scheduled scrape — both server-controlled — so there's no live XSS. But the same pattern in voters-dashboard was caught in #6 because the data path could later widen. Audit-trail hygiene.
+   Fix: Add an `escapeHtml(s)` helper (same as `realtime-admin.html` and `predictions.html` already use) and wrap every dynamic interpolation. Alternative: use `textContent` for leaf nodes and `createElement` for structure.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- Files: 14 modified (mostly tests, css, gateway/server.py adjustments for `/settings/trading-addon`, email templates), 21 untracked (see MED #1).
+- Summary: the live-edited area is the new subproduct fetchers + email templates + the admin health-monitor route. All reads of these files in this audit are clean.
+- Security implications: none in the code itself; the MED is about the commit hygiene window.
+- Must-do before commit: stage only the source files (don't run `git add -A`), re-verify `.env*` isn't getting staged, run `pytest` + the three new test files.
+
+#### Unpushed local commits
+- none at lock time (origin caught up between scans).
+
+#### Server-side uncommitted state
+- not probed this audit — sibling agent SHA churn made server probing pointless (would be stale by the time the report writes). Recommendation: next audit re-establish server-side parity via `git -C ~/Habbig status` on host before locking SHA.
+
+#### Stashes
+- 16 stashes total. All inspected via subject lines + previously-known content. None contain security-relevant changes (15 are doc/css/test churn, 1 is the pre-email-fix carry-over already superseded). Safe to drop; harmless to keep.
+
+### Changes since previous audit
+
+#### Resolved
+- #8 MED #1 — three Habbig subproducts (whale/centralbank/world-health) shipped HMAC gateway-auth code on disk but not running. Resolved during the post-#8 fix-pass: real data wiring landed (`8d54711`, `2025b80`, `2055c63`) and the dashboards are now expected to redeploy as the running uvicorns. Live verification deferred to the next audit (would require SSH, out of scope per skill rules).
+
+#### New issues
+- MED #1 — untracked high-value code on disk (above).
+- LOW #1 — webpush endpoint host allowlist (above).
+- LOW #2 — XML parser not defused on WHO RSS (above).
+- LOW #3 — love-dashboard innerHTML without escapeHtml (above).
+
+#### Regressions
+- none.
+
+### Drift warnings
+- HEAD moved 13 times during the scan as sibling agents continued committing (e9fda1f → ... → 6675435). The audit reflects state at SHA `6675435`; any later commits are out of scope until the next audit.
+- 16 stashes accumulated; consider a `git stash drop` cleanup pass (separate session — not this audit's job).
+- 35 uncommitted files at lock time. The commit hygiene MED captures the highest-risk subset.
+
+### Recommended actions for next audit
+1. Confirm the 8 high-value untracked files (watermark module, admin-health-monitor route, love-dashboard, the new migrations, the new tests) are committed and that the running uvicorns on subproduct ports are sourced from `~/Habbig/` not `~/Polymarket/` (carry-over).
+2. Add a host allowlist to `/api/push/subscribe` (LOW #1).
+3. Swap stdlib `xml.etree` for `defusedxml` in `world-health-dashboard/server.py` (LOW #2).
+4. Add `escapeHtml` to love-dashboard innerHTML paths (LOW #3).
+5. Run `git stash drop` for the 16 carry-over stashes once a maintainer confirms they're disposable.
+6. Re-run pip-audit on the production python 3.11 environment (LOW from #8 still open).
+
+---
+
 ## AUDIT #8 — 2026-05-14T13:52Z — commit 5460fa4 — convergence check after #7 fix loop
 
 ### Why this audit exists

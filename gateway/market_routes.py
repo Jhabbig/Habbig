@@ -344,6 +344,16 @@ async def api_connect_polymarket(request: Request):
 
 async def api_disconnect_market(request: Request, source: str):
     user = _require_markets_user(request)
+    # AUDIT 2026-05-14 — share the connect/disconnect 5/min/user budget.
+    # Prevents a compromised session from churning the connect/disconnect
+    # cycle to spam Kalshi/Polymarket logout flows.
+    srv = _srv()
+    if srv._is_rate_limited(f"market_connect:{user['user_id']}", limit=5, window=60):
+        return JSONResponse(
+            {"error": "Too many attempts. Try again in a minute."},
+            status_code=429,
+            headers={"Retry-After": "60"},
+        )
     if source not in ("polymarket", "kalshi"):
         raise HTTPException(status_code=400, detail="Invalid source")
     db.disconnect_market_credential(user["user_id"], source)
