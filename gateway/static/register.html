@@ -3,51 +3,54 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Create your account — narve.ai</title>
+  <title>Create account — narve.ai</title>
   <meta name="description" content="Create a narve.ai account.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ static: pages/register.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <a href="/" class="reg-brand">
+  <a href="/" class="auth-brand">
     <img src="/_gateway_static/img/logo.png" alt="narve.ai">
     <span>narve.ai</span>
   </a>
 
-  <div class="reg-card">
-    <h1 class="reg-title">Create your account</h1>
-    <p class="reg-sub">Token verified. Set up your account to continue.</p>
+  <div class="auth-card">
+    <h1 class="auth-hero">Create account</h1>
+    <p class="auth-sub">Your token is verified. Set up your account to continue.</p>
 
-    <div class="reg-error" id="form-error">{{ error }}</div>
+    <div class="auth-error" id="form-error">{{ error }}</div>
 
-    <form class="reg-form" id="reg-form" onsubmit="return submitRegister(event)">
+    <form class="auth-form" id="reg-form" onsubmit="return submitRegister(event)">
       {{ raw_csrf_field }}
 
       <div>
         <label for="display_name">Display name</label>
-        <input class="reg-input" id="display_name" name="display_name" type="text"
+        <input class="auth-input" id="display_name" name="display_name" type="text"
                required minlength="2" maxlength="40" autocomplete="nickname" autofocus
                placeholder="How should we greet you?">
-        <div class="reg-field-error" id="name-err"></div>
+        <div class="auth-field-error" id="name-err"></div>
       </div>
 
       <div>
         <label for="email">Email address</label>
-        <input class="reg-input" id="email" name="email" type="email"
+        <input class="auth-input" id="email" name="email" type="email"
                required autocomplete="email" placeholder="you@company.com" value="{{ target_email }}">
-        <div class="reg-field-error" id="email-err"></div>
+        <div class="auth-field-error" id="email-err"></div>
       </div>
 
       <div>
         <label for="password">Password</label>
         <div class="pw-wrap">
-          <input class="reg-input" id="password" name="password" type="password"
+          <input class="auth-input" id="password" name="password" type="password"
                  required minlength="12" autocomplete="new-password">
           <button class="pw-toggle" type="button" onclick="togglePw('password')" aria-label="Show password">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
@@ -65,28 +68,28 @@
           <li class="pw-rule" id="rule-num">One number</li>
           <li class="pw-rule" id="rule-special">One special character</li>
         </ul>
-        <div class="reg-field-error" id="pw-err"></div>
+        <div class="auth-field-error" id="pw-err"></div>
       </div>
 
       <div>
         <label for="confirm_password">Confirm password</label>
         <div class="pw-wrap">
-          <input class="reg-input" id="confirm_password" name="confirm_password" type="password"
+          <input class="auth-input" id="confirm_password" name="confirm_password" type="password"
                  required minlength="12" autocomplete="new-password">
           <button class="pw-toggle" type="button" onclick="togglePw('confirm_password')" aria-label="Show password">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
           </button>
         </div>
-        <div class="reg-field-error" id="confirm-err"></div>
+        <div class="auth-field-error" id="confirm-err"></div>
       </div>
 
-      <button class="reg-btn" id="reg-btn" type="submit">Create account</button>
-    </form>
+      <label class="auth-terms">
+        <input type="checkbox" id="agree-terms" required>
+        <span>I agree to the <a class="auth-link-serif" href="/terms">Terms</a> and <a class="auth-link-serif" href="/privacy">Privacy Policy</a>.</span>
+      </label>
 
-    <p class="reg-footer-note">
-      By creating an account you agree to our
-      <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.
-    </p>
+      <button class="auth-btn" id="reg-btn" type="submit">Create account</button>
+    </form>
   </div>
 
 <script>
@@ -136,6 +139,10 @@ function submitRegister(ev) {
     confirm_password: document.getElementById('confirm_password').value,
   };
 
+  if (!document.getElementById('agree-terms').checked) {
+    formErr.textContent = 'Please agree to the Terms and Privacy Policy.';
+    return false;
+  }
   if (payload.password !== payload.confirm_password) {
     document.getElementById('confirm-err').textContent = 'Passwords do not match.';
     return false;

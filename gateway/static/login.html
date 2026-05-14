@@ -3,54 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome back — narve.ai</title>
+  <title>Sign in — narve.ai</title>
   <meta name="description" content="Sign in to narve.ai.">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ static: pages/login.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-  <a href="/" class="login-brand">
+  <a href="/" class="auth-brand">
     <img src="/_gateway_static/img/logo.png" alt="narve.ai">
     <span>narve.ai</span>
   </a>
 
-  <div class="login-card">
-    <h1 class="login-title">Welcome back</h1>
-    <p class="login-sub">Sign in to access your dashboards.</p>
+  <div class="auth-card">
+    <h1 class="auth-hero">Sign in</h1>
+    <p class="auth-sub">Welcome back. Enter your password to reach your dashboards.</p>
 
-    <div class="login-success" id="success-msg">{{ raw_success }}</div>
+    <div class="auth-success" id="success-msg">{{ raw_success }}</div>
 
-    <form class="login-form" id="login-form" onsubmit="return submitLogin(event)">
+    <form class="auth-form" id="login-form" onsubmit="return submitLogin(event)">
       {{ raw_csrf_field }}
 
       <div>
         <label for="email">Email address</label>
-        <input class="login-input" id="email" name="email" type="text" readonly
+        <input class="auth-input" id="email" name="email" type="text" readonly
                value="{{ email_hint }}">
-        <div class="login-hint">This account is linked to your token.</div>
+        <div class="auth-hint">This account is linked to your token.</div>
       </div>
 
       <div>
         <div class="label-row">
           <label for="password">Password</label>
-          <a href="/forgot-password">Forgot password?</a>
+          <a class="auth-link-serif" href="/forgot-password">Forgot password?</a>
         </div>
         <div class="pw-wrap">
-          <input class="login-input" id="password" name="password" type="password"
+          <input class="auth-input" id="password" name="password" type="password"
                  required autocomplete="current-password" autofocus>
           <button class="pw-toggle" type="button" onclick="togglePw()" aria-label="Show password">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
           </button>
         </div>
-        <div class="login-field-error" id="pw-err">{{ error }}</div>
+        <div class="auth-field-error" id="pw-err">{{ error }}</div>
       </div>
 
-      <button class="login-btn" id="login-btn" type="submit">Sign in</button>
+      <button class="auth-btn" id="login-btn" type="submit">Sign in</button>
     </form>
   </div>
 
