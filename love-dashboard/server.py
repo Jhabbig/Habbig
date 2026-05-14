@@ -184,7 +184,45 @@ def _ensure_schema() -> None:
         logger.warning("DB bootstrap failed: %s", e)
 
 
+def _startup_vacuum() -> None:
+    """Compact love.sqlite on boot.
+
+    The gateway runs daily VACUUM on its ``auth.db`` (see
+    gateway/jobs/db_maintenance.py), but the subproduct DBs were never
+    maintained. Running VACUUM + ANALYZE + WAL-truncate at boot keeps
+    the file compact between deploys and refreshes planner stats. The
+    exclusive lock VACUUM holds is uncontested before request traffic
+    starts. Best-effort: failures are logged and swallowed so a wedged
+    DB doesn't block startup.
+    """
+    if not DB_PATH.exists():
+        return
+    size_before: Optional[int] = None
+    size_after: Optional[int] = None
+    try:
+        size_before = os.path.getsize(DB_PATH)
+    except OSError:
+        pass
+    try:
+        with _db_connect() as conn:
+            conn.execute("VACUUM")
+            conn.execute("ANALYZE")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as e:
+        logger.warning("love startup VACUUM failed (continuing): %s", e)
+        return
+    try:
+        size_after = os.path.getsize(DB_PATH)
+    except OSError:
+        pass
+    logger.info(
+        "love startup VACUUM: size_before=%s size_after=%s",
+        size_before, size_after,
+    )
+
+
 _ensure_schema()
+_startup_vacuum()
 
 
 def load_metrics() -> dict:

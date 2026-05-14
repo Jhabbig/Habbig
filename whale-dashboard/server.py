@@ -220,6 +220,39 @@ def _init_schema() -> None:
     log.info("schema applied to %s", DB_PATH)
 
 
+def _startup_vacuum() -> None:
+    """Compact whale.sqlite on boot.
+
+    The gateway has its own daily VACUUM job for ``auth.db`` (see
+    gateway/jobs/db_maintenance.py), but the subproduct DBs were never
+    maintained. Running VACUUM + ANALYZE + WAL-truncate at boot keeps
+    the file compact between deploys (daily redeploys) and refreshes
+    the planner stats. Best-effort: failures are logged and swallowed
+    so a wedged DB does not block startup.
+    """
+    import os
+    try:
+        size_before = os.path.getsize(DB_PATH) if DB_PATH.exists() else None
+    except OSError:
+        size_before = None
+    try:
+        with _db_lock:
+            _conn.execute("VACUUM")
+            _conn.execute("ANALYZE")
+            _conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            _conn.commit()
+        try:
+            size_after = os.path.getsize(DB_PATH) if DB_PATH.exists() else None
+        except OSError:
+            size_after = None
+        log.info(
+            "whale startup VACUUM: size_before=%s size_after=%s",
+            size_before, size_after,
+        )
+    except sqlite3.Error as e:
+        log.warning("whale startup VACUUM failed (continuing): %s", e)
+
+
 def _seed_whales() -> None:
     """Upsert the YAML roster into ``whales`` on boot."""
     if not WHALES_YAML.exists():
@@ -344,6 +377,7 @@ async def _edgar_refresh_loop() -> None:
 @app.on_event("startup")
 async def _on_startup() -> None:
     _init_schema()
+    _startup_vacuum()
     _seed_whales()
     if EDGAR_DISABLE_SCHEDULER:
         log.info("EDGAR_DISABLE_SCHEDULER=1 — refresh loop suppressed")

@@ -174,7 +174,44 @@ def _init_db() -> None:
         conn.commit()
 
 
+def _startup_vacuum() -> None:
+    """Compact voters.sqlite on boot.
+
+    The gateway runs daily VACUUM + ANALYZE + WAL-truncate on its own
+    ``auth.db`` from gateway/jobs/db_maintenance.py, but the subproduct
+    DBs live in independent service processes and were never being
+    maintained. Running this once at startup keeps the file compact
+    between deploys (we redeploy daily) and refreshes the query
+    planner stats. VACUUM holds an exclusive lock; doing it before the
+    server starts accepting requests means there's no contention.
+
+    Best-effort: any sqlite error is logged and swallowed so a wedged
+    DB doesn't keep the service from booting.
+    """
+    import os
+    try:
+        size_before = os.path.getsize(DB_PATH) if DB_PATH.exists() else None
+    except OSError:
+        size_before = None
+    try:
+        with _db_lock, _db() as conn:
+            conn.execute("VACUUM")
+            conn.execute("ANALYZE")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        try:
+            size_after = os.path.getsize(DB_PATH) if DB_PATH.exists() else None
+        except OSError:
+            size_after = None
+        log.info(
+            "voters startup VACUUM: size_before=%s size_after=%s",
+            size_before, size_after,
+        )
+    except sqlite3.Error as e:
+        log.warning("voters startup VACUUM failed (continuing): %s", e)
+
+
 _init_db()
+_startup_vacuum()
 
 
 @app.on_event("startup")

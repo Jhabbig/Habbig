@@ -1,6 +1,6 @@
 """Scheduled DB maintenance jobs.
 
-Three things the SQLite file needs on a recurring cadence that nothing
+Four things the SQLite file needs on a recurring cadence that nothing
 else in the codebase runs:
 
   1. ``wal_checkpoint(TRUNCATE)`` — the WAL file grows unbounded under
@@ -8,20 +8,32 @@ else in the codebase runs:
      readers from walking an oversized journal. We run this nightly
      at 04:10 UTC (after the credibility recompute at 04:00 and
      before the source-summary regen at 04:30, both of which hit
-     concurrent reads).
+     concurrent reads). The daily VACUUM job (#2) also calls this at
+     05:00 — keeping the 04:10 standalone slot gives us a checkpoint
+     during the active window in case the 05:00 VACUUM fails.
 
-  2. ``VACUUM`` — rebuilds the DB file and reclaims pages freed by
-     deletes. Cheap when the DB is small; potentially blocking once
-     the file grows, so we run it quarterly (first Sunday of Jan / Apr
-     / Jul / Oct at 05:00 UTC). The ``apscheduler`` cron surface
-     doesn't support "first Sunday of the month" directly, so we gate
-     on ``day=1..7`` + ``weekday=6`` inside the handler.
+  2. Daily ``VACUUM`` + ``ANALYZE`` + ``wal_checkpoint(TRUNCATE)`` on
+     ``auth.db``. Per the perf audit (PERFORMANCE_BASELINE.md), the
+     DB grows enough between deploys that monthly VACUUM is too coarse
+     — daily keeps the file compact and re-runs ``ANALYZE`` so the
+     query planner has fresh statistics. Runs at 05:00 UTC, well clear
+     of the credibility recompute (04:00) and source-summary regen
+     (04:30). VACUUM rebuilds the file (effectively truncating the
+     WAL) but we still issue the explicit ``wal_checkpoint(TRUNCATE)``
+     afterwards as a belt-and-braces safety net.
 
   3. Retention trims — slow_request_log and slow_query_log both grow
      indefinitely. Keep 30 days.
 
+  4. Quarterly recovery drill — proves the .backup restore path works
+     by integrity-checking a copy of the live DB.
+
 Every job is fire-and-forget: a failure logs and swallows rather than
 taking the scheduler down. None of them hit user requests.
+
+Subproduct DBs (voters.sqlite, whale.sqlite, annoyance.db, love.sqlite)
+are NOT touched from here — they live in independent service processes
+with their own startup VACUUM hooks (see each subproduct's server.py).
 """
 
 from __future__ import annotations
@@ -70,34 +82,117 @@ async def wal_checkpoint() -> dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
-# ── VACUUM ────────────────────────────────────────────────────────────────
+# ── VACUUM (daily) ────────────────────────────────────────────────────────
 
 
-@register_job("vacuum_db_maybe")
-async def vacuum_db_maybe() -> dict[str, Any]:
-    """VACUUM the DB on the first Sunday of the quarter.
+def _db_file_size_bytes() -> int | None:
+    """Return on-disk size of the main DB file, or ``None`` if unknown.
 
-    The cron slot fires every Sunday at 05:00. We gate on month + day
-    inside the handler because apscheduler cron can't express "first
-    Sunday of Jan / Apr / Jul / Oct" natively.
+    Helper isolated so tests can monkey-patch it. We use ``os.path.getsize``
+    against ``db.DB_PATH`` because that gives the actual filesystem footprint
+    that VACUUM reclaims — not the logical page count, which would miss
+    fragmentation savings.
     """
-    now = _dt.datetime.utcnow()
-    if now.month not in (1, 4, 7, 10):
-        return {"ok": True, "skipped": "not quarter month"}
-    if now.day > 7:
-        return {"ok": True, "skipped": "past first week"}
+    try:
+        import os
+        import db
+        return os.path.getsize(db.DB_PATH)
+    except Exception:
+        return None
 
+
+@register_job("vacuum_db_daily")
+async def vacuum_db_daily() -> dict[str, Any]:
+    """Daily VACUUM + ANALYZE + WAL-truncate on ``auth.db``.
+
+    Sequence:
+      1. Record on-disk size before.
+      2. ``VACUUM`` — rebuilds the DB file, reclaims pages freed by
+         deletes, defragments tables. Holds an exclusive lock so we
+         schedule for the quiet 05:00 UTC slot.
+      3. ``ANALYZE`` — refreshes ``sqlite_stat1`` so the query planner
+         picks up new selectivity after data churn.
+      4. ``PRAGMA wal_checkpoint(TRUNCATE)`` — VACUUM already rolls the
+         WAL into the main file, but the explicit truncate is harmless
+         and guarantees no orphan WAL pages survive.
+      5. Record on-disk size after, log delta.
+
+    Lock contention: if another writer holds the DB, sqlite3 raises
+    ``sqlite3.OperationalError: database is locked``. We swallow and
+    log so a transient contender doesn't take the scheduler down — the
+    next nightly run will retry.
+    """
+    import sqlite3
     import db
+
+    size_before = _db_file_size_bytes()
     t0 = time.time()
+    vacuum_ok = analyze_ok = wal_ok = False
+    wal_result: tuple[Any, Any, Any] | None = None
+    error: str | None = None
+
     try:
         with db.conn() as c:
             c.execute("VACUUM")
-        duration = int((time.time() - t0) * 1000)
-        log.info("VACUUM completed in %d ms", duration)
-        return {"ok": True, "duration_ms": duration}
+            vacuum_ok = True
+            c.execute("ANALYZE")
+            analyze_ok = True
+            row = c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if row is not None:
+                wal_result = (row[0], row[1], row[2])
+            wal_ok = True
+    except sqlite3.OperationalError as e:
+        # Most common: database is locked. Log and bail — the job will
+        # rerun tomorrow. Don't propagate so scheduler stays healthy.
+        error = f"OperationalError: {e}"
+        log.warning("vacuum_db_daily: lock contention or operational error — %s", e)
     except Exception as e:
-        log.exception("VACUUM failed: %s", e)
-        return {"ok": False, "error": str(e)}
+        error = str(e)
+        log.exception("vacuum_db_daily failed: %s", e)
+
+    size_after = _db_file_size_bytes()
+    duration_ms = int((time.time() - t0) * 1000)
+
+    if size_before is not None and size_after is not None:
+        delta = size_before - size_after
+        log.info(
+            "vacuum_db_daily: size_before=%dB size_after=%dB delta=%dB duration=%dms"
+            " vacuum_ok=%s analyze_ok=%s wal_ok=%s",
+            size_before, size_after, delta, duration_ms,
+            vacuum_ok, analyze_ok, wal_ok,
+        )
+    else:
+        log.info(
+            "vacuum_db_daily: size unavailable duration=%dms"
+            " vacuum_ok=%s analyze_ok=%s wal_ok=%s",
+            duration_ms, vacuum_ok, analyze_ok, wal_ok,
+        )
+
+    result: dict[str, Any] = {
+        "ok": vacuum_ok and analyze_ok and wal_ok,
+        "vacuum_ok": vacuum_ok,
+        "analyze_ok": analyze_ok,
+        "wal_ok": wal_ok,
+        "size_before_bytes": size_before,
+        "size_after_bytes": size_after,
+        "duration_ms": duration_ms,
+    }
+    if wal_result is not None:
+        result["wal_busy"], result["wal_log_pages"], result["wal_checkpointed"] = wal_result
+    if error is not None:
+        result["error"] = error
+    return result
+
+
+# Back-compat alias: the previous quarterly job was named
+# ``vacuum_db_maybe``. Anything that enqueues it by name (admin tools,
+# old retry rows in background_jobs) should still run — point them at
+# the new daily handler. Apscheduler cron registrations are wired to
+# the new name below, so this alias is queue-driven only.
+@register_job("vacuum_db_maybe")
+async def vacuum_db_maybe() -> dict[str, Any]:
+    """Deprecated alias — calls :func:`vacuum_db_daily`."""
+    return await vacuum_db_daily()
 
 
 # ── Retention trims ───────────────────────────────────────────────────────
@@ -128,20 +223,60 @@ async def trim_perf_logs(days: int = 30) -> dict[str, Any]:
     return {"ok": True, "removed": removed, "cutoff_ts": cutoff}
 
 
+@register_job("trim_wallet_connect_nonces")
+async def trim_wallet_connect_nonces(max_age_seconds: int = 3600) -> dict[str, Any]:
+    """Sweep SIWE wallet-connect nonces older than ``max_age_seconds``.
+
+    Live nonces have a 5-minute TTL (see SIWE_NONCE_TTL in
+    market_routes); 1 hour is a comfortable retention window — well
+    past any in-flight wallet UX and useful as forensic context if
+    we're investigating a connect-replay attempt the same day. After
+    that the row is just exhaust. Both used and unused rows are swept;
+    a never-redeemed nonce older than 1h is dead either way.
+
+    Idempotent and fire-and-forget — a missing table (clean install
+    that hasn't run migration 179 yet) logs and returns ok=False
+    instead of taking the scheduler down.
+    """
+    import db
+    cutoff = int(time.time()) - int(max_age_seconds)
+    try:
+        with db.conn() as c:
+            cur = c.execute(
+                "DELETE FROM wallet_connect_nonces WHERE created_at < ?",
+                (cutoff,),
+            )
+            removed = cur.rowcount or 0
+        log.info("trim_wallet_connect_nonces: removed %d rows < %d",
+                 removed, cutoff)
+        return {"ok": True, "removed": removed, "cutoff_ts": cutoff}
+    except Exception as e:
+        log.warning("trim_wallet_connect_nonces: skipped — %s", e)
+        return {"ok": False, "error": str(e), "cutoff_ts": cutoff}
+
+
 # ── Schedule ──────────────────────────────────────────────────────────────
 
 # 04:10 UTC daily — well clear of the 04:00 credibility recompute and
 # the 04:30 source-summary regen, both of which hold read connections.
+# Redundant with the WAL truncate inside vacuum_db_daily (05:00) but
+# cheap, and gives us coverage if the 05:00 job fails.
 register_cron("wal_checkpoint", hour=4, minute=10)
 
-# Every Sunday at 05:00 UTC; the job's own gate short-circuits everything
-# except the first Sunday of Jan/Apr/Jul/Oct. Cheap to call 49 extra
-# times per year.
-register_cron("vacuum_db_maybe", hour=5, minute=0, weekday=6)
+# 05:00 UTC daily — daily VACUUM + ANALYZE + WAL-truncate per the perf
+# audit. Slotted after credibility recompute (04:00), source-summary
+# regen (04:30), and the standalone WAL checkpoint (04:10) — none of
+# them hold an exclusive lock, but stacking gives VACUUM a clean window.
+register_cron("vacuum_db_daily", hour=5, minute=0)
 
 # 03:40 UTC daily — runs before the WAL checkpoint so truncation
 # reflects the trimmed state.
 register_cron("trim_perf_logs", hour=3, minute=40)
+
+# 03:45 UTC daily — SIWE wallet-connect nonces older than 1h are
+# swept. Slotted between the perf-log trim and the WAL checkpoint so
+# the deletions land in the same nightly checkpoint cycle.
+register_cron("trim_wallet_connect_nonces", hour=3, minute=45)
 
 
 # ── Quarterly recovery drill ──────────────────────────────────────────────
@@ -279,5 +414,6 @@ async def recovery_drill() -> dict[str, Any]:
 
 
 # 05:20 UTC daily — the job gates on first-of-Jan/Apr/Jul/Oct. Slotted
-# after vacuum_db_maybe (05:00) so a quarterly VACUUM finishes first.
+# after vacuum_db_daily (05:00) so the daily VACUUM finishes first and
+# the .backup runs against a freshly compacted file.
 register_cron("recovery_drill", hour=5, minute=20)

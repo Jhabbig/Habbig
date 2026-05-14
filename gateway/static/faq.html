@@ -37,47 +37,141 @@
   </script>
 
   <link rel="stylesheet" href="{{ static: pages/faq.css }}">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
 </head>
 <body>
-  <main class="wrap" id="main">
-    <a class="backlink" href="/">← narve.ai</a>
-    <h1>FAQ</h1>
-    <p class="tagline">Frequently asked questions about narve.ai.</p>
+  <main class="faq-shell" id="main">
+    <a class="faq-back" href="/">← narve.ai</a>
 
-    <h2>The basics</h2>
-    <details open><summary>What is narve.ai?</summary><div><p>narve.ai is an invite-only prediction market intelligence platform. We ingest forecasts from social media, score each source by historical accuracy, and cross-reference those forecasts with live Polymarket and Kalshi odds to surface the largest credibility-vs-market gaps.</p></div></details>
+    <header class="faq-hero">
+      <div class="faq-eyebrow">FAQ</div>
+      <h1 class="faq-title">Common questions,<br>answered.</h1>
+      <p class="faq-tagline">Everything you might want to know about narve.ai.</p>
+    </header>
 
-    <details><summary>How is narve different from just following good forecasters on Twitter?</summary><div><p>Two things. First, we grade every prediction against ground-truth market resolution, so credibility is earned, not claimed. Second, we rank sources by category — someone who's great at sports markets but bad at geopolitics can't sway geopolitics signals. Plus we cross-reference with live odds, so you see <em>edge</em>, not just opinion.</p></div></details>
+    <section class="faq-group">
+      <h2>The basics</h2>
+      <details class="faq-item" open>
+        <summary>What is narve.ai?</summary>
+        <div class="faq-answer">
+          <p>narve.ai is an invite-only prediction market intelligence platform. We ingest forecasts from social media, score each source by historical accuracy, and cross-reference those forecasts with live Polymarket and Kalshi odds to surface the largest credibility-vs-market gaps.</p>
+        </div>
+      </details>
 
-    <details><summary>Is this financial advice?</summary><div><p>No. narve.ai shows you what credible sources are saying and how that differs from market prices. The decision to trade is yours. Prediction markets carry the risk of total loss, and regulations differ by jurisdiction. Consult a licensed advisor if you want advice.</p></div></details>
+      <details class="faq-item">
+        <summary>How is narve different from just following good forecasters on Twitter?</summary>
+        <div class="faq-answer">
+          <p>Two things. First, we grade every prediction against ground-truth market resolution, so credibility is earned, not claimed. Second, we rank sources by category — someone who's great at sports markets but bad at geopolitics can't sway geopolitics signals. Plus we cross-reference with live odds, so you see <em>edge</em>, not just opinion.</p>
+        </div>
+      </details>
 
-    <h2>Access & pricing</h2>
-    <details><summary>How do I get access?</summary><div><p>narve is invite-only. Request access via the enquiry form on the homepage or reach out through <a class="inline" href="/enquire">/enquire</a>. We onboard in small batches and prioritise active traders and researchers.</p></div></details>
+      <details class="faq-item">
+        <summary>Is this financial advice?</summary>
+        <div class="faq-answer">
+          <p>No. narve.ai shows you what credible sources are saying and how that differs from market prices. The decision to trade is yours. Prediction markets carry the risk of total loss, and regulations differ by jurisdiction. Consult a licensed advisor if you want advice.</p>
+        </div>
+      </details>
+    </section>
 
-    <details><summary>How much does it cost?</summary><div><p>Pricing varies by subproduct. See <a class="inline" href="/pricing">/pricing</a> for current tiers. Each narve.ai subdomain (sports, weather, world, crypto, midterm, traders) has its own subscription, or you can bundle via the traders tier for full cross-category access.</p></div></details>
+    <section class="faq-group">
+      <h2>Access and pricing</h2>
 
-    <details><summary>Can I try it before committing?</summary><div><p>Every paid tier has a 14-day refund window. If narve doesn't work for you in the first two weeks, email support and we'll refund the charge in full.</p></div></details>
+      <details class="faq-item">
+        <summary>How do I get access?</summary>
+        <div class="faq-answer">
+          <p>narve is invite-only. Request access via the enquiry form on the homepage or reach out through <a class="inline" href="/enquire">/enquire</a>. We onboard in small batches and prioritise active traders and researchers.</p>
+        </div>
+      </details>
 
-    <details><summary>How do I cancel?</summary><div><p>From the billing page in your settings. You keep access until the end of the current billing period. No cancellation fees, no retention dark patterns, no "are you sure" loops designed to make you give up.</p></div></details>
+      <details class="faq-item">
+        <summary>How much does it cost?</summary>
+        <div class="faq-answer">
+          <p>Pricing varies by subproduct. See <a class="inline" href="/pricing">/pricing</a> for current tiers. Each narve.ai subdomain (sports, weather, world, crypto, midterm, traders) has its own subscription, or you can bundle via the traders tier for full cross-category access.</p>
+        </div>
+      </details>
 
-    <h2>How narve works</h2>
-    <details><summary>Where does your data come from?</summary><div><p>Forecasts come from a curated, rotating set of public accounts on X (Twitter), selected Substacks, specific Discord channels we have permission to read, and a handful of blogs. Market data comes from Polymarket's and Kalshi's public APIs. Every prediction we score is publicly available; narve adds the grading layer.</p></div></details>
+      <details class="faq-item">
+        <summary>Can I try it before committing?</summary>
+        <div class="faq-answer">
+          <p>Every paid tier has a 14-day refund window. If narve doesn't work for you in the first two weeks, email support and we'll refund the charge in full.</p>
+        </div>
+      </details>
 
-    <details><summary>Is the methodology open?</summary><div><p>Yes. The full methodology is at <a class="inline" href="/methodology">/methodology</a>, including the Bayesian scoring math, the Brier and timing decomposition, the decay constants, and known pitfalls. We publish individual source scorecards for journalistic or academic use on request.</p></div></details>
+      <details class="faq-item">
+        <summary>How do I cancel?</summary>
+        <div class="faq-answer">
+          <p>From the billing page in your settings. You keep access until the end of the current billing period. No cancellation fees, no retention dark patterns, no "are you sure" loops designed to make you give up.</p>
+        </div>
+      </details>
+    </section>
 
-    <details><summary>Do you have an API?</summary><div><p>The developer API lives at <code>/api/v1/</code>. Canonical docs are at <code>/api/v1/docs</code>. API keys are managed per-user in settings on Pro and above tiers. Rate limits and scopes are in the docs.</p></div></details>
+    <section class="faq-group">
+      <h2>How narve works</h2>
 
-    <details><summary>Can you export my data?</summary><div><p>Yes. Every user can export their account data (predictions, saved markets, followed sources, activity history) as a ZIP from the privacy settings page. The export runs as a background job and you'll get an email with a signed download link when it's ready.</p></div></details>
+      <details class="faq-item">
+        <summary>Where does your data come from?</summary>
+        <div class="faq-answer">
+          <p>Forecasts come from a curated, rotating set of public accounts on X (Twitter), selected Substacks, specific Discord channels we have permission to read, and a handful of blogs. Market data comes from Polymarket's and Kalshi's public APIs. Every prediction we score is publicly available; narve adds the grading layer.</p>
+        </div>
+      </details>
 
-    <h2>Privacy & trust</h2>
-    <details><summary>Can I opt out of being tracked?</summary><div><p>Yes. If you're a public forecaster and you'd prefer not to be indexed, email <a class="inline" href="mailto:opt-out@narve.ai">opt-out@narve.ai</a> with your handle and we'll remove your predictions and block future ingestion. We honour every opt-out request; turnaround is under 24 hours.</p></div></details>
+      <details class="faq-item">
+        <summary>Is the methodology open?</summary>
+        <div class="faq-answer">
+          <p>Yes. The full methodology is at <a class="inline" href="/methodology">/methodology</a>, including the Bayesian scoring math, the Brier and timing decomposition, the decay constants, and known pitfalls. We publish individual source scorecards for journalistic or academic use on request.</p>
+        </div>
+      </details>
 
-    <details><summary>Is my data shared with third parties?</summary><div><p>No. We don't sell user data and we don't share behavioural data with advertisers. The full privacy terms are at <a class="inline" href="/privacy">/privacy</a> and our data-processing addendum is at <a class="inline" href="/dpa">/dpa</a>.</p></div></details>
+      <details class="faq-item">
+        <summary>Do you have an API?</summary>
+        <div class="faq-answer">
+          <p>The developer API lives at <code>/api/v1/</code>. Canonical docs are at <code>/api/v1/docs</code>. API keys are managed per-user in settings on Pro and above tiers. Rate limits and scopes are in the docs.</p>
+        </div>
+      </details>
 
-    <details><summary>Where is my data stored?</summary><div><p>On narve.ai's own infrastructure, hosted in the EU. We don't use a managed database or a third-party analytics provider. The only external services we send user data to are Stripe (for billing) and our email provider (for transactional mail); both are documented in the DPA.</p></div></details>
+      <details class="faq-item">
+        <summary>Can you export my data?</summary>
+        <div class="faq-answer">
+          <p>Yes. Every user can export their account data (predictions, saved markets, followed sources, activity history) as a ZIP from the privacy settings page. The export runs as a background job and you'll get an email with a signed download link when it's ready.</p>
+        </div>
+      </details>
+    </section>
 
-    <h2>Still have a question?</h2>
-    <details><summary>I didn't find my answer here.</summary><div><p>Email <a class="inline" href="mailto:hello@narve.ai">hello@narve.ai</a> or use the <a class="inline" href="/enquire">enquiry form</a>. We try to answer every message within two business days.</p></div></details>
+    <section class="faq-group">
+      <h2>Privacy and trust</h2>
+
+      <details class="faq-item">
+        <summary>Can I opt out of being tracked?</summary>
+        <div class="faq-answer">
+          <p>Yes. If you're a public forecaster and you'd prefer not to be indexed, email <a class="inline" href="mailto:opt-out@narve.ai">opt-out@narve.ai</a> with your handle and we'll remove your predictions and block future ingestion. We honour every opt-out request; turnaround is under 24 hours.</p>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary>Is my data shared with third parties?</summary>
+        <div class="faq-answer">
+          <p>No. We don't sell user data and we don't share behavioural data with advertisers. The full privacy terms are at <a class="inline" href="/privacy">/privacy</a> and our data-processing addendum is at <a class="inline" href="/dpa">/dpa</a>.</p>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary>Where is my data stored?</summary>
+        <div class="faq-answer">
+          <p>On narve.ai's own infrastructure, hosted in the EU. We don't use a managed database or a third-party analytics provider. The only external services we send user data to are Stripe (for billing) and our email provider (for transactional mail); both are documented in the DPA.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="faq-group">
+      <h2>Still have a question?</h2>
+
+      <details class="faq-item">
+        <summary>I didn't find my answer here.</summary>
+        <div class="faq-answer">
+          <p>Email <a class="inline" href="mailto:hello@narve.ai">hello@narve.ai</a> or use the <a class="inline" href="/enquire">enquiry form</a>. We try to answer every message within two business days.</p>
+        </div>
+      </details>
+    </section>
   </main>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>

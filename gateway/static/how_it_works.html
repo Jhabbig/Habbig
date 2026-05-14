@@ -26,16 +26,21 @@
   </script>
 
   <link rel="stylesheet" href="{{ static: pages/how_it_works.css }}">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
 </head>
 <body>
-  <main class="wrap" id="main">
-    <a class="backlink" href="/">← narve.ai</a>
-    <h1>How narve.ai works</h1>
-    <p class="tagline">From a tweet to a ranked market signal — the full pipeline.</p>
+  <main class="hiw-shell" id="main">
+    <a class="hiw-back" href="/">← narve.ai</a>
 
-    <p>narve.ai runs a four-stage pipeline. The goal is simple: at any moment, tell you which prediction markets have the biggest gap between what credible sources are saying and what the market is pricing. The devil's in the detail, but the outline is short.</p>
+    <header class="hiw-hero">
+      <div class="hiw-eyebrow">How it works</div>
+      <h1 class="hiw-title">From a tweet to a ranked<br>market signal.</h1>
+      <p class="hiw-tagline">The full pipeline, in four steps.</p>
+    </header>
 
-    <div class="diagram">Social media feeds  ─┐
+    <p class="hiw-intro">narve.ai runs a four-stage pipeline. The goal is simple: at any moment, tell you which prediction markets have the biggest gap between what credible sources are saying and what the market is pricing. The devil's in the detail, but the outline is short.</p>
+
+    <pre class="diagram">Social media feeds  ─┐
                        ├─→  Prediction extraction  ─→  Scored events
 Resolution ground truth ┘                              (by source)
                                                             │
@@ -43,62 +48,87 @@ Resolution ground truth ┘                              (by source)
                                             odds  ──────────┤
                                                             ▼
                                             Credibility × market
-                                            delta → ranked signals</div>
+                                            delta → ranked signals</pre>
 
-    <h2><span class="num">1</span>Ingest</h2>
-    <p>Every day, narve ingests raw forecast text from a rotating set of high-signal accounts on X (Twitter), selected Substacks, specific Discord channels we have permission to read, and a handful of blogs. "Forecast text" means any post that makes a specific claim about a future, market-resolvable event.</p>
+    <section class="hiw-step">
+      <div class="hiw-step-head">
+        <div class="hiw-step-num">01</div>
+        <h2>Ingest</h2>
+      </div>
+      <p>Every day, narve ingests raw forecast text from a rotating set of high-signal accounts on X (Twitter), selected Substacks, specific Discord channels we have permission to read, and a handful of blogs. "Forecast text" means any post that makes a specific claim about a future, market-resolvable event.</p>
 
-    <h3>What counts as a prediction?</h3>
-    <p>narve uses an LLM classifier fine-tuned on tens of thousands of human-labeled social posts. The classifier answers three questions: (1) does this post contain a claim about a future event? (2) is the event specific enough to resolve? (3) is the claim directional or probabilistic? If all three are yes, it's tagged as a candidate prediction and entered into the extraction queue.</p>
+      <h3>What counts as a prediction?</h3>
+      <p>narve uses an LLM classifier fine-tuned on tens of thousands of human-labeled social posts. The classifier answers three questions: (1) does this post contain a claim about a future event? (2) is the event specific enough to resolve? (3) is the claim directional or probabilistic? If all three are yes, it's tagged as a candidate prediction and entered into the extraction queue.</p>
 
-    <h3>Cleaning and attribution</h3>
-    <p>Each candidate gets attributed to a source handle, timestamped with wall-clock and the market's outcome deadline, and linked to a specific market when one exists. Markets are matched by category + keyword + resolution-date heuristics first, then confirmed by a smaller classifier. Unmatched predictions are kept for retrospective grading once the underlying event resolves.</p>
+      <h3>Cleaning and attribution</h3>
+      <p>Each candidate gets attributed to a source handle, timestamped with wall-clock and the market's outcome deadline, and linked to a specific market when one exists. Markets are matched by category + keyword + resolution-date heuristics first, then confirmed by a smaller classifier. Unmatched predictions are kept for retrospective grading once the underlying event resolves.</p>
+    </section>
 
-    <h2><span class="num">2</span>Score</h2>
-    <p>Every source's historical predictions are graded as they resolve. narve uses two scoring layers:</p>
+    <section class="hiw-step">
+      <div class="hiw-step-head">
+        <div class="hiw-step-num">02</div>
+        <h2>Score</h2>
+      </div>
+      <p>Every source's historical predictions are graded as they resolve. narve uses two scoring layers:</p>
 
-    <div class="step-card">
-      <strong>Brier score (accuracy).</strong> For each resolved prediction, we compute (predicted_probability − actual_outcome)². Lower is better. A source's rolling Brier is the time-weighted average over their last N predictions in each category.
-    </div>
+      <div class="step-card">
+        <strong>Brier score (accuracy).</strong> For each resolved prediction, we compute (predicted_probability − actual_outcome)². Lower is better. A source's rolling Brier is the time-weighted average over their last N predictions in each category.
+      </div>
 
-    <div class="step-card">
-      <strong>Timing score.</strong> A correct prediction made four weeks before resolution is worth more than the same prediction made an hour before. Timing score is the log of (time_to_resolution / market_duration) weighted by the size of the source's disagreement with the market at prediction time.
-    </div>
+      <div class="step-card">
+        <strong>Timing score.</strong> A correct prediction made four weeks before resolution is worth more than the same prediction made an hour before. Timing score is the log of (time_to_resolution / market_duration) weighted by the size of the source's disagreement with the market at prediction time.
+      </div>
 
-    <p>Credibility is a Bayesian combination of the two, penalised for category concentration (a source who only predicts one narrow slice gets a confidence haircut). The full formula is in the <a class="inline" href="/methodology">methodology page</a>.</p>
+      <p>Credibility is a Bayesian combination of the two, penalised for category concentration (a source who only predicts one narrow slice gets a confidence haircut). The full formula is in the <a class="inline" href="/methodology">methodology page</a>.</p>
+    </section>
 
-    <h2><span class="num">3</span>Match</h2>
-    <p>Every live Polymarket and Kalshi market is pulled on a rolling schedule. Market prices are cached at 30-second granularity for the duration of the market's life, and archived permanently once it resolves. When narve receives a new prediction, it's linked to the most-probable matching market if one exists.</p>
+    <section class="hiw-step">
+      <div class="hiw-step-head">
+        <div class="hiw-step-num">03</div>
+        <h2>Match</h2>
+      </div>
+      <p>Every live Polymarket and Kalshi market is pulled on a rolling schedule. Market prices are cached at 30-second granularity for the duration of the market's life, and archived permanently once it resolves. When narve receives a new prediction, it's linked to the most-probable matching market if one exists.</p>
 
-    <p>The "credibility-weighted probability" for any active market is the weighted average of every tracked source's current prediction for that market, weighted by the source's credibility in the market's category. If no source has predicted on this specific market, we fall back to a category-adjacent aggregate.</p>
+      <p>The "credibility-weighted probability" for any active market is the weighted average of every tracked source's current prediction for that market, weighted by the source's credibility in the market's category. If no source has predicted on this specific market, we fall back to a category-adjacent aggregate.</p>
+    </section>
 
-    <h2><span class="num">4</span>Rank</h2>
-    <p>The last stage is simple arithmetic: for each market, compute <code>|credibility_weighted_probability − market_price|</code>. That's the edge. Sort markets descending by edge, filter out anything where credibility confidence is too low (not enough scored predictions) or market liquidity is too thin. What's left is the Best Bets panel.</p>
+    <section class="hiw-step">
+      <div class="hiw-step-head">
+        <div class="hiw-step-num">04</div>
+        <h2>Rank</h2>
+      </div>
+      <p>The last stage is simple arithmetic: for each market, compute <code>|credibility_weighted_probability − market_price|</code>. That's the edge. Sort markets descending by edge, filter out anything where credibility confidence is too low (not enough scored predictions) or market liquidity is too thin. What's left is the Best Bets panel.</p>
 
-    <p>Every entry in the Best Bets panel links through to the market detail view, where you can see:</p>
-    <ul>
-      <li>Every source's prediction on this market, with their credibility score in this category</li>
-      <li>How the market has moved since the first credible prediction</li>
-      <li>Historical performance of the top-5 credible sources in this category (hit rate, Brier, median timing)</li>
-      <li>Similar past markets and how they resolved</li>
-    </ul>
+      <p>Every entry in the Best Bets panel links through to the market detail view, where you can see:</p>
+      <ul>
+        <li>Every source's prediction on this market, with their credibility score in this category</li>
+        <li>How the market has moved since the first credible prediction</li>
+        <li>Historical performance of the top-5 credible sources in this category (hit rate, Brier, median timing)</li>
+        <li>Similar past markets and how they resolved</li>
+      </ul>
+    </section>
 
-    <h2>What you see as a user</h2>
-    <p>On the dashboard you get four panels:</p>
-    <ol>
-      <li><strong>Feed</strong> — every new prediction from any followed credible source, in reverse-chronological order.</li>
-      <li><strong>Best Bets</strong> — the ranked edge list described above.</li>
-      <li><strong>Market browser</strong> — all live markets, filterable by category, liquidity, and credibility confidence.</li>
-      <li><strong>Sources</strong> — browse by credibility score, filter by category, see each source's full history.</li>
-    </ol>
+    <section class="hiw-step">
+      <div class="hiw-step-head">
+        <div class="hiw-step-num">05</div>
+        <h2>What you see as a user</h2>
+      </div>
+      <p>On the dashboard you get four panels:</p>
+      <ol>
+        <li><strong>Feed</strong> — every new prediction from any followed credible source, in reverse-chronological order.</li>
+        <li><strong>Best Bets</strong> — the ranked edge list described above.</li>
+        <li><strong>Market browser</strong> — all live markets, filterable by category, liquidity, and credibility confidence.</li>
+        <li><strong>Sources</strong> — browse by credibility score, filter by category, see each source's full history.</li>
+      </ol>
 
-    <h2>What you don't see</h2>
-    <p>We deliberately don't show you two things: (1) a recommended bet size — that's an individual risk decision and narve isn't financial advice; (2) the underlying follower count or "popularity" of any source. Credibility is earned by being right, full stop. If you want popularity, use Twitter.</p>
+      <h3>What you don't see</h3>
+      <p>We deliberately don't show you two things: (1) a recommended bet size — that's an individual risk decision and narve isn't financial advice; (2) the underlying follower count or "popularity" of any source. Credibility is earned by being right, full stop. If you want popularity, use Twitter.</p>
 
-    <h2>Under the hood</h2>
-    <p>narve is one FastAPI service (gateway/) talking to a single SQLite database in WAL mode. Scraping runs as a pipeline of ARQ jobs. LLM inference is routed through Anthropic's Claude API with heavy prompt caching. Nothing about the architecture is exotic — it's the credibility engine and the ground-truth database that are hard to replicate.</p>
+      <h3>Under the hood</h3>
+      <p>narve is one FastAPI service (gateway/) talking to a single SQLite database in WAL mode. Scraping runs as a pipeline of ARQ jobs. LLM inference is routed through Anthropic's Claude API with heavy prompt caching. Nothing about the architecture is exotic — it's the credibility engine and the ground-truth database that are hard to replicate.</p>
 
-    <p><a class="cta" href="/methodology">Read the methodology →</a></p>
+      <a class="hiw-cta" href="/methodology">Read the methodology →</a>
+    </section>
   </main>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>

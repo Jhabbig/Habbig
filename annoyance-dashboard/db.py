@@ -215,6 +215,63 @@ def init_db() -> None:
     conn.commit()
 
 
+def startup_vacuum() -> dict[str, object]:
+    """Compact ``annoyance.db`` on boot.
+
+    The gateway runs daily VACUUM + ANALYZE + WAL-truncate on its
+    ``auth.db`` (see gateway/jobs/db_maintenance.py), but each
+    subproduct ships an independent SQLite DB that was never being
+    maintained. Calling this from the FastAPI lifespan before request
+    traffic starts means there's no contention for the exclusive lock
+    VACUUM holds.
+
+    Best-effort: any sqlite error is logged and swallowed — a wedged
+    DB shouldn't keep the dashboard offline. Returns a small result
+    dict for observability/tests.
+    """
+    import logging
+    import os
+
+    log = logging.getLogger("annoyance.db")
+    size_before: Optional[int] = None
+    size_after: Optional[int] = None
+    try:
+        if os.path.exists(config.DB_PATH):
+            size_before = os.path.getsize(config.DB_PATH)
+    except OSError:
+        size_before = None
+
+    ok = True
+    error: Optional[str] = None
+    try:
+        conn = _get_conn()
+        conn.execute("VACUUM")
+        conn.execute("ANALYZE")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
+    except sqlite3.Error as e:
+        ok = False
+        error = str(e)
+        log.warning("annoyance startup VACUUM failed (continuing): %s", e)
+
+    try:
+        if os.path.exists(config.DB_PATH):
+            size_after = os.path.getsize(config.DB_PATH)
+    except OSError:
+        size_after = None
+
+    log.info(
+        "annoyance startup VACUUM: ok=%s size_before=%s size_after=%s",
+        ok, size_before, size_after,
+    )
+    return {
+        "ok": ok,
+        "size_before_bytes": size_before,
+        "size_after_bytes": size_after,
+        "error": error,
+    }
+
+
 # ── Posts ────────────────────────────────────────────────────────────────────
 
 def insert_post(

@@ -232,6 +232,10 @@ async def lifespan(app: FastAPI):
     # spikes + supporting index). Idempotent; must run before happiness loop.
     migrations.run_all()
     log.info("db initialized at %s", config.DB_PATH)
+    # Daily-deploy hygiene — compact annoyance.db + refresh planner stats
+    # before request traffic starts. Mirrors the gateway's nightly job
+    # but runs at boot since subproducts don't have a scheduler. Best-effort.
+    db.startup_vacuum()
 
     # Kill-switches (config.{REDDIT,BLUESKY,CLASSIFIER}_LOOP_ENABLED) let
     # staging keep Claude spend at $0 until launch-day while still building

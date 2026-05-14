@@ -1,24 +1,182 @@
-/* Per-page CSS for static/about.html — extracted from the
- * previous inline <style> block by the foundation bundle
- * auto-migration. Rules live here unchanged; if anything in
- * this file should instead live in gateway.css or
- * components.css, lift it in a follow-up pass — but do NOT
- * rewrite selectors here without a visual QA pass. */
+/* Per-page CSS for static/about.html
+ * Editorial serif body, Instrument Serif Italic hero, full-width sections.
+ * Light + dark via gateway.css tokens. */
 
-body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
-    .wrap { max-width: 760px; margin: 0 auto; padding: 72px 24px 120px; }
-    .backlink { display: inline-block; opacity: 0.55; text-decoration: none; color: inherit; font-size: var(--text-sm); margin-bottom: 32px; }
-    .backlink:hover { opacity: 1; }
-    h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
-    .tagline { font-size: var(--text-lg); opacity: 0.7; margin: 0 0 48px; }
-    h2 { font-size: 22px; font-weight: 600; margin: 52px 0 14px; letter-spacing: -0.01em; }
-    h3 { font-size: var(--text-md); font-weight: 600; margin: 28px 0 10px; opacity: 0.9; }
-    p { margin: 0 0 16px; }
-    ul { padding-left: 22px; margin: 0 0 18px; }
-    li { margin-bottom: 8px; }
-    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; opacity: 0.9; }
-    .lede { font-size: var(--text-lg); opacity: 0.85; }
-    .cta { display: inline-block; padding: 12px 22px; background: var(--accent, #fff); color: var(--bg, #0d0d0d); border-radius: var(--radius-md); text-decoration: none; font-weight: 600; margin-top: 14px; }
-    .footer-nav { opacity: 0.55; font-size: var(--text-sm); margin-top: 80px; display: flex; gap: 18px; flex-wrap: wrap; }
-    .footer-nav a { color: inherit; text-decoration: none; }
-    .footer-nav a:hover { opacity: 0.8; text-decoration: underline; }
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.about-shell {
+  padding: var(--space-8) var(--space-6);
+  max-width: none;
+  margin: 0 auto;
+}
+@media (min-width: 900px) {
+  .about-shell { padding: var(--space-8) var(--space-7); }
+}
+
+.about-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  margin-bottom: var(--space-7);
+}
+.about-back:hover { color: var(--text-primary); }
+
+.about-hero { margin-bottom: var(--space-9); }
+
+.about-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-4);
+}
+
+.about-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-5xl);
+  letter-spacing: -0.02em;
+  line-height: 1.02;
+  margin: 0 0 var(--space-5);
+  color: var(--text-primary);
+}
+@media (min-width: 900px) {
+  .about-title { font-size: 88px; }
+}
+@media (max-width: 640px) {
+  .about-title { font-size: var(--text-4xl); }
+}
+
+.about-tagline {
+  font-family: var(--font-body);
+  font-size: var(--text-xl);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-5);
+  max-width: 60ch;
+  font-style: italic;
+}
+
+.about-lede {
+  font-family: var(--font-body);
+  font-size: var(--text-lg);
+  line-height: 1.6;
+  color: var(--text-primary);
+  margin: 0;
+  max-width: 70ch;
+}
+
+.about-section {
+  padding: var(--space-8) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.about-section:first-of-type { border-top: none; padding-top: 0; }
+
+.about-section-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-3);
+}
+
+.about-section h2 {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-4xl);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 var(--space-5);
+  color: var(--text-primary);
+}
+@media (max-width: 640px) {
+  .about-section h2 { font-size: var(--text-3xl); }
+}
+
+.about-section h3 {
+  font-family: var(--font-ui);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  margin: var(--space-6) 0 var(--space-3);
+  color: var(--text-primary);
+}
+
+.about-section p {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.7;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-4);
+  max-width: 72ch;
+}
+
+.about-section ul {
+  font-family: var(--font-body);
+  padding-left: var(--space-5);
+  margin: 0 0 var(--space-4);
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  line-height: 1.7;
+  max-width: 72ch;
+}
+.about-section li { margin-bottom: var(--space-3); }
+
+.about-section a.inline {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.about-section strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.about-cta {
+  display: inline-block;
+  padding: var(--space-3) var(--space-5);
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+  margin-top: var(--space-4);
+  transition: background var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.about-cta:hover { background: var(--interactive-hover); }
+
+.about-footer-nav {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  margin-top: var(--space-9);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-default);
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+.about-footer-nav a { color: var(--text-secondary); text-decoration: none; }
+.about-footer-nav a:hover { color: var(--text-primary); text-decoration: underline; }
