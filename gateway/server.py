@@ -2975,9 +2975,20 @@ async def seo_robots_txt(request: Request):
     return Response(body, media_type="text/plain; charset=utf-8")
 
 
-# Public pages included in the sitemap. Priorities are hand-tuned to match
-# crawl-importance: homepage highest, legal pages lowest, source/calendar
-# pages in between since they change frequently.
+# Public pages included in the apex sitemap. Priorities are hand-tuned to
+# match crawl-importance: homepage highest, legal pages lowest, source/
+# calendar pages in between since they change frequently.
+#
+# NOTE: sub-brand subdomains (sports.narve.ai, crypto.narve.ai, …) are
+# DELIBERATELY excluded from this list. Each sub-brand is registered as
+# its own Google property and serves its own subdomain-scoped sitemap
+# from the same /sitemap.xml route below (see the get_subdomain() branch).
+# Do not add subdomain root URLs here — that would cross-link properties
+# and dilute the per-subdomain canonical signals.
+#
+# There is no static gateway/static/sitemap.xml; the dynamic route below
+# is the single source of truth (StaticFiles is mounted at
+# /_gateway_static/, so a file at that path would not be served anyway).
 _SITEMAP_ENTRIES = [
     ("/",               "weekly",  "1.0"),
     ("/landing",        "weekly",  "0.9"),
