@@ -548,6 +548,216 @@ def record_newsletter_campaign(
         return int(cur.lastrowid)
 
 
+# ── Bounded-blast deferred-tail helpers ───────────────────────────────────
+#
+# The synchronous portion of /admin/newsletter/send is bounded at
+# MAX_INLINE_RECIPIENTS. Any overflow is recorded as a row in
+# ``newsletter_blast_jobs`` (migration 187) and drained by the
+# ``newsletter_blast_tick`` cron job. These helpers are the data plane
+# for that drain.
+
+# Inline cap: how many recipients the request handler enqueues in-band
+# before deferring the rest to ``newsletter_blast_jobs``. 500 fits inside
+# a ~5 s SQLite write window even on a cold DB; larger blasts stall the
+# admin POST and tip the rate limit.
+MAX_INLINE_RECIPIENTS = 500
+
+# Per-tick batch size — how many deferred recipients the tick worker
+# enqueues on each cron pulse. With a 60 s tick this caps the deferred
+# fan-out at MAX_BATCH_PER_TICK * 60 recipients/minute, which keeps the
+# scheduler responsive for the rest of the registry.
+MAX_BATCH_PER_TICK = 500
+
+
+def get_blast_recipients_page(
+    segment: str,
+    frequency_filter: Optional[str],
+    *,
+    offset: int,
+    limit: int,
+) -> list[dict]:
+    """Page through ``get_blast_recipients`` for the deferred-tail worker.
+
+    Same filter semantics as ``get_blast_recipients`` — sorted by id ASC
+    so successive pages are stable across ticks even when the table is
+    being mutated. ``offset`` is bounded at 0+, ``limit`` is capped at
+    a generous 5_000 to defang accidental "give me everything" calls.
+    """
+    seg = segment if segment in VALID_SEGMENTS else "all"
+    where = ["confirmed_at IS NOT NULL", "unsubscribed_at IS NULL"]
+    params: list = []
+
+    if seg != "all":
+        where.append("(segment = ? OR segment = 'all')")
+        params.append(seg)
+
+    if frequency_filter and frequency_filter in VALID_FREQUENCIES:
+        where.append("frequency = ?")
+        params.append(frequency_filter)
+
+    safe_offset = max(0, int(offset))
+    safe_limit = min(max(1, int(limit)), 5_000)
+    params.extend([safe_limit, safe_offset])
+
+    sql = (
+        "SELECT id, email, segment, frequency FROM newsletter_subscribers "
+        "WHERE " + " AND ".join(where)
+        + " ORDER BY id ASC LIMIT ? OFFSET ?"
+    )
+    with db.conn() as c:
+        return [dict(r) for r in c.execute(sql, params).fetchall()]
+
+
+def create_blast_job(
+    *,
+    campaign_id: int,
+    total_recipients: int,
+) -> int:
+    """Record a deferred-tail row for a blast that exceeded the inline cap.
+
+    Returns the new ``newsletter_blast_jobs.id``. The row starts at
+    ``status='pending'`` / ``processed_recipients=0`` and is picked up
+    by the tick worker on the next cron pulse.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        cur = c.execute(
+            "INSERT INTO newsletter_blast_jobs "
+            "(campaign_id, status, total_recipients, processed_recipients, "
+            " created_at) VALUES (?, 'pending', ?, 0, ?)",
+            (int(campaign_id), int(total_recipients), now),
+        )
+        return int(cur.lastrowid)
+
+
+def fetch_next_pending_blast_job() -> Optional[dict]:
+    """Return the oldest pending or running blast job, or None.
+
+    Running rows are returned alongside pending rows so a tick that
+    crashes mid-batch resumes on the next pulse rather than wedging.
+    """
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT id, campaign_id, status, total_recipients, "
+            " processed_recipients, created_at, started_at, finished_at "
+            "FROM newsletter_blast_jobs "
+            "WHERE status IN ('pending', 'running') "
+            "ORDER BY id ASC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def mark_blast_job_started(job_id: int) -> None:
+    """Flip a blast job from ``pending`` to ``running`` and stamp
+    ``started_at`` (if it isn't already set — re-entrant ticks must
+    not clobber the original start time).
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        c.execute(
+            "UPDATE newsletter_blast_jobs "
+            "SET status = 'running', "
+            "    started_at = COALESCE(started_at, ?) "
+            "WHERE id = ? AND status IN ('pending', 'running')",
+            (now, int(job_id)),
+        )
+
+
+def advance_blast_job_progress(job_id: int, batch_size: int) -> dict:
+    """Bump ``processed_recipients`` by *batch_size* and return the row.
+
+    If ``processed_recipients >= total_recipients`` after the bump, the
+    row flips to ``status='done'`` and ``finished_at`` is stamped.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        c.execute(
+            "UPDATE newsletter_blast_jobs "
+            "SET processed_recipients = processed_recipients + ? "
+            "WHERE id = ?",
+            (int(batch_size), int(job_id)),
+        )
+        row = c.execute(
+            "SELECT id, campaign_id, status, total_recipients, "
+            " processed_recipients, created_at, started_at, finished_at "
+            "FROM newsletter_blast_jobs WHERE id = ?",
+            (int(job_id),),
+        ).fetchone()
+        if row is None:
+            return {}
+        if int(row["processed_recipients"]) >= int(row["total_recipients"]):
+            c.execute(
+                "UPDATE newsletter_blast_jobs "
+                "SET status = 'done', finished_at = ? "
+                "WHERE id = ?",
+                (now, int(job_id)),
+            )
+            # Refresh after the close.
+            row = c.execute(
+                "SELECT id, campaign_id, status, total_recipients, "
+                " processed_recipients, created_at, started_at, "
+                " finished_at FROM newsletter_blast_jobs WHERE id = ?",
+                (int(job_id),),
+            ).fetchone()
+    return dict(row) if row else {}
+
+
+def mark_blast_job_failed(job_id: int) -> None:
+    """Flip a blast job to ``failed`` and stamp ``finished_at``.
+
+    Used by the tick worker when a batch raises hard. Pending recipients
+    are abandoned — the admin can re-blast the same campaign manually
+    after triaging.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        c.execute(
+            "UPDATE newsletter_blast_jobs "
+            "SET status = 'failed', finished_at = ? "
+            "WHERE id = ? AND status IN ('pending', 'running')",
+            (now, int(job_id)),
+        )
+
+
+def get_blast_job(job_id: int) -> Optional[dict]:
+    """Look up a single blast job by id."""
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT id, campaign_id, status, total_recipients, "
+            " processed_recipients, created_at, started_at, finished_at "
+            "FROM newsletter_blast_jobs WHERE id = ?",
+            (int(job_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_blast_job_for_campaign(campaign_id: int) -> Optional[dict]:
+    """Return the deferred-tail job for *campaign_id* if one exists."""
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT id, campaign_id, status, total_recipients, "
+            " processed_recipients, created_at, started_at, finished_at "
+            "FROM newsletter_blast_jobs "
+            "WHERE campaign_id = ? ORDER BY id DESC LIMIT 1",
+            (int(campaign_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def backfill_campaign_sent_at(campaign_id: int, sent_at: int) -> None:
+    """Set ``newsletter_campaigns.sent_at`` once the deferred tail
+    finishes. The "sent now" handler only sets ``sent_at`` for the
+    inline portion; the tail completion stamps the campaign as fully
+    sent.
+    """
+    with db.conn() as c:
+        c.execute(
+            "UPDATE newsletter_campaigns SET sent_at = ? "
+            "WHERE id = ? AND sent_at IS NULL",
+            (int(sent_at), int(campaign_id)),
+        )
+
+
 __all__ = [
     'subscribe_newsletter',
     'get_newsletter_position',
@@ -556,7 +766,18 @@ __all__ = [
     'list_newsletter_campaigns',
     'count_blast_recipients',
     'get_blast_recipients',
+    'get_blast_recipients_page',
     'record_newsletter_campaign',
+    'create_blast_job',
+    'fetch_next_pending_blast_job',
+    'mark_blast_job_started',
+    'advance_blast_job_progress',
+    'mark_blast_job_failed',
+    'get_blast_job',
+    'get_blast_job_for_campaign',
+    'backfill_campaign_sent_at',
+    'MAX_INLINE_RECIPIENTS',
+    'MAX_BATCH_PER_TICK',
     'VALID_SEGMENTS',
     'VALID_FREQUENCIES',
     'CONFIRMATION_RESEND_COOLDOWN_S',

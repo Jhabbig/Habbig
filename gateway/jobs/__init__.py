@@ -88,6 +88,15 @@ except Exception as _e:  # pragma: no cover
     import logging as _l
     _l.getLogger("jobs").warning("share_retention import failed: %s", _e)
 
+# Newsletter blast tail — drains the deferred portion of bounded
+# /admin/newsletter/send blasts. Defensively imported: a DB stuck
+# below migration 187 still imports the rest of the job registry.
+try:
+    from jobs import newsletter_blast_jobs  # noqa: F401
+except Exception as _e:  # pragma: no cover
+    import logging as _l
+    _l.getLogger("jobs").warning("newsletter_blast_jobs import failed: %s", _e)
+
 # Intelligence-layer jobs. Each one is self-registering through the
 # module-level @register_job / register_cron calls, so just importing
 # them is enough. Defensive imports keep a partial schema tree bootable.

@@ -2820,38 +2820,66 @@ async def newsletter_send(request: Request):
     else:
         scheduled_at = now
 
-    recipients = db.get_blast_recipients(
+    # Bound the synchronous portion. Audit #12 MED #1: the original
+    # handler walked every confirmed subscriber inside the request and
+    # awaited an enqueue per row. With 100k+ subscribers that's 100k DB
+    # writes on the admin POST path, easily blowing the worker timeout.
+    #
+    # Now: count the full recipient set, page the first
+    # MAX_INLINE_RECIPIENTS inline, and defer the rest as a row in
+    # ``newsletter_blast_jobs``. A cron tick
+    # (jobs/newsletter_blast_jobs.py::newsletter_blast_tick) drains the
+    # deferred tail one batch per minute.
+    recipient_count = db.count_blast_recipients(
         segment=segment, frequency_filter=frequency_filter,
     )
-    recipient_count = len(recipients)
+
+    inline_cap = int(db.NEWSLETTER_MAX_INLINE_RECIPIENTS)
+    inline_target = min(recipient_count, inline_cap) if schedule == "now" else 0
+    deferred_target = (
+        max(0, recipient_count - inline_target)
+        if schedule == "now" else 0
+    )
 
     sent_at: int | None
+    immediate_enqueued = 0
     if schedule == "now":
         # Render the markdown body once — every enqueued recipient gets
         # the same HTML so we don't repeat the regex passes per send.
         body_html_str = _newsletter_md_to_html(body_md)
         from jobs.email_jobs import enqueue_email
 
-        for row in recipients:
-            try:
-                await enqueue_email(
-                    to=row["email"],
-                    template="newsletter_blast",
-                    context={
-                        "subject": subject,
-                        # raw_-prefixed so the renderer skips HTML-escape:
-                        # the markdown→HTML pass already produced trusted
-                        # HTML, and this value is admin-authored.
-                        "raw_body_html": body_html_str,
-                    },
-                    tags=["newsletter_blast", f"segment:{segment}"],
-                )
-            except Exception as exc:
-                log.warning(
-                    "newsletter blast enqueue failed for %s: %s",
-                    row["email"], exc,
-                )
-        sent_at = now
+        if inline_target > 0:
+            inline_rows = db.get_blast_recipients_page(
+                segment=segment, frequency_filter=frequency_filter,
+                offset=0, limit=inline_target,
+            )
+            for row in inline_rows:
+                try:
+                    await enqueue_email(
+                        to=row["email"],
+                        template="newsletter_blast",
+                        context={
+                            "subject": subject,
+                            # raw_-prefixed so the renderer skips HTML-
+                            # escape: the markdown→HTML pass already
+                            # produced trusted HTML, and this value is
+                            # admin-authored.
+                            "raw_body_html": body_html_str,
+                        },
+                        tags=["newsletter_blast", f"segment:{segment}"],
+                    )
+                    immediate_enqueued += 1
+                except Exception as exc:
+                    log.warning(
+                        "newsletter blast enqueue failed for %s: %s",
+                        row["email"], exc,
+                    )
+        # ``sent_at`` reflects "the blast has left the building" — for
+        # bounded sends we stamp it once the inline portion is enqueued
+        # iff there is no deferred tail. Otherwise the tick worker
+        # backfills ``sent_at`` when the tail finishes.
+        sent_at = now if deferred_target == 0 else None
     else:
         sent_at = None  # picked up by the scheduled-dispatch cron later.
 
@@ -2866,8 +2894,16 @@ async def newsletter_send(request: Request):
         recipient_count=recipient_count,
     )
 
+    deferred_job_id: int | None = None
+    if schedule == "now" and deferred_target > 0:
+        deferred_job_id = db.create_blast_job(
+            campaign_id=campaign_id,
+            total_recipients=deferred_target,
+        )
+
     _audit(
-        "newsletter.blast_send" if sent_at else "newsletter.blast_schedule",
+        "newsletter.blast_send" if schedule == "now"
+        else "newsletter.blast_schedule",
         admin=admin, request=request,
         target_type="newsletter_campaign", target_id=str(campaign_id),
         target_description=f"{recipient_count} recipients · {segment}",
@@ -2876,8 +2912,27 @@ async def newsletter_send(request: Request):
             "frequency_filter": frequency_filter,
             "scheduled_at": scheduled_at,
             "recipient_count": recipient_count,
+            "immediate_enqueued": immediate_enqueued,
+            "queued_count": deferred_target,
+            "blast_job_id": deferred_job_id,
         },
     )
+
+    # JSON callers (tests, future admin tooling) get the bounded counts
+    # back so they can verify the deferred-tail flip without inspecting
+    # the DB directly. The form submit is redirected to the page so the
+    # existing admin UX is unchanged.
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept:
+        return JSONResponse({
+            "ok": True,
+            "campaign_id": campaign_id,
+            "recipient_count": recipient_count,
+            "immediate_enqueued": immediate_enqueued,
+            "queued_count": deferred_target,
+            "blast_job_id": deferred_job_id,
+            "status": "queued" if deferred_target > 0 else "sent",
+        })
 
     return RedirectResponse("/admin/newsletter", status_code=302)
 
