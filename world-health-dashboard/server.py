@@ -49,9 +49,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+# Security: import defusedxml BEFORE feedparser so feedparser auto-detects
+# it and routes all XML parsing through the XXE-hardened parser (blocks
+# external entities, DTDs, and entity expansion bombs). This protects the
+# WHO Disease Outbreak News RSS path — WHO is trusted today but the feed
+# is fetched over the public internet and could be tampered with mid-path.
+# defusedxml is also exposed as ``ET`` for any future direct XML parsing
+# (e.g. ECB SDW, other XML upstreams) so we never reach for stdlib
+# ``xml.etree`` by accident.
+import defusedxml  # noqa: F401  # presence forces feedparser to use it
+import defusedxml.ElementTree as ET  # noqa: F401
+
 # feedparser is the canonical WHO RSS parser. Treat it as optional — if the
 # import fails for any reason, the fetcher falls back to a minimal regex
-# parser so the service still boots.
+# parser so the service still boots. With defusedxml already imported above,
+# feedparser's internal XML parser is XXE-safe.
 try:
     import feedparser  # type: ignore
     _HAS_FEEDPARSER = True
