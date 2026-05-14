@@ -9,10 +9,16 @@
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- Source Serif 4 — body typeface on /dashboards only. Nav, logo,
+       and CTA chrome stay in Inter via --font-ui. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ static: scroll-animations.css }}">
   <link rel="stylesheet" href="/_gateway_static/states.css">
   <link rel="stylesheet" href="/_gateway_static/skeletons.css">
   <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
+  <link rel="stylesheet" href="{{ static: pages/dashboards.css }}">
 <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
   <!-- Sentry frontend (only loads if DSN present) -->
   <!-- requires server to substitute sentry_frontend_dsn; empty disables Sentry -->

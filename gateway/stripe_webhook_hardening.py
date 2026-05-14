@@ -38,6 +38,7 @@ webhooks (Stripe retries, so the handler will see it again).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -52,6 +53,100 @@ log = logging.getLogger("stripe.hardening")
 
 def _is_production() -> bool:
     return os.environ.get("PRODUCTION", "0") == "1"
+
+
+# ── Stripe IP allowlist (defence-in-depth) ─────────────────────────────────
+#
+# Source: https://stripe.com/files/ips/ips_webhooks.txt — pull annually
+# If Stripe rotates IPs and we get false rejections, refresh from the
+# canonical URL. Webhook signature still defends us; allowlist is
+# defence-in-depth.
+#
+# Snapshot: 2026-05-14. Stripe's published list rarely changes but is
+# authoritative — re-fetch yearly or whenever the audit log flags
+# unexpected 403s on /stripe/webhook.
+_STRIPE_WEBHOOK_CIDRS = (
+    "3.18.12.63/32",
+    "3.130.192.231/32",
+    "13.235.14.237/32",
+    "13.235.122.149/32",
+    "18.211.135.69/32",
+    "35.154.171.200/32",
+    "52.15.183.38/32",
+    "54.88.130.119/32",
+    "54.88.130.237/32",
+    "54.187.174.169/32",
+    "54.187.205.235/32",
+    "54.187.216.72/32",
+)
+
+_STRIPE_NETWORKS = tuple(
+    ipaddress.ip_network(cidr) for cidr in _STRIPE_WEBHOOK_CIDRS
+)
+
+
+def _is_stripe_ip(addr: str) -> bool:
+    """Return True if ``addr`` is a literal Stripe webhook source IP."""
+    if not addr:
+        return False
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return any(ip in net for net in _STRIPE_NETWORKS)
+
+
+def _allowlist_enforced() -> bool:
+    """Whether the allowlist check should reject non-Stripe IPs.
+
+    Default behavior:
+      * ``STRIPE_IP_ALLOWLIST_ENFORCE`` unset → enforce in production,
+        bypass in dev/test so local replay tooling still works.
+      * Explicit ``true`` / ``false`` overrides the default in either
+        direction (e.g. enforce on staging that doesn't set PRODUCTION).
+    """
+    flag = os.environ.get("STRIPE_IP_ALLOWLIST_ENFORCE")
+    if flag is None:
+        return _is_production()
+    return str(flag).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def reject_non_stripe_ip(client_ip: str) -> Optional[JSONResponse]:
+    """Reject the request if ``client_ip`` is not in the Stripe allowlist.
+
+    Call this in the webhook route AFTER extracting the real client IP
+    (via ``CF-Connecting-IP`` header) and BEFORE signature verification.
+    Returns a ``JSONResponse`` if the caller should abort with 403, else
+    ``None``.
+
+    Defence-in-depth — the Stripe signature verification still defends
+    us against forged payloads; this guards against any attacker who
+    discovered the signing secret but can't spoof Stripe's source IPs.
+    """
+    if not _allowlist_enforced():
+        return None
+    if _is_stripe_ip(client_ip):
+        return None
+    log.warning(
+        "Stripe webhook from non-Stripe IP %s — rejecting", client_ip,
+    )
+    return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+
+def extract_client_ip(request) -> str:
+    """Pull the real client IP from a FastAPI ``Request``.
+
+    Prefers ``CF-Connecting-IP`` (set by Cloudflare on every request to
+    the origin) over ``request.client.host`` (which under Cloudflare
+    would be a Cloudflare edge IP, not the real source).
+    """
+    cf_ip = request.headers.get("CF-Connecting-IP") or ""
+    if cf_ip:
+        return cf_ip.strip()
+    try:
+        return request.client.host or ""
+    except AttributeError:
+        return ""
 
 
 def reject_mode_mismatch(event: dict) -> Optional[JSONResponse]:

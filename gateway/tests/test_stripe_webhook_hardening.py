@@ -541,5 +541,161 @@ class TestLookupSubproductSlug(unittest.TestCase):
         self.assertIsNone(_lookup_subproduct_slug("sub_anything"))
 
 
+class TestStripeIPAllowlist(unittest.TestCase):
+    """IP allowlist on /stripe/webhook (defence-in-depth).
+
+    Covers:
+      * Stripe-source IP accepted (e.g. ``3.18.12.63``)
+      * Random / non-Stripe IPv4 rejected with 403
+      * IPv6 / malformed IP rejected
+      * ``STRIPE_IP_ALLOWLIST_ENFORCE=false`` bypasses the allowlist
+      * ``CF-Connecting-IP`` header preferred over ``request.client.host``
+    """
+
+    def setUp(self):
+        # Force a re-import so the env-flag default picks up our patches.
+        for mod in ("stripe_webhook_hardening",):
+            if mod in sys.modules:
+                del sys.modules[mod]
+        # Enforce by default for this test class — explicit is clearer
+        # than relying on PRODUCTION=1 leaking from another test.
+        os.environ["STRIPE_IP_ALLOWLIST_ENFORCE"] = "true"
+
+    def tearDown(self):
+        os.environ.pop("STRIPE_IP_ALLOWLIST_ENFORCE", None)
+        os.environ.pop("PRODUCTION", None)
+
+    # ── _is_stripe_ip ──────────────────────────────────────────────────
+
+    def test_known_stripe_ip_accepted(self):
+        from stripe_webhook_hardening import _is_stripe_ip
+        self.assertTrue(_is_stripe_ip("3.18.12.63"))
+        self.assertTrue(_is_stripe_ip("54.187.174.169"))
+
+    def test_random_ipv4_rejected(self):
+        from stripe_webhook_hardening import _is_stripe_ip
+        self.assertFalse(_is_stripe_ip("8.8.8.8"))
+        self.assertFalse(_is_stripe_ip("192.168.1.1"))
+
+    def test_ipv6_rejected(self):
+        from stripe_webhook_hardening import _is_stripe_ip
+        # Stripe publishes only IPv4 ranges at present — an IPv6 source
+        # cannot match the allowlist.
+        self.assertFalse(_is_stripe_ip("2001:db8::1"))
+        self.assertFalse(_is_stripe_ip("::1"))
+
+    def test_malformed_ip_rejected(self):
+        from stripe_webhook_hardening import _is_stripe_ip
+        self.assertFalse(_is_stripe_ip("not.an.ip.address"))
+        self.assertFalse(_is_stripe_ip(""))
+        self.assertFalse(_is_stripe_ip("3.18.12.63.99"))
+
+    # ── reject_non_stripe_ip ───────────────────────────────────────────
+
+    def test_reject_returns_none_for_stripe_ip(self):
+        from stripe_webhook_hardening import reject_non_stripe_ip
+        self.assertIsNone(reject_non_stripe_ip("3.18.12.63"))
+
+    def test_reject_returns_403_for_non_stripe_ip(self):
+        from stripe_webhook_hardening import reject_non_stripe_ip
+        resp = reject_non_stripe_ip("8.8.8.8")
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_reject_returns_403_for_malformed_ip(self):
+        from stripe_webhook_hardening import reject_non_stripe_ip
+        resp = reject_non_stripe_ip("garbage")
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_reject_returns_403_for_ipv6(self):
+        from stripe_webhook_hardening import reject_non_stripe_ip
+        resp = reject_non_stripe_ip("2001:db8::1")
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status_code, 403)
+
+    # ── env flag bypass ────────────────────────────────────────────────
+
+    def test_flag_false_bypasses_allowlist(self):
+        os.environ["STRIPE_IP_ALLOWLIST_ENFORCE"] = "false"
+        for mod in ("stripe_webhook_hardening",):
+            if mod in sys.modules:
+                del sys.modules[mod]
+        from stripe_webhook_hardening import reject_non_stripe_ip
+        # Random IP should now pass.
+        self.assertIsNone(reject_non_stripe_ip("8.8.8.8"))
+        # Even malformed input passes when allowlist is disabled.
+        self.assertIsNone(reject_non_stripe_ip("not-an-ip"))
+
+    def test_flag_unset_defaults_to_dev_bypass(self):
+        # PRODUCTION=0 (dev/test) and flag unset → bypass.
+        os.environ.pop("STRIPE_IP_ALLOWLIST_ENFORCE", None)
+        os.environ["PRODUCTION"] = "0"
+        for mod in ("stripe_webhook_hardening",):
+            if mod in sys.modules:
+                del sys.modules[mod]
+        from stripe_webhook_hardening import reject_non_stripe_ip
+        self.assertIsNone(reject_non_stripe_ip("8.8.8.8"))
+
+    def test_flag_unset_in_production_enforces(self):
+        # PRODUCTION=1 and flag unset → enforce.
+        os.environ.pop("STRIPE_IP_ALLOWLIST_ENFORCE", None)
+        os.environ["PRODUCTION"] = "1"
+        for mod in ("stripe_webhook_hardening",):
+            if mod in sys.modules:
+                del sys.modules[mod]
+        from stripe_webhook_hardening import reject_non_stripe_ip
+        resp = reject_non_stripe_ip("8.8.8.8")
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status_code, 403)
+
+    # ── extract_client_ip ──────────────────────────────────────────────
+
+    def test_extract_client_ip_prefers_cf_connecting_ip(self):
+        from stripe_webhook_hardening import extract_client_ip
+
+        class _Client:
+            host = "10.0.0.1"  # would be a Cloudflare edge IP in prod
+
+        class _Req:
+            headers = {"CF-Connecting-IP": "3.18.12.63"}
+            client = _Client()
+
+        self.assertEqual(extract_client_ip(_Req()), "3.18.12.63")
+
+    def test_extract_client_ip_falls_back_to_request_client(self):
+        from stripe_webhook_hardening import extract_client_ip
+
+        class _Client:
+            host = "5.6.7.8"
+
+        class _Req:
+            headers = {}
+            client = _Client()
+
+        self.assertEqual(extract_client_ip(_Req()), "5.6.7.8")
+
+    def test_extract_client_ip_handles_missing_client(self):
+        from stripe_webhook_hardening import extract_client_ip
+
+        class _Req:
+            headers = {}
+            client = None  # type: ignore[assignment]
+
+        # Reading ``.host`` off None raises AttributeError — helper must
+        # swallow it and return empty string rather than 500.
+        self.assertEqual(extract_client_ip(_Req()), "")
+
+    def test_extract_client_ip_strips_whitespace(self):
+        from stripe_webhook_hardening import extract_client_ip
+
+        class _Req:
+            headers = {"CF-Connecting-IP": "  3.18.12.63  "}
+            client = None
+
+        self.assertEqual(extract_client_ip(_Req()), "3.18.12.63")
+
+
+
 if __name__ == "__main__":
     unittest.main()

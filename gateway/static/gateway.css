@@ -35,7 +35,10 @@ html { color-scheme: light dark; }
 }
 
 html, body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Body face is now editorial serif (Source Serif 4) site-wide. Nav
+     chrome, logo, buttons, and dashboard data tables override back to
+     --font-ui (Inter) via component selectors. */
+  font-family: var(--font-body);
   background-color: var(--bg);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;

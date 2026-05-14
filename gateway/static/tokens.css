@@ -40,6 +40,19 @@
   font-display: swap;
 }
 
+/* ── @font-face: Source Serif 4 (editorial body face) ─────────────────────
+   Variable axis covers 200–900 so a single file serves every weight.
+   Self-hosted Roman variable — no italic axis. For italic emphasis use
+   --font-display (Instrument Serif Italic). New default for <body> on
+   every gateway-served page; nav chrome + logo stay on --font-ui (Inter)
+   by selector specificity. */
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("/_gateway_static/fonts/SourceSerif4-Variable.woff2") format("woff2-variations");
+  font-weight: 200 900;
+  font-display: swap;
+}
+
 
 /* ============================================================
    LIGHT THEME — DEFAULT
@@ -190,6 +203,10 @@
   --text-5xl:  72px;
 
   /* ── Font families ──────────────────────────────────────── */
+  /* Editorial body face — long-form reading + paragraph copy. Site-wide
+     default for <body>; nav chrome + logo override back to --font-ui via
+     component selectors. */
+  --font-body:    "Source Serif 4", Georgia, "Times New Roman", serif;
   --font-ui:      "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
                   ui-sans-serif, system-ui, sans-serif;
   --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;

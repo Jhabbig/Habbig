@@ -1,0 +1,60 @@
+/* /dashboards hub — full-width responsive grid + serif body
+ *
+ * Overrides the generic .dash-grid / .dash-card rules from gateway.css
+ * so the hub cards span the full viewport width (no fixed max-width
+ * cap), pick up generous padding, and read in Source Serif 4 body.
+ * Nav chrome, logo, and CTA chrome stay in Inter (--font-ui) per the
+ * narve three-typeface policy.
+ *
+ * Loaded only on /dashboards (via dashboards.html), so the broader
+ * design system is unaffected. */
+
+.dash-grid {
+  display: grid;
+  /* Mobile: single column, full-width cards. */
+  grid-template-columns: 1fr;
+  gap: var(--space-6);
+  width: 100%;
+  /* Drop the upstream max-width cap so cards span edge-to-edge. */
+  max-width: none;
+  padding: var(--space-8);
+}
+
+@media (min-width: 720px) {
+  .dash-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1100px) {
+  .dash-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.dash-card {
+  width: 100%;
+  /* Generous interior padding — pulls the card content off the edges
+     and gives the serif body room to breathe. */
+  padding: var(--space-6);
+  font-family: var(--font-body);
+}
+
+.dash-card-title,
+.dash-card-desc,
+.dash-card-price {
+  font-family: var(--font-body);
+}
+
+/* CTA chrome ("Open ↗" / "Unlock →") stays in Inter — keeps the
+   interactive affordance crisp and consistent with the rest of the
+   product's UI vocabulary. */
+.dash-card-action {
+  font-family: var(--font-ui);
+}
+
+/* Badges and accent dots are part of the card's UI chrome, not its
+   prose — keep them in Inter so they read as labels, not body copy. */
+.dash-card .badge {
+  font-family: var(--font-ui);
+}
