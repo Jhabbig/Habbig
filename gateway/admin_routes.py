@@ -299,6 +299,56 @@ async def impersonation_detail(request: Request, session_id: int):
 _FLAG_TIERS = ["free", "trader", "pro", "enterprise"]
 
 
+def _subproduct_slugs():
+    """Return the list of valid subproduct slugs, sorted.
+
+    Used to validate the ``subproduct`` query/form param on flag CRUD so
+    the admin UI cannot accidentally create a row scoped to a junk slug.
+    Looked up lazily so the import order of `subproduct` does not matter.
+    """
+    try:
+        from subproduct import SUBPRODUCTS  # type: ignore
+    except Exception:
+        try:
+            from gateway.subproduct import SUBPRODUCTS  # type: ignore
+        except Exception:
+            return []
+    return sorted(SUBPRODUCTS.keys())
+
+
+def _flag_subproduct_dropdown(current):
+    """Return <option> tags for the per-subproduct scope dropdown.
+
+    Empty value = global (subproduct_key IS NULL). Each other option is a
+    valid subproduct slug from the SUBPRODUCTS catalogue.
+    """
+    cur = current or ""
+    parts = [
+        '<option value=""' + (' selected' if not cur else '') + '>Global (default)</option>'
+    ]
+    for slug in _subproduct_slugs():
+        sel = ' selected' if cur == slug else ''
+        parts.append(
+            f'<option value="{html.escape(slug)}"{sel}>'
+            f'{html.escape(slug)}.narve.ai</option>'
+        )
+    return "".join(parts)
+
+
+def _normalize_subproduct(raw):
+    """Coerce a query/form value into a valid subproduct slug or None.
+
+    Falls back to None (global) when the value is missing, empty, or not
+    a known slug.
+    """
+    if not raw:
+        return None
+    value = str(raw).strip()
+    if not value:
+        return None
+    return value if value in _subproduct_slugs() else None
+
+
 def _flag_tier_input(current: list) -> str:
     parts = []
     for t in _FLAG_TIERS:
@@ -357,15 +407,28 @@ async def flags_page(request: Request):
             if f["enabled_globally"] else
             '<span class="badge" style="background:var(--surface-hover);color:var(--text-muted)">Disabled</span>'
         )
+        # Per-subproduct override badge — makes it obvious at a glance
+        # which rows are scoped vs global. Global rows show no badge.
+        subp = data.get("subproduct_key")
+        scope_badge = (
+            f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary);'
+            f'margin-left:8px;font-size:10px">{html.escape(subp)}.narve.ai</span>'
+            if subp else ""
+        )
+        # Edit link carries the subproduct slug as a query param so the
+        # edit page targets the right (key, subproduct_key) row.
+        edit_href = f'/admin/flags/{html.escape(f["key"])}'
+        if subp:
+            edit_href += f'?subproduct={html.escape(subp)}'
         rows.append(
             f'<div class="admin-row">'
             f'<div class="admin-row-info">'
             f'<div class="admin-row-main"><code>{html.escape(f["key"])}</code> &middot; '
-            f'<strong>{html.escape(f["name"])}</strong> {status}</div>'
+            f'<strong>{html.escape(f["name"])}</strong> {status}{scope_badge}</div>'
             f'<div class="admin-row-meta">Tiers: {html.escape(tiers)} &middot; '
             f'Rollout: {int(f["rollout_percentage"] or 0)}%</div></div>'
             f'<div class="admin-row-actions"><a class="btn btn-primary-outline" style="font-size:11px" '
-            f'href="/admin/flags/{html.escape(f["key"])}">Edit</a></div>'
+            f'href="{edit_href}">Edit</a></div>'
             f'</div>'
         )
 
@@ -378,6 +441,7 @@ async def flags_page(request: Request):
         active_route="flags",
         breadcrumb=[("Admin", "/admin"), ("Feature flags", "/admin/flags")],
         raw_flag_rows=body,
+        raw_create_subproduct_options=_flag_subproduct_dropdown(None),
     )
 
 
@@ -390,32 +454,51 @@ async def flag_create(request: Request):
         raise HTTPException(status_code=400, detail="Key must be lowercase [a-z0-9_-], ≤80 chars")
     if not name:
         name = key
-    if db.get_feature_flag(key):
-        raise HTTPException(status_code=409, detail="A flag with that key already exists")
+    subproduct_key = _normalize_subproduct(form.get("subproduct"))
+    if db.get_feature_flag(key, subproduct_key=subproduct_key):
+        scope_msg = f" for subproduct {subproduct_key}" if subproduct_key else ""
+        raise HTTPException(
+            status_code=409,
+            detail=f"A flag with that key already exists{scope_msg}",
+        )
 
     db.create_feature_flag(
         key=key, name=name,
         description=(form.get("description") or "").strip(),
         updated_by_admin_id=admin["user_id"],
+        subproduct_key=subproduct_key,
     )
     from security import audit as _a
     _audit(
         _a.AuditAction.FEATURE_FLAG_CREATE,
         admin=admin, request=request,
         target_type="feature_flag", target_id=key,
-        target_description=name,
+        target_description=(
+            f"{name} (subproduct={subproduct_key})" if subproduct_key else name
+        ),
     )
-    return RedirectResponse(f"/admin/flags/{key}", status_code=302)
+    redirect = f"/admin/flags/{key}"
+    if subproduct_key:
+        redirect += f"?subproduct={subproduct_key}"
+    return RedirectResponse(redirect, status_code=302)
 
 
 async def flag_edit_page(request: Request, key: str):
     admin = _require_admin_user(request, page=True)
     if admin is None:
         return _denied_response(request)
-    row = db.get_feature_flag(key)
+    subproduct_key = _normalize_subproduct(request.query_params.get("subproduct"))
+    row = db.get_feature_flag(key, subproduct_key=subproduct_key)
     if not row:
         raise HTTPException(status_code=404, detail="Flag not found")
     data = features.flag_to_dict(row)
+
+    # Form action carries the subproduct via query string so the POST
+    # routes (save / delete) target the right (key, subproduct_key) row.
+    form_qs = f"?subproduct={subproduct_key}" if subproduct_key else ""
+    scope_label = (
+        f"{subproduct_key}.narve.ai" if subproduct_key else "Global (default)"
+    )
 
     from admin_shell import render_admin_page
     return render_admin_page(
@@ -426,11 +509,14 @@ async def flag_edit_page(request: Request, key: str):
         breadcrumb=[
             ("Admin", "/admin"),
             ("Feature flags", "/admin/flags"),
-            (data["key"], None),
+            (data["key"] + (f" ({subproduct_key})" if subproduct_key else ""), None),
         ],
         flag_key=data["key"],
         flag_name=data["name"],
         flag_description=data["description"],
+        flag_form_qs=form_qs,
+        flag_scope_label=scope_label,
+        raw_subproduct_options=_flag_subproduct_dropdown(subproduct_key),
         # Template uses {{ raw_enabled_checked }} so the substituter
         # leaves the value as raw HTML attribute fragment ("checked" or
         # empty). Without the raw_ prefix the placeholder never matched,
@@ -446,13 +532,14 @@ async def flag_edit_page(request: Request, key: str):
 
 async def flag_save(request: Request, key: str):
     admin = _require_admin_user(request)
-    row = db.get_feature_flag(key)
+    subproduct_key = _normalize_subproduct(request.query_params.get("subproduct"))
+    row = db.get_feature_flag(key, subproduct_key=subproduct_key)
     if not row:
         raise HTTPException(status_code=404, detail="Flag not found")
     form = await request.form()
     kwargs = _parse_flag_form(form)
     kwargs["updated_by_admin_id"] = admin["user_id"]
-    db.update_feature_flag(key, **kwargs)
+    db.update_feature_flag(key, subproduct_key=subproduct_key, **kwargs)
 
     # Feature flags gate what the feed materialises for which tier/user.
     # Flush the feed namespace after any flag change so users don't see
@@ -464,24 +551,29 @@ async def flag_save(request: Request, key: str):
         log.warning("ttl_invalidate on_feature_flag_change failed", exc_info=True)
 
     from security import audit as _a
+    audit_kwargs = dict(kwargs)
+    audit_kwargs["subproduct_key"] = subproduct_key
     _audit(
         _a.AuditAction.FEATURE_FLAG_UPDATE,
         admin=admin, request=request,
-        target_type="feature_flag", target_id=key,
-        after=kwargs,
+        target_type="feature_flag",
+        target_id=(f"{key}@{subproduct_key}" if subproduct_key else key),
+        after=audit_kwargs,
     )
     return RedirectResponse("/admin/flags", status_code=302)
 
 
 async def flag_delete(request: Request, key: str):
     admin = _require_admin_user(request)
-    if not db.delete_feature_flag(key):
+    subproduct_key = _normalize_subproduct(request.query_params.get("subproduct"))
+    if not db.delete_feature_flag(key, subproduct_key=subproduct_key):
         raise HTTPException(status_code=404, detail="Flag not found")
     from security import audit as _a
     _audit(
         _a.AuditAction.FEATURE_FLAG_DELETE,
         admin=admin, request=request,
-        target_type="feature_flag", target_id=key,
+        target_type="feature_flag",
+        target_id=(f"{key}@{subproduct_key}" if subproduct_key else key),
     )
     return RedirectResponse("/admin/flags", status_code=302)
 
@@ -492,8 +584,13 @@ async def flag_evaluate_api(request: Request, key: str):
     user = _current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    enabled = features.is_feature_enabled(key, user)
-    return JSONResponse({"key": key, "enabled": enabled})
+    subproduct_key = _normalize_subproduct(request.query_params.get("subproduct"))
+    enabled = features.is_feature_enabled(key, user, subproduct_key=subproduct_key)
+    return JSONResponse({
+        "key": key,
+        "enabled": enabled,
+        "subproduct_key": subproduct_key,
+    })
 
 
 # ── Email template routes ───────────────────────────────────────────────
@@ -576,17 +673,17 @@ async def emails_page(request: Request):
             f'<div class="admin-row-main"><code>{html.escape(key)}</code> {status_html}</div>'
             f'<div class="admin-row-meta">{" &middot; ".join(meta_parts)}</div></div>'
             f'<div class="admin-row-actions"><a class="btn btn-primary-outline" style="font-size:11px" '
-            f'href="/admin/emails/{html.escape(key)}">Edit</a></div>'
+            f'href="/admin/email-templates/{html.escape(key)}">Edit</a></div>'
             f'</div>'
         )
 
     from admin_shell import render_admin_page
     return render_admin_page(
         request,
-        "admin/emails.html",
+        "admin/email-templates.html",
         page_title="Email templates",
-        active_route="emails",
-        breadcrumb=[("Admin", "/admin"), ("Email templates", "/admin/emails")],
+        active_route="email-templates",
+        breadcrumb=[("Admin", "/admin"), ("Email templates", "/admin/email-templates")],
         raw_template_rows="".join(rows),
     )
 
@@ -631,10 +728,10 @@ async def email_edit_page(request: Request, key: str):
         request,
         "admin/email-edit.html",
         page_title=f"Email: {key}",
-        active_route="emails",
+        active_route="email-templates",
         breadcrumb=[
             ("Admin", "/admin"),
-            ("Email templates", "/admin/emails"),
+            ("Email templates", "/admin/email-templates"),
             (key, None),
         ],
         template_key=key,
@@ -679,7 +776,7 @@ async def email_save(request: Request, key: str):
         target_type="email_template", target_id=key,
         notes=f"is_active={is_active}",
     )
-    return RedirectResponse("/admin/emails", status_code=302)
+    return RedirectResponse("/admin/email-templates", status_code=302)
 
 
 async def email_preview(request: Request, key: str):
@@ -706,7 +803,7 @@ async def email_reset(request: Request, key: str):
             admin=admin, request=request,
             target_type="email_template", target_id=key,
         )
-    return RedirectResponse("/admin/emails", status_code=302)
+    return RedirectResponse("/admin/email-templates", status_code=302)
 
 
 # ── /admin/trace-watermark ──────────────────────────────────────────────
@@ -2366,6 +2463,425 @@ async def users_bulk_actions(request: Request):
     return RedirectResponse("/admin/users", status_code=302)
 
 
+# ── /admin/newsletter ────────────────────────────────────────────────────
+#
+# One-off blast composer. Admin picks a (segment, frequency) filter,
+# writes a markdown body + subject, and either sends now or schedules
+# for a future timestamp. Confirmed subscribers matching the filter
+# receive the rendered ``newsletter_blast`` template.
+#
+# The recurring weekly digest is a separate cron path; this is the
+# manual surface for launch announcements, milestone hits, and the like.
+
+_NEWSLETTER_SEGMENTS = ("all", "markets", "election", "climate", "intelligence")
+_NEWSLETTER_FREQUENCIES = ("", "weekly", "monthly", "daily_spike")
+_NEWSLETTER_SEGMENT_LABELS = {
+    "all": "All segments",
+    "markets": "Markets",
+    "election": "Election",
+    "climate": "Climate",
+    "intelligence": "Intelligence",
+}
+_NEWSLETTER_FREQUENCY_LABELS = {
+    "": "Any frequency",
+    "weekly": "Weekly",
+    "monthly": "Monthly",
+    "daily_spike": "Daily spike",
+}
+
+
+def _newsletter_md_to_html(body_md: str) -> str:
+    """Render the admin-composed markdown body into safe-ish HTML for the
+    email body. Intentionally minimal: paragraphs, **bold**, *italic*,
+    `code`, [link](url), bulleted lists, and headings (## / ###).
+
+    Pulling a full markdown engine in here would expand the trust surface
+    (some support raw HTML by default). The set below covers the 95% of
+    what an announcement actually needs and lets us escape everything
+    else, so a runaway "<script>" in a body never reaches a recipient.
+    """
+    safe = html.escape(body_md or "")
+
+    # Headings — must run before paragraph wrapping.
+    safe = re.sub(
+        r"^### (.+)$",
+        r'<h3 style="margin:20px 0 8px;font-size:15px;font-weight:600;color:#0d0d0d;">\1</h3>',
+        safe,
+        flags=re.MULTILINE,
+    )
+    safe = re.sub(
+        r"^## (.+)$",
+        r'<h2 style="margin:24px 0 12px;font-size:17px;font-weight:600;color:#0d0d0d;letter-spacing:-0.01em;">\1</h2>',
+        safe,
+        flags=re.MULTILINE,
+    )
+
+    # Inline: **bold**, *italic*, `code`, [text](url).
+    safe = re.sub(r"\*\*([^\*]+)\*\*", r"<strong>\1</strong>", safe)
+    safe = re.sub(r"(?<!\*)\*([^\*\n]+)\*(?!\*)", r"<em>\1</em>", safe)
+    safe = re.sub(
+        r"`([^`]+)`",
+        r'<code style="background:#f3f3f3;padding:1px 4px;border-radius:3px;font-size:13px;">\1</code>',
+        safe,
+    )
+
+    # Links — escape pass already neutered raw HTML, so href injection
+    # via the URL is the only remaining surface. Restrict to http(s)/mailto.
+    def _link_repl(m):
+        text = m.group(1)
+        url = m.group(2)
+        if not re.match(r"^(https?://|mailto:)", url):
+            return m.group(0)
+        return (
+            f'<a href="{url}" style="color:#0d0d0d;text-decoration:underline;">'
+            f'{text}</a>'
+        )
+
+    safe = re.sub(r"\[([^\]]+)\]\(([^\)]+)\)", _link_repl, safe)
+
+    # Bulleted lists — group consecutive "- foo" lines into a <ul>.
+    def _list_repl(m):
+        items = "".join(
+            f'<li style="margin-bottom:4px;">{line[2:]}</li>'
+            for line in m.group(0).split("\n") if line.startswith("- ")
+        )
+        return (
+            '<ul style="margin:12px 0;padding-left:20px;color:#0d0d0d;">'
+            f'{items}</ul>'
+        )
+
+    safe = re.sub(r"(?:^- .+(?:\n|$))+", _list_repl, safe, flags=re.MULTILINE)
+
+    # Paragraph wrapping — split on blank lines.
+    blocks = []
+    for block in re.split(r"\n{2,}", safe.strip()):
+        block = block.strip()
+        if not block:
+            continue
+        if block.startswith(("<h", "<ul", "<ol")):
+            blocks.append(block)
+        else:
+            block = block.replace("\n", "<br>")
+            blocks.append(
+                f'<p style="margin:0 0 16px;color:#0d0d0d;line-height:1.6;">'
+                f'{block}</p>'
+            )
+    return "\n".join(blocks)
+
+
+def _render_newsletter_history_rows(campaigns: list[dict]) -> str:
+    """Render the past-campaigns table for the /admin/newsletter index.
+
+    Each row shows subject, segment + frequency, scheduled/sent timestamps,
+    and recipient count. The count cell uses Geist Mono via inline
+    font-family — admin-shell.css doesn't auto-mono arbitrary spans.
+    """
+    if not campaigns:
+        return (
+            '<div class="admin-empty">'
+            'No campaigns sent yet. Compose one below.</div>'
+        )
+
+    now = int(time.time())
+    rows = []
+    for c in campaigns:
+        seg = _NEWSLETTER_SEGMENT_LABELS.get(c["segment"], c["segment"])
+        freq_raw = c.get("frequency_filter") or ""
+        freq = _NEWSLETTER_FREQUENCY_LABELS.get(
+            freq_raw, freq_raw or "Any frequency",
+        )
+        sched_ts = int(c["scheduled_at"])
+        sent_ts = c.get("sent_at")
+
+        if sent_ts:
+            status_html = (
+                '<span class="badge" style="background:rgba(34,197,94,0.12);'
+                'color:#22c55e">Sent</span>'
+            )
+            time_label = (
+                f"Sent {html.escape(_fmt_ts(sent_ts, '%b %-d %H:%M UTC'))}"
+            )
+        elif sched_ts > now:
+            status_html = (
+                '<span class="badge" style="background:rgba(59,130,246,0.12);'
+                'color:#3b82f6">Scheduled</span>'
+            )
+            time_label = (
+                f"Fires {html.escape(_fmt_ts(sched_ts, '%b %-d %H:%M UTC'))}"
+            )
+        else:
+            status_html = (
+                '<span class="badge" style="background:var(--surface-hover);'
+                'color:var(--text-muted)">Pending</span>'
+            )
+            time_label = (
+                f"Queued {html.escape(_fmt_ts(sched_ts, '%b %-d %H:%M UTC'))}"
+            )
+
+        recipients = int(c.get("recipient_count") or 0)
+        meta_parts = [html.escape(seg), html.escape(freq), time_label]
+        rows.append(
+            f'<div class="admin-row" data-campaign-id="{c["id"]}">'
+            f'<div class="admin-row-info">'
+            f'<div class="admin-row-main">'
+            f'{html.escape(c["subject"])} {status_html}'
+            f'</div>'
+            f'<div class="admin-row-meta">'
+            f'{" &middot; ".join(meta_parts)}</div></div>'
+            f'<div class="admin-row-actions">'
+            f'<span class="newsletter-count" '
+            f'style="font-family:var(--font-mono);font-size:13px;'
+            f'color:var(--text-secondary);">'
+            f'{recipients:,} recipients</span>'
+            f'</div>'
+            f'</div>'
+        )
+    return "".join(rows)
+
+
+def _render_newsletter_select(
+    name: str, values, current: str, labels: dict,
+) -> str:
+    """Render a <select> for segment/frequency on the compose form."""
+    options = []
+    for v in values:
+        sel = ' selected' if v == current else ''
+        options.append(
+            f'<option value="{html.escape(v)}"{sel}>'
+            f'{html.escape(labels.get(v, v))}</option>'
+        )
+    return (
+        f'<select id="{name}" name="{name}" class="newsletter-select">'
+        + "".join(options)
+        + "</select>"
+    )
+
+
+async def newsletter_page(request: Request):
+    """GET /admin/newsletter — list past campaigns + compose form.
+
+    Two-section page: past campaigns at top (newest first, paginated to
+    the most recent 50), then the compose form below. The live recipient
+    count for the currently selected filter is rendered server-side on
+    initial load and refreshed by inline JS on filter change via
+    /admin/newsletter/recipients.
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    campaigns = db.list_newsletter_campaigns(limit=50)
+    history_rows = _render_newsletter_history_rows(campaigns)
+
+    # Default-filter recipient count for the live preview.
+    default_count = db.count_blast_recipients(
+        segment="all", frequency_filter=None,
+    )
+
+    segment_select = _render_newsletter_select(
+        "segment", _NEWSLETTER_SEGMENTS, "all",
+        _NEWSLETTER_SEGMENT_LABELS,
+    )
+    frequency_select = _render_newsletter_select(
+        "frequency_filter", _NEWSLETTER_FREQUENCIES, "",
+        _NEWSLETTER_FREQUENCY_LABELS,
+    )
+
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/newsletter.html",
+        page_title="Newsletter blasts",
+        active_route="newsletter",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Newsletter", "/admin/newsletter"),
+        ],
+        raw_history_rows=history_rows,
+        raw_segment_select=segment_select,
+        raw_frequency_select=frequency_select,
+        recipient_count=f"{default_count:,}",
+    )
+
+
+async def newsletter_recipient_count_json(request: Request):
+    """GET /admin/newsletter/recipients — JSON live count for compose.
+
+    Admin-only. Used by the inline JS on the compose page to refresh
+    "X recipients" when the segment/frequency dropdowns change without
+    a full page reload.
+    """
+    _require_admin_user(request)
+    qp = request.query_params
+    segment = (qp.get("segment") or "all").strip().lower()
+    frequency = (qp.get("frequency_filter") or "").strip().lower() or None
+    count = db.count_blast_recipients(
+        segment=segment, frequency_filter=frequency,
+    )
+    return JSONResponse({
+        "count": int(count),
+        "segment": segment,
+        "frequency_filter": frequency,
+    })
+
+
+async def newsletter_preview(request: Request):
+    """POST /admin/newsletter/preview — render the markdown body to HTML.
+
+    Used by the inline "Preview" button on the compose form. Returns
+    the rendered HTML body so the admin can sanity-check before sending.
+    """
+    _require_admin_user(request)
+    form = await request.form()
+    body_md = form.get("body_md") or ""
+    subject = (form.get("subject") or "").strip()
+    return JSONResponse({
+        "subject": subject,
+        "body_html": _newsletter_md_to_html(body_md),
+    })
+
+
+async def newsletter_send(request: Request):
+    """POST /admin/newsletter/send — compose-and-blast handler.
+
+    Required form fields:
+      * ``subject``           — non-empty subject line.
+      * ``body_md``           — markdown body, rendered into HTML for send.
+      * ``segment``           — one of ``_NEWSLETTER_SEGMENTS``.
+      * ``frequency_filter``  — optional, weekly/monthly/daily_spike.
+      * ``schedule``          — "now" or "later".
+      * ``scheduled_at``      — required when schedule=="later". ISO 8601
+                                 ``YYYY-MM-DDTHH:MM`` from the form's
+                                 datetime-local input, interpreted as UTC.
+
+    Behaviour:
+      * ``schedule == "now"``    — enqueue an email per recipient via
+                                    ``enqueue_email``, record the campaign
+                                    with ``sent_at = now`` and the actual
+                                    recipient_count.
+      * ``schedule == "later"``  — record the campaign with
+                                    ``scheduled_at`` set to the future ts
+                                    and ``sent_at = NULL``. A future cron
+                                    dispatches it — out of scope here.
+
+    CSRF is enforced by the global middleware. Admin auth + per-admin
+    mutation rate limit come from ``_require_admin_user``.
+    """
+    admin = _require_admin_user(request)
+    form = await request.form()
+
+    subject = (form.get("subject") or "").strip()
+    body_md = form.get("body_md") or ""
+    segment = (form.get("segment") or "all").strip().lower()
+    frequency_filter = (
+        (form.get("frequency_filter") or "").strip().lower() or None
+    )
+    schedule = (form.get("schedule") or "now").strip().lower()
+    scheduled_at_str = (form.get("scheduled_at") or "").strip()
+
+    if not subject:
+        raise HTTPException(status_code=400, detail="Subject is required")
+    if not body_md.strip():
+        raise HTTPException(status_code=400, detail="Body is required")
+    if segment not in _NEWSLETTER_SEGMENTS:
+        raise HTTPException(status_code=400, detail="Invalid segment")
+    if frequency_filter is not None and frequency_filter not in (
+        "weekly", "monthly", "daily_spike",
+    ):
+        raise HTTPException(
+            status_code=400, detail="Invalid frequency filter",
+        )
+
+    now = int(time.time())
+
+    # Resolve scheduled_at — "now" snaps to current time; "later" parses
+    # the datetime-local input as UTC. The form has no TZ picker so the
+    # contract is "what you type, in UTC". Admin pages already render
+    # timestamps with the UTC suffix throughout.
+    if schedule == "later":
+        if not scheduled_at_str:
+            raise HTTPException(
+                status_code=400, detail="Scheduled time required",
+            )
+        try:
+            dt = _dt.datetime.fromisoformat(scheduled_at_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_dt.timezone.utc)
+            scheduled_at = int(dt.timestamp())
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="Invalid scheduled time",
+            )
+        if scheduled_at <= now:
+            raise HTTPException(
+                status_code=400,
+                detail="Scheduled time must be in the future",
+            )
+    else:
+        scheduled_at = now
+
+    recipients = db.get_blast_recipients(
+        segment=segment, frequency_filter=frequency_filter,
+    )
+    recipient_count = len(recipients)
+
+    sent_at: int | None
+    if schedule == "now":
+        # Render the markdown body once — every enqueued recipient gets
+        # the same HTML so we don't repeat the regex passes per send.
+        body_html_str = _newsletter_md_to_html(body_md)
+        from jobs.email_jobs import enqueue_email
+
+        for row in recipients:
+            try:
+                await enqueue_email(
+                    to=row["email"],
+                    template="newsletter_blast",
+                    context={
+                        "subject": subject,
+                        # raw_-prefixed so the renderer skips HTML-escape:
+                        # the markdown→HTML pass already produced trusted
+                        # HTML, and this value is admin-authored.
+                        "raw_body_html": body_html_str,
+                    },
+                    tags=["newsletter_blast", f"segment:{segment}"],
+                )
+            except Exception as exc:
+                log.warning(
+                    "newsletter blast enqueue failed for %s: %s",
+                    row["email"], exc,
+                )
+        sent_at = now
+    else:
+        sent_at = None  # picked up by the scheduled-dispatch cron later.
+
+    campaign_id = db.record_newsletter_campaign(
+        admin_user_id=int(admin.get("user_id") or 0),
+        subject=subject,
+        body_md=body_md,
+        segment=segment,
+        frequency_filter=frequency_filter,
+        scheduled_at=scheduled_at,
+        sent_at=sent_at,
+        recipient_count=recipient_count,
+    )
+
+    _audit(
+        "newsletter.blast_send" if sent_at else "newsletter.blast_schedule",
+        admin=admin, request=request,
+        target_type="newsletter_campaign", target_id=str(campaign_id),
+        target_description=f"{recipient_count} recipients · {segment}",
+        after={
+            "segment": segment,
+            "frequency_filter": frequency_filter,
+            "scheduled_at": scheduled_at,
+            "recipient_count": recipient_count,
+        },
+    )
+
+    return RedirectResponse("/admin/newsletter", status_code=302)
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 
@@ -2394,6 +2910,26 @@ def register(app) -> None:
     )
     app.add_api_route(
         "/admin/users/bulk-actions", users_bulk_actions,
+        methods=["POST"], include_in_schema=False,
+    )
+
+    # Newsletter blast composer — see newsletter_page docstring for the
+    # surface. Data layer: queries/newsletter.py; DB:
+    # newsletter_campaigns (migration 183) + newsletter_subscribers.
+    app.add_api_route(
+        "/admin/newsletter", newsletter_page,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/newsletter/recipients", newsletter_recipient_count_json,
+        methods=["GET"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/newsletter/preview", newsletter_preview,
+        methods=["POST"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/newsletter/send", newsletter_send,
         methods=["POST"], include_in_schema=False,
     )
 
@@ -2452,24 +2988,27 @@ def register(app) -> None:
         methods=["GET"], include_in_schema=False,
     )
 
+    # Email *templates* editor lives at /admin/email-templates. The
+    # /admin/emails surface is now the outbound queue / delivery review
+    # diagnostic page (see admin_emails_routes.py).
     app.add_api_route(
-        "/admin/emails", emails_page,
+        "/admin/email-templates", emails_page,
         methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
     )
     app.add_api_route(
-        "/admin/emails/{key}", email_edit_page,
+        "/admin/email-templates/{key}", email_edit_page,
         methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
     )
     app.add_api_route(
-        "/admin/emails/{key}", email_save,
+        "/admin/email-templates/{key}", email_save,
         methods=["POST"], include_in_schema=False,
     )
     app.add_api_route(
-        "/admin/emails/{key}/preview", email_preview,
+        "/admin/email-templates/{key}/preview", email_preview,
         methods=["POST"], include_in_schema=False,
     )
     app.add_api_route(
-        "/admin/emails/{key}/reset", email_reset,
+        "/admin/email-templates/{key}/reset", email_reset,
         methods=["POST"], include_in_schema=False,
     )
 

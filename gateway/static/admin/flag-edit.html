@@ -1,11 +1,23 @@
 <!-- Converted from admin-flag-edit.html. Body-only — wrapped by admin_shell. -->
 <div style="max-width:820px">
 
-          <form method="post" action="/admin/flags/{{ flag_key }}">
+          <form method="post" action="/admin/flags/{{ flag_key }}{{ flag_form_qs }}">
             {{ raw_csrf_field }}
 
             <div class="settings-card">
               <div class="settings-section">
+                <div class="field-row">
+                  <span class="field-label">Scope</span>
+                  <div class="field-control" style="padding-top:4px">
+                    <strong style="font-size:13px">{{ flag_scope_label }}</strong>
+                    <div class="field-helper">
+                      Per-subproduct rows override the global default for that subdomain.
+                      To create an override, use the form on the listing page with the
+                      subproduct dropdown.
+                    </div>
+                  </div>
+                </div>
+
                 <div class="field-row">
                   <label class="field-label" for="flag-name">Name</label>
                   <div class="field-control">
@@ -72,8 +84,8 @@
 
             <div class="save-bar">
               <button class="btn-danger" type="submit"
-                      formaction="/admin/flags/{{ flag_key }}/delete" formmethod="post"
-                      onclick="return confirm('Delete flag {{ flag_key }}? Callers that reference it will fall back to disabled.')">
+                      formaction="/admin/flags/{{ flag_key }}/delete{{ flag_form_qs }}" formmethod="post"
+                      onclick="return confirm('Delete flag {{ flag_key }} ({{ flag_scope_label }})? Callers that reference it will fall back to the next-broader scope.')">
                 Delete flag
               </button>
               <button class="btn btn-primary" type="submit">Save changes</button>

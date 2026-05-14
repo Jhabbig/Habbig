@@ -534,14 +534,45 @@ def list_impersonation_actions(session_id: int, limit: int = 500):
         ).fetchall()
 
 
-def list_feature_flags():
+def list_feature_flags(subproduct_key="__all__"):
+    """List flags.
+
+    Default returns every row across all subproducts (used by the admin
+    listing page). Pass ``subproduct_key=None`` for global-only rows, or
+    a specific slug for a single subproduct's overrides.
+    """
     with db.conn() as c:
-        return c.execute("SELECT * FROM feature_flags ORDER BY key ASC").fetchall()
+        if subproduct_key == "__all__":
+            return c.execute(
+                "SELECT * FROM feature_flags "
+                "ORDER BY key ASC, (subproduct_key IS NOT NULL), subproduct_key ASC"
+            ).fetchall()
+        if subproduct_key is None:
+            return c.execute(
+                "SELECT * FROM feature_flags WHERE subproduct_key IS NULL "
+                "ORDER BY key ASC"
+            ).fetchall()
+        return c.execute(
+            "SELECT * FROM feature_flags WHERE subproduct_key = ? ORDER BY key ASC",
+            (subproduct_key,),
+        ).fetchall()
 
 
-def get_feature_flag(key: str):
+def get_feature_flag(key: str, subproduct_key=None):
+    """Fetch a single flag row for a (key, subproduct_key) pair.
+
+    ``subproduct_key=None`` returns the global row (subproduct_key IS NULL).
+    """
     with db.conn() as c:
-        return c.execute("SELECT * FROM feature_flags WHERE key = ?", (key,)).fetchone()
+        if subproduct_key is None:
+            return c.execute(
+                "SELECT * FROM feature_flags WHERE key = ? AND subproduct_key IS NULL",
+                (key,),
+            ).fetchone()
+        return c.execute(
+            "SELECT * FROM feature_flags WHERE key = ? AND subproduct_key = ?",
+            (key, subproduct_key),
+        ).fetchone()
 
 
 def create_feature_flag(
@@ -555,6 +586,7 @@ def create_feature_flag(
     disabled_for_user_ids=None,
     rollout_percentage: int = 0,
     updated_by_admin_id=None,
+    subproduct_key=None,
 ) -> int:
     import json as _json
     now = int(time.time())
@@ -563,8 +595,8 @@ def create_feature_flag(
             "INSERT INTO feature_flags "
             "(key, name, description, enabled_globally, enabled_for_tiers, "
             " enabled_for_user_ids, disabled_for_user_ids, rollout_percentage, "
-            " created_at, updated_at, updated_by_admin_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " created_at, updated_at, updated_by_admin_id, subproduct_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 key, name, description,
                 1 if enabled_globally else 0,
@@ -573,6 +605,7 @@ def create_feature_flag(
                 _json.dumps(disabled_for_user_ids or []),
                 max(0, min(100, int(rollout_percentage))),
                 now, now, updated_by_admin_id,
+                subproduct_key,
             ),
         )
         return cur.lastrowid
@@ -589,7 +622,13 @@ def update_feature_flag(
     disabled_for_user_ids=None,
     rollout_percentage=None,
     updated_by_admin_id=None,
+    subproduct_key=None,
 ) -> bool:
+    """Update the (key, subproduct_key) row.
+
+    ``subproduct_key=None`` (the default) updates the global row; pass a
+    slug to update that subproduct's override.
+    """
     import json as _json
     fields = []
     params = []
@@ -613,18 +652,33 @@ def update_feature_flag(
     if not fields:
         return False
     fields.append("updated_at = ?"); params.append(int(time.time()))
-    params.append(key)
+    if subproduct_key is None:
+        where = "WHERE key = ? AND subproduct_key IS NULL"
+        params.append(key)
+    else:
+        where = "WHERE key = ? AND subproduct_key = ?"
+        params.append(key)
+        params.append(subproduct_key)
     with db.conn() as c:
         cur = c.execute(
-            f"UPDATE feature_flags SET {', '.join(fields)} WHERE key = ?",
+            f"UPDATE feature_flags SET {', '.join(fields)} {where}",
             tuple(params),
         )
         return cur.rowcount > 0
 
 
-def delete_feature_flag(key: str) -> bool:
+def delete_feature_flag(key: str, subproduct_key=None) -> bool:
     with db.conn() as c:
-        cur = c.execute("DELETE FROM feature_flags WHERE key = ?", (key,))
+        if subproduct_key is None:
+            cur = c.execute(
+                "DELETE FROM feature_flags WHERE key = ? AND subproduct_key IS NULL",
+                (key,),
+            )
+        else:
+            cur = c.execute(
+                "DELETE FROM feature_flags WHERE key = ? AND subproduct_key = ?",
+                (key, subproduct_key),
+            )
         return cur.rowcount > 0
 
 

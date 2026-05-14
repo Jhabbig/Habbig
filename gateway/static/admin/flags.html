@@ -40,6 +40,17 @@
                 placeholder="Optional — what this flag gates"
                 style="width:100%;padding:8px 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text-primary);font-size:13px;font-family:inherit;resize:vertical"></textarea>
     </div>
+    <div style="margin-bottom:16px">
+      <label for="new-flag-subproduct" style="display:block;font-size:12px;font-weight:500;margin-bottom:6px">Scope</label>
+      <select id="new-flag-subproduct" name="subproduct"
+              style="width:100%;padding:8px 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text-primary);font-size:13px">
+        {{ raw_create_subproduct_options }}
+      </select>
+      <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">
+        Leave "Global (default)" unless this row is a per-subdomain override.
+        A subdomain row overrides the global value for that subdomain only.
+      </div>
+    </div>
     <button type="submit" class="btn btn-primary">Create flag</button>
   </form>
 </div>
