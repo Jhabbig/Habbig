@@ -71,6 +71,15 @@ _PWA_HEAD = (
     # that need it and isn't worth a universal preload.
     '<link rel="preload" href="/_gateway_static/fonts/GeistMono-Variable.woff2" '
     'as="font" type="font/woff2" crossorigin>\n'
+    # Hoist Instrument Serif Italic (display) + Source Serif 4 (body) to
+    # site-wide so every page's --font-display and --font-body actually
+    # render the right webfont instead of silently falling back to Georgia.
+    # Per the 2026-05-14 redesign-review: previously only 4/14 redesigned
+    # pages loaded these via per-page links.
+    '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+    '<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1'
+    '&family=Source+Serif+4:opsz,wght@8..60,200..900&display=swap" rel="stylesheet">\n'
     f'<link rel="stylesheet" href="/_gateway_static/mobile-a11y.css?v={_MOBILE_A11Y_VER}">\n'
     # narve-polish: site-wide refinement layer (motion + focus rhythm).
     f'<link rel="stylesheet" href="/_gateway_static/narve-polish.css?v={_NARVE_POLISH_VER}">\n'

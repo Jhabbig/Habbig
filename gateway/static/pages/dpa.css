@@ -69,6 +69,7 @@ body {
 }
 
 .legal-content { max-width: none; }
+.legal-content p, .legal-content ul, .legal-content ol { max-width: 72ch; }
 
 .legal-content h2 {
   font-family: var(--font-display);
