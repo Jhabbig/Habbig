@@ -6325,6 +6325,47 @@ async def settings_disconnect_market(request: Request, source: str):
     return RedirectResponse("/settings", status_code=302)
 
 
+@app.get("/settings/integrations", response_class=HTMLResponse)
+async def settings_integrations_page(request: Request):
+    """Dedicated settings surface for Polymarket wallet + Kalshi token + bankroll.
+
+    The page is read-only on the server — all state lives behind the
+    market_routes JSON endpoints (/api/markets/connections,
+    /api/user/bankroll). The template is a shell; settings_integrations.js
+    hydrates it on load. Auth is required (redirect to /token), but the
+    Trading Add-on check happens client-side via the JSON endpoints'
+    403 response — that way users without the add-on still see the page
+    and a clear "add-on required" toast rather than a 403 wall.
+    """
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/settings/integrations")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+
+    _username = user.get("username", user["email"])
+    _admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    _nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="settings",
+        username=_username,
+        raw_admin_link=_admin_link,
+        raw_nav_role=_nav_role,
+    )
+    return render_page(
+        "settings_integrations",
+        request=request,
+        email=user["email"],
+        username=_username,
+        raw_admin_link=_admin_link,
+        raw_nav_role=_nav_role,
+        _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
+    )
+
+
 @app.post("/settings")
 async def settings_save(
     request: Request,

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Integrations · narve.ai</title>
+  <meta name="description" content="Connect your Polymarket wallet, Kalshi account, and bankroll for narve.ai trading.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="stylesheet" href="{{ static: pages/settings_integrations.css }}">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+    {{ raw_sidebar }}
+
+    <main class="main-content" id="main">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
+        <span class="breadcrumb-separator">/</span>
+        <a href="/settings" class="breadcrumb-item" style="text-decoration:none;color:inherit">Settings</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item current">Integrations</span>
+      </nav>
+
+      <header class="page-header">
+        <h1 class="page-title">Integrations</h1>
+        <p class="page-subtitle">
+          Connect your prediction-market accounts so narve.ai can read positions and size
+          bets with Kelly. We never move funds — connections are read-only at our end.
+        </p>
+      </header>
+
+      <div class="content-area">
+        <div id="si-root">
+
+          <!-- ── Polymarket card ────────────────────────────────── -->
+          <section class="settings-card si-card" data-card="polymarket" aria-labelledby="si-poly-title">
+            <div class="settings-section">
+              <div class="si-header">
+                <div class="si-header-text">
+                  <div class="settings-section-title" id="si-poly-title">Polymarket</div>
+                  <div class="settings-section-desc">
+                    Connect a MetaMask-compatible wallet. Your private key never leaves
+                    your browser — we only store the public address.
+                  </div>
+                </div>
+                <span class="si-pill" id="si-poly-pill" data-status="loading">Loading…</span>
+              </div>
+
+              <div class="si-identifier-empty" id="si-poly-identifier" hidden></div>
+
+              <div class="si-actions">
+                <button type="button" class="btn btn-primary" id="si-poly-connect">Connect Wallet</button>
+                <button type="button" class="btn btn-danger" id="si-poly-disconnect" hidden>Disconnect</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Kalshi card ─────────────────────────────────────── -->
+          <section class="settings-card si-card" data-card="kalshi" aria-labelledby="si-kalshi-title">
+            <div class="settings-section">
+              <div class="si-header">
+                <div class="si-header-text">
+                  <div class="settings-section-title" id="si-kalshi-title">Kalshi</div>
+                  <div class="settings-section-desc">
+                    Enter your Kalshi email and password once. We exchange them for a
+                    session token and store the token encrypted — never the password.
+                  </div>
+                </div>
+                <span class="si-pill" id="si-kalshi-pill" data-status="loading">Loading…</span>
+              </div>
+
+              <div class="si-identifier-empty" id="si-kalshi-identifier" hidden></div>
+
+              <div class="si-actions">
+                <button type="button" class="btn btn-primary" id="si-kalshi-connect">Connect Kalshi</button>
+                <button type="button" class="btn" id="si-kalshi-reconnect" hidden>Reconnect</button>
+                <button type="button" class="btn btn-danger" id="si-kalshi-disconnect" hidden>Disconnect</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Bankroll card ───────────────────────────────────── -->
+          <section class="settings-card si-card" aria-labelledby="si-bankroll-title">
+            <div class="settings-section">
+              <div class="settings-section-title" id="si-bankroll-title">Bankroll</div>
+              <div class="settings-section-desc">
+                Your total trading capital, used by the Kelly criterion to size
+                recommended bets across every market. Reference only — narve.ai never
+                moves money.
+              </div>
+
+              <div class="si-current-value" id="si-bankroll-current">Current: <strong>—</strong></div>
+
+              <div class="si-bankroll-row">
+                <input type="number" min="0" step="1" id="si-bankroll-input" inputmode="decimal"
+                       placeholder="e.g. 10000" aria-label="Bankroll amount">
+                <div class="si-currency-toggle" role="radiogroup" aria-label="Currency">
+                  <button type="button" role="radio" data-currency="USD" aria-pressed="true">$</button>
+                  <button type="button" role="radio" data-currency="GBP" aria-pressed="false">£</button>
+                </div>
+              </div>
+
+              <div class="save-bar">
+                <span class="save-bar-status" id="si-bankroll-status" role="status" aria-live="polite"></span>
+                <button type="button" class="btn btn-primary" id="si-bankroll-save">Save bankroll</button>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </main>
+
+    <div class="status-bar">
+      <span class="status-item"><span class="status-dot running"></span> Connected</span>
+      <span class="status-separator"></span>
+      <span class="status-item">Integrations</span>
+      <span class="status-spacer"></span>
+      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
+    </div>
+
+  </div>
+
+  <!-- ── Reconnect / Connect modal (Kalshi credentials) ─────── -->
+  <div class="nv-modal" id="si-kalshi-modal" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="si-kalshi-modal-title">
+    <div class="nv-modal__backdrop" data-close></div>
+    <div class="nv-modal__panel" role="document">
+      <h2 class="nv-modal__title" id="si-kalshi-modal-title">Connect Kalshi</h2>
+      <p class="nv-modal__sub">Enter your Kalshi email and password. Your password is used once to get a session token and is never stored.</p>
+      <label class="field-row">
+        <span class="field-label" for="si-kalshi-email">Email</span>
+        <span class="field-control">
+          <input id="si-kalshi-email" type="email" autocomplete="username" placeholder="you@email.com">
+        </span>
+      </label>
+      <label class="field-row">
+        <span class="field-label" for="si-kalshi-pass">Password</span>
+        <span class="field-control">
+          <input id="si-kalshi-pass" type="password" autocomplete="current-password" placeholder="Your Kalshi password">
+        </span>
+      </label>
+      <p class="si-current-value" id="si-kalshi-modal-status" role="status" aria-live="polite"></p>
+      <div class="nv-modal__actions">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn btn-primary" id="si-kalshi-modal-submit">Connect Kalshi</button>
+      </div>
+    </div>
+  </div>
+
+{{ raw_sitemap }}
+<script src="/_gateway_static/js/toast.js" defer></script>
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/density.js?v=1" defer></script>
+<script src="/_gateway_static/settings_integrations.js" defer></script>
+<script src="/_gateway_static/js/cmdk.js" defer></script>
+</body>
+</html>

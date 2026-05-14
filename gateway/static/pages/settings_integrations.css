@@ -1,0 +1,211 @@
+/* Per-page CSS for /settings/integrations. Sits on top of gateway.css
+ * and components.css so .settings-card / .field-row / .save-bar /
+ * .btn / .btn-primary / .btn-danger already render correctly.
+ *
+ * Only adds the few bits unique to this page:
+ *   - a status-pill ("Connected" / "Not connected" / "Session expired")
+ *   - a monospace wallet/email line under each card title
+ *   - the currency-toggle pair for the bankroll input
+ *
+ * Monochrome only — status is conveyed by text + weight, never colour.
+ */
+
+.si-card {
+  max-width: 720px;
+}
+
+.si-card + .si-card {
+  margin-top: var(--space-6, 24px);
+}
+
+.si-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4, 16px);
+  flex-wrap: wrap;
+}
+
+.si-header-text {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.si-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  padding: 2px var(--space-2, 8px);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full, 9999px);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  background: var(--bg-base);
+}
+
+.si-pill--connected {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.si-pill--expired {
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.si-identifier {
+  margin-top: var(--space-2, 8px);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.si-identifier-empty {
+  margin-top: var(--space-2, 8px);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.si-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-4, 16px);
+}
+
+.si-actions .btn {
+  font-size: var(--text-sm);
+}
+
+.si-bankroll-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2, 8px);
+  align-items: stretch;
+  margin-top: var(--space-3, 12px);
+  max-width: 320px;
+}
+
+.si-bankroll-row input[type="number"] {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font: inherit;
+  /* defeat iOS auto-zoom — see narve-design rule */
+  font-size: 16px;
+}
+
+.si-bankroll-row input[type="number"]:focus,
+.si-bankroll-row input[type="number"]:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+  border-color: var(--text-primary);
+}
+
+.si-currency-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.si-currency-toggle button {
+  padding: 0 var(--space-3, 12px);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  border-right: 1px solid var(--border-default);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  /* match input height visually */
+  min-width: 44px;
+  min-height: 40px;
+}
+
+.si-currency-toggle button:last-child {
+  border-right: 0;
+}
+
+.si-currency-toggle button[aria-pressed="true"] {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+}
+
+.si-current-value {
+  margin-top: var(--space-2, 8px);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.si-current-value strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+@media (max-width: 640px) {
+  .si-header { flex-direction: column; align-items: stretch; }
+  .si-actions .btn { flex: 1 1 140px; }
+}
+
+/* ── Kalshi credential modal — positioning + layout. The
+ * narve-redesign.css restyles .nv-modal__panel but doesn't position the
+ * modal, so we place it here scoped to this page's modal id. */
+#si-kalshi-modal {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 1000);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4, 16px);
+}
+
+#si-kalshi-modal[hidden] { display: none; }
+
+#si-kalshi-modal .nv-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+#si-kalshi-modal .nv-modal__panel {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - var(--space-8, 32px));
+  overflow-y: auto;
+}
+
+#si-kalshi-modal .nv-modal__sub {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4, 16px);
+}
+
+#si-kalshi-modal .nv-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-4, 16px);
+}
+
+@media (max-width: 640px) {
+  #si-kalshi-modal { padding: 0; align-items: flex-end; }
+  #si-kalshi-modal .nv-modal__panel {
+    max-width: 100%;
+    max-height: 90vh;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    padding-bottom: calc(var(--space-6, 28px) + env(safe-area-inset-bottom));
+  }
+}
