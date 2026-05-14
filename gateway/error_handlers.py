@@ -65,38 +65,29 @@ _STATUS_TO_TITLE: dict[int, str] = {
     401: "Sign in to continue",
     402: "Subscription required",
     403: "You don't have access",
-    404: "This page does not exist",
+    404: "Not found",
     409: "Already exists",
     422: "Check your input",
-    429: "Slow down a touch",
-    500: "Something broke on our end",
+    429: "Slow down",
+    500: "Something broke",
     502: "Upstream error",
-    503: "Temporarily down for maintenance",
+    503: "Temporarily down",
     504: "Upstream timeout",
 }
 
 # Safe generic messages. Never echoes internal detail.
-#
-# Copy notes:
-#   - 401 vs 403 vs 404 are three distinct states. 401 = you're not signed
-#     in; 403 = signed in but lacking access; 404 = page does not exist for
-#     you (which, per the existence-hide rule, may overlap with 403 on
-#     private resources). Each message has to make the distinction clear.
-#   - 402 sells the Pro tier honestly: 13 subproducts + platform, one plan.
-#   - 429 talks to a human clicking too fast, not a misbehaving bot.
-#   - 500 apologises and points to the request id below.
 _STATUS_TO_MESSAGE: dict[int, str] = {
     400: "That request was malformed. Double-check and try again.",
-    401: "You need to sign in to see this. If you already have an account, the link below will take you there.",
-    402: "This is a Pro feature. narve.ai Pro unlocks all 13 subproducts and the full platform on one subscription.",
-    403: "You're signed in, but this account doesn't have access to this resource.",
-    404: "This page does not exist. It may have been moved, the link may be wrong, or you may not have access to it.",
+    401: "You need to sign in to see this.",
+    402: "This feature needs a subscription.",
+    403: "Your account doesn't have access to this.",
+    404: "This page doesn't exist. It may have been moved, or the link may be wrong.",
     409: "A resource with the same identifier already exists.",
     422: "Some fields need attention.",
-    429: "You're clicking faster than our servers can keep up. Give it a moment and try again.",
-    500: "Sorry — something broke on our end. The error has been reported and we're looking at it. Quote the request id below if you contact support.",
+    429: "Too many requests. Try again in a moment.",
+    500: "An unexpected error occurred. Please try again.",
     502: "One of our upstream services returned an error.",
-    503: "narve.ai is briefly offline for maintenance. We'll be back shortly — live updates at /status.",
+    503: "narve.ai is temporarily unavailable. Check /status for live updates.",
     504: "An upstream service took too long to respond.",
 }
 
@@ -104,21 +95,14 @@ _STATUS_TO_MESSAGE: dict[int, str] = {
 # ── 404-only curated top links ────────────────────────────────────────
 # Hand-picked destinations users are most likely to want when a URL
 # 404s. Order matters — these render top-to-bottom in the grid.
-#
-# The list deliberately points at platform-wide surfaces rather than
-# specific subproducts: a 404'd user has no idea what they were after,
-# so we send them to the hub (/dashboards), the price page, what's-new,
-# the about page, plus one or two subproduct roots that double as
-# entrypoints (collections + users). Subproduct slugs live in
-# subproduct.py — if that list grows we update here too.
 
 _TOP_LINKS_404: list[tuple[str, str]] = [
-    ("Dashboards — main hub", "/dashboards"),
-    ("Pricing — see plans", "/pricing"),
-    ("Changelog — what's new", "/changelog"),
-    ("About narve.ai", "/about"),
-    ("Browse collections", "/c/"),
-    ("Browse users", "/u/"),
+    ("Recent best bets", "/dashboard/best-bets"),
+    ("Top sources", "/dashboard/sources?sort=credibility"),
+    ("Latest predictions", "/dashboard/feed"),
+    ("Pricing", "/pricing"),
+    ("How it works", "/how-it-works"),
+    ("FAQ", "/faq"),
 ]
 
 
@@ -219,37 +203,23 @@ def render_error_page(
     if status == 402:
         extra_line = (
             '<p class="nv-error__extra">'
-            'narve.ai Pro bundles all 13 subproducts plus the full platform '
-            'on a single subscription — <a href="/pricing">see pricing</a>.'
+            'narve.ai Pro bundles every subproduct plus the full platform — '
+            '<a href="/pricing">see pricing</a>.'
             '</p>'
         )
     elif status == 503:
-        # Maintenance window — copy is intentionally vague (we don't
-        # always know ETA when 503 fires) and points at the status page.
         extra_line = (
-            '<p class="nv-error__extra">Follow recovery progress on the '
-            '<a href="/status">status page</a>.</p>'
-        )
-    elif status == 401:
-        # 401 is the one place we can hint at distinct 403 / 404 cases —
-        # if the user lands here without an account, the invite flow.
-        extra_line = (
-            '<p class="nv-error__extra">No account yet? '
-            '<a href="/enquire">Request an invite</a>.</p>'
+            '<p class="nv-error__extra">Live updates at '
+            '<a href="/status">/status</a>.</p>'
         )
 
-    # 404 gets a search box — quickest way to get unstuck. The canonical
-    # site search lives at /signal-search (post-redesign there is no
-    # bare /search HTML route); it accepts ?q= and renders matching
-    # markets, sources, and predictions.
+    # 404 gets a search box — quickest way to get unstuck.
     search_block = ""
     if status == 404:
         search_block = (
-            '<form class="nv-error__search" action="/signal-search" '
-            'method="get" role="search" aria-label="Site search">'
-            '<label for="nv-error-q" class="nv-sr-only">'
-            'Search markets, sources, predictions</label>'
-            '<input id="nv-error-q" type="search" name="q" '
+            '<form class="nv-error__search" action="/search" method="get" '
+            'role="search">'
+            '<input type="search" name="q" '
             'placeholder="Search markets, sources, predictions" '
             'autocomplete="off" autofocus>'
             '<button type="submit">Search</button>'
