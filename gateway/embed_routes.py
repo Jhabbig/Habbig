@@ -305,53 +305,98 @@ def _build_market_probability_payload(target: str) -> dict:
 
 
 def _build_best_bets_payload() -> dict:
-    picks: list[dict] = []
-    try:
-        with db.conn() as c:
-            rows = c.execute(
-                "SELECT market_slug, market_question, yes_price "
-                "FROM market_snapshots "
-                "ORDER BY snapshotted_at DESC LIMIT 60"
-            ).fetchall()
-        seen: set[str] = set()
-        deduped = []
-        for r in rows:
-            if r["market_slug"] in seen:
-                continue
-            seen.add(r["market_slug"])
-            deduped.append(r)
-        for r in deduped:
+    """Top-3 highest-EV markets for the public embed widget.
+
+    Caching: 120s TTL via sync `ttl_cache`. The factory runs the work
+    below; it's keyed `embed:best_bets:v1` (no per-request params — this
+    payload is identical for every embed viewer) so all third-party page
+    views share a single cache slot.
+
+    DB shape: previously this issued 1 + N queries (60 markets → 61
+    queries against `predictions`). Now it's two: one to fetch the
+    snapshot list, one `IN (...)` query that pulls every prediction
+    across all candidate markets and groups them in-process by market_id.
+    """
+    def _compute() -> dict:
+        picks: list[dict] = []
+        try:
+            with db.conn() as c:
+                rows = c.execute(
+                    "SELECT market_slug, market_question, yes_price "
+                    "FROM market_snapshots "
+                    "ORDER BY snapshotted_at DESC LIMIT 60"
+                ).fetchall()
+            seen: set[str] = set()
+            deduped = []
+            for r in rows:
+                if r["market_slug"] in seen:
+                    continue
+                seen.add(r["market_slug"])
+                deduped.append(r)
+            if not deduped:
+                return {"picks": []}
+
+            # Single batched query: collect every market_id we care about
+            # and fetch predictions + credibility in one round-trip, then
+            # group by market_id in Python.
+            market_ids = [f"poly:{r['market_slug']}" for r in deduped]
+            preds_by_market: dict[str, list] = {}
             try:
+                placeholders = ",".join("?" * len(market_ids))
                 with db.conn() as c:
-                    preds = c.execute(
+                    all_preds = c.execute(
                         "SELECT p.*, sc.global_credibility FROM predictions p "
                         "LEFT JOIN source_credibility sc "
                         "ON sc.source_handle = p.source_handle "
-                        "WHERE p.market_id = ?",
-                        (f"poly:{r['market_slug']}",),
+                        f"WHERE p.market_id IN ({placeholders})",
+                        market_ids,
                     ).fetchall()
-                if not preds or not hasattr(db, "calculate_betyc_probability"):
+                for p in all_preds:
+                    preds_by_market.setdefault(p["market_id"], []).append(p)
+            except Exception as e:
+                log.debug("embed: best_bets batched preds query failed: %s", e)
+                return {"picks": []}
+
+            if not hasattr(db, "calculate_betyc_probability"):
+                return {"picks": []}
+
+            for r in deduped:
+                try:
+                    preds = preds_by_market.get(f"poly:{r['market_slug']}", [])
+                    if not preds:
+                        continue
+                    calc = db.calculate_betyc_probability(list(preds))
+                    narve_prob = calc.get("betyc_yes_probability")
+                    if narve_prob is None:
+                        continue
+                    market_price = float(r["yes_price"] or 0.0)
+                    ev = narve_prob - market_price
+                    creds = [float(p["global_credibility"] or 0.5) for p in preds]
+                    avg_cred = sum(creds) / len(creds) if creds else 0.5
+                    picks.append({
+                        "slug": r["market_slug"],
+                        "question": r["market_question"],
+                        "ev": ev,
+                        "credibility": avg_cred,
+                    })
+                except Exception:
                     continue
-                calc = db.calculate_betyc_probability(list(preds))
-                narve_prob = calc.get("betyc_yes_probability")
-                if narve_prob is None:
-                    continue
-                market_price = float(r["yes_price"] or 0.0)
-                ev = narve_prob - market_price
-                creds = [float(p["global_credibility"] or 0.5) for p in preds]
-                avg_cred = sum(creds) / len(creds) if creds else 0.5
-                picks.append({
-                    "slug": r["market_slug"],
-                    "question": r["market_question"],
-                    "ev": ev,
-                    "credibility": avg_cred,
-                })
-            except Exception:
-                continue
+        except Exception as e:
+            log.debug("embed: best_bets scan failed: %s", e)
+        picks.sort(key=lambda p: abs(p["ev"]), reverse=True)
+        return {"picks": picks[:3]}
+
+    try:
+        from cache import ttl_cache
+        return ttl_cache.get_or_compute(
+            "embed:best_bets:v1",
+            _compute,
+            ttl_seconds=120,
+        )
     except Exception as e:
-        log.debug("embed: best_bets scan failed: %s", e)
-    picks.sort(key=lambda p: abs(p["ev"]), reverse=True)
-    return {"picks": picks[:3]}
+        # Cache import/runtime failure must never break the endpoint.
+        log.debug("embed: best_bets cache bypass: %s", e)
+        return _compute()
 
 
 # ── Widget body HTML ────────────────────────────────────────────────────────
