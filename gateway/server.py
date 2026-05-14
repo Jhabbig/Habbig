@@ -5165,6 +5165,11 @@ def _build_enquiry_rows() -> str:
 def _build_revenue_content() -> str:
     import datetime as _dt
     stats = db.get_revenue_stats()
+    # Recent-activity section below renders the last page of subs
+    # (cap 20 in the loop). MRR/ARR no longer iterate this list — see
+    # the perf audit #5 note below — so it's display-only here.
+    subs = db.list_all_subscriptions(limit=20)
+    now = int(time.time())
 
     # Perf audit #5: MRR is computed from the SQL-aggregated
     # per_dashboard×plan counts in `stats` rather than iterating every
