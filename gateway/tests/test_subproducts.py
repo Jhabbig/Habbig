@@ -30,10 +30,15 @@ import subproduct
 
 
 class TestSubproductCatalogue(unittest.TestCase):
-    def test_six_subproducts_defined(self):
+    def test_twelve_subproducts_defined(self):
+        # Catalogue grew from 6 → 12 with the platform-build expansion.
+        # New: voters, whale, cb (central bank), climate, disasters, health.
         self.assertEqual(
             set(subproduct.SUBPRODUCTS.keys()),
-            {"sports", "weather", "world", "crypto", "midterm", "traders"},
+            {
+                "sports", "weather", "world", "crypto", "midterm", "traders",
+                "voters", "whale", "cb", "climate", "disasters", "health",
+            },
         )
 
     def test_every_subproduct_has_required_fields(self):
