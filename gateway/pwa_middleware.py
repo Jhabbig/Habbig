@@ -51,8 +51,58 @@ _FEEDBACK_BTN_VER = _asset_version("feedback_button.js")
 _SHORTCUTS_DISC_VER = _asset_version("js/shortcuts-discovery.js")
 
 
+# Critical first-paint CSS. Inlined into the head so the visible chrome
+# (app shell + sidebar + page header) can render before gateway.css (~73 KB)
+# arrives. External stylesheets still load and override on cascade — this
+# block exists only to defeat the FOUC and to put a paint on screen on
+# slow networks. Keep it under ~4 KB compressed; if you need to expand
+# it, drop something else first or move the rule to the external sheet.
+_CRITICAL_CSS = (
+    '<style>'
+    ':root,:root[data-theme="light"]{'
+    '--bg-base:#fff;--bg-surface:#fafafa;'
+    '--text-primary:#0d0d0d;--text-secondary:#4a4a4a;--text-tertiary:#6e6e6e;--text-quaternary:#bbb;'
+    '--border-ghost:#ebebeb;--border-subtle:#e0e0e0;--border-default:#ccc;--border-strong:#b0b0b0;'
+    '--interactive-bg:#0d0d0d;--interactive-text:#fff;--interactive-ghost:rgba(0,0,0,.04);'
+    '--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-7:48px;--space-8:64px;'
+    '--page-pad:24px;'
+    '--font-body:"Source Serif 4",Georgia,"Times New Roman",serif;'
+    '--font-ui:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",ui-sans-serif,system-ui,sans-serif;'
+    '--bg:var(--bg-base);--surface:var(--bg-surface);--border:var(--border-default)'
+    '}'
+    ':root[data-theme="dark"]{'
+    '--bg-base:#0d0d0d;--bg-surface:#111;'
+    '--text-primary:#f0f0f0;--text-secondary:#b0b0b0;--text-tertiary:#909090;--text-quaternary:#6e6e6e;'
+    '--border-ghost:#141414;--border-subtle:#1f1f1f;--border-default:#2a2a2a;--border-strong:#383838;'
+    '--interactive-bg:#f0f0f0;--interactive-text:#0d0d0d;--interactive-ghost:rgba(240,240,240,.06)'
+    '}'
+    '*{box-sizing:border-box;margin:0;padding:0}'
+    'html{color-scheme:light dark}'
+    'html,body{font-family:var(--font-body);background:var(--bg-base);color:var(--text-primary);'
+    '-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;'
+    'min-height:100vh;min-height:100dvh;font-size:15px;line-height:1.5}'
+    'a{color:var(--text-secondary);text-decoration:none}'
+    '.app-shell{display:grid;grid-template-columns:240px 1fr;grid-template-rows:1fr 28px;'
+    'grid-template-areas:"sidebar main" "sidebar status";min-height:100vh;min-height:100dvh;'
+    'background:var(--bg-base);color:var(--text-primary)}'
+    '.sidebar{grid-area:sidebar;display:flex;flex-direction:column;gap:var(--space-2);'
+    'padding:var(--space-5) var(--space-3);background:var(--bg-surface);'
+    'border-right:1px solid var(--border-default);min-height:100vh;min-height:100dvh;'
+    'position:sticky;top:0}'
+    '.main-content{grid-area:main;padding:var(--space-4) var(--page-pad) var(--page-pad);'
+    'max-width:100%;overflow-x:hidden}'
+    '.page-header{margin-bottom:var(--space-5);padding-bottom:var(--space-4);'
+    'border-bottom:1px solid var(--border-default)}'
+    '.page-title{font-size:28px;font-weight:500;letter-spacing:-0.02em;'
+    'color:var(--text-primary);margin:0 0 var(--space-2)}'
+    '.narve-fouc-hide,[hidden]{display:none!important}'
+    '</style>\n'
+)
+
+
 _PWA_HEAD = (
     '<!--narve-pwa-head-->\n'
+    + _CRITICAL_CSS +
     '<link rel="manifest" href="/manifest.json">\n'
     '<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">\n'
     '<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">\n'
