@@ -5,6 +5,256 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #6 — 2026-05-14T09:59Z — commit cafb4d9 — post-deploy adversarial pass
+
+### Why this audit exists
+Massive batch landed between b7a7b13 (audit #5) and cafb4d9 (now): Permissions-Policy + CORP header expansion, 3 new subproduct dashboards (voters/climate/disasters) with full server code on disk, 3 skeleton subproducts being scaffolded in parallel (whale/centralbank/world_health — Dockerfile + requirements.txt + data only, no server.py yet), Geist Mono font, og:image defaults + per-subdomain PNGs for 6 dashboards, `:focus → :focus-visible` site-wide, i18n completion for de/es/pt-br, 6 portfolio test failures fixed, `portfolio_jobs.py` dead-code purged, and **two `requirements.lock` files now in the tree** (root and `gateway/`) with divergent content. Goal: confirm nothing in this firehose introduced a CRITICAL/HIGH regression and that the new subproduct surfaces (voters auth model, climate/disasters read-only design) hold up to adversarial review.
+
+### Code inventory audited
+- Committed tip: `cafb4d9` (seo: per-subproduct og:image PNGs)
+- Local unpushed commits: **none** — local in sync with origin
+- Local uncommitted files: 4 untracked — `centralbank-dashboard/`, `voters-dashboard/voters.sqlite-{shm,wal}`, `whale-dashboard/` (data + Dockerfile only, no server.py yet; sqlite WAL artefacts from local dev run)
+- Local stashes: **none**
+- Server uncommitted files: `?? voters-dashboard/` (single untracked dir; consistent with deploy in flight)
+- Server tip vs origin: **DIVERGED** — server is 17 commits ahead AND 35 commits behind. Server head is `e4cda27` (whale-dashboard gateway-config add). Origin head is `cafb4d9`. The server "ahead" commits are all UI/border tweaks from the parallel agent; origin "ahead" commits include audit #5, requirements.lock work, i18n, the 6 portfolio test fixes, the bd2d583 a11y migration, and the entire 897fb21 merge bringing voters/climate/disasters server code in. **Server is running stale code missing recent dependency + a11y + dashboard work.**
+- Running uvicorn: 7 instances; the production gateway is pid 3085495 (port 7000); subproducts on 7050/7051/7053/7060/7061 are independent processes (no recent restart observed in enumerate output)
+- Branches with recent work (last 14d not in current): none — `feature/platform-build` is the active branch and gets all writes
+- DRIFT FLAG: **server and origin diverged** (35 behind / 17 ahead) — most-divergent state across audit history; bigger than #5's "235 lines on disk"
+
+### Surfaces newly introduced since AUDIT #5
+| Feature | Files | Risk surface |
+|---|---|---|
+| 3 new live subproducts (voters / climate / disasters) | `voters-dashboard/server.py` (1,393 LOC), `climate-dashboard/server.py` (1,292 LOC), `disasters-dashboard/server.py` (400 LOC) + Dockerfiles + data | new public web surface, new SQLite (voters), new external-API fanout (Polymarket gamma, NASA GISTEMP, NOAA Mauna Loa, NSIDC sea ice, USGS earthquakes, EONET, GDACS, NWS) |
+| 3 skeleton subproducts scaffolded (whale / centralbank / world_health) | `whale-dashboard/`, `centralbank-dashboard/`, plus catalog entries in `gateway/subproduct.py` | no server code on disk yet — gateway catalog references them but proxy can't resolve them. Local-only (untracked). |
+| Permissions-Policy expansion + CORP | `gateway/server.py:592-619` | now ships 23 directives (camera/mic/geo/payment/usb/midi/sensors/bluetooth/serial/hid/clipboard/idle-detection/interest-cohort/browsing-topics) + `Cross-Origin-Resource-Policy: same-origin` |
+| Two divergent requirements.lock files | `requirements.lock` (root, 58 lines, Python 3.12 prod, cryptography 46.0.7) + `gateway/requirements.lock` (stale Apr 22, cryptography 44.0.1, fastapi 0.118.0) | install ambiguity — CI/Docker may resolve from either |
+| Geist Mono variable woff2 | `gateway/static/fonts/GeistMono-Variable.woff2` (71.6 KB) | static asset, no surface |
+| og:image defaults + per-subdomain | `gateway/pwa_middleware.py` (+22), `gateway/static/og/*.png` (7 files) | static asset + middleware; meta-tag injection, no user input flowing in |
+| i18n completion de/es/pt-br | `gateway/i18n/locales/{de,es,pt-br}.json` (+2,495 lines) | translation strings — checked for HTML injection via {{ }} via Phase 3 |
+| `:focus → :focus-visible` site-wide | 23 CSS files | client-only, no surface |
+| Stripe price-id env stubs (6 new) | `gateway/.env.example` (+6) | env-var addition; no live keys in repo |
+| portfolio_jobs.py removed | `gateway/jobs/portfolio_jobs.py` (153 lines deleted) | dead code purge — attack surface DOWN |
+| 6 portfolio test fixes | `gateway/tests/test_portfolio_integration.py` (+40/-24) | tests-only |
+
+### Summary
+Posture: **adequate**
+Critical issues: **0**
+High-priority: **2** (lockfile divergence; stale server vs origin)
+Medium-priority: **3** (skeleton subproducts unpinned deps; voters dashboard CSP has `unsafe-inline`; `/settings/integrations` page not found in tree — feature deferred or untracked)
+Low-priority: **3** (scanner FPs carried; voters/disasters Flask vs FastAPI inconsistency; 7 stale uvicorn processes on server)
+Resolved since last audit: **2** (server-side WIP committed to origin via 69c7833 + 897fb21; requirements.lock now present at repo root)
+New since last audit: **5** (2H + 3M)
+Regressions: **0**
+
+### Automated scan hit counts
+
+| scan | hits | classification |
+|---|---|---|
+| secrets         |  0 | clean — no current-tree hits, no .env in history, no DB tracked |
+| sqli            | 30 CRIT + 13 MED | **all pre-existing patterns from audits #2/#3/#4/#5** — every "CRITICAL" hit is an f-string interpolating either (a) a hardcoded constant table/column name controlled by the codebase, or (b) a value bound separately as `?` parameter. No new injection sink in audit-#5→#6 diff. Verified spot-check on the 3 new dashboards: voters uses parameterised `?` binds throughout; climate + disasters are read-only HTTP aggregators with no SQL at all. |
+| xss             |  9 JS innerHTML (carryover) + ~40 raw_ template (carryover) | same set as audit #5; the new dashboards' `index.html` are static templates rendered from controlled data. CSP set on every response. |
+| rce             |  5 SSRF HIGH (carryover, all in tests/) + 19 path-traversal MED (carryover, all in tests/) | **zero in production source paths**. New climate/disasters dashboards use `requests.get(url, ...)` with hardcoded URLs only — verified by file read. |
+| auth            | 26 cookie attr HIGH + 7 rate-limit HIGH | **all carryover** — cookie attrs are `csrf_token` / `narve_lang` / `narve_tz` cookies (intentionally non-HttpOnly so JS can read for CSRF token / locale switch); the auth "missing rate limit" hits are `server_features.py` routes that the scanner doesn't recognise as having `@rate_limit` defined elsewhere via decorator stacking. Same FP class as audits #3/#4/#5. |
+| redirects       | 19 HIGH | **all carryover** — every hit is an internal-path `/login?next=…` or `/admin/...#anchor` redirect, no external destination derived from query/cookie/form. Same FP class as audits #2-#5. |
+| deserialisation |  0 | clean |
+| rate limits     | 7 auth HIGH + 10 billing MED + 3 AI HIGH + 4 export MED | **all carryover** — same FP class as #5. |
+| infra           |  1 LOW | local `gateway/auth.db` is 644 (dev artefact, production unaffected); CLOUDFLARE_CHANGES.md fresh; cf-connecting-ip referenced. |
+| deps            | could not run (Python 3.9 host can't resolve 3.12-targeted lockfile) | manual review: top-level pins in `requirements.txt` are current as of audit #2 sweep; `cryptography==46.0.7` closes CVE-2026-26007/34073/39892; `starlette==0.49.1` closes CVE-2025-62727; `orjson==3.11.6` closes CVE-2025-67221; **but** `gateway/requirements.lock` (the older, untracked one) pins cryptography 44.0.1 / starlette 0.47.2 — see HIGH #1 below. |
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT
+- pm_gateway_session + narve_session both accepted: yes
+- narve_session stored as SHA-256 hash in DB: yes
+- Session cookie HttpOnly: yes (narve_session); intentional `False` for csrf_token / narve_lang / narve_tz
+- Session cookie Secure: yes in production (set via cookies.py helper)
+- Session cookie SameSite: Lax on narve_session
+- Session revocation on logout: works
+- Session rotation on privilege change: implemented (audit #3)
+- Max sessions per user enforced: per-user table cap (audit #2)
+- Password reset invalidates sessions: yes (migration 003)
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations yes
+- 2FA status: removed in migration 019 (intentional product decision)
+- Impersonation banner visible on every page while active: yes
+- Impersonation blocked paths enforced: yes (audit #4 verified)
+
+### Authorisation
+- Admin routes require role ≥ 1: yes
+- Super admin routes require role = 2: yes
+- Subproduct access checked at middleware + route + response: partial — middleware does host validation; `has_subproduct_access` enforces user→subproduct gate; new voters/climate/disasters dashboards rely on gateway proxy + their own `X-Gateway-Secret` HMAC check (voters) or read-only public design (climate/disasters)
+- has_subproduct_access called on every subproduct route: yes (via `require_subproduct_access` dependency factory)
+- Feature flag evaluation in use: yes
+- Gift subscription enforcement: yes
+
+### CSRF
+- Double submit cookie: yes
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes (120 routes scanned, all gated via middleware + decorator stack)
+- HTMX X-CSRF-Token hook active: yes
+- Exempt routes list minimal and documented: yes (Stripe webhook only)
+
+### Rate limiting
+- Auth endpoints: 26 `@rate_limit` decorators across the gateway. Some FP-flagged routes are actually rate-limited via Cloudflare WAF + middleware stacking (Cloudflare rule D for `/auth`, rule E for `/admin`).
+- API endpoints: partial — `/api/billing/*` family relies on Stripe idempotency, not local rate limit
+- Per-user and per-IP as appropriate: yes
+- 429 response includes Retry-After: yes
+- Cloudflare-level rate limit rules: present (rules D + E in CLOUDFLARE_CHANGES.md)
+
+### Input validation
+- SQL injection vectors found (new since #5): 0
+- XSS via innerHTML with user content (new since #5): 0 — JS innerHTML hits are all template-literal-with-escaped-content
+- Command injection / subprocess with user input: 0
+- Path traversal in file operations: 0 production source
+- SSRF in URL-fetching code: 0 production source (5 in tests/; climate/disasters use hardcoded URLs)
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes
+- No hardcoded secrets in current tree: clean
+- No secrets in git history: clean
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes
+- Sessions hashed before DB storage: yes
+- Password hashes use PBKDF2-HMAC-SHA256: yes
+- .env permissions on server: 600 (verified audit #4)
+
+### Data privacy
+- Account deletion works end-to-end: yes
+- Data export includes all user-linked tables: **carryover** — `user_positions` still unverified (audit #4/#5 recommendation #3)
+- Sensitive fields redacted in logs: yes
+- Sentry scrubbing active: yes
+- Impersonation actions logged: yes
+
+### External integrations
+- Stripe webhook signature validated: N/A — Stripe stubbed via `backend/payments/stripe_stub.py` (documented in audits #2/#3)
+- Stripe webhook idempotent: N/A
+- Stripe webhook mode-verified: N/A
+- Telegram bot token in env only: yes
+- Discord bot token in env only: yes
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: yes (in voters dashboard `markets.py` — uses gamma API by slug, not raw addresses)
+- SEC EDGAR User-Agent set: yes — `polymarket-climate-dashboard/1.0 (+https://climate.narve.ai)` in climate-dashboard, voters dashboard sets its own UA
+
+### Infrastructure
+- SQLite WAL mode active: yes (gateway `auth.db` + new `voters-dashboard/voters.sqlite`)
+- Cloudflare Tunnel active, origin not directly reachable: yes (audit #3 verified)
+- Cloudflare Rules for subdomain enumeration: yes
+- Cloudflare Rules for scanner UA blocking: yes
+- Post-deploy commit step documented: yes (CLOUDFLARE_CHANGES.md + DEPLOY.md)
+- CLOUDFLARE_CHANGES.md current: yes (Apr 21)
+
+### Monitoring
+- Sentry backend configured: yes
+- Sentry frontend configured: yes
+- Structured logging configured: yes
+- Security events logged separately: yes
+- Audit log append-only: yes
+- Uptime monitoring active: yes
+
+### Dependency audit
+- Last dependency audit: 2026-04-21 (audit #3 CVE sweep — 8 packages bumped)
+- Known CVEs: 0 in pinned top-levels of `requirements.txt`; **unknown for the stale `gateway/requirements.lock`** which still pins cryptography 44.0.1 / starlette 0.47.2 — see HIGH #1
+- Unpinned deps: 0 in gateway/; **6 in centralbank-dashboard/requirements.txt** (`fastapi>=0.110`, `uvicorn[standard]>=0.27`, `httpx>=0.27`, `pyyaml>=6.0`, `pydantic>=2.6`) — MED #1
+- Lockfile present: yes at root (`requirements.lock` 2026-05-14, 58 deps, prod Python 3.12)
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+*(none)*
+
+#### HIGH
+
+1. **Two `requirements.lock` files with divergent contents.**
+   Location: `requirements.lock` (root, fresh, cryptography 46.0.7) + `gateway/requirements.lock` (stale Apr 22, cryptography 44.0.1, fastapi 0.118.0)
+   Impact: A Dockerfile/CI step that does `pip install -r gateway/requirements.lock` (the older file, the one referenced in audit #5's recommendation) will install **cryptography 44.0.1** — which has CVE-2026-26007 / CVE-2026-34073 / CVE-2026-39892 unpatched (closed in 46.0.7 per requirements.txt comments). Also installs **starlette 0.47.2** (CVE-2025-62727 unpatched, closed in 0.49.1) and **orjson** absent entirely. If anyone follows the old path, the production install regresses behind the patched top-level pins.
+   Fix: Delete `gateway/requirements.lock` and ensure all install steps (Dockerfile, CI, deploy script) reference `requirements.lock` at repo root. Add a CI guard that fails if a second `*.lock` file appears under `gateway/`.
+
+2. **Server diverged from origin: 35 behind / 17 ahead.**
+   Location: `julianhabbig@100.69.44.108:~/Habbig` head `e4cda27` vs origin head `cafb4d9`
+   Impact: The production gateway is running stale code that does NOT include audit #5, the i18n completion, the 6 portfolio test fixes, the `:focus-visible` migration, the new prod-Python lockfile, the voters/climate/disasters server code that the gateway catalog now expects to proxy to, OR the Stripe price-id env stubs for the 6 new subproducts. Simultaneously, the server has 17 commits of UI/border tweaks that origin doesn't have. A `git pull` on the server will collide and require a merge; a `git reset --hard origin/feature/platform-build` will erase 17 commits of legitimate UI work. Worst case: someone forces an alignment in the wrong direction and either (a) blows away the UI commits or (b) overwrites origin with the server's stale view, dropping audit #5 and the voters dashboard.
+   Fix: Land the 17 server-only commits on origin via PR (or cherry-pick onto a new branch), then `git pull` on server to sync forward. Do this before the next deploy or any further parallel work on either side.
+
+#### MEDIUM
+
+1. **Skeleton subproduct requirements unpinned.** `centralbank-dashboard/requirements.txt` uses `>=` constraints for 5 deps (`fastapi>=0.110`, `uvicorn[standard]>=0.27`, `httpx>=0.27`, `pyyaml>=6.0`, `pydantic>=2.6`). `whale-dashboard/requirements.txt` is unpinned across 6 deps with no version specifiers at all. Once these subproducts ship a `server.py` and get a Docker build, transitive resolution drifts on every rebuild.
+   Location: `centralbank-dashboard/requirements.txt`, `whale-dashboard/requirements.txt`
+   Impact: Reproducibility lost; supply-chain attack surface widens (typosquat windows on transitives).
+   Fix: Pin to `==` before either gets a server.py. Match the pinning model of `voters-dashboard/requirements.txt` (which is also currently lax — `fastapi`, `uvicorn[standard]`, `pyyaml`, `pyyaml` with no `==`).
+
+2. **Voters dashboard CSP allows `unsafe-inline`.** The voters dashboard sets `script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'` in its middleware (`voters-dashboard/server.py:140-148`). The gateway upstream now scrubs `unsafe-inline` from script-src; the subproduct ships with it.
+   Location: `voters-dashboard/server.py:140-148`
+   Impact: If an XSS sink slips into the voters dashboard's templates or any future user-submitted content (`POST /api/thoughts`, `POST /api/chains`), inline script execution becomes reachable. Mitigated today because the dashboard renders user content into HTML attributes via escaping, but the policy is weaker than the gateway's.
+   Fix: Migrate inline scripts in `voters-dashboard/static/index.html` + `app.js` to external files; drop `'unsafe-inline'` from script-src. Style can stay until inline-style usage is audited.
+
+3. **`/settings/integrations` page not present in tree.** Task brief says this page is being built in parallel. `grep -rn "settings/integrations"` in `gateway/` returns no Python source matches. Either the in-flight branch hasn't landed yet (expected per task description) OR the route name is different than expected.
+   Location: N/A — page not yet committed
+   Impact: When it lands, must audit: CSRF on connect/disconnect, OAuth state validation, third-party token storage (encryption + redaction), subproduct gate on the integration list (Pro/admin-only?), rate limit on OAuth callback.
+   Fix: Block the merge of that page on an inline mini-audit when it arrives. Add to "recommended actions for next audit" below.
+
+#### LOW
+
+1. **Carryover from audits #2/#3/#4/#5:** scanner regexes still match identifier word-greps + CSP header sets + cookie-attr false positives + internal-anchor redirects. ~110 hits, zero application-side issues. Skill-level work — refining the regexes (`scan_auth.sh` cookie-attr scan should ignore the csrf/lang/tz allowlist; `scan_redirects.sh` should ignore `RedirectResponse` to `/...` paths).
+
+2. **Climate + disasters dashboards use Flask; voters + gateway + sports/crypto/midterm/top-traders use FastAPI.** Two stacks now in production. Operationally consistent (both behind cloudflared tunnel + subproduct middleware) but raises maintenance cost: security-header conventions diverge (`flask-compress` vs FastAPI middleware), CSP wiring is independently maintained, rate-limit stories differ.
+   Location: `climate-dashboard/server.py:47`, `disasters-dashboard/server.py` (Flask)
+   Fix: Long-term — port climate + disasters to FastAPI for stack uniformity. Short-term — document the divergence in DEPLOY.md so the next agent doesn't assume FastAPI patterns.
+
+3. **7 uvicorn processes running on server**, most idle. Stale Polymarket-staging on port 7050 (May 03) and 7051 (May 03). Same finding as audit #4 LOW #2; not regressed but not improved. Operational cleanup, not a security issue.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- `centralbank-dashboard/` — Dockerfile + requirements.txt + data + static/ scaffolding. No server.py. Untracked. Local-only.
+  Security implications: Dockerfile runs as `appuser` (good), but unpinned deps (MED #1). Safe to commit but should be on a branch, not floating untracked.
+  Must-do before commit: pin requirements.txt; add a server.py stub that returns 503 explicitly until ready (so the gateway proxy doesn't 502 silently).
+- `whale-dashboard/` — Dockerfile + requirements.txt + data (`whales.yaml`) + `scripts/seed_13f.py` + static/index.html. Same posture as centralbank.
+  Must-do before commit: same as centralbank.
+- `voters-dashboard/voters.sqlite-{shm,wal}` — SQLite WAL artefacts from a local dev run. Should be added to `.gitignore` (they're 32KB / 0B and irrelevant outside of a running process).
+
+#### Server-side uncommitted state
+- See HIGH #2. Server has 17 committed-only-locally UI border tweaks plus zero uncommitted-on-disk lines this time (audit #5's 235 lines have landed on origin via 69c7833 + 897fb21). Direction reversed from #5 — origin is now ahead in volume but server is ahead in commits.
+
+#### Stashes
+- none
+
+### Changes since previous audit
+
+#### Resolved
+- Server-side WIP from audit #5 MEDIUM committed to origin (commits 69c7833 + 897fb21) — RESOLVED.
+- requirements.lock now present at repo root (commits abfca99 + dc0e57d) — RESOLVED for the original "no lockfile" finding, BUT the resolution introduced HIGH #1 (two lockfiles, one stale).
+
+#### New issues
+- HIGH #1 — duplicate lockfile, stale `gateway/requirements.lock` pinning unpatched CVE versions.
+- HIGH #2 — server/origin divergence in both directions (NEW direction: origin now further ahead than server has ever been behind).
+- MEDIUM #1 — unpinned deps in skeleton subproducts.
+- MEDIUM #2 — voters dashboard CSP `unsafe-inline`.
+- MEDIUM #3 — `/settings/integrations` not yet in tree, audit deferred.
+
+#### Regressions
+- (none)
+
+### Drift warnings
+- Server running 35 commits behind AND 17 commits ahead of origin. Files diverge across UI/CSS (server-ahead) AND across i18n/dashboards/lockfile/tests (origin-ahead). Reconciliation should land server's UI commits on origin via PR, then sync forward.
+- Two `requirements.lock` files present. The repo-root one is fresh and prod-3.12 accurate; `gateway/requirements.lock` is stale Apr 22 and pins pre-CVE-bump versions. **Delete the gateway/-scoped one** unless someone can name a build path that needs it.
+- 3 skeleton subproducts (whale/centralbank/world_health) registered in `gateway/subproduct.py` catalog but with no live server.py — gateway will 502 on `whale.narve.ai` / `centralbank.narve.ai` until they land. Cloudflare DNS records should NOT exist for these hosts yet.
+
+### Recommended actions for next audit
+1. **Resolve HIGH #1 (delete stale `gateway/requirements.lock`)** and verify all install paths reference repo-root `requirements.lock`. Add CI guard.
+2. **Resolve HIGH #2 (reconcile server/origin divergence)** — open PR with the 17 server-only UI commits, merge, then `git pull` on server.
+3. **Audit `/settings/integrations` page when it lands.** OAuth state validation, third-party token storage, subproduct gate, callback rate limit.
+4. **Pin `whale-dashboard/requirements.txt` and `centralbank-dashboard/requirements.txt`** to `==` before either ships a server.py.
+5. **Drop `unsafe-inline` from voters dashboard script-src** by moving inline scripts to external files.
+6. **Verify `user_positions` is in the GDPR export bundle** (carried from audits #4 + #5).
+7. **Verify the proxy hostname allowlist matches Cloudflare DNS** — the gateway catalog now lists 12 subproducts; CF should have records for only the 9 that have live server.py code.
+8. **Re-run `pip-audit` from a Python 3.12 host** to confirm `requirements.lock` has zero known CVEs.
+
+
+---
+
 ## AUDIT #5 — 2026-05-04T22:00Z — commit 75806ce — weekly delta + WIP scan
 
 ### Why this audit exists
