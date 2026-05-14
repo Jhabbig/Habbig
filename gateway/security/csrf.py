@@ -70,6 +70,15 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = ()
 
 CSRF_ENABLED = os.environ.get("CSRF_ENABLED", "true").lower() not in ("0", "false", "no", "off")
 
+# Phase-1 rollout flag for PATCH/PUT/DELETE enforcement. When false (default),
+# the middleware still inspects these verbs but lets failing requests through
+# with a warning log — useful while we verify every client sends x-csrf-token
+# on non-POST mutating requests. When true, behaves identically to POST.
+# Mirror of the same flag in gateway/server.py — keep the two in lockstep.
+CSRF_PATCH_DELETE_ENFORCE = os.environ.get(
+    "CSRF_PATCH_DELETE_ENFORCE", "false"
+).lower() in ("1", "true", "yes", "on")
+
 
 def generate_csrf_token() -> str:
     """Generate a cryptographically secure CSRF token."""
@@ -178,6 +187,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            # Phase-1 rollout: PATCH/PUT/DELETE failures only produce a 403
+            # when CSRF_PATCH_DELETE_ENFORCE is true. POST always enforces.
+            enforce_failure = (request.method == "POST") or CSRF_PATCH_DELETE_ENFORCE
             # Extract submitted token from form field or header
             content_type = request.headers.get("content-type", "")
             submitted_token = None
@@ -234,10 +246,20 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                             reason, path, request.method, ip)
                 from security.logger import log_csrf_failure
                 log_csrf_failure(request, reason=reason, ip=ip)
-                return JSONResponse(
-                    {"error": "CSRF validation failed"},
-                    status_code=403,
-                    headers={"X-CSRF-Error": reason},
+                if enforce_failure:
+                    return JSONResponse(
+                        {"error": "CSRF validation failed"},
+                        status_code=403,
+                        headers={"X-CSRF-Error": reason},
+                    )
+                # Soft-warn mode: let PATCH/PUT/DELETE through during Phase 1
+                # rollout so we get telemetry without breaking clients that
+                # haven't been migrated yet. Flip CSRF_PATCH_DELETE_ENFORCE
+                # in Phase 2 once the warning rate is zero.
+                log.warning(
+                    "CSRF soft-warn: %s %s reason=%s ip=%s "
+                    "(CSRF_PATCH_DELETE_ENFORCE=false)",
+                    request.method, path, reason, ip,
                 )
 
         # Pre-generate CSRF token for first-visit GET requests

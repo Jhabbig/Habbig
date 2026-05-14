@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import importlib
+
 from security.csrf import (
     CSRF_TOKEN_LENGTH,
     CSRF_ROTATION_SECONDS,
@@ -20,6 +22,7 @@ from security.csrf import (
     validate_csrf_token,
     csrf_hidden_field,
 )
+import security.csrf as csrf_module
 
 
 class TestCSRFTokenGeneration(unittest.TestCase):
@@ -167,6 +170,167 @@ class TestCSRFMiddlewareExemptions(unittest.TestCase):
     def test_health_is_exempt(self):
         from security.csrf import _CSRF_EXEMPT_PATHS
         self.assertIn("/health", _CSRF_EXEMPT_PATHS)
+
+
+class TestCSRFPatchDeleteEnforceFlag(unittest.TestCase):
+    """
+    Phase-1 rollout flag for PATCH/PUT/DELETE.
+
+    When CSRF_PATCH_DELETE_ENFORCE is false (default), the middleware logs
+    a warning on a missing/invalid PATCH/PUT/DELETE token but lets the
+    request through. When true, it behaves identically to POST (hard 403).
+    POST enforcement is unaffected by the flag.
+    """
+
+    def _reload_with_flag(self, value):
+        """Reload the security.csrf module with the env flag set."""
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": value}):
+            return importlib.reload(csrf_module)
+
+    def tearDown(self):
+        # Reset to default false so other test classes see a clean module.
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "false"}):
+            importlib.reload(csrf_module)
+
+    def test_flag_defaults_to_false(self):
+        """Absent env var means soft-warn mode (safe default)."""
+        # Wipe the var if present so the reload sees no value at all.
+        env_without_flag = {k: v for k, v in os.environ.items()
+                            if k != "CSRF_PATCH_DELETE_ENFORCE"}
+        with patch.dict(os.environ, env_without_flag, clear=True):
+            mod = importlib.reload(csrf_module)
+            self.assertFalse(mod.CSRF_PATCH_DELETE_ENFORCE)
+
+    def test_flag_true_parses_truthy_values(self):
+        for v in ("1", "true", "TRUE", "yes", "on"):
+            with self.subTest(value=v):
+                mod = self._reload_with_flag(v)
+                self.assertTrue(mod.CSRF_PATCH_DELETE_ENFORCE)
+
+    def test_flag_false_parses_falsy_values(self):
+        for v in ("0", "false", "FALSE", "no", "off", ""):
+            with self.subTest(value=v):
+                mod = self._reload_with_flag(v)
+                self.assertFalse(mod.CSRF_PATCH_DELETE_ENFORCE)
+
+
+class TestCSRFMiddlewareMethodDispatch(unittest.TestCase):
+    """
+    Verify the dispatch enforces POST always, gates PATCH/PUT/DELETE on the
+    rollout flag, and ignores safe verbs (GET/HEAD/OPTIONS).
+
+    Uses a minimal fake request — we exercise the dispatch coroutine
+    directly rather than spinning up Starlette so the test is hermetic.
+    """
+
+    def _make_request(self, method, *, token_in_header=None, cookie_token=None):
+        req = MagicMock()
+        req.method = method
+        req.url.path = "/api/sample"
+        req.headers = {"content-type": "application/json", "host": "localhost"}
+        if token_in_header:
+            req.headers[CSRF_HEADER_NAME] = token_in_header
+        req.cookies = {CSRF_COOKIE_NAME: cookie_token} if cookie_token else {}
+        req.client.host = "127.0.0.1"
+        # Used by JSONResponse path; no state needed otherwise
+        req.state = MagicMock()
+        return req
+
+    async def _dispatch(self, mw, request, expected_status_passthrough=200):
+        """Run dispatch and return (status_code, was_passthrough)."""
+        passthrough = {"called": False}
+
+        async def call_next(r):
+            passthrough["called"] = True
+            resp = MagicMock()
+            resp.status_code = expected_status_passthrough
+            resp.headers = {"content-type": "application/json"}
+            return resp
+
+        result = await mw.dispatch(request, call_next)
+        status = getattr(result, "status_code", None)
+        return status, passthrough["called"]
+
+    def _build_middleware(self, mod):
+        # Mock log_csrf_failure to avoid touching the DB during tests.
+        sys.modules.setdefault(
+            "security.logger",
+            MagicMock(log_csrf_failure=lambda *a, **kw: None),
+        )
+        return mod.CSRFMiddleware(app=MagicMock(), is_production=False)
+
+    def test_post_without_token_returns_403_regardless_of_flag(self):
+        import asyncio
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "false"}):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            req = self._make_request("POST")
+            status, passed = asyncio.run(self._dispatch(mw, req))
+            self.assertEqual(status, 403)
+            self.assertFalse(passed)
+
+    def test_patch_without_token_soft_warns_when_flag_false(self):
+        """PATCH without a token gets through and only logs a warning."""
+        import asyncio
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "false"}):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            req = self._make_request("PATCH")
+            with patch.object(mod.log, "warning") as warn:
+                _, passed = asyncio.run(self._dispatch(mw, req))
+                self.assertTrue(passed, "PATCH should pass through in soft-warn mode")
+                # At least one warning should mention soft-warn
+                msgs = [c.args[0] for c in warn.call_args_list]
+                self.assertTrue(
+                    any("soft-warn" in m for m in msgs),
+                    f"Expected soft-warn log, got: {msgs}",
+                )
+
+    def test_delete_without_token_soft_warns_when_flag_false(self):
+        import asyncio
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "false"}):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            req = self._make_request("DELETE")
+            with patch.object(mod.log, "warning"):
+                _, passed = asyncio.run(self._dispatch(mw, req))
+                self.assertTrue(passed, "DELETE should pass through in soft-warn mode")
+
+    def test_patch_without_token_returns_403_when_flag_true(self):
+        import asyncio
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "true"}):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            req = self._make_request("PATCH")
+            status, passed = asyncio.run(self._dispatch(mw, req))
+            self.assertEqual(status, 403)
+            self.assertFalse(passed)
+
+    def test_delete_without_token_returns_403_when_flag_true(self):
+        import asyncio
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "true"}):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            req = self._make_request("DELETE")
+            status, passed = asyncio.run(self._dispatch(mw, req))
+            self.assertEqual(status, 403)
+            self.assertFalse(passed)
+
+    def test_patch_with_valid_token_passes_when_flag_true(self):
+        """Happy path: valid PATCH gets through even in strict mode."""
+        import asyncio
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "true"}):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            tok = "matching_token_value"
+            req = self._make_request("PATCH", token_in_header=tok, cookie_token=tok)
+            status, passed = asyncio.run(self._dispatch(mw, req))
+            self.assertTrue(passed)
+            self.assertNotEqual(status, 403)
+
+    def tearDown(self):
+        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "false"}):
+            importlib.reload(csrf_module)
 
 
 if __name__ == "__main__":

@@ -346,10 +346,21 @@ except Exception:  # pragma: no cover
     _JSON_SERIALIZER = "stdlib"
 
 app = FastAPI(
-    title="Polymarket Gateway",
+    title="narve.ai API",
+    version="1.0",
+    description=(
+        "Public REST surface for narve.ai. Bearer-token endpoints live under "
+        "/api/public/v1/*; session-scoped endpoints under /api/*; embed widgets "
+        "under /api/embed/* with X-API-Key; subproducts behind subdomain HMAC. "
+        "Human-readable reference: /api/docs."
+    ),
     docs_url=None,
     redoc_url=None,
-    openapi_url=None,
+    # Machine-readable OpenAPI for the /api/docs reference page. Enabled
+    # so SDK generators, agents, and integrators can fetch the schema
+    # without scraping HTML. Internal routes set include_in_schema=False
+    # to stay out of the public surface.
+    openapi_url="/api/openapi.json",
     default_response_class=_DefaultJSONResponse,
 )
 
@@ -843,6 +854,26 @@ CSRF_FORM_FIELD = "_csrf"
 CSRF_HEADER_NAME = "x-csrf-token"
 _CSRF_TOKEN_LENGTH = 32
 
+# Phase-1 rollout flag for PATCH/PUT/DELETE CSRF enforcement.
+#
+# Historically the in-line middleware below only enforced CSRF on POST.
+# PATCH/PUT/DELETE are equally mutating verbs and need the same protection,
+# but flipping enforcement on cold would break any client code that isn't
+# yet sending x-csrf-token on those methods. Two-phase rollout:
+#
+#   Phase 1 (now, flag default false): PATCH/PUT/DELETE are inspected. If
+#     a valid token is missing/mismatched we LOG a warning but still let the
+#     request through. Gives us telemetry on which routes/clients aren't
+#     yet sending the header without taking the site down.
+#
+#   Phase 2 (next sprint, set CSRF_PATCH_DELETE_ENFORCE=true): same path,
+#     but a failed validation returns 403 just like POST does today.
+#
+# When the flag is true the behaviour is identical to POST enforcement.
+CSRF_PATCH_DELETE_ENFORCE = os.environ.get(
+    "CSRF_PATCH_DELETE_ENFORCE", "false"
+).lower() in ("1", "true", "yes", "on")
+
 # Routes that skip CSRF validation (public GET-only, static files, proxied)
 _CSRF_SKIP_PREFIXES = ("/_gateway_static", "/ws")
 
@@ -980,8 +1011,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     """Double-submit cookie CSRF protection.
 
     - On GET requests to HTML pages: ensures _csrf cookie is set.
-    - On POST requests: validates the submitted token (form field or header)
-      matches the cookie value.
+    - On POST/PATCH/PUT/DELETE requests: validates the submitted token
+      (form field or header) matches the cookie value. PATCH/PUT/DELETE
+      enforcement is gated by ``CSRF_PATCH_DELETE_ENFORCE`` during rollout
+      (soft-warn when false, hard-403 when true). See the constant above.
     - Skips static files, WebSocket, and reverse-proxied subdomain routes.
     """
     async def dispatch(self, request, call_next):
@@ -999,16 +1032,24 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if host and any(host != apex and host.endswith("." + apex) for apex in ALLOWED_DOMAINS):
                 return await call_next(request)
 
-        # Exempt public POST endpoints that don't have a session to anchor to
-        if request.method == "POST" and path in _CSRF_EXEMPT_POSTS:
+        method = request.method
+        is_mutating = method in ("POST", "PATCH", "PUT", "DELETE")
+        # PATCH/PUT/DELETE are inspected unconditionally for telemetry, but
+        # only enforce 403 when the rollout flag is on. POST always enforces.
+        enforce_failure = (method == "POST") or CSRF_PATCH_DELETE_ENFORCE
+
+        # Exempt public mutating endpoints that don't have a session to anchor
+        # to. The current exempt lists are POST-only; if a PATCH/DELETE
+        # variant of an exempt path is ever introduced, add it explicitly.
+        if method == "POST" and path in _CSRF_EXEMPT_POSTS:
             return await call_next(request)
         # Prefix-matched variants for dynamic path segments (e.g. invite/{code}).
-        if request.method == "POST" and any(
+        if method == "POST" and any(
             path.startswith(p) for p in _CSRF_EXEMPT_POST_PREFIXES
         ):
             return await call_next(request)
 
-        if request.method == "POST":
+        if is_mutating:
             # Extract token from form field or header
             content_type = request.headers.get("content-type", "")
             submitted_token = None
@@ -1021,13 +1062,19 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 body = await request.body()
                 parsed = parse_qs(body.decode("utf-8", errors="replace"))
                 submitted_token = parsed.get(CSRF_FORM_FIELD, [None])[0]
+            else:
+                # Other content types (multipart, no body, etc.) still allow
+                # the header as a fallback — matches the JS auto-inject path.
+                submitted_token = request.headers.get(CSRF_HEADER_NAME)
 
             # Origin/Referer check as secondary defense. Compare against the
             # request's Host header rather than the configured DOMAIN — that
             # way a multi-domain front (habbig.com + narve.ai) still validates
-            # cleanly without hardcoding each alias. Cross-origin POSTs are
-            # rejected; same-origin POSTs (including subdomains sharing the
-            # same apex) pass through.
+            # cleanly without hardcoding each alias. Cross-origin requests
+            # are rejected; same-origin (including subdomains sharing the
+            # same apex) pass through. Origin enforcement applies to every
+            # mutating verb regardless of the PATCH/DELETE rollout flag —
+            # mismatched origin is a strong attack signal on its own.
             origin = request.headers.get("origin")
             if origin and IS_PRODUCTION:
                 from urllib.parse import urlparse
@@ -1044,7 +1091,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                         return JSONResponse({"error": "Invalid origin"}, status_code=403)
 
             if not _validate_csrf(request, submitted_token):
-                return JSONResponse({"error": "CSRF validation failed"}, status_code=403)
+                if enforce_failure:
+                    return JSONResponse({"error": "CSRF validation failed"}, status_code=403)
+                # Soft-warn mode for PATCH/PUT/DELETE during Phase 1. We
+                # let the request through but log enough to triage which
+                # client/route still needs a CSRF header before flipping
+                # CSRF_PATCH_DELETE_ENFORCE on.
+                log.warning(
+                    "CSRF soft-warn: %s %s missing/invalid token "
+                    "(enforce=false) — fix before flipping "
+                    "CSRF_PATCH_DELETE_ENFORCE=true",
+                    method, path,
+                )
 
         # Pre-generate CSRF token for first-visit GET requests so render_page
         # and the cookie use the same token.
@@ -1107,6 +1165,8 @@ _PUBLIC_PATHS = frozenset({
     "/team", "/press", "/changelog", "/changelog.rss", "/narve",
     # Developer docs — public page describing /api/public/v1/* for SEO.
     "/api/docs",
+    # Machine-readable OpenAPI schema referenced from /api/docs.
+    "/api/openapi.json",
 })
 # The gate is bypassed on these prefixes. The public developer API
 # (/api/public/v1/*) uses Bearer-token auth and has no gate cookie, so
