@@ -12,6 +12,7 @@ body { background: var(--bg-base); color: var(--text-primary); font-family: var(
     .cp-form { display: flex; gap: 8px; margin-bottom: 24px; }
     .cp-form input { flex: 1; padding: 12px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); font-size: var(--text-base); font-family: var(--font-ui); }
     .cp-form input:focus { outline: none; border-color: var(--text-primary); }
+    .cp-form input:focus-visible { outline: 2px solid var(--ring, var(--text-primary)); outline-offset: 2px; }
     .cp-form button { background: var(--text-primary); color: var(--bg-base); border: none; padding: 12px 20px; border-radius: var(--radius-md); font-weight: 500; font-size: var(--text-base); cursor: pointer; font-family: var(--font-ui); }
     .cp-form button:hover { opacity: 0.88; }
     .cp-form button:disabled { opacity: 0.5; cursor: default; }

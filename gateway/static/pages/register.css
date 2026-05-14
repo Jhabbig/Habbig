@@ -72,6 +72,10 @@ body {
       border-color: var(--text-primary);
       box-shadow: 0 0 0 3px var(--interactive-ghost);
     }
+    .reg-input:focus-visible {
+      outline: 2px solid var(--ring, var(--text-primary));
+      outline-offset: 2px;
+    }
     .reg-field-error {
       font-size: var(--text-xs);
       color: var(--text-secondary);

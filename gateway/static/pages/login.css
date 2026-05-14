@@ -72,6 +72,10 @@ body {
       border-color: var(--text-primary);
       box-shadow: 0 0 0 3px var(--interactive-ghost);
     }
+    .login-input:focus-visible {
+      outline: 2px solid var(--ring, var(--text-primary));
+      outline-offset: 2px;
+    }
     .login-input[readonly] {
       background: var(--bg-overlay);
       color: var(--text-secondary);

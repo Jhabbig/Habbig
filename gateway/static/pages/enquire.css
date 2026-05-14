@@ -80,7 +80,7 @@
       outline: none;
     }
     .enq-input::placeholder, .enq-textarea::placeholder { color: var(--text-muted); }
-    .enq-input:focus, .enq-select:focus, .enq-textarea:focus {
+    .enq-input:focus-visible, .enq-select:focus-visible, .enq-textarea:focus-visible {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px var(--accent-light);
     }

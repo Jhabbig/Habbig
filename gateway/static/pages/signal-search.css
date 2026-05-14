@@ -153,6 +153,7 @@
     .ss-modal label { display: block; font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); margin: 16px 0 6px; }
     .ss-modal input, .ss-modal select { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); background: var(--bg-overlay); color: var(--text-primary); }
     .ss-modal input:focus, .ss-modal select:focus { outline: none; border-color: var(--accent); }
+    .ss-modal input:focus-visible, .ss-modal select:focus-visible { outline: 2px solid var(--ring, var(--text-primary)); outline-offset: 2px; }
     .ss-modal-actions { display: flex; gap: 12px; margin-top: 24px; }
     .ss-modal-actions button { flex: 1; padding: 12px; border-radius: var(--radius-sm); font-size: var(--text-base); font-weight: 600; cursor: pointer; }
     .ss-modal-save { background: var(--cta-bg); color: var(--interactive-text); border: none; }

@@ -32,7 +32,7 @@
     /* Form */
     .sub-label { display: block; font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; margin-top: 16px; }
     .sub-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: var(--text-base); background: var(--bg-overlay); color: var(--text-primary); transition: border-color 0.15s; outline: none; }
-    .sub-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+    .sub-input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
 
     /* Summary */
     .sub-summary { background: var(--surface-hover); border-radius: var(--radius-sm); padding: 16px; margin: 24px 0; }

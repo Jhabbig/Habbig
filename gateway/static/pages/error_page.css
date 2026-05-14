@@ -195,6 +195,10 @@
   border-color: var(--text-primary);
   box-shadow: 0 0 0 3px var(--interactive-ghost);
 }
+.nv-error__search input:focus-visible {
+  outline: 2px solid var(--ring, var(--text-primary));
+  outline-offset: 2px;
+}
 .nv-error__search button {
   padding: var(--space-2, 8px) var(--space-4, 16px);
   border: 1px solid var(--text-primary);

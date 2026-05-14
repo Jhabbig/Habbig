@@ -257,7 +257,7 @@
   font-weight: 500;
 }
 
-.skip-link:focus {
+.skip-link:focus-visible {
   top: 0;
 }
 

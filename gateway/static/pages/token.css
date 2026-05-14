@@ -69,6 +69,10 @@ body {
       border-color: var(--text-primary);
       box-shadow: 0 0 0 3px var(--interactive-ghost);
     }
+    .token-input:focus-visible {
+      outline: 2px solid var(--ring, var(--text-primary));
+      outline-offset: 2px;
+    }
     .token-input.error {
       border-color: var(--text-secondary);
       animation: shake 0.4s cubic-bezier(.36, .07, .19, .97);

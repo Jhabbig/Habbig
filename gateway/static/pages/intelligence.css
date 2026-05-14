@@ -43,6 +43,7 @@ body { display: flex; min-height: 100vh; }
     .intel-input-shell { max-width: 820px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
     .intel-input-shell textarea { flex: 1; padding: 14px 16px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: 10px; font-family: inherit; font-size: var(--text-base); resize: none; min-height: 52px; max-height: 200px; }
     .intel-input-shell textarea:focus { outline: none; border-color: var(--text-primary); }
+    .intel-input-shell textarea:focus-visible { outline: 2px solid var(--ring, var(--text-primary)); outline-offset: 2px; }
     .intel-send { background: var(--text-primary); color: var(--interactive-text); border: 1px solid var(--text-primary); border-radius: 10px; padding: 14px 22px; font-size: var(--text-base); font-weight: 500; cursor: pointer; font-family: inherit; }
     .intel-send:disabled { opacity: 0.5; cursor: wait; }
 

@@ -223,6 +223,10 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-light);
 }
+.auth-form input:focus-visible {
+  outline: 2px solid var(--ring, var(--text-primary));
+  outline-offset: 2px;
+}
 
 .auth-submit {
   width: 100%;
@@ -1017,6 +1021,10 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-light);
 }
+.settings-select:focus-visible {
+  outline: 2px solid var(--ring, var(--text-primary));
+  outline-offset: 2px;
+}
 
 .settings-actions {
   margin-top: 8px;
@@ -1118,6 +1126,12 @@ a.landing-primary-cta, a.landing-primary-cta:hover { color: var(--cta-text); }
   outline: none;
   border-color: var(--text-primary);
   box-shadow: 0 0 0 3px var(--interactive-ghost);
+}
+.field-row .field-control input:focus-visible,
+.field-row .field-control select:focus-visible,
+.field-row .field-control textarea:focus-visible {
+  outline: 2px solid var(--ring, var(--text-primary));
+  outline-offset: 2px;
 }
 .field-row .field-control textarea { min-height: 80px; resize: vertical; }
 
@@ -1670,7 +1684,6 @@ html.theme-loading * { transition: none !important; }
   text-decoration: none;
   transition: top 0.15s ease-out;
 }
-.narve-skip-link:focus,
 .narve-skip-link:focus-visible {
   top: 12px;
   outline: 3px solid var(--accent, #fff);
@@ -2547,7 +2560,7 @@ a.btn:focus-visible,
   line-height: 1.3;
 }
 .narve-cmdp-row.selected,
-.narve-cmdp-row:focus {
+.narve-cmdp-row:focus-visible {
   background: var(--bg-hover, rgba(255, 255, 255, 0.04));
   color: var(--text-primary, #fff);
 }

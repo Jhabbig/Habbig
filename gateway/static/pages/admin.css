@@ -31,6 +31,7 @@
     .generate-form { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 24px; }
     .generate-form input { flex: 1; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: var(--text-base); background: var(--bg-surface); color: var(--text-primary); }
     .generate-form input:focus { outline: none; border-color: var(--text-primary); box-shadow: 0 0 0 3px var(--interactive-ghost); }
+    .generate-form input:focus-visible { outline: 2px solid var(--ring, var(--text-primary)); outline-offset: 2px; }
     /* Monochrome just-generated-token banner. Strong outline + ghost
        fill so it reads as "something just happened" without a colour
        accent violating the design system. */

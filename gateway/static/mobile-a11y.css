@@ -87,7 +87,6 @@ body > div:last-of-type a[href="/privacy"] {
   border-radius: var(--radius-sm);
   transition: top 0.15s ease;
 }
-.narve-skip-link:focus,
 .narve-skip-link:focus-visible {
   top: 8px;
   outline: 2px solid var(--text-primary);

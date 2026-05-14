@@ -359,6 +359,12 @@ body textarea:focus {
   border-color: var(--text-primary);
   box-shadow: 0 0 0 3px var(--interactive-ghost);
 }
+body input:focus-visible,
+body select:focus-visible,
+body textarea:focus-visible {
+  outline: 2px solid var(--ring, var(--text-primary));
+  outline-offset: 2px;
+}
 body label {
   display: block;
   font-size: var(--text-sm);

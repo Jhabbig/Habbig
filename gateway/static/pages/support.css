@@ -15,7 +15,7 @@
     .sup-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
     .sup-label { display: block; font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
     .sup-input, .sup-textarea, .sup-select { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: var(--text-base); background: var(--bg-overlay); color: var(--text-primary); outline: none; transition: border-color 0.15s; }
-    .sup-input:focus, .sup-textarea:focus, .sup-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+    .sup-input:focus-visible, .sup-textarea:focus-visible, .sup-select:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
     .sup-textarea { min-height: 140px; resize: vertical; line-height: 1.6; }
     .sup-select { appearance: none; -webkit-appearance: none; cursor: pointer; }
     .sup-field { margin-bottom: 20px; }

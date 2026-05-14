@@ -86,6 +86,7 @@
         color: #fff; font-family: inherit; font-size: 14px;
       }
       .hb-m-search:focus { outline: none; border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.08); }
+      .hb-m-search:focus-visible { outline: 2px solid var(--ring, var(--text-primary, #fff)); outline-offset: 2px; }
       .hb-m-select {
         padding: 10px 14px; background: #141414; border: 1px solid #2a2a2a;
         border-radius: 6px; color: #fff; font-family: inherit; font-size: 13px; cursor: pointer;
@@ -188,6 +189,7 @@
         border-radius: 6px; color: #fff; font-family: inherit; font-size: 14px;
       }
       .hb-m-input:focus { outline: none; border-color: #fff; }
+      .hb-m-input:focus-visible { outline: 2px solid var(--ring, var(--text-primary, #fff)); outline-offset: 2px; }
       .hb-m-summary {
         background: #141414; border: 1px solid #2a2a2a; border-radius: 8px;
         padding: 14px; margin: 16px 0; font-size: 13px; color: #a3a3a3; line-height: 1.8;

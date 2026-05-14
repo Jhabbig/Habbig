@@ -50,7 +50,7 @@
       transition: border-color var(--duration-fast);
       -webkit-text-security: disc;
     }
-    .gate-input:focus { border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(240,240,240,0.04); }
+    .gate-input:focus-visible { border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(240,240,240,0.04); }
     .gate-input::placeholder { color: var(--text-tertiary); }
     .gate-btn {
       width: 100%;
