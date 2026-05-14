@@ -798,7 +798,8 @@ async def admin_feedback_page(request: Request):
         'margin-top:14px">'
         '<span style="font-size:11px;font-weight:600;color:var(--text-muted);'
         'text-transform:uppercase;letter-spacing:0.05em">Bulk action</span>'
-        '<select name="status" required style="font-size:12px;padding:6px 10px;'
+        '<select name="status" required aria-label="Bulk status change" '
+        'style="font-size:12px;padding:6px 10px;'
         'background:var(--bg-base);border:1px solid var(--border);border-radius:4px;'
         'color:var(--text-primary)">'
         + "".join(f'<option value="{s}">{s}</option>' for s in sorted(VALID_STATUSES))

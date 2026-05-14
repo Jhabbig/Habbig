@@ -113,22 +113,36 @@ def get_predictions_for_market(market_id: str) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def list_recent_predictions(limit: int = 50, category: Optional[str] = None) -> list[sqlite3.Row]:
+def list_recent_predictions(
+    limit: int = 50,
+    category: Optional[str] = None,
+    before_id: Optional[int] = None,
+) -> list[sqlite3.Row]:
+    """List recent predictions, newest first by row id.
+
+    Order is ``id DESC`` so that the row's monotonically-increasing primary
+    key acts as a stable cursor — cheaper and more reliable than ordering
+    by ``extracted_at`` (which can collide on the second). Callers paginate
+    by passing the smallest ``id`` from the previous page as ``before_id``.
+    """
+    clauses = []
+    params: list = []
+    if category:
+        clauses.append("p.category = ?")
+        params.append(category)
+    if before_id is not None:
+        clauses.append("p.id < ?")
+        params.append(int(before_id))
+    where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
     with db.conn() as c:
-        if category:
-            return c.execute(
-                "SELECT p.*, sc.global_credibility, sc.accuracy_unlocked "
-                "FROM predictions p "
-                "LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
-                "WHERE p.category = ? ORDER BY p.extracted_at DESC LIMIT ?",
-                (category, limit),
-            ).fetchall()
         return c.execute(
             "SELECT p.*, sc.global_credibility, sc.accuracy_unlocked "
             "FROM predictions p "
             "LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
-            "ORDER BY p.extracted_at DESC LIMIT ?",
-            (limit,),
+            f"{where_sql} "
+            "ORDER BY p.id DESC LIMIT ?",
+            tuple(params),
         ).fetchall()
 
 

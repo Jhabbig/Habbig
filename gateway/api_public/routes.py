@@ -219,17 +219,58 @@ async def v1_source_history(request: Request, handle: str, limit: int = 200):
 
 
 @router.get("/feed")
-async def v1_feed(request: Request, limit: int = 100, category: Optional[str] = None):
+async def v1_feed(
+    request: Request,
+    limit: int = 100,
+    category: Optional[str] = None,
+    before_id: Optional[int] = None,
+):
+    """Cursor-paginated feed of recent predictions.
+
+    Pagination uses keyset cursors on the predictions row id (monotonic,
+    indexed primary key). The first page is fetched with no cursor; each
+    response contains a ``next_before`` field which the client passes back
+    as ``?before_id=<int>`` to fetch the next page. ``next_before`` is
+    ``null`` when the page is empty (end of feed).
+
+    ``limit`` is hard-capped at 100 — the upper bound for the public surface
+    is intentionally lower than the internal helper's 500-row maximum to
+    keep response sizes predictable for third-party clients.
+    """
     verify_api_key(request)
-    lim = _clamp(limit, 100, 500)
+    lim = _clamp(limit, 100, 100)
+    cursor: Optional[int] = None
+    if before_id is not None:
+        try:
+            cursor = int(before_id)
+            if cursor < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise HTTPException(400, "before_id must be a non-negative integer")
     try:
         import queries.predictions as qp
-        rows = qp.list_recent_predictions(limit=lim, category=category)
+        rows = qp.list_recent_predictions(
+            limit=lim, category=category, before_id=cursor,
+        )
     except Exception as exc:
         log.warning("public feed failed: %s", exc)
         rows = []
-    return _ok(request, "public.feed",
-               {"feed": _rows(rows), "limit": lim, "category": category})
+    items = _rows(rows)
+    # Smallest id in this page = cursor for the next page. None when the
+    # caller has paged past the end so they can stop polling.
+    next_before: Optional[int] = None
+    if items:
+        try:
+            next_before = min(int(row["id"]) for row in items if row.get("id") is not None)
+        except (TypeError, ValueError):
+            next_before = None
+    return _ok(request, "public.feed", {
+        "feed": items,
+        "limit": lim,
+        "category": category,
+        "before_id": cursor,
+        "next_before": next_before,
+    })
 
 
 @router.get("/best-bets")

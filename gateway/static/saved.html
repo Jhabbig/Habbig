@@ -51,6 +51,7 @@
 
         <main>
           <ul class="feed-list" id="saved-body" aria-live="polite"></ul>
+          <div id="saved-status" aria-live="polite"></div>
         </main>
 
       </div>
@@ -61,6 +62,7 @@
 <script>
 (function(){
   var body = document.getElementById('saved-body');
+  var statusEl = document.getElementById('saved-status');
   var countEl = document.getElementById('saved-count');
   var currentTab = 'predictions';
   var cache = { predictions: null, markets: null, sources: null };
@@ -96,7 +98,7 @@
   /* ---------- renderers (one per tab) ---------- */
 
   function renderPredictions(items){
-    if (!items.length) return renderEmpty('predictions');
+    if (!items.length) return '';
     return items.map(function(it){
       var p = it.prediction || {};
       var handle = p.source_handle || '';
@@ -123,7 +125,7 @@
   }
 
   function renderMarkets(items){
-    if (!items.length) return renderEmpty('markets');
+    if (!items.length) return '';
     return items.map(function(m){
       var slug = m.slug || '';
       var question = m.question || m.title || slug;
@@ -150,7 +152,7 @@
   }
 
   function renderSources(items){
-    if (!items.length) return renderEmpty('sources');
+    if (!items.length) return '';
     return items.map(function(s){
       var handle = s.handle || '';
       var name = s.name || handle;
@@ -196,6 +198,7 @@
 
   /* ---------- skeleton ---------- */
   function showSkeleton(){
+    statusEl.innerHTML = '';
     var html = '';
     for (var i = 0; i < 6; i++) {
       html += '<li><div class="feed-row feed-row--skeleton" aria-hidden="true">' +
@@ -227,12 +230,18 @@
   }
 
   function paint(tab, items){
+    if (!items.length) {
+      body.innerHTML = '';
+      statusEl.innerHTML = renderEmpty(tab);
+      countEl.textContent = '';
+      return;
+    }
+    statusEl.innerHTML = '';
     var html = '';
     if (tab === 'predictions') html = renderPredictions(items);
     else if (tab === 'markets') html = renderMarkets(items);
     else html = renderSources(items);
     body.innerHTML = html;
-    if (!items.length) { countEl.textContent = ''; return; }
     applyClientFilter();
     wireUnsave();
   }
@@ -288,7 +297,8 @@
       })
       .catch(function(err){
         var is401 = err && String(err.message || '').indexOf('http_401') === 0;
-        body.innerHTML =
+        body.innerHTML = '';
+        statusEl.innerHTML =
           '<div class="error-state">' +
             '<div class="error-state__title">' +
               (is401 ? 'Your session expired' : 'Could not load saved') +
