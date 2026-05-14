@@ -62,6 +62,15 @@ _PWA_HEAD = (
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n'
     '<meta name="mobile-web-app-capable" content="yes">\n'
     '<meta name="format-detection" content="telephone=no">\n'
+    # Geist Mono is referenced by tokens.css via @font-face but isn't
+    # preloaded anywhere else — declaring it here means the browser can
+    # start the fetch in parallel with the CSS parse instead of waiting
+    # until it discovers the @font-face rule. Inter preloads stay in
+    # per-page heads (most templates already declare them); Instrument
+    # Serif is loaded via Google Fonts on the handful of editorial pages
+    # that need it and isn't worth a universal preload.
+    '<link rel="preload" href="/_gateway_static/fonts/GeistMono-Variable.woff2" '
+    'as="font" type="font/woff2" crossorigin>\n'
     f'<link rel="stylesheet" href="/_gateway_static/mobile-a11y.css?v={_MOBILE_A11Y_VER}">\n'
     # narve-polish: site-wide refinement layer (motion + focus rhythm).
     f'<link rel="stylesheet" href="/_gateway_static/narve-polish.css?v={_NARVE_POLISH_VER}">\n'
