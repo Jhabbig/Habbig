@@ -5,7 +5,9 @@
  * components.css, lift it in a follow-up pass — but do NOT
  * rewrite selectors here without a visual QA pass. */
 
-.admin-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: 32px; }
+.admin-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: 32px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+    .admin-tabs::-webkit-scrollbar { height: 4px; }
+    .admin-tab { flex-shrink: 0; }
     .admin-tab { padding: 12px 24px; font-size: var(--text-base); font-weight: 500; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; background: none; border-top: none; border-left: none; border-right: none; }
     .admin-tab:hover { color: var(--text-primary); }
     .admin-tab.active { color: var(--text-primary); border-bottom-color: var(--text-primary); }

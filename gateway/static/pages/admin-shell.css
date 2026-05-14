@@ -140,6 +140,10 @@
 .admin-body .admin-card:has(> table.admin-table),
 .admin-body .admin-card:has(> .nv-table-wrap > .admin-table) {
   padding: 0;
+  /* Wide admin tables (5-7 cols, 30+ char IDs) exceed 375px on mobile.
+     Contain the overflow inside the card so the body doesn't h-scroll. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 /* .admin-section is a grouping container — its header + card already
    own their own padding, so the wrapper just owns vertical rhythm. */
