@@ -144,6 +144,7 @@ class TestExplanationsTable(unittest.TestCase):
             "/admin/impersonations",
             "/admin/flags",
             "/admin/emails",
+            "/admin/email-templates",
             "/admin/incidents",
             "/admin/security/forensics",
             "/admin/cache",

@@ -127,6 +127,10 @@
       body: "Globally disable, enable per user, or roll out by percentage. Evaluation order: globally disabled → user disabled → user enabled → tier → rollout %.",
     },
     "/admin/emails": {
+      title: "Outbound emails",
+      body: "Recent sends, queued deliveries, and failed jobs. Filter by template / status / recipient. Inspect rendered payload + retry failed deliveries.",
+    },
+    "/admin/email-templates": {
       title: "Email templates",
       body: "Override default email templates. DB override wins over file fallback. Broken overrides fall through silently — no email is dropped.",
     },

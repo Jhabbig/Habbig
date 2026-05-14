@@ -8111,6 +8111,21 @@ except Exception as _exc:  # pragma: no cover
     log.warning("admin_test_emails_routes import failed: %s — continuing without it", _exc)
 
 
+# Outbound email queue + delivery review (/admin/emails + /admin/api/emails*).
+# Diagnostic surface for every send_email background job — list, filter,
+# inspect, resend. Same reload-safe side-effect pattern as
+# admin_test_emails_routes above; must sit before the catch-all so
+# /admin/emails isn't swallowed as a 404.
+try:
+    import admin_emails_routes  # noqa: F401,E402
+    import sys as _aer_sys
+    if "admin_emails_routes" in _aer_sys.modules:
+        import importlib as _aer_importlib
+        _aer_importlib.reload(_aer_sys.modules["admin_emails_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("admin_emails_routes import failed: %s — continuing without it", _exc)
+
+
 # Single-pane external-integration health (/admin/integrations + /api/admin/integrations*).
 # Surfaces config + live state for every third-party SaaS (Stripe, Anthropic,
 # Polymarket, Kalshi, SMTP, Sentry, BetterStack, Cloudflare). Same reload-safe

@@ -1,15 +1,410 @@
-<!-- Converted from admin-emails.html. Body-only — wrapped by admin_shell. -->
-<div style="max-width:1100px">
+<!-- /admin/emails — outbound email queue + delivery review.
+     Wrapped by admin_shell. Body-only fragment.
 
-          <div class="admin-section">
-            <div class="admin-section-head">
-              <h2>Templates</h2>
-              <span class="admin-section-count">tap a row to edit</span>
-            </div>
-            <div class="admin-card">
-              {{ raw_template_rows }}
-            </div>
-          </div>
+     Layout:
+       1. Hero ("Emails", Instrument Serif Italic)
+       2. Stats bar — 24h sent / failed / queued / failure rate
+       3. Top failing templates (right column of stats)
+       4. Filter row — template / status / recipient
+       5. Recent table — last 200, with View link → /admin/emails/{id}
 
-        </div>
+     Recipient is redacted (`abc***@domain`) in the list view; the
+     detail page shows the full address.
+-->
 
+<div class="emails-page">
+
+  <div class="emails-hero">
+    <h2 class="emails-hero__display">Emails</h2>
+    <p class="emails-hero__lede">
+      Every outbound delivery. Filter by template, status, or recipient
+      to triage a bounce, audit a send, or re-queue a failed delivery.
+    </p>
+  </div>
+
+  <!-- ── Stats bar ──────────────────────────────────────────────────── -->
+  <section class="emails-stats" aria-label="Email statistics, last 24 hours">
+    <div class="emails-stat">
+      <div class="emails-stat__label">Sent &middot; 24h</div>
+      <div class="emails-stat__value">{{ raw_stat_sent }}</div>
+    </div>
+    <div class="emails-stat">
+      <div class="emails-stat__label">Failed &middot; 24h</div>
+      <div class="emails-stat__value">{{ raw_stat_failed }}</div>
+    </div>
+    <div class="emails-stat">
+      <div class="emails-stat__label">Queued</div>
+      <div class="emails-stat__value">{{ raw_stat_queued }}</div>
+    </div>
+    <div class="emails-stat">
+      <div class="emails-stat__label">Failure rate</div>
+      <div class="emails-stat__value">{{ raw_stat_rate }}</div>
+    </div>
+  </section>
+
+  <!-- ── Top failing templates ──────────────────────────────────────── -->
+  <section class="emails-card" aria-labelledby="emails-top-title">
+    <header class="emails-card__head">
+      <h3 id="emails-top-title" class="emails-card__title">Top failing templates &middot; 24h</h3>
+      <span class="emails-card__sub">debug clusters before they spread</span>
+    </header>
+    {{ raw_top_failing }}
+  </section>
+
+  <!-- ── Filter row ─────────────────────────────────────────────────── -->
+  <section class="emails-card" aria-labelledby="emails-table-title">
+    <header class="emails-card__head">
+      <h3 id="emails-table-title" class="emails-card__title">Recent deliveries</h3>
+      <span class="emails-card__sub">{{ raw_result_count }} rows</span>
+    </header>
+
+    <form method="get" action="/admin/emails" class="emails-filter">
+      <label class="emails-filter__group">
+        <span class="emails-filter__label">Template</span>
+        <select name="template" class="emails-filter__select">
+          {{ raw_template_options }}
+        </select>
+      </label>
+
+      <label class="emails-filter__group">
+        <span class="emails-filter__label">Status</span>
+        <select name="status" class="emails-filter__select">
+          {{ raw_status_options }}
+        </select>
+      </label>
+
+      <label class="emails-filter__group emails-filter__group--wide">
+        <span class="emails-filter__label">Recipient contains</span>
+        <input type="search"
+               name="recipient"
+               value="{{ raw_recipient_value }}"
+               placeholder="e.g. @gmail.com"
+               class="emails-filter__input">
+      </label>
+
+      <div class="emails-filter__actions">
+        <button type="submit" class="emails-filter__submit">Apply</button>
+        <a href="/admin/emails" class="emails-filter__reset">Clear</a>
+      </div>
+    </form>
+
+    <div class="emails-table-wrap nv-table-wrap">
+      <table class="emails-table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Template</th>
+            <th scope="col">Recipient</th>
+            <th scope="col">Status</th>
+            <th scope="col">Error</th>
+            <th scope="col" class="emails-th-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>{{ raw_recent_rows }}</tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<style>
+  /* ── Hero ───────────────────────────────────────────────────────── */
+  .emails-page {
+    padding: var(--space-8) var(--space-6);
+    max-width: 1280px;
+    margin: 0 auto;
+    font-family: var(--font-body);
+  }
+  .emails-hero {
+    margin-bottom: var(--space-8, 32px);
+  }
+  .emails-hero__display {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(40px, 5.5vw, 64px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-3, 12px);
+    color: var(--text-primary);
+  }
+  .emails-hero__lede {
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 60ch;
+  }
+
+  /* ── Stats ──────────────────────────────────────────────────────── */
+  .emails-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-3, 12px);
+    margin-bottom: var(--space-6, 24px);
+  }
+  .emails-stat {
+    padding: var(--space-6);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .emails-stat__label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: var(--space-2, 8px);
+  }
+  .emails-stat__value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .emails-stat__hint {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin: 0;
+  }
+
+  @media (max-width: 720px) {
+    .emails-stats { grid-template-columns: repeat(2, 1fr); }
+    .emails-stat__value { font-size: 22px; }
+  }
+
+  /* ── Card ───────────────────────────────────────────────────────── */
+  .emails-card {
+    margin-bottom: var(--space-6, 24px);
+    padding: var(--space-6);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .emails-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4, 16px);
+    margin-bottom: var(--space-4, 16px);
+    flex-wrap: wrap;
+  }
+  .emails-card__title {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    letter-spacing: -0.005em;
+  }
+  .emails-card__sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+  }
+
+  /* ── Top failing list ──────────────────────────────────────────── */
+  .emails-top-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-2, 8px);
+  }
+  .emails-top-list li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: var(--space-2, 8px) 0;
+    border-bottom: 1px solid var(--border-ghost, var(--border-default));
+  }
+  .emails-top-list li:last-child { border-bottom: none; }
+  .emails-top-template {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  .emails-top-count {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+  }
+
+  /* ── Filter row ────────────────────────────────────────────────── */
+  .emails-filter {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-3, 12px);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-4, 16px);
+    padding-bottom: var(--space-4, 16px);
+    border-bottom: 1px solid var(--border-ghost, var(--border-default));
+  }
+  .emails-filter__group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 0 0 auto;
+  }
+  .emails-filter__group--wide { flex: 1 1 240px; }
+  .emails-filter__label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .emails-filter__select,
+  .emails-filter__input {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-default, var(--border-strong));
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm, 4px);
+    min-width: 180px;
+  }
+  .emails-filter__select:focus,
+  .emails-filter__input:focus {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+  }
+  .emails-filter__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 8px);
+  }
+  .emails-filter__submit {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    padding: 8px 14px;
+    border: 1px solid var(--text-primary);
+    background: var(--text-primary);
+    color: var(--bg-base);
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+  }
+  .emails-filter__submit:hover { opacity: 0.9; }
+  .emails-filter__reset {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-tertiary);
+    text-decoration: none;
+    padding: 8px 4px;
+  }
+  .emails-filter__reset:hover { color: var(--text-primary); text-decoration: underline; }
+
+  /* ── Table ──────────────────────────────────────────────────────── */
+  .emails-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-ui);
+    font-size: 13px;
+  }
+  .emails-table thead th {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    text-align: left;
+    padding: var(--space-2, 8px) var(--space-3, 12px);
+    border-bottom: 1px solid var(--border-default, var(--border-strong));
+  }
+  .emails-table thead th.emails-th-actions { text-align: right; }
+  .emails-table tbody td {
+    padding: var(--space-3, 12px);
+    border-bottom: 1px solid var(--border-ghost, var(--border-default));
+    color: var(--text-primary);
+    vertical-align: top;
+  }
+  .emails-table tbody tr:last-child td { border-bottom: none; }
+  .emails-table tbody tr:hover td { background: var(--bg-inset, transparent); }
+
+  .emails-cell-mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+  }
+  .emails-cell-template {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+  .emails-cell-error {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    word-break: break-word;
+    max-width: 320px;
+    display: inline-block;
+  }
+  .emails-cell-actions { text-align: right; }
+  .emails-row-link {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--text-primary);
+    text-decoration: none;
+    border-bottom: 1px solid currentColor;
+  }
+  .emails-row-link:hover { opacity: 0.7; }
+
+  /* ── Status pills (same monochrome scheme as /admin/jobs) ─────── */
+  .emails-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-transform: lowercase;
+  }
+  .emails-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: 0 0 6px;
+  }
+  .emails-status--sent { color: var(--text-secondary); }
+  .emails-status--queued { color: var(--text-tertiary); }
+  .emails-status--queued::before {
+    animation: emails-pulse 1.4s ease-in-out infinite;
+  }
+  .emails-status--failed { color: var(--text-primary); font-weight: 600; }
+  .emails-status--bounced { color: var(--text-primary); }
+  .emails-status--unknown { color: var(--text-tertiary); }
+  @keyframes emails-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .emails-status--queued::before { animation: none; }
+  }
+
+  .emails-empty {
+    padding: var(--space-6, 24px);
+    text-align: center;
+    color: var(--text-tertiary);
+    font-family: var(--font-ui);
+    font-size: 13px;
+  }
+
+  /* Compact density */
+  [data-density="compact"] .emails-table tbody td { padding: 6px var(--space-3, 12px); }
+  [data-density="compact"] .emails-card { padding: var(--space-4, 16px); }
+</style>

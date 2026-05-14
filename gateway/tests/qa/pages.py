@@ -74,6 +74,7 @@ ADMIN_PAGES: list[str] = [
     "/admin/audit-log",
     "/admin/churn",
     "/admin/emails",
+    "/admin/email-templates",
     "/admin/equivalences",
     "/admin/flags",
     "/admin/impersonations",

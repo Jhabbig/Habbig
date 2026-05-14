@@ -25,7 +25,7 @@
         <a href="/dashboards" class="nav-item">Dashboards</a>
         <a href="/settings" class="nav-item">Settings</a>
         <a href="/admin" class="nav-item">Admin</a>
-        <a href="/admin/emails" class="nav-item active">Email templates</a>
+        <a href="/admin/email-templates" class="nav-item active">Email templates</a>
       </nav>
       <a href="/profile" class="sidebar-user" style="text-decoration:none">
         <div class="sidebar-user-avatar" data-username="{{ username }}">{{ username }}</div>
@@ -40,7 +40,7 @@
         <span class="breadcrumb-separator">/</span>
         <a href="/admin" class="breadcrumb-item" style="text-decoration:none;color:inherit">Admin</a>
         <span class="breadcrumb-separator">/</span>
-        <a href="/admin/emails" class="breadcrumb-item" style="text-decoration:none;color:inherit">Email templates</a>
+        <a href="/admin/email-templates" class="breadcrumb-item" style="text-decoration:none;color:inherit">Email templates</a>
         <span class="breadcrumb-separator">/</span>
         <span class="breadcrumb-item current"><code>{{ template_key }}</code></span>
       </div>
@@ -59,7 +59,7 @@
       <div class="content-area">
         <div style="max-width:1280px">
 
-          <form id="email-form" method="post" action="/admin/emails/{{ template_key }}">
+          <form id="email-form" method="post" action="/admin/email-templates/{{ template_key }}">
             {{ raw_csrf_field }}
 
             <div class="ed-split">
@@ -137,7 +137,7 @@
 
           <!-- Reset form sits OUTSIDE the main form so Save and Reset can
                never submit together (they share no CSRF/field state). -->
-          <form method="post" action="/admin/emails/{{ template_key }}/reset"
+          <form method="post" action="/admin/email-templates/{{ template_key }}/reset"
                 style="margin-top:10px;display:flex;justify-content:flex-end"
                 onsubmit="return confirm('Drop this custom template? Future sends will use the default from email_system/templates/.')">
             {{ raw_csrf_field }}
@@ -167,7 +167,7 @@
     var bodyEl = document.getElementById('body_html');
     var previewSubject = document.getElementById('preview-subject');
     var previewHtml = document.getElementById('preview-html');
-    var endpoint = '/admin/emails/{{ template_key }}/preview';
+    var endpoint = '/admin/email-templates/{{ template_key }}/preview';
     var debounceTimer = null;
 
     function csrfField() {

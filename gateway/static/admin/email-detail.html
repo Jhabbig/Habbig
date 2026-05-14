@@ -1,0 +1,277 @@
+<!-- /admin/emails/{id} — full email payload.
+     Wrapped by admin_shell. Body-only fragment.
+
+     Layout:
+       1. Metadata strip (template, recipient, status, attempts, when)
+       2. Resend action (only when status == failed)
+       3. Subject + headers
+       4. Rendered HTML (sandboxed iframe, srcdoc)
+       5. Plain-text fallback
+       6. Job context (the JSON payload used to render)
+-->
+
+<div class="emails-detail">
+
+  <div class="emails-detail__hero">
+    <h2 class="emails-detail__display">Email #{{ raw_email_id }}</h2>
+    <p class="emails-detail__lede">
+      Full rendered payload for this delivery, the headers we would
+      have sent, and the JSON context the renderer ran. The body iframe
+      is sandboxed so anything inside it cannot run, fetch, or phone home.
+    </p>
+  </div>
+
+  <!-- ── Metadata strip ─────────────────────────────────────────────── -->
+  <section class="emails-detail__meta" aria-label="Delivery metadata">
+    <div class="emails-detail__meta-row">
+      <span class="emails-detail__meta-label">Template</span>
+      <code class="emails-detail__meta-value">{{ raw_template }}</code>
+    </div>
+    <div class="emails-detail__meta-row">
+      <span class="emails-detail__meta-label">Recipient</span>
+      <code class="emails-detail__meta-value">{{ raw_recipient }}</code>
+    </div>
+    <div class="emails-detail__meta-row">
+      <span class="emails-detail__meta-label">Status</span>
+      <span class="emails-status emails-status--{{ raw_status_class }}">{{ raw_status_label }}</span>
+    </div>
+    <div class="emails-detail__meta-row">
+      <span class="emails-detail__meta-label">Attempts</span>
+      <code class="emails-detail__meta-value">{{ raw_attempts }}</code>
+    </div>
+    <div class="emails-detail__meta-row">
+      <span class="emails-detail__meta-label">Enqueued</span>
+      <code class="emails-detail__meta-value">{{ raw_enqueued }}</code>
+    </div>
+    <div class="emails-detail__meta-row">
+      <span class="emails-detail__meta-label">Finished</span>
+      <code class="emails-detail__meta-value">{{ raw_finished }}</code>
+    </div>
+    <div class="emails-detail__meta-row">
+      <span class="emails-detail__meta-label">Duration</span>
+      <code class="emails-detail__meta-value">{{ raw_duration }}</code>
+    </div>
+  </section>
+
+  <!-- Error band (only present when this delivery failed). -->
+  <div class="emails-detail__error" data-empty="{{ raw_error_message }}">
+    <strong>Last error:</strong> <code>{{ raw_error_message }}</code>
+  </div>
+
+  <!-- Resend action — only rendered server-side when status == failed. -->
+  {{ raw_resend_form }}
+
+  <!-- ── Subject + headers ──────────────────────────────────────────── -->
+  <section class="emails-detail__card" aria-labelledby="emails-detail-subject">
+    <header class="emails-detail__card-head">
+      <h3 id="emails-detail-subject" class="emails-detail__card-title">Subject &middot; Headers</h3>
+    </header>
+    <div class="emails-detail__subject"><code>{{ raw_subject }}</code></div>
+    <pre class="emails-detail__pre">{{ raw_headers }}</pre>
+  </section>
+
+  <!-- ── Rendered HTML (sandboxed iframe) ──────────────────────────── -->
+  <section class="emails-detail__card" aria-labelledby="emails-detail-html">
+    <header class="emails-detail__card-head">
+      <h3 id="emails-detail-html" class="emails-detail__card-title">Rendered HTML</h3>
+      <span class="emails-detail__card-sub">sandbox=&quot;&quot; — scripts and forms disabled</span>
+    </header>
+    <iframe class="emails-detail__iframe"
+            sandbox=""
+            srcdoc="{{ raw_body_html }}"
+            title="Rendered email body"
+            referrerpolicy="no-referrer"></iframe>
+    <p class="emails-detail__render-error" data-empty="{{ raw_render_error }}">
+      <strong>Render error:</strong> <code>{{ raw_render_error }}</code>
+    </p>
+  </section>
+
+  <!-- ── Plain-text fallback ───────────────────────────────────────── -->
+  <section class="emails-detail__card" aria-labelledby="emails-detail-text">
+    <header class="emails-detail__card-head">
+      <h3 id="emails-detail-text" class="emails-detail__card-title">Plain-text fallback</h3>
+    </header>
+    <pre class="emails-detail__pre">{{ raw_body_text }}</pre>
+  </section>
+
+  <!-- ── Job context (raw JSON) ────────────────────────────────────── -->
+  <section class="emails-detail__card" aria-labelledby="emails-detail-context">
+    <header class="emails-detail__card-head">
+      <h3 id="emails-detail-context" class="emails-detail__card-title">Job context</h3>
+      <span class="emails-detail__card-sub">the dict the renderer received</span>
+    </header>
+    <pre class="emails-detail__pre">{{ raw_context_json }}</pre>
+  </section>
+
+</div>
+
+<style>
+  .emails-detail {
+    padding: var(--space-8) var(--space-6);
+    max-width: 1100px;
+    margin: 0 auto;
+    font-family: var(--font-body);
+  }
+  .emails-detail__hero {
+    margin-bottom: var(--space-8, 32px);
+  }
+  .emails-detail__display {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(36px, 5vw, 56px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-3, 12px);
+    color: var(--text-primary);
+  }
+  .emails-detail__lede {
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 60ch;
+  }
+
+  /* Metadata strip — a single-row grid that wraps to two rows on mobile. */
+  .emails-detail__meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--space-3, 12px);
+    padding: var(--space-4, 16px);
+    margin-bottom: var(--space-4, 16px);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .emails-detail__meta-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .emails-detail__meta-label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .emails-detail__meta-value {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+
+  /* Status pills — kept in sync with /admin/emails. */
+  .emails-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    text-transform: lowercase;
+  }
+  .emails-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .emails-status--sent { color: var(--text-secondary); }
+  .emails-status--queued { color: var(--text-tertiary); }
+  .emails-status--failed { color: var(--text-primary); font-weight: 600; }
+  .emails-status--bounced { color: var(--text-primary); }
+  .emails-status--unknown { color: var(--text-tertiary); }
+
+  /* Error band collapses when empty using the data-empty attr. */
+  .emails-detail__error,
+  .emails-detail__render-error {
+    padding: var(--space-3, 12px) var(--space-4, 16px);
+    margin-bottom: var(--space-4, 16px);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-sm, 4px);
+    background: var(--bg-surface, var(--bg-base));
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+  .emails-detail__error[data-empty=""] { display: none; }
+  .emails-detail__render-error[data-empty=""] { display: none; }
+
+  .emails-detail__resend {
+    margin-bottom: var(--space-6, 24px);
+  }
+  .emails-resend-btn {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    padding: 10px 16px;
+    border: 1px solid var(--text-primary);
+    background: var(--text-primary);
+    color: var(--bg-base);
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+  }
+  .emails-resend-btn:hover { opacity: 0.9; }
+
+  /* Cards */
+  .emails-detail__card {
+    margin-bottom: var(--space-6, 24px);
+    padding: var(--space-6);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .emails-detail__card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4, 16px);
+    margin-bottom: var(--space-4, 16px);
+    flex-wrap: wrap;
+  }
+  .emails-detail__card-title {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+  .emails-detail__card-sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+  .emails-detail__subject {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text-primary);
+    padding: var(--space-3, 12px);
+    border: 1px solid var(--border-ghost, var(--border-default));
+    border-radius: var(--radius-sm, 4px);
+    margin-bottom: var(--space-3, 12px);
+  }
+  .emails-detail__pre {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-inset, var(--bg-base));
+    padding: var(--space-4, 16px);
+    border: 1px solid var(--border-ghost, var(--border-default));
+    border-radius: var(--radius-sm, 4px);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+  }
+  .emails-detail__iframe {
+    width: 100%;
+    height: 520px;
+    border: 1px solid var(--border-ghost, var(--border-default));
+    border-radius: var(--radius-sm, 4px);
+    background: white;
+  }
+</style>

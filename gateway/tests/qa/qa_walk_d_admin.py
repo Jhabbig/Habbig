@@ -34,6 +34,7 @@ ADMIN_PAGES = [
     "/admin/backups",
     "/admin/flags",
     "/admin/emails",
+    "/admin/email-templates",
     "/admin/impersonations",
     "/admin/audit-log",
     "/admin/logs/errors",
