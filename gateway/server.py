@@ -4274,6 +4274,14 @@ async def profile_change_password(request: Request, current_password: str = Form
     if not user:
         return RedirectResponse("/token", status_code=302)
 
+    # AUDIT 2026-05-14 — 5 password-change attempts per hour per user.
+    # Stops a compromised session from brute-forcing current_password
+    # (the only gate between session hijack and account take-over).
+    if _is_rate_limited(f"profile-password:{user['user_id']}", 5, 3600):
+        raise HTTPException(
+            status_code=429, detail="Too many attempts. Try again in an hour.",
+        )
+
     db_user = db.get_user_by_id(user["user_id"])
     if not db_user:
         return RedirectResponse("/token", status_code=302)
@@ -4644,8 +4652,8 @@ def _denied_response(request: Request) -> Response:
 def _build_admin_context(
     new_token_str: str = "",
     caller_level: int = 1,
-    tokens_before: int | None = None,
-    users_before: int | None = None,
+    tokens_before: Optional[int] = None,
+    users_before: Optional[int] = None,
 ) -> dict:
     """Build the template context for the admin page.
 
@@ -5078,8 +5086,8 @@ def _build_revenue_content() -> str:
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(
     request: Request,
-    tokens_before: int | None = None,
-    users_before: int | None = None,
+    tokens_before: Optional[int] = None,
+    users_before: Optional[int] = None,
 ):
     user = _require_admin_user(request, page=True)
     if user is None:

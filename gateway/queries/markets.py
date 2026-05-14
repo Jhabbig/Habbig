@@ -500,6 +500,111 @@ def has_trading_addon(user_id: int) -> bool:
     return True
 
 
+# ── Trading add-on per-user settings ─────────────────────────────────────────
+#
+# Defaults match the route + UI contract documented in
+# gateway/static/settings_trading_addon.html. A user with the add-on but no
+# row in user_trading_addon_settings sees these values; saving from the UI
+# upserts a row.
+
+_TRADING_ADDON_DEFAULTS = {
+    "kelly_fraction": 0.5,
+    "max_cap_pct": 25,
+    "auto_execute": False,
+    "auto_execute_min_ev": None,
+    "daily_cap": None,
+    "daily_cap_currency": "USD",
+    "max_position_size": None,
+    "cooldown_minutes": None,
+}
+
+
+def get_trading_addon_settings(user_id: int) -> dict:
+    """Return the user's trading-addon config, falling back to defaults.
+
+    Always returns a dict — the page renders the same shell whether the
+    user has saved settings yet or not.
+    """
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT kelly_fraction, max_cap_pct, auto_execute, "
+            "auto_execute_min_ev, daily_cap, daily_cap_currency, "
+            "max_position_size, cooldown_minutes, updated_at "
+            "FROM user_trading_addon_settings WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        # Return defaults with updated_at=None so the UI can show "never saved".
+        return {**_TRADING_ADDON_DEFAULTS, "updated_at": None}
+    return {
+        "kelly_fraction": float(row["kelly_fraction"]),
+        "max_cap_pct": int(row["max_cap_pct"]),
+        "auto_execute": bool(row["auto_execute"]),
+        "auto_execute_min_ev": (
+            float(row["auto_execute_min_ev"])
+            if row["auto_execute_min_ev"] is not None
+            else None
+        ),
+        "daily_cap": (
+            float(row["daily_cap"]) if row["daily_cap"] is not None else None
+        ),
+        "daily_cap_currency": row["daily_cap_currency"] or "USD",
+        "max_position_size": (
+            float(row["max_position_size"])
+            if row["max_position_size"] is not None
+            else None
+        ),
+        "cooldown_minutes": (
+            int(row["cooldown_minutes"])
+            if row["cooldown_minutes"] is not None
+            else None
+        ),
+        "updated_at": int(row["updated_at"]) if row["updated_at"] else None,
+    }
+
+
+def upsert_trading_addon_settings(user_id: int, **fields) -> dict:
+    """Upsert the user's trading-addon config and return the new state.
+
+    Only keys present in ``fields`` are written — others keep their stored
+    (or default) value. Caller is expected to have validated bounds at the
+    API surface; this helper only enforces type-coercion sanity.
+    """
+    allowed = {
+        "kelly_fraction", "max_cap_pct", "auto_execute",
+        "auto_execute_min_ev", "daily_cap", "daily_cap_currency",
+        "max_position_size", "cooldown_minutes",
+    }
+    payload = {k: v for k, v in fields.items() if k in allowed}
+    now = int(time.time())
+    with db.conn() as c:
+        # Ensure a row exists with defaults, then UPDATE in place.
+        c.execute(
+            "INSERT INTO user_trading_addon_settings (user_id, updated_at) "
+            "VALUES (?, ?) ON CONFLICT(user_id) DO NOTHING",
+            (user_id, now),
+        )
+        if payload:
+            sets = []
+            params = []
+            for k, v in payload.items():
+                sets.append(f"{k} = ?")
+                # Coerce booleans to int for SQLite.
+                if k == "auto_execute":
+                    params.append(1 if v else 0)
+                else:
+                    params.append(v)
+            sets.append("updated_at = ?")
+            params.append(now)
+            params.append(user_id)
+            c.execute(
+                f"UPDATE user_trading_addon_settings SET {', '.join(sets)} "
+                f"WHERE user_id = ?",
+                tuple(params),
+            )
+    return get_trading_addon_settings(user_id)
+
+
 def get_market_categorisation(market_id: str) -> Optional[sqlite3.Row]:
     if not market_id:
         return None
@@ -587,6 +692,8 @@ __all__ = [
     'get_trading_addon_status',
     'set_trading_addon',
     'has_trading_addon',
+    'get_trading_addon_settings',
+    'upsert_trading_addon_settings',
     'get_market_categorisation',
     'upsert_market_categorisation',
     'list_uncategorised_market_ids',
