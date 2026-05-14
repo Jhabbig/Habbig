@@ -30,14 +30,15 @@ import subproduct
 
 
 class TestSubproductCatalogue(unittest.TestCase):
-    def test_twelve_subproducts_defined(self):
-        # Catalogue grew from 6 → 12 with the platform-build expansion.
-        # New: voters, whale, cb (central bank), climate, disasters, health.
+    def test_thirteen_subproducts_defined(self):
+        # Catalogue grew from 6 → 13 with the platform-build expansion
+        # (new: voters, whale, cb, climate, disasters, health, love).
         self.assertEqual(
             set(subproduct.SUBPRODUCTS.keys()),
             {
                 "sports", "weather", "world", "crypto", "midterm", "traders",
                 "voters", "whale", "cb", "climate", "disasters", "health",
+                "love",
             },
         )
 
