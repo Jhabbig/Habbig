@@ -320,12 +320,19 @@ def create_invite_token(note: str = "", target_email: str = "") -> str:
 
 
 def get_invite_token(token: str) -> Optional[sqlite3.Row]:
+    """Return the invite_tokens row for `token`, regardless of status.
+
+    Callers (auth/validate-token, /register, /login, /forgot-password,
+    require_pending_token) inspect ``row["status"]`` to decide what
+    to do — they need to distinguish "unclaimed" / "claimed" /
+    "revoked" rather than treating non-unclaimed rows as "not found".
+    Returns None only if the token doesn't exist or is past expiry.
+    """
     token = token.strip()
     now = int(time.time())
     with db.conn() as c:
         return c.execute(
             "SELECT * FROM invite_tokens WHERE token = ? "
-            "AND status = 'unclaimed' "
             "AND (expires_at IS NULL OR expires_at > ?)",
             (token, now),
         ).fetchone()

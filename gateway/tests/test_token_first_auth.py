@@ -58,8 +58,11 @@ class TestTokenPageIsPublic(unittest.TestCase):
 
     def test_token_page_no_register_link(self):
         r = client.get("/token")
-        self.assertNotIn("Create account", r.text.split("Continue")[0] if "Continue" in r.text else "")
-        self.assertNotIn("Sign in", r.text.split("Continue")[0] if "Continue" in r.text else "")
+        # The bare strings "Create account" / "Sign in" appear in the inlined
+        # i18n JSON dict on every page. Assert structural markup instead so
+        # we don't false-positive on the bundle.
+        self.assertNotIn('href="/register"', r.text)
+        self.assertNotIn('href="/login"', r.text)
 
 
 class TestValidateToken(unittest.TestCase):
@@ -94,13 +97,11 @@ class TestValidateToken(unittest.TestCase):
         self.assertFalse(data["claimed"])
         self.assertIn("pending_token", r.cookies)
 
-    def test_valid_claimed_token_rejected(self):
-        # db.get_invite_token() filters on `status = 'unclaimed'`, so
-        # claimed tokens come back as `valid: False` from validate-token.
-        # This is the correct security posture: a claimed token belongs
-        # to an existing account; the user should go through /login with
-        # their password, not re-validate the raw token to get an email
-        # hint. The old "email_hint" surface has been retired.
+    def test_valid_claimed_token_routes_to_login(self):
+        # A claimed invite token is still "valid" — it identifies an existing
+        # account. The endpoint returns valid=True with claimed=True (plus a
+        # masked email hint) so the client knows to route to /login rather
+        # than /register.
         raw, _ = _claimed_invite("alice@hint.com")
         r = client.post(
             "/auth/validate-token",
@@ -111,7 +112,9 @@ class TestValidateToken(unittest.TestCase):
         if r.status_code == 403:
             self.skipTest("CSRF blocks raw token; covered by lookup test")
         self.assertEqual(r.status_code, 200)
-        self.assertFalse(r.json()["valid"])
+        body = r.json()
+        self.assertTrue(body["valid"])
+        self.assertTrue(body["claimed"])
 
 
 class TestRegisterAndLoginPages(unittest.TestCase):

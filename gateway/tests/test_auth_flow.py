@@ -125,7 +125,11 @@ class TestTokenGate(_RebindMixin, unittest.TestCase):
         r = client.get("/token")
         self.assertEqual(r.status_code, 200)
         # The page should advertise the token entry, not a register/login form.
-        self.assertNotIn("Create account", r.text)
+        # We can't bare-string check "Create account" because it appears in the
+        # i18n JSON bundle inlined on every page. Look for the form/link
+        # markup instead.
+        self.assertNotIn('href="/register"', r.text)
+        self.assertNotIn('action="/auth/register"', r.text)
         self.assertNotIn("Welcome back", r.text)
 
     def test_token_page_redirects_authenticated_user(self):
@@ -312,8 +316,9 @@ class TestLoginPageRendering(_RebindMixin, unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         # No path to /register from /login — the user must restart at /token
         # if they need to create a different account.
+        # (Bare "Create account" appears in the i18n JSON bundle on every
+        # page; assert structural markup instead.)
         self.assertNotIn('href="/register"', r.text)
-        self.assertNotIn("Create account", r.text)
         self.assertNotIn("Don't have an account", r.text)
 
 
@@ -323,9 +328,10 @@ class TestRegisterPageRendering(_RebindMixin, unittest.TestCase):
         _set_pending_token_cookie(raw)
         r = client.get("/register")
         self.assertEqual(r.status_code, 200)
+        # ("Sign in" appears in the i18n JSON bundle inlined on every page
+        # — assert structural markup, not bare strings.)
         self.assertNotIn('href="/login"', r.text)
         self.assertNotIn("Already have an account", r.text)
-        self.assertNotIn("Sign in", r.text)
 
 
 # ── 5. POST /auth/login behaviour ────────────────────────────────────────
