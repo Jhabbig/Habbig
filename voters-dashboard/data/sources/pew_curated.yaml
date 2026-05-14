@@ -1,0 +1,155 @@
+# Pew Research Center - curated headline findings.
+#
+# Refresh cadence: semi-annual (June and December).
+# Source: https://www.pewresearch.org/global/
+# Manual refresh checklist: see data/sources/pew_loader.py docstring.
+
+schema_version: 1
+last_curated: "2026-04-01"
+next_refresh_due: "2026-10-01"
+
+findings:
+  - iso: USA
+    issue: "Inflation is a very big problem"
+    pct: 65
+    year: 2026
+    study: "Spring 2026 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: USA
+    issue: "Trust in the federal government"
+    pct: 22
+    year: 2025
+    study: "Public Trust in Government 1958-2025"
+    source_url: "https://www.pewresearch.org/politics/"
+  - iso: USA
+    issue: "China viewed unfavorably"
+    pct: 81
+    year: 2025
+    study: "Global Attitudes Toward China 2025"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: USA
+    issue: "Climate change is a major threat"
+    pct: 54
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: GBR
+    issue: "Inflation is a very big problem"
+    pct: 70
+    year: 2025
+    study: "Spring 2025 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: GBR
+    issue: "Climate change is a major threat"
+    pct: 70
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: DEU
+    issue: "Inflation is a very big problem"
+    pct: 67
+    year: 2025
+    study: "Spring 2025 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: DEU
+    issue: "Climate change is a major threat"
+    pct: 73
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: FRA
+    issue: "Inflation is a very big problem"
+    pct: 71
+    year: 2025
+    study: "Spring 2025 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: FRA
+    issue: "Climate change is a major threat"
+    pct: 71
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: IND
+    issue: "Modi favorability"
+    pct: 79
+    year: 2024
+    study: "India and the World 2024"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: IND
+    issue: "China viewed unfavorably"
+    pct: 67
+    year: 2024
+    study: "India and the World 2024"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: BRA
+    issue: "Inflation is a very big problem"
+    pct: 72
+    year: 2025
+    study: "Spring 2025 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: BRA
+    issue: "Climate change is a major threat"
+    pct: 75
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: MEX
+    issue: "Inflation is a very big problem"
+    pct: 74
+    year: 2025
+    study: "Spring 2025 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: JPN
+    issue: "China viewed unfavorably"
+    pct: 88
+    year: 2025
+    study: "Global Attitudes Toward China 2025"
+    source_url: "https://www.pewresearch.org/global/"
+  - iso: JPN
+    issue: "Climate change is a major threat"
+    pct: 70
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: KOR
+    issue: "China viewed unfavorably"
+    pct: 77
+    year: 2025
+    study: "Global Attitudes Toward China 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: ITA
+    issue: "Inflation is a very big problem"
+    pct: 65
+    year: 2025
+    study: "Spring 2025 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: POL
+    issue: "Russia is a major threat"
+    pct: 81
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: CAN
+    issue: "Inflation is a very big problem"
+    pct: 63
+    year: 2025
+    study: "Spring 2025 Global Attitudes"
+    source_url: "https://www.pewresearch.org/global/"
+
+  - iso: AUS
+    issue: "Climate change is a major threat"
+    pct: 74
+    year: 2025
+    study: "Global Threats 2025"
+    source_url: "https://www.pewresearch.org/global/"

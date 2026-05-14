@@ -1,0 +1,836 @@
+fetched_at: 1778769013
+source: curated
+source_url: data/polls.yaml
+cadence: hourly
+schema_version: 1
+last_curated: '2026-04-15'
+by_iso:
+  USA:
+    election_label: 2026 Midterms — generic House ballot
+    polls:
+    - pollster: NYT/Siena
+      date: '2025-11-12'
+      sample: 1402
+      topic: party_share
+      options:
+      - label: Democratic
+        pct: 47
+      - label: Republican
+        pct: 45
+      - label: Other
+        pct: 4
+    - pollster: Marist
+      date: '2025-12-08'
+      sample: 1208
+      topic: party_share
+      options:
+      - label: Democratic
+        pct: 48
+      - label: Republican
+        pct: 46
+      - label: Other
+        pct: 3
+    - pollster: Quinnipiac
+      date: '2026-01-21'
+      sample: 1648
+      topic: party_share
+      options:
+      - label: Democratic
+        pct: 49
+      - label: Republican
+        pct: 44
+      - label: Other
+        pct: 4
+    - pollster: NYT/Siena
+      date: '2026-02-10'
+      sample: 1532
+      topic: party_share
+      options:
+      - label: Democratic
+        pct: 49
+      - label: Republican
+        pct: 45
+      - label: Other
+        pct: 3
+    - pollster: Fox News
+      date: '2026-03-04'
+      sample: 1115
+      topic: party_share
+      options:
+      - label: Democratic
+        pct: 47
+      - label: Republican
+        pct: 46
+      - label: Other
+        pct: 4
+    - pollster: ABC/WaPo
+      date: '2026-03-22'
+      sample: 1003
+      topic: party_share
+      options:
+      - label: Democratic
+        pct: 50
+      - label: Republican
+        pct: 44
+      - label: Other
+        pct: 3
+    - pollster: Marist
+      date: '2026-04-08'
+      sample: 1248
+      topic: party_share
+      options:
+      - label: Democratic
+        pct: 49
+      - label: Republican
+        pct: 45
+      - label: Other
+        pct: 3
+    latest_date: '2026-04-08'
+    poll_count: 7
+  GBR:
+    election_label: Westminster voting intention
+    polls:
+    - pollster: YouGov
+      date: '2025-11-08'
+      sample: 2032
+      topic: party_share
+      options:
+      - label: Labour
+        pct: 27
+      - label: Conservative
+        pct: 21
+      - label: Reform UK
+        pct: 28
+      - label: Lib Dem
+        pct: 13
+      - label: Green
+        pct: 7
+    - pollster: Opinium
+      date: '2025-12-14'
+      sample: 2015
+      topic: party_share
+      options:
+      - label: Labour
+        pct: 26
+      - label: Conservative
+        pct: 20
+      - label: Reform UK
+        pct: 30
+      - label: Lib Dem
+        pct: 12
+      - label: Green
+        pct: 7
+    - pollster: More in Common
+      date: '2026-01-19'
+      sample: 2168
+      topic: party_share
+      options:
+      - label: Labour
+        pct: 25
+      - label: Conservative
+        pct: 21
+      - label: Reform UK
+        pct: 31
+      - label: Lib Dem
+        pct: 13
+      - label: Green
+        pct: 6
+    - pollster: YouGov
+      date: '2026-02-16'
+      sample: 2024
+      topic: party_share
+      options:
+      - label: Labour
+        pct: 24
+      - label: Conservative
+        pct: 19
+      - label: Reform UK
+        pct: 32
+      - label: Lib Dem
+        pct: 13
+      - label: Green
+        pct: 7
+    - pollster: Techne
+      date: '2026-03-12'
+      sample: 1623
+      topic: party_share
+      options:
+      - label: Labour
+        pct: 25
+      - label: Conservative
+        pct: 19
+      - label: Reform UK
+        pct: 31
+      - label: Lib Dem
+        pct: 14
+      - label: Green
+        pct: 6
+    - pollster: YouGov
+      date: '2026-04-10'
+      sample: 2103
+      topic: party_share
+      options:
+      - label: Labour
+        pct: 26
+      - label: Conservative
+        pct: 19
+      - label: Reform UK
+        pct: 30
+      - label: Lib Dem
+        pct: 13
+      - label: Green
+        pct: 7
+    latest_date: '2026-04-10'
+    poll_count: 6
+  DEU:
+    election_label: Bundestag voting intention
+    polls:
+    - pollster: INSA
+      date: '2025-11-24'
+      sample: 2010
+      topic: party_share
+      options:
+      - label: CDU/CSU
+        pct: 31
+      - label: AfD
+        pct: 22
+      - label: SPD
+        pct: 14
+      - label: Grüne
+        pct: 11
+      - label: BSW
+        pct: 6
+      - label: Linke
+        pct: 4
+      - label: FDP
+        pct: 4
+    - pollster: Forsa
+      date: '2025-12-10'
+      sample: 2503
+      topic: party_share
+      options:
+      - label: CDU/CSU
+        pct: 30
+      - label: AfD
+        pct: 21
+      - label: SPD
+        pct: 15
+      - label: Grüne
+        pct: 12
+      - label: BSW
+        pct: 6
+      - label: Linke
+        pct: 4
+      - label: FDP
+        pct: 4
+    - pollster: INSA
+      date: '2026-01-13'
+      sample: 2009
+      topic: party_share
+      options:
+      - label: CDU/CSU
+        pct: 29
+      - label: AfD
+        pct: 23
+      - label: SPD
+        pct: 14
+      - label: Grüne
+        pct: 11
+      - label: BSW
+        pct: 6
+      - label: Linke
+        pct: 5
+      - label: FDP
+        pct: 3
+    - pollster: Forsa
+      date: '2026-02-25'
+      sample: 2510
+      topic: party_share
+      options:
+      - label: CDU/CSU
+        pct: 30
+      - label: AfD
+        pct: 24
+      - label: SPD
+        pct: 14
+      - label: Grüne
+        pct: 11
+      - label: BSW
+        pct: 5
+      - label: Linke
+        pct: 5
+      - label: FDP
+        pct: 3
+    - pollster: Allensbach
+      date: '2026-03-18'
+      sample: 1042
+      topic: party_share
+      options:
+      - label: CDU/CSU
+        pct: 31
+      - label: AfD
+        pct: 22
+      - label: SPD
+        pct: 15
+      - label: Grüne
+        pct: 12
+      - label: BSW
+        pct: 5
+      - label: Linke
+        pct: 4
+      - label: FDP
+        pct: 3
+    - pollster: INSA
+      date: '2026-04-07'
+      sample: 2003
+      topic: party_share
+      options:
+      - label: CDU/CSU
+        pct: 30
+      - label: AfD
+        pct: 23
+      - label: SPD
+        pct: 14
+      - label: Grüne
+        pct: 11
+      - label: BSW
+        pct: 5
+      - label: Linke
+        pct: 4
+      - label: FDP
+        pct: 4
+    latest_date: '2026-04-07'
+    poll_count: 6
+  FRA:
+    election_label: 2027 Presidential 1st round (vote intention)
+    polls:
+    - pollster: Ifop
+      date: '2025-12-04'
+      sample: 1502
+      topic: head_to_head
+      options:
+      - label: Le Pen / Bardella (RN)
+        pct: 33
+      - label: Mélenchon (LFI)
+        pct: 18
+      - label: Centrist successor (Ensemble)
+        pct: 22
+      - label: LR candidate
+        pct: 9
+      - label: Other
+        pct: 18
+    - pollster: Elabe
+      date: '2026-01-22'
+      sample: 1008
+      topic: head_to_head
+      options:
+      - label: Le Pen / Bardella (RN)
+        pct: 35
+      - label: Mélenchon (LFI)
+        pct: 17
+      - label: Centrist successor (Ensemble)
+        pct: 21
+      - label: LR candidate
+        pct: 8
+      - label: Other
+        pct: 19
+    - pollster: Ipsos
+      date: '2026-02-19'
+      sample: 1412
+      topic: head_to_head
+      options:
+      - label: Le Pen / Bardella (RN)
+        pct: 34
+      - label: Mélenchon (LFI)
+        pct: 19
+      - label: Centrist successor (Ensemble)
+        pct: 22
+      - label: LR candidate
+        pct: 9
+      - label: Other
+        pct: 16
+    - pollster: Ifop
+      date: '2026-04-05'
+      sample: 1500
+      topic: head_to_head
+      options:
+      - label: Le Pen / Bardella (RN)
+        pct: 36
+      - label: Mélenchon (LFI)
+        pct: 18
+      - label: Centrist successor (Ensemble)
+        pct: 21
+      - label: LR candidate
+        pct: 8
+      - label: Other
+        pct: 17
+    latest_date: '2026-04-05'
+    poll_count: 4
+  BRA:
+    election_label: 2026 Presidential 1st round
+    polls:
+    - pollster: Datafolha
+      date: '2025-12-05'
+      sample: 2005
+      topic: head_to_head
+      options:
+      - label: Lula
+        pct: 36
+      - label: Bolsonaro-aligned (Tarcísio)
+        pct: 28
+      - label: 3rd way (Pacheco/Caiado)
+        pct: 9
+      - label: Other
+        pct: 14
+      - label: Undecided
+        pct: 13
+    - pollster: Quaest
+      date: '2026-01-30'
+      sample: 2004
+      topic: head_to_head
+      options:
+      - label: Lula
+        pct: 35
+      - label: Bolsonaro-aligned (Tarcísio)
+        pct: 30
+      - label: 3rd way (Pacheco/Caiado)
+        pct: 8
+      - label: Other
+        pct: 14
+      - label: Undecided
+        pct: 13
+    - pollster: Datafolha
+      date: '2026-02-26'
+      sample: 2006
+      topic: head_to_head
+      options:
+      - label: Lula
+        pct: 37
+      - label: Bolsonaro-aligned (Tarcísio)
+        pct: 30
+      - label: 3rd way (Pacheco/Caiado)
+        pct: 8
+      - label: Other
+        pct: 13
+      - label: Undecided
+        pct: 12
+    - pollster: Quaest
+      date: '2026-04-02'
+      sample: 2010
+      topic: head_to_head
+      options:
+      - label: Lula
+        pct: 38
+      - label: Bolsonaro-aligned (Tarcísio)
+        pct: 32
+      - label: 3rd way (Pacheco/Caiado)
+        pct: 7
+      - label: Other
+        pct: 12
+      - label: Undecided
+        pct: 11
+    latest_date: '2026-04-02'
+    poll_count: 4
+  ARG:
+    election_label: Milei approval rating
+    polls:
+    - pollster: Poliarquía
+      date: '2025-11-15'
+      sample: 1003
+      topic: approval
+      options:
+      - label: Approve
+        pct: 47
+      - label: Disapprove
+        pct: 48
+      - label: No opinion
+        pct: 5
+    - pollster: Management & Fit
+      date: '2025-12-10'
+      sample: 2200
+      topic: approval
+      options:
+      - label: Approve
+        pct: 49
+      - label: Disapprove
+        pct: 46
+      - label: No opinion
+        pct: 5
+    - pollster: Poliarquía
+      date: '2026-01-18'
+      sample: 1005
+      topic: approval
+      options:
+      - label: Approve
+        pct: 51
+      - label: Disapprove
+        pct: 44
+      - label: No opinion
+        pct: 5
+    - pollster: Opina Argentina
+      date: '2026-02-15'
+      sample: 1500
+      topic: approval
+      options:
+      - label: Approve
+        pct: 49
+      - label: Disapprove
+        pct: 46
+      - label: No opinion
+        pct: 5
+    - pollster: Poliarquía
+      date: '2026-03-12'
+      sample: 1004
+      topic: approval
+      options:
+      - label: Approve
+        pct: 50
+      - label: Disapprove
+        pct: 45
+      - label: No opinion
+        pct: 5
+    - pollster: Management & Fit
+      date: '2026-04-05'
+      sample: 2210
+      topic: approval
+      options:
+      - label: Approve
+        pct: 48
+      - label: Disapprove
+        pct: 47
+      - label: No opinion
+        pct: 5
+    latest_date: '2026-04-05'
+    poll_count: 6
+  ISR:
+    election_label: Knesset voting intention (seats out of 120)
+    polls:
+    - pollster: Channel 12
+      date: '2025-12-05'
+      sample: 700
+      topic: party_share
+      options:
+      - label: Likud
+        pct: 21
+      - label: Democrats (Lapid+Gantz)
+        pct: 27
+      - label: Bennett bloc
+        pct: 18
+      - label: Shas
+        pct: 8
+      - label: UTJ
+        pct: 6
+      - label: Religious Zionism + Otzma
+        pct: 8
+      - label: Joint List
+        pct: 6
+      - label: Ra'am
+        pct: 4
+    - pollster: Channel 13
+      date: '2026-01-15'
+      sample: 600
+      topic: party_share
+      options:
+      - label: Likud
+        pct: 19
+      - label: Democrats (Lapid+Gantz)
+        pct: 25
+      - label: Bennett bloc
+        pct: 20
+      - label: Shas
+        pct: 9
+      - label: UTJ
+        pct: 6
+      - label: Religious Zionism + Otzma
+        pct: 8
+      - label: Joint List
+        pct: 6
+      - label: Ra'am
+        pct: 4
+    - pollster: Maariv
+      date: '2026-02-19'
+      sample: 506
+      topic: party_share
+      options:
+      - label: Likud
+        pct: 20
+      - label: Democrats (Lapid+Gantz)
+        pct: 26
+      - label: Bennett bloc
+        pct: 19
+      - label: Shas
+        pct: 8
+      - label: UTJ
+        pct: 6
+      - label: Religious Zionism + Otzma
+        pct: 7
+      - label: Joint List
+        pct: 6
+      - label: Ra'am
+        pct: 4
+    - pollster: Channel 12
+      date: '2026-04-08'
+      sample: 700
+      topic: party_share
+      options:
+      - label: Likud
+        pct: 21
+      - label: Democrats (Lapid+Gantz)
+        pct: 27
+      - label: Bennett bloc
+        pct: 18
+      - label: Shas
+        pct: 9
+      - label: UTJ
+        pct: 6
+      - label: Religious Zionism + Otzma
+        pct: 7
+      - label: Joint List
+        pct: 6
+      - label: Ra'am
+        pct: 4
+    latest_date: '2026-04-08'
+    poll_count: 4
+  CAN:
+    election_label: Federal voting intention
+    polls:
+    - pollster: Nanos
+      date: '2025-11-30'
+      sample: 1062
+      topic: party_share
+      options:
+      - label: Liberal
+        pct: 39
+      - label: Conservative
+        pct: 38
+      - label: NDP
+        pct: 12
+      - label: Bloc
+        pct: 7
+      - label: Green
+        pct: 3
+    - pollster: Abacus Data
+      date: '2026-01-10'
+      sample: 1500
+      topic: party_share
+      options:
+      - label: Liberal
+        pct: 38
+      - label: Conservative
+        pct: 39
+      - label: NDP
+        pct: 12
+      - label: Bloc
+        pct: 7
+      - label: Green
+        pct: 3
+    - pollster: Léger
+      date: '2026-02-12'
+      sample: 1591
+      topic: party_share
+      options:
+      - label: Liberal
+        pct: 40
+      - label: Conservative
+        pct: 38
+      - label: NDP
+        pct: 11
+      - label: Bloc
+        pct: 7
+      - label: Green
+        pct: 3
+    - pollster: Nanos
+      date: '2026-03-22'
+      sample: 1100
+      topic: party_share
+      options:
+      - label: Liberal
+        pct: 41
+      - label: Conservative
+        pct: 36
+      - label: NDP
+        pct: 12
+      - label: Bloc
+        pct: 7
+      - label: Green
+        pct: 3
+    - pollster: Abacus Data
+      date: '2026-04-08'
+      sample: 1505
+      topic: party_share
+      options:
+      - label: Liberal
+        pct: 40
+      - label: Conservative
+        pct: 37
+      - label: NDP
+        pct: 12
+      - label: Bloc
+        pct: 7
+      - label: Green
+        pct: 3
+    latest_date: '2026-04-08'
+    poll_count: 5
+  POL:
+    election_label: Sejm voting intention
+    polls:
+    - pollster: IBRiS
+      date: '2025-12-08'
+      sample: 1100
+      topic: party_share
+      options:
+      - label: KO (Tusk)
+        pct: 31
+      - label: PiS
+        pct: 30
+      - label: Konfederacja
+        pct: 13
+      - label: Trzecia Droga
+        pct: 7
+      - label: Lewica
+        pct: 7
+    - pollster: United Surveys
+      date: '2026-01-20'
+      sample: 1000
+      topic: party_share
+      options:
+      - label: KO (Tusk)
+        pct: 30
+      - label: PiS
+        pct: 31
+      - label: Konfederacja
+        pct: 14
+      - label: Trzecia Droga
+        pct: 7
+      - label: Lewica
+        pct: 7
+    - pollster: CBOS
+      date: '2026-02-25'
+      sample: 1019
+      topic: party_share
+      options:
+      - label: KO (Tusk)
+        pct: 32
+      - label: PiS
+        pct: 30
+      - label: Konfederacja
+        pct: 12
+      - label: Trzecia Droga
+        pct: 8
+      - label: Lewica
+        pct: 6
+    - pollster: IBRiS
+      date: '2026-04-04'
+      sample: 1100
+      topic: party_share
+      options:
+      - label: KO (Tusk)
+        pct: 31
+      - label: PiS
+        pct: 31
+      - label: Konfederacja
+        pct: 13
+      - label: Trzecia Droga
+        pct: 7
+      - label: Lewica
+        pct: 6
+    latest_date: '2026-04-04'
+    poll_count: 4
+  IND:
+    election_label: Modi approval (national)
+    polls:
+    - pollster: CSDS-Lokniti
+      date: '2025-11-22'
+      sample: 5402
+      topic: approval
+      options:
+      - label: Approve
+        pct: 56
+      - label: Disapprove
+        pct: 32
+      - label: No opinion
+        pct: 12
+    - pollster: CVoter
+      date: '2026-01-15'
+      sample: 4108
+      topic: approval
+      options:
+      - label: Approve
+        pct: 54
+      - label: Disapprove
+        pct: 36
+      - label: No opinion
+        pct: 10
+    - pollster: Mood of the Nation
+      date: '2026-02-26'
+      sample: 4220
+      topic: approval
+      options:
+      - label: Approve
+        pct: 53
+      - label: Disapprove
+        pct: 35
+      - label: No opinion
+        pct: 12
+    - pollster: CVoter
+      date: '2026-04-05'
+      sample: 4101
+      topic: approval
+      options:
+      - label: Approve
+        pct: 52
+      - label: Disapprove
+        pct: 37
+      - label: No opinion
+        pct: 11
+    latest_date: '2026-04-05'
+    poll_count: 4
+  MEX:
+    election_label: Sheinbaum approval
+    polls:
+    - pollster: Mitofsky
+      date: '2025-11-30'
+      sample: 1000
+      topic: approval
+      options:
+      - label: Approve
+        pct: 64
+      - label: Disapprove
+        pct: 30
+      - label: No opinion
+        pct: 6
+    - pollster: El Financiero
+      date: '2026-01-12'
+      sample: 1100
+      topic: approval
+      options:
+      - label: Approve
+        pct: 66
+      - label: Disapprove
+        pct: 28
+      - label: No opinion
+        pct: 6
+    - pollster: Reforma
+      date: '2026-02-22'
+      sample: 1000
+      topic: approval
+      options:
+      - label: Approve
+        pct: 62
+      - label: Disapprove
+        pct: 31
+      - label: No opinion
+        pct: 7
+    - pollster: Mitofsky
+      date: '2026-04-02'
+      sample: 1003
+      topic: approval
+      options:
+      - label: Approve
+        pct: 64
+      - label: Disapprove
+        pct: 30
+      - label: No opinion
+        pct: 6
+    latest_date: '2026-04-02'
+    poll_count: 4

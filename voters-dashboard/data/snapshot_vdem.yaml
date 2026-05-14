@@ -1,0 +1,90 @@
+fetched_at: 1778769013
+source: vdem
+source_url: https://v-dem.net/data/the-v-dem-dataset/
+cadence: monthly
+release: v14
+indicators:
+- vdem_edi
+- vdem_libdem
+by_iso:
+  NGA:
+    vdem_edi: 0.41
+    vdem_libdem: 0.27
+  ARG:
+    vdem_edi: 0.69
+    vdem_libdem: 0.55
+  MEX:
+    vdem_edi: 0.55
+    vdem_libdem: 0.41
+  AUS:
+    vdem_edi: 0.83
+    vdem_libdem: 0.76
+  POL:
+    vdem_edi: 0.61
+    vdem_libdem: 0.42
+  ITA:
+    vdem_edi: 0.74
+    vdem_libdem: 0.65
+  PAK:
+    vdem_edi: 0.27
+    vdem_libdem: 0.14
+  VEN:
+    vdem_edi: 0.24
+    vdem_libdem: 0.1
+  GBR:
+    vdem_edi: 0.81
+    vdem_libdem: 0.71
+  THA:
+    vdem_edi: 0.39
+    vdem_libdem: 0.21
+  UKR:
+    vdem_edi: 0.43
+    vdem_libdem: 0.27
+  FRA:
+    vdem_edi: 0.79
+    vdem_libdem: 0.67
+  IDN:
+    vdem_edi: 0.49
+    vdem_libdem: 0.32
+  IND:
+    vdem_edi: 0.36
+    vdem_libdem: 0.21
+  ZAF:
+    vdem_edi: 0.64
+    vdem_libdem: 0.52
+  TUR:
+    vdem_edi: 0.27
+    vdem_libdem: 0.13
+  ISR:
+    vdem_edi: 0.59
+    vdem_libdem: 0.41
+  TWN:
+    vdem_edi: 0.81
+    vdem_libdem: 0.72
+  USA:
+    vdem_edi: 0.78
+    vdem_libdem: 0.66
+  BRA:
+    vdem_edi: 0.62
+    vdem_libdem: 0.49
+  KOR:
+    vdem_edi: 0.79
+    vdem_libdem: 0.69
+  DEU:
+    vdem_edi: 0.85
+    vdem_libdem: 0.78
+  JPN:
+    vdem_edi: 0.74
+    vdem_libdem: 0.65
+  EGY:
+    vdem_edi: 0.2
+    vdem_libdem: 0.08
+  CAN:
+    vdem_edi: 0.84
+    vdem_libdem: 0.76
+  PHL:
+    vdem_edi: 0.42
+    vdem_libdem: 0.29
+  IRN:
+    vdem_edi: 0.16
+    vdem_libdem: 0.05

@@ -207,15 +207,28 @@ _COUNTRY_CACHE_TTL = 60  # seconds; ETL writes cache files, server re-reads
 
 
 def _load_etl_overlay(name: str) -> dict[str, Any]:
-    """Load a single ETL cache file, returning {} if missing or malformed."""
-    path = CACHE_DIR / f"{name}.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        log.warning("ETL overlay %s unreadable: %s", name, e)
-        return {}
+    """Load a single ETL overlay, returning {} if missing or malformed.
+
+    Two-tier read so the service serves data on a fresh deploy without
+    requiring any fetcher to have run yet:
+
+      1. ``data/cache/{name}.json``     — hot path; written by ETL scripts.
+      2. ``data/snapshot_{name}.yaml``  — committed last-known-good fallback.
+    """
+    json_path = CACHE_DIR / f"{name}.json"
+    if json_path.exists():
+        try:
+            return json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            log.warning("ETL overlay %s JSON unreadable: %s", name, e)
+
+    yaml_path = DATA_DIR / f"snapshot_{name}.yaml"
+    if yaml_path.exists():
+        try:
+            return yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            log.warning("ETL overlay %s snapshot unreadable: %s", name, e)
+    return {}
 
 
 def _load_countries() -> dict[str, Any]:
@@ -233,6 +246,7 @@ def _load_countries() -> dict[str, Any]:
     vdem = _load_etl_overlay("vdem").get("by_iso", {})
     wb = _load_etl_overlay("worldbank").get("by_iso", {})
     elections = _load_etl_overlay("elections_calendar").get("by_iso", {})
+    pew = _load_etl_overlay("pew").get("by_iso", {})
 
     for c in countries:
         iso = c.get("iso")
@@ -252,6 +266,9 @@ def _load_countries() -> dict[str, Any]:
             for e in elections[iso]:
                 merged[(e.get("date"), e.get("type"))] = {**merged.get((e.get("date"), e.get("type")), {}), **e}
             c["elections"] = sorted(merged.values(), key=lambda e: e.get("date") or "")
+        if iso in pew and isinstance(pew[iso], list) and pew[iso]:
+            c["pew_findings"] = pew[iso]
+            c["_pew_overlay_source"] = "pew-research"
 
     out = {
         "schema_version": base.get("schema_version", 1),

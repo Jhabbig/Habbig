@@ -4390,6 +4390,15 @@ _ANALYTICS_ENABLED = os.environ.get("ANALYTICS_ENABLED", "true").strip().lower()
 # malicious client cannot inject odd payloads into our reporting tables.
 _ANALYTICS_EVENT_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
+# Per-principal rate limit on /api/analytics/event. The global middleware
+# already caps at 600 req/min/IP for *everything*, but an attacker who
+# only hits analytics could still fill engagement tables at that rate.
+# Tighten to 60/min per user (or per IP for anonymous traffic) — well
+# above the worst real-world page (one auto-track on load + a few user
+# actions) and matches the user-spec hardening bar.
+_ANALYTICS_RATE_LIMIT = int(os.environ.get("ANALYTICS_RATE_LIMIT_PER_MIN", "60"))
+_ANALYTICS_RATE_WINDOW = 60
+
 
 @app.post("/api/analytics/event")
 async def api_analytics_event(request: Request):
@@ -4399,10 +4408,45 @@ async def api_analytics_event(request: Request):
     signed in. We resolve user_id best-effort from the session cookie so
     authenticated traffic gets attributed when possible.
 
+    Hardening (security audit, 2026-05-14):
+    * Per-principal rate limit (60/min by default; tunable via
+      ``ANALYTICS_RATE_LIMIT_PER_MIN``).
+    * Body size cap (4 KB) + per-field length caps.
+    * ``properties`` size cap and PII scrub via ``queries.analytics``.
+
     Analytics MUST NEVER 500: we wrap every step in try/except and return
     204 on internal failure. Validation errors (bad event_type, malformed
-    JSON) still return 400 because those are caller bugs we want surfaced.
+    JSON, oversized properties) still return 400/422 because those are
+    caller bugs we want surfaced. Rate-limit returns 429.
+
+    TODO(perf): the DB write is still synchronous on the request path.
+    At very high event rates we should push to a background task / queue
+    so the beacon response never blocks on disk I/O. See the
+    fire-and-forget pattern in engagement.py for reference.
     """
+    # Resolve the rate-limit principal first so authenticated users get
+    # their own bucket (one user behind NAT can't be DoSed by a noisy
+    # neighbour, and we still throttle anon traffic per source IP).
+    try:
+        _rl_ip = _get_client_ip(request)
+    except Exception:
+        _rl_ip = "unknown"
+    _rl_user: Optional[int] = None
+    try:
+        _rl_session = current_user(request)
+        if _rl_session:
+            _rl_user = _rl_session.get("user_id")
+    except Exception:
+        _rl_user = None
+    _rl_key = (
+        f"analytics:user:{_rl_user}" if _rl_user is not None
+        else f"analytics:ip:{_rl_ip}"
+    )
+    if _is_rate_limited(_rl_key, _ANALYTICS_RATE_LIMIT, _ANALYTICS_RATE_WINDOW):
+        # 429 — explicit signal so the client backs off rather than
+        # retrying. Body intentionally empty (this is a beacon endpoint).
+        return Response(status_code=429)
+
     # Hard cap on body size — sendBeacon payloads from analytics.js are
     # small (a few hundred bytes); anything larger is abuse.
     try:
@@ -4428,6 +4472,19 @@ async def api_analytics_event(request: Request):
     if not _ANALYTICS_ENABLED:
         return Response(status_code=204)
 
+    # Properties: PII scrub + size cap. Imported lazily so the analytics
+    # helper module isn't required for the rest of the gateway to import.
+    from queries import analytics as _analytics_q
+    raw_properties = payload.get("properties")
+    if raw_properties is not None and not isinstance(raw_properties, dict):
+        raw_properties = None
+    scrubbed = _analytics_q.scrub_properties(raw_properties)
+    if _analytics_q.properties_too_large(scrubbed):
+        # 422 — caller sent a valid-shape body but the content is too
+        # big to accept. Distinguished from the 400 "body cap" case so
+        # client-side debugging can tell the two apart.
+        return Response(status_code=422)
+
     try:
         page = (str(payload.get("page") or "") or None)
         if page is not None:
@@ -4441,19 +4498,11 @@ async def api_analytics_event(request: Request):
         session_id = payload.get("session_id")
         if session_id is not None:
             session_id = str(session_id)[:128]
-        properties = payload.get("properties")
-        if properties is not None and not isinstance(properties, dict):
-            properties = None
+        properties = scrubbed
 
-        # Best-effort user_id from the session cookie. Stays None for
-        # anonymous landing visitors — that's the common case.
-        user_id: Optional[int] = None
-        try:
-            user = current_user(request)
-            if user:
-                user_id = user.get("user_id")
-        except Exception:
-            user_id = None
+        # user_id resolved above for the rate-limit key — reuse so we
+        # don't pay for current_user() twice on the hot path.
+        user_id: Optional[int] = _rl_user
 
         # Hash the client IP via the salted helper. Honour
         # X-Forwarded-For when behind the Cloudflare/Tunnel front so the

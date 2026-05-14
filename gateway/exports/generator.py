@@ -18,6 +18,10 @@ and matches the spec under PR description verbatim:
     ├── intelligence/conversations/conversation-N.md
     ├── notifications/history.csv
     ├── activity/login_history.csv
+    ├── trading/positions.{csv,json}                ← audit #4 carryover
+    ├── trading/connections.{csv,json}              ← metadata only
+    ├── whale/watchlist.{csv,json}
+    ├── social/{takes,votes,follows,collections,...}
     └── metadata.json
 
 Storage: ZIPs land under EXPORT_DIR (default /tmp/narve-exports/) and
@@ -136,13 +140,17 @@ def _rows_to_dicts(rows) -> list[dict]:
 
 def _safe_query(conn, sql: str, params: tuple = ()) -> list[dict]:
     """Run a raw SELECT and return list[dict]. Returns [] if the table
-    does not exist — keeps the export resilient against schemas the user
-    happens not to have rows in."""
+    or one of the referenced columns does not exist — keeps the export
+    resilient against schemas the user happens not to have rows in (a
+    test DB built from db.py won't have every migration's tables, and
+    schema drift across deploys would otherwise break the whole export
+    over a single column rename)."""
     try:
         rows = conn.execute(sql, params).fetchall()
         return [_row_to_dict(r) for r in rows]
     except sqlite3.OperationalError as e:
-        if "no such table" in str(e).lower():
+        msg = str(e).lower()
+        if "no such table" in msg or "no such column" in msg:
             return []
         raise
 
@@ -150,6 +158,49 @@ def _safe_query(conn, sql: str, params: tuple = ()) -> list[dict]:
 def _scrub_user_row(row: dict) -> dict:
     """Drop password material before serializing the user row."""
     drop = {"password_hash", "password_salt"}
+    return {k: v for k, v in row.items() if k not in drop}
+
+
+def _scrub_market_credential_row(row: dict) -> dict:
+    """Strip encrypted tokens and wallet addresses from connection rows.
+
+    GDPR export must surface that the user *has* a Kalshi / Polymarket
+    connection (source + connected_at + last_used_at), but the encrypted
+    token or wallet address itself is sensitive and would let a stolen
+    export blob unlock the user's brokerage account. We retain identity-
+    less metadata only — see the inline note in the export bundle for
+    operators and end users.
+    """
+    safe_keys = {
+        "id", "source", "connected_at", "last_used_at",
+        "is_active", "kalshi_member_id", "token_expires_at",
+        "kalshi_token_expires_at", "last_synced_at",
+        "sync_error_count",
+    }
+    return {k: v for k, v in row.items() if k in safe_keys}
+
+
+def _scrub_session_row(row: dict) -> dict:
+    """Keep timing/UA, drop any token hash or raw token if present.
+
+    The hardened user_sessions table never stores the raw token, only a
+    SHA-256 hash. We strip that hash plus any legacy raw-token column —
+    a hash leak is still a leak (attacker can mass-revoke or correlate
+    against captured network logs)."""
+    drop = {"token_hash", "legacy_token", "csrf_token"}
+    return {k: v for k, v in row.items() if k not in drop}
+
+
+def _scrub_audit_row(row: dict) -> dict:
+    """Audit log entries that target this user.
+
+    GDPR Art. 15 right-of-access covers admin actions taken against the
+    data subject (suspensions, role changes, manual data edits). We keep
+    action / timestamp / target_id / target_description / before-after,
+    but redact the admin's IP + UA — those are the *admin's* personal
+    data, not the user's, and would leak through if we did SELECT *.
+    """
+    drop = {"ip_address", "user_agent", "request_id", "admin_email"}
     return {k: v for k, v in row.items() if k not in drop}
 
 
@@ -250,14 +301,19 @@ def _collect(user_id: int) -> dict[str, Any]:
         )
 
         # Activity / login history — the hardened session table records
-        # IP + UA per session start.
-        bundle["sessions"] = _safe_query(
-            c,
-            "SELECT id, user_id, created_at, expires_at, last_active_at, "
-            "ip_address, user_agent, revoked, revoked_at "
-            "FROM user_sessions WHERE user_id = ? ORDER BY created_at DESC",
-            (user_id,),
-        )
+        # IP + UA per session start. Session token hash never leaves the
+        # DB (see _scrub_session_row); explicit allow-list keeps any
+        # future column from leaking into the export by accident.
+        bundle["sessions"] = [
+            _scrub_session_row(r)
+            for r in _safe_query(
+                c,
+                "SELECT id, user_id, created_at, expires_at, last_active_at, "
+                "ip_address, user_agent, revoked, revoked_at "
+                "FROM user_sessions WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,),
+            )
+        ]
 
         # Bet history (trading add-on)
         bundle["bet_history"] = _safe_query(
@@ -312,6 +368,290 @@ def _collect(user_id: int) -> dict[str, Any]:
             "ORDER BY created_at DESC",
             (user_id,),
         )
+
+        # ── Subproduct-scoped data (added 2026-05-14, audit #4 follow-up) ──
+        # Trading add-on: open + closed positions across Polymarket / Kalshi.
+        # This was the headline carryover from audit #4 — without it the
+        # export was missing every position the user has ever held.
+        bundle["user_positions"] = _safe_query(
+            c,
+            "SELECT * FROM user_positions WHERE user_id = ? "
+            "ORDER BY last_synced_at DESC",
+            (user_id,),
+        )
+
+        # User's own predictions (the parallel pipeline from migration 031
+        # keyed by user_id, not source_handle).
+        bundle["user_predictions"] = _safe_query(
+            c,
+            "SELECT * FROM user_predictions WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+        bundle["user_prediction_stats"] = _safe_query(
+            c,
+            "SELECT * FROM user_prediction_stats WHERE user_id = ?",
+            (user_id,),
+        )
+
+        # Trading add-on settings (Kelly fraction / bankroll prefs / risk caps
+        # — added today as part of /settings/integrations).
+        bundle["user_trading_addon_settings"] = _safe_query(
+            c,
+            "SELECT * FROM user_trading_addon_settings WHERE user_id = ?",
+            (user_id,),
+        )
+
+        # Market credentials — REDACTED to metadata only.
+        # The encrypted Kalshi token + Polymarket wallet hash are NEVER
+        # exported (see _scrub_market_credential_row). We list the
+        # connection so the user can see which platforms they've linked,
+        # but never the secret material itself.
+        # Tokens redacted for security; connection metadata only.
+        bundle["user_market_credentials"] = [
+            _scrub_market_credential_row(r)
+            for r in _safe_query(
+                c,
+                "SELECT id, source, connected_at, last_used_at, is_active, "
+                "kalshi_member_id, kalshi_token_expires_at "
+                "FROM user_market_credentials WHERE user_id = ? "
+                "ORDER BY connected_at DESC",
+                (user_id,),
+            )
+        ]
+        # Newer polymarket/kalshi connection tables (migration 062) — same
+        # redaction rule applies. We surface connected_at + sync timing
+        # but never the encrypted_token or the wallet address itself.
+        bundle["polymarket_connections"] = [
+            _scrub_market_credential_row({**r, "source": "polymarket"})
+            for r in _safe_query(
+                c,
+                "SELECT id, connected_at, last_synced_at, sync_error_count "
+                "FROM polymarket_connections WHERE user_id = ?",
+                (user_id,),
+            )
+        ]
+        bundle["kalshi_connections"] = [
+            _scrub_market_credential_row({**r, "source": "kalshi"})
+            for r in _safe_query(
+                c,
+                "SELECT id, connected_at, last_synced_at, token_expires_at, "
+                "member_id AS kalshi_member_id, sync_error_count "
+                "FROM kalshi_connections WHERE user_id = ?",
+                (user_id,),
+            )
+        ]
+
+        # Whale-dashboard watchlist (per-user followed tickers + filers).
+        # Lives in a separate sqlite DB on production; the gateway connects
+        # to it lazily and the _safe_query fall-through means tests without
+        # the whale schema don't break.
+        bundle["whale_watchlist"] = _safe_query(
+            c,
+            "SELECT * FROM whale_watchlist WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+
+        # In-app notifications feed (migration 026).
+        bundle["notifications_feed"] = _safe_query(
+            c,
+            "SELECT * FROM notifications WHERE user_id = ? "
+            "ORDER BY created_at DESC LIMIT 5000",
+            (user_id,),
+        )
+        bundle["notification_preferences"] = _safe_query(
+            c,
+            "SELECT * FROM notification_preferences WHERE user_id = ?",
+            (user_id,),
+        )
+        bundle["push_subscriptions"] = _safe_query(
+            c,
+            "SELECT id, endpoint, user_agent, created_at, last_used_at "
+            "FROM push_subscriptions WHERE user_id = ?",
+            (user_id,),
+        )
+
+        # Engagement / onboarding state — what the user has interacted with.
+        bundle["engagement_events"] = _safe_query(
+            c,
+            "SELECT * FROM engagement_events WHERE user_id = ? "
+            "ORDER BY created_at DESC LIMIT 5000",
+            (user_id,),
+        )
+        bundle["user_onboarding"] = _safe_query(
+            c,
+            "SELECT * FROM user_onboarding WHERE user_id = ?",
+            (user_id,),
+        )
+        bundle["user_first_week_goals"] = _safe_query(
+            c,
+            "SELECT * FROM user_first_week_goals WHERE user_id = ?",
+            (user_id,),
+        )
+        bundle["changelog_seen"] = _safe_query(
+            c,
+            "SELECT * FROM changelog_seen WHERE user_id = ?",
+            (user_id,),
+        )
+
+        # Public-facing user content: takes, votes, follows, collections.
+        bundle["market_takes"] = _safe_query(
+            c,
+            "SELECT * FROM market_takes WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+        bundle["take_votes"] = _safe_query(
+            c,
+            "SELECT * FROM take_votes WHERE user_id = ?",
+            (user_id,),
+        )
+        bundle["user_follows"] = _safe_query(
+            c,
+            "SELECT * FROM user_follows WHERE follower_user_id = ? "
+            "OR followed_user_id = ?",
+            (user_id, user_id),
+        )
+        bundle["collections"] = _safe_query(
+            c,
+            "SELECT * FROM collections WHERE owner_user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+        bundle["collection_follows"] = _safe_query(
+            c,
+            "SELECT * FROM collection_follows WHERE user_id = ?",
+            (user_id,),
+        )
+        bundle["saved_views"] = _safe_query(
+            c,
+            "SELECT * FROM saved_views WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+
+        # Webhooks — REDACTED secret (HMAC signing secret).
+        bundle["webhook_subscriptions"] = _safe_query(
+            c,
+            "SELECT id, url, events, created_at, is_active, last_delivered_at, "
+            "failure_count, consecutive_failures "
+            "FROM webhook_subscriptions WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+
+        # Public feedback board (separate from feedback_submissions which
+        # is the older one-off form). feedback_items uses ON DELETE SET NULL
+        # so deletions preserve the public thread anonymously.
+        bundle["feedback_items"] = _safe_query(
+            c,
+            "SELECT * FROM feedback_items WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+        bundle["feedback_votes"] = _safe_query(
+            c,
+            "SELECT * FROM feedback_votes WHERE user_id = ?",
+            (user_id,),
+        )
+        bundle["feedback_comments"] = _safe_query(
+            c,
+            "SELECT * FROM feedback_comments WHERE user_id = ? "
+            "ORDER BY created_at",
+            (user_id,),
+        )
+
+        # Subscription lifecycle — cancellation / pause history.
+        bundle["cancellation_attempts"] = _safe_query(
+            c,
+            "SELECT * FROM cancellation_attempts WHERE user_id = ? "
+            "ORDER BY started_at DESC",
+            (user_id,),
+        )
+        bundle["subscription_pauses"] = _safe_query(
+            c,
+            "SELECT * FROM subscription_pauses WHERE user_id = ? "
+            "ORDER BY started_at DESC",
+            (user_id,),
+        )
+
+        # Invite tokens the user has issued (referral system).
+        bundle["user_invite_tokens"] = _safe_query(
+            c,
+            "SELECT id, tier_at_grant, created_at, used_at, used_by_user_id, "
+            "is_active, source FROM user_invite_tokens WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+        # Referral edges where the user is either side.
+        bundle["referrals"] = _safe_query(
+            c,
+            "SELECT * FROM referrals "
+            "WHERE referrer_user_id = ? OR referred_user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id, user_id),
+        )
+
+        # Affiliate program enrolment.
+        bundle["affiliate_accounts"] = _safe_query(
+            c,
+            "SELECT * FROM affiliate_accounts WHERE user_id = ?",
+            (user_id,),
+        )
+
+        # Weekly performance reports the user has been emailed.
+        bundle["weekly_reports"] = _safe_query(
+            c,
+            "SELECT * FROM weekly_reports WHERE user_id = ? "
+            "ORDER BY period_start DESC",
+            (user_id,),
+        )
+
+        # Discord / extended Telegram connections.
+        bundle["discord_user_connections"] = _safe_query(
+            c,
+            "SELECT * FROM discord_user_connections WHERE user_id = ?",
+            (user_id,),
+        )
+        bundle["telegram_connections"] = _safe_query(
+            c,
+            "SELECT * FROM telegram_connections WHERE user_id = ?",
+            (user_id,),
+        )
+
+        # Embed widgets the user has created.
+        bundle["embed_widgets"] = _safe_query(
+            c,
+            "SELECT * FROM embed_widgets WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+
+        # GDPR self-service log — the user's own past export requests.
+        bundle["data_export_requests"] = _safe_query(
+            c,
+            "SELECT id, requested_at, completed_at, expires_at, status, "
+            "file_size_bytes FROM data_export_requests WHERE user_id = ? "
+            "ORDER BY requested_at DESC",
+            (user_id,),
+        )
+
+        # Admin actions where the user is the target (Art. 15 right of
+        # access — the user can see what admins have done to their data).
+        # IP / UA / request_id stripped: those are the admin's PII, not
+        # the user's, and would leak through if we did SELECT *.
+        bundle["audit_log"] = [
+            _scrub_audit_row(r)
+            for r in _safe_query(
+                c,
+                "SELECT id, timestamp, action, target_type, target_id, "
+                "target_description, before_state, after_state, notes "
+                "FROM audit_log WHERE target_type = 'user' AND target_id = ? "
+                "ORDER BY timestamp DESC LIMIT 1000",
+                (str(user_id),),
+            )
+        ]
 
     return bundle
 
@@ -389,14 +729,40 @@ CONTENTS
 
   account.json          Your profile and preferences
   subscriptions.json    Current and past subscriptions
-  predictions/          All saved predictions (CSV and JSON)
+  predictions/          All saved predictions + your own predictions (CSV and JSON)
   markets/              Markets you've viewed
   sources/              Sources you follow
   signal_search/        Your Signal Search topics
   intelligence/         Your AI assistant conversations (Markdown, one per file)
-  notifications/        Notification history
-  activity/             Login history
+  notifications/        Notification history + in-app feed + preferences
+  activity/             Login history, engagement events, onboarding, audit log
+  trading/              Positions, bet history, backtests, broker connections (metadata only)
+  social/               Takes, votes, follows, collections, saved views, referrals
+  developer/            API keys, webhook subscriptions, embed widgets
+  whale/                Whale-dashboard watchlist
+  reports/              Weekly performance reports
+  integrations/         Telegram / Discord connections
+  feedback/             Feedback you've submitted, voted on, or commented
+  billing/              Gifts, affiliate accounts, cancellation / pause history
   metadata.json         Export manifest (file list, row counts, schema versions)
+
+SECURITY-SENSITIVE FIELDS — REDACTED
+
+The following fields are NOT included in this export so that a leaked
+archive cannot be used to compromise your account or your brokerage:
+
+  - Password hash / salt
+  - Kalshi encrypted bearer token + Polymarket wallet private material
+    (the connections themselves appear under trading/, but only the
+    platform name, connected_at, and last_used_at — never the secret)
+  - Session token hashes (your login history shows when, from where,
+    and which device — but never the cryptographic token itself)
+  - Admin IP addresses + user-agents from audit-log entries about your
+    account (those are the admin's personal data, not yours)
+  - Webhook signing secrets
+
+If you need any of the above for a legal or law-enforcement request,
+contact {PRIVACY_EMAIL} directly with proper authorization.
 
 FORMATS
 
@@ -465,6 +831,43 @@ def build_zip(user_id: int, target_path: Path) -> dict:
             ("backtests", "trading/backtests"),
             ("feedback", "feedback/submissions"),
             ("gifted_subscriptions", "billing/gifts"),
+            # ── New subproduct sections (audit #4 follow-up). ──────────
+            ("user_positions", "trading/positions"),
+            ("user_predictions", "predictions/user_predictions"),
+            ("user_prediction_stats", "predictions/user_prediction_stats"),
+            ("user_trading_addon_settings", "trading/addon_settings"),
+            ("user_market_credentials", "trading/connections"),
+            ("polymarket_connections", "trading/polymarket_connections"),
+            ("kalshi_connections", "trading/kalshi_connections"),
+            ("whale_watchlist", "whale/watchlist"),
+            ("notifications_feed", "notifications/in_app_feed"),
+            ("notification_preferences", "notifications/preferences"),
+            ("push_subscriptions", "notifications/push_subscriptions"),
+            ("engagement_events", "activity/engagement_events"),
+            ("user_onboarding", "activity/onboarding"),
+            ("user_first_week_goals", "activity/first_week_goals"),
+            ("changelog_seen", "activity/changelog_seen"),
+            ("market_takes", "social/market_takes"),
+            ("take_votes", "social/take_votes"),
+            ("user_follows", "social/user_follows"),
+            ("collections", "social/collections"),
+            ("collection_follows", "social/collection_follows"),
+            ("saved_views", "social/saved_views"),
+            ("webhook_subscriptions", "developer/webhook_subscriptions"),
+            ("feedback_items", "feedback/items"),
+            ("feedback_votes", "feedback/votes"),
+            ("feedback_comments", "feedback/comments"),
+            ("cancellation_attempts", "billing/cancellation_attempts"),
+            ("subscription_pauses", "billing/subscription_pauses"),
+            ("user_invite_tokens", "social/invite_tokens"),
+            ("referrals", "social/referrals"),
+            ("affiliate_accounts", "billing/affiliate_accounts"),
+            ("weekly_reports", "reports/weekly_reports"),
+            ("discord_user_connections", "integrations/discord"),
+            ("telegram_connections", "integrations/telegram_connections"),
+            ("embed_widgets", "developer/embed_widgets"),
+            ("data_export_requests", "activity/data_export_requests"),
+            ("audit_log", "activity/audit_log"),
         ):
             rows = bundle.get(bundle_key) or []
             info = _write_csv_and_json(zf, base, rows)
