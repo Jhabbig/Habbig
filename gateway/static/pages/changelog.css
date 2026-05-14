@@ -143,6 +143,53 @@ body {
   border-color: var(--text-primary);
 }
 
+/* ── Segmented newsletter signup ─────────────────────────────────── */
+/* Segment / frequency radio groups for /api/newsletter signup.
+   Keep monochrome — no accent colours. Visual weight comes from
+   layout density and the inherited bar background. */
+.cl-subscribe-bar__fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.cl-subscribe-bar__legend {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  letter-spacing: -0.005em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-1);
+}
+
+.cl-subscribe-bar__radio {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.cl-subscribe-bar__radio input[type="radio"] {
+  margin: 0;
+  accent-color: var(--text-primary);
+}
+
+.cl-subscribe-bar__hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.cl-subscribe-bar__notice {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
 /* ── Page chrome ─────────────────────────────────────────────────── */
 .cl-wrap {
   max-width: 880px;

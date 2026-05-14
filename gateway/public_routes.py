@@ -234,13 +234,20 @@ async def _read_newsletter_body(request: Request) -> dict:
     """Accept either form-urlencoded OR JSON. The prerelease form posts
     urlencoded (because it's a plain <form> submit rewritten as fetch with
     URLSearchParams), but keep the JSON path so curl tests and API clients
-    still work."""
+    still work.
+
+    Pulls every field the segmented signup form might submit. Unknown
+    keys are ignored downstream; missing keys default at the handler.
+    """
     ctype = (request.headers.get("content-type") or "").lower()
     if "application/x-www-form-urlencoded" in ctype or "multipart/form-data" in ctype:
         form = await request.form()
         return {
             "email": form.get("email", ""),
             "ref": form.get("ref", ""),
+            "segment": form.get("segment", ""),
+            "frequency": form.get("frequency", ""),
+            "source": form.get("source", ""),
         }
     # Fallback: treat the body as JSON. request.json() raises on non-JSON.
     try:
@@ -250,6 +257,24 @@ async def _read_newsletter_body(request: Request) -> dict:
         return data
     except (_JSONDecodeError, ValueError, Exception):
         return {}
+
+
+# Human-readable labels for the confirmation email. Mirrors the segments
+# offered by the prerelease + changelog forms — keep in sync with
+# queries.newsletter.VALID_SEGMENTS.
+_SEGMENT_LABELS = {
+    "all": "Everything — all subproducts",
+    "markets": "Just markets — sports, crypto, world",
+    "election": "Just election + politics",
+    "climate": "Just climate + disasters",
+    "intelligence": "Just intelligence — signal-search, weekly digest",
+}
+
+_FREQUENCY_LABELS = {
+    "weekly": "Weekly digest",
+    "monthly": "Monthly summary",
+    "daily_spike": "Daily on spikes only",
+}
 
 
 def _build_share_url(request: Request, referral_code: str) -> str:
@@ -273,11 +298,34 @@ def _build_share_url(request: Request, referral_code: str) -> str:
 
 
 async def api_newsletter(request: Request):
+    """Segmented newsletter signup with double-opt-in.
+
+    Accepts ``email``, optional ``ref``, optional ``segment`` (one of
+    ``VALID_SEGMENTS`` — defaults to 'all'), and optional ``frequency``
+    (one of ``VALID_FREQUENCIES`` — defaults to 'weekly').
+
+    The response shape is identical regardless of whether the email
+    already exists, whether a confirmation email was actually sent, or
+    whether the row was unconfirmed. This is deliberate — the endpoint
+    must NEVER reveal whether a given email is already on the list,
+    so probes can't enumerate subscribers.
+
+    Confirmation flow:
+      * Brand-new + cooldown-elapsed re-signups   → enqueue confirmation email
+      * Same-window re-signups                    → silent 200, no email
+      * Already-confirmed re-signups              → silent 200, prefs updated
+
+    The frontend reads ``success``, ``position``, ``referral_code``,
+    ``share_url``, ``is_new`` — all of which still come back. New fields
+    (``segment``, ``frequency``, ``confirmation_pending``) are additive.
+    """
     srv = _srv()
     body = await _read_newsletter_body(request)
 
     email = str(body.get("email") or "").strip().lower()
     ref = str(body.get("ref") or "").strip() or None
+    segment = (str(body.get("segment") or "").strip().lower() or "all")
+    frequency = (str(body.get("frequency") or "").strip().lower() or "weekly")
 
     field_max = srv.FIELD_MAX
     email_re = srv.EMAIL_RE
@@ -286,10 +334,21 @@ async def api_newsletter(request: Request):
     if not email or len(email) > field_max["email"] or not email_re.match(email):
         return JSONResponse({"error": "Please enter a valid email address."}, status_code=400)
 
+    # Reject unknown segment / frequency strings up-front so we never write
+    # garbage to the DB. Defence-in-depth — queries.newsletter clamps too.
+    from queries.newsletter import VALID_SEGMENTS, VALID_FREQUENCIES
+    if segment not in VALID_SEGMENTS:
+        return JSONResponse({"error": "Invalid segment."}, status_code=400)
+    if frequency not in VALID_FREQUENCIES:
+        return JSONResponse({"error": "Invalid frequency."}, status_code=400)
+
     ip = srv._get_client_ip(request)
 
     # Per-IP rate limit (new signups from the same network).
-    if srv._is_rate_limited(f"{ip}:newsletter", _NEWSLETTER_RATE_MAX, _NEWSLETTER_RATE_WINDOW):
+    # Spec calls for 3/hour on /api/newsletter — tighter than the legacy 5
+    # because segmented signups give attackers a wider probe surface.
+    _PER_IP_LIMIT = 3
+    if srv._is_rate_limited(f"{ip}:newsletter", _PER_IP_LIMIT, _NEWSLETTER_RATE_WINDOW):
         return JSONResponse(
             {"error": "Too many signup attempts from your network. Try again in an hour."},
             status_code=429,
@@ -314,17 +373,60 @@ async def api_newsletter(request: Request):
             _NEWSLETTER_GLOBAL_MAX, ip,
         )
 
+    # Honour an explicit ``source`` field from the form (e.g. the changelog
+    # page submits source=changelog-page) so admin reporting can tell which
+    # surface produced the signup. Fall back to 'prerelease'.
+    source = (str(body.get("source") or "").strip() or "prerelease")[:40]
+
     try:
-        result = db.subscribe_newsletter(email, source="prerelease", referred_by=ref)
+        result = db.subscribe_newsletter(
+            email,
+            source=source,
+            referred_by=ref,
+            segment=segment,
+            frequency=frequency,
+        )
     except Exception as exc:
         log.exception("subscribe_newsletter failed for email=%s: %s", db.mask_email(email), exc)
         return JSONResponse({"error": "Could not save your signup. Try again."}, status_code=500)
 
+    # Enqueue confirmation email when the DB layer says one is required.
+    # The DB enforces the 24h cooldown; we just react to its decision.
+    if result.get("confirmation_required") and result.get("confirmation_token"):
+        try:
+            from jobs.email_jobs import enqueue_email
+            apex = srv._request_apex(request) or srv.DOMAIN
+            confirm_url = f"https://{apex}/api/newsletter/confirm?token={result['confirmation_token']}"
+            # Even the confirmation email gets a one-click unsubscribe in
+            # the footer — CAN-SPAM and GDPR are fine with it, and it
+            # gives anyone who got the email by mistake a clean exit.
+            from urllib.parse import quote
+            unsubscribe_url = f"https://{apex}/api/newsletter/unsubscribe?email={quote(email)}"
+            await enqueue_email(
+                to=email,
+                template="newsletter_confirm",
+                context={
+                    "confirm_url": confirm_url,
+                    "segment_label": _SEGMENT_LABELS.get(segment, segment),
+                    "frequency_label": _FREQUENCY_LABELS.get(frequency, frequency),
+                    "unsubscribe_url": unsubscribe_url,
+                },
+                tags=["newsletter", "confirm", segment],
+            )
+            log.info(
+                "newsletter confirmation enqueued ip=%s email=%s segment=%s freq=%s",
+                ip, db.mask_email(email), segment, frequency,
+            )
+        except Exception as exc:
+            # Don't fail the user-facing request — the row exists, they can
+            # just re-submit after the cooldown expires.
+            log.exception("newsletter confirmation enqueue failed: %s", exc)
+
     share_url = _build_share_url(request, result["referral_code"])
     log.info(
-        "newsletter signup ip=%s email=%s position=%d is_new=%s ref=%s",
+        "newsletter signup ip=%s email=%s position=%d is_new=%s ref=%s seg=%s freq=%s",
         ip, db.mask_email(email), result["position"],
-        result["is_new"], result["referred_by"] or "-",
+        result["is_new"], result["referred_by"] or "-", segment, frequency,
     )
     return JSONResponse({
         "success": True,
@@ -332,7 +434,119 @@ async def api_newsletter(request: Request):
         "position": result["position"],
         "referral_code": result["referral_code"],
         "share_url": share_url,
+        # Tell the UI to render the "check your email" message. Identical
+        # 200 shape either way — we never reveal whether a confirmation
+        # email was actually sent on this particular request.
+        "confirmation_pending": bool(result.get("confirmation_required")),
+        "segment": result.get("segment", segment),
+        "frequency": result.get("frequency", frequency),
     })
+
+
+async def api_newsletter_confirm(request: Request, token: str = ""):
+    """Accept a confirmation-token click and flip ``confirmed_at``.
+
+    Returns a self-contained HTML page so the link works from any email
+    client, with no JS required. Same success message regardless of
+    whether the token is new or was already used — re-clicks shouldn't
+    look like errors to a confused user.
+
+    Token-shape failures (bad sig, no matching row) render a generic
+    "link expired or invalid" message rather than 404. This mirrors the
+    anti-enumeration behaviour of the signup endpoint: an attacker can't
+    use this surface to test whether a guessed token exists in the DB.
+    """
+    from fastapi.responses import HTMLResponse
+    srv = _srv()
+    token = (token or "").strip()
+
+    # Per-IP rate limit on confirmation clicks — token brute-force attempts
+    # would otherwise sail through unchallenged.
+    ip = srv._get_client_ip(request)
+    if srv._is_rate_limited(f"{ip}:newsletter_confirm", 30, 3600):
+        return HTMLResponse(
+            "<h1>Too many attempts</h1><p>Try again in an hour.</p>",
+            status_code=429,
+        )
+
+    result = db.confirm_newsletter(token) if token else None
+    apex = srv._request_apex(request) or srv.DOMAIN
+    home = f"https://{apex}"
+
+    body = """<!DOCTYPE html><html><head><meta charset='utf-8'>
+<title>Subscription confirmed — narve.ai</title>
+<link rel='stylesheet' href='/_gateway_static/gateway.css?v=5'>
+<style>body{background:var(--bg-base);color:var(--text-primary);display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:var(--font-ui);margin:0;}
+.card{max-width:440px;padding:48px 40px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:12px;text-align:center}
+h1{font-family:var(--font-display);font-size:28px;margin:0 0 16px;letter-spacing:-0.02em}
+p{color:var(--text-secondary);font-size:14px;line-height:1.6}
+a{color:var(--text-primary)}</style></head><body><div class='card'>"""
+
+    if result:
+        if result.get("was_already_confirmed"):
+            body += "<h1>Already confirmed.</h1><p>You're on the list. Nothing more to do.</p>"
+        else:
+            body += "<h1>Subscription confirmed.</h1><p>You're on the list. We'll send you the first digest within a week.</p>"
+            body += "<p style='font-size:12px;color:#aaa;margin-top:16px'>Every email has a one-click unsubscribe link in the footer.</p>"
+        log.info("newsletter confirmed ip=%s email=%s segment=%s",
+                 ip, db.mask_email(result["email"]), result.get("segment"))
+    else:
+        body += "<h1>Link expired or invalid.</h1><p>If you didn't sign up recently, you can safely ignore this. Otherwise, request a fresh confirmation by signing up again.</p>"
+        log.info("newsletter confirm failed ip=%s token_present=%s", ip, bool(token))
+
+    body += f"<p style='margin-top:28px'><a href='{home}'>Return to narve.ai</a></p></div></body></html>"
+    return HTMLResponse(body)
+
+
+async def api_newsletter_unsubscribe(request: Request, email: str = ""):
+    """One-click unsubscribe for newsletter (waitlist) subscribers.
+
+    Distinct from the authenticated-user unsubscribe at /unsubscribe
+    (which flips ``users.email_marketing``). Newsletter rows aren't
+    necessarily tied to a user account — they predate signup.
+
+    Always returns 200 with the same message regardless of whether the
+    email existed. Anti-enumeration parity with the signup endpoint.
+    """
+    from fastapi.responses import HTMLResponse
+    srv = _srv()
+    email = (email or "").strip().lower()
+
+    # Per-IP rate limit so a bot can't iterate the list.
+    ip = srv._get_client_ip(request)
+    if srv._is_rate_limited(f"{ip}:newsletter_unsub", 20, 3600):
+        return HTMLResponse(
+            "<h1>Too many attempts</h1><p>Try again in an hour.</p>",
+            status_code=429,
+        )
+
+    # Best-effort unsubscribe. We don't surface the boolean to the UI —
+    # the page is identical either way.
+    try:
+        db.unsubscribe_newsletter(email)
+    except Exception as exc:
+        log.exception("unsubscribe_newsletter failed: %s", exc)
+
+    apex = srv._request_apex(request) or srv.DOMAIN
+    home = f"https://{apex}"
+    body = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<title>Unsubscribed — narve.ai</title>"
+        "<link rel='stylesheet' href='/_gateway_static/gateway.css?v=5'>"
+        "<style>body{background:var(--bg-base);color:var(--text-primary);display:flex;"
+        "align-items:center;justify-content:center;min-height:100vh;"
+        "font-family:var(--font-ui);margin:0}.card{max-width:440px;padding:48px 40px;"
+        "background:var(--bg-surface);border:1px solid var(--border-default);"
+        "border-radius:12px;text-align:center}h1{font-family:var(--font-display);"
+        "font-size:28px;margin:0 0 16px;letter-spacing:-0.02em}p{color:var(--text-secondary);"
+        "font-size:14px;line-height:1.6}a{color:var(--text-primary)}</style></head>"
+        "<body><div class='card'><h1>Unsubscribed.</h1>"
+        "<p>You've been removed from the narve.ai newsletter. "
+        "It can take up to 24 hours for any pending sends to clear.</p>"
+        f"<p style='margin-top:28px'><a href='{home}'>Return to narve.ai</a></p>"
+        "</div></body></html>"
+    )
+    return HTMLResponse(body)
 
 
 async def api_newsletter_position(request: Request, email: str = ""):
@@ -383,3 +597,14 @@ def register(app) -> None:
     app.add_api_route("/suspended", suspended_page, methods=["GET"], response_class=HTMLResponse)
     app.add_api_route("/api/newsletter", api_newsletter, methods=["POST"])
     app.add_api_route("/api/newsletter/position", api_newsletter_position, methods=["GET"])
+    # Double-opt-in confirmation. GET so it works from any email client.
+    app.add_api_route(
+        "/api/newsletter/confirm", api_newsletter_confirm, methods=["GET"],
+        response_class=HTMLResponse,
+    )
+    # One-click newsletter unsubscribe (distinct from the authed-user one
+    # at /unsubscribe which targets users.email_marketing).
+    app.add_api_route(
+        "/api/newsletter/unsubscribe", api_newsletter_unsubscribe, methods=["GET"],
+        response_class=HTMLResponse,
+    )

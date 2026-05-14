@@ -37,15 +37,32 @@
         <button type="button" class="cl-subscribe-bar__btn cl-subscribe-bar__btn--primary" data-cl-email-toggle aria-expanded="false" aria-controls="cl-email-form">Email digest</button>
       </div>
     </div>
-    <form id="cl-email-form" class="cl-subscribe-bar__form" hidden action="/api/newsletter" method="post">
+    <form id="cl-email-form" class="cl-subscribe-bar__form" hidden action="/api/newsletter" method="post" data-cl-newsletter-form>
       {{ raw_csrf_field }}
       <input type="hidden" name="source" value="changelog-page">
-      <input type="hidden" name="list" value="changelog-digest">
-      <label for="cl-email-input" class="cl-subscribe-bar__form-label">Weekly digest, no marketing — opt out one-click.</label>
+      <label for="cl-email-input" class="cl-subscribe-bar__form-label">Pick what you want. One-click unsubscribe in every email.</label>
+
+      <fieldset class="cl-subscribe-bar__fieldset">
+        <legend class="cl-subscribe-bar__legend">Interests</legend>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="segment" value="all" checked> All subproducts</label>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="segment" value="markets"> Just markets <span class="cl-subscribe-bar__hint">sports, crypto, world</span></label>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="segment" value="election"> Just election + politics</label>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="segment" value="climate"> Just climate + disasters</label>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="segment" value="intelligence"> Just intelligence <span class="cl-subscribe-bar__hint">signal-search, weekly digest</span></label>
+      </fieldset>
+
+      <fieldset class="cl-subscribe-bar__fieldset">
+        <legend class="cl-subscribe-bar__legend">Frequency</legend>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="frequency" value="weekly" checked> Weekly digest</label>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="frequency" value="monthly"> Monthly summary</label>
+        <label class="cl-subscribe-bar__radio"><input type="radio" name="frequency" value="daily_spike"> Daily on spikes only</label>
+      </fieldset>
+
       <div class="cl-subscribe-bar__form-row">
         <input id="cl-email-input" type="email" name="email" required autocomplete="email" placeholder="you@work.example" class="cl-subscribe-bar__input">
         <button type="submit" class="cl-subscribe-bar__btn cl-subscribe-bar__btn--primary">Subscribe</button>
       </div>
+      <p class="cl-subscribe-bar__notice" data-cl-newsletter-status hidden></p>
     </form>
   </div>
 
@@ -107,6 +124,45 @@
       }
       window.addEventListener("scroll", onScroll, { passive: true });
       onScroll();
+
+      // Intercept the newsletter submit so we can render an inline
+      // "check your email" confirmation instead of a full nav. The plain
+      // <form> POST still works as a no-JS fallback — the same handler
+      // returns JSON either way, and we accept both content-types server-side.
+      if (form && form.hasAttribute("data-cl-newsletter-form")) {
+        var statusEl = form.querySelector("[data-cl-newsletter-status]");
+        form.addEventListener("submit", function (evt) {
+          evt.preventDefault();
+          var fd = new FormData(form);
+          var body = new URLSearchParams();
+          fd.forEach(function (v, k) { body.append(k, v); });
+          if (statusEl) {
+            statusEl.removeAttribute("hidden");
+            statusEl.textContent = "Subscribing…";
+          }
+          fetch(form.action, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+          }).then(function (r) {
+            return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+          }).then(function (res) {
+            if (!statusEl) return;
+            if (!res.ok) {
+              statusEl.textContent = (res.body && res.body.error) || "Something went wrong. Try again.";
+              return;
+            }
+            // Always show the same confirmation message — the server
+            // deliberately never tells us whether an email was actually
+            // re-sent (anti-enumeration). The user sees the same flow.
+            statusEl.textContent = "Check your inbox — we just sent a confirmation link.";
+            form.reset();
+          }).catch(function () {
+            if (statusEl) statusEl.textContent = "Network error. Try again.";
+          });
+        });
+      }
     })();
   </script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>

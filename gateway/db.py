@@ -995,6 +995,11 @@ from queries.intelligence import (  # noqa: F401,E402
 from queries.newsletter import (  # noqa: F401,E402
     subscribe_newsletter,
     get_newsletter_position,
+    confirm_newsletter,
+    unsubscribe_newsletter,
+    VALID_SEGMENTS as NEWSLETTER_VALID_SEGMENTS,
+    VALID_FREQUENCIES as NEWSLETTER_VALID_FREQUENCIES,
+    CONFIRMATION_RESEND_COOLDOWN_S as NEWSLETTER_CONFIRMATION_RESEND_COOLDOWN_S,
 )
 from queries.environmental import (  # noqa: F401,E402
     ENV_VALID_UNITS,

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Confirm your subscription</h1>
+
+<p style="margin:0 0 16px;color:#555;">
+  Thanks for signing up to the narve.ai newsletter. One last click to make it official &mdash; we use double opt-in so you stay in control of your inbox.
+</p>
+
+<p style="margin:0 0 8px;color:#777;font-size:13px;">You signed up for:</p>
+<ul style="margin:0 0 24px;padding-left:20px;color:#555;font-size:14px;">
+  <li style="margin-bottom:4px;"><strong style="color:#0d0d0d;">{{ segment_label }}</strong></li>
+  <li style="margin-bottom:4px;">Cadence: <strong style="color:#0d0d0d;">{{ frequency_label }}</strong></li>
+</ul>
+
+<div style="margin:24px 0;">
+  <a href="{{ confirm_url }}" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Confirm subscription &rarr;</a>
+</div>
+
+<p style="margin:24px 0 0;color:#aaa;font-size:12px;line-height:1.6;">
+  If the button doesn't work, paste this link in your browser:<br>
+  <span style="color:#777;word-break:break-all;">{{ confirm_url }}</span>
+</p>
+
+<p style="margin:16px 0 0;color:#aaa;font-size:12px;">
+  Didn't sign up? Ignore this email &mdash; you won't be added to any list.
+</p>
+{% endblock %}

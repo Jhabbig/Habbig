@@ -200,6 +200,7 @@ _SUBJECTS = {
     "market_resolved": "Market resolved on narve.ai",
     "unsubscribe_confirmation": "Unsubscribed from narve.ai emails",
     "enquiry_notification": "New enquiry — narve.ai",
+    "newsletter_confirm": "Confirm your narve.ai subscription",
     "2fa_email_otp": "Your narve.ai sign-in code",
     "2fa_locked": "Suspicious activity on your narve.ai account",
     "incident_created": "New incident — narve.ai status",
