@@ -142,9 +142,27 @@ class TestCSRFMiddlewareExemptions(unittest.TestCase):
         from security.csrf import _CSRF_EXEMPT_PATHS
         self.assertIn("/stripe/webhook", _CSRF_EXEMPT_PATHS)
 
-    def test_scraper_api_is_exempt(self):
+    def test_scraper_ingest_is_exempt(self):
+        # Only the specific scraper push endpoint is exempt — the broad
+        # "/api/scraper/" prefix was removed (audit MED #3, narrow allowlist).
+        from security.csrf import _CSRF_EXEMPT_PATHS
+        self.assertIn("/api/scraper/ingest", _CSRF_EXEMPT_PATHS)
+
+    def test_no_prefix_exemptions(self):
+        # Prefix-style exemptions are intentionally empty; any future
+        # exemption must be an exact path in _CSRF_EXEMPT_PATHS.
         from security.csrf import _CSRF_EXEMPT_PREFIXES
-        self.assertIn("/api/scraper/", _CSRF_EXEMPT_PREFIXES)
+        self.assertEqual(_CSRF_EXEMPT_PREFIXES, ())
+
+    def test_scraper_subpath_is_not_exempt(self):
+        # Regression guard for the old broad prefix. An arbitrary
+        # "/api/scraper/<whatever>" must NOT slip through.
+        from security.csrf import _CSRF_EXEMPT_PATHS, _CSRF_EXEMPT_PREFIXES
+        self.assertNotIn("/api/scraper/anything-else", _CSRF_EXEMPT_PATHS)
+        self.assertFalse(any(
+            "/api/scraper/anything-else".startswith(p)
+            for p in _CSRF_EXEMPT_PREFIXES
+        ))
 
     def test_health_is_exempt(self):
         from security.csrf import _CSRF_EXEMPT_PATHS

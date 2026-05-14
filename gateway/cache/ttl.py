@@ -309,6 +309,49 @@ class ttl_invalidate:
         return removed
 
     @staticmethod
+    def on_role_change(user_id: int) -> int:
+        """User's role changed (user ↔ admin ↔ super-admin) — bust the per-user
+        landing-surface async caches so any admin-only payload differences
+        reflect immediately on the next request.
+
+        Today's `/dashboards`, `/settings`, and `/signal-search` payloads don't
+        embed role-gated fields, so a missed bust is not a data leak — but
+        wiring this here matches the pattern of `on_subscription_change` and
+        means future admin-only fields cannot leak across a demotion via a
+        stale cache entry. The sync TTL cache (`feed:*`, `best_bets:*`) is
+        not user-role-keyed, so we don't touch it.
+
+        Returns the number of sync-cache keys removed (always 0 today — the
+        async deletes are fire-and-forget through the same path used by
+        `on_subscription_change`).
+        """
+        # Reuse the async-bust block. Identical key set to the subscription
+        # helper because both events change what the per-user surface should
+        # render. Keep this code path in lock-step with on_subscription_change.
+        try:
+            import asyncio
+            from cache.service import cache as _async_cache
+
+            async def _bust() -> None:
+                await _async_cache.delete(f"dashboards:user:{user_id}")
+                await _async_cache.delete(f"settings:user:{user_id}")
+                await _async_cache.delete(f"signal_search:user:{user_id}")
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(_bust())
+                else:
+                    loop.run_until_complete(_bust())
+            except RuntimeError:
+                asyncio.run(_bust())
+        except Exception:
+            # Async cache missing/broken — TTL-based self-heal (30-60s) covers it.
+            pass
+
+        return 0
+
+    @staticmethod
     def on_feature_flag_change() -> int:
         """Flags gate what rows the feed materialises — conservative wipe."""
         return ttl_cache.delete_prefix("feed:")

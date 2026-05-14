@@ -376,7 +376,11 @@ def set_user_role(user_id: int, level: int) -> None:
     """Set user role: 0=user, 1=admin, 2=super_admin.
 
     Revokes all hardened sessions for the user after a role change so the
-    new privilege level cannot be exercised on a pre-existing cookie.
+    new privilege level cannot be exercised on a pre-existing cookie. Also
+    busts the per-user response caches (`dashboards`, `settings`,
+    `signal_search`) — current payloads don't surface admin-only fields, but
+    wiring this here matches the subscription-change pattern and prevents a
+    future leak across role transitions (audit MED #4).
     """
     with db.conn() as c:
         c.execute("UPDATE users SET is_admin = ? WHERE id = ?", (level, user_id))
@@ -384,6 +388,14 @@ def set_user_role(user_id: int, level: int) -> None:
         revoke_all_user_sessions(user_id)
     except Exception:
         pass  # Revocation best-effort; DB row change already committed.
+    try:
+        # Local import: queries/ must not pull from cache/ at module load
+        # time (test scaffolding stubs cache.service in some suites). The
+        # import is microseconds and only runs on role-change events.
+        from cache import ttl_invalidate
+        ttl_invalidate.on_role_change(user_id)
+    except Exception:
+        pass  # Cache bust best-effort; TTL self-heal (30-60s) covers a miss.
 
 
 def set_user_admin(user_id: int, is_admin: bool) -> None:

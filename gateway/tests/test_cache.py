@@ -266,6 +266,46 @@ class TestInvalidateHelpers(unittest.TestCase):
         # User 2's feed should be untouched
         self.assertIsNotNone(ttl_cache.get("feed:user_2:cat_all:sort_new:page_1"))
 
+    def test_on_role_change_does_not_touch_sync_cache(self):
+        # Role-change is a per-user async-surface bust only. The sync TTL cache
+        # (`feed:*`, `best_bets:*`) is not role-keyed, so it must stay intact.
+        ttl_cache.set("feed:user_1:cat_all:sort_new:page_1", [], 60)
+        ttl_cache.set("best_bets:tier_free:page_1", [], 120)
+
+        removed = ttl_invalidate.on_role_change(1)
+        self.assertEqual(removed, 0)
+        self.assertIsNotNone(ttl_cache.get("feed:user_1:cat_all:sort_new:page_1"))
+        self.assertIsNotNone(ttl_cache.get("best_bets:tier_free:page_1"))
+
+    def test_on_role_change_busts_per_user_async_keys(self):
+        # The async cache deletes are fire-and-forget. Drive a transient event
+        # loop, seed the per-user keys, fire the helper, and confirm the bust
+        # landed on the three canonical user-surface keys.
+        import asyncio
+        from cache.service import cache as _async_cache
+        # Force the in-process fallback so we don't touch a real Redis.
+        _async_cache._memory._store.clear()
+        _async_cache._connect_attempted = True
+
+        async def _seed():
+            await _async_cache.set("dashboards:user:42", {"x": 1}, ttl_seconds=60)
+            await _async_cache.set("settings:user:42", {"y": 1}, ttl_seconds=60)
+            await _async_cache.set("signal_search:user:42", {"z": 1}, ttl_seconds=30)
+            # An unrelated user's keys must survive.
+            await _async_cache.set("dashboards:user:99", {"keep": 1}, ttl_seconds=60)
+
+        asyncio.new_event_loop().run_until_complete(_seed())
+
+        ttl_invalidate.on_role_change(42)
+
+        async def _check():
+            self.assertIsNone(await _async_cache.get("dashboards:user:42"))
+            self.assertIsNone(await _async_cache.get("settings:user:42"))
+            self.assertIsNone(await _async_cache.get("signal_search:user:42"))
+            self.assertIsNotNone(await _async_cache.get("dashboards:user:99"))
+
+        asyncio.new_event_loop().run_until_complete(_check())
+
     def test_everything_nukes_cache(self):
         ttl_cache.set("a", 1, 10)
         ttl_cache.set("b", 2, 10)

@@ -40,17 +40,33 @@ _CSRF_SKIP_PREFIXES = ("/_gateway_static", "/ws")
 
 # Paths exempt from CSRF because they use API-key or JWT auth, not cookies.
 # POST to these paths will NOT be CSRF-validated.
+#
+# Audit guidance: keep this list as narrow as exact-match paths. Prefix-style
+# exemptions are fragile — any future `/foo/<anything>` route silently inherits
+# the bypass and the only reviewer who notices is the next pentester. List the
+# specific endpoint(s) you want exempt and add a comment explaining why CSRF
+# doesn't apply (Bearer auth, webhook signature, etc.).
 _CSRF_EXEMPT_PATHS = frozenset({
     "/stripe/webhook",
     "/health",
     # Public prerelease newsletter signup — no user session to anchor CSRF to.
     # Still protected by per-IP rate limit + email format validation.
     "/api/newsletter",
+    # Scraper service → main server push of freshly scraped posts. Authenticated
+    # via the X-Scraper-API-Key header (see scraper/transmission/pusher.py); a
+    # forged cross-origin request can't read or replay that header, so CSRF
+    # adds nothing. This is the only `/api/scraper/*` path the main gateway
+    # actually serves — the admin panel's other "/api/scraper/<x>" calls hit
+    # the same X-Scraper-API-Key boundary (also Bearer-equivalent), but those
+    # routes don't exist on the main app today so listing them here would be
+    # speculative. Add them explicitly if/when they're introduced.
+    "/api/scraper/ingest",
 })
 
-_CSRF_EXEMPT_PREFIXES = (
-    "/api/scraper/",
-)
+# Prefix-style exemptions are intentionally empty. The previous broad
+# "/api/scraper/" entry let any `/api/scraper/<anything>` POST bypass CSRF
+# even if such a route was later added with cookie auth — audit MED #3.
+_CSRF_EXEMPT_PREFIXES: tuple[str, ...] = ()
 
 CSRF_ENABLED = os.environ.get("CSRF_ENABLED", "true").lower() not in ("0", "false", "no", "off")
 
