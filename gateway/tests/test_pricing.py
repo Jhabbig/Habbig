@@ -80,7 +80,9 @@ class TestLandingPricingContent(unittest.TestCase):
         self.assertIn("229", self.html)
 
     def test_currency_note(self):
-        self.assertIn("Prices shown in GBP and USD", self.html)
+        # Copy moved to the i18n bundle under ``landing.pricing.currency_note``;
+        # template references the key so the runtime bundle resolves it.
+        self.assertIn('landing.pricing.currency_note', self.html)
 
 
 class TestSubscribePagePrices(unittest.TestCase):
