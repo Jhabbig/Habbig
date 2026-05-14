@@ -76,7 +76,7 @@
           <!-- ── Payment method ───────────────────────────────────── -->
           <div class="sb-section">
             <div class="sb-section-title">Payment method</div>
-            <div class="sb-section-desc">Securely managed by Stripe. Update your card through the customer portal.</div>
+            <div class="sb-section-desc">Securely managed by Stripe. Update your card or manage your subscription through the customer portal.</div>
 
             <div class="sb-payment">
               <div class="sb-payment-info">
@@ -86,10 +86,21 @@
                   <div class="sb-payment-sub">{{ card_expiry }}</div>
                 </div>
               </div>
-              <form method="post" action="/api/v1/billing/portal" style="display:inline">
-                <button type="submit" class="sb-btn sb-btn-outline sb-btn-sm">Update card →</button>
-              </form>
+              <div class="sb-payment-actions" style="display:flex;gap:8px;align-items:center">
+                <button type="button"
+                        class="sb-btn sb-btn-primary sb-btn-sm"
+                        id="sb-manage-subscription"
+                        data-portal-url="/api/billing/portal-session">
+                  Manage subscription →
+                </button>
+                <form method="post" action="/api/v1/billing/portal" style="display:inline">
+                  <button type="submit" class="sb-btn sb-btn-outline sb-btn-sm">Update card →</button>
+                </form>
+              </div>
             </div>
+            <div id="sb-manage-subscription-error"
+                 role="alert"
+                 style="display:none;margin-top:8px;font-size:13px;color:var(--red,#ef4444)"></div>
           </div>
 
           <!-- ── Billing history ──────────────────────────────────── -->
@@ -200,6 +211,84 @@
 
   <!-- ── Data payload for client JS ─────────────────────────────── -->
   <script id="sb-data" type="application/json">{{ raw_data_json }}</script>
+
+  <!--
+    "Manage subscription" button — POSTs to /api/billing/portal-session
+    and redirects to the returned Stripe-hosted portal URL. CSRF token
+    is read from the _csrf cookie (set by the middleware on this page
+    load) and sent in the X-CSRF-Token header.
+
+    Error UX:
+      no_active_subscription -> "You don't have an active subscription yet."
+      billing_unavailable    -> "Billing is temporarily unavailable. Please try again in a moment."
+      auth_required          -> bounce to /token (session expired)
+  -->
+  <script>
+    (function () {
+      var btn = document.getElementById("sb-manage-subscription");
+      var errBox = document.getElementById("sb-manage-subscription-error");
+      if (!btn) return;
+
+      function csrfToken() {
+        var m = document.cookie.match(/(?:^|; )_csrf=([^;]*)/);
+        return m ? decodeURIComponent(m[1]) : "";
+      }
+
+      function showError(msg) {
+        if (!errBox) return;
+        errBox.textContent = msg;
+        errBox.style.display = "block";
+      }
+
+      btn.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        if (errBox) { errBox.style.display = "none"; errBox.textContent = ""; }
+        btn.disabled = true;
+        var originalText = btn.textContent;
+        btn.textContent = "Opening portal…";
+
+        fetch(btn.getAttribute("data-portal-url") || "/api/billing/portal-session", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "X-CSRF-Token": csrfToken(),
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        })
+          .then(function (r) {
+            return r.json().then(function (body) {
+              return { ok: r.ok, status: r.status, body: body };
+            });
+          })
+          .then(function (res) {
+            if (res.ok && res.body && res.body.url) {
+              window.location.href = res.body.url;
+              return;
+            }
+            btn.disabled = false;
+            btn.textContent = originalText;
+            if (res.status === 401) {
+              window.location.href = "/token";
+              return;
+            }
+            var code = (res.body && res.body.error) || "";
+            if (code === "no_active_subscription") {
+              showError("You don't have an active subscription yet.");
+            } else if (code === "billing_unavailable") {
+              showError("Billing is temporarily unavailable. Please try again in a moment.");
+            } else {
+              showError("Couldn't open the customer portal. Please try again.");
+            }
+          })
+          .catch(function () {
+            btn.disabled = false;
+            btn.textContent = originalText;
+            showError("Network error — please check your connection and try again.");
+          });
+      });
+    })();
+  </script>
 
   <script src="/_gateway_static/scroll-animations.js" defer></script>
   <script src="/_gateway_static/user-features.js" defer></script>

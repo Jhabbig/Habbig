@@ -16,6 +16,8 @@ Endpoints:
     GET  /api/v1/billing/invoices/{id}/pdf -> 501 stub until Stripe is wired
     POST /api/v1/billing/portal         -> Stripe Customer Portal (stub,
                                            redirects to /enquire)
+    POST /api/billing/portal-session    -> Live Stripe Customer Portal — returns
+                                           {url} for the client to redirect to.
 
 Stripe integration remains stubbed (see backend/payments/stripe_stub.py). All
 mutation routes operate on the local subscriptions table so the UI is fully
@@ -27,10 +29,12 @@ only surfaces the data needed to drive that calculator.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import html
 import json
 import logging
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -1137,3 +1141,123 @@ async def api_billing_portal(request: Request):
         user.get("username", user["email"]),
     )
     return RedirectResponse("/enquire", status_code=302)
+
+
+# ── Stripe Customer Portal — live session creator ───────────────────────────
+#
+# Sibling to the /api/v1/billing/portal stub above. That stub predates the
+# Stripe integration and just bounces unauthenticated visitors to /enquire;
+# this is the real thing.
+#
+# Contract (called as fetch() from settings_billing.html):
+#   POST /api/billing/portal-session
+#   Auth: session cookie (current_user) + CSRF (double-submit middleware)
+#   Body: none
+#   200 { "url": "https://billing.stripe.com/p/session/…" }
+#   400 { "error": "no_active_subscription" }     -> user has no stripe_customer_id
+#   401 { "error": "auth_required" }              -> no session
+#   503 { "error": "billing_unavailable" }        -> STRIPE_SECRET_KEY missing or SDK error
+#
+# Dashboard config (manual, see Stripe dashboard → Billing → Customer portal):
+#   * Features:    pause/resume subscription, cancel, update payment method,
+#                  change plan
+#   * Disabled:    invoice history (we render our own at /settings/billing —
+#                  having both creates a confusing dual surface)
+#   * Return URL:  https://narve.ai/settings/billing
+#
+# The Stripe customer_id is *never* echoed back to the client — we only
+# return the portal URL. Leaking cus_… IDs lets an attacker who's compromised
+# one user's session enumerate the customer base, and customer IDs are used
+# as identifiers in webhook lookups so they're worth treating like secrets.
+
+@app.post("/api/billing/portal-session", include_in_schema=False)
+async def api_billing_portal_session(request: Request):
+    """Create a Stripe Customer Portal session and return the URL.
+
+    Wraps ``stripe.billing_portal.Session.create`` in ``asyncio.to_thread``
+    so the synchronous SDK call doesn't block the event loop. The portal
+    handles all subscription self-service (cancel, change plan, update
+    card) — narve.ai only owns the redirect and the return.
+    """
+    user = current_user(request)
+    if not user:
+        return JSONResponse({"error": "auth_required"}, status_code=401)
+
+    _billing_rate_limit(user, "portal_session")
+
+    # Look up the user's persisted Stripe customer ID. Set by the
+    # checkout webhook on first successful payment.
+    customer_id: Optional[str] = None
+    try:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT stripe_customer_id FROM users WHERE id = ?",
+                (user["user_id"],),
+            ).fetchone()
+            if row is not None:
+                # Tolerate the column not existing on partially-migrated DBs.
+                try:
+                    customer_id = row["stripe_customer_id"]
+                except (IndexError, KeyError):
+                    customer_id = None
+    except Exception as exc:  # noqa: BLE001
+        log.exception("portal-session: user lookup failed: %s", exc)
+        return JSONResponse({"error": "billing_unavailable"}, status_code=503)
+
+    if not customer_id:
+        return JSONResponse(
+            {"error": "no_active_subscription"}, status_code=400,
+        )
+
+    # Live-mode gate — surface a friendly 503 instead of a 500 when keys
+    # aren't configured (CI, local dev, the test-mode subdomain). The
+    # actual ``stripe.api_key`` is read from STRIPE_SECRET_KEY; the
+    # STRIPE_LIVE_MODE flag is consulted purely so the user-facing
+    # error message matches what they'd see in the rest of the
+    # gateway when billing is intentionally disabled.
+    api_key = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+    if not api_key:
+        log.warning(
+            "portal-session: STRIPE_SECRET_KEY missing — user=%s",
+            user.get("username", user["email"]),
+        )
+        return JSONResponse({"error": "billing_unavailable"}, status_code=503)
+
+    try:
+        import stripe  # type: ignore[import]
+    except Exception as exc:  # noqa: BLE001
+        log.exception("portal-session: stripe SDK import failed: %s", exc)
+        return JSONResponse({"error": "billing_unavailable"}, status_code=503)
+
+    stripe.api_key = api_key
+
+    try:
+        session = await asyncio.to_thread(
+            stripe.billing_portal.Session.create,
+            customer=customer_id,
+            return_url="https://narve.ai/settings/billing",
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception(
+            "portal-session: stripe portal create failed for user=%s: %s",
+            user.get("username", user["email"]),
+            exc,
+        )
+        return JSONResponse({"error": "billing_unavailable"}, status_code=503)
+
+    url = getattr(session, "url", None) or (
+        session.get("url") if isinstance(session, dict) else None
+    )
+    if not url:
+        log.error(
+            "portal-session: Stripe returned no url field — user=%s",
+            user.get("username", user["email"]),
+        )
+        return JSONResponse({"error": "billing_unavailable"}, status_code=503)
+
+    log.info(
+        "portal-session: created for user=%s",
+        user.get("username", user["email"]),
+    )
+    # Deliberately do NOT echo customer_id — only the portal URL.
+    return JSONResponse({"url": url})

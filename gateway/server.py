@@ -3362,8 +3362,22 @@ async def seo_sitemap_xml(request: Request):
                 f"<lastmod>{today}</lastmod>"
                 f"<changefreq>weekly</changefreq>"
                 f"<priority>1.0</priority></url>",
-                "</urlset>",
             ]
+            # Per-subproduct extra public pages — pulled from the
+            # `sitemap_pages` field on SUBPRODUCTS[sub] so each sub-brand
+            # owns its own crawl surface. Field is a list of
+            # (path, changefreq, priority) tuples; an absent or empty list
+            # leaves the sitemap as just the subdomain root. Anything added
+            # here MUST resolve to a 200 on this subdomain — gated or
+            # proxy-only paths will create soft-404s in Search Console.
+            for path, freq, priority in _SP[sub].get("sitemap_pages", ()):
+                parts.append(
+                    f"<url><loc>{base}{path}</loc>"
+                    f"<lastmod>{today}</lastmod>"
+                    f"<changefreq>{freq}</changefreq>"
+                    f"<priority>{priority}</priority></url>"
+                )
+            parts.append("</urlset>")
             return Response("".join(parts), media_type="application/xml; charset=utf-8")
 
     apex = _request_apex(request) or DOMAIN
