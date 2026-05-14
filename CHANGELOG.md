@@ -192,6 +192,46 @@ deploy commits on `feature/platform-build`.
   to `176` and `181_api_keys_origins` renumbered to `180` so the
   chain resolves cleanly after migration `179`.
 
+### Added (evening)
+
+- `/admin/users` — paginated user management with filters + bulk
+  actions + GDPR export.
+- `/admin/cost-alerts` — Anthropic AI spend monitoring +
+  kill-switch toggle.
+- `/admin/newsletter` — compose + schedule blasts (if built today).
+- `/admin/test-emails` — preview + send test of any email template
+  (if built today).
+- `/admin/subproducts` — 13-tier MRR rollup + 90-day sparklines.
+- `/admin/audit-log` polish — filters + suspicious-pattern flags +
+  CSV export.
+- `/admin/jobs` background queue dashboard.
+- Sentry recent-errors widget on admin pages.
+- Stripe customer portal integration (if built).
+- Per-subproduct feature flag dimension (if built).
+
+### Changed (evening — design fixes)
+
+- Hoisted Instrument Serif + Source Serif 4 to `_PWA_HEAD` —
+  webfonts now load on every page (was 4/14).
+- Legal pages (`/terms`, `/privacy`, `/dpa`) prose capped at 72ch.
+- `error_page.css` legacy `prefers-color-scheme` block removed.
+- `admin-shell.css` monochrome (no green/red hex fallbacks).
+- `:focus-visible` site-wide audit + fixes.
+- Source profile + subproduct landing: dropped hardcoded
+  max-widths.
+- Inline critical CSS in `_PWA_HEAD` for faster first-paint (if
+  shipped).
+
+### Fixed (evening)
+
+- `/admin` root `NameError: subs` in `_build_revenue_content`.
+- A11y: `/admin/feedback` unlabelled select, `/saved` invalid `ul`
+  child, `/privacy` table `tabindex`.
+- Mobile: 4 admin table overflow fixes.
+- Migration 179 collision (already fixed earlier, verified).
+- `text-tertiary` AA contrast (`#858585` → `#6e6e6e`) fixing 30+
+  violations across 14 pages.
+
 ## [Unreleased]
 
 Work in flight on `feature/platform-build` that hasn't been tagged.
