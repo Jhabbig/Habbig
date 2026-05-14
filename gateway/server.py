@@ -4641,10 +4641,22 @@ def _denied_response(request: Request) -> Response:
     return resp
 
 
-def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict:
-    """Build the template context for the admin page."""
-    tokens = db.list_invite_tokens()
-    users = db.list_all_users()
+def _build_admin_context(
+    new_token_str: str = "",
+    caller_level: int = 1,
+    tokens_before: int | None = None,
+    users_before: int | None = None,
+) -> dict:
+    """Build the template context for the admin page.
+
+    Perf audit #5: ``tokens_before`` / ``users_before`` are cursor
+    parameters wired into ``list_invite_tokens`` / ``list_all_users``.
+    ``None`` renders page 1; a numeric value fetches the page whose
+    ids are strictly less than the cursor (newest-first). The
+    'Load more' anchors below each list set these via query string.
+    """
+    tokens = db.list_invite_tokens(before_id=tokens_before)
+    users = db.list_all_users(before_id=users_before)
 
     # Token rows HTML
     token_rows = []
@@ -4870,6 +4882,26 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1) -> dict
         revenue_tab = ""
         revenue_content = '<div style="text-align:center;padding:48px 0;color:var(--text-muted)">Super admin access required.</div>'
 
+    # Perf audit #5: cursor-pagination 'Load more' anchors. Only emit
+    # when the current page was filled (default size 50 tokens / 100
+    # users); a partial page means there's nothing further. PK ids are
+    # ints from AUTOINCREMENT — cast to int defensively so the query
+    # string is strictly numeric (XSS-safe by construction).
+    if tokens and len(tokens) >= 50:
+        last_token_id = int(tokens[-1]["id"])
+        token_rows.append(
+            f'<div class="admin-row" style="justify-content:center">'
+            f'<a href="/admin?tokens_before={last_token_id}#panel-tokens" '
+            f'class="btn btn-primary-outline" style="font-size:12px">Load more tokens</a></div>'
+        )
+    if users and len(users) >= 100:
+        last_user_id = int(users[-1]["id"])
+        user_rows.append(
+            f'<div class="admin-row" style="justify-content:center">'
+            f'<a href="/admin?users_before={last_user_id}#panel-users" '
+            f'class="btn btn-primary-outline" style="font-size:12px">Load more users</a></div>'
+        )
+
     # XSS invariant (AUDIT #5 MED #4): every `raw_*` key here is built
     # server-side from either (a) a whitelist of static strings or
     # (b) the output of a helper that html.escape's its inputs before
@@ -4923,23 +4955,23 @@ def _build_enquiry_rows() -> str:
 def _build_revenue_content() -> str:
     import datetime as _dt
     stats = db.get_revenue_stats()
-    subs = db.list_all_subscriptions()
-    now = int(time.time())
 
-    # Calculate MRR and ARR from active subscriptions using config prices
+    # Perf audit #5: MRR is computed from the SQL-aggregated
+    # per_dashboard×plan counts in `stats` rather than iterating every
+    # row of `list_all_subscriptions()` (which is now paginated and
+    # would under-report MRR once active_subs > page_size). Same math
+    # (config price × active count per plan), O(active_dashboards)
+    # instead of O(subs).
     mrr_cents = 0
-    for s in subs:
-        if s["status"] != "active":
-            continue
-        if s["expires_at"] and s["expires_at"] <= now:
-            continue
-        cfg = DASHBOARDS.get(s["dashboard_key"])
+    for row in stats["per_dashboard"]:
+        cfg = DASHBOARDS.get(row["dashboard_key"])
         if not cfg:
             continue
-        if s["plan"] == "monthly":
-            mrr_cents += cfg["monthly_cents"]
-        elif s["plan"] == "annual":
-            mrr_cents += cfg["annual_cents"] // 12
+        cnt = int(row["cnt"] or 0)
+        if row["plan"] == "monthly":
+            mrr_cents += cfg["monthly_cents"] * cnt
+        elif row["plan"] == "annual":
+            mrr_cents += (cfg["annual_cents"] // 12) * cnt
 
     mrr = mrr_cents / 100
     arr = mrr * 12
@@ -5044,13 +5076,24 @@ def _build_revenue_content() -> str:
 
 
 @app.get("/admin", response_class=HTMLResponse)
-async def admin_page(request: Request):
+async def admin_page(
+    request: Request,
+    tokens_before: int | None = None,
+    users_before: int | None = None,
+):
     user = _require_admin_user(request, page=True)
     if user is None:
         return _denied_response(request)
     if isinstance(user, Response):
         return user  # 2FA setup or verification redirect
-    ctx = _build_admin_context(caller_level=user.get("admin_level", 1))
+    # Perf audit #5: pass cursor params through; FastAPI's int parser
+    # rejects non-numeric values with a 422 before they hit the DB, so
+    # the query layer always sees ints or None.
+    ctx = _build_admin_context(
+        caller_level=user.get("admin_level", 1),
+        tokens_before=tokens_before,
+        users_before=users_before,
+    )
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"), **ctx)
 
 
@@ -6445,6 +6488,190 @@ async def settings_integrations_page(request: Request):
         _is_admin=user.get("is_admin"),
         raw_sidebar=_sidebar,
     )
+
+
+
+@app.get("/settings/trading-addon", response_class=HTMLResponse)
+async def settings_trading_addon_page(request: Request):
+    """Dedicated settings surface for the Trading Add-on."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/settings/trading-addon")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/token", status_code=302)
+
+    _username = user.get("username", user["email"])
+    _admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    _nav_role = _role_badge(user)
+    _sidebar = render_sidebar(
+        request,
+        active="settings",
+        username=_username,
+        raw_admin_link=_admin_link,
+        raw_nav_role=_nav_role,
+    )
+    return render_page(
+        "settings_trading_addon",
+        request=request,
+        email=user["email"],
+        username=_username,
+        raw_admin_link=_admin_link,
+        raw_nav_role=_nav_role,
+        _is_admin=user.get("is_admin"),
+        raw_sidebar=_sidebar,
+    )
+
+
+@app.get("/api/trading-addon/config")
+async def api_trading_addon_config_get(request: Request):
+    """Return the user's add-on subscription status + saved settings."""
+    user = current_user(request)
+    if not user:
+        return JSONResponse({"error": "Authentication required"}, status_code=401)
+    user_id = user["user_id"]
+    is_admin = bool(user.get("is_admin"))
+    status = db.get_trading_addon_status(user_id)
+    active = bool(status.get("active")) or is_admin
+    return JSONResponse({
+        "active": active,
+        "period_end": status.get("period_end"),
+        "config": db.get_trading_addon_settings(user_id),
+    })
+
+
+@app.patch("/api/trading-addon/config")
+async def api_trading_addon_config_patch(request: Request):
+    """Upsert the user's trading-addon config; validates bounds."""
+    user = current_user(request)
+    if not user:
+        return JSONResponse({"error": "Authentication required"}, status_code=401)
+    user_id = user["user_id"]
+    is_admin = bool(user.get("is_admin"))
+    if not (is_admin or db.has_trading_addon(user_id)):
+        return JSONResponse(
+            {"error": "Trading add-on required to save these settings."},
+            status_code=403,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    payload = {}
+
+    if "kelly_fraction" in body:
+        try:
+            kf = float(body["kelly_fraction"])
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Invalid kelly_fraction"}, status_code=400)
+        if not any(abs(kf - v) < 1e-6 for v in (1.0, 0.5, 0.25)):
+            return JSONResponse(
+                {"error": "kelly_fraction must be 1.0, 0.5, or 0.25"},
+                status_code=400,
+            )
+        payload["kelly_fraction"] = kf
+
+    if "max_cap_pct" in body:
+        try:
+            mc = int(body["max_cap_pct"])
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Invalid max_cap_pct"}, status_code=400)
+        if not (1 <= mc <= 25):
+            return JSONResponse(
+                {"error": "max_cap_pct must be between 1 and 25"},
+                status_code=400,
+            )
+        payload["max_cap_pct"] = mc
+
+    if "auto_execute" in body:
+        payload["auto_execute"] = bool(body["auto_execute"])
+
+    if "auto_execute_min_ev" in body:
+        raw = body["auto_execute_min_ev"]
+        if raw is None:
+            payload["auto_execute_min_ev"] = None
+        else:
+            try:
+                ev = float(raw)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"error": "Invalid auto_execute_min_ev"}, status_code=400,
+                )
+            if not (1 <= ev <= 50):
+                return JSONResponse(
+                    {"error": "auto_execute_min_ev must be between 1 and 50"},
+                    status_code=400,
+                )
+            payload["auto_execute_min_ev"] = ev
+
+    if "daily_cap" in body:
+        raw = body["daily_cap"]
+        if raw is None:
+            payload["daily_cap"] = None
+        else:
+            try:
+                dc = float(raw)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "Invalid daily_cap"}, status_code=400)
+            if dc < 0 or dc > 1_000_000_000:
+                return JSONResponse(
+                    {"error": "daily_cap must be 0 or a positive number"},
+                    status_code=400,
+                )
+            payload["daily_cap"] = dc
+
+    if "daily_cap_currency" in body:
+        cur = str(body["daily_cap_currency"] or "").upper().strip()
+        if cur not in ("USD", "GBP"):
+            return JSONResponse(
+                {"error": "daily_cap_currency must be USD or GBP"},
+                status_code=400,
+            )
+        payload["daily_cap_currency"] = cur
+
+    if "max_position_size" in body:
+        raw = body["max_position_size"]
+        if raw is None:
+            payload["max_position_size"] = None
+        else:
+            try:
+                ps = float(raw)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"error": "Invalid max_position_size"}, status_code=400,
+                )
+            if ps < 0 or ps > 1_000_000_000:
+                return JSONResponse(
+                    {"error": "max_position_size must be 0 or a positive number"},
+                    status_code=400,
+                )
+            payload["max_position_size"] = ps
+
+    if "cooldown_minutes" in body:
+        raw = body["cooldown_minutes"]
+        if raw is None:
+            payload["cooldown_minutes"] = None
+        else:
+            try:
+                cd = int(raw)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"error": "Invalid cooldown_minutes"}, status_code=400,
+                )
+            if not (0 <= cd <= 1440):
+                return JSONResponse(
+                    {"error": "cooldown_minutes must be between 0 and 1440"},
+                    status_code=400,
+                )
+            payload["cooldown_minutes"] = cd
+
+    updated = db.upsert_trading_addon_settings(user_id, **payload)
+    return JSONResponse(updated)
+
 
 
 @app.post("/settings")

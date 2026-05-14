@@ -1,0 +1,214 @@
+<!-- /admin/health-monitor — single-pane status for all 13 narve.ai services.
+     Wrapped by admin_shell. Body-only fragment; vanilla JS polls every 10s. -->
+<div class="health-monitor" style="max-width:1200px">
+
+  <div class="settings-section" style="margin-bottom:20px">
+    <div class="settings-section-title">Service health</div>
+    <div class="settings-section-desc">
+      HEAD <code>/health</code> on every backend port. Polls every 10s. UP = 2xx &lt;500ms,
+      SLOW = 2xx &ge;500ms, DOWN = timeout / refused / 5xx. Cached 5s server-side.
+    </div>
+  </div>
+
+  <div id="hm-summary" class="health-summary"
+       style="display:flex;gap:24px;margin-bottom:20px;padding:14px 18px;
+              background:var(--bg-inset);border:1px solid var(--border-subtle);
+              border-radius:8px;font-size:13px;">
+    <span><strong id="hm-summary-up">&mdash;</strong> UP</span>
+    <span><strong id="hm-summary-slow">&mdash;</strong> SLOW</span>
+    <span><strong id="hm-summary-down">&mdash;</strong> DOWN</span>
+    <span style="margin-left:auto;color:var(--text-tertiary);font-size:12px">
+      Last refresh: <span id="hm-last-refresh">never</span>
+    </span>
+  </div>
+
+  <div id="hm-grid" class="health-grid"
+       style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">
+    <div class="hm-empty" style="grid-column:1/-1;padding:32px;text-align:center;color:var(--text-tertiary)">
+      Loading service health&hellip;
+    </div>
+  </div>
+
+</div>
+
+<style>
+  .hm-tile {
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: var(--bg-card, var(--bg-inset));
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 120px;
+  }
+  .hm-tile-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .hm-tile-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+  .hm-tile-port {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+  .hm-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border-default);
+  }
+  .hm-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .hm-status-up    { color: var(--green, #15803d); border-color: currentColor; }
+  .hm-status-slow  { color: var(--amber, #b45309); border-color: currentColor; }
+  .hm-status-down  { color: var(--red, #dc2626); border-color: currentColor; }
+  .hm-status-unknown { color: var(--text-tertiary); border-color: currentColor; }
+
+  .hm-tile[data-status="down"] {
+    background: rgba(220, 38, 38, 0.04);
+    border-color: rgba(220, 38, 38, 0.3);
+  }
+  .hm-tile[data-status="slow"] {
+    background: rgba(180, 83, 9, 0.04);
+    border-color: rgba(180, 83, 9, 0.25);
+  }
+
+  .hm-meta {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 10px;
+    row-gap: 2px;
+    margin-top: 4px;
+  }
+  .hm-meta dt { font-weight: 500; }
+  .hm-meta dd { margin: 0; font-family: var(--font-mono, ui-monospace, monospace); color: var(--text-primary); }
+  .hm-actions {
+    margin-top: auto;
+    padding-top: 8px;
+  }
+  .hm-actions a {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-decoration: underline;
+  }
+</style>
+
+<script>
+(function(){
+  function statusLabel(s){
+    if (s === 'up') return 'UP';
+    if (s === 'slow') return 'SLOW';
+    if (s === 'down') return 'DOWN';
+    return '—';
+  }
+  function statusClass(s){
+    if (s === 'up') return 'hm-status-up';
+    if (s === 'slow') return 'hm-status-slow';
+    if (s === 'down') return 'hm-status-down';
+    return 'hm-status-unknown';
+  }
+  function escape(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
+  function fmtTs(t){
+    if (!t) return '—';
+    var d = new Date(t * 1000);
+    var delta = (Date.now() - d.getTime()) / 1000;
+    if (delta < 60) return Math.round(delta) + 's ago';
+    if (delta < 3600) return Math.round(delta/60) + 'm ago';
+    return d.toLocaleTimeString();
+  }
+  function fmtLatency(ms){
+    if (ms == null) return '—';
+    return ms + 'ms';
+  }
+  function fmtUptime(p){
+    if (p == null) return '—';
+    return p.toFixed(1) + '%';
+  }
+
+  function render(data){
+    var grid = document.getElementById('hm-grid');
+    var services = (data && data.services) || [];
+    var up=0, slow=0, down=0;
+    services.forEach(function(s){
+      if (s.status === 'up') up++;
+      else if (s.status === 'slow') slow++;
+      else if (s.status === 'down') down++;
+    });
+    document.getElementById('hm-summary-up').textContent = up;
+    document.getElementById('hm-summary-slow').textContent = slow;
+    document.getElementById('hm-summary-down').textContent = down;
+    document.getElementById('hm-last-refresh').textContent = new Date().toLocaleTimeString();
+
+    if (services.length === 0) {
+      grid.innerHTML = '<div class="hm-empty" style="grid-column:1/-1;padding:32px;text-align:center;color:var(--text-tertiary)">No services reported.</div>';
+      return;
+    }
+
+    var html = services.map(function(s){
+      var cls = statusClass(s.status);
+      var label = statusLabel(s.status);
+      return ''
+        + '<div class="hm-tile" data-status="' + escape(s.status || 'unknown') + '">'
+        +   '<div class="hm-tile-head">'
+        +     '<div>'
+        +       '<div class="hm-tile-name">' + escape(s.name) + '</div>'
+        +       '<div class="hm-tile-port">:' + escape(s.port) + '</div>'
+        +     '</div>'
+        +     '<span class="hm-status ' + cls + '" aria-label="status: ' + escape(label) + '">'
+        +       '<span class="hm-status-dot" aria-hidden="true"></span>'
+        +       escape(label)
+        +     '</span>'
+        +   '</div>'
+        +   '<dl class="hm-meta">'
+        +     '<dt>Latency</dt><dd>' + escape(fmtLatency(s.latency_ms)) + '</dd>'
+        +     '<dt>Uptime 24h</dt><dd>' + escape(fmtUptime(s.uptime_24h)) + '</dd>'
+        +     '<dt>Checked</dt><dd>' + escape(fmtTs(s.last_check)) + '</dd>'
+        +   '</dl>'
+        +   '<div class="hm-actions">'
+        +     '<a href="/admin/logs?service=' + encodeURIComponent(s.slug || s.name) + '">View logs</a>'
+        +   '</div>'
+        + '</div>';
+    }).join('');
+    grid.innerHTML = html;
+  }
+
+  function load(){
+    return fetch('/api/admin/health-monitor', {credentials:'same-origin'})
+      .then(function(r){
+        if (!r.ok) throw new Error('status ' + r.status);
+        return r.json();
+      })
+      .then(render)
+      .catch(function(err){
+        var grid = document.getElementById('hm-grid');
+        grid.innerHTML = '<div class="hm-empty" style="grid-column:1/-1;padding:32px;text-align:center;color:var(--red,#dc2626)">Failed to load: ' + escape(err.message) + '</div>';
+      });
+  }
+
+  load();
+  setInterval(load, 10000);
+})();
+</script>
