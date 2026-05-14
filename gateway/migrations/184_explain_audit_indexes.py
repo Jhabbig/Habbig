@@ -1,7 +1,7 @@
-"""Indexes for query patterns surfaced by a fresh EXPLAIN audit (2026-05-14).
+"""Indexes for query patterns surfaced by EXPLAIN audit (2026-05-14).
 
 Audit method: built a clean SQLite at /tmp/narve_audit.db, ran every
-migration to head (currently 102 applied), then drove the ~30 hottest
+migration to head (102 applied), then drove the ~30 hottest
 queries through ``EXPLAIN QUERY PLAN`` with realistic parameters. The
 five indexes below remove a ``SCAN <table>`` or ``USE TEMP B-TREE FOR
 ORDER BY`` step from a measured-frequent query:

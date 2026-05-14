@@ -8082,6 +8082,21 @@ except Exception as _exc:  # pragma: no cover
     log.warning("admin_cost_alerts_routes import failed: %s — continuing without it", _exc)
 
 
+# Admin email-template test harness (/admin/test-emails + /admin/test-emails/*).
+# Preview + send-to-self for every template in email_system/templates/, so we
+# can verify a render before pulling the trigger on a live cohort. Same reload-
+# safe side-effect pattern as admin_cost_alerts_routes above — must sit before
+# the catch-all so /admin/test-emails isn't swallowed as a 404.
+try:
+    import admin_test_emails_routes  # noqa: F401,E402
+    import sys as _ate_sys
+    if "admin_test_emails_routes" in _ate_sys.modules:
+        import importlib as _ate_importlib
+        _ate_importlib.reload(_ate_sys.modules["admin_test_emails_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("admin_test_emails_routes import failed: %s — continuing without it", _exc)
+
+
 # Billing UI — /settings/billing + /api/v1/billing/*. Same reload-safe pattern
 # as status_routes/embed_routes above; billing_routes registers its endpoints
 # on server.app via @app.get/@app.post decorators as a side effect of import.
