@@ -900,6 +900,8 @@ from queries.markets import (  # noqa: F401,E402
     get_trading_addon_status,
     set_trading_addon,
     has_trading_addon,
+    get_trading_addon_settings,
+    upsert_trading_addon_settings,
     get_market_categorisation,
     upsert_market_categorisation,
     list_uncategorised_market_ids,
