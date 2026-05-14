@@ -1,0 +1,222 @@
+/* ─────────────────────────────────────────────────────────────────────
+ * Settings redesign — shared rules across /settings/*
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Loaded AFTER gateway.css, components.css, and any per-page
+ * settings_*.css so it gets last-rule wins on shared selectors
+ * (.settings-card, .content-area, etc.). Scope is intentionally
+ * limited to the settings shell — every rule below lives under one of
+ * these roots:
+ *
+ *   body.settings-page  (preferred)
+ *   .content-area .settings-card
+ *
+ * `.settings-page` is a body class added per-template. Pages that
+ * don't carry it (legacy or third-party shells) just inherit the
+ * global look — this stylesheet has no effect.
+ *
+ * Changes vs. the global card style:
+ *   - Cards span the full content viewport — no 720/760/800/900 cap.
+ *   - Outer page container gains generous padding:
+ *       var(--space-8) var(--space-6)  (64px / 32px).
+ *   - Each card gets var(--space-6) interior padding (32px).
+ *   - Body prose uses --font-body (Source Serif 4, Georgia fallback).
+ *   - Card titles + section headings: Inter (--font-ui), chrome-style.
+ *   - Hero page-title: Instrument Serif Italic (--font-display).
+ *   - Buttons, form controls, badges, breadcrumb, sidebar: still Inter.
+ *   - Inputs/selects/textarea: min-height 44px for mobile tap-targets,
+ *     16px font-size to defeat iOS focus-zoom.
+ *   - Light + dark themes both render correctly (relies on tokens, not
+ *     hex values).
+ *
+ * No max-width cap is added here — the legacy inline `style="max-width
+ * :760px"` wrappers + per-page CSS .sp-card / .si-card / .offline-wrap
+ * caps are neutralised below so the cards fill the page-frame edge to
+ * edge.
+ */
+
+/* ── Outer page container — generous padding ───────────────────────── */
+body.settings-page .content-area,
+body.settings-page .main-content {
+  padding: var(--space-8) var(--space-6);
+  gap: var(--space-5);
+}
+
+/* Some settings pages (offline) skip .content-area + .app-shell entirely
+   and live inside .offline-wrap directly. Apply the same generous
+   gutter so the look stays consistent. */
+body.settings-page .offline-wrap {
+  max-width: none;
+  padding: var(--space-8) var(--space-6);
+  margin: 0;
+}
+
+/* Legacy inline wrappers — `<div style="max-width:760px">` and friends
+   inside .content-area / .main-content. We can't strip the inline
+   style from a template without touching every HTML file, but we CAN
+   zero its effect: pages that opt into .settings-page get the cap
+   removed in CSS too. */
+body.settings-page .content-area > div[style*="max-width"],
+body.settings-page .main-content > div[style*="max-width"] {
+  max-width: none !important;
+  width: 100%;
+}
+
+/* ── Full-width cards ──────────────────────────────────────────────── */
+body.settings-page .settings-card,
+body.settings-page .sp-card,
+body.settings-page .si-card,
+body.settings-page .si-card-stack,
+body.settings-page .sb-section,
+body.settings-page .ta-card,
+body.settings-page .emb-card {
+  max-width: none;
+  width: 100%;
+}
+
+body.settings-page .settings-card {
+  padding: var(--space-6);
+  margin-bottom: var(--space-5);
+}
+
+/* Settings_billing uses `.sb-section`, integrations `.si-card`, embeds
+   `.emb-card`, trading-addon `.ta-card`, profile `.sp-card`. Treat
+   them like a card — same interior padding + bottom-margin. */
+body.settings-page .sb-section,
+body.settings-page .si-card,
+body.settings-page .sp-card,
+body.settings-page .ta-card,
+body.settings-page .emb-card {
+  padding: var(--space-6);
+  margin-bottom: var(--space-5);
+}
+
+/* ── Editorial body prose ──────────────────────────────────────────── */
+body.settings-page,
+body.settings-page .page-subtitle,
+body.settings-page .settings-card,
+body.settings-page .settings-section,
+body.settings-page .settings-section-desc,
+body.settings-page .sp-card,
+body.settings-page .sp-card-desc,
+body.settings-page .si-card,
+body.settings-page .si-card-desc,
+body.settings-page .sb-section,
+body.settings-page .sb-section-desc,
+body.settings-page .ta-card,
+body.settings-page .ta-card-desc,
+body.settings-page .emb-card,
+body.settings-page .emb-card-desc,
+body.settings-page .offline-lede,
+body.settings-page .offline-row-label,
+body.settings-page .offline-row-hint,
+body.settings-page p,
+body.settings-page li {
+  font-family: var(--font-body);
+}
+
+/* ── Hero page title: Instrument Serif Italic ──────────────────────── */
+body.settings-page .page-title,
+body.settings-page .offline-title {
+  font-family: var(--font-display);
+  letter-spacing: -0.005em;
+}
+
+/* ── Card / section titles: Inter (chrome) ─────────────────────────── */
+body.settings-page .settings-section-title,
+body.settings-page .sp-card-title,
+body.settings-page .si-card-title,
+body.settings-page .sb-section-title,
+body.settings-page .ta-card-title,
+body.settings-page .emb-card-title,
+body.settings-page .offline-section-title,
+body.settings-page .emb-modal-title,
+body.settings-page .sb-modal-title {
+  font-family: var(--font-ui);
+}
+
+body.settings-page .page-subtitle {
+  max-width: none;
+}
+
+/* ── Inter retained on chrome ──────────────────────────────────────── */
+body.settings-page .breadcrumb,
+body.settings-page .breadcrumb-item,
+body.settings-page .sidebar,
+body.settings-page .status-bar,
+body.settings-page .btn,
+body.settings-page button,
+body.settings-page input,
+body.settings-page select,
+body.settings-page textarea,
+body.settings-page .field-label,
+body.settings-page .field-helper,
+body.settings-page .si-pill,
+body.settings-page .emb-badge,
+body.settings-page .sb-plan-badge,
+body.settings-page .sb-btn,
+body.settings-page .offline-btn,
+body.settings-page .offline-toggle,
+body.settings-page .offline-eyebrow,
+body.settings-page .ta-field-label,
+body.settings-page .ta-field-suffix,
+body.settings-page .ta-segmented button {
+  font-family: var(--font-ui);
+}
+
+/* Tabular numerics + identifiers: monospace. */
+body.settings-page code,
+body.settings-page .sp-handle-prefix,
+body.settings-page .si-identifier,
+body.settings-page .emb-row-sub,
+body.settings-page .emb-code,
+body.settings-page .sb-plan-price,
+body.settings-page .sb-payment-text,
+body.settings-page .sb-card-price,
+body.settings-page .sb-history-table .col-amount {
+  font-family: var(--font-mono);
+}
+
+/* ── Mobile-safe form controls ─────────────────────────────────────── */
+body.settings-page input[type="text"],
+body.settings-page input[type="email"],
+body.settings-page input[type="url"],
+body.settings-page input[type="number"],
+body.settings-page input[type="password"],
+body.settings-page input[type="search"],
+body.settings-page select,
+body.settings-page textarea,
+body.settings-page .settings-select {
+  min-height: 44px;
+  /* defeat iOS auto-zoom on focus — see narve-design rule */
+  font-size: 16px;
+}
+
+/* textarea grows from its own min-height; keep the floor at 44 but let
+   the rendered height exceed it so multi-line input still has room. */
+body.settings-page textarea {
+  min-height: 88px;
+}
+
+/* Buttons stay buttons — DON'T promote them to 44px-tall hero blobs.
+   The base .btn already has comfortable hit areas via padding. */
+
+/* ── Mobile gutter: tighten below 600px ────────────────────────────── */
+@media (max-width: 600px) {
+  body.settings-page .content-area,
+  body.settings-page .main-content,
+  body.settings-page .offline-wrap {
+    padding: var(--space-6) var(--space-5);
+  }
+
+  body.settings-page .settings-card,
+  body.settings-page .sp-card,
+  body.settings-page .si-card,
+  body.settings-page .sb-section,
+  body.settings-page .ta-card,
+  body.settings-page .emb-card {
+    padding: var(--space-5);
+  }
+}
+
+/* ── Dark theme: nothing extra — tokens carry the colour. ──────────── */
