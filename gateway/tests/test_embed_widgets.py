@@ -74,8 +74,14 @@ _user_counter = {"n": 0}
 
 
 def _unique_email(prefix: str = "user") -> str:
+    # Include the process pid + a millisecond timestamp so the email +
+    # derived username are unique even when this module shares an
+    # in-memory DB with other test modules that already inserted users
+    # named user1, user2, etc.
+    import os
+    import time
     _user_counter["n"] += 1
-    return f"{prefix}{_user_counter['n']}@embed-test.example"
+    return f"{prefix}{_user_counter['n']}_{os.getpid()}_{int(time.time()*1000)}@embed-test.example"
 
 
 def _err_text(resp) -> str:

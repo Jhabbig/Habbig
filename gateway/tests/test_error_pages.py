@@ -124,7 +124,10 @@ class Test403Page(unittest.TestCase):
         # Render the standalone 403 template directly (the admin-deny
         # path) — this is the file the audit flagged.
         from pathlib import Path
-        text = Path("static/403.html").read_text()
+        # Anchored on this file's location so it works regardless of
+        # cwd (pytest invokes from repo root, but other tooling may not).
+        path = Path(__file__).resolve().parent.parent / "static" / "403.html"
+        text = path.read_text()
         self.assertFalse(
             bool(_EMOJI_RE.search(text)),
             "static/403.html contains emoji codepoints"
