@@ -187,6 +187,7 @@ class TestSubproductFiltering(unittest.TestCase):
             "week_start": "Apr 1", "week_end": "Apr 7, 2026",
             "top_predictions": [], "top_sources": [],
             "subproduct_labels": ["Crypto Edge", "Sharpe Sports"],
+            "subproduct_labels_str": "Crypto Edge, Sharpe Sports",
             "app_url": "https://narve.ai",
             "unsubscribe_url": "https://narve.ai/unsubscribe?token=x",
         })

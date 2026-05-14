@@ -47,6 +47,7 @@ class TestMorningBriefingSubproductFilter(unittest.TestCase):
             "new_signals": [],
             "approaching_resolutions": [],
             "subproduct_labels": ["Crypto Edge"],
+            "subproduct_labels_str": "Crypto Edge",
             "unsubscribe_url": "https://narve.ai/unsubscribe?type=digest",
         })
         self.assertIn("Your briefing for:", html)

@@ -230,8 +230,13 @@ async def send_weekly_digest_batch() -> dict[str, Any]:
             "top_predictions": top_predictions,
             "top_sources": top_sources,
             "subproduct_labels": subproduct_labels,
+            "subproduct_labels_str": ", ".join(subproduct_labels),
             "unsubscribe_url": _unsub_url(u["id"], u["email"], "digest"),
         }
+        # Per-recipient watermark — forensic attribution for Pro intelligence
+        # email leaks. See email_system/watermark.py.
+        from email_system import watermark as _wm
+        _wm.annotate_context(context, u["id"], "weekly_digest", batch_ts=now)
         await enqueue_email(
             to=u["email"],
             template="weekly_digest",
@@ -424,8 +429,13 @@ async def send_morning_briefings() -> dict[str, Any]:
             "new_signals": new_signals,
             "approaching_resolutions": approaching,
             "subproduct_labels": subproduct_labels,
+            "subproduct_labels_str": ", ".join(subproduct_labels),
             "unsubscribe_url": f"{app_url}/unsubscribe?type=digest",
         }
+        # Per-recipient watermark — forensic attribution for Pro intelligence
+        # email leaks. See email_system/watermark.py.
+        from email_system import watermark as _wm
+        _wm.annotate_context(context, user["id"], "morning_briefing", batch_ts=now)
 
         try:
             await enqueue_email(

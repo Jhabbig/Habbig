@@ -1,10 +1,8 @@
 {% block content %}
 <h1 style="margin:0 0 4px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your weekly signal digest<span style="font-size:0;line-height:0;">{{ watermark_zw }}</span></h1>
 <p style="margin:0 0 4px;color:#aaaaaa;font-size:13px;">Week of {{ week_start }} — {{ week_end }}<span style="font-size:0;line-height:0;">{{ watermark_zw }}</span></p>
-{% if subproduct_labels %}
-<p style="margin:0 0 24px;color:#666;font-size:12px;">Your digest for: {{ subproduct_labels|join(', ') }}</p>
-{% else %}
-<p style="margin:0 0 24px;color:#aaaaaa;font-size:12px;">&nbsp;</p>
+{% if subproduct_labels_str %}
+<p style="margin:0 0 24px;color:#666;font-size:12px;">Your digest for: {{ subproduct_labels_str }}</p>
 {% endif %}
 
 <h2 style="margin:24px 0 12px;font-size:14px;font-weight:600;color:#0d0d0d;text-transform:uppercase;letter-spacing:0.05em;">Top signals this week</h2>
