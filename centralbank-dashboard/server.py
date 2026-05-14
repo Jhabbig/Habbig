@@ -11,10 +11,11 @@ banks.yaml file but not always wired). For each bank we serve:
   - the edge between our model probabilities and Polymarket FOMC markets
     (queried via the gateway's Polymarket source).
 
-This MVP intentionally ships with the external fetchers wired but only
-exercised on a background task. The first response on every endpoint
-serves the YAML snapshot, so the page loads even when FRED/ECB/BoE are
-down or rate-limited.
+The external fetchers are wired through a once-per-hour background task. The
+first response on every endpoint serves the YAML snapshot, so the page loads
+even when FRED/ECB/BoE are down or rate-limited. Each bank in /api/rates
+carries a ``_source`` field — ``live``, ``snapshot_yaml``, or ``stale`` —
+so the frontend can show data provenance.
 
 Stateless: no database, no migrations. Hot data lives in an in-memory
 cache; cold data lives in data/*.yaml.
@@ -44,6 +45,45 @@ from fastapi.staticfiles import StaticFiles
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("centralbank")
 
+
+# ── BetterStack / Logtail ─────────────────────────────────────────────────────
+# Ships structured logs to the central BetterStack source for the "centralbank"
+# subproduct. Falls back to the apex LOGTAIL_TOKEN if the per-service variable
+# is unset. If neither is set we silently skip — stdout/stderr handlers stay
+# attached so logs are never lost.
+class _ServiceTagFilter(logging.Filter):
+    """Stamps every record with service=<name> so BetterStack can route/group."""
+
+    def __init__(self, service_name: str) -> None:
+        super().__init__()
+        self._service = service_name
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+        if not hasattr(record, "service"):
+            record.service = self._service
+        return True
+
+
+_logtail_token = os.getenv("LOGTAIL_TOKEN_CENTRALBANK", os.getenv("LOGTAIL_TOKEN", "")).strip()
+# Always tag local records with the service name so downstream aggregators
+# (docker logs -> vector -> wherever) can group correctly even without Logtail.
+logging.getLogger().addFilter(_ServiceTagFilter("centralbank"))
+if _logtail_token:
+    try:
+        from logtail import LogtailHandler  # type: ignore
+
+        _handler = LogtailHandler(source_token=_logtail_token)
+        _handler.setLevel(logging.INFO)
+        _handler.addFilter(_ServiceTagFilter("centralbank"))
+        logging.getLogger().addHandler(_handler)
+        logger.info("Logtail handler attached", extra={"service": "centralbank"})
+    except ImportError:
+        logger.warning("logtail-python not installed; skipping BetterStack handler",
+                       extra={"service": "centralbank"})
+    except Exception as _exc:  # pragma: no cover — defensive: never crash on log init
+        logger.warning("Logtail init failed: %s", _exc, extra={"service": "centralbank"})
+
+
 PORT = int(os.environ.get("PORT", "7061"))
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
@@ -58,17 +98,28 @@ GATEWAY_POLYMARKET_URL = os.environ.get(
 )
 POLYMARKET_GAMMA_URL = "https://gamma-api.polymarket.com/events"
 
-USER_AGENT = "narve-centralbank-tracker/1.0 (+https://cb.narve.ai)"
+USER_AGENT = "narve.ai centralbank-dashboard"
 HTTP_TIMEOUT = 8.0
+# Per-fetcher timeout. The spec wants each external call to abort fast so a
+# single slow upstream doesn't stall the whole refresh.
+FETCH_TIMEOUT_S = 5.0
 
 # Refresh external rates this often. Hourly is plenty — these series move on
 # committee decisions, not minutes.
 REFRESH_INTERVAL_S = 60 * 60
+# Per-bank fetch status TTLs for the `_source` field on /api/rates.
+LIVE_TTL_S = 60 * 60          # within last hour → "live"
+STALE_TTL_S = 60 * 60 * 24    # over 24h since last successful fetch → "stale"
 
 # ─── Cache ─────────────────────────────────────────────────────────────────────
 
 _cache: dict[str, dict[str, Any]] = {}
 _cache_lock = threading.Lock()
+
+# Per-bank "last successful live fetch" timestamps (epoch seconds). Used to
+# compute the ``_source`` label on /api/rates: live | snapshot_yaml | stale.
+_last_live_fetch: dict[str, float] = {}
+_last_live_lock = threading.Lock()
 
 
 def _cache_get(key: str) -> Optional[Any]:
@@ -86,6 +137,32 @@ def _cache_age(key: str) -> Optional[float]:
     with _cache_lock:
         entry = _cache.get(key)
         return (time.time() - entry["t"]) if entry else None
+
+
+def _mark_live_fetch(bank_id: str) -> None:
+    with _last_live_lock:
+        _last_live_fetch[bank_id] = time.time()
+
+
+def _source_label(bank_id: str) -> str:
+    """Classify each bank's current rate provenance for /api/rates.
+
+    Rules:
+      - ``live``: a successful upstream fetch within LIVE_TTL_S (1h).
+      - ``stale``: a successful fetch happened, but it's older than STALE_TTL_S (24h).
+      - ``snapshot_yaml``: no successful fetch on record, or it's between 1h and
+        24h old with the cache holding the snapshot.
+    """
+    with _last_live_lock:
+        ts = _last_live_fetch.get(bank_id)
+    if ts is None:
+        return "snapshot_yaml"
+    age = time.time() - ts
+    if age <= LIVE_TTL_S:
+        return "live"
+    if age >= STALE_TTL_S:
+        return "stale"
+    return "snapshot_yaml"
 
 
 # ─── YAML loaders ──────────────────────────────────────────────────────────────
@@ -112,42 +189,117 @@ def load_banks_meta() -> dict[str, Any]:
         return {"banks": []}
 
 
-# ─── External fetchers (stubbed for build; live behaviour on deploy) ──────────
+# ─── External fetchers ────────────────────────────────────────────────────────
 #
-# We keep the call sites real (httpx + endpoints + parsing) so that a deploy
-# turns these on by simply having network access. Anywhere we'd hit an external
-# API during build we short-circuit to the snapshot.
+# Each fetcher hits its upstream with a hard 5s timeout, parses the response
+# into a small dict, and on any failure logs + returns None so refresh_rates_once
+# falls back to the YAML snapshot for that bank. Parsing helpers are split out
+# so they can be unit-tested against canned JSON / CSV without touching the
+# network.
+#
+# BoJ has no clean JSON API — we keep it snapshot-only for now.
+# TODO(boj): wire BoJ once they publish a stable JSON feed.
 
 
-async def _fetch_fred_funds_rate(client: httpx.AsyncClient) -> Optional[dict[str, Any]]:
-    """FRED publishes the Fed funds target band as DFEDTARU / DFEDTARL.
+def _parse_fred_observation(payload: dict[str, Any]) -> Optional[float]:
+    """Pull the numeric value out of a FRED `series/observations` JSON
+    response. Returns None on missing / malformed input. Pure function so we
+    can unit-test against a canned payload."""
+    try:
+        obs = payload.get("observations") or []
+        if not obs:
+            return None
+        val = obs[0].get("value")
+        if val in (None, "", "."):  # FRED uses "." for missing
+            return None
+        return float(val)
+    except (AttributeError, ValueError, TypeError):
+        return None
 
+
+def _parse_ecb_jsondata(payload: dict[str, Any]) -> Optional[float]:
+    """Parse the ECB SDW jsondata shape down to the latest observation value.
+
+    The jsondata format nests observations as
+        dataSets[0].series["0:0:0:0:0:0:0"].observations["N"] = [value, ...]
+    We grab the highest observation index in the (sole) series.
+    """
+    try:
+        datasets = payload.get("dataSets") or []
+        if not datasets:
+            return None
+        series_map = (datasets[0] or {}).get("series") or {}
+        if not series_map:
+            return None
+        # There's exactly one series key for this single-series query — but
+        # iterate defensively just in case the API ever returns more.
+        for series in series_map.values():
+            observations = (series or {}).get("observations") or {}
+            if not observations:
+                continue
+            # Keys are stringified ints ("0", "1", ...). Take the latest.
+            latest_idx = max(observations.keys(), key=lambda k: int(k))
+            value = observations[latest_idx][0]
+            if value is None:
+                return None
+            return float(value)
+        return None
+    except (AttributeError, ValueError, TypeError, KeyError, IndexError):
+        return None
+
+
+def _parse_boe_csv(text: str) -> Optional[float]:
+    """Pull the most-recent rate out of the BoE `_iadb-fromshowcolumns.asp`
+    CSV response (DATE,VALUE rows after a one-line header)."""
+    try:
+        rows = [r.strip() for r in text.splitlines() if "," in r]
+        if len(rows) < 2:
+            return None
+        # Skip header, take the last data row, last column (the rate).
+        last = rows[-1].split(",")
+        if len(last) < 2:
+            return None
+        return float(last[-1])
+    except (ValueError, IndexError):
+        return None
+
+
+async def _fetch_fred_rate(client: httpx.AsyncClient) -> Optional[dict[str, Any]]:
+    """Fetch the live Fed funds target band from FRED.
+
+    Series DFEDTARU (upper) + DFEDTARL (lower) → midpoint = rate_pct.
     Requires a FRED API key in $FRED_API_KEY. Without it, return None so the
     caller falls back to the YAML snapshot.
     """
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
+        logger.info("FRED_API_KEY unset — skipping live Fed rate fetch")
         return None
     base = "https://api.stlouisfed.org/fred/series/observations"
-    async def latest(series: str) -> Optional[float]:
-        r = await client.get(base, params={
-            "series_id": series,
-            "api_key": api_key,
-            "file_type": "json",
-            "sort_order": "desc",
-            "limit": 1,
-        })
+
+    async def _latest(series: str) -> Optional[float]:
+        try:
+            r = await client.get(base, params={
+                "series_id": series,
+                "api_key": api_key,
+                "file_type": "json",
+                "sort_order": "desc",
+                "limit": 1,
+            }, timeout=FETCH_TIMEOUT_S)
+        except httpx.HTTPError as e:
+            logger.warning("FRED %s fetch failed: %s", series, e)
+            return None
         if r.status_code != 200:
+            logger.warning("FRED %s returned HTTP %d", series, r.status_code)
             return None
         try:
-            obs = r.json().get("observations", [])
-            if not obs:
-                return None
-            return float(obs[0]["value"])
-        except (ValueError, KeyError):
+            return _parse_fred_observation(r.json())
+        except ValueError as e:
+            logger.warning("FRED %s JSON decode failed: %s", series, e)
             return None
-    upper = await latest("DFEDTARU")
-    lower = await latest("DFEDTARL")
+
+    upper = await _latest("DFEDTARU")
+    lower = await _latest("DFEDTARL")
     if upper is None or lower is None:
         return None
     return {
@@ -158,46 +310,95 @@ async def _fetch_fred_funds_rate(client: httpx.AsyncClient) -> Optional[dict[str
     }
 
 
-async def _fetch_ecb_deposit_rate(client: httpx.AsyncClient) -> Optional[dict[str, Any]]:
-    """ECB Statistical Data Warehouse exposes the deposit facility rate at
-    FM.D.U2.EUR.4F.KR.DFR.LEV — CSV download endpoint.
+# Backwards-compatible alias — older call sites used the long name.
+_fetch_fred_funds_rate = _fetch_fred_rate
+
+
+async def _fetch_ecb_rate(client: httpx.AsyncClient) -> Optional[dict[str, Any]]:
+    """Fetch the live ECB deposit facility rate from the SDW jsondata API.
+
+    Series FM.D.U2.EUR.4F.KR.DFR.LEV — last observation only.
     """
-    url = "https://sdw-wsrest.ecb.europa.eu/service/data/FM/D.U2.EUR.4F.KR.DFR.LEV"
+    url = ("https://sdw-wsrest.ecb.europa.eu/service/data/"
+           "FM/D.U2.EUR.4F.KR.DFR.LEV")
     try:
-        r = await client.get(url, headers={"Accept": "text/csv"})
-        if r.status_code != 200:
-            return None
-        lines = [ln for ln in r.text.splitlines() if ln and not ln.startswith("KEY")]
-        if not lines:
-            return None
-        last = lines[-1].split(",")
-        return {"rate_pct": float(last[-1]), "source": "ECB SDW FM.D.U2.EUR.4F.KR.DFR.LEV"}
-    except (httpx.HTTPError, ValueError, IndexError):
+        r = await client.get(
+            url,
+            params={"lastNObservations": "1", "format": "jsondata"},
+            headers={"Accept": "application/json"},
+            timeout=FETCH_TIMEOUT_S,
+        )
+    except httpx.HTTPError as e:
+        logger.warning("ECB SDW fetch failed: %s", e)
         return None
+    if r.status_code != 200:
+        logger.warning("ECB SDW returned HTTP %d", r.status_code)
+        return None
+    try:
+        payload = r.json()
+    except ValueError as e:
+        logger.warning("ECB SDW JSON decode failed: %s", e)
+        return None
+    rate = _parse_ecb_jsondata(payload)
+    if rate is None:
+        logger.warning("ECB SDW: no observation in payload")
+        return None
+    return {
+        "rate_pct": round(rate, 4),
+        "source": "ECB SDW FM.D.U2.EUR.4F.KR.DFR.LEV",
+    }
 
 
-async def _fetch_boe_bank_rate(client: httpx.AsyncClient) -> Optional[dict[str, Any]]:
-    """BoE database — IUMABEDR is the official Bank Rate series."""
+# Backwards-compatible alias.
+_fetch_ecb_deposit_rate = _fetch_ecb_rate
+
+
+async def _fetch_boe_rate(client: httpx.AsyncClient) -> Optional[dict[str, Any]]:
+    """Fetch the live BoE Bank Rate (IUMABEDR) from the BoE IADB CSV endpoint.
+
+    Returns None on any failure so we fall back to the snapshot.
+    """
     url = "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp"
-    params = {"csv.x": "yes", "Datefrom": "01/Jan/2024", "Dateto": "now",
-              "SeriesCodes": "IUMABEDR", "CSVF": "TN", "UsingCodes": "Y"}
+    # Use a sliding window — the last 2 years is plenty for the most-recent obs
+    # and keeps the response small. Date format is dd/Mon/yyyy.
+    datefrom = (date.today() - timedelta(days=730)).strftime("%d/%b/%Y")
+    params = {
+        "csv.x": "yes",
+        "Datefrom": datefrom,
+        "Dateto": "now",
+        "SeriesCodes": "IUMABEDR",
+        "CSVF": "TN",
+        "UsingCodes": "Y",
+        "Filter": "N",
+        "FD": "1",
+    }
     try:
-        r = await client.get(url, params=params)
-        if r.status_code != 200:
-            return None
-        rows = [row for row in r.text.splitlines() if "," in row][1:]
-        if not rows:
-            return None
-        last = rows[-1].split(",")
-        return {"rate_pct": float(last[-1]), "source": "BoE IUMABEDR"}
-    except (httpx.HTTPError, ValueError, IndexError):
+        r = await client.get(url, params=params, timeout=FETCH_TIMEOUT_S)
+    except httpx.HTTPError as e:
+        logger.warning("BoE fetch failed: %s", e)
         return None
+    if r.status_code != 200:
+        logger.warning("BoE returned HTTP %d", r.status_code)
+        return None
+    rate = _parse_boe_csv(r.text)
+    if rate is None:
+        logger.warning("BoE: could not parse rate from CSV response")
+        return None
+    return {"rate_pct": round(rate, 4), "source": "BoE IUMABEDR"}
+
+
+# Backwards-compatible alias.
+_fetch_boe_bank_rate = _fetch_boe_rate
 
 
 async def refresh_rates_once() -> dict[str, Any]:
-    """Try external APIs, fall back to snapshot. Cache the merged result."""
+    """Try external APIs, fall back to snapshot. Cache the merged result.
+
+    Each bank fetched successfully has its timestamp recorded so /api/rates
+    can tag it ``live`` / ``snapshot_yaml`` / ``stale``.
+    """
     snapshot = load_rates_snapshot()
-    out = {
+    out: dict[str, Any] = {
         "as_of": snapshot.get("as_of"),
         "units": "percent",
         "fallback": True,
@@ -209,24 +410,35 @@ async def refresh_rates_once() -> dict[str, Any]:
         _cache_set("rates", out)
         return out
     try:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT,
-                                      headers={"User-Agent": USER_AGENT}) as client:
+        async with httpx.AsyncClient(
+            timeout=HTTP_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
+        ) as client:
             fed, ecb, boe = await asyncio.gather(
-                _fetch_fred_funds_rate(client),
-                _fetch_ecb_deposit_rate(client),
-                _fetch_boe_bank_rate(client),
+                _fetch_fred_rate(client),
+                _fetch_ecb_rate(client),
+                _fetch_boe_rate(client),
                 return_exceptions=True,
             )
             any_live = False
             if isinstance(fed, dict):
                 out["banks"].setdefault("fed", {}).update(fed)
+                _mark_live_fetch("fed")
                 any_live = True
+            elif isinstance(fed, Exception):
+                logger.warning("FRED fetcher raised: %s", fed)
             if isinstance(ecb, dict):
                 out["banks"].setdefault("ecb", {}).update(ecb)
+                _mark_live_fetch("ecb")
                 any_live = True
+            elif isinstance(ecb, Exception):
+                logger.warning("ECB fetcher raised: %s", ecb)
             if isinstance(boe, dict):
                 out["banks"].setdefault("boe", {}).update(boe)
+                _mark_live_fetch("boe")
                 any_live = True
+            elif isinstance(boe, Exception):
+                logger.warning("BoE fetcher raised: %s", boe)
             if any_live:
                 out["fallback"] = False
                 out["as_of"] = datetime.now(timezone.utc).date().isoformat()
@@ -481,6 +693,11 @@ _refresh_task: Optional[asyncio.Task] = None
 
 
 async def _periodic_refresh() -> None:
+    """Hourly refresh: call each fetcher and merge results into the rates cache.
+
+    refresh_rates_once gathers the three fetchers concurrently and records
+    per-bank live timestamps via _mark_live_fetch.
+    """
     while True:
         try:
             await refresh_rates_once()
@@ -537,7 +754,19 @@ async def api_rates() -> JSONResponse:
     age = _cache_age("rates")
     if cached is None or (age is not None and age > REFRESH_INTERVAL_S):
         cached = await refresh_rates_once()
-    return JSONResponse(cached)
+    # Annotate each bank with a `_source` label so the UI can show provenance.
+    # We don't mutate the cache entry — copy on the way out.
+    out = dict(cached or {})
+    banks: dict[str, Any] = {}
+    for bank_id, bank in (cached or {}).get("banks", {}).items():
+        bank_copy = dict(bank) if isinstance(bank, dict) else {}
+        # BoJ is snapshot-only; we never call a live fetcher for it.
+        bank_copy["_source"] = (
+            "snapshot_yaml" if bank_id == "boj" else _source_label(bank_id)
+        )
+        banks[bank_id] = bank_copy
+    out["banks"] = banks
+    return JSONResponse(out)
 
 
 @app.get("/api/implied-path")
