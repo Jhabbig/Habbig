@@ -135,12 +135,17 @@ async def security_and_auth(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # script-src: 'unsafe-inline' removed — all JS lives in /static/app.js
+    # (no inline <script> blocks, no inline on*= handlers). Matches the
+    # gateway's hardened embed CSP shape.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; "
         "connect-src 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
         "frame-ancestors 'none'"
     )
     if _sso_secret:
