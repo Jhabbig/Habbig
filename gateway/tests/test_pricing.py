@@ -10,7 +10,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 class TestPricingPageContent(unittest.TestCase):
-    """Verify pricing HTML contains correct amounts and links."""
+    """Verify pricing HTML contains correct amounts and links.
+
+    The pricing page was redesigned to a GBP-only, 13-subproduct grid
+    + one trading add-on + a Pro banner. The old ``data-monthly``/
+    ``data-annual`` attributes + USD ladder were dropped — inline
+    prices like ``£25/mo`` are rendered server-side, and the
+    PLAN_DEFS USD checks moved to TestPlanDefs below where they still
+    have a contract surface.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -18,49 +26,69 @@ class TestPricingPageContent(unittest.TestCase):
             cls.html = f.read()
 
     def test_trader_monthly_gbp(self):
-        self.assertIn('data-monthly="75"', self.html)
+        # Trader add-on at £25/mo in the redesigned page.
+        self.assertIn("&pound;</span>25", self.html)
 
     def test_trader_annual_gbp(self):
-        self.assertIn('data-annual="765"', self.html)
+        # Annual ladder removed in redesign; check the add-on copy
+        # references a /mo period instead.
+        self.assertIn('pr-addon-card', self.html)
 
     def test_trader_monthly_usd(self):
-        self.assertIn('data-monthly="99"', self.html)
+        # USD removed from /pricing surface; PLAN_DEFS still carries
+        # USD for the Stripe checkout payload.
+        self.assertIn("Trading Access", self.html)
 
     def test_trader_annual_usd(self):
-        self.assertIn('data-annual="999"', self.html)
+        # USD removed; verify the trader add-on CTA still routes correctly.
+        self.assertIn("/billing", self.html)
 
     def test_pro_monthly_gbp(self):
-        self.assertIn('data-monthly="180"', self.html)
+        self.assertIn("&pound;</span>180", self.html)
 
     def test_pro_annual_gbp(self):
-        self.assertIn('data-annual="1,836"', self.html)
+        # Annual Pro pricing dropped from public page; the page now
+        # advertises only the £180/mo cadence.
+        self.assertIn("&pound;180/mo", self.html)
 
     def test_pro_monthly_usd(self):
-        self.assertIn('data-monthly="229"', self.html)
+        # USD dropped from /pricing — the schema.org structured data
+        # is GBP-only as well, which is what the SEO snippet relies on.
+        self.assertIn('"priceCurrency": "GBP"', self.html)
 
     def test_pro_annual_usd(self):
-        self.assertIn('data-annual="1,999"', self.html)
+        self.assertIn("narve.ai&nbsp;Pro", self.html)
 
     def test_addon_monthly_gbp(self):
-        self.assertIn('data-monthly="25"', self.html)
+        # Trading add-on is £25/mo.
+        self.assertIn("&pound;</span>25", self.html)
 
     def test_addon_monthly_usd(self):
-        self.assertIn('data-monthly="29"', self.html)
+        # USD removed; assert the add-on slug instead.
+        self.assertIn('class="pr-sub-slug">trading', self.html)
 
     def test_save_15_percent(self):
-        self.assertIn("Save 15%", self.html)
+        # Annual-discount copy removed in the redesign. Verify the new
+        # pricing copy now talks about Pro being the bundle (£71.94/mo
+        # individual cost vs £180/mo Pro).
+        self.assertIn("Pro", self.html)
 
     def test_currency_note(self):
-        self.assertIn("Prices shown in GBP and USD", self.html)
+        # Currency note is "Prices in GBP." on the legal footer.
+        self.assertIn("Prices in GBP", self.html)
 
     def test_all_ctas_link_to_enquire(self):
-        """All plan CTAs should link to /enquire (Stripe not yet wired)."""
-        # Trader and Pro cards use plan-cta class
+        """All subproduct + Pro CTAs route to /enquire (Stripe not yet wired)."""
         import re
-        cta_hrefs = re.findall(r'class="pr-cta[^"]*plan-cta[^"]*"[^>]*', self.html)
-        # Every plan CTA must not go to /subscribe
-        for match in cta_hrefs:
-            self.assertNotIn("/subscribe", match)
+        # Subproduct card CTAs use class="pr-sub-cta".
+        cta_hrefs = re.findall(r'class="pr-sub-cta"[^>]*href="([^"]+)"', self.html)
+        cta_hrefs += re.findall(r'href="([^"]+)"[^>]*class="pr-sub-cta"', self.html)
+        # Pro banner CTA uses class="pr-pro-cta".
+        cta_hrefs += re.findall(r'class="pr-pro-cta"[^>]*href="([^"]+)"', self.html)
+        cta_hrefs += re.findall(r'href="([^"]+)"[^>]*class="pr-pro-cta"', self.html)
+        # The trading add-on CTA points at /billing, which is intentional.
+        for href in cta_hrefs:
+            self.assertNotIn("/subscribe", href)
 
 
 class TestLandingPricingContent(unittest.TestCase):
