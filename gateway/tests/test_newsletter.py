@@ -293,8 +293,8 @@ class TestNewsletterReferralFlow(unittest.TestCase):
         self.assertEqual(r_inviter.status_code, 200, f"inviter signup failed: {r_inviter.text}")
         inviter_code = r_inviter.json()["referral_code"]
         inviter_pos_before = r_inviter.json()["position"]
-        self.assertGreaterEqual(inviter_pos_before, 6,
-                                f"need inviter at >=6 for the math to be observable, got {inviter_pos_before}")
+        self.assertGreaterEqual(inviter_pos_before, 2,
+                                f"need inviter at >=2 to observe the 1-slot bump, got {inviter_pos_before}")
         _reset_rate_store()
 
         # New signup uses inviter's code
@@ -310,8 +310,9 @@ class TestNewsletterReferralFlow(unittest.TestCase):
         new_pos = lookup.json()["position"]
         self.assertLess(new_pos, inviter_pos_before,
                         f"expected inviter to advance from {inviter_pos_before}, got {new_pos}")
-        # 5-slot bump per referral, floored at 1
-        self.assertEqual(new_pos, max(1, inviter_pos_before - 5))
+        # Bump dropped from 5 → 1 slot per referral in commit cce4e67;
+        # the test predates that change.
+        self.assertEqual(new_pos, max(1, inviter_pos_before - 1))
 
     def test_referral_code_is_case_sensitive_round_trip(self):
         """REGRESSION: getRefFromUrl().toUpperCase() corrupted mixed-case codes."""
