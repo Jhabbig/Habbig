@@ -5,6 +5,267 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #7 — 2026-05-14T13:42Z — commit 463384e — post-everything fix-pass review
+
+### Why this audit exists
+Roughly 3 hours after Audit #6, a focused fix-pass landed:
+`dbe9692` stale gateway/requirements.lock removed (was pinning cryptography
+44.0.1 with CVEs — resolves #6 HIGH #1), `f766fdb` sync Stripe calls
+wrapped in `asyncio.to_thread` (resolves #6 HIGH #2 — event-loop blocking),
+`fed4f51` embed_routes N+1 fixed, `3535912` whale + centralbank deps
+pinned to exact versions (resolves #6 MED #1), `38a6593` voters CSP
+`unsafe-inline` removed from `script-src` (resolves #6 MED #3), `b9ecfe6`
+broken `enqueue_email(user_id=)` kwarg fixed + 6 new email templates
+created (winback_7d, winback_30d, saved_prediction_resolved,
+weekly_intelligence, admin_cost_alert, admin_subscription_drift),
+`463384e` four hot routes cached (`/dashboards`, `/settings`,
+`/signal-search`, `/sources/{handle}`) with per-user keys + invalidation
+hooks, `6e877a1` `/settings/integrations` UI shipped (was a deferred #6
+review gap), plus six test-sweep commits including `ebf7401` which
+loosened `get_invite_token` to return rows of any status to fix 14
+auth tests. Prod redeployed at 14:26 and is serving the new code
+(verified via curl: Permissions-Policy 23-directive + `CORP: same-origin`,
+/health 200 with 953s uptime). The audit focus is whether the
+fix-pass introduced new risks in the six new email templates, the
+per-user cache keys, the new CSRF surface on `/settings/integrations`,
+the broadened `get_invite_token` lookup, and the three new subproduct
+scaffolds (whale/centralbank/world_health) that now have actual
+`server.py` on disk.
+
+### Code inventory audited
+- Committed tip: `463384e` (perf: cache 4 hot DB-heavy routes)
+- Local unpushed commits: **none** — local in sync with origin
+- Local uncommitted files: 2 modified + 2 untracked — `gateway/tests/conftest.py` and `gateway/tests/integration/test_error_handling.py` are doc-only diff (re-flowed docstring, kept identical behaviour), `voters-dashboard/voters.sqlite-{shm,wal}` are sqlite WAL artefacts from local dev. None deployable as risk.
+- Local stashes: **1** — `stash@{0}: On feature/platform-build: wip-before-email-fix` (contains the same conftest cookie-clearing fixture + the error-page copy update; same content as the current uncommitted diff; safe to drop but harmless to leave)
+- Server uncommitted files: server tree shows the same body of UI/border tweaks committed via the parallel agent's path (115 modified CSS/HTML files + many added files including `centralbank-dashboard/`, `whale-dashboard/`, `world-health-dashboard/`, all new test files + `requirements.lock` move). The state is consistent with the parallel agent that does in-place edits then commits with `deploy: …` messages.
+- Server tip vs origin: **DIVERGED** — server is 15 commits ahead AND 15 commits behind. Server head `e4cda27` is from the parallel UI agent (whale-dashboard gateway-config addition). Origin head `463384e`. The ahead set is all UI/CSS tweaks; the behind set includes today's fix-pass (the eight commits above). Prod /health uptime is only ~16 min — the redeploy at 14:26 has loaded the *origin* state (Permissions-Policy header + CORP confirm it), so the SSH-visible `git status` on the box is a stale snapshot of the working tree, not what's actually in memory.
+- Running uvicorn loaded from: `/home/julianhabbig/Habbig/gateway/server.py` — pid 4027679 on port 7000 since 14:26 (~16 min ago). Mtime check skipped (would require SSH; the version + /health response confirm freshness).
+- Branches with recent work (last 14d not in current): none — `feature/platform-build` is the active branch.
+- DRIFT FLAG: **stashes unreviewed >0d** (stash@{0} from earlier today, doc-only, no risk); **server and origin diverge** (UI-only "deploy: …" commits ahead on box, fix-pass behind in git but already in-process per uptime check — process is fresh, git tree is stale)
+
+### Surfaces newly introduced since AUDIT #6
+| Feature | Files | Risk surface |
+|---|---|---|
+| 4 routes now use `cache.get_or_set` | `gateway/server.py` (4 handlers) + `gateway/cache/invalidate.py` (3 new prefix deletes on subscription change) | per-user cache key collision; stale state after privilege change; key-injection via path params |
+| 6 new email templates | `gateway/email_system/templates/{winback_7d,winback_30d,saved_prediction_resolved,weekly_intelligence,admin_cost_alert,admin_subscription_drift}.html` | XSS via `{{ }}` interpolation if context contains user-controlled strings rendered without escape |
+| `/settings/integrations` page + JS | `gateway/server.py:6385-6423` GET handler + `gateway/static/settings_integrations.{html,js}` | CSRF on PATCH `/api/user/bankroll` + DELETE `/api/markets/connect/{source}` |
+| Three new subproduct scaffolds with full `server.py` on disk | `whale-dashboard/server.py` (475 LOC, port 8053), `centralbank-dashboard/server.py` (566 LOC, port 7061), `world-health-dashboard/server.py` (633 LOC, port 7053) | gateway-SSO header trust + HMAC-secret enforcement; CORS scope; bind-host posture |
+| Loosened `get_invite_token` | `gateway/queries/auth.py:322-338` | returns rows of any status — callers must filter; risk of leak if any caller treats every row as "valid invite" |
+
+### Summary
+Posture: **adequate**
+Critical issues: 0
+High-priority: 2
+Medium-priority: 3
+Low-priority: 3
+Resolved since last audit: 5 (all #6 HIGH + MED)
+New since last audit: 2 HIGH + 3 MED + 3 LOW (mostly subproduct scaffold gaps that are not yet wired to prod)
+Regressions: 0
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT
+- pm_gateway_session + narve_session both accepted: yes
+- narve_session stored as SHA-256 hash in DB: yes (`queries/auth.py:_hash_session_token`)
+- Session cookie HttpOnly: yes (kwargs dict in `auth/cookies.py:127`; auth-scan flagged false-positive because it can't see dict assembly)
+- Session cookie Secure: yes (gated on `_is_production()`)
+- Session cookie SameSite: Strict
+- Session revocation on logout: works
+- Session rotation on privilege change: implemented (`queries/auth.py:rotate_session` + `set_user_role` calls `revoke_all_user_sessions`)
+- Max sessions per user enforced: 3 (`MAX_SESSIONS_PER_USER`)
+- Password reset invalidates sessions: yes (`set_user_role` + best-effort revoke)
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations (legacy 200k still accepted, opportunistic rehash via `password_needs_rehash`)
+- 2FA status: removed in migration 019 (intentional product decision)
+- Impersonation banner visible on every page while active: yes (carried over from #6)
+- Impersonation blocked paths enforced: yes (carried over from #6)
+- `get_invite_token` now returns any-status rows: callers verified — every caller checks `invite["status"]` explicitly (`== "revoked"`, `!= "claimed"`, `!= "unclaimed"`, etc.) — see `auth/guards.py:74-76`, `server.py:3183-3192`, `server_features.py:1437/1468/1584/1724`, `routes_referrals.py:156-157`. **No leak surface added.**
+
+### Authorisation
+- Admin routes require role ≥ 1: yes
+- Super admin routes require role = 2: yes (`super_admin_required`)
+- Subproduct access checked at middleware + route + response: partial — voters/climate/disasters/world all enforce HMAC `x-gateway-secret`; **whale/centralbank/world-health do NOT verify the HMAC** (see HIGH #1)
+- has_subproduct_access called on every subproduct route: yes for gateway-side
+- Feature flag evaluation in use: yes (migration 022 stack)
+- Gift subscription enforcement: yes
+
+### CSRF
+- Double submit cookie: yes
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes (`security/csrf.py:164` enforces unconditionally for those methods)
+- HTMX X-CSRF-Token hook active: yes
+- `/settings/integrations` PATCH `/api/user/bankroll` + DELETE `/api/markets/connect/{source}`: covered by global middleware (no exempt-list entry), and the test file `test_settings_integrations.py` explicitly verifies CSRF rejection via `with_csrf=False` paths
+- Exempt routes list minimal and documented: yes — `/stripe/webhook`, `/health`, `/api/newsletter`, `/api/scraper/*` only
+
+### Rate limiting
+- Auth endpoints: correct limits (inline `_is_rate_limited` on `/auth/login` 10/5min, `/auth/forgot-password` 3/hr per IP + per email, `/auth/reset-password` 5/hr per IP, etc. — auth-scan HIGHs are false positives since they grep only for `@rate_limit` decorator)
+- API endpoints: partial — see MEDIUM #1
+- Per-user and per-IP as appropriate: yes
+- 429 response includes Retry-After: yes (`/auth/login` returns `Retry-After: 300`)
+- Cloudflare-level rate limit rules: present (CLOUDFLARE_CHANGES.md Rules D/E for /auth, /admin)
+
+### Input validation
+- SQL injection vectors found: 0 net-new (all SQLi-scan CRITICALs are previously-audited dynamic-identifier patterns where the interpolated value is a hardcoded allowlist or admin-controlled column; no user-input-to-SQL path was added in the fix-pass)
+- XSS via innerHTML with user content: 0 (the six new email templates use `{{ display_name }}`/`{{ app_url }}` — non-raw, auto-escaped by `email_system/renderer.py:115`)
+- Command injection / subprocess with user input: 0
+- Path traversal in file operations: 0 (all open() flags are dev-test scaffolding)
+- SSRF in URL-fetching code: 0 (all `urlopen`/`requests.get` are test-suite probes against fixtures)
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes
+- No hardcoded secrets in current tree: clean (scan finds zero hits)
+- No secrets in git history: clean (scan finds zero hits)
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes (carried over from prior audits)
+- Sessions hashed before DB storage: yes
+- Password hashes use PBKDF2-HMAC-SHA256: yes
+- .env permissions on server: 600 (assumed — not re-checked this pass; the local `auth.db` is 644 which is fine on dev box, flagged separately)
+
+### Data privacy
+- Account deletion works end-to-end: yes (`cascade_delete_user` enumerates every table with a `user_id` column)
+- Data export includes all user-linked tables: yes (verified in earlier audits, no schema additions today)
+- Sensitive fields redacted in logs: yes — `routes_referrals.py:178` documents the `raw_token` annotation explicitly (token is `secrets.token_urlsafe(…)` output, A-Z a-z 0-9 _- only, no XSS surface)
+- Sentry scrubbing active (if Sentry configured): yes
+- Impersonation actions logged: yes
+
+### External integrations
+- Stripe webhook signature validated: yes (`stripe_webhook_hardening` — and the `enqueue_email` kwarg bug that previously swallowed customer cancellation emails is now fixed in `b9ecfe6`)
+- Stripe webhook idempotent: yes
+- Stripe webhook mode-verified: yes
+- Telegram bot token in env only: yes
+- Discord bot token in env only: yes
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: yes (existing pattern)
+- SEC EDGAR User-Agent set: yes (`world-health-dashboard/server.py:_USER_AGENT`, `whale-dashboard/scripts/seed_13f.py` if present)
+
+### Infrastructure
+- SQLite WAL mode active: yes
+- Cloudflare Tunnel active, origin not directly reachable: unverified (would require off-Tailscale probe; assumed yes given /health 200 with cf-ray header)
+- Cloudflare Rules for subdomain enumeration: yes
+- Cloudflare Rules for scanner UA blocking: yes
+- Post-deploy commit step documented: yes
+- CLOUDFLARE_CHANGES.md current: yes (Apr 21 mtime)
+
+### Monitoring
+- Sentry backend configured: yes
+- Sentry frontend configured: yes
+- Structured logging configured: yes
+- Security events logged separately: yes (`security/logger.py`)
+- Audit log append-only: yes
+- Uptime monitoring active: yes
+
+### Dependency audit
+- Last dependency audit: 2026-05-14 (this audit; pip-audit failed on local py3.9 — `orjson==3.11.6` requires py3.10+; manually inspected `gateway/requirements.txt`: cryptography 46.0.7 ≥ 44.0.1 CVE threshold; no other known-vulnerable pins detected)
+- Known CVEs: 0 (after `dbe9692` removed the stale lockfile that pinned cryptography 44.0.1 — the root `requirements.lock` is the only authoritative source now)
+- Unpinned deps: 0 (whale + centralbank pinned in `3535912`)
+- Lockfile present: yes — single `requirements.lock` at root, divergent `gateway/requirements.lock` removed
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+None.
+
+#### HIGH
+
+1. Whale-dashboard `server.py` trusts gateway identity headers without verifying the HMAC shared secret
+   Location: `whale-dashboard/server.py:85-99` — `_user_from_request` reads `x-gateway-user-id` and `x-gateway-user-email` directly; the module imports `hmac` is **absent**; there is no `@app.middleware("http")` enforcing `hmac.compare_digest(client_secret, _sso_secret)` before letting the handler trust those headers. Compare with `voters-dashboard/server.py:124-129` which gates the entire request flow behind a 401 if `x-gateway-secret` doesn't match.
+   Impact: If `whale-dashboard` is ever reachable on its port (8053) other than via the gateway proxy — anywhere on the LAN, via Tailscale, via a misconfigured firewall rule, or via a future reverse-proxy that doesn't fully strip client `x-gateway-*` headers — an attacker can forge `x-gateway-user-id: <admin_uid>` + `x-gateway-user-email: admin@whatever` and call `POST /api/watchlist/add` (line 451) and similar write endpoints as ANY user. Not yet exploitable from the internet because (a) whale-dashboard isn't yet running in prod (no port 8053 listener on the box), (b) cloudflared only fronts narve.ai apex via the gateway. But this is one DNS record + one systemd unit away from being wired up; the user explicitly asked about subdomain access bypass.
+   Fix: Add an `@app.middleware("http")` modeled on `voters-dashboard/server.py:122-152` that calls `hmac.compare_digest(request.headers.get("x-gateway-secret", ""), _sso_secret)` and returns 401 on mismatch. Same fix for `world-health-dashboard/server.py` and `centralbank-dashboard/server.py` even though they currently only expose GET endpoints — the second someone adds a `POST /api/comment` or `/api/feedback` they will silently inherit the broken trust model. Bind all three to `127.0.0.1` instead of `0.0.0.0` as a defence-in-depth layer.
+
+2. `world-health-dashboard` and `centralbank-dashboard` bind on `0.0.0.0` and have NO `x-gateway-secret` verification at all
+   Location: `world-health-dashboard/server.py:633` (`host="0.0.0.0"`), `centralbank-dashboard/server.py:566` (`host="0.0.0.0"`); neither file imports `hmac` or has any middleware function that checks for the shared secret.
+   Impact: All routes (`/api/diseases`, `/api/outbreaks`, `/api/markets`, `/api/rates`, `/api/implied-path`, `/api/fomc-meetings`, etc.) are unauthenticated. Today the data they serve is public (WHO / FRED / ECB / BoE), so there is no confidentiality leak. The risk is two-fold: (a) anyone on the LAN or any future cohabiting tenant can scrape them at line-rate, bypassing the rate-limits / caching the gateway provides — they make outbound API calls to WHO / FRED / openFDA which is your reputation if a scraper goes spam-tier; (b) any future addition of a user-write endpoint will silently inherit no-auth. Treat as HIGH because the boundary is structurally wrong, even if no data is currently leaking.
+   Fix: Mirror the voters-dashboard middleware (HMAC `x-gateway-secret` check + bind to `127.0.0.1`). At minimum, add the bind-host change as a defence-in-depth precaution so the surface is only reachable from the gateway process. Document the policy that every new subproduct must pass the same HMAC check or be explicitly marked `auth=public` in `gateway/config.json` so future audits can flag drift.
+
+#### MEDIUM
+
+1. `_CSRF_EXEMPT_PREFIXES` includes `/api/scraper/` — wide net for a single deprecated endpoint
+   Location: `gateway/security/csrf.py:51-54`
+   Impact: Every `/api/scraper/*` path skips CSRF validation. If a scraper endpoint is ever extended to accept a body or to act on user identity, the exemption becomes load-bearing. The exemption is justified for the public scraper-API-key auth endpoints, but the prefix is broader than the actual surface.
+   Fix: Replace the prefix exemption with an explicit allowlist of the 2-3 paths that legitimately use scraper-key auth (`/api/scraper/predictions`, `/api/scraper/sources`, etc.). Document each in `_CSRF_EXEMPT_PATHS` with a comment naming the auth model.
+
+2. Cache-key invalidation does not fire on role change
+   Location: `gateway/cache/invalidate.py` — `on_subscription_change(user_id)` now invalidates `dashboards:user:{user_id}`, `settings:user:{user_id}`, `signal_search:user:{user_id}`. There is no matching `on_role_change(user_id)` or `on_session_revoke(user_id)` hook.
+   Impact: If an admin is demoted (role → 0), they keep seeing the cached `settings` payload — which contains `trading_status`, `bankroll`, `env_prefs` — for up to 60 seconds. Acceptable for these specific fields (no privilege escalation), but the pattern is fragile: any future addition of an admin-only field to the cached payload becomes a stale-privilege leak.
+   Fix: Plumb a `delete dashboards:user:{user_id}` + `delete settings:user:{user_id}` call into `set_user_role` (`queries/auth.py:375-386`) alongside the existing `revoke_all_user_sessions` call. Keep the TTL low (60s) as belt-and-braces.
+
+3. `auth.db` permissions 644 on local dev box (file mode-only, not group-readable)
+   Location: `gateway/auth.db` on disk
+   Impact: Local-only; prod server should be 600 (carried-over recommendation from prior audits). Not a production risk but documented for hygiene.
+   Fix: `chmod 600 gateway/auth.db` on the dev box; verify prod via ssh.
+
+#### LOW
+
+1. Six new email templates inherit `base.html` correctly, but the email renderer's `{% block content %}` substitution is regex-based, not Jinja2
+   Location: `gateway/email_system/renderer.py`
+   Impact: If any new template author writes a literal `{% block content %}` token in a `raw_*` context variable, the regex would not re-escape it. Confirmed not exploitable today (no `raw_*` context vars in the six new templates), but a soft footgun.
+   Fix: Document the regex's grammar in a one-line header in `renderer.py` so future template authors avoid raw-block-token contamination.
+
+2. Stash `stash@{0}: wip-before-email-fix` is now duplicate of HEAD
+   Location: local stash from earlier today.
+   Impact: None — same content as uncommitted diff. Just clutter.
+   Fix: `git stash drop stash@{0}` (defer to a clean-up commit, not this audit).
+
+3. `requirements.lock` still contains the audit-flagged ambiguity between root + gateway lockfile pattern in CI doc
+   Location: README / deploy docs may still reference `gateway/requirements.lock` even though `dbe9692` removed it.
+   Impact: Stale doc; deploy may try to `pip install -r gateway/requirements.lock` and fail (or worse, succeed against a removed historical version).
+   Fix: Grep README / DEPLOY.md for `gateway/requirements.lock` and update to point at the root lockfile.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- File: `gateway/tests/conftest.py`, `gateway/tests/integration/test_error_handling.py`
+- Summary: Docstring re-flow + error-page assertion update — no behaviour change vs HEAD (the cookie-clearing fixture is identical to what `f9ce197` committed, with whitespace differences only)
+- Security implications: none
+- Must-do before commit: nothing; these are dead diffs from the test sweep — drop via `git checkout -- <files>` or commit if there's any value.
+
+#### Unpushed local commits
+- None.
+
+#### Server-side uncommitted state
+- What differs: Server tree shows 115 modified CSS/HTML files + many added (centralbank/whale/world-health/voters dashboard dirs, all settings_integrations.* files, qa test files, root requirements.lock). This is the parallel UI agent's WIP that lands via "deploy: …" commits direct on the box and gets reconciled later via a `seo:` / `ui:` merge into origin.
+- Regression vs origin: the actually-running uvicorn process loaded *origin* (`463384e`) at 14:26 — verified via the live response headers (Permissions-Policy with `clipboard-write=(self)` directive only present after audit #6's expansion). The on-disk WIP is the next batch, not what's serving traffic.
+- Secrets server-only not in .env.example: unknown (not probed this pass)
+- Reconciliation recommendation: continue letting the parallel agent commit its "deploy: …" series, then merge into origin via a `ui:` reconcile commit on next deploy cycle.
+
+#### Stashes
+- `stash@{0}` from earlier today: `wip-before-email-fix` — same content as the current uncommitted diff. Not security-relevant. Drop after this audit.
+
+### Changes since previous audit
+
+#### Resolved
+- #6 HIGH #1 (stale gateway/requirements.lock pinning cryptography 44.0.1 with CVEs) — resolved by `dbe9692`
+- #6 HIGH #2 (sync Stripe calls blocking the event loop in subproduct hot paths) — resolved by `f766fdb`
+- #6 MED #1 (whale + centralbank deps unpinned) — resolved by `3535912`
+- #6 MED #2 (voters CSP `script-src 'unsafe-inline'`) — resolved by `38a6593` — extracted inline scripts to `/static/app.js`
+- #6 MED #3 (`/settings/integrations` UI deferred) — shipped in `6e877a1`
+
+#### New issues
+- HIGH #1: whale-dashboard trusts gateway headers with no HMAC check (NEW — created when the scaffold materialised into a real `server.py`)
+- HIGH #2: world-health + centralbank bind `0.0.0.0` with no auth middleware
+- MEDIUM #2: cache-key invalidation does not fire on role change
+- LOW #1: email-template regex grammar undocumented
+- LOW #3: stale `gateway/requirements.lock` references possibly still in deploy docs
+
+#### Regressions
+- None.
+
+### Drift warnings
+- Server "git status" snapshot is stale relative to the live uvicorn process — the box's working tree shows the parallel UI agent's WIP queued for a later "deploy: …" commit batch, but the *running* process loaded origin tip `463384e` at 14:26 per /health. No action required; just don't confuse the SSH-visible disk state for what's serving.
+- Stash `stash@{0}` from earlier today is duplicate of HEAD — safe to drop, doesn't need to wait for next audit.
+
+### Recommended actions for next audit
+1. Verify the HIGH #1 + HIGH #2 fixes (HMAC middleware added to whale/centralbank/world-health; bind-host changed to 127.0.0.1) BEFORE any of those three subproducts is wired into `gateway/config.json` with a `target` port that the gateway will proxy.
+2. Confirm `cache.invalidate.on_role_change` is added and called from `set_user_role`.
+3. Re-run pip-audit on the prod box's Python (3.12) — the local 3.9 venv can't resolve `orjson==3.11.6`; this audit's "0 CVEs" is from manual `requirements.txt` inspection, not a clean pip-audit pass.
+4. Probe `world-health-dashboard` / `centralbank-dashboard` / `whale-dashboard` ports from off-Tailscale once they're deployed; the bind-host audit is theoretical until those services have ListenAddress set.
+
+---
+
 ## AUDIT #6 — 2026-05-14T09:59Z — commit cafb4d9 — post-deploy adversarial pass
 
 ### Why this audit exists
