@@ -165,8 +165,18 @@ def _inject_into_html(body: bytes, host: str | None = None) -> bytes:
         if host:
             sub = subproduct_for_host(host)
             if sub:
+                # Prefer the subdomain slug as filename (sports.png,
+                # traders.png, voters.png …) and fall back to the
+                # dashboard_key for the two products whose subdomain
+                # and key disagree on disk (cb → centralbank.png,
+                # health → world_health.png). Without the slug-first
+                # check, `traders` looked for `top_traders.png` and
+                # silently 404'd into default.png.
+                slug = sub.get("slug")
                 key = sub.get("dashboard_key")
-                if key and (_OG_DIR / f"{key}.png").exists():
+                if slug and (_OG_DIR / f"{slug}.png").exists():
+                    og_block = _og_block_for_key(slug)
+                elif key and (_OG_DIR / f"{key}.png").exists():
                     og_block = _og_block_for_key(key)
         idx = body.rfind(b'</head>')
         if idx != -1:
