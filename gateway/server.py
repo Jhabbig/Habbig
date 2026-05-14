@@ -354,6 +354,28 @@ app = FastAPI(
         "under /api/embed/* with X-API-Key; subproducts behind subdomain HMAC. "
         "Human-readable reference: /api/docs."
     ),
+    contact={
+        "name": "narve.ai support",
+        "url": "https://narve.ai/feedback",
+        "email": "hello@narve.ai",
+    },
+    license_info={
+        "name": "Proprietary — narve.ai Terms of Service",
+        "url": "https://narve.ai/terms",
+    },
+    terms_of_service="https://narve.ai/terms",
+    openapi_tags=[
+        {"name": "Public API v1", "description": "Bearer-token authenticated REST surface under /api/public/v1/*. Stable contract; documented in /api/docs."},
+        {"name": "Predictions", "description": "Single-prediction reads and the public predictions feed."},
+        {"name": "Markets", "description": "Per-market reads — listings, detail, history, predictions per market."},
+        {"name": "Sources", "description": "Forecaster profile reads — listings, detail, history, predictions per source."},
+        {"name": "Feed", "description": "Cross-market discovery — feed, best bets, upcoming calendar."},
+        {"name": "Usage", "description": "Authenticated rate-limit and quota introspection."},
+        {"name": "Embeds", "description": "X-API-Key authenticated widget endpoints under /api/embed/*."},
+        {"name": "Account", "description": "Session-scoped user account, profile, takes, and saved-view endpoints."},
+        {"name": "AI", "description": "Pro-tier AI endpoints — explain, summarize, coach. Subscription required."},
+        {"name": "Health", "description": "Liveness, readiness, and version probes."},
+    ],
     docs_url=None,
     redoc_url=None,
     # Machine-readable OpenAPI for the /api/docs reference page. Enabled
@@ -368,6 +390,136 @@ app = FastAPI(
 APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
 APP_ENVIRONMENT = os.environ.get("ENVIRONMENT", "production" if IS_PRODUCTION else "dev")
 APP_START_TIME = time.time()
+
+
+# ── OpenAPI customization ──────────────────────────────────────────────────
+#
+# FastAPI builds the spec by walking decorators; many older routes were
+# registered before tags/security/include_in_schema conventions landed.
+# Rather than re-touch every decorator, we post-process the generated spec:
+#
+#   1. Drop any /admin/* or /settings/* paths that slipped through —
+#      these are internal surfaces, never part of the public contract.
+#   2. Inject reusable security schemes (Bearer for /api/public/v1/*,
+#      session cookie for /api/*, X-API-Key for /api/embed/*).
+#   3. Apply a tag to every operation based on path prefix, so the spec
+#      groups endpoints meaningfully in /api/docs and generated clients.
+#   4. Attach security requirements to authenticated path families so
+#      SDK generators emit the right auth handling.
+#
+# All transformations are read-only on the routing layer — no behavior
+# change, additive metadata only.
+
+def _custom_openapi():  # type: ignore[no-untyped-def]
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=app.openapi_tags,
+        contact=app.contact,
+        license_info=app.license_info,
+        terms_of_service=app.terms_of_service,
+    )
+
+    # Hide internal surfaces. /admin/* and /settings/* are session-cookie
+    # gated dashboards meant for humans, not the public API contract.
+    paths = schema.get("paths", {})
+    for p in list(paths.keys()):
+        if p.startswith("/admin/") or p == "/admin" or p.startswith("/settings/"):
+            paths.pop(p, None)
+
+    # Reusable security schemes. We document three auth modes:
+    #   - BearerAuth: Authorization: Bearer <token> for /api/public/v1/*
+    #   - SessionCookie: browser session cookie for in-app /api/* calls
+    #   - ApiKeyHeader: X-API-Key for /api/embed/* widget endpoints
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {}).update({
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "opaque",
+            "description": "Public API v1 token. Generate at /settings/api-keys; pass as `Authorization: Bearer nrv_...`.",
+        },
+        "SessionCookie": {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "narve_session",
+            "description": "Browser session cookie set by /login. Used by session-scoped /api/* endpoints called from the web app.",
+        },
+        "ApiKeyHeader": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "Per-widget embed key. Pass as `X-API-Key: <key>` on /api/embed/* calls.",
+        },
+    })
+
+    # Tag + secure operations based on path prefix. This avoids touching
+    # ~300 decorators while still producing a well-grouped spec.
+    def _classify(path: str) -> tuple[list[str], list[dict]]:
+        # Returns (tags, security_requirements).
+        if path.startswith("/api/public/v1/markets") or path.startswith("/api/v1/markets"):
+            return (["Markets"], [{"BearerAuth": []}])
+        if path.startswith("/api/public/v1/sources") or path.startswith("/api/v1/sources"):
+            return (["Sources"], [{"BearerAuth": []}])
+        if path.startswith("/api/public/v1/predictions") or path.startswith("/api/v1/predictions"):
+            return (["Predictions"], [{"BearerAuth": []}])
+        if (path.startswith("/api/public/v1/feed")
+                or path.startswith("/api/public/v1/best-bets")
+                or path.startswith("/api/public/v1/calendar")):
+            return (["Feed"], [{"BearerAuth": []}])
+        if path.startswith("/api/public/v1/usage"):
+            return (["Usage"], [{"BearerAuth": []}])
+        if path.startswith("/api/public/v1/") or path.startswith("/api/v1/"):
+            return (["Public API v1"], [{"BearerAuth": []}])
+        if path.startswith("/api/embed/") or path.startswith("/embed/"):
+            return (["Embeds"], [{"ApiKeyHeader": []}])
+        if (path.startswith("/api/ai/")
+                or path.startswith("/api/explain")
+                or path.startswith("/api/summarize")):
+            return (["AI"], [{"SessionCookie": []}])
+        if path in ("/health", "/healthz", "/readyz", "/api/version"):
+            return (["Health"], [])
+        if path.startswith("/api/"):
+            return (["Account"], [{"SessionCookie": []}])
+        return ([], [])
+
+    # Legacy ad-hoc tags that pre-date the taxonomy and should be replaced
+    # so the spec uses a single consistent grouping in /api/docs.
+    _LEGACY_TAGS = {"public-api-v1", "v1"}
+    for path, methods in paths.items():
+        tags, security = _classify(path)
+        if not tags and not security:
+            continue
+        for method, op in methods.items():
+            if method not in ("get", "post", "put", "delete", "patch", "head", "options"):
+                continue
+            if not isinstance(op, dict):
+                continue
+            existing = op.get("tags") or []
+            keep = [t for t in existing if t not in _LEGACY_TAGS]
+            if tags and not keep:
+                op["tags"] = tags
+            elif tags and keep != existing:
+                op["tags"] = keep + [t for t in tags if t not in keep]
+            if security and "security" not in op:
+                op["security"] = security
+
+    # Servers block helps SDK generators emit a base URL out of the box.
+    schema["servers"] = [
+        {"url": "https://narve.ai", "description": "Production"},
+    ]
+
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
+
 
 db.init_db()
 
@@ -882,6 +1034,12 @@ _CSRF_SKIP_PREFIXES = ("/_gateway_static", "/ws")
 # protected by per-IP rate limiting + email format validation.
 _CSRF_EXEMPT_POSTS = frozenset({
     "/api/newsletter",
+    # Stripe webhook — called server-to-server by Stripe with HMAC-signed
+    # body. Defence is the Stripe-Signature header (verified via
+    # stripe.Webhook.construct_event in stripe_webhook_routes) plus the
+    # IP allowlist; CSRF cookies are irrelevant because Stripe never
+    # carries one.
+    "/stripe/webhook",
     # Invite-token bootstrap endpoint (token-first auth flow). Called from
     # /token before any session exists to anchor a CSRF token against.
     # Still protected by per-IP rate limiting (10 attempts / minute).
@@ -2951,6 +3109,26 @@ def _render_subproduct_landing(request: Request, slug: str) -> HTMLResponse:
     # missing config entry never breaks the page.
     accent_hex = (DASHBOARDS.get(dashboard_key) or {}).get("accent", "#000000")
 
+    # Cross-link discovery bar — five other subproducts (excluding the
+    # current slug) picked at random per-request so repeat visitors see
+    # different neighbours over time. Cap is min(5, available) so the page
+    # still renders if the catalogue ever shrinks below 6 entries. All
+    # interpolated values pass through html.escape; the resulting HTML
+    # lands in the template via `{{ raw_other_subproducts }}`.
+    import random as _random
+    other_slugs = [s for s in _SP if s != slug]
+    _random.shuffle(other_slugs)
+    other_picks = other_slugs[: min(5, len(other_slugs))]
+    other_links_html = "".join(
+        (
+            f'<a class="sp-other-link" href="https://{html.escape(s)}.narve.ai/">'
+            f'<span class="sp-other-name">{html.escape(_SP[s]["name"])}</span>'
+            f'<span class="sp-other-tagline">{html.escape(_SP[s]["tagline"])}</span>'
+            f'</a>'
+        )
+        for s in other_picks
+    )
+
     return render_page(
         "subproduct_landing",
         request=request,
@@ -2973,6 +3151,7 @@ def _render_subproduct_landing(request: Request, slug: str) -> HTMLResponse:
         raw_stat_pills=pills_html,
         raw_tab_buttons=tab_buttons_html,
         raw_tab_panels=tab_panels_html,
+        raw_other_subproducts=other_links_html,
     )
 
 
@@ -7561,6 +7740,21 @@ except Exception as _exc:  # pragma: no cover
     log.warning("admin_health_monitor_routes import failed: %s — continuing without it", _exc)
 
 
+# Anthropic AI cost-alerts dashboard (/admin/cost-alerts + /admin/api/ai-cost/*).
+# Surfaces month-to-date spend, the 30-day chart, alert history, and the global
+# kill-switch with a super-admin toggle. Same reload-safe side-effect pattern as
+# admin_jobs_routes above — must sit before the catch-all so /admin/cost-alerts
+# isn't swallowed as a 404.
+try:
+    import admin_cost_alerts_routes  # noqa: F401,E402
+    import sys as _aca_sys
+    if "admin_cost_alerts_routes" in _aca_sys.modules:
+        import importlib as _aca_importlib
+        _aca_importlib.reload(_aca_sys.modules["admin_cost_alerts_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("admin_cost_alerts_routes import failed: %s — continuing without it", _exc)
+
+
 # Billing UI — /settings/billing + /api/v1/billing/*. Same reload-safe pattern
 # as status_routes/embed_routes above; billing_routes registers its endpoints
 # on server.app via @app.get/@app.post decorators as a side effect of import.
@@ -7659,7 +7853,13 @@ for _mod_name in (
 
 
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.
-@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+# Excluded from OpenAPI — it's a routing fallback, not a documented endpoint,
+# and the wildcard path produces a duplicate operation ID otherwise.
+@app.api_route(
+    "/{full_path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+    include_in_schema=False,
+)
 async def catch_all(request: Request, full_path: str):
     sub = get_subdomain(request)
     if not sub:
