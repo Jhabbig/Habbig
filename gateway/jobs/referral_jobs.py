@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import time
 from typing import Any
 
@@ -66,6 +67,71 @@ async def process_referral_rewards() -> dict[str, Any]:
     if not pending:
         return {"processed": 0, "granted": 0, "skipped_no_payer": 0}
 
+    # ── N+1 fix ──────────────────────────────────────────────────────────
+    # Each iteration of the original loop did 5 round-trips per referrer:
+    # tier (2 queries: admin probe + active-subs), reward-already-stamped
+    # count, full user row for the email, and converted-referral count.
+    # We batch all of these into one chunked query each (500 ids per
+    # chunk, well under SQLITE_MAX_VARIABLE_NUMBER=999) keyed by the
+    # unique referrer set, then maintain dynamic counts in Python so the
+    # ordering semantics of the original per-row SELECT are preserved.
+    referrer_ids = sorted({row["referrer_user_id"] for row in pending})
+    admin_ids: set[int] = set()
+    referrer_plans: dict[int, list[str]] = {}
+    user_rows: dict[int, sqlite3.Row] = {}
+    already_baseline: dict[int, int] = {}
+    converted_baseline: dict[int, int] = {}
+    if referrer_ids:
+        with db.conn() as c:
+            for i in range(0, len(referrer_ids), 500):
+                chunk = referrer_ids[i:i + 500]
+                placeholders = ",".join("?" * len(chunk))
+                for r in c.execute(
+                    f"SELECT id FROM users WHERE id IN ({placeholders}) AND is_admin = 1",
+                    chunk,
+                ).fetchall():
+                    admin_ids.add(r["id"])
+                for r in c.execute(
+                    f"SELECT user_id, plan FROM subscriptions "
+                    f"WHERE user_id IN ({placeholders}) AND status = 'active'",
+                    chunk,
+                ).fetchall():
+                    referrer_plans.setdefault(r["user_id"], []).append(r["plan"] or "")
+                for r in c.execute(
+                    f"SELECT * FROM users WHERE id IN ({placeholders})",
+                    chunk,
+                ).fetchall():
+                    user_rows[r["id"]] = r
+                for r in c.execute(
+                    f"SELECT referrer_user_id, COUNT(*) AS n FROM referrals "
+                    f"WHERE referrer_user_id IN ({placeholders}) AND reward_granted = 1 "
+                    f"GROUP BY referrer_user_id",
+                    chunk,
+                ).fetchall():
+                    already_baseline[r["referrer_user_id"]] = int(r["n"])
+                for r in c.execute(
+                    f"SELECT referrer_user_id, COUNT(*) AS n FROM referrals "
+                    f"WHERE referrer_user_id IN ({placeholders}) AND converted_to_paid = 1 "
+                    f"GROUP BY referrer_user_id",
+                    chunk,
+                ).fetchall():
+                    converted_baseline[r["referrer_user_id"]] = int(r["n"])
+
+    def _tier_for(uid: int) -> str:
+        if uid in admin_ids:
+            return "pro"
+        plans = referrer_plans.get(uid, [])
+        if any((p or "").startswith("pro") for p in plans):
+            return "pro"
+        if plans:
+            return "trader"
+        return "none"
+
+    # Mutable per-referrer counter — preserves the "conversion N+1"
+    # semantics of the original per-row SELECT as we stamp rows.
+    already_count: dict[int, int] = dict(already_baseline)
+    # ──────────────────────────────────────────────────────────────────────
+
     granted = 0
     skipped_no_payer = 0
     no_reward_at_this_count = 0
@@ -73,11 +139,7 @@ async def process_referral_rewards() -> dict[str, Any]:
 
     for row in pending:
         referrer_id = row["referrer_user_id"]
-        try:
-            tier = db.get_user_subscription_tier(referrer_id)
-        except Exception:
-            log.exception("tier lookup failed for user %s", referrer_id)
-            continue
+        tier = _tier_for(referrer_id)
         if tier == "none":
             # Referrer isn't paying right now. Leave the row pending; if
             # they reactivate, the next daily run will grant the reward
@@ -86,16 +148,10 @@ async def process_referral_rewards() -> dict[str, Any]:
             skipped_no_payer += 1
             continue
 
-        # How many of their referrals already have a reward stamped
-        # (of any type, including 'none'). This is the conversion-number
-        # MINUS ONE the new reward logic needs.
-        with db.conn() as c:
-            already = c.execute(
-                "SELECT COUNT(*) AS n FROM referrals "
-                "WHERE referrer_user_id = ? AND reward_granted = 1",
-                (referrer_id,),
-            ).fetchone()
-        already_n = int(already["n"] if already else 0)
+        # How many of their referrals already have a reward stamped.
+        # This is the conversion-number MINUS ONE that the reward logic
+        # needs.
+        already_n = already_count.get(referrer_id, 0)
 
         reward = referral_logic.compute_reward_for_referral(
             total_converted_before_this_one=already_n,
@@ -115,6 +171,7 @@ async def process_referral_rewards() -> dict[str, Any]:
             )
             if ok:
                 no_reward_at_this_count += 1
+                already_count[referrer_id] = already_n + 1
             continue
 
         # Grant the reward via gifted_subscriptions.
@@ -177,6 +234,7 @@ async def process_referral_rewards() -> dict[str, Any]:
 
         dbr.add_referral_credit_months(referrer_id, reward["months"])
         granted += 1
+        already_count[referrer_id] = already_n + 1
 
         # Fire congratulations email via the job queue.
         try:
@@ -185,9 +243,16 @@ async def process_referral_rewards() -> dict[str, Any]:
                 format_reward_label,
                 progress_toward_next_reward,
             )
-            total_converted = dbr.count_converted_referrals(referrer_id)
+            # converted_baseline + user_rows come from the batched
+            # prefetch above. Every pending row is already paid, so the
+            # converted-baseline doesn't move during this run. Fall back
+            # to the per-user helpers if a referrer wasn't captured (a
+            # defence-in-depth path that shouldn't fire in practice).
+            total_converted = converted_baseline.get(referrer_id)
+            if total_converted is None:
+                total_converted = dbr.count_converted_referrals(referrer_id)
             progress = progress_toward_next_reward(total_converted)
-            user_row = db.get_user_by_id(referrer_id)
+            user_row = user_rows.get(referrer_id) or db.get_user_by_id(referrer_id)
             if user_row and user_row["email"]:
                 await enqueue_email(
                     to=user_row["email"],
@@ -269,16 +334,32 @@ async def compute_user_leaderboard_scores() -> dict[str, Any]:
             "AND COALESCE(suspended, 0) = 0"
         ).fetchall()
 
+    # ── N+1 fix ──────────────────────────────────────────────────────────
+    # The original loop ran one SELECT per opted-in user against
+    # user_predictions. Batch-load every resolved prediction for the
+    # cohort in chunks of 500 ids (under SQLITE_MAX_VARIABLE_NUMBER=999),
+    # then partition by user_id in Python.
+    opted_in_ids = [u["id"] for u in opted_in]
+    rows_by_uid: dict[int, list[sqlite3.Row]] = {uid: [] for uid in opted_in_ids}
+    if opted_in_ids:
+        with db.conn() as c:
+            for i in range(0, len(opted_in_ids), 500):
+                chunk = opted_in_ids[i:i + 500]
+                placeholders = ",".join("?" * len(chunk))
+                rows = c.execute(
+                    f"SELECT user_id, resolved_at, resolved_correct "
+                    f"FROM user_predictions "
+                    f"WHERE user_id IN ({placeholders}) AND resolved = 1",
+                    chunk,
+                ).fetchall()
+                for r in rows:
+                    rows_by_uid[r["user_id"]].append(r)
+    # ──────────────────────────────────────────────────────────────────────
+
     scored = 0
     unranked = 0
     for u in opted_in:
-        with db.conn() as c:
-            all_rows = c.execute(
-                "SELECT resolved_at, resolved_correct "
-                "FROM user_predictions "
-                "WHERE user_id = ? AND resolved = 1",
-                (u["id"],),
-            ).fetchall()
+        all_rows = rows_by_uid.get(u["id"], [])
 
         total = len(all_rows)
         if total == 0:

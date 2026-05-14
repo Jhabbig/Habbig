@@ -4,16 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Changelog — narve.ai</title>
-  <meta name="description" content="Product updates, new features, and recent migrations on narve.ai. Updated monthly.">
+  <meta name="description" content="Product updates, new features, and recent releases on narve.ai. Subscribe via RSS or email for weekly digests.">
   <link rel="canonical" href="https://narve.ai/changelog">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
 
+  <!-- Feed discovery — readers like NetNewsWire / Feedly auto-detect this. -->
+  <link rel="alternate" type="application/rss+xml" title="narve.ai changelog" href="/changelog.rss">
+
   <meta property="og:type" content="website">
   <meta property="og:title" content="Changelog · narve.ai">
-  <meta property="og:description" content="Product updates and recent releases on narve.ai.">
+  <meta property="og:description" content="Product updates and recent releases on narve.ai. RSS available.">
   <meta property="og:url" content="https://narve.ai/changelog">
   <meta property="og:site_name" content="narve.ai">
   <meta property="og:image" content="https://narve.ai/og/default">
@@ -26,78 +29,86 @@
   <link rel="stylesheet" href="{{ static: pages/changelog.css }}">
 </head>
 <body>
-  <main class="wrap" id="main">
-    <a class="backlink" href="/">← narve.ai</a>
-    <h1>Changelog</h1>
-    <p class="tagline">What's shipped on narve.ai.</p>
+  <div class="cl-subscribe-bar" data-cl-subscribe>
+    <div class="cl-subscribe-bar__inner">
+      <span class="cl-subscribe-bar__label">Subscribe to updates</span>
+      <div class="cl-subscribe-bar__actions">
+        <a class="cl-subscribe-bar__btn cl-subscribe-bar__btn--ghost" href="/changelog.rss" rel="alternate" type="application/rss+xml">RSS feed</a>
+        <button type="button" class="cl-subscribe-bar__btn cl-subscribe-bar__btn--primary" data-cl-email-toggle aria-expanded="false" aria-controls="cl-email-form">Email digest</button>
+      </div>
+    </div>
+    <form id="cl-email-form" class="cl-subscribe-bar__form" hidden action="/api/newsletter" method="post">
+      {{ raw_csrf_field }}
+      <input type="hidden" name="source" value="changelog-page">
+      <input type="hidden" name="list" value="changelog-digest">
+      <label for="cl-email-input" class="cl-subscribe-bar__form-label">Weekly digest, no marketing — opt out one-click.</label>
+      <div class="cl-subscribe-bar__form-row">
+        <input id="cl-email-input" type="email" name="email" required autocomplete="email" placeholder="you@work.example" class="cl-subscribe-bar__input">
+        <button type="submit" class="cl-subscribe-bar__btn cl-subscribe-bar__btn--primary">Subscribe</button>
+      </div>
+    </form>
+  </div>
 
-    <div class="entry">
-      <div class="entry-date">21 April 2026</div>
-      <h3>SEO content pages + 90-day strategy</h3>
-      <p>Added dedicated pages for /about, /how-it-works, /methodology, /faq, /team, /press, and /changelog, each with its own schema.org JSON-LD, canonical URL, and Open Graph metadata. Full 90-day SEO plan committed at SEO_STRATEGY.md.</p>
+  <main class="cl-wrap" id="main">
+    <a class="cl-backlink" href="/">&larr; narve.ai</a>
+    <header class="cl-page-head">
+      <h1 class="cl-page-title">Changelog</h1>
+      <p class="cl-page-tagline">What's shipped on narve.ai. Updated every deploy.</p>
+    </header>
+
+    <div class="cl-stack">
+      {{ raw_changelog_html }}
     </div>
 
-    <div class="entry">
-      <div class="entry-date">21 April 2026</div>
-      <h3>Subproduct marketing pages + admin MRR</h3>
-      <p>Branded marketing pages for the six narve.ai subdomains — sports, weather, world, crypto, midterm, traders — plus an admin MRR view broken down per subproduct.</p>
-    </div>
+    <p class="cl-footnote">Older history lives in the repo commit log. For technical release notes, see <a class="cl-inline" href="/methodology">methodology</a>.</p>
 
-    <div class="entry">
-      <div class="entry-date">21 April 2026</div>
-      <h3>Security remediation pass</h3>
-      <p>First pass on the non-bypassable access audit: tightened host validation, hardened impersonation privilege checks to fail-closed when admin_level is absent, and expanded the impersonation block list to include 2FA and API-key paths on all methods.</p>
-    </div>
-
-    <div class="entry">
-      <div class="entry-date">20 April 2026</div>
-      <h3>SEO foundation</h3>
-      <p>robots.txt and sitemap.xml now served from the gateway with per-path changefreq and priority. Added a dedicated /narve brand-query landing page. Full Organization + WebSite + SoftwareApplication JSON-LD blocks on the homepage.</p>
-    </div>
-
-    <div class="entry">
-      <div class="entry-date">19 April 2026</div>
-      <h3>Admin: impersonation, feature flags, email template editor</h3>
-      <p>Three admin tools shipped together:</p>
-      <ul>
-        <li>User impersonation with reason-required, full audit trail, and a destructive-action block list.</li>
-        <li>Feature flags with per-user, per-tier, and percentage-rollout controls.</li>
-        <li>Admin-editable email templates with live preview; broken overrides fall back to the file template so emails never drop.</li>
-      </ul>
-    </div>
-
-    <div class="entry">
-      <div class="entry-date">18 April 2026</div>
-      <h3>In-app notification bell</h3>
-      <p>Bell icon in the top nav with unread badge. Dropdown shows the last ten, with "Mark all read" and "View all." Server-Sent Events for real-time updates. Per-type preferences page at /settings/notifications.</p>
-    </div>
-
-    <div class="entry">
-      <div class="entry-date">17 April 2026</div>
-      <h3>Embed widgets</h3>
-      <p>Three embeddable widget types — source credibility, market probability, and best bets — with per-widget domain scoping and Referer validation. Creation flow at /settings/embeds, paid users only, max ten widgets per account.</p>
-    </div>
-
-    <div class="entry">
-      <div class="entry-date">16 April 2026</div>
-      <h3>Affiliate program</h3>
-      <p>Admin-provisioned affiliate accounts with per-affiliate commission rates. 90-day attribution cookie. Payouts manually approved via the admin panel; no Stripe Connect. First affiliates onboarded by end of month.</p>
-    </div>
-
-    <div class="entry">
-      <div class="entry-date">15 April 2026</div>
-      <h3>Private referrals + leaderboard</h3>
-      <p>Each paid user gets a referral link. Rewards: 1 paid referral = +1 month free, 5 = +1 tier upgrade, 10 = 3 months Pro. Accuracy leaderboard at /leaderboard is opt-in for subscribers only. No public "refer a friend" CTAs.</p>
-    </div>
-
-    <div class="entry">
-      <div class="entry-date">14 April 2026</div>
-      <h3>User predictions</h3>
-      <p>Users can now submit their own predictions on any active market (YES/NO + probability). 24h edit window, direction locked. /predictions page shows personal history + Brier + timing + per-category stats. Opt-in public profile at /predictions/public/{user_id}.</p>
-    </div>
-
-    <p style="margin-top: 48px; opacity: 0.55; font-size: 14px;">Older entries live in the repo migration history. For technical release notes, see <a class="inline" href="/methodology">methodology</a> or the public GitHub mirror.</p>
+    <nav class="cl-footer-nav" aria-label="Footer navigation">
+      <a href="/about">About</a>
+      <a href="/how-it-works">How it works</a>
+      <a href="/methodology">Methodology</a>
+      <a href="/faq">FAQ</a>
+      <a href="/team">Team</a>
+      <a href="/press">Press</a>
+      <a href="/pricing">Pricing</a>
+    </nav>
   </main>
+
+  <script>
+    // Minimal vanilla DOM — no external JS. Toggles the email-digest form
+    // beneath the sticky subscribe bar, and applies a "shrunk" state on
+    // scroll so the bar gets out of the way once the user has scrolled in.
+    (function () {
+      var bar = document.querySelector("[data-cl-subscribe]");
+      if (!bar) return;
+      var toggle = bar.querySelector("[data-cl-email-toggle]");
+      var form = bar.querySelector("#cl-email-form");
+      if (toggle && form) {
+        toggle.addEventListener("click", function () {
+          var open = form.hasAttribute("hidden");
+          if (open) {
+            form.removeAttribute("hidden");
+            toggle.setAttribute("aria-expanded", "true");
+            var input = form.querySelector("input[type=email]");
+            if (input) input.focus();
+          } else {
+            form.setAttribute("hidden", "");
+            toggle.setAttribute("aria-expanded", "false");
+          }
+        });
+      }
+      var shrunk = false;
+      function onScroll() {
+        var y = window.scrollY || document.documentElement.scrollTop || 0;
+        var want = y > 120;
+        if (want !== shrunk) {
+          shrunk = want;
+          bar.classList.toggle("cl-subscribe-bar--shrunk", shrunk);
+        }
+      }
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+    })();
+  </script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>
 </body>

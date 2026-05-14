@@ -156,72 +156,127 @@ async def send_weekly_digest_batch() -> dict[str, Any]:
             "AND COALESCE(u.is_deleted, 0) = 0"
         ).fetchall()
 
+    # ── N+1 fix ──────────────────────────────────────────────────────────
+    # _resolve_subproduct_filter() costs 3 queries per user (admin probe
+    # + active-subs for tier + active-subs for slugs). For a digest run
+    # we batch-prefetch all of that up front, and hoist the two
+    # user-invariant catalog queries (recent predictions + source
+    # credibilities) plus the per-user "categories → sources" DISTINCT
+    # scan out of the loop.
+    from subproduct_filters import categories_for as _cats_for
+    _uids = [u["id"] for u in users]
+    _admin_ids: set[int] = set()
+    _user_plans: dict[int, list[str]] = {}
+    _subproducts_by_uid: dict[int, set[str]] = {}
+    if _uids:
+        with db.conn() as c:
+            for i in range(0, len(_uids), 500):  # SQLITE_MAX_VARIABLE_NUMBER=999
+                ch = _uids[i:i + 500]
+                ph = ",".join("?" * len(ch))
+                for r in c.execute(
+                    f"SELECT id FROM users WHERE id IN ({ph}) AND is_admin = 1", ch
+                ).fetchall():
+                    _admin_ids.add(r["id"])
+                for r in c.execute(
+                    f"SELECT user_id, dashboard_key, plan FROM subscriptions "
+                    f"WHERE user_id IN ({ph}) AND status = 'active' "
+                    f"AND (expires_at IS NULL OR expires_at > ?)",
+                    (*ch, now),
+                ).fetchall():
+                    _user_plans.setdefault(r["user_id"], []).append(r["plan"] or "")
+                    if r["dashboard_key"] != "__plan__":
+                        _subproducts_by_uid.setdefault(r["user_id"], set()).add(r["dashboard_key"])
+
+    def _resolve_batched(uid: int):
+        if uid in _admin_ids:
+            return None, [], True
+        plans = _user_plans.get(uid, [])
+        if not plans:
+            return set(), [], False
+        if any((p or "").startswith("pro") for p in plans):
+            return None, [], True
+        slugs = _subproducts_by_uid.get(uid, set())
+        if not slugs:
+            return set(), [], False
+        cats: set[str] = set()
+        for s in slugs:
+            cats.update(_cats_for(s))
+        labels = sorted(_subproduct_display_name(s) for s in slugs)
+        return (cats or None), labels, True
+
+    _prediction_pool: list[dict] = []
+    try:
+        for p in db.list_recent_predictions(limit=200):
+            cred = p["global_credibility"] if "global_credibility" in p.keys() else None
+            _prediction_pool.append({
+                "source": f"@{p['source_handle']}",
+                "content": (p["content"] or "")[:200],
+                "credibility": round(cred, 2) if cred is not None else None,
+                "category": p["category"],
+            })
+    except Exception:
+        pass
+
+    _all_sources: list = []
+    try:
+        _all_sources = (
+            list(db.list_all_source_credibilities())
+            if hasattr(db, "list_all_source_credibilities") else []
+        )
+    except Exception:
+        _all_sources = []
+
+    _source_cats: dict[str, set[str]] = {}
+    try:
+        with db.conn() as c:
+            for r in c.execute(
+                "SELECT DISTINCT source_handle, category FROM predictions "
+                "WHERE extracted_at >= ?",
+                (week_start,),
+            ).fetchall():
+                _source_cats.setdefault(r["source_handle"], set()).add(r["category"])
+    except Exception:
+        pass
+    # ──────────────────────────────────────────────────────────────────────
+
     enqueued = 0
     skipped = 0
     for u in users:
-        category_filter, subproduct_labels, should_send = _resolve_subproduct_filter(u["id"])
+        category_filter, subproduct_labels, should_send = _resolve_batched(u["id"])
         if not should_send:
-            # tier='none' OR no active subproducts → skip the send entirely.
-            # Avoids spamming expired/cancelled users with content from
-            # the 11 subproducts they're not paying for.
             skipped += 1
             continue
 
-        # Top 5 high-EV predictions from the last week, restricted to
-        # the user's subproducts when a category filter is set.
         top_predictions: list[dict] = []
-        try:
-            # Pull a wider window then filter in-memory so we still
-            # have 5 picks after the category narrow.
-            pull_limit = 5 if category_filter is None else 50
-            preds = db.list_recent_predictions(limit=pull_limit)
-            for p in preds:
-                if category_filter is not None and p["category"] not in category_filter:
-                    continue
-                cred = p["global_credibility"] if "global_credibility" in p.keys() else None
-                top_predictions.append({
-                    "source": f"@{p['source_handle']}",
-                    "content": (p["content"] or "")[:200],
-                    "credibility": round(cred, 2) if cred is not None else None,
-                    "category": p["category"],
-                })
-                if len(top_predictions) >= 5:
-                    break
-        except Exception:
-            pass
+        for p in _prediction_pool:
+            if category_filter is not None and p["category"] not in category_filter:
+                continue
+            top_predictions.append(p)
+            if len(top_predictions) >= 5:
+                break
 
-        # Top 3 most accurate sources, optionally restricted to sources
-        # that have been active in the user's categories this week.
-        top_sources: list[dict] = []
-        try:
-            sources = db.list_all_source_credibilities() if hasattr(db, "list_all_source_credibilities") else []
-            if category_filter is not None:
-                # Keep only sources that have at least one prediction in
-                # one of the user's categories within the digest window.
-                placeholders = ",".join("?" * len(category_filter))
-                with db.conn() as c:
-                    allowed = c.execute(
-                        f"SELECT DISTINCT source_handle FROM predictions "
-                        f"WHERE category IN ({placeholders}) AND extracted_at >= ?",
-                        (*sorted(category_filter), week_start),
-                    ).fetchall()
-                allowed_handles = {r["source_handle"] for r in allowed}
-                sources = [s for s in sources if s["source_handle"] in allowed_handles]
-            sources = sorted(
-                [s for s in sources if s["total_predictions"] >= 5],
-                key=lambda s: s["global_credibility"],
-                reverse=True,
-            )[:3]
-            for s in sources:
-                top_sources.append({
-                    "handle": s["source_handle"],
-                    "credibility": round(s["global_credibility"], 2),
-                    "accuracy": (
-                        f"{int(100 * s['correct_predictions'] / max(s['total_predictions'], 1))}%"
-                    ),
-                })
-        except Exception:
-            pass
+        if category_filter is not None:
+            allowed_handles = {
+                h for h, cats in _source_cats.items() if cats & category_filter
+            }
+            _scoped = [s for s in _all_sources if s["source_handle"] in allowed_handles]
+        else:
+            _scoped = list(_all_sources)
+        _scoped = sorted(
+            [s for s in _scoped if s["total_predictions"] >= 5],
+            key=lambda s: s["global_credibility"],
+            reverse=True,
+        )[:3]
+        top_sources: list[dict] = [
+            {
+                "handle": s["source_handle"],
+                "credibility": round(s["global_credibility"], 2),
+                "accuracy": (
+                    f"{int(100 * s['correct_predictions'] / max(s['total_predictions'], 1))}%"
+                ),
+            }
+            for s in _scoped
+        ]
 
         context = {
             "display_name": u["username"] or (u["email"] or "").split("@")[0],
@@ -313,27 +368,83 @@ async def send_morning_briefings() -> dict[str, Any]:
             except (ValueError, TypeError):
                 pass
 
+    # ── N+1 fix ──────────────────────────────────────────────────────────
+    # Batch all per-user lookups up front:
+    #   - tier (was 2 queries each via get_user_subscription_tier)
+    #   - active subproducts (was 1 query each)
+    #   - followed-source signals (was 1 query each, with category narrow)
+    # That's ~4 per-user queries collapsed to a handful of chunked
+    # batched queries up front.
+    _uids_mb = [u["id"] for u in users]
+    _admin_mb: set[int] = set()
+    _plans_mb: dict[int, list[str]] = {}
+    _subp_mb: dict[int, set[str]] = {}
+    if _uids_mb:
+        with db.conn() as c:
+            for i in range(0, len(_uids_mb), 500):
+                ch = _uids_mb[i:i + 500]
+                ph = ",".join("?" * len(ch))
+                for r in c.execute(
+                    f"SELECT id FROM users WHERE id IN ({ph}) AND is_admin = 1", ch
+                ).fetchall():
+                    _admin_mb.add(r["id"])
+                for r in c.execute(
+                    f"SELECT user_id, dashboard_key, plan FROM subscriptions "
+                    f"WHERE user_id IN ({ph}) AND status = 'active' "
+                    f"AND (expires_at IS NULL OR expires_at > ?)",
+                    (*ch, now),
+                ).fetchall():
+                    _plans_mb.setdefault(r["user_id"], []).append(r["plan"] or "")
+                    if r["dashboard_key"] != "__plan__":
+                        _subp_mb.setdefault(r["user_id"], set()).add(r["dashboard_key"])
+
+    def _tier_mb(uid: int) -> str:
+        if uid in _admin_mb:
+            return "pro"
+        plans = _plans_mb.get(uid, [])
+        if any((p or "").startswith("pro") for p in plans):
+            return "pro"
+        if plans:
+            return "trader"
+        return "none"
+
+    # Pre-fetch all followed-source signals for the cohort. We pull
+    # category too so per-user category narrowing happens in-memory.
+    _signals_mb: dict[int, list[dict]] = {uid: [] for uid in _uids_mb}
+    if _uids_mb:
+        with db.conn() as c:
+            for i in range(0, len(_uids_mb), 500):
+                ch = _uids_mb[i:i + 500]
+                ph = ",".join("?" * len(ch))
+                rows = c.execute(
+                    f"SELECT fs.user_id, p.source_handle, p.content, p.category, "
+                    f"sc.global_credibility "
+                    f"FROM predictions p "
+                    f"JOIN followed_sources fs ON fs.source_handle = p.source_handle "
+                    f"LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
+                    f"WHERE fs.user_id IN ({ph}) AND p.extracted_at >= ? "
+                    f"ORDER BY p.extracted_at DESC",
+                    (*ch, yesterday),
+                ).fetchall()
+                for r in rows:
+                    _signals_mb[r["user_id"]].append({
+                        "source_handle": r["source_handle"],
+                        "content": (r["content"] or "")[:120],
+                        "category": r["category"],
+                        "credibility": round(r["global_credibility"] or 0.5, 2),
+                    })
+    # ──────────────────────────────────────────────────────────────────────
+
     sent = 0
     skipped = 0
     for user in users:
-        # Resolve which subproducts this user should see content from.
-        tier = (
-            db.get_user_subscription_tier(user["id"])
-            if hasattr(db, "get_user_subscription_tier")
-            else "none"
-        )
+        tier = _tier_mb(user["id"])
         if tier == "none":
             skipped += 1
             continue
         is_pro = tier == "pro"
-        slugs = (
-            db.get_user_active_subproducts(user["id"])
-            if hasattr(db, "get_user_active_subproducts")
-            else set()
-        )
+        slugs = _subp_mb.get(user["id"], set())
         if not is_pro and not slugs:
-            # No active subproducts → skip. Avoids spamming expired
-            # users with the 11 subproducts they're not paying for.
             skipped += 1
             continue
 
@@ -371,40 +482,20 @@ async def send_morning_briefings() -> dict[str, Any]:
             for m, dt in scoped_approaching[:5]
         ]
 
-        # New signals from followed sources (last 24h), gated by category
-        if is_pro or not category_filter:
-            with db.conn() as c:
-                new_signals_rows = c.execute(
-                    "SELECT p.source_handle, p.content, sc.global_credibility "
-                    "FROM predictions p "
-                    "JOIN followed_sources fs ON fs.source_handle = p.source_handle AND fs.user_id = ? "
-                    "LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
-                    "WHERE p.extracted_at >= ? "
-                    "ORDER BY p.extracted_at DESC LIMIT 5",
-                    (user["id"], yesterday),
-                ).fetchall()
-        else:
-            placeholders = ",".join("?" * len(category_filter))
-            with db.conn() as c:
-                new_signals_rows = c.execute(
-                    f"SELECT p.source_handle, p.content, sc.global_credibility "
-                    f"FROM predictions p "
-                    f"JOIN followed_sources fs ON fs.source_handle = p.source_handle AND fs.user_id = ? "
-                    f"LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
-                    f"WHERE p.extracted_at >= ? "
-                    f"AND p.category IN ({placeholders}) "
-                    f"ORDER BY p.extracted_at DESC LIMIT 5",
-                    (user["id"], yesterday, *sorted(category_filter)),
-                ).fetchall()
-
-        new_signals = [
-            {
-                "source_handle": r["source_handle"],
-                "content": (r["content"] or "")[:120],
-                "credibility": round(r["global_credibility"] or 0.5, 2),
-            }
-            for r in new_signals_rows
-        ]
+        # New signals from the user's pre-fetched bucket; apply the
+        # category narrow in-memory (preserves the original LIMIT 5).
+        _bucket = _signals_mb.get(user["id"], [])
+        new_signals: list[dict] = []
+        for s in _bucket:
+            if (not is_pro) and category_filter and s["category"] not in category_filter:
+                continue
+            new_signals.append({
+                "source_handle": s["source_handle"],
+                "content": s["content"],
+                "credibility": s["credibility"],
+            })
+            if len(new_signals) >= 5:
+                break
 
         subproduct_labels = (
             [] if is_pro else sorted(_subproduct_display_name(s) for s in slugs)

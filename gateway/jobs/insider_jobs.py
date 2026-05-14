@@ -121,23 +121,35 @@ async def _run_fetcher_and_correlate(source_key: str) -> dict[str, Any]:
             "LIMIT ?".format(",".join("?" * len(result.sample_external_ids))),
             (source_key, *result.sample_external_ids, len(result.sample_external_ids)),
         ).fetchall() if result.sample_external_ids else []
+        # ── N+1 fix ──────────────────────────────────────────────────────
+        # Collect every correlation tuple in memory first, then write
+        # them with one executemany. The original loop did one INSERT
+        # round-trip per correlation; for a fetcher that emits hundreds
+        # of correlations per tick this is a substantial saving even on
+        # a local SQLite (each .execute() goes through the cursor +
+        # statement-compile path).
+        rows_to_insert: list[tuple] = []
+        now_ts = int(time.time())
         for row in new_rows:
             signal = dict(row)
             correlations = await correlate_signal(signal, markets)
             for c in correlations:
-                conn.execute(
-                    "INSERT OR REPLACE INTO insider_market_correlations ("
-                    "  signal_id, market_slug, correlation_type, correlation_explanation,"
-                    "  implied_direction, implied_confidence, insider_score, computed_at"
-                    ") VALUES (?,?,?,?,?,?,?,?)",
-                    (
-                        signal["id"], c["market_slug"], c["correlation_type"],
-                        c["correlation_explanation"], c["implied_direction"],
-                        c["implied_confidence"], c["insider_score"],
-                        int(time.time()),
-                    ),
-                )
-                correlated += 1
+                rows_to_insert.append((
+                    signal["id"], c["market_slug"], c["correlation_type"],
+                    c["correlation_explanation"], c["implied_direction"],
+                    c["implied_confidence"], c["insider_score"],
+                    now_ts,
+                ))
+        if rows_to_insert:
+            conn.executemany(
+                "INSERT OR REPLACE INTO insider_market_correlations ("
+                "  signal_id, market_slug, correlation_type, correlation_explanation,"
+                "  implied_direction, implied_confidence, insider_score, computed_at"
+                ") VALUES (?,?,?,?,?,?,?,?)",
+                rows_to_insert,
+            )
+            correlated = len(rows_to_insert)
+        # ──────────────────────────────────────────────────────────────────
         conn.commit()
     except sqlite3.Error as exc:
         log.warning("insider correlate persist failed: %s", exc)

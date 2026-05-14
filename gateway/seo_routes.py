@@ -88,7 +88,19 @@ async def press_page(request: Request):
 async def changelog_page(request: Request):
     if _get_subdomain(request):
         return await _proxy(request, "/changelog")
-    return _render("changelog", request)
+    # Server-render the parsed CHANGELOG.md so the page ships with a
+    # complete card stack on first paint — no client fetch + flash. The
+    # widget JS in render_page() still injects, but the dashboards-hub
+    # mount is the only consumer of /api/changelog now.
+    try:
+        import changelog_routes as _cr
+        raw_html = _cr.render_changelog_html()
+    except Exception as _exc:
+        log.warning("changelog_page: render failed: %s", _exc)
+        raw_html = (
+            '<p class="cl-empty">No changelog entries available right now.</p>'
+        )
+    return _render("changelog", request, raw_changelog_html=raw_html)
 
 
 # ── Registration ────────────────────────────────────────────────────────
