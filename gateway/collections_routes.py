@@ -690,25 +690,42 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 
 
 def _card_html(c: dict, link: str) -> str:
-    title = _html.escape(c.get("title") or "Untitled")
-    desc = _html.escape((c.get("description") or "").strip()[:120])
-    chips = []
+    """Full-width feed row for the collections list.
+
+    Layout mirrors the editorial pattern shared by /predictions, /saved,
+    and /sources: avatar (initial), title in Instrument Serif Italic,
+    description in Source Serif 4 body, item count in Geist Mono on the
+    right. Pure monochrome — no chips, no decoration.
+    """
+    title_raw = (c.get("title") or "Untitled").strip()
+    title = _html.escape(title_raw)
+    desc = _html.escape((c.get("description") or "").strip()[:160])
+    initial = _html.escape(title_raw[:1].upper() or "?")
+    vis = _html.escape((c.get("visibility") or "private").upper())
+    meta_bits = [vis]
     if c.get("is_system"):
-        chips.append('<span class="c-chip c-chip-system">System</span>')
+        meta_bits.append("SYSTEM")
     if c.get("is_featured"):
-        chips.append('<span class="c-chip c-chip-featured">Featured</span>')
-    vis = _html.escape(c.get("visibility") or "private")
-    chips.append(f'<span class="c-chip">{vis}</span>')
+        meta_bits.append("FEATURED")
+    meta = " · ".join(meta_bits)
+    items = int(c.get("item_count") or 0)
+    followers = int(c.get("follower_count") or 0)
     return (
-        f'<a class="c-card" href="{_html.escape(link)}">'
-        f'<div class="c-card-title">{title}</div>'
-        f'<div class="c-card-desc">{desc}</div>'
-        f'<div class="c-card-meta">'
-        f'<span>{c.get("item_count") or 0} items</span>'
-        f'<span>{c.get("follower_count") or 0} followers</span>'
+        f'<li>'
+        f'<a class="feed-row" href="{_html.escape(link)}">'
+        f'<span class="feed-avatar" aria-hidden="true">{initial}</span>'
+        f'<div class="feed-body">'
+        f'<div class="feed-handle">{meta} · {followers} followers</div>'
+        f'<h3 class="feed-row-title">{title}</h3>'
+        f'<p class="feed-prose">{desc}</p>'
         f'</div>'
-        f'<div style="margin-top:10px">{" ".join(chips)}</div>'
+        f'<div class="feed-stats">'
+        f'<span class="feed-stat-value">{items}</span>'
+        f'<span class="feed-stat-label">Items</span>'
+        f'</div>'
+        f'<span class="feed-action feed-action--ghost" aria-hidden="true">Open</span>'
         f'</a>'
+        f'</li>'
     )
 
 
@@ -720,48 +737,51 @@ async def page_collections(request: Request):
     own = coll.list_user_collections(user["user_id"])
     followed = coll.list_user_follows(user["user_id"])
 
-    own_cards = "".join(
-        _card_html(c, f"/collections/{c['id']}") for c in own
-    ) or '<div class="c-empty">No collections yet. Create your first board below.</div>'
+    # Editorial feed rows — full-width, monochrome, no decorative chrome.
+    import server as _srv
 
-    # Followed cards get a small bell toggle in the top-right corner that
-    # mutes notifications without un-following (notifications_on column).
-    def _followed_card_html(c: dict) -> str:
+    own_rows = "".join(
+        _card_html(c, f"/collections/{c['id']}") for c in own
+    ) or _srv.render_empty(
+        title="No collections yet",
+        body="Create your first board to bundle markets, sources, and predictions into a shareable playlist.",
+        actions=[
+            {"label": "New collection", "href": "#", "primary": True},
+            {"label": "Browse public", "href": "/explore"},
+        ],
+    )
+
+    # Followed rows mirror the own-rows layout but append an inline notify
+    # toggle wired up via [data-follow-id]; the bell glyph is gone — text
+    # label only, monochrome.
+    def _followed_row_html(c: dict) -> str:
         notif_on = bool(c.get("notifications_on", 1))
         cid = c["id"]
-        card = _card_html(c, f"/collections/{cid}")
-        bell_color = "var(--ink)" if notif_on else "var(--muted)"
-        bell_glyph = "\U0001F514" if notif_on else "\U0001F515"
-        bell_title = "Mute notifications" if notif_on else "Unmute notifications"
-        notif_flag = 1 if notif_on else 0
-        return (
-            '<div style="position:relative">'
-            f'{card}'
+        row = _card_html(c, f"/collections/{cid}")
+        # Inject a sibling toggle directly after the row's closing </a>. The
+        # row is wrapped in <li>...<a>...</a></li>; we insert before </li>.
+        toggle = (
             f'<button type="button" data-follow-id="{cid}" '
-            f'data-notif-on="{notif_flag}" class="c-bell" title="{bell_title}" '
-            f'style="position:absolute;top:10px;right:10px;background:var(--bg);'
-            f'border:1px solid var(--border);cursor:pointer;font-size:12px;padding:4px 8px;'
-            f'border-radius:6px;color:{bell_color}">{bell_glyph}</button>'
-            '</div>'
+            f'data-notif-on="{1 if notif_on else 0}" '
+            f'class="feed-action feed-action--ghost" '
+            f'style="margin-top:var(--space-2);align-self:flex-start">'
+            f'{"Notify" if notif_on else "Muted"}</button>'
         )
+        return row.replace("</a></li>", f"</a>{toggle}</li>")
 
-    if followed:
-        followed_cards = "".join(_followed_card_html(c) for c in followed)
-    else:
-        followed_cards = '<div class="c-empty">You\'re not following any collections. Head to /explore.</div>'
+    followed_rows = "".join(_followed_row_html(c) for c in followed) or _srv.render_empty(
+        title="Not following any collections",
+        body="Discover public boards on the explore page — follow one to keep its updates in your feed.",
+        actions=[{"label": "Explore", "href": "/explore", "primary": True}],
+    )
 
     # Sidebar from the shared helper so /collections matches the rest of
-    # the app (dashboards, billing, settings, etc.). Without this, the page
-    # had no back-affordance — the user complaint that triggered this fix.
+    # the app (dashboards, billing, settings, etc.).
     try:
         from sidebar import render_sidebar as _render_sidebar
         _admin_link = ""
-        try:
-            import server as _srv_mod
-            if user.get("is_admin"):
-                _admin_link = '<a href="/admin">Admin</a>'
-        except Exception:
-            pass
+        if user.get("is_admin"):
+            _admin_link = '<a href="/admin">Admin</a>'
         sidebar_html = _render_sidebar(
             request,
             active="collections",
@@ -771,140 +791,200 @@ async def page_collections(request: Request):
     except Exception:
         sidebar_html = ""
 
-    body = f"""<!DOCTYPE html><html><head>
-<meta charset='utf-8'><title>Collections — narve.ai</title>
-<link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
-<link rel='stylesheet' href='/_gateway_static/components.css'>
-<script>(function(){{try{{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}}catch(e){{document.documentElement.setAttribute("data-theme","light");}}}})();</script>
-{_PAGE_CSS}
-<style>
-/* Collections wraps in the shared app-shell so the sidebar appears on
-   the left and the existing .c-* page styles continue to work. */
-.c-page-body {{ padding: 24px 32px; max-width: 1200px; margin: 0 auto; }}
-.c-breadcrumb {{ font-size: 12px; color: var(--text-tertiary); margin-bottom: 16px; display: flex; gap: 6px; align-items: center; }}
-.c-breadcrumb a {{ color: var(--text-secondary); text-decoration: none; }}
-.c-breadcrumb a:hover {{ color: var(--text-primary); text-decoration: underline; }}
-</style>
-</head><body>
-<div class="app-shell">
-{sidebar_html}
-<main class="main-content">
-<div class="c-page-body">
-<nav class="c-breadcrumb" aria-label="Breadcrumb">
-  <a href="/dashboards">Dashboards</a>
-  <span aria-hidden="true">/</span>
-  <span aria-current="page">Collections</span>
-</nav>
-<div class="c-wrap">
-<div class="c-head">
-  <div class="c-bar">
-    <div>
-      <h1 class="c-title">Collections</h1>
-      <p class="c-sub">Playlists for markets, sources, and predictions</p>
-    </div>
-    <div class="c-actions">
-      <a class="c-btn c-btn-ghost" href="/explore">Browse public</a>
-      <button class="c-btn" id="c-new-btn">New collection</button>
-    </div>
-  </div>
-</div>
+    return _srv.render_page(
+        "collections",
+        request=request,
+        raw_sidebar=sidebar_html,
+        raw_own_rows=own_rows,
+        raw_followed_rows=followed_rows,
+    )
 
-<div class="c-section-title">Your collections</div>
-<div class="c-grid">{own_cards}</div>
 
-<div class="c-section-title">Following</div>
-<div class="c-grid">{followed_cards}</div>
-</div>
+def _render_detail_item(it: dict, *, is_owner: bool, is_system: bool) -> str:
+    """One row in the collection detail items list — full-width editorial."""
+    kind = it["item_type"]
+    ref = str(it["item_ref"])
+    meta = it.get("meta") or {}
+    if kind == "market":
+        title = meta.get("title") or ref
+        source = (meta.get("source") or "").upper()
+        yes_pct = int((meta.get("yes_price") or 0) * 100)
+        handle_line = f"{source} · {ref}"
+        stat_value = f"{yes_pct}%"
+        stat_label = "YES"
+        href = f"/market/{ref}"
+    elif kind == "source":
+        title = ref
+        cred = meta.get("global_credibility")
+        handle_line = f"@{ref}"
+        stat_value = f"{cred:.2f}" if cred else "—"
+        stat_label = "Credibility"
+        href = f"/source/{ref}"
+    else:
+        content = (meta.get("content") or "")[:200]
+        title = content or f"Prediction #{ref}"
+        handle_line = f"@{meta.get('source_handle') or 'unknown'}"
+        stat_value = "—"
+        stat_label = (meta.get("status") or "open").upper()[:8]
+        href = f"/predictions/{ref}"
 
-<dialog id="c-new-dialog" style="border:1px solid var(--border);border-radius:12px;padding:24px;max-width:460px;width:90%;background:var(--bg);color:var(--ink)">
-  <form method="dialog" id="c-new-form">
-    <h3 style="margin:0 0 16px">New collection</h3>
-    <div class="c-form-field">
-      <label>Title</label>
-      <input name="title" required maxlength="80" placeholder="e.g. Fed meetings Q2">
-    </div>
-    <div class="c-form-field">
-      <label>Description</label>
-      <textarea name="description" rows="3" maxlength="500"></textarea>
-    </div>
-    <div class="c-form-field">
-      <label>Visibility</label>
-      <select name="visibility">
-        <option value="private">Private (only you)</option>
-        <option value="shared">Shared (any signed-in narve user)</option>
-        <option value="public">Public (indexed, shareable)</option>
-      </select>
-    </div>
-    <div class="c-actions" style="justify-content:flex-end">
-      <button type="button" class="c-btn c-btn-ghost" id="c-new-cancel">Cancel</button>
-      <button type="submit" class="c-btn">Create</button>
-    </div>
-  </form>
-</dialog>
+    init = (title.strip()[:1] or "?").upper()
+    drag = (
+        '<span class="c-item-drag" aria-hidden="true" '
+        'style="cursor:grab;color:var(--text-tertiary);'
+        'font-family:var(--font-mono);padding-right:var(--space-2)">::</span>'
+        if is_owner and not is_system else ""
+    )
+    remove = ""
+    if is_owner and not is_system:
+        remove = (
+            f'<button type="button" class="feed-action feed-action--ghost" '
+            f'onclick="__hbColl.remove({it["id"]})">Remove</button>'
+        )
 
-<script>
-(function(){{
-  var dlg = document.getElementById('c-new-dialog');
-  var open = document.getElementById('c-new-btn');
-  var cancel = document.getElementById('c-new-cancel');
-  var form = document.getElementById('c-new-form');
-  if (!dlg || !open) return;
-  open.addEventListener('click', function(){{ dlg.showModal(); }});
-  cancel.addEventListener('click', function(){{ dlg.close(); }});
-  form.addEventListener('submit', async function(ev){{
-    ev.preventDefault();
-    var fd = new FormData(form);
-    var body = {{
-      title: fd.get('title'),
-      description: fd.get('description') || null,
-      visibility: fd.get('visibility') || 'private',
-    }};
-    var r = await fetch('/api/collections', {{
-      method:'POST', headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify(body),
-    }});
-    if (!r.ok) {{
-      var err = await r.json().catch(function(){{ return {{}}; }});
-      alert(err.detail || 'Create failed');
-      return;
-    }}
-    var data = await r.json();
-    location.href = '/collections/' + data.id;
-  }});
+    return (
+        f'<li data-item-id="{it["id"]}">'
+        f'<a class="feed-row" href="{_html.escape(href)}">'
+        f'{drag}'
+        f'<span class="feed-avatar" aria-hidden="true">{_html.escape(init)}</span>'
+        f'<div class="feed-body">'
+        f'<div class="feed-kind">{_html.escape(kind)}</div>'
+        f'<div class="feed-handle">{_html.escape(handle_line)}</div>'
+        f'<p class="feed-prose">{_html.escape(title)}</p>'
+        f'</div>'
+        f'<div class="feed-stats">'
+        f'<span class="feed-stat-value">{_html.escape(stat_value)}</span>'
+        f'<span class="feed-stat-label">{_html.escape(stat_label)}</span>'
+        f'</div>'
+        f'{remove}'
+        f'</a>'
+        f'</li>'
+    )
 
-  // Mute/un-mute notifications on followed cards (bell toggle).
-  document.querySelectorAll('.c-bell[data-follow-id]').forEach(function(btn){{
-    btn.addEventListener('click', async function(ev){{
-      ev.preventDefault(); ev.stopPropagation();
-      var cid = btn.dataset.followId;
-      var current = btn.dataset.notifOn === '1';
-      btn.disabled = true;
-      try {{
-        var csrf = (document.cookie.match(/(?:^|;\\s*)_csrf=([^;]*)/) || [])[1] || '';
-        var r = await fetch('/api/collections/' + cid + '/follow', {{
-          method: 'PATCH',
-          headers: {{'Content-Type': 'application/json', 'x-csrf-token': csrf}},
-          body: JSON.stringify({{ notifications_on: !current }}),
-        }});
-        if (!r.ok) throw new Error('failed');
-        btn.dataset.notifOn = current ? '0' : '1';
-        btn.textContent = current ? '\\ud83d\\udd15' : '\\ud83d\\udd14';
-        btn.title = current ? 'Unmute notifications' : 'Mute notifications';
-        btn.style.color = current ? 'var(--muted)' : 'var(--ink)';
-      }} catch (e) {{
-        alert('Could not update notifications.');
-      }} finally {{
-        btn.disabled = false;
-      }}
-    }});
-  }});
-}})();
-</script>
-</div>
-</main>
-</div>
-</body></html>"""
-    return HTMLResponse(body)
+
+def _render_detail_page(
+    request: Request,
+    *,
+    row: dict,
+    items: list[dict],
+    viewer: Optional[dict],
+    is_owner: bool,
+    is_system: bool,
+    is_following: bool,
+    owner_handle: str,
+    is_public_seo: bool = False,
+):
+    """Shared detail renderer for both /collections/{id} and /c/{handle}/{slug}."""
+    import server as _srv
+
+    title_raw = row["title"] or "Untitled"
+    desc_raw = row["description"] or ""
+    vis = row["visibility"]
+
+    items_html = "".join(
+        _render_detail_item(it, is_owner=is_owner, is_system=is_system) for it in items
+    )
+    if not items_html:
+        items_html = _srv.render_empty(
+            title="No items yet" if is_owner else "This collection is empty",
+            body=(
+                "Add your first market, source, or prediction with the button above."
+                if is_owner and not is_system
+                else "The owner hasn't added anything to this collection."
+            ),
+            actions=(
+                [{"label": "Add items", "href": "#", "primary": True}]
+                if is_owner and not is_system else []
+            ),
+        )
+
+    # Action buttons
+    actions: list[str] = []
+    if row["visibility"] in ("shared", "public"):
+        share_url = f"/c/{owner_handle}/{row['slug']}"
+        actions.append(
+            f'<button type="button" class="feed-action feed-action--ghost" '
+            f'id="c-share-btn" data-share-url="{_html.escape(share_url)}">Share</button>'
+        )
+    if not is_owner and row["visibility"] in ("shared", "public"):
+        label = "Following" if is_following else "Follow"
+        actions.append(
+            f'<button type="button" class="feed-action" id="c-follow-btn" '
+            f'data-following="{"1" if is_following else "0"}" '
+            f'aria-pressed="{"true" if is_following else "false"}">{label}</button>'
+        )
+    if is_owner and not is_system:
+        actions.append(
+            '<button type="button" class="feed-action" id="c-add-btn">Add items</button>'
+        )
+        actions.append(
+            '<button type="button" class="feed-action feed-action--ghost" '
+            'id="c-delete-btn">Delete</button>'
+        )
+
+    actions_html = "".join(actions)
+
+    system_banner = ""
+    if is_system:
+        system_banner = (
+            '<div style="margin-top:var(--space-4);padding:var(--space-3) var(--space-4);'
+            'border:1px solid var(--border-subtle);border-radius:var(--radius-md);'
+            'color:var(--text-tertiary);font-size:var(--text-xs);font-family:var(--font-ui);'
+            'font-weight:500">'
+            'This collection is maintained by narve — items sync automatically '
+            'from your saves and watchlist. It can\'t be edited or deleted.'
+            '</div>'
+        )
+
+    title_editable = (not is_system) and is_owner
+    raw_title_editable = ' contenteditable="true" spellcheck="false"' if title_editable else ""
+    raw_desc_editable = raw_title_editable
+
+    desc_for_display = desc_raw or ("Add a description…" if title_editable else "")
+
+    share_url = f"/c/{owner_handle}/{row['slug']}"
+    canonical = share_url if vis == "public" else f"/collections/{row['id']}"
+    robots = "index,follow" if vis == "public" else "noindex,nofollow"
+
+    # Sidebar (signed-in only; public SEO page hides it).
+    sidebar_html = ""
+    if not is_public_seo:
+        try:
+            from sidebar import render_sidebar as _render_sidebar
+            _admin_link_d = ""
+            if (viewer or {}).get("is_admin"):
+                _admin_link_d = '<a href="/admin">Admin</a>'
+            sidebar_html = _render_sidebar(
+                request,
+                active="collections",
+                username=(viewer or {}).get("username")
+                         or (viewer or {}).get("email") or "",
+                raw_admin_link=_admin_link_d,
+            )
+        except Exception:
+            sidebar_html = ""
+
+    return _srv.render_page(
+        "collection_detail",
+        request=request,
+        raw_sidebar=sidebar_html,
+        collection_id=row["id"],
+        collection_title=title_raw,
+        collection_description=desc_for_display,
+        owner_handle=owner_handle,
+        visibility_label=vis.upper(),
+        item_count=row.get("item_count") or 0,
+        follower_count=row.get("follower_count") or 0,
+        canonical_url=canonical,
+        robots=robots,
+        raw_title_editable=raw_title_editable,
+        raw_desc_editable=raw_desc_editable,
+        raw_actions=actions_html,
+        raw_system_banner=system_banner,
+        raw_items=items_html,
+        raw_is_owner_js="true" if is_owner else "false",
+        raw_is_system_js="true" if is_system else "false",
+    )
 
 
 async def page_collection_detail(request: Request, id: int):
@@ -921,396 +1001,30 @@ async def page_collection_detail(request: Request, id: int):
         coll.rebuild_system_collection_items(vid, row["slug"])
     items = _resolve_items(coll.list_items(row["id"]))
     owner_handle = _owner_handle(row["owner_user_id"])
-    is_owner = row["is_owner"]
-    is_system = row["is_system"]
+    is_owner = bool(row["is_owner"])
+    is_system = bool(row["is_system"])
     is_following = bool(vid) and coll.is_following(vid, row["id"])
-
-    def _item_html(it: dict) -> str:
-        kind = it["item_type"]
-        ref = _html.escape(str(it["item_ref"]))
-        meta = it.get("meta") or {}
-        if kind == "market":
-            title = _html.escape(meta.get("title") or ref)
-            sub = f"{_html.escape(meta.get('source') or '').capitalize()} · {int((meta.get('yes_price') or 0)*100)}% YES"
-        elif kind == "source":
-            title = f"@{ref}"
-            cred = meta.get("global_credibility")
-            sub = f"credibility {cred:.2f}" if cred else "—"
-        else:
-            content = (meta.get("content") or "")[:140]
-            title = _html.escape(content or f"Prediction #{ref}")
-            sub = f"by @{_html.escape(meta.get('source_handle') or '')}" if meta.get("source_handle") else ""
-        drag = '<span class="c-item-drag" aria-hidden="true">⋮⋮</span>' if is_owner and not is_system else ""
-        remove = ""
-        if is_owner and not is_system:
-            remove = (
-                f'<button class="c-btn c-btn-ghost" style="margin-left:auto" '
-                f'onclick="__hbColl.remove({it["id"]})">Remove</button>'
-            )
-        return (
-            f'<div class="c-item" data-item-id="{it["id"]}">'
-            f'{drag}'
-            f'<div class="c-item-body">'
-            f'<div class="c-item-kind">{_html.escape(kind)}</div>'
-            f'<div class="c-item-title">{title}</div>'
-            f'<div class="c-item-sub">{_html.escape(sub)}</div>'
-            f'</div>{remove}</div>'
-        )
-
-    items_html = "".join(_item_html(it) for it in items)
-    if not items_html:
-        if is_owner and not is_system:
-            items_html = '<div class="c-empty">No items yet. Add your first market, source, or prediction.</div>'
-        else:
-            items_html = '<div class="c-empty">This collection is empty.</div>'
-
-    follow_block = ""
-    if not is_owner and row["visibility"] in ("shared", "public"):
-        follow_block = (
-            f'<button class="c-btn" id="c-follow-btn" data-following="{"1" if is_following else "0"}">'
-            f'{"Following ✓" if is_following else "Follow"}</button>'
-        )
-
-    # Share button — only makes sense once the board isn't private, and
-    # we always link to the SEO canonical /c/{handle}/{slug} so the link
-    # survives users changing their handle down the road.
-    share_btn = ""
-    if row["visibility"] in ("shared", "public"):
-        share_url = f"/c/{owner_handle}/{_html.escape(row['slug'])}"
-        share_btn = (
-            f'<button class="c-btn c-btn-ghost" id="c-share-btn" '
-            f'data-share-url="{share_url}" title="Copy link to clipboard">Share</button>'
-        )
-
-    owner_actions = ""
-    if is_owner:
-        delete_btn = (
-            '<button class="c-btn c-btn-ghost" id="c-delete-btn">Delete</button>'
-            if not is_system else ""
-        )
-        add_btn = (
-            '<button class="c-btn" id="c-add-btn">Add items</button>'
-            if not is_system else ""
-        )
-        owner_actions = f'<div class="c-actions">{add_btn}{delete_btn}</div>'
-
-    # System boards get a read-only banner so the UI is never confusing.
-    system_banner = ""
-    if is_system:
-        system_banner = (
-            '<div style="padding:12px 16px;border:1px solid var(--border);'
-            'border-radius:8px;color:var(--muted);font-size:12px;margin-bottom:16px">'
-            'This collection is maintained by narve — items sync automatically '
-            'from your saves and watchlist. It can\'t be edited or deleted.'
-            '</div>'
-        )
-
-    title_editable = (not is_system) and is_owner
-    title_html = _html.escape(row["title"])
-    desc_html = _html.escape(row["description"] or "")
-    vis = row["visibility"]
-    share_url = f"/c/{_html.escape(owner_handle)}/{_html.escape(row['slug'])}"
-    og_url = share_url if vis == "public" else f"/collections/{row['id']}"
-
-    # Sidebar via shared helper, same as list page above.
-    try:
-        from sidebar import render_sidebar as _render_sidebar
-        _admin_link_d = ""
-        if (viewer or {}).get("is_admin"):
-            _admin_link_d = '<a href="/admin">Admin</a>'
-        sidebar_html = _render_sidebar(
-            request,
-            active="collections",
-            username=(viewer or {}).get("username")
-                     or (viewer or {}).get("email") or "",
-            raw_admin_link=_admin_link_d,
-        )
-    except Exception:
-        sidebar_html = ""
-
-    body = f"""<!DOCTYPE html><html><head>
-<meta charset='utf-8'>
-<title>{title_html} — narve.ai Collections</title>
-<meta name="description" content="{desc_html[:160]}">
-<meta property="og:title" content="{title_html}">
-<meta property="og:description" content="{desc_html[:160]}">
-<meta property="og:url" content="{og_url}">
-<meta property="og:type" content="website">
-<link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
-<link rel='stylesheet' href='/_gateway_static/components.css'>
-<script>(function(){{try{{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}}catch(e){{document.documentElement.setAttribute("data-theme","light");}}}})();</script>
-{_PAGE_CSS}
-<style>
-.c-page-body {{ padding: 24px 32px; max-width: 1200px; margin: 0 auto; }}
-.c-breadcrumb {{ font-size: 12px; color: var(--text-tertiary); margin-bottom: 16px; display: flex; gap: 6px; align-items: center; }}
-.c-breadcrumb a {{ color: var(--text-secondary); text-decoration: none; }}
-.c-breadcrumb a:hover {{ color: var(--text-primary); text-decoration: underline; }}
-</style>
-</head><body>
-<div class="app-shell">
-{sidebar_html}
-<main class="main-content">
-<div class="c-page-body">
-<nav class="c-breadcrumb" aria-label="Breadcrumb">
-  <a href="/dashboards">Dashboards</a>
-  <span aria-hidden="true">/</span>
-  <a href="/collections">Collections</a>
-  <span aria-hidden="true">/</span>
-  <span aria-current="page">{title_html}</span>
-</nav>
-<div class="c-wrap">
-<a href="/collections" class="c-back">← Collections</a>
-<div class="c-head" style="margin-top:14px">
-  <div class="c-bar">
-    <div>
-      <h1 class="c-title" id="c-title"{' contenteditable="true"' if title_editable else ''}>{title_html}</h1>
-      <p class="c-sub" id="c-desc"{' contenteditable="true"' if title_editable else ''}>
-        {desc_html or ("Add a description…" if title_editable else "")}
-      </p>
-      <div style="margin-top:10px">
-        <span class="c-chip">{_html.escape(vis)}</span>
-        <span class="c-chip">{row.get("item_count") or 0} items</span>
-        <span class="c-chip">{row.get("follower_count") or 0} followers</span>
-      </div>
-    </div>
-    <div class="c-actions">
-      {share_btn}
-      {follow_block}
-      {owner_actions}
-    </div>
-  </div>
-</div>
-
-{system_banner}
-
-<div id="c-items">{items_html}</div>
-
-<div id="c-add-modal" style="display:none;margin-top:18px;padding:16px;border:1px solid var(--border);border-radius:12px">
-  <div class="c-form-field">
-    <label>Search markets, sources, predictions</label>
-    <input id="c-add-q" placeholder="Start typing…" autocomplete="off">
-  </div>
-  <div id="c-add-results" style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
-  <div class="c-actions" style="justify-content:flex-end;margin-top:10px">
-    <button class="c-btn c-btn-ghost" id="c-add-cancel">Close</button>
-  </div>
-</div>
-
-<script>
-(function(){{
-  var COLLECTION_ID = {row["id"]};
-  var IS_OWNER = {str(bool(is_owner)).lower()};
-  var IS_SYSTEM = {str(bool(is_system)).lower()};
-
-  async function api(method, path, body){{
-    var opts = {{ method: method, headers: {{'Content-Type': 'application/json'}} }};
-    if (body !== undefined) opts.body = JSON.stringify(body);
-    var r = await fetch(path, opts);
-    if (!r.ok) {{
-      var err = await r.json().catch(function(){{ return {{}}; }});
-      throw new Error(err.detail || ('HTTP ' + r.status));
-    }}
-    return r.json().catch(function(){{ return {{}}; }});
-  }}
-
-  window.__hbColl = {{
-    remove: async function(itemId){{
-      if (!confirm('Remove this item?')) return;
-      try {{
-        await api('DELETE', '/api/collections/' + COLLECTION_ID + '/items/' + itemId);
-        location.reload();
-      }} catch (e) {{ alert(e.message); }}
-    }}
-  }};
-
-  // Inline title / description edit — PATCH on blur.
-  if (IS_OWNER && !IS_SYSTEM) {{
-    var titleEl = document.getElementById('c-title');
-    var descEl = document.getElementById('c-desc');
-    function save(field){{
-      var payload = {{}};
-      payload[field] = (field === 'title' ? titleEl.textContent : descEl.textContent).trim();
-      api('PATCH', '/api/collections/' + COLLECTION_ID, payload)
-        .catch(function(e){{ alert(e.message); }});
-    }}
-    if (titleEl) titleEl.addEventListener('blur', function(){{ save('title'); }});
-    if (descEl) descEl.addEventListener('blur', function(){{ save('description'); }});
-  }}
-
-  var followBtn = document.getElementById('c-follow-btn');
-  if (followBtn) {{
-    followBtn.addEventListener('click', async function(){{
-      var following = followBtn.dataset.following === '1';
-      try {{
-        await api(following ? 'DELETE' : 'POST',
-                  '/api/collections/' + COLLECTION_ID + '/follow');
-        followBtn.dataset.following = following ? '0' : '1';
-        followBtn.textContent = following ? 'Follow' : 'Following \u2713';
-      }} catch (e) {{ alert(e.message); }}
-    }});
-  }}
-
-  var delBtn = document.getElementById('c-delete-btn');
-  if (delBtn) {{
-    delBtn.addEventListener('click', async function(){{
-      if (!confirm('Delete this collection? This cannot be undone.')) return;
-      try {{
-        await api('DELETE', '/api/collections/' + COLLECTION_ID);
-        location.href = '/collections';
-      }} catch (e) {{ alert(e.message); }}
-    }});
-  }}
-
-  var addBtn = document.getElementById('c-add-btn');
-  var addModal = document.getElementById('c-add-modal');
-  var addCancel = document.getElementById('c-add-cancel');
-  var addQ = document.getElementById('c-add-q');
-  var addResults = document.getElementById('c-add-results');
-  if (addBtn && addModal) {{
-    addBtn.addEventListener('click', function(){{
-      addModal.style.display = 'block';
-      if (addQ) addQ.focus();
-    }});
-    addCancel.addEventListener('click', function(){{ addModal.style.display = 'none'; }});
-
-    // Debounced typeahead — hits /api/collections/search, renders rows,
-    // each row is a button that POSTs directly to the items endpoint.
-    var searchTimer = null;
-    function escHtml(s){{
-      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){{
-        return ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c];
-      }});
-    }}
-    function renderResults(results){{
-      if (!results || !results.length) {{
-        addResults.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px;text-align:center">No matches. Try a different search.</div>';
-        return;
-      }}
-      addResults.innerHTML = results.map(function(r){{
-        return (
-          '<button type="button" class="hbc-row" data-type="' + escHtml(r.item_type) +
-          '" data-ref="' + escHtml(r.item_ref) + '" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;cursor:pointer;background:transparent;border:0;width:100%;text-align:left;color:inherit;font:inherit">' +
-          '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em">' + escHtml(r.item_type) + '</div>' +
-          '<div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(r.title) + '</div>' +
-          '<div style="font-size:11px;color:var(--muted)">' + escHtml(r.subtitle || '') + '</div>' +
-          '</div>' +
-          '<span style="color:var(--muted);font-size:18px">+</span>' +
-          '</button>'
-        );
-      }}).join('');
-      addResults.querySelectorAll('button[data-type]').forEach(function(btn){{
-        btn.addEventListener('click', async function(){{
-          btn.disabled = true;
-          try {{
-            await api('POST', '/api/collections/' + COLLECTION_ID + '/items', {{
-              item_type: btn.dataset.type,
-              item_ref: btn.dataset.ref,
-            }});
-            location.reload();
-          }} catch (e) {{
-            btn.disabled = false;
-            alert(e.message);
-          }}
-        }});
-      }});
-    }}
-    if (addQ && addResults) {{
-      addQ.addEventListener('input', function(){{
-        clearTimeout(searchTimer);
-        var q = addQ.value.trim();
-        if (q.length < 2) {{
-          addResults.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px;text-align:center">Type at least 2 characters…</div>';
-          return;
-        }}
-        searchTimer = setTimeout(async function(){{
-          try {{
-            var data = await api('GET', '/api/collections/search?q=' + encodeURIComponent(q));
-            renderResults(data.results || []);
-          }} catch (e) {{
-            addResults.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px;text-align:center">Search failed.</div>';
-          }}
-        }}, 180);
-      }});
-    }}
-  }}
-
-  // Share button — copies the canonical URL to clipboard.
-  var shareBtn = document.getElementById('c-share-btn');
-  if (shareBtn) {{
-    shareBtn.addEventListener('click', async function(){{
-      var url = shareBtn.dataset.shareUrl || location.href;
-      try {{
-        if (navigator.clipboard && navigator.clipboard.writeText) {{
-          await navigator.clipboard.writeText(url);
-        }} else {{
-          // Fallback for http or older browsers — fall through to prompt.
-          window.prompt('Copy this link:', url);
-        }}
-        var orig = shareBtn.textContent;
-        shareBtn.textContent = 'Copied \u2713';
-        setTimeout(function(){{ shareBtn.textContent = orig; }}, 1400);
-      }} catch (e) {{
-        window.prompt('Copy this link:', url);
-      }}
-    }});
-  }}
-
-  // Drag-to-reorder. Lightweight — no library. Pointer-based so it
-  // works on touch + mouse without pulling in dragula.
-  if (IS_OWNER && !IS_SYSTEM) {{
-    var container = document.getElementById('c-items');
-    if (container) {{
-      var dragging = null;
-      container.addEventListener('pointerdown', function(ev){{
-        var handle = ev.target.closest('.c-item-drag');
-        if (!handle) return;
-        dragging = handle.closest('.c-item');
-        dragging.setAttribute('aria-grabbed', 'true');
-        dragging.style.opacity = '0.6';
-      }});
-      container.addEventListener('pointermove', function(ev){{
-        if (!dragging) return;
-        var after = null;
-        var items = container.querySelectorAll('.c-item');
-        for (var i = 0; i < items.length; i++) {{
-          var item = items[i];
-          if (item === dragging) continue;
-          var rect = item.getBoundingClientRect();
-          if (ev.clientY < rect.top + rect.height / 2) {{ after = item; break; }}
-        }}
-        if (after) container.insertBefore(dragging, after);
-        else container.appendChild(dragging);
-      }});
-      container.addEventListener('pointerup', async function(){{
-        if (!dragging) return;
-        dragging.style.opacity = '';
-        dragging.removeAttribute('aria-grabbed');
-        dragging = null;
-        var ordering = [];
-        container.querySelectorAll('.c-item').forEach(function(el, idx){{
-          ordering.push({{ item_id: parseInt(el.dataset.itemId), position: idx }});
-        }});
-        try {{
-          await api('POST',
-            '/api/collections/' + COLLECTION_ID + '/items/reorder',
-            ordering);
-        }} catch (e) {{ /* swallow — reload fixes divergence */ }}
-      }});
-    }}
-  }}
-}})();
-</script>
-</div>
-</div>
-</main>
-</div>
-</body></html>"""
-    return HTMLResponse(body)
+    return _render_detail_page(
+        request,
+        row=row,
+        items=items,
+        viewer=viewer,
+        is_owner=is_owner,
+        is_system=is_system,
+        is_following=is_following,
+        owner_handle=owner_handle,
+        is_public_seo=False,
+    )
 
 
 async def page_public(request: Request, handle: str, slug: str):
-    """Public SEO page. Indexable only when visibility=public."""
+    """Public SEO page. Indexable only when visibility=public.
+
+    Uses the same `collection_detail.html` template as the dashboard view
+    so the editorial layout, type system, and monochrome treatment are
+    identical between owner and reader. Sidebar is suppressed on the
+    public page so SEO crawlers see a focused, sidebar-free document.
+    """
     viewer = _optional_user(request)
     vid = viewer["user_id"] if viewer else None
     try:
@@ -1321,101 +1035,21 @@ async def page_public(request: Request, handle: str, slug: str):
         raise HTTPException(status_code=404)
 
     items = _resolve_items(coll.list_items(row["id"]))
-    title_html = _html.escape(row["title"])
-    desc_html = _html.escape(row["description"] or "")
-    vis = row["visibility"]
-    owner_handle = _html.escape(handle)
-    robots = "index,follow" if vis == "public" else "noindex,nofollow"
-    # Send readers to the dashboard-owned canonical so /c/ variants don't split link equity.
-    canonical = f"/c/{owner_handle}/{_html.escape(slug)}"
+    is_owner = bool(row.get("is_owner"))
+    is_system = bool(row.get("is_system"))
+    is_following = bool(vid) and coll.is_following(vid, row["id"])
 
-    def _render_item(it: dict) -> str:
-        kind = it["item_type"]
-        meta = it.get("meta") or {}
-        ref = _html.escape(str(it["item_ref"]))
-        if kind == "market":
-            title = _html.escape(meta.get("title") or ref)
-            url = _html.escape(meta.get("url") or "")
-            sub = f"{_html.escape((meta.get('source') or '').capitalize())} · {int((meta.get('yes_price') or 0)*100)}% YES"
-            link_html = f'<a href="{url}" target="_blank" rel="noopener">Open on platform ↗</a>' if url else ""
-        elif kind == "source":
-            title = f"@{ref}"
-            sub = f"credibility {meta.get('global_credibility'):.2f}" if meta.get("global_credibility") else "—"
-            link_html = f'<a href="/sources/{ref}">View profile →</a>'
-        else:
-            content = (meta.get("content") or "")[:200]
-            title = _html.escape(content or f"Prediction #{ref}")
-            sub = f"by @{_html.escape(meta.get('source_handle') or '')}" if meta.get("source_handle") else ""
-            link_html = ""
-        return (
-            f'<div class="c-item">'
-            f'<div class="c-item-body">'
-            f'<div class="c-item-kind">{_html.escape(kind)}</div>'
-            f'<div class="c-item-title">{title}</div>'
-            f'<div class="c-item-sub">{_html.escape(sub)} {link_html}</div>'
-            f'</div></div>'
-        )
-
-    items_html = "".join(_render_item(it) for it in items) or \
-                 '<div class="c-empty">This collection is empty.</div>'
-
-    body = f"""<!DOCTYPE html><html><head>
-<meta charset='utf-8'>
-<title>{title_html} · @{owner_handle} — narve.ai</title>
-<meta name="description" content="{desc_html[:160]}">
-<meta name="robots" content="{robots}">
-<link rel="canonical" href="{canonical}">
-<meta property="og:title" content="{title_html} · @{owner_handle}">
-<meta property="og:description" content="{desc_html[:160]}">
-<meta property="og:type" content="website">
-<meta property="og:url" content="{canonical}">
-<meta property="og:site_name" content="narve.ai">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="{title_html} · @{owner_handle}">
-<meta name="twitter:description" content="{desc_html[:160]}">
-<link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
-{_PAGE_CSS}
-</head><body>
-<div class="c-wrap">
-<a href="/explore" class="c-back">← Explore</a>
-<div class="c-head" style="margin-top:14px">
-  <div class="c-bar">
-    <div>
-      <h1 class="c-title">{title_html}</h1>
-      <p class="c-sub">by @{owner_handle} · {row.get("item_count") or 0} items · {row.get("follower_count") or 0} followers</p>
-    </div>
-    <div class="c-actions">
-      <button class="c-btn c-btn-ghost" id="c-share-btn" data-share-url="{canonical}">Share</button>
-      {'<a class="c-btn c-btn-ghost" href="/c/' + owner_handle + '/' + _html.escape(slug) + '.rss" style="text-decoration:none">RSS</a>' if vis == "public" else ""}
-    </div>
-  </div>
-  <p style="margin-top:16px;color:var(--muted);font-size:14px;line-height:1.55;max-width:640px">{desc_html}</p>
-</div>
-<div>{items_html}</div>
-</div>
-<script>
-(function(){{
-  var btn = document.getElementById('c-share-btn');
-  if (!btn) return;
-  btn.addEventListener('click', async function(){{
-    var url = location.origin + btn.dataset.shareUrl;
-    try {{
-      if (navigator.clipboard && navigator.clipboard.writeText) {{
-        await navigator.clipboard.writeText(url);
-      }} else {{
-        window.prompt('Copy this link:', url);
-      }}
-      var orig = btn.textContent;
-      btn.textContent = 'Copied \u2713';
-      setTimeout(function(){{ btn.textContent = orig; }}, 1400);
-    }} catch (e) {{
-      window.prompt('Copy this link:', url);
-    }}
-  }});
-}})();
-</script>
-</body></html>"""
-    return HTMLResponse(body)
+    return _render_detail_page(
+        request,
+        row=row,
+        items=items,
+        viewer=viewer,
+        is_owner=is_owner,
+        is_system=is_system,
+        is_following=is_following,
+        owner_handle=handle,
+        is_public_seo=True,
+    )
 
 
 async def page_explore(request: Request):
@@ -1423,12 +1057,12 @@ async def page_explore(request: Request):
     most = coll.most_followed_collections(12)
     recent = coll.recently_updated_collections(12)
 
-    def _grid(rows: list[dict]) -> str:
+    def _list(rows: list[dict]) -> str:
         if not rows:
-            return '<div class="c-empty">Nothing here yet.</div>'
-        return '<div class="c-grid">' + "".join(
+            return '<div class="nv-empty" role="status"><p class="nv-empty__body">Nothing here yet.</p></div>'
+        return '<ul class="feed-list">' + "".join(
             _card_html(c, f"/collections/{c['id']}") for c in rows
-        ) + '</div>'
+        ) + '</ul>'
 
     body = f"""<!DOCTYPE html><html><head>
 <meta charset='utf-8'>
@@ -1438,19 +1072,23 @@ async def page_explore(request: Request):
 <meta property="og:title" content="Explore collections — narve.ai">
 <meta property="og:type" content="website">
 <link rel='stylesheet' href='/_gateway_static/gateway.css?v=8'>
-{_PAGE_CSS}
+<link rel='stylesheet' href='/_gateway_static/pages/feeds.css'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
 </head><body>
-<div class="c-wrap">
-<div class="c-head">
-  <h1 class="c-title">Explore</h1>
-  <p class="c-sub">Editor-picked + most-followed collections</p>
-</div>
-<div class="c-section-title">Editor's picks</div>
-{_grid(featured)}
-<div class="c-section-title">Most followed</div>
-{_grid(most)}
-<div class="c-section-title">Recently updated</div>
-{_grid(recent)}
+<div class="feed-shell">
+<header class="feed-hero">
+  <div class="feed-eyebrow">Discover</div>
+  <h1 class="feed-title">Explore</h1>
+  <p class="feed-lede">Editor-picked and most-followed collections from across narve.</p>
+</header>
+<h2 class="feed-section-title">Editor's picks</h2>
+{_list(featured)}
+<h2 class="feed-section-title">Most followed</h2>
+{_list(most)}
+<h2 class="feed-section-title">Recently updated</h2>
+{_list(recent)}
 </div>
 </body></html>"""
     return HTMLResponse(body)

@@ -295,38 +295,10 @@ async def predictions_history_page(request: Request):
     if not user:
         return RedirectResponse("/login?next=/predictions", status_code=302)
 
-    rows = db.list_user_predictions(user["user_id"], limit=200)
-    stats = db.get_user_prediction_stats(user["user_id"])
-
-    if stats:
-        total = int(stats["total_predictions"] or 0)
-        resolved = int(stats["resolved_predictions"] or 0)
-        correct = int(stats["correct_predictions"] or 0)
-        accuracy_pct = (float(stats["accuracy"]) * 100) if stats["accuracy"] is not None else None
-        avg_brier = stats["avg_brier_score"]
-        streak = int(stats["current_streak"] or 0)
-    else:
-        total = len(rows)
-        resolved = sum(1 for r in rows if r["resolved"])
-        correct = sum(1 for r in rows if r["resolved_correct"])
-        accuracy_pct = (correct / resolved * 100) if resolved else None
-        avg_brier = None
-        streak = 0
-
-    summary_parts = [
-        ("Total", str(total)),
-        ("Resolved", str(resolved)),
-        ("Correct", str(correct)),
-        ("Accuracy", f"{accuracy_pct:.1f}%" if accuracy_pct is not None else "—"),
-        ("Avg Brier", f"{avg_brier:.3f}" if avg_brier is not None else "—"),
-        ("Streak", str(streak)),
-    ]
-    summary_html = "".join(
-        f'<div class="stat-card"><div class="stat-label">{lbl}</div>'
-        f'<div class="stat-value">{val}</div></div>'
-        for lbl, val in summary_parts
-    )
-
+    # The redesigned page is JS-driven — it fetches /api/predictions/me on
+    # mount so we don't need to pre-render rows or stats here. Keeps the
+    # initial HTML payload small and lets the editorial layout own the
+    # presentation.
     nav_role = _role_badge(user)
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     _sidebar = render_sidebar(
@@ -337,17 +309,12 @@ async def predictions_history_page(request: Request):
         raw_nav_role=nav_role,
     )
     return _render(
-        "predictions_history",
+        "predictions",
         request=request,
         email=user["email"],
         username=user.get("username", user["email"]),
         raw_nav_role=nav_role,
         raw_admin_link=admin_link,
-        raw_summary_cards=summary_html,
-        raw_prediction_rows=_build_prediction_rows_html(rows) or
-            '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">'
-            'No predictions yet. Visit any market to log one.'
-            '</div></div></div>',
         raw_sidebar=_sidebar,
     )
 

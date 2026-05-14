@@ -1,0 +1,405 @@
+/* Per-page CSS shared by the editorial feed family:
+ *   static/predictions.html
+ *   static/saved.html
+ *   static/collections.html
+ *   static/collection_detail.html
+ *
+ * Layout: full-width rows (no grid). Each .feed-row sits at 100% of the
+ * page wrapper, padded with var(--space-6). Page wrapper padding is
+ * var(--space-8) var(--space-6) per the design-system spec.
+ *
+ * Typography:
+ *   - Hero            → Instrument Serif Italic (--font-display)
+ *   - Body / prose    → Source Serif 4 (--font-body)
+ *   - UI chrome       → Inter (--font-ui)
+ *   - Handles, nums   → Geist Mono (--font-mono)
+ *
+ * Monochrome only. No accent colour. Theme-aware via tokens.
+ */
+
+/* ---------- page wrapper ---------- */
+.feed-shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+  font-family: var(--font-ui);
+}
+
+.feed-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  margin-bottom: var(--space-6);
+  font-family: var(--font-ui);
+}
+.feed-back:hover { color: var(--text-primary); }
+
+/* ---------- hero ---------- */
+.feed-hero {
+  margin-bottom: var(--space-7);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.feed-eyebrow {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-3);
+}
+
+.feed-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-5xl);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--space-4);
+  color: var(--text-primary);
+}
+
+.feed-lede {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 640px;
+  margin: 0;
+}
+
+/* Owner handle on the collection detail hero (Geist Mono) */
+.feed-owner {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- filter / tab bar (Inter sans) ---------- */
+.feed-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-4) 0;
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-ui);
+}
+
+.feed-chip {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  padding: var(--space-2) var(--space-4);
+  min-height: 36px;
+  cursor: pointer;
+  transition: background var(--duration-fast) cubic-bezier(0.2, 0, 0, 1),
+              color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1),
+              border-color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.feed-chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.feed-chip.is-active,
+.feed-chip[aria-pressed="true"] {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  border-color: var(--interactive-bg);
+}
+
+.feed-search {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  min-height: 36px;
+  flex: 1 1 240px;
+  min-width: 200px;
+  outline: none;
+}
+.feed-search:focus { border-color: var(--text-primary); }
+
+.feed-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- feed list ---------- */
+.feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* full-width row card — the editorial pattern.
+ * grid: [avatar 48px] [body 1fr] [stats auto] [action auto]
+ */
+.feed-row {
+  display: grid;
+  grid-template-columns: 48px 1fr auto auto;
+  align-items: center;
+  gap: var(--space-5);
+  width: 100%;
+  padding: var(--space-6);
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1),
+              background var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+
+.feed-row:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+}
+
+/* avatar / initial — circular, Instrument Serif initial */
+.feed-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-full);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-xl);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* body column */
+.feed-body { min-width: 0; }
+
+.feed-handle {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-2);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Prediction text / collection title — editorial serif body face */
+.feed-prose {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--text-primary);
+  margin: 0;
+  max-width: 64ch;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* For collection rows — collection title takes display face */
+.feed-row-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-2xl);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin: var(--space-2) 0 0;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.feed-meta > span { white-space: nowrap; }
+
+/* stats column (Geist Mono, right-aligned) */
+.feed-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-width: 84px;
+  text-align: right;
+}
+
+.feed-stat-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.feed-stat-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+/* action button (Inter sans) — Save / Follow / Open */
+.feed-action {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--interactive-text);
+  background: var(--interactive-bg);
+  border: 1px solid var(--interactive-bg);
+  border-radius: var(--radius-full);
+  padding: var(--space-2) var(--space-4);
+  min-height: 36px;
+  min-width: 88px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-fast) cubic-bezier(0.2, 0, 0, 1),
+              color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.feed-action:hover { background: var(--interactive-hover); }
+.feed-action[aria-pressed="true"],
+.feed-action.is-active {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+.feed-action--ghost {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+.feed-action--ghost:hover {
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
+}
+
+/* ---------- empty state — overrides for tighter integration ---------- */
+.feed-shell .nv-empty {
+  padding: var(--space-7) var(--space-5);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+.feed-shell .nv-empty__title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-2xl);
+}
+.feed-shell .nv-empty__body {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* skeleton placeholder rows — keep editorial layout while loading */
+.feed-row.feed-row--skeleton {
+  pointer-events: none;
+}
+.feed-row--skeleton .feed-avatar,
+.feed-row--skeleton .feed-handle,
+.feed-row--skeleton .feed-prose,
+.feed-row--skeleton .feed-stat-value,
+.feed-row--skeleton .feed-stat-label {
+  background: var(--bg-inset);
+  color: transparent;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+}
+.feed-row--skeleton .feed-handle  { width: 96px;  height: 12px; }
+.feed-row--skeleton .feed-prose   { width: 90%;   height: 18px; }
+.feed-row--skeleton .feed-stat-value { width: 64px; height: 18px; }
+.feed-row--skeleton .feed-stat-label { width: 48px; height: 12px; }
+
+/* ---------- collection detail items ---------- */
+.feed-section-title {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  margin: var(--space-7) 0 var(--space-4);
+}
+
+.feed-row .feed-kind {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 720px) {
+  .feed-shell { padding: var(--space-7) var(--space-4); }
+
+  .feed-title { font-size: var(--text-4xl); }
+
+  .feed-row {
+    grid-template-columns: 40px 1fr;
+    grid-template-areas:
+      "avatar body"
+      "stats  action";
+    gap: var(--space-3);
+    padding: var(--space-5);
+  }
+  .feed-avatar { width: 40px; height: 40px; font-size: var(--text-lg); grid-area: avatar; }
+  .feed-body   { grid-area: body; }
+  .feed-stats  { grid-area: stats; flex-direction: row; align-items: center; gap: var(--space-3); align-self: end; }
+  .feed-stat-value { font-size: var(--text-md); }
+  .feed-action { grid-area: action; justify-self: end; align-self: end; }
+  .feed-row-title { font-size: var(--text-xl); }
+  .feed-prose { font-size: var(--text-sm); }
+
+  .feed-filters { gap: var(--space-2); padding: var(--space-3) 0; }
+  .feed-search { flex-basis: 100%; min-width: 0; font-size: 16px; }
+  .feed-count  { margin-left: 0; }
+}
+
+/* compact density — keep full-width, tighten padding */
+[data-density="compact"] .feed-row   { padding: var(--space-5); }
+[data-density="compact"] .feed-shell { padding: var(--space-7) var(--space-5); }

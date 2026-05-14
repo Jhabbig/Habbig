@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your predictions — narve.ai</title>
+  <title>Predictions — narve.ai</title>
   <meta name="description" content="Your predictions — track accuracy, Brier score, and streaks.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
@@ -11,8 +11,12 @@
   <link rel="stylesheet" href="/_gateway_static/states.css">
   <link rel="stylesheet" href="/_gateway_static/skeletons.css">
   <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
+  <link rel="stylesheet" href="{{ static: pages/feeds.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
@@ -22,74 +26,36 @@
     {{ raw_sidebar }}
 
     <div class="main-content">
-      <div class="breadcrumb">
-        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
-        <span class="breadcrumb-separator">/</span>
-        <span class="breadcrumb-item current">Your predictions</span>
-      </div>
+      <div class="feed-shell">
 
-      <div class="page-header">
-        <h1 class="page-title">Your predictions</h1>
-        <p class="page-subtitle">
-          Track your calls. Accuracy, Brier score, and streaks populate as
-          markets resolve. Brier is lower-is-better: 0.0 is a perfect forecast,
-          0.25 is a coin flip.
-        </p>
-      </div>
+        <nav class="feed-back" aria-label="Breadcrumb">
+          <a href="/dashboards" style="color:inherit;text-decoration:none">← narve.ai</a>
+        </nav>
 
-      <div class="content-area">
-        <div class="stat-grid" id="stats-grid" style="margin-bottom:16px">
-          <div class="stat-tile" data-k="total">
-            <div class="stat-label">Total</div>
-            <div class="stat-value" id="s-total">—</div>
-          </div>
-          <div class="stat-tile" data-k="resolved">
-            <div class="stat-label">Resolved</div>
-            <div class="stat-value" id="s-resolved">—</div>
-          </div>
-          <div class="stat-tile" data-k="accuracy">
-            <div class="stat-label">Accuracy</div>
-            <div class="stat-value" id="s-accuracy">—</div>
-            <div class="stat-trend">% of resolved calls correct</div>
-          </div>
-          <div class="stat-tile" data-k="brier">
-            <div class="stat-label">Brier</div>
-            <div class="stat-value" id="s-brier">—</div>
-            <div class="stat-trend">lower is better</div>
-          </div>
-          <div class="stat-tile" data-k="streak">
-            <div class="stat-label">Current streak</div>
-            <div class="stat-value" id="s-streak">—</div>
-          </div>
-          <div class="stat-tile" data-k="best-cat">
-            <div class="stat-label">Best category</div>
-            <div class="stat-value" id="s-bestcat" style="font-size:16px">—</div>
-          </div>
+        <header class="feed-hero">
+          <div class="feed-eyebrow">Your calls</div>
+          <h1 class="feed-title">Predictions</h1>
+          <p class="feed-lede">
+            Every market you've called, tracked from open to resolution. Accuracy,
+            Brier score, and streaks populate as markets close — lower Brier is
+            better, 0.25 is a coin flip.
+          </p>
+        </header>
+
+        <div class="feed-filters" role="toolbar" aria-label="Filter predictions">
+          <input type="search" id="pred-search" class="feed-search" placeholder="Search market or question…" aria-label="Search your predictions">
+          <button type="button" class="feed-chip is-active" data-filter="all">All</button>
+          <button type="button" class="feed-chip" data-filter="active">Active</button>
+          <button type="button" class="feed-chip" data-filter="correct">Correct</button>
+          <button type="button" class="feed-chip" data-filter="incorrect">Incorrect</button>
+          <span class="feed-count" id="pred-count" aria-live="polite"></span>
         </div>
 
-        <div class="admin-filter-bar" role="toolbar" aria-label="Filter predictions">
-          <input type="search" id="pred-search" placeholder="Search market or question…" aria-label="Search your predictions">
-          <span class="filter-spacer"></span>
-          <button type="button" class="filter-chip active" data-filter="all">All</button>
-          <button type="button" class="filter-chip" data-filter="active">Active</button>
-          <button type="button" class="filter-chip" data-filter="correct">Correct</button>
-          <button type="button" class="filter-chip" data-filter="incorrect">Incorrect</button>
-        </div>
+        <main>
+          <ul class="feed-list" id="predictions-body" aria-live="polite"></ul>
+        </main>
 
-        <div id="predictions-body">
-          <div class="empty-state" style="padding:40px;text-align:center">
-            <div class="empty-state-title" style="font-size:14px;color:var(--text-tertiary)">Loading…</div>
-          </div>
-        </div>
       </div>
-    </div>
-
-    <div class="status-bar">
-      <span class="status-item"><span class="status-dot running"></span> Connected</span>
-      <span class="status-separator"></span>
-      <span class="status-item">Your predictions</span>
-      <span class="status-spacer"></span>
-      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
     </div>
 
   </div>
@@ -97,130 +63,132 @@
 <script>
 (function(){
   var body = document.getElementById('predictions-body');
+  var countEl = document.getElementById('pred-count');
   var currentFilter = 'all';
+  var allItems = [];
 
   function esc(s){ if (s === null || s === undefined) return '';
     return String(s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; }); }
-  function fmtDate(ts){ if (!ts) return '—'; var d = new Date(ts * 1000); return d.toLocaleDateString(); }
+  function fmtDate(ts){ if (!ts) return ''; var d = new Date(ts * 1000); return d.toLocaleDateString(); }
   function fmtPct(x, digits){ if (x === null || x === undefined) return '—'; return (x*100).toFixed(digits||0)+'%'; }
   function fmtPp(x){ if (x === null || x === undefined) return '—'; var v = x*100; return (v>=0?'+':'')+v.toFixed(0)+'pp'; }
-
-  function stateLabel(p){
-    if (!p.resolved) return '<span class="cred-score unrated">Active</span>';
-    if (p.resolved_correct) return '<span class="cred-score high">✓</span>';
-    return '<span class="cred-score low">✗</span>';
-  }
-
-  function bestCategory(cats){
-    var best = null;
-    Object.keys(cats || {}).forEach(function(cat){
-      var c = cats[cat];
-      if (c.total < 3) return;
-      if (!best || (c.accuracy || 0) > (best.accuracy || 0)) best = Object.assign({name: cat}, c);
-    });
-    return best;
-  }
-
-  function loadStats(){
-    fetch('/api/predictions/stats').then(function(r){return r.json();}).then(function(d){
-      document.getElementById('s-total').textContent = d.total_predictions || 0;
-      document.getElementById('s-resolved').textContent = d.resolved_predictions || 0;
-      document.getElementById('s-accuracy').textContent = d.accuracy === null ? '—' : fmtPct(d.accuracy, 1);
-      document.getElementById('s-brier').textContent = d.avg_brier_score === null ? '—' : d.avg_brier_score.toFixed(3);
-      document.getElementById('s-streak').textContent = (d.current_streak || 0) + ' / best ' + (d.best_streak || 0);
-      var b = bestCategory(d.category_stats);
-      document.getElementById('s-bestcat').textContent = b ? (b.name + ' (' + fmtPct(b.accuracy, 0) + ')') : '—';
-    }).catch(function(){});
-  }
+  function initial(s){ s = (s || '').trim(); return s ? s.charAt(0).toUpperCase() : '?'; }
 
   function rowStatus(p){
     if (!p.resolved) return 'active';
     return p.resolved_correct ? 'correct' : 'incorrect';
   }
 
+  function stateLabel(p){
+    if (!p.resolved) return 'OPEN';
+    return p.resolved_correct ? 'CORRECT' : 'MISS';
+  }
+
   function renderRows(items){
     if (!items.length){
-      body.innerHTML = '<div class="empty-state" style="padding:48px 24px;text-align:center">'
-        + '<div class="empty-state-title" style="font-size:16px;font-weight:600;margin-bottom:8px">No predictions yet</div>'
-        + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary);max-width:480px;margin:0 auto var(--space-4);line-height:1.55">'
-        + 'Open any market and record your call. Accuracy, Brier score, and streaks populate here as markets resolve — and your public profile surfaces the ones you got right.'
-        + '</div>'
-        + '<div class="empty-state__cta-row">'
-        +   '<a class="btn btn-primary" href="/dashboards">Browse markets</a>'
-        +   '<a class="btn" href="/leaderboard">Top predictors</a>'
-        + '</div>'
-        + '</div>';
+      body.innerHTML = '';
+      body.insertAdjacentHTML('beforebegin', renderEmpty());
+      countEl.textContent = '';
       return;
     }
-    var html = '<div class="admin-card"><table class="admin-table" id="pred-table"><thead><tr>'
-      + '<th style="width:9%">State</th>'
-      + '<th>Market</th>'
-      + '<th style="width:16%">Your pred</th>'
-      + '<th class="num" style="width:11%">Market @ call</th>'
-      + '<th class="num" style="width:9%">Edge</th>'
-      + '<th class="num" style="width:11%">When</th>'
-      + '<th class="actions"></th>'
-      + '</tr></thead><tbody>';
-    items.forEach(function(p){
-      var pct = Math.round((p.predicted_probability || 0) * 100);
-      var mkt = p.market_price_at_prediction;
-      var edge = p.edge_at_prediction;
-      var searchBlob = ((p.market_question || '') + ' ' + (p.market_slug || '')).toLowerCase();
-      html += '<tr data-pid="' + p.id + '" data-status="' + esc(rowStatus(p)) + '" data-search="' + esc(searchBlob) + '">'
-        + '<td>' + stateLabel(p) + '</td>'
-        + '<td><a href="/market/' + encodeURIComponent(p.market_slug) + '" style="color:inherit;text-decoration:none">' + esc(p.market_question || p.market_slug) + '</a></td>'
-        + '<td>' + esc(p.predicted_outcome) + ' (' + pct + '%)</td>'
-        + '<td class="num">' + (mkt === null || mkt === undefined ? '—' : fmtPct(mkt, 0)) + '</td>'
-        + '<td class="num">' + fmtPp(edge) + '</td>'
-        + '<td class="num">' + esc(fmtDate(p.created_at)) + '</td>'
-        + '<td class="actions">'
-        +   (p.resolved ? '' : '<button class="btn-danger delete-btn" data-pid="' + p.id + '" style="font-size:12px;padding:5px 10px">Delete</button>')
-        + '</td>'
-        + '</tr>';
-    });
-    html += '</tbody></table></div>';
-    body.innerHTML = html;
+    var existingEmpty = document.querySelector('.feed-shell .nv-empty[data-feed-empty]');
+    if (existingEmpty) existingEmpty.remove();
 
-    body.querySelectorAll('.delete-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if (!confirm('Delete this prediction?')) return;
-        var pid = btn.getAttribute('data-pid');
-        fetch('/api/predictions/' + pid, {method:'DELETE'}).then(function(){ load(); loadStats(); });
-      });
-    });
+    var html = items.map(function(p){
+      var pct = Math.round((p.predicted_probability || 0) * 100);
+      var edge = p.edge_at_prediction;
+      var question = p.market_question || p.market_slug || '';
+      var when = fmtDate(p.created_at);
+      var status = rowStatus(p);
+      var searchBlob = (question + ' ' + (p.market_slug || '')).toLowerCase();
+      return (
+        '<li data-pid="' + p.id + '" data-status="' + esc(status) + '" data-search="' + esc(searchBlob) + '">' +
+          '<a class="feed-row" href="/market/' + encodeURIComponent(p.market_slug || '') + '">' +
+            '<span class="feed-avatar" aria-hidden="true">' + esc(initial(question)) + '</span>' +
+            '<div class="feed-body">' +
+              '<div class="feed-handle">@you · ' + esc(stateLabel(p)) + (when ? ' · ' + esc(when) : '') + '</div>' +
+              '<p class="feed-prose">' + esc(question) + '</p>' +
+              '<div class="feed-meta">' +
+                '<span>' + esc(p.predicted_outcome || '') + ' · ' + pct + '%</span>' +
+                '<span>Edge ' + esc(fmtPp(edge)) + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div class="feed-stats">' +
+              '<span class="feed-stat-value">' + pct + '%</span>' +
+              '<span class="feed-stat-label">Confidence</span>' +
+            '</div>' +
+            '<button type="button" class="feed-action feed-action--ghost save-btn" data-pid="' + p.id + '">Open</button>' +
+          '</a>' +
+        '</li>'
+      );
+    }).join('');
+    body.innerHTML = html;
+    applyClientFilter();
+  }
+
+  function renderEmpty(){
+    return (
+      '<div class="nv-empty" role="status" data-feed-empty>' +
+        '<h2 class="nv-empty__title">No predictions yet</h2>' +
+        '<p class="nv-empty__body">Open any market and record your call. Accuracy, Brier score, and streaks populate here as markets resolve — and your public profile surfaces the ones you got right.</p>' +
+        '<div class="nv-empty__actions">' +
+          '<a class="nv-empty__action nv-empty__action--primary" href="/dashboards">Browse markets</a>' +
+          '<a class="nv-empty__action" href="/leaderboard">Top predictors</a>' +
+        '</div>' +
+      '</div>'
+    );
   }
 
   function applyClientFilter(){
     var q = (document.getElementById('pred-search').value || '').trim().toLowerCase();
-    var rows = document.querySelectorAll('#pred-table tbody tr');
+    var rows = body.querySelectorAll('li[data-pid]');
+    var shown = 0;
     rows.forEach(function(row){
       var statusMatch = (currentFilter === 'all') ||
         (row.getAttribute('data-status') === currentFilter);
       var searchMatch = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
-      row.style.display = (statusMatch && searchMatch) ? '' : 'none';
+      var visible = statusMatch && searchMatch;
+      row.style.display = visible ? '' : 'none';
+      if (visible) shown += 1;
     });
+    countEl.textContent = shown + ' / ' + rows.length;
+  }
+
+  function showSkeleton(){
+    if (window.narveSkel && window.narveSkel.show) {
+      // Editorial skeleton — render full-width row placeholders so the
+      // page doesn't jolt when the fetch lands.
+      var html = '';
+      for (var i = 0; i < 6; i++) {
+        html += '<li><div class="feed-row feed-row--skeleton" aria-hidden="true">' +
+          '<span class="feed-avatar"></span>' +
+          '<div class="feed-body">' +
+            '<div class="feed-handle"></div>' +
+            '<p class="feed-prose"></p>' +
+          '</div>' +
+          '<div class="feed-stats">' +
+            '<span class="feed-stat-value"></span>' +
+            '<span class="feed-stat-label"></span>' +
+          '</div>' +
+          '<span></span>' +
+          '</div></li>';
+      }
+      body.innerHTML = html;
+    } else {
+      body.innerHTML = '';
+    }
   }
 
   function load(){
-    if (window.narveSkel && window.narveSkel.show) {
-      // body element lacks an id the skeleton lib requires; fall back
-      // to direct HTML injection for this page.
-      body.innerHTML = '<table class="admin-table"><tbody>' +
-        Array(6).fill(window.narveSkel.template ? window.narveSkel.template('prediction-row') : '').join('') +
-        '</tbody></table>';
-    } else {
-      body.innerHTML = '<div class="loading-text">Loading predictions</div>';
-    }
-    /* Always fetch the full set; chips + search filter client-side so
-       the view stays snappy and the stats tiles reflect the whole set. */
+    showSkeleton();
     fetch('/api/predictions/me?status=all')
       .then(function(r){
         if (!r.ok) throw new Error('http_' + r.status);
         return r.json();
       })
       .then(function(d){
-        renderRows(d.items || []);
-        applyClientFilter();
+        allItems = d.items || [];
+        renderRows(allItems);
       })
       .catch(function(err){
         var is401 = err && String(err.message || '').indexOf('http_401') === 0;
@@ -249,10 +217,10 @@
       });
   }
 
-  document.querySelectorAll('.filter-chip').forEach(function(chip){
+  document.querySelectorAll('.feed-chip').forEach(function(chip){
     chip.addEventListener('click', function(){
-      document.querySelectorAll('.filter-chip').forEach(function(c){ c.classList.remove('active'); });
-      chip.classList.add('active');
+      document.querySelectorAll('.feed-chip').forEach(function(c){ c.classList.remove('is-active'); });
+      chip.classList.add('is-active');
       currentFilter = chip.getAttribute('data-filter');
       applyClientFilter();
     });
@@ -262,7 +230,6 @@
   if (searchInput){ searchInput.addEventListener('input', applyClientFilter); }
 
   load();
-  loadStats();
 })();
 </script>
 {{ raw_sitemap }}
@@ -271,8 +238,6 @@
 <script src="/_gateway_static/toast.js" defer></script>
 <script src="/_gateway_static/filter_panel.js" defer></script>
 <script>
-  // Mount pinned saved-view list + show shared-view banner if the user
-  // arrived via a /v/{token} link. Silent no-ops otherwise.
   document.addEventListener("DOMContentLoaded", function () {
     if (window.NarveFilterPanel && typeof window.NarveFilterPanel.mountSidebar === "function") {
       window.NarveFilterPanel.mountSidebar();

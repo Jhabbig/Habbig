@@ -4,83 +4,56 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Saved — narve.ai</title>
-  <meta name="description" content="Your saved narve.ai predictions.">
+  <meta name="description" content="Your saved narve.ai predictions, markets, and sources.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="stylesheet" href="/_gateway_static/states.css">
   <link rel="stylesheet" href="/_gateway_static/skeletons.css">
   <link rel="stylesheet" href="/_gateway_static/filter_panel.css">
+  <link rel="stylesheet" href="{{ static: pages/feeds.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
   <div class="app-shell">
 
-    <!-- ── Sidebar ──────────────────────────────────────────────── -->
     {{ raw_sidebar }}
 
-    <!-- ── Main content ─────────────────────────────────────────── -->
     <div class="main-content">
-      <div class="breadcrumb">
-        <a href="/dashboards" class="breadcrumb-item" style="text-decoration:none;color:inherit">narve.ai</a>
-        <span class="breadcrumb-separator">/</span>
-        <span class="breadcrumb-item current">Saved</span>
-      </div>
+      <div class="feed-shell">
 
-      <div class="page-header">
-        <h1 class="page-title">Saved predictions</h1>
-        <p class="page-subtitle">
-          Predictions you're tracking. See which sources you trust most when markets resolve.
-        </p>
-      </div>
+        <nav class="feed-back" aria-label="Breadcrumb">
+          <a href="/dashboards" style="color:inherit;text-decoration:none">← narve.ai</a>
+        </nav>
 
-      <div class="content-area">
-        <div class="stat-grid" id="saved-kpis" style="margin-bottom:16px">
-          <div class="stat-tile">
-            <div class="stat-label">Tracking</div>
-            <div class="stat-value" id="kpi-total">—</div>
-          </div>
-          <div class="stat-tile">
-            <div class="stat-label">Active</div>
-            <div class="stat-value" id="kpi-active">—</div>
-          </div>
-          <div class="stat-tile">
-            <div class="stat-label">Resolved correct</div>
-            <div class="stat-value" id="kpi-correct">—</div>
-          </div>
-          <div class="stat-tile">
-            <div class="stat-label">Resolved incorrect</div>
-            <div class="stat-value" id="kpi-incorrect">—</div>
-          </div>
+        <header class="feed-hero">
+          <div class="feed-eyebrow">Your library</div>
+          <h1 class="feed-title">Saved</h1>
+          <p class="feed-lede">
+            Predictions, markets, and sources you've bookmarked. See which calls
+            land and which sources you trust most when the markets resolve.
+          </p>
+        </header>
+
+        <div class="feed-filters" role="tablist" aria-label="Saved categories">
+          <button type="button" class="feed-chip is-active" role="tab" aria-selected="true" data-tab="predictions">Predictions</button>
+          <button type="button" class="feed-chip" role="tab" aria-selected="false" data-tab="markets">Markets</button>
+          <button type="button" class="feed-chip" role="tab" aria-selected="false" data-tab="sources">Sources</button>
+          <input type="search" id="saved-search" class="feed-search" placeholder="Search prediction, market, or source…" aria-label="Search saved items">
+          <span class="feed-count" id="saved-count" aria-live="polite"></span>
         </div>
 
-        <div class="admin-filter-bar" role="toolbar" aria-label="Filter saved predictions">
-          <input type="search" id="saved-search" placeholder="Search prediction text or source…" aria-label="Search saved predictions">
-          <span class="filter-spacer"></span>
-          <button type="button" class="filter-chip active" data-filter="all">All</button>
-          <button type="button" class="filter-chip" data-filter="active">Active</button>
-          <button type="button" class="filter-chip" data-filter="correct">Correct</button>
-          <button type="button" class="filter-chip" data-filter="incorrect">Incorrect</button>
-        </div>
+        <main>
+          <ul class="feed-list" id="saved-body" aria-live="polite"></ul>
+        </main>
 
-        <div id="saved-body">
-          <div class="empty-state" id="saved-loading">
-            <div class="empty-state-title">Loading…</div>
-          </div>
-        </div>
       </div>
-    </div>
-
-    <!-- ── Status bar ───────────────────────────────────────────── -->
-    <div class="status-bar">
-      <span class="status-item"><span class="status-dot running"></span> Connected</span>
-      <span class="status-separator"></span>
-      <span class="status-item">Saved</span>
-      <span class="status-spacer"></span>
-      <a href="/logout" class="status-item" style="text-decoration:none;color:inherit;cursor:pointer">Sign out</a>
     </div>
 
   </div>
@@ -88,7 +61,9 @@
 <script>
 (function(){
   var body = document.getElementById('saved-body');
-  var currentFilter = 'all';
+  var countEl = document.getElementById('saved-count');
+  var currentTab = 'predictions';
+  var cache = { predictions: null, markets: null, sources: null };
 
   function esc(s){
     if (s === null || s === undefined) return '';
@@ -98,103 +73,19 @@
   }
 
   function fmtDate(ts){
-    if (!ts) return '—';
+    if (!ts) return '';
     var d = new Date(ts * 1000);
-    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    return d.toLocaleDateString();
+  }
+
+  function initial(s){
+    s = (s || '').trim();
+    return s ? s.charAt(0).toUpperCase() : '?';
   }
 
   function statusLabel(p){
-    if (!p.resolved) return '<span class="status-item">—</span>';
-    if (p.resolved_correct) return '<span class="cred-score high">✓ correct</span>';
-    return '<span class="cred-score low">✗ incorrect</span>';
-  }
-
-  function credScore(c){
-    if (c === null || c === undefined) return '<span class="cred-score unrated">unrated</span>';
-    var cls = c >= 0.7 ? 'high' : (c >= 0.5 ? 'mid' : 'low');
-    return '<span class="cred-score ' + cls + '">' + (c).toFixed(2) + '</span>';
-  }
-
-  function renderRows(items){
-    if (!items.length){
-      body.innerHTML = '<div class="empty-state" style="padding:48px 24px;text-align:center">'
-        + '<div class="empty-state-title" style="font-size:16px;font-weight:600;margin-bottom:8px">Nothing saved yet</div>'
-        + '<div class="empty-state-body" style="font-size:13px;color:var(--text-tertiary);max-width:460px;margin:0 auto var(--space-4);line-height:1.55">'
-        + 'Tap the bookmark icon on any prediction to track it here. When the market resolves, you\'ll see who called it right.'
-        + '</div>'
-        + '<div class="empty-state__cta-row">'
-        +   '<a class="btn btn-primary" href="/dashboards">Browse dashboards</a>'
-        +   '<a class="btn" href="/leaderboard">Top predictors</a>'
-        + '</div>'
-        + '</div>';
-      return;
-    }
-    var html = '<div class="admin-card"><table class="admin-table" id="saved-table"><thead><tr>'
-      + '<th style="width:14%">Saved</th>'
-      + '<th>Prediction</th>'
-      + '<th style="width:14%">Source</th>'
-      + '<th class="num" style="width:9%">Credibility</th>'
-      + '<th style="width:10%">Status</th>'
-      + '<th style="width:14%">Notes</th>'
-      + '<th class="actions"></th>'
-      + '</tr></thead><tbody>';
-    items.forEach(function(it){
-      var p = it.prediction;
-      html += '<tr data-pid="' + p.id + '" data-status="' + esc(rowStatus(p)) + '" data-search="' + esc((p.content + ' ' + p.source_handle).toLowerCase()) + '">'
-        + '<td class="num">' + esc(fmtDate(it.saved_at)) + '</td>'
-        + '<td title="' + esc(p.content) + '">' + esc(p.content) + '</td>'
-        + '<td><code>@' + esc(p.source_handle) + '</code></td>'
-        + '<td class="num">' + credScore(p.credibility) + '</td>'
-        + '<td>' + statusLabel(p) + '</td>'
-        + '<td style="max-width:200px;color:var(--text-tertiary)">' + esc(it.notes || '') + '</td>'
-        + '<td class="actions"><button class="btn-danger unsave-btn" data-pid="' + p.id + '"'
-        + ' style="font-size:12px;padding:5px 10px">Remove</button></td>'
-        + '</tr>';
-    });
-    html += '</tbody></table></div>';
-    body.innerHTML = html;
-
-    body.querySelectorAll('.unsave-btn').forEach(function(btn){
-      btn.addEventListener('click', function(e){
-        e.stopPropagation();
-        var pid = btn.getAttribute('data-pid');
-        fetch('/api/saved/' + pid, {method:'DELETE', headers:{'X-CSRF-Token': getCsrf()}})
-          .then(function(r){ return r.json(); })
-          .then(function(){ load(); });
-      });
-    });
-  }
-
-  function rowStatus(p){
-    if (!p.resolved) return 'active';
-    return p.resolved_correct ? 'correct' : 'incorrect';
-  }
-
-  function updateKpis(items){
-    var total = items.length;
-    var correct = 0, incorrect = 0, active = 0;
-    items.forEach(function(it){
-      var s = rowStatus(it.prediction);
-      if (s === 'correct') correct += 1;
-      else if (s === 'incorrect') incorrect += 1;
-      else active += 1;
-    });
-    var set = function(id, v){ var el = document.getElementById(id); if (el) el.textContent = v; };
-    set('kpi-total', total);
-    set('kpi-active', active);
-    set('kpi-correct', correct);
-    set('kpi-incorrect', incorrect);
-  }
-
-  function applyClientFilter(){
-    var q = (document.getElementById('saved-search').value || '').trim().toLowerCase();
-    var rows = document.querySelectorAll('#saved-table tbody tr');
-    rows.forEach(function(row){
-      var statusMatch = (currentFilter === 'all') ||
-        (row.getAttribute('data-status') === currentFilter);
-      var searchMatch = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
-      row.style.display = (statusMatch && searchMatch) ? '' : 'none';
-    });
+    if (!p.resolved) return 'OPEN';
+    return p.resolved_correct ? 'CORRECT' : 'MISS';
   }
 
   function getCsrf(){
@@ -202,43 +93,210 @@
     return m ? decodeURIComponent(m[1]) : '';
   }
 
-  function load(){
-    // Skeleton rows while the fetch is in flight — smoother than a
-    // plain "Loading…" chip. narveSkel is loaded via skeletons.js.
-    if (window.narveSkel && window.narveSkel.show) {
-      window.narveSkel.show('saved-body', 'prediction-row', 6);
-    } else {
-      body.innerHTML = '<div class="loading-text">Loading saved</div>';
+  /* ---------- renderers (one per tab) ---------- */
+
+  function renderPredictions(items){
+    if (!items.length) return renderEmpty('predictions');
+    return items.map(function(it){
+      var p = it.prediction || {};
+      var handle = p.source_handle || '';
+      var saved = fmtDate(it.saved_at);
+      var cred = (p.credibility === null || p.credibility === undefined) ? null : p.credibility;
+      var searchBlob = ((p.content || '') + ' ' + handle).toLowerCase();
+      return (
+        '<li data-pid="' + p.id + '" data-search="' + esc(searchBlob) + '">' +
+          '<a class="feed-row" href="/source/' + encodeURIComponent(handle) + '">' +
+            '<span class="feed-avatar" aria-hidden="true">' + esc(initial(handle)) + '</span>' +
+            '<div class="feed-body">' +
+              '<div class="feed-handle">@' + esc(handle) + (saved ? ' · saved ' + esc(saved) : '') + ' · ' + statusLabel(p) + '</div>' +
+              '<p class="feed-prose">' + esc(p.content || '') + '</p>' +
+            '</div>' +
+            '<div class="feed-stats">' +
+              '<span class="feed-stat-value">' + (cred !== null ? cred.toFixed(2) : '—') + '</span>' +
+              '<span class="feed-stat-label">Credibility</span>' +
+            '</div>' +
+            '<button type="button" class="feed-action feed-action--ghost unsave-btn" data-kind="prediction" data-id="' + p.id + '">Remove</button>' +
+          '</a>' +
+        '</li>'
+      );
+    }).join('');
+  }
+
+  function renderMarkets(items){
+    if (!items.length) return renderEmpty('markets');
+    return items.map(function(m){
+      var slug = m.slug || '';
+      var question = m.question || m.title || slug;
+      var price = (m.yes_price !== null && m.yes_price !== undefined) ? Math.round(m.yes_price * 100) : null;
+      var src = (m.source || '').toUpperCase();
+      var searchBlob = (question + ' ' + slug).toLowerCase();
+      return (
+        '<li data-mid="' + esc(slug) + '" data-search="' + esc(searchBlob) + '">' +
+          '<a class="feed-row" href="/market/' + encodeURIComponent(slug) + '">' +
+            '<span class="feed-avatar" aria-hidden="true">' + esc(initial(question)) + '</span>' +
+            '<div class="feed-body">' +
+              '<div class="feed-handle">' + esc(src) + ' · ' + esc(slug) + '</div>' +
+              '<p class="feed-prose">' + esc(question) + '</p>' +
+            '</div>' +
+            '<div class="feed-stats">' +
+              '<span class="feed-stat-value">' + (price !== null ? price + '%' : '—') + '</span>' +
+              '<span class="feed-stat-label">YES</span>' +
+            '</div>' +
+            '<button type="button" class="feed-action feed-action--ghost unsave-btn" data-kind="market" data-id="' + esc(slug) + '">Remove</button>' +
+          '</a>' +
+        '</li>'
+      );
+    }).join('');
+  }
+
+  function renderSources(items){
+    if (!items.length) return renderEmpty('sources');
+    return items.map(function(s){
+      var handle = s.handle || '';
+      var name = s.name || handle;
+      var desc = s.description || '';
+      var cred = (s.global_credibility === null || s.global_credibility === undefined) ? null : s.global_credibility;
+      var searchBlob = (handle + ' ' + name + ' ' + desc).toLowerCase();
+      return (
+        '<li data-handle="' + esc(handle) + '" data-search="' + esc(searchBlob) + '">' +
+          '<a class="feed-row" href="/source/' + encodeURIComponent(handle) + '">' +
+            '<span class="feed-avatar" aria-hidden="true">' + esc(initial(name)) + '</span>' +
+            '<div class="feed-body">' +
+              '<div class="feed-handle">@' + esc(handle) + '</div>' +
+              '<p class="feed-prose">' + esc(name) + (desc ? ' — ' + esc(desc) : '') + '</p>' +
+            '</div>' +
+            '<div class="feed-stats">' +
+              '<span class="feed-stat-value">' + (cred !== null ? cred.toFixed(2) : '—') + '</span>' +
+              '<span class="feed-stat-label">Credibility</span>' +
+            '</div>' +
+            '<button type="button" class="feed-action feed-action--ghost unsave-btn" data-kind="source" data-id="' + esc(handle) + '">Unfollow</button>' +
+          '</a>' +
+        '</li>'
+      );
+    }).join('');
+  }
+
+  function renderEmpty(tab){
+    var copy = {
+      predictions: ['Nothing saved yet', 'Tap the bookmark icon on any prediction to track it here. When the market resolves, you\'ll see who called it right.'],
+      markets: ['No saved markets', 'Bookmark markets you want to follow. They\'ll show up here with live YES prices.'],
+      sources: ['Not following anyone yet', 'Follow sources whose calls you respect. Their predictions land in your feed and on your dashboard.']
+    }[tab] || ['Nothing here', 'Save items from anywhere on narve.'];
+    return (
+      '<div class="nv-empty" role="status" data-feed-empty>' +
+        '<h2 class="nv-empty__title">' + esc(copy[0]) + '</h2>' +
+        '<p class="nv-empty__body">' + esc(copy[1]) + '</p>' +
+        '<div class="nv-empty__actions">' +
+          '<a class="nv-empty__action nv-empty__action--primary" href="/dashboards">Browse dashboards</a>' +
+          '<a class="nv-empty__action" href="/sources">All sources</a>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  /* ---------- skeleton ---------- */
+  function showSkeleton(){
+    var html = '';
+    for (var i = 0; i < 6; i++) {
+      html += '<li><div class="feed-row feed-row--skeleton" aria-hidden="true">' +
+        '<span class="feed-avatar"></span>' +
+        '<div class="feed-body">' +
+          '<div class="feed-handle"></div>' +
+          '<p class="feed-prose"></p>' +
+        '</div>' +
+        '<div class="feed-stats">' +
+          '<span class="feed-stat-value"></span>' +
+          '<span class="feed-stat-label"></span>' +
+        '</div>' +
+        '<span></span>' +
+        '</div></li>';
     }
-    /* Always fetch the full set; client-side filter handles status chips
-       + search. Avoids a round-trip on every chip click and keeps KPIs
-       honest (they count across the whole set, not the filtered slice). */
-    fetch('/api/saved?resolved=all')
+    body.innerHTML = html;
+  }
+
+  function applyClientFilter(){
+    var q = (document.getElementById('saved-search').value || '').trim().toLowerCase();
+    var rows = body.querySelectorAll('li[data-search]');
+    var shown = 0;
+    rows.forEach(function(row){
+      var match = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
+      row.style.display = match ? '' : 'none';
+      if (match) shown += 1;
+    });
+    countEl.textContent = shown + ' / ' + rows.length;
+  }
+
+  function paint(tab, items){
+    var html = '';
+    if (tab === 'predictions') html = renderPredictions(items);
+    else if (tab === 'markets') html = renderMarkets(items);
+    else html = renderSources(items);
+    body.innerHTML = html;
+    if (!items.length) { countEl.textContent = ''; return; }
+    applyClientFilter();
+    wireUnsave();
+  }
+
+  function wireUnsave(){
+    body.querySelectorAll('.unsave-btn').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        var kind = btn.getAttribute('data-kind');
+        var id = btn.getAttribute('data-id');
+        var url = null;
+        if (kind === 'prediction') url = '/api/saved/' + encodeURIComponent(id);
+        else if (kind === 'market') url = '/api/watchlist/' + encodeURIComponent(id);
+        else if (kind === 'source') url = '/api/sources/' + encodeURIComponent(id) + '/follow';
+        if (!url) return;
+        fetch(url, { method: 'DELETE', headers: { 'X-CSRF-Token': getCsrf() } })
+          .then(function(){
+            cache[currentTab] = null;
+            loadTab(currentTab);
+          });
+      });
+    });
+  }
+
+  /* ---------- loading ---------- */
+
+  var endpoints = {
+    predictions: '/api/saved?resolved=all',
+    markets: '/api/watchlist/me',
+    sources: '/api/sources/following/me'
+  };
+
+  function extractItems(tab, data){
+    if (tab === 'predictions') return data.items || [];
+    if (tab === 'markets')     return data.items || data.markets || [];
+    if (tab === 'sources')     return data.items || data.sources || data.following || [];
+    return [];
+  }
+
+  function loadTab(tab){
+    if (cache[tab]) { paint(tab, cache[tab]); return; }
+    showSkeleton();
+    fetch(endpoints[tab])
       .then(function(r){
         if (!r.ok) throw new Error('http_' + r.status);
         return r.json();
       })
       .then(function(d){
-        var items = d.items || [];
-        updateKpis(items);
-        renderRows(items);
-        applyClientFilter();
+        var items = extractItems(tab, d);
+        cache[tab] = items;
+        paint(tab, items);
       })
       .catch(function(err){
-        // 401 → session expired; otherwise generic failure.
         var is401 = err && String(err.message || '').indexOf('http_401') === 0;
         body.innerHTML =
           '<div class="error-state">' +
-            '<svg class="error-state__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
-              '<circle cx="8" cy="8" r="6.5"/><line x1="8" y1="5" x2="8" y2="9"/><circle cx="8" cy="11.5" r="0.5" fill="currentColor"/>' +
-            '</svg>' +
             '<div class="error-state__title">' +
-              (is401 ? 'Your session expired' : 'Could not load saved predictions') +
+              (is401 ? 'Your session expired' : 'Could not load saved') +
             '</div>' +
             '<div class="error-state__body">' +
               (is401
                 ? 'Sign in again to pick up where you left off.'
-                : 'Check your connection and retry. If this keeps happening, it\'s on us.') +
+                : 'Check your connection and retry.') +
             '</div>' +
             '<div class="error-state__actions">' +
               (is401
@@ -248,16 +306,21 @@
             '</div>' +
           '</div>';
         var retry = document.getElementById('saved-retry');
-        if (retry) retry.addEventListener('click', load);
+        if (retry) retry.addEventListener('click', function(){ cache[tab] = null; loadTab(tab); });
       });
   }
 
-  document.querySelectorAll('.filter-chip').forEach(function(chip){
+  /* ---------- tab + search wiring ---------- */
+  document.querySelectorAll('.feed-chip[data-tab]').forEach(function(chip){
     chip.addEventListener('click', function(){
-      document.querySelectorAll('.filter-chip').forEach(function(c){ c.classList.remove('active'); });
-      chip.classList.add('active');
-      currentFilter = chip.getAttribute('data-filter');
-      applyClientFilter();
+      document.querySelectorAll('.feed-chip[data-tab]').forEach(function(c){
+        c.classList.remove('is-active');
+        c.setAttribute('aria-selected', 'false');
+      });
+      chip.classList.add('is-active');
+      chip.setAttribute('aria-selected', 'true');
+      currentTab = chip.getAttribute('data-tab');
+      loadTab(currentTab);
     });
   });
 
@@ -266,7 +329,7 @@
     searchInput.addEventListener('input', applyClientFilter);
   }
 
-  load();
+  loadTab(currentTab);
 })();
 </script>
 {{ raw_sitemap }}
@@ -276,10 +339,6 @@
 <script src="/_gateway_static/toast.js" defer></script>
 <script src="/_gateway_static/filter_panel.js" defer></script>
 <script>
-  // Mount pinned saved-view list into the sidebar slot + auto-show the
-  // shared-view flash banner if the user just followed a /v/{token} link.
-  // Silent no-op when signed out or when nothing is pinned — the
-  // pre-existing /api/saved filter bar above is untouched.
   document.addEventListener("DOMContentLoaded", function () {
     if (!window.NarveFilterPanel) return;
     if (typeof window.NarveFilterPanel.mountSidebar === "function") {

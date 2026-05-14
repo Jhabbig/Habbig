@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ collection_title }} — narve.ai Collections</title>
+  <meta name="description" content="{{ collection_description }}">
+  <meta name="robots" content="{{ robots }}">
+  <meta property="og:title" content="{{ collection_title }}">
+  <meta property="og:description" content="{{ collection_description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:type" content="website">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="stylesheet" href="/_gateway_static/states.css">
+  <link rel="stylesheet" href="/_gateway_static/skeletons.css">
+  <link rel="stylesheet" href="{{ static: pages/feeds.css }}">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <div class="app-shell">
+
+    {{ raw_sidebar }}
+
+    <div class="main-content">
+      <div class="feed-shell">
+
+        <nav class="feed-back" aria-label="Breadcrumb">
+          <a href="/collections" style="color:inherit;text-decoration:none">← Collections</a>
+        </nav>
+
+        <header class="feed-hero">
+          <p class="feed-owner">@{{ owner_handle }}</p>
+          <h1 class="feed-title" id="c-title" {{ raw_title_editable }}>{{ collection_title }}</h1>
+          <p class="feed-lede" id="c-desc" {{ raw_desc_editable }}>{{ collection_description }}</p>
+          <div style="display:flex;gap:var(--space-3);align-items:center;
+                margin-top:var(--space-4);font-family:var(--font-mono);
+                font-size:var(--text-xs);color:var(--text-tertiary);
+                font-variant-numeric:tabular-nums">
+            <span>{{ visibility_label }}</span>
+            <span>·</span>
+            <span>{{ item_count }} items</span>
+            <span>·</span>
+            <span>{{ follower_count }} followers</span>
+          </div>
+          <div style="display:flex;gap:var(--space-2);margin-top:var(--space-5);
+                flex-wrap:wrap">
+            {{ raw_actions }}
+          </div>
+        </header>
+
+        {{ raw_system_banner }}
+
+        <h2 class="feed-section-title">Items</h2>
+
+        <main>
+          <ul class="feed-list" id="c-items" aria-live="polite">
+            {{ raw_items }}
+          </ul>
+        </main>
+
+        <div id="c-add-modal" hidden
+             style="margin-top:var(--space-5);padding:var(--space-5);
+                    border:1px solid var(--border-default);
+                    border-radius:var(--radius-lg);background:var(--bg-surface);
+                    font-family:var(--font-ui)">
+          <label style="display:flex;flex-direction:column;gap:var(--space-1);
+                 font-size:var(--text-xs);font-weight:600;
+                 text-transform:uppercase;letter-spacing:0.08em;
+                 color:var(--text-tertiary)">
+            Search markets, sources, predictions
+            <input id="c-add-q" placeholder="Start typing…" autocomplete="off"
+                   style="margin-top:var(--space-1);font-family:var(--font-ui);
+                          font-size:var(--text-sm);color:var(--text-primary);
+                          background:var(--bg-base);border:1px solid var(--border-default);
+                          border-radius:var(--radius-md);padding:var(--space-2) var(--space-3);
+                          min-height:36px;text-transform:none;letter-spacing:0;font-weight:400">
+          </label>
+          <div id="c-add-results"
+               style="margin-top:var(--space-3);max-height:280px;overflow:auto;
+                      border:1px solid var(--border-subtle);
+                      border-radius:var(--radius-md);padding:var(--space-2);
+                      background:var(--bg-base)"></div>
+          <div style="display:flex;gap:var(--space-2);justify-content:flex-end;
+                margin-top:var(--space-3)">
+            <button class="feed-action feed-action--ghost" id="c-add-cancel">Close</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+<script>
+(function(){
+  var COLLECTION_ID = {{ collection_id }};
+  var IS_OWNER = {{ raw_is_owner_js }};
+  var IS_SYSTEM = {{ raw_is_system_js }};
+
+  function getCsrf(){
+    var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  async function api(method, path, body){
+    var opts = { method: method, headers: {'Content-Type': 'application/json', 'x-csrf-token': getCsrf()} };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    var r = await fetch(path, opts);
+    if (!r.ok) {
+      var err = await r.json().catch(function(){ return {}; });
+      throw new Error(err.detail || ('HTTP ' + r.status));
+    }
+    return r.json().catch(function(){ return {}; });
+  }
+
+  function toast(msg, type){
+    if (window.narveToast) window.narveToast(msg, {type: type || 'info'});
+  }
+
+  window.__hbColl = {
+    remove: async function(itemId){
+      // Modal confirm replaced by toast pattern — silent delete, toast result.
+      try {
+        await api('DELETE', '/api/collections/' + COLLECTION_ID + '/items/' + itemId);
+        location.reload();
+      } catch (e) { toast(e.message, 'error'); }
+    }
+  };
+
+  // Inline title / description edit on owner views.
+  if (IS_OWNER && !IS_SYSTEM) {
+    var titleEl = document.getElementById('c-title');
+    var descEl = document.getElementById('c-desc');
+    function save(field){
+      var payload = {};
+      payload[field] = (field === 'title' ? titleEl.textContent : descEl.textContent).trim();
+      api('PATCH', '/api/collections/' + COLLECTION_ID, payload)
+        .catch(function(e){ toast(e.message, 'error'); });
+    }
+    if (titleEl) titleEl.addEventListener('blur', function(){ save('title'); });
+    if (descEl)  descEl.addEventListener('blur', function(){ save('description'); });
+  }
+
+  // Follow / share / delete / add buttons.
+  var followBtn = document.getElementById('c-follow-btn');
+  if (followBtn) {
+    followBtn.addEventListener('click', async function(){
+      var following = followBtn.dataset.following === '1';
+      try {
+        await api(following ? 'DELETE' : 'POST',
+                  '/api/collections/' + COLLECTION_ID + '/follow');
+        followBtn.dataset.following = following ? '0' : '1';
+        followBtn.textContent = following ? 'Follow' : 'Following';
+        followBtn.setAttribute('aria-pressed', following ? 'false' : 'true');
+      } catch (e) { toast(e.message, 'error'); }
+    });
+  }
+
+  var delBtn = document.getElementById('c-delete-btn');
+  if (delBtn) {
+    delBtn.addEventListener('click', async function(){
+      // Confirmation via native dialog kept; replacing confirm() requires
+      // wiring the .nv-modal pattern which lives outside this template.
+      if (!confirm('Delete this collection? This cannot be undone.')) return;
+      try {
+        await api('DELETE', '/api/collections/' + COLLECTION_ID);
+        location.href = '/collections';
+      } catch (e) { toast(e.message, 'error'); }
+    });
+  }
+
+  // Add-items panel.
+  var addBtn = document.getElementById('c-add-btn');
+  var addModal = document.getElementById('c-add-modal');
+  var addCancel = document.getElementById('c-add-cancel');
+  var addQ = document.getElementById('c-add-q');
+  var addResults = document.getElementById('c-add-results');
+  if (addBtn && addModal) {
+    addBtn.addEventListener('click', function(){
+      addModal.hidden = false;
+      if (addQ) addQ.focus();
+    });
+    if (addCancel) addCancel.addEventListener('click', function(){ addModal.hidden = true; });
+
+    var searchTimer = null;
+    function escHtml(s){
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+      });
+    }
+    function renderResults(results){
+      if (!results || !results.length) {
+        addResults.innerHTML = '<div style="padding:var(--space-3);color:var(--text-tertiary);font-size:var(--text-xs);text-align:center">No matches. Try a different search.</div>';
+        return;
+      }
+      addResults.innerHTML = results.map(function(r){
+        return (
+          '<button type="button" class="hbc-row" data-type="' + escHtml(r.item_type) +
+          '" data-ref="' + escHtml(r.item_ref) +
+          '" style="display:flex;justify-content:space-between;align-items:center;' +
+          'gap:var(--space-3);padding:var(--space-3);border-radius:var(--radius-md);' +
+          'cursor:pointer;background:transparent;border:0;width:100%;text-align:left;' +
+          'color:inherit;font:inherit">' +
+          '<div style="flex:1;min-width:0">' +
+          '<div style="font-family:var(--font-ui);font-size:var(--text-xs);' +
+          'font-weight:600;color:var(--text-tertiary);text-transform:uppercase;' +
+          'letter-spacing:0.1em">' + escHtml(r.item_type) + '</div>' +
+          '<div style="font-family:var(--font-body);font-size:var(--text-md);' +
+          'color:var(--text-primary);white-space:nowrap;overflow:hidden;' +
+          'text-overflow:ellipsis">' + escHtml(r.title) + '</div>' +
+          '<div style="font-family:var(--font-mono);font-size:var(--text-xs);' +
+          'color:var(--text-tertiary)">' + escHtml(r.subtitle || '') + '</div>' +
+          '</div>' +
+          '<span style="color:var(--text-tertiary);font-size:var(--text-lg);' +
+          'font-family:var(--font-ui)">+</span>' +
+          '</button>'
+        );
+      }).join('');
+      addResults.querySelectorAll('button[data-type]').forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          btn.disabled = true;
+          try {
+            await api('POST', '/api/collections/' + COLLECTION_ID + '/items', {
+              item_type: btn.dataset.type,
+              item_ref: btn.dataset.ref,
+            });
+            location.reload();
+          } catch (e) {
+            btn.disabled = false;
+            toast(e.message, 'error');
+          }
+        });
+      });
+    }
+    if (addQ && addResults) {
+      addQ.addEventListener('input', function(){
+        clearTimeout(searchTimer);
+        var q = addQ.value.trim();
+        if (q.length < 2) {
+          addResults.innerHTML = '<div style="padding:var(--space-3);color:var(--text-tertiary);font-size:var(--text-xs);text-align:center">Type at least 2 characters…</div>';
+          return;
+        }
+        searchTimer = setTimeout(async function(){
+          try {
+            var data = await api('GET', '/api/collections/search?q=' + encodeURIComponent(q));
+            renderResults(data.results || []);
+          } catch (e) {
+            addResults.innerHTML = '<div style="padding:var(--space-3);color:var(--text-tertiary);font-size:var(--text-xs);text-align:center">Search failed.</div>';
+          }
+        }, 180);
+      });
+    }
+  }
+
+  // Share button — uses [data-share] elsewhere; keep this path for back-compat.
+  var shareBtn = document.getElementById('c-share-btn');
+  if (shareBtn) {
+    shareBtn.addEventListener('click', async function(){
+      var url = shareBtn.dataset.shareUrl || location.href;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(url);
+        } else {
+          window.prompt('Copy this link:', url);
+        }
+        toast('Link copied', 'success');
+      } catch (e) {
+        window.prompt('Copy this link:', url);
+      }
+    });
+  }
+
+  // Drag-to-reorder (owner only).
+  if (IS_OWNER && !IS_SYSTEM) {
+    var container = document.getElementById('c-items');
+    if (container) {
+      var dragging = null;
+      container.addEventListener('pointerdown', function(ev){
+        var handle = ev.target.closest('.c-item-drag');
+        if (!handle) return;
+        dragging = handle.closest('li[data-item-id]');
+        if (!dragging) return;
+        dragging.setAttribute('aria-grabbed', 'true');
+        dragging.style.opacity = '0.6';
+      });
+      container.addEventListener('pointermove', function(ev){
+        if (!dragging) return;
+        var after = null;
+        var items = container.querySelectorAll('li[data-item-id]');
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          if (item === dragging) continue;
+          var rect = item.getBoundingClientRect();
+          if (ev.clientY < rect.top + rect.height / 2) { after = item; break; }
+        }
+        if (after) container.insertBefore(dragging, after);
+        else container.appendChild(dragging);
+      });
+      container.addEventListener('pointerup', async function(){
+        if (!dragging) return;
+        dragging.style.opacity = '';
+        dragging.removeAttribute('aria-grabbed');
+        dragging = null;
+        var ordering = [];
+        container.querySelectorAll('li[data-item-id]').forEach(function(el, idx){
+          ordering.push({ item_id: parseInt(el.dataset.itemId), position: idx });
+        });
+        try {
+          await api('POST',
+            '/api/collections/' + COLLECTION_ID + '/items/reorder',
+            ordering);
+        } catch (e) { /* reload fixes divergence */ }
+      });
+    }
+  }
+})();
+</script>
+{{ raw_sitemap }}
+<script src="/_gateway_static/theme.js?v=2" defer></script>
+<script src="/_gateway_static/skeletons.js" defer></script>
+<script src="/_gateway_static/toast.js" defer></script>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
+  <script src="/_gateway_static/js/share_menu.js" defer></script>
+</body>
+</html>
