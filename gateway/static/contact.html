@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact · narve.ai</title>
+  <meta name="description" content="Send a message to narve.ai — subject and message form, plus address and legal contacts.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ static: pages/contact.css }}">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
+</head>
+<body>
+  <main class="ct-wrap" aria-labelledby="ct-title">
+    <a href="/" class="ct-back">← narve.ai</a>
+
+    <header class="ct-header">
+      <p class="ct-eyebrow">Get in touch</p>
+      <h1 class="ct-title" id="ct-title">Contact us</h1>
+      <p class="ct-lede">Send us a message and we'll reply within one business day. For status incidents and outages, check the <a href="/status">status page</a> first.</p>
+    </header>
+
+    <form id="ct-form" class="ct-form" onsubmit="return submitContact(event)" novalidate>
+      <div class="ct-error" id="ct-error" role="alert"></div>
+
+      <div class="ct-field">
+        <label class="ct-label" for="ct-email">Your email</label>
+        <input class="ct-input" type="email" id="ct-email" name="email" required
+               placeholder="you@example.com" autocomplete="email" autofocus>
+      </div>
+
+      <div class="ct-field">
+        <label class="ct-label" for="ct-subject">Subject</label>
+        <input class="ct-input" type="text" id="ct-subject" name="subject" required
+               placeholder="What's this about?" maxlength="140">
+      </div>
+
+      <div class="ct-field">
+        <label class="ct-label" for="ct-message">Message</label>
+        <textarea class="ct-textarea" id="ct-message" name="message" required
+                  minlength="10" maxlength="4000"
+                  placeholder="Tell us what's going on. Include any relevant context — account email, browser, the page you were on."></textarea>
+      </div>
+
+      <button type="submit" class="ct-submit" id="ct-btn">Send message</button>
+    </form>
+
+    <div class="ct-success" id="ct-success" hidden>
+      <h2 class="ct-success-title">Message sent</h2>
+      <p class="ct-success-body">We've received your message and will reply at the email you provided, usually within 24 hours.</p>
+    </div>
+
+    <section class="ct-info" aria-label="Address and legal contacts">
+      <div class="ct-info-block">
+        <h3 class="ct-info-label">Mailing address</h3>
+        <address class="ct-info-body">
+          narve.ai<br>
+          c/o Sho Cakarel<br>
+          London, United Kingdom
+        </address>
+      </div>
+
+      <div class="ct-info-block">
+        <h3 class="ct-info-label">Privacy &amp; data</h3>
+        <p class="ct-info-body">
+          <a href="mailto:privacy@narve.ai">privacy@narve.ai</a><br>
+          GDPR, deletion, and data-export requests.
+        </p>
+      </div>
+
+      <div class="ct-info-block">
+        <h3 class="ct-info-label">Security</h3>
+        <p class="ct-info-body">
+          <a href="mailto:security@narve.ai">security@narve.ai</a><br>
+          Vulnerability disclosure — see also <a href="/.well-known/security.txt">security.txt</a>.
+        </p>
+      </div>
+
+      <div class="ct-info-block">
+        <h3 class="ct-info-label">Press &amp; legal</h3>
+        <p class="ct-info-body">
+          <a href="mailto:legal@narve.ai">legal@narve.ai</a><br>
+          DMCA, partnership, and press enquiries.
+        </p>
+      </div>
+    </section>
+
+    <footer class="ct-footer">
+      <div>
+        <a href="/">Home</a>
+        <a href="/support">Support</a>
+        <a href="/status">Status</a>
+        <a href="/faq">FAQ</a>
+      </div>
+      <div>narve.ai · We read every message</div>
+    </footer>
+  </main>
+
+  <script>
+    function getCsrf() {
+      var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    function submitContact(e) {
+      e.preventDefault();
+      var email = document.getElementById('ct-email').value.trim();
+      var subject = document.getElementById('ct-subject').value.trim();
+      var message = document.getElementById('ct-message').value.trim();
+      var errEl = document.getElementById('ct-error');
+      var btn = document.getElementById('ct-btn');
+
+      errEl.textContent = '';
+      errEl.classList.remove('visible');
+
+      if (!email || !subject || message.length < 10) {
+        errEl.textContent = 'Please fill in every field. Messages need at least 10 characters.';
+        errEl.classList.add('visible');
+        return false;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+
+      fetch('/api/support-ticket', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
+        body: JSON.stringify({ email: email, message: '[' + subject + '] ' + message })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.success) {
+            document.getElementById('ct-form').hidden = true;
+            document.getElementById('ct-success').hidden = false;
+          } else {
+            errEl.textContent = data.error || 'Could not send — please try again.';
+            errEl.classList.add('visible');
+            btn.disabled = false;
+            btn.textContent = 'Send message';
+          }
+        })
+        .catch(function () {
+          errEl.textContent = 'Network error. Please try again.';
+          errEl.classList.add('visible');
+          btn.disabled = false;
+          btn.textContent = 'Send message';
+        });
+
+      return false;
+    }
+  </script>
+  <script src="/_gateway_static/theme.js?v=2" defer></script>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
+  <script src="/_gateway_static/js/share_menu.js" defer></script>
+</body>
+</html>

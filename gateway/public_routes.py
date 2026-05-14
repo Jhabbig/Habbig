@@ -1,8 +1,8 @@
 """Public marketing / pre-release routes.
 
 Extracted from server.py. Handles the non-auth public endpoints that sit
-in front of the gate: /enquire, /pricing, /subscribe, /support, /suspended,
-and the prerelease newsletter signup (/api/newsletter*).
+in front of the gate: /enquire, /pricing, /subscribe, /support, /contact,
+/suspended, and the prerelease newsletter signup (/api/newsletter*).
 
 Legal pages (/terms, /privacy, /dpa) and source-profile SEO pages
 (/sources/{handle}, /sitemap.xml, /robots.txt) live in server_features.py.
@@ -178,6 +178,16 @@ async def support_page(request: Request):
     if sub:
         return await srv.proxy_request(request, "/support")
     return srv.render_page("support", request=request)
+
+
+async def contact_page(request: Request):
+    """Public contact form. Submits to /api/support-ticket — the existing
+    ticket pipeline. Kept on the apex; subdomains proxy through."""
+    srv = _srv()
+    sub = srv.get_subdomain(request)
+    if sub:
+        return await srv.proxy_request(request, "/contact")
+    return srv.render_page("contact", request=request)
 
 
 async def api_support_ticket(request: Request):
@@ -593,6 +603,7 @@ def register(app) -> None:
     app.add_api_route("/subscribe", subscribe_page, methods=["GET"], response_class=HTMLResponse)
     app.add_api_route("/api/subscribe", api_subscribe, methods=["POST"])
     app.add_api_route("/support", support_page, methods=["GET"], response_class=HTMLResponse)
+    app.add_api_route("/contact", contact_page, methods=["GET"], response_class=HTMLResponse)
     app.add_api_route("/api/support-ticket", api_support_ticket, methods=["POST"])
     app.add_api_route("/suspended", suspended_page, methods=["GET"], response_class=HTMLResponse)
     app.add_api_route("/api/newsletter", api_newsletter, methods=["POST"])

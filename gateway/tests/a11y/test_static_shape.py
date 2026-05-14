@@ -46,6 +46,7 @@ STATIC_PAGES: tuple[str, ...] = (
     "pricing.html",
     "subscribe.html",
     "support.html",
+    "contact.html",
     "suspended.html",
     "gate.html",
     "login.html",

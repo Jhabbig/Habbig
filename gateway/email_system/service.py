@@ -213,6 +213,7 @@ _SUBJECTS = {
     "weekly_intelligence": "narve.ai — Your weekly intelligence report",
     "admin_cost_alert": "[admin] narve.ai Claude spend alert",
     "admin_subscription_drift": "[admin] narve.ai subscription drift detected",
+    "admin_forensic_alert": "[narve.ai] Watermark trace used",
 }
 
 

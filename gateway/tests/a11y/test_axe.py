@@ -32,7 +32,7 @@ PAGES: tuple[str, ...] = (
     "/", "/landing", "/narve",
     "/about", "/how-it-works", "/methodology", "/faq",
     "/team", "/press", "/changelog",
-    "/pricing", "/subscribe", "/support", "/suspended",
+    "/pricing", "/subscribe", "/support", "/contact", "/suspended",
     "/terms", "/privacy", "/dpa",
     "/enquire", "/gate", "/login", "/register", "/token",
     "/forgot-password", "/signup",

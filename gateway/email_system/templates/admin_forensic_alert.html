@@ -1,0 +1,31 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Watermark trace endpoint used</h1>
+<p style="margin:0 0 20px;color:#555;">An admin used the watermark trace endpoint at <strong>{{ timestamp }}</strong>. This is a forensic-only endpoint and every access is logged.</p>
+
+<table cellpadding="0" cellspacing="0" style="width:100%;margin:16px 0;border-collapse:collapse">
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px 4px 0 0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em;width:140px">Admin</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-left:0;border-radius:0 4px 0 0;font-size:14px;color:#0d0d0d;">{{ admin_email }}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em">Target watermark</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;font-size:14px;color:#0d0d0d;"><code>{{ target_watermark }}</code></td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em">Target user_id</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;font-size:14px;color:#0d0d0d;">{{ target_user_id }}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em">IP address</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;font-size:14px;color:#0d0d0d;">{{ ip_address }}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:0;border-radius:0 0 0 4px;font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.06em">User-Agent</td>
+    <td style="padding:10px 14px;background:#ffffff;border:1px solid #e0e0e0;border-top:0;border-left:0;border-radius:0 0 4px 0;font-size:14px;color:#0d0d0d;word-break:break-all;">{{ user_agent }}</td>
+  </tr>
+</table>
+
+<p style="margin:20px 0 0;color:#555;font-size:13px;">
+  <strong>If this was not authorised, revoke the admin account immediately.</strong> The watermark trace endpoint reverses a per-recipient email fingerprint to a user_id and should only be used during an active leak investigation. Cross-reference the admin's session activity on the <a href="https://narve.ai/admin/audit" style="color:#0d0d0d;">audit log</a>.
+</p>
+{% endblock %}

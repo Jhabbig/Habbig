@@ -31,7 +31,7 @@ NOINDEX_PATHS: tuple[str, ...] = (
     "/dashboard", "/dashboards", "/admin", "/api",
     "/login", "/register", "/token", "/gate", "/invite", "/signup",
     "/settings", "/leaderboard", "/embed", "/billing", "/profile",
-    "/onboarding", "/account", "/enquire", "/support", "/saved",
+    "/onboarding", "/account", "/enquire", "/support", "/contact", "/saved",
     "/signal-search", "/suspended", "/subscribe",
     "/forgot-password", "/reset-password",
     "/auth",
@@ -223,6 +223,7 @@ Disallow: /onboarding
 Disallow: /account
 Disallow: /enquire
 Disallow: /support
+Disallow: /contact
 Disallow: /saved
 Disallow: /signal-search
 Disallow: /forgot-password

@@ -730,8 +730,29 @@ async def trace_watermark_route(request: Request):
     the email carrying the supplied watermark fingerprint. Returns 404
     if the fingerprint is unknown, 400 if the query string is missing
     or malformed.
+
+    Forensic endpoint — per Cloudflare audit, every access fires:
+      * standard audit log entry (``EMAIL_WATERMARK_TRACE``)
+      * Sentry capture_message at info level
+      * email to the forensic mailbox (``LEGAL_EMAIL`` / ``EMAIL_FORENSIC``)
+
+    Rate-limited to 10 lookups per hour per admin so a compromised admin
+    account cannot drain the whole watermark map in one burst.
     """
     admin = _require_admin_user(request)
+
+    # Rate-limit per admin: 10 / hour. 11th request returns 429.
+    try:
+        from server import _is_rate_limited as _irl  # type: ignore
+        admin_key = (admin or {}).get("user_id") or (admin or {}).get("email") or "unknown"
+        if _irl(f"trace-watermark:{admin_key}", limit=10, window=3600):
+            return JSONResponse(
+                {"error": "rate limit exceeded (10/hour)"},
+                status_code=429,
+            )
+    except Exception:
+        log.warning("trace_watermark rate-limit check failed", exc_info=True)
+
     raw = (request.query_params.get("id") or "").strip().lower()
     if not raw or not re.fullmatch(r"[0-9a-f]{4,12}", raw):
         return JSONResponse(
@@ -756,6 +777,40 @@ async def trace_watermark_route(request: Request):
         )
     except Exception:
         log.warning("audit of trace_watermark failed", exc_info=True)
+
+    # Sentry capture — every access, even misses. Info-level because it's
+    # informational/forensic, not an error condition.
+    admin_email = (admin or {}).get("email") or "unknown"
+    target_user_id = (detail or {}).get("user_id") if detail else None
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_message(
+            f"Admin trace-watermark used: admin={admin_email} target={target_user_id}",
+            level="info",
+        )
+    except Exception:
+        log.warning("trace_watermark sentry capture failed", exc_info=True)
+
+    # Forensic alert email — fire-and-forget so a stalled email backend
+    # never blocks the endpoint. Resolve IP defensively; some stub
+    # requests (and probes via internal callers) lack ``request.client``.
+    try:
+        ip_address = _client_ip(request) or "unknown"
+    except Exception:
+        ip_address = "unknown"
+    try:
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            _notify_forensic_of_trace(
+                admin_email=admin_email,
+                target_watermark=raw,
+                target_user_id=target_user_id,
+                ip_address=ip_address,
+                user_agent=(request.headers.get("user-agent") or "")[:500],
+            )
+        )
+    except Exception:
+        log.warning("trace_watermark forensic-email schedule failed", exc_info=True)
 
     if not detail:
         return JSONResponse({"error": "watermark not found"}, status_code=404)
@@ -784,6 +839,57 @@ async def trace_watermark_route(request: Request):
         ).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return JSONResponse(payload)
+
+
+async def _notify_forensic_of_trace(
+    *,
+    admin_email: str,
+    target_watermark: str,
+    target_user_id: int | None,
+    ip_address: str,
+    user_agent: str,
+) -> None:
+    """Email the forensic mailbox on every /admin/trace-watermark access.
+
+    Per Cloudflare security audit: a watermark trace is a high-trust
+    forensic action and an out-of-band notification gives a second pair
+    of eyes the chance to flag misuse. Recipient resolves via
+    ``EMAIL_FORENSIC`` first (purpose-built), falling back to
+    ``LEGAL_EMAIL`` (general counsel), then a hard-coded default.
+    """
+    import os as _os
+    recipient = (
+        _os.environ.get("EMAIL_FORENSIC", "").strip()
+        or _os.environ.get("LEGAL_EMAIL", "").strip()
+        or "legal@narve.ai"
+    )
+    timestamp = _dt.datetime.now(tz=_dt.timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S UTC"
+    )
+    try:
+        from jobs.email_jobs import enqueue_email
+        await enqueue_email(
+            to=recipient,
+            template="admin_forensic_alert",
+            context={
+                "admin_email": admin_email,
+                "target_watermark": target_watermark,
+                "target_user_id": target_user_id if target_user_id is not None else "—",
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "timestamp": timestamp,
+                # The _SUBJECTS fallback already includes "Watermark trace
+                # used"; this `subject` override interpolates the admin
+                # email so the inbox preview is actionable.
+                "subject": f"[narve.ai] Watermark trace used — admin={admin_email}",
+            },
+            tags=["forensic", "trace-watermark"],
+        )
+    except Exception as exc:
+        log.warning(
+            "forensic email notify failed admin=%s watermark=%s: %s",
+            admin_email, target_watermark, exc,
+        )
 
 
 # ── Cache admin ──────────────────────────────────────────────────────────

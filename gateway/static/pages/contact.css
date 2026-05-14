@@ -1,0 +1,248 @@
+/* Per-page CSS for static/contact.html — subject + message form,
+ * with address and legal contacts at the bottom.
+ *
+ * Typography:
+ *   Hero "Contact us" → Instrument Serif Italic (--font-display)
+ *   Form inputs and chrome → Inter (--font-ui), 16px on inputs to
+ *                            avoid iOS zoom-on-focus.
+ *   Lede + address + legal body → editorial serif (--font-body).
+ *
+ * Layout: single-column, full-width form and info blocks.
+ *   Shell padding: var(--space-8) var(--space-6).
+ *   Info blocks: full-width, padding var(--space-6).
+ */
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* ---------- shell ---------- */
+.ct-wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+}
+
+.ct-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  margin-bottom: var(--space-6);
+}
+.ct-back:hover { color: var(--text-primary); }
+
+/* ---------- hero ---------- */
+.ct-header {
+  margin-bottom: var(--space-7);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.ct-eyebrow {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-3);
+}
+
+.ct-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-5xl);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-4);
+}
+
+.ct-lede {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 60ch;
+}
+.ct-lede a {
+  color: var(--text-primary);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-default);
+}
+.ct-lede a:hover { border-color: var(--text-primary); }
+
+/* ---------- form (Inter sans, 16px inputs) ---------- */
+.ct-form {
+  margin-bottom: var(--space-7);
+}
+
+.ct-field {
+  margin-bottom: var(--space-5);
+}
+
+.ct-label {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.ct-input,
+.ct-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--duration-fast);
+}
+.ct-input { min-height: 44px; }
+.ct-textarea {
+  min-height: 160px;
+  resize: vertical;
+}
+.ct-input:focus,
+.ct-textarea:focus { border-color: var(--text-primary); }
+.ct-input::placeholder,
+.ct-textarea::placeholder { color: var(--text-quaternary); }
+
+.ct-submit {
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--interactive-text);
+  background: var(--interactive-bg);
+  border: 1px solid var(--interactive-bg);
+  border-radius: var(--radius-md);
+  min-height: 48px;
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+.ct-submit:hover { background: var(--interactive-hover); }
+.ct-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.ct-error {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  display: none;
+}
+.ct-error.visible { display: block; }
+
+.ct-success {
+  padding: var(--space-6);
+  margin-bottom: var(--space-7);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+.ct-success-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-2xl);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-2);
+}
+.ct-success-body {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ---------- info blocks (address + legal contacts) ---------- */
+.ct-info {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-default);
+}
+
+.ct-info-block {
+  padding: var(--space-6);
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.ct-info-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-3);
+}
+
+.ct-info-body {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+  font-style: normal;
+}
+.ct-info-body a {
+  color: var(--text-primary);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-default);
+}
+.ct-info-body a:hover { border-color: var(--text-primary); }
+
+/* ---------- footer ---------- */
+.ct-footer {
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-default);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.ct-footer a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  margin-right: var(--space-4);
+}
+.ct-footer a:hover { color: var(--text-primary); }
+
+/* ---------- responsive ---------- */
+@media (max-width: 720px) {
+  .ct-wrap { padding: var(--space-6) var(--space-4); }
+  .ct-title { font-size: var(--text-4xl); }
+  .ct-info { grid-template-columns: 1fr; }
+  .ct-info-block { padding: var(--space-5); }
+}

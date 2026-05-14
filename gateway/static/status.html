@@ -11,6 +11,7 @@
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ static: pages/status.css }}">
   <link rel="canonical" href="https://narve.ai/status">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -25,17 +26,20 @@
 </head>
 <body>
   <main class="status-wrap" aria-labelledby="status-title">
+    <a href="/" class="status-back">← narve.ai</a>
+
     <header class="status-header">
-      <p class="status-eyebrow">narve.ai</p>
-      <h1 class="status-title" id="status-title">Status</h1>
-      <div class="status-banner" data-level="{{ status_level }}">
-        <span class="status-dot status-dot-ok" aria-hidden="true"></span>
-        <div>
-          <p class="status-banner-message">{{ status_message }}</p>
-          <p class="status-banner-sub">Last checked {{ last_checked_rel }} · <time datetime="{{ last_checked_abs }}">{{ last_checked_abs }}</time></p>
-        </div>
-      </div>
+      <p class="status-eyebrow">Service health</p>
+      <h1 class="status-title" id="status-title">narve.ai status</h1>
     </header>
+
+    <div class="status-banner" data-level="{{ status_level }}">
+      <span class="status-dot status-dot-ok" aria-hidden="true"></span>
+      <div class="status-banner-body">
+        <p class="status-banner-message">{{ status_message }}</p>
+        <p class="status-banner-sub">Last checked {{ last_checked_rel }} · <time datetime="{{ last_checked_abs }}">{{ last_checked_abs }}</time></p>
+      </div>
+    </div>
 
     <section class="status-section" aria-labelledby="components-head">
       <h2 class="status-section-title" id="components-head">Components</h2>
@@ -43,7 +47,7 @@
     </section>
 
     <section class="status-section" aria-labelledby="uptime-head">
-      <h2 class="status-section-title" id="uptime-head">Uptime — Last 90 Days</h2>
+      <h2 class="status-section-title" id="uptime-head">Uptime — last 90 days</h2>
       <div class="uptime-chart" role="img" aria-label="Uptime history for the last 90 days">
         {{ raw_uptime_bars }}
       </div>
@@ -51,19 +55,29 @@
     </section>
 
     <section class="status-section" aria-labelledby="incidents-head">
-      <h2 class="status-section-title" id="incidents-head">Recent Incidents</h2>
+      <h2 class="status-section-title" id="incidents-head">Recent incidents</h2>
       {{ raw_incident_list }}
     </section>
 
-    <section class="status-section" aria-labelledby="subscribe-head">
+    <section class="status-section status-subscribe" aria-labelledby="subscribe-head">
       <h2 class="status-section-title" id="subscribe-head">Subscribe to updates</h2>
+      <p class="subscribe-lede">Get an email whenever we open or resolve an incident. Unsubscribe in one click.</p>
       <form id="subscribe-form" class="subscribe-row" onsubmit="return submitSubscribe(event)">
         <input type="email" name="email" placeholder="you@example.com" required aria-label="Email address">
         <button type="submit">Subscribe</button>
       </form>
       <p id="subscribe-feedback" class="subscribe-feedback" aria-live="polite"></p>
-      <p class="feed-link">Or via RSS: <a href="{{ feed_url }}">/status/feed.xml</a></p>
+      <p class="feed-link">Or subscribe via RSS: <a href="{{ feed_url }}">/status/feed.xml</a></p>
     </section>
+
+    <footer class="status-footer">
+      <div>
+        <a href="/">Home</a>
+        <a href="/support">Support</a>
+        <a href="/contact">Contact</a>
+      </div>
+      <div>narve.ai · operational transparency</div>
+    </footer>
   </main>
 
   <script>

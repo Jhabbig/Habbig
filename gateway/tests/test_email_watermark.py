@@ -268,5 +268,247 @@ class TestAdminTraceRoute(unittest.TestCase):
             admin_routes._require_admin_user = original_guard
 
 
+class TestAdminTraceForensicAlerts(unittest.TestCase):
+    """The /admin/trace-watermark endpoint is a forensic surface — per the
+    Cloudflare audit, every access must:
+      * be captured to Sentry at info level,
+      * enqueue an email to the forensic mailbox using the
+        ``admin_forensic_alert`` template,
+      * 429 the 11th request within an hour from the same admin.
+
+    These tests assert each of the three guarantees independently by
+    monkeypatching ``sentry_sdk``, ``jobs.email_jobs.enqueue_email`` and
+    ``server._is_rate_limited`` respectively.
+    """
+
+    def _fake_request(self, qs, ua="curl/8", ip="203.0.113.5"):
+        class FakeClient:
+            def __init__(self, host):
+                self.host = host
+        class FakeRequest:
+            def __init__(self):
+                self.query_params = qs
+                self.headers = {"user-agent": ua, "x-forwarded-for": ip}
+                self.client = FakeClient(ip)
+        return FakeRequest()
+
+    def _bypass_admin(self):
+        import admin_routes
+        original_guard = admin_routes._require_admin_user
+        admin_routes._require_admin_user = lambda req, page=False: {
+            "user_id": 99, "id": 99, "email": "admin@narve.ai", "is_admin": 1,
+        }
+        return original_guard
+
+    def _restore_admin(self, original_guard):
+        import admin_routes
+        admin_routes._require_admin_user = original_guard
+
+    def test_sentry_capture_on_hit(self):
+        import admin_routes
+        import asyncio
+        import sys
+        import types
+
+        uid = _make_user("forensic-sentry-hit@test.com")
+        ctx: dict = {}
+        wm.annotate_context(ctx, uid, "weekly_digest", batch_ts=19520 * 86400)
+        watermark_hex = ctx["watermark"]
+
+        captured: list[tuple[str, str]] = []
+
+        # Stub sentry_sdk so the lazy `import sentry_sdk` inside the route
+        # resolves to our fake. Capturing also any kwargs we care about.
+        fake_sentry = types.SimpleNamespace(
+            capture_message=lambda msg, level="info": captured.append((msg, level))
+        )
+        sys.modules["sentry_sdk"] = fake_sentry
+
+        original_guard = self._bypass_admin()
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                resp = loop.run_until_complete(
+                    admin_routes.trace_watermark_route(
+                        self._fake_request({"id": watermark_hex})
+                    )
+                )
+            finally:
+                loop.close()
+            self.assertEqual(resp.status_code, 200)
+        finally:
+            self._restore_admin(original_guard)
+            sys.modules.pop("sentry_sdk", None)
+
+        self.assertEqual(len(captured), 1, f"expected 1 sentry capture, got {captured!r}")
+        msg, level = captured[0]
+        self.assertEqual(level, "info")
+        self.assertIn("admin@narve.ai", msg)
+        self.assertIn(str(uid), msg)
+
+    def test_sentry_capture_also_on_miss(self):
+        """A 404 (unknown watermark) must still capture — we want to know
+        when someone is probing the endpoint with forged fingerprints."""
+        import admin_routes
+        import asyncio
+        import sys
+        import types
+
+        captured: list[tuple[str, str]] = []
+        sys.modules["sentry_sdk"] = types.SimpleNamespace(
+            capture_message=lambda msg, level="info": captured.append((msg, level))
+        )
+
+        original_guard = self._bypass_admin()
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                resp = loop.run_until_complete(
+                    admin_routes.trace_watermark_route(
+                        self._fake_request({"id": "deadbe"})
+                    )
+                )
+            finally:
+                loop.close()
+            self.assertEqual(resp.status_code, 404)
+        finally:
+            self._restore_admin(original_guard)
+            sys.modules.pop("sentry_sdk", None)
+
+        self.assertEqual(len(captured), 1)
+        self.assertIn("admin@narve.ai", captured[0][0])
+
+    def test_forensic_email_enqueued_with_template(self):
+        import admin_routes
+        import asyncio
+        import sys
+        import types
+
+        uid = _make_user("forensic-email@test.com")
+        ctx: dict = {}
+        wm.annotate_context(ctx, uid, "morning_briefing", batch_ts=19521 * 86400)
+        watermark_hex = ctx["watermark"]
+
+        enqueued: list[dict] = []
+
+        async def fake_enqueue(to, template, context, reply_to=None, tags=None):
+            enqueued.append({
+                "to": to, "template": template, "context": context, "tags": tags,
+            })
+            return 1
+
+        # Stub sentry_sdk so the capture call doesn't blow up.
+        sys.modules["sentry_sdk"] = types.SimpleNamespace(
+            capture_message=lambda *a, **kw: None
+        )
+
+        # Patch enqueue_email at its source module so the route's lazy
+        # import sees the fake.
+        from jobs import email_jobs as _ej
+        original_enqueue = _ej.enqueue_email
+        _ej.enqueue_email = fake_enqueue
+
+        original_guard = self._bypass_admin()
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                # Run the route, then let the create_task() coroutine drain.
+                resp = loop.run_until_complete(
+                    admin_routes.trace_watermark_route(
+                        self._fake_request({"id": watermark_hex})
+                    )
+                )
+                pending = [
+                    t for t in asyncio.all_tasks(loop=loop) if not t.done()
+                ]
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending))
+            finally:
+                loop.close()
+            self.assertEqual(resp.status_code, 200)
+        finally:
+            self._restore_admin(original_guard)
+            _ej.enqueue_email = original_enqueue
+            sys.modules.pop("sentry_sdk", None)
+
+        self.assertEqual(len(enqueued), 1, f"expected 1 email enqueue, got {enqueued!r}")
+        payload = enqueued[0]
+        self.assertEqual(payload["template"], "admin_forensic_alert")
+        # Forensic recipient — env default lands on legal@narve.ai when
+        # neither EMAIL_FORENSIC nor LEGAL_EMAIL is set.
+        self.assertIn("@narve.ai", payload["to"])
+        ctx_passed = payload["context"]
+        self.assertEqual(ctx_passed["admin_email"], "admin@narve.ai")
+        self.assertEqual(ctx_passed["target_watermark"], watermark_hex)
+        self.assertEqual(ctx_passed["target_user_id"], uid)
+        self.assertIn("UTC", ctx_passed["timestamp"])
+        # Subject must interpolate the admin's email for inbox preview.
+        self.assertIn("admin=admin@narve.ai", ctx_passed["subject"])
+        # The tags array tells the relay this is forensic traffic.
+        self.assertIn("forensic", payload["tags"])
+
+    def test_rate_limit_11th_request_in_hour_returns_429(self):
+        import admin_routes
+        import asyncio
+        import sys
+        import types
+
+        # Stub sentry + enqueue so the rate-limit test isolates only the
+        # 429 path.
+        sys.modules["sentry_sdk"] = types.SimpleNamespace(
+            capture_message=lambda *a, **kw: None
+        )
+        from jobs import email_jobs as _ej
+        original_enqueue = _ej.enqueue_email
+        _ej.enqueue_email = lambda *a, **kw: _noop_coro()
+
+        # Use a stub rate-limiter that returns False for the first 10
+        # calls and True from the 11th onward — the in-memory store is
+        # process-wide and could be polluted by other tests.
+        import server as _srv
+        call_count = {"n": 0}
+        def _stub_rl(key, limit, window=None):
+            call_count["n"] += 1
+            return call_count["n"] > limit  # 11th request → True
+        original_irl = _srv._is_rate_limited
+        _srv._is_rate_limited = _stub_rl
+
+        original_guard = self._bypass_admin()
+        responses = []
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                for _ in range(11):
+                    resp = loop.run_until_complete(
+                        admin_routes.trace_watermark_route(
+                            self._fake_request({"id": "abcdef"})
+                        )
+                    )
+                    responses.append(resp.status_code)
+                pending = [
+                    t for t in asyncio.all_tasks(loop=loop) if not t.done()
+                ]
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending))
+            finally:
+                loop.close()
+        finally:
+            self._restore_admin(original_guard)
+            _srv._is_rate_limited = original_irl
+            _ej.enqueue_email = original_enqueue
+            sys.modules.pop("sentry_sdk", None)
+
+        # First 10 calls must NOT be 429 (they're 404s since watermark
+        # is fake, but anything ≠ 429 satisfies the under-the-limit gate).
+        self.assertTrue(all(s != 429 for s in responses[:10]),
+                        f"under-limit responses: {responses[:10]}")
+        # The 11th must be 429.
+        self.assertEqual(responses[10], 429)
+
+
+async def _noop_coro():
+    return 1
+
+
 if __name__ == "__main__":
     unittest.main()

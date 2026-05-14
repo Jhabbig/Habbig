@@ -3,108 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Support Ticket — narve.ai</title>
-  <meta name="description" content="Contact narve.ai support.">
+  <title>Support · narve.ai</title>
+  <meta name="description" content="Get help with narve.ai — browse the FAQ, send us a message, or email support directly.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ static: pages/support.css }}">
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
   <link rel="apple-touch-icon" href="/_gateway_static/img/logo.png">
 </head>
 <body>
-<div class="sup-page">
-  <div class="sup-container">
-    <a href="/" class="sup-back">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
-      Back
-    </a>
+  <main class="sup-wrap" aria-labelledby="sup-title">
+    <a href="/" class="sup-back">← narve.ai</a>
 
-    <h1 class="sup-title">Support Ticket</h1>
-    <p class="sup-desc">Describe your issue and we'll get back to you within 24-48 hours.</p>
+    <header class="sup-header">
+      <p class="sup-eyebrow">Support</p>
+      <h1 class="sup-title" id="sup-title">Need help?</h1>
+      <p class="sup-lede">Pick the path that fits. Most answers live in the FAQ — if you don't find yours there, send us a message and we'll reply within one business day.</p>
+    </header>
 
-    <div class="sup-card">
-      <div class="sup-error" id="sup-error"></div>
+    <section class="sup-paths" aria-label="Support channels">
+      <a class="sup-path" href="/faq">
+        <div class="sup-path-body">
+          <h2 class="sup-path-title">Read the FAQ</h2>
+          <p class="sup-path-desc">Account, billing, data, sources, and the fastest answers to the most common questions.</p>
+        </div>
+        <span class="sup-path-cta">Browse FAQ →</span>
+      </a>
 
-      <form id="sup-form" onsubmit="return submitSupport(event)">
-        <div class="sup-field">
-          <label class="sup-label" for="sup-email">Your email</label>
-          <input class="sup-input" type="email" id="sup-email" required placeholder="you@example.com" autocomplete="email" autofocus>
+      <a class="sup-path" href="/contact">
+        <div class="sup-path-body">
+          <h2 class="sup-path-title">Send us a message</h2>
+          <p class="sup-path-desc">Open a support ticket with a subject and message. We reply to every ticket — usually within 24 hours, always within two business days.</p>
         </div>
-        <div class="sup-field">
-          <label class="sup-label" for="sup-category">Category</label>
-          <select class="sup-select" id="sup-category">
-            <option value="Account Suspension">Account Suspension</option>
-            <option value="Billing Issue">Billing Issue</option>
-            <option value="Token Lost">Token Lost</option>
-            <option value="Bug Report">Bug Report</option>
-            <option value="Other">Other</option>
-          </select>
-        </div>
-        <div class="sup-field">
-          <label class="sup-label" for="sup-message">Describe your issue</label>
-          <textarea class="sup-textarea" id="sup-message" required placeholder="Please describe what happened, your username or email, and any relevant details..." minlength="10"></textarea>
-        </div>
-        <button type="submit" class="sup-submit" id="sup-btn">Send ticket</button>
-      </form>
+        <span class="sup-path-cta">Open ticket →</span>
+      </a>
 
-      <div class="sup-success" id="sup-success">
-        <div class="sup-success-icon">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+      <a class="sup-path" href="mailto:support@narve.ai">
+        <div class="sup-path-body">
+          <h2 class="sup-path-title">Email us directly</h2>
+          <p class="sup-path-desc">Prefer email? Write to <code>support@narve.ai</code> and we'll route it to the right person. Include your account email if you have one.</p>
         </div>
-        <h2 style="font-size:20px;font-weight:700;color:var(--text-primary);margin-bottom:8px">Ticket submitted</h2>
-        <p style="font-size:14px;color:var(--text-secondary);line-height:1.6">We've received your support ticket and will review it within 24-48 hours. You'll hear from us at the email you provided.</p>
+        <span class="sup-path-cta">support@narve.ai →</span>
+      </a>
+    </section>
+
+    <footer class="sup-footer">
+      <div>
+        <a href="/">Home</a>
+        <a href="/status">Status</a>
+        <a href="/contact">Contact</a>
+        <a href="/faq">FAQ</a>
       </div>
-    </div>
-  </div>
-</div>
+      <div>narve.ai · We read every message</div>
+    </footer>
+  </main>
 
-<script>
-function getCsrf() {
-  var m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
-  return m ? decodeURIComponent(m[1]) : '';
-}
-
-function submitSupport(e) {
-  e.preventDefault();
-  var email = document.getElementById('sup-email').value.trim();
-  var category = document.getElementById('sup-category').value;
-  var message = document.getElementById('sup-message').value.trim();
-  var errEl = document.getElementById('sup-error');
-  var btn = document.getElementById('sup-btn');
-
-  errEl.classList.remove('visible');
-  btn.disabled = true;
-  btn.textContent = 'Sending…';
-
-  fetch('/api/support-ticket', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
-    body: JSON.stringify({ email: email, message: '[' + category + '] ' + message })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.success) {
-      document.getElementById('sup-form').style.display = 'none';
-      document.getElementById('sup-success').classList.add('visible');
-    } else {
-      errEl.textContent = data.error || 'Could not send ticket — please try again.';
-      errEl.classList.add('visible');
-      btn.disabled = false;
-      btn.textContent = 'Send ticket';
-    }
-  })
-  .catch(function() {
-    errEl.textContent = 'Network error. Please try again.';
-    errEl.classList.add('visible');
-    btn.disabled = false;
-    btn.textContent = 'Send ticket';
-  });
-}
-</script>
-<script src="/_gateway_static/theme.js?v=2" defer></script>
+  <script src="/_gateway_static/theme.js?v=2" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>
 </body>
