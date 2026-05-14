@@ -46,48 +46,50 @@
 
     <!-- ── Main content ─────────────────────────────────────────── -->
     <div class="main-content">
-      <div class="breadcrumb">
-        <span class="breadcrumb-item">Home</span>
-        <span class="breadcrumb-separator">/</span>
-        <span class="breadcrumb-item current">Dashboards</span>
-      </div>
+      <div class="page-frame">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+          <span class="breadcrumb-item">Home</span>
+          <span class="breadcrumb-separator">/</span>
+          <span class="breadcrumb-item current">Dashboards</span>
+        </nav>
 
-      <div class="page-header" style="position:relative">
-        {{ raw_credits_badge }}
-        <h1 class="page-title">Pick where you want to go.</h1>
-        <p class="page-subtitle">
-          Active dashboards open in a new tab. Locked ones can be unlocked from billing.
-          <a href="/settings">Set a default</a> to skip this page next time.
-        </p>
-      </div>
+        <header class="page-header dash-hero">
+          {{ raw_credits_badge }}
+          <h1 class="page-title dash-hero__title">Pick where you want to go</h1>
+          <p class="page-subtitle dash-hero__lede">
+            Active dashboards open in a new tab. Locked ones can be unlocked from billing.
+            <a href="/settings">Set a default</a> to skip this page next time.
+          </p>
+        </header>
 
-      <div class="content-area">
-        <!-- "What's new" widget — populated by changelog_widget.js
-             from /api/changelog. Hidden by default until the fetch
-             completes so the dash-grid never paints behind a flash
-             of empty space. -->
-        <div class="nv-changelog-widget" data-changelog data-collapsed="false" hidden>
-          <header>
-            <h3>
-              What's new
-              <span class="nv-changelog-widget__badge" data-changelog-badge hidden>0</span>
-            </h3>
-            <button
-              type="button"
-              class="nv-changelog-widget__collapse"
-              aria-expanded="true"
-              aria-label="Collapse What's new"
-              data-changelog-collapse
-            >&minus;</button>
-          </header>
-          <ul class="nv-changelog-widget__list" data-changelog-list></ul>
-          <footer>
-            <a href="/changelog">View all updates &rarr;</a>
-          </footer>
-        </div>
+        <div class="content-area content-area--bare">
+          <!-- "What's new" widget — populated by changelog_widget.js
+               from /api/changelog. Hidden by default until the fetch
+               completes so the dash-grid never paints behind a flash
+               of empty space. -->
+          <div class="nv-changelog-widget" data-changelog data-collapsed="false" hidden>
+            <header>
+              <h3>
+                What's new
+                <span class="nv-changelog-widget__badge" data-changelog-badge hidden>0</span>
+              </h3>
+              <button
+                type="button"
+                class="nv-changelog-widget__collapse"
+                aria-expanded="true"
+                aria-label="Collapse What's new"
+                data-changelog-collapse
+              >&minus;</button>
+            </header>
+            <ul class="nv-changelog-widget__list" data-changelog-list></ul>
+            <footer>
+              <a href="/changelog">View all updates &rarr;</a>
+            </footer>
+          </div>
 
-        <div class="dash-grid stagger">
-          {{ dashboard_cards }}
+          <div class="dash-grid stagger">
+            {{ dashboard_cards }}
+          </div>
         </div>
       </div>
     </div>
@@ -95,11 +97,11 @@
     <!-- ── Status bar ───────────────────────────────────────────── -->
     <footer class="status-bar">
       <span class="status-item">narve.ai</span>
-      <span class="status-item"><a href="/terms" style="color:inherit;text-decoration:none">Terms</a></span>
-      <span class="status-item"><a href="/privacy" style="color:inherit;text-decoration:none">Privacy</a></span>
-      <span class="status-item"><a href="/dpa" style="color:inherit;text-decoration:none">DPA</a></span>
-      <span class="status-item"><a href="/support" style="color:inherit;text-decoration:none">Support</a></span>
-      <span class="status-item" style="margin-left:auto">v3</span>
+      <span class="status-item"><a class="status-item__link" href="/terms">Terms</a></span>
+      <span class="status-item"><a class="status-item__link" href="/privacy">Privacy</a></span>
+      <span class="status-item"><a class="status-item__link" href="/dpa">DPA</a></span>
+      <span class="status-item"><a class="status-item__link" href="/support">Support</a></span>
+      <span class="status-item status-item--end">v3</span>
     </footer>
 
   </div>
