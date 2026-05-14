@@ -1,0 +1,275 @@
+fetched_at: 1778769147
+source: worldbank
+source_url: https://api.worldbank.org/v2/
+cadence: monthly
+indicators:
+- gdp_per_capita_usd
+- population_m
+- internet_pct
+- energy_use_per_capita_kgoe
+- secondary_enrollment_pct
+- urban_pct
+- adult_mortality_male
+- unemployment_pct
+- inflation_cpi_pct
+by_iso:
+  USA:
+    gdp_per_capita_usd: 84534.0
+    population_m: 340.1
+    internet_pct: 94.7
+    energy_use_per_capita_kgoe: 6359.0
+    secondary_enrollment_pct: 97.5
+    urban_pct: 80.1
+    adult_mortality_male: 147.0
+    unemployment_pct: 4.2
+    inflation_cpi_pct: 2.9
+  GBR:
+    gdp_per_capita_usd: 53246.0
+    population_m: 69.2
+    internet_pct: 95.5
+    energy_use_per_capita_kgoe: 2071.0
+    secondary_enrollment_pct: 112.1
+    urban_pct: 83.2
+    adult_mortality_male: 91.0
+    unemployment_pct: 4.7
+    inflation_cpi_pct: 3.3
+  DEU:
+    gdp_per_capita_usd: 56104.0
+    population_m: 83.5
+    internet_pct: 93.5
+    energy_use_per_capita_kgoe: 2825.0
+    secondary_enrollment_pct: 100.2
+    urban_pct: 82.0
+    adult_mortality_male: 85.0
+    unemployment_pct: 3.7
+    inflation_cpi_pct: 2.3
+  FRA:
+    gdp_per_capita_usd: 46103.0
+    population_m: 68.6
+    internet_pct: 88.7
+    energy_use_per_capita_kgoe: 3185.0
+    secondary_enrollment_pct: 103.8
+    urban_pct: 78.8
+    adult_mortality_male: 88.0
+    unemployment_pct: 7.5
+    inflation_cpi_pct: 2.0
+  IND:
+    gdp_per_capita_usd: 2695.0
+    population_m: 1450.9
+    internet_pct: 70.0
+    energy_use_per_capita_kgoe: 763.0
+    secondary_enrollment_pct: 79.6
+    urban_pct: 35.4
+    adult_mortality_male: 176.0
+    unemployment_pct: 4.2
+    inflation_cpi_pct: 5.0
+  BRA:
+    gdp_per_capita_usd: 10311.0
+    population_m: 212.0
+    internet_pct: 84.5
+    energy_use_per_capita_kgoe: 1512.0
+    secondary_enrollment_pct: 104.1
+    urban_pct: 87.9
+    adult_mortality_male: 170.0
+    unemployment_pct: 6.0
+    inflation_cpi_pct: 4.4
+  MEX:
+    gdp_per_capita_usd: 14186.0
+    population_m: 130.9
+    internet_pct: 83.1
+    energy_use_per_capita_kgoe: 1559.0
+    secondary_enrollment_pct: 103.1
+    urban_pct: 79.8
+    adult_mortality_male: 193.0
+    unemployment_pct: 2.7
+    inflation_cpi_pct: 4.7
+  ARG:
+    gdp_per_capita_usd: 13970.0
+    population_m: 45.7
+    internet_pct: 89.7
+    energy_use_per_capita_kgoe: 1737.0
+    secondary_enrollment_pct: 105.6
+    urban_pct: 92.3
+    adult_mortality_male: 126.0
+    unemployment_pct: 7.1
+    inflation_cpi_pct: 219.9
+  TUR:
+    gdp_per_capita_usd: 15893.0
+    population_m: 85.5
+    internet_pct: 89.8
+    energy_use_per_capita_kgoe: 1925.0
+    secondary_enrollment_pct: 118.4
+    urban_pct: 89.3
+    adult_mortality_male: 111.0
+    unemployment_pct: 8.5
+    inflation_cpi_pct: 58.5
+  ISR:
+    gdp_per_capita_usd: 54177.0
+    population_m: 10.0
+    internet_pct: 88.2
+    energy_use_per_capita_kgoe: 2484.0
+    secondary_enrollment_pct: 98.5
+    urban_pct: 91.5
+    adult_mortality_male: 71.0
+    unemployment_pct: 3.5
+    inflation_cpi_pct: 3.1
+  JPN:
+    gdp_per_capita_usd: 32487.0
+    population_m: 124.0
+    internet_pct: 85.5
+    energy_use_per_capita_kgoe: 3006.0
+    secondary_enrollment_pct: 101.5
+    urban_pct: 92.2
+    adult_mortality_male: 65.0
+    unemployment_pct: 2.5
+    inflation_cpi_pct: 2.7
+  KOR:
+    gdp_per_capita_usd: 36239.0
+    population_m: 51.8
+    internet_pct: 97.9
+    energy_use_per_capita_kgoe: 5439.0
+    secondary_enrollment_pct: 96.3
+    urban_pct: 81.2
+    adult_mortality_male: 53.0
+    unemployment_pct: 2.7
+    inflation_cpi_pct: 2.3
+  IDN:
+    gdp_per_capita_usd: 4925.0
+    population_m: 283.5
+    internet_pct: 72.8
+    energy_use_per_capita_kgoe: 982.0
+    secondary_enrollment_pct: 97.2
+    urban_pct: 58.8
+    adult_mortality_male: 188.0
+    unemployment_pct: 3.2
+    inflation_cpi_pct: 2.2
+  ITA:
+    gdp_per_capita_usd: 40385.0
+    population_m: 59.0
+    internet_pct: 89.2
+    energy_use_per_capita_kgoe: 2231.0
+    secondary_enrollment_pct: 100.7
+    urban_pct: 69.6
+    adult_mortality_male: 65.0
+    unemployment_pct: 6.4
+    inflation_cpi_pct: 1.0
+  POL:
+    gdp_per_capita_usd: 25104.0
+    population_m: 36.6
+    internet_pct: 88.6
+    energy_use_per_capita_kgoe: 2647.0
+    secondary_enrollment_pct: 107.9
+    urban_pct: 60.0
+    adult_mortality_male: 144.0
+    unemployment_pct: 3.0
+    inflation_cpi_pct: 3.8
+  CAN:
+    gdp_per_capita_usd: 54340.0
+    population_m: 41.3
+    internet_pct: 94.4
+    energy_use_per_capita_kgoe: 7156.0
+    secondary_enrollment_pct: 104.3
+    urban_pct: 82.7
+    adult_mortality_male: 95.0
+    unemployment_pct: 6.9
+    inflation_cpi_pct: 2.4
+  AUS:
+    gdp_per_capita_usd: 64604.0
+    population_m: 27.2
+    internet_pct: 96.1
+    energy_use_per_capita_kgoe: 4750.0
+    secondary_enrollment_pct: 131.9
+    urban_pct: 87.6
+    adult_mortality_male: 73.0
+    unemployment_pct: 4.1
+    inflation_cpi_pct: 3.2
+  NGA:
+    gdp_per_capita_usd: 1084.0
+    population_m: 232.7
+    internet_pct: 41.2
+    energy_use_per_capita_kgoe: 320.0
+    secondary_enrollment_pct: 46.9
+    urban_pct: 63.0
+    adult_mortality_male: 355.0
+    unemployment_pct: 3.1
+    inflation_cpi_pct: 33.2
+  ZAF:
+    gdp_per_capita_usd: 6267.0
+    population_m: 64.0
+    internet_pct: 78.4
+    energy_use_per_capita_kgoe: 1939.0
+    secondary_enrollment_pct: 104.1
+    urban_pct: 63.7
+    adult_mortality_male: 354.0
+    unemployment_pct: 32.4
+    inflation_cpi_pct: 4.4
+  PHL:
+    gdp_per_capita_usd: 3985.0
+    population_m: 115.8
+    internet_pct: 67.3
+    energy_use_per_capita_kgoe: 580.0
+    secondary_enrollment_pct: 85.3
+    urban_pct: 55.5
+    adult_mortality_male: 230.0
+    unemployment_pct: 2.2
+    inflation_cpi_pct: 3.2
+  PAK:
+    gdp_per_capita_usd: 1479.0
+    population_m: 251.3
+    internet_pct: 57.3
+    energy_use_per_capita_kgoe: 415.0
+    secondary_enrollment_pct: 48.3
+    urban_pct: 39.2
+    adult_mortality_male: 200.0
+    unemployment_pct: 5.4
+    inflation_cpi_pct: 12.6
+  UKR:
+    gdp_per_capita_usd: 5389.0
+    population_m: 37.9
+    internet_pct: 82.5
+    energy_use_per_capita_kgoe: 1508.0
+    secondary_enrollment_pct: 86.2
+    urban_pct: 69.5
+    adult_mortality_male: 236.0
+    unemployment_pct: 9.8
+    inflation_cpi_pct: 6.5
+  IRN:
+    gdp_per_capita_usd: 5190.0
+    population_m: 91.6
+    internet_pct: 85.3
+    energy_use_per_capita_kgoe: 3399.0
+    secondary_enrollment_pct: 85.1
+    urban_pct: 77.0
+    adult_mortality_male: 107.0
+    unemployment_pct: 8.3
+    inflation_cpi_pct: 32.5
+  EGY:
+    gdp_per_capita_usd: 3338.0
+    population_m: 116.5
+    internet_pct: 74.6
+    energy_use_per_capita_kgoe: 928.0
+    secondary_enrollment_pct: 84.8
+    urban_pct: 42.8
+    adult_mortality_male: 169.0
+    unemployment_pct: 6.8
+    inflation_cpi_pct: 28.3
+  VEN:
+    gdp_per_capita_usd: 4218.0
+    population_m: 28.4
+    internet_pct: 76.7
+    energy_use_per_capita_kgoe: 1331.0
+    secondary_enrollment_pct: 97.8
+    urban_pct: 89.3
+    adult_mortality_male: 216.0
+    unemployment_pct: 5.3
+    inflation_cpi_pct: 254.9
+  THA:
+    gdp_per_capita_usd: 7347.0
+    population_m: 71.7
+    internet_pct: 90.9
+    energy_use_per_capita_kgoe: 1851.0
+    secondary_enrollment_pct: 92.1
+    urban_pct: 61.9
+    adult_mortality_male: 211.0
+    unemployment_pct: 0.8
+    inflation_cpi_pct: 1.4
