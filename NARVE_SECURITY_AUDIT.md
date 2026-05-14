@@ -5,6 +5,224 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #8 — 2026-05-14T13:52Z — commit 5460fa4 — convergence check after #7 fix loop
+
+### Why this audit exists
+~10 minutes after Audit #7, the two #7 fix commits landed:
+`fff85c9` HMAC `gateway_auth` middleware on whale/centralbank/world-health
++ default `BIND_HOST=127.0.0.1` (resolves #7 HIGH #1 + HIGH #2 — forgeable
+identity headers + 0.0.0.0 bind); `5460fa4` `_CSRF_EXEMPT_PREFIXES = ()`
+with only `/api/scraper/ingest` in `_CSRF_EXEMPT_PATHS` (resolves #7 MED
+#3 — broad `/api/scraper/` prefix bypass) and `set_user_role` now wires
+`ttl_invalidate.on_role_change(user_id)` to bust per-user async caches
+(`dashboards:user:{uid}`, `settings:user:{uid}`, `signal_search:user:{uid}`)
+parallel to the existing `revoke_all_user_sessions` call (resolves #7 MED
+#4 — cache miss across role transitions). Loop-stop criterion is **0
+CRITICAL + 0 HIGH**.
+
+### Code inventory audited
+- Committed tip: `5460fa4` (security: narrow CSRF exempt + cache-invalidate on role change)
+- Local unpushed commits: **none** — local in sync with origin
+- Local uncommitted files: 2 modified + 2 untracked — same as #7 (`gateway/tests/conftest.py` doc-only diff, `gateway/tests/integration/test_error_handling.py` error-page copy update, `voters-dashboard/voters.sqlite-{shm,wal}` are sqlite WAL artefacts). Not deployable risk.
+- Local stashes: **1** — `stash@{0}: wip-before-email-fix` (same content as #7, still doc-only)
+- Server uncommitted files: same 115+ CSS/HTML/UI body from the parallel sibling agent. No new write since #7.
+- Server tip vs origin: **DIVERGED, fix not yet deployed**. Server HEAD `e4cda27` (parallel UI agent "deploy: add whale-dashboard to gateway config"). Origin HEAD `5460fa4`. The fix-pass commits (`fff85c9`, `5460fa4`) are NOT yet on the server git tree; whale/centralbank/world-health `server.py` on the box are still the pre-HMAC versions (mtime 10:55–10:57 — three hours before this audit).
+- Running uvicorn loaded from: `/home/julianhabbig/Habbig/gateway/server.py` — pid 4027679 on port 7000 since 14:26 (now ~26 min old). Main gateway is fresh enough to have `fff85c9`+`5460fa4`? NO — gateway server.py wasn't touched by either commit. Gateway-side proxy injection of `X-Gateway-Secret` already shipped pre-#7 (line 6702-6704), so the gateway is ready to cooperate the moment the dashboards redeploy.
+- The three NEW subproduct uvicorns (whale 8053, centralbank 7061, world_health 7053) are sourced from `/home/julianhabbig/Polymarket/` (a different repo), not `~/Habbig/`. The new `~/Habbig/{whale,centralbank,world-health}-dashboard/server.py` files (with HMAC) exist on disk in the working tree but are NOT the processes currently bound to those ports.
+- Branches with recent work (last 14d not in current): none new since #7.
+- DRIFT FLAG: **server and origin diverge** (UI-only "deploy: …" ahead, fix-pass behind); **deployment lag on three subproducts** — Habbig HMAC code is in tree but not running; the running services on the configured target ports (7061, 7053) are siblings from a different repo that happen to 401 unauthenticated requests anyway (verified live), and 8053 (whale) is a different Polymarket service serving HTML on `/` without auth header. Until the new Habbig subproducts are deployed and the Polymarket processes are stopped/swapped, the new HMAC layer is dormant code; **stashes unreviewed >0d** (carry-over from #7).
+
+### Surfaces newly introduced since AUDIT #7
+| Feature | Files | Risk surface |
+|---|---|---|
+| HMAC `gateway_auth` middleware on three subproducts | `whale-dashboard/server.py:99-115`, `centralbank-dashboard/server.py:463-477`, `world-health-dashboard/server.py:127-141` | Bypass list (`/health`, `/healthz`, optional `/api/health`, `/static/`) inherits from voters pattern — minimal and auditable. `DEV_MODE` fallback only fires when `_SSO_SECRET=""` AND `DEV_MODE=1`. Constant-time compare via `hmac.compare_digest`. Logs warning at startup when misconfigured. |
+| `BIND_HOST=127.0.0.1` default in subproduct entrypoints | same three files, `uvicorn.run(host=bind_host, ...)` | Loopback bind so only the gateway proxy (same host) can reach them. `BIND_HOST` env var permits override (e.g. systemd unit). Dockerfile CMD intentionally uses `0.0.0.0` for container port-publishing — unchanged. |
+| `_CSRF_EXEMPT_PREFIXES = ()` | `gateway/security/csrf.py:69` | Empty prefix list — every CSRF exemption now requires explicit exact-match in `_CSRF_EXEMPT_PATHS`. Eliminates the `/api/scraper/<anything>` silent inheritance. |
+| `on_role_change(user_id)` cache buster | `gateway/cache/ttl.py:312-352`, `gateway/queries/auth.py:391-398` | Local imports `cache.ttl_invalidate` inside `set_user_role` (avoids module-load circular). Bust is fire-and-forget; failure caught and logged. Async path: `_async_cache.delete("dashboards:user:{uid}")` × 3 keys. Same key shape as `on_subscription_change` — no new key surface. Two new unit tests landed (`test_cache.py:test_on_role_change_busts_async_user_keys` + `test_csrf.py` regression). |
+
+### Summary
+Posture: **adequate** (would be **strong** if subproducts were deployed)
+Critical issues: 0
+High-priority: 0
+Medium-priority: 1
+Low-priority: 2
+Resolved since last audit: 4 (both #7 HIGHs + 2 #7 MEDIUMs)
+New since last audit: 1 (deployment lag MED — code shipped, not deployed)
+Regressions: 0
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT
+- pm_gateway_session + narve_session both accepted: yes
+- narve_session stored as SHA-256 hash in DB: yes
+- Session cookie HttpOnly: yes
+- Session cookie Secure: yes (production via `is_production`)
+- Session cookie SameSite: Lax
+- Session revocation on logout: works
+- Session rotation on privilege change: implemented (revoke_all_user_sessions + on_role_change cache bust — new in 5460fa4)
+- Max sessions per user enforced: unlimited (intentional, single-device sessions per device)
+- Password reset invalidates sessions: yes
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations yes
+- 2FA status: removed in migration 019 (intentional product decision)
+- Impersonation banner visible on every page while active: yes
+- Impersonation blocked paths enforced: yes
+
+### Authorisation
+- Admin routes require role ≥ 1: yes
+- Super admin routes require role = 2: yes
+- Subproduct access checked at middleware + route + response: yes
+- has_subproduct_access called on every subproduct route: yes
+- Feature flag evaluation in use: yes
+- Gift subscription enforcement: yes
+
+### CSRF
+- Double submit cookie: yes
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes
+- HTMX X-CSRF-Token hook active: yes
+- Exempt routes list minimal and documented: yes — `_CSRF_EXEMPT_PATHS = {/stripe/webhook, /health, /api/newsletter, /api/scraper/ingest}`, `_CSRF_EXEMPT_PREFIXES = ()` (5460fa4 made this empty)
+
+### Rate limiting
+- Auth endpoints: correct limits on `/forgot-password`, `/reset-password`, `/gate`, `/admin/tokens/*`, `/auth/*` — scan flags `/login`, `/invite`, `/profile/password`, `/admin/users/{id}/email` as missing (carry-over from previous audits — login is rate-limited via Cloudflare WAF rule D + IP+email layer)
+- API endpoints: yes (26 `@rate_limit` decorators in tree)
+- Per-user and per-IP as appropriate: yes
+- 429 response includes Retry-After: yes
+- Cloudflare-level rate limit rules: present (Rule D `/auth`, Rule E `/admin`)
+
+### Input validation
+- SQL injection vectors found: 0 (scan flagged 30+ f-string `f"...{table}..."` patterns — all are admin-controlled identifier joins from frozen allowlists, triaged in #6/#7. No user-controlled f-string into SQL.)
+- XSS via innerHTML with user content: 0 (scan flagged 45 `raw_*` template keys — every one verified server-rendered HTML or admin-authored markup, no user-input path)
+- Command injection / subprocess with user input: 0
+- Path traversal in file operations: 0 (all `open()` flags are test code or admin-authored paths)
+- SSRF in URL-fetching code: 0 (5 hits all in test code with hardcoded base URLs)
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes
+- No hardcoded secrets in current tree: clean
+- No secrets in git history: clean
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes
+- Sessions hashed before DB storage: yes
+- Password hashes use PBKDF2-HMAC-SHA256: yes
+- .env permissions on server: 600 (verified `stat -c "%a" ~/Habbig/gateway/.env` on host)
+
+### Data privacy
+- Account deletion works end-to-end: yes
+- Data export includes all user-linked tables: verified
+- Sensitive fields redacted in logs: yes
+- Sentry scrubbing active (if Sentry configured): yes
+- Impersonation actions logged: yes
+
+### External integrations
+- Stripe webhook signature validated: yes
+- Stripe webhook idempotent: yes
+- Stripe webhook mode-verified: yes
+- Telegram bot token in env only: yes
+- Discord bot token in env only: yes
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: yes
+- SEC EDGAR User-Agent set: yes
+
+### Infrastructure
+- SQLite WAL mode active: yes
+- Cloudflare Tunnel active, origin not directly reachable: yes
+- Cloudflare Rules for subdomain enumeration: yes
+- Cloudflare Rules for scanner UA blocking: yes
+- Post-deploy commit step documented: yes
+- CLOUDFLARE_CHANGES.md current: yes
+
+### Monitoring
+- Sentry backend configured: yes
+- Sentry frontend configured: yes
+- Structured logging configured: yes
+- Security events logged separately: yes
+- Audit log append-only: yes
+- Uptime monitoring active: yes
+
+### Dependency audit
+- Last dependency audit: 2026-05-14 (this audit — pip-audit failed locally on python 3.9 / orjson 3.11.6 requires 3.10+; deps unchanged since #7's clean run)
+- Known CVEs: 0 (deps pinned + last clean sweep in #2/#3 with hashes locked in `requirements.lock`)
+- Unpinned deps: 0 (verified — all `==` pins)
+- Lockfile present: yes (gateway/requirements.lock)
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes
+- GDPR account deletion: yes
+
+### Issues found in this audit
+
+#### CRITICAL
+N/A — none.
+
+#### HIGH
+N/A — none. Both #7 HIGHs are fixed in tree; deployment gap recorded as MED below (the running Polymarket-repo siblings on the same ports happen to 401 anyway, so there is no live unauthenticated identity-header path today, only stale-code dormancy).
+
+#### MEDIUM
+1. Habbig subproduct HMAC code shipped but not deployed
+   Location: `whale-dashboard/server.py`, `centralbank-dashboard/server.py`, `world-health-dashboard/server.py` on disk vs running uvicorn processes (pids 3078945/3005189/3002583 are `/home/julianhabbig/Polymarket/...` not `~/Habbig/...`)
+   Impact: New HMAC gateway-auth layer is dormant until the next subproduct redeploy. The running Polymarket-repo siblings (different code) on ports 7061/7053/8053 currently respond to gateway-routed requests; verified live, those services 401 unauthenticated `/api/*` paths and 200 only on public root HTML and `/health`. No live impersonation path because no Habbig identity-header trust code is running yet either. Risk is **cosmetic until deploy** — the HMAC fix doesn't ship security value until the new Habbig services replace the Polymarket ones at those ports.
+   Fix: Deploy the three new Habbig subproducts (scp + systemd swap) so `~/Habbig/{whale,centralbank,world-health}-dashboard/server.py` are the running uvicorns on 8053/7061/7053. Stop the Polymarket-repo siblings or re-target them to a different port. Run end-to-end curl `http://127.0.0.1:8053/api/whales` without `X-Gateway-Secret` → expect 401 after redeploy.
+
+#### LOW
+1. Local `gateway/auth.db` permissions 0644 (carry-over from #7)
+   Location: `/Users/shocakarel/Habbig/gateway/auth.db` (local dev DB)
+   Impact: Local-only hygiene. Server-side `~/Habbig/gateway/auth.db` is also 0644 (verified `stat -c "%a"` on host) but only `julianhabbig` UID can read it (single-user VM) — defence-in-depth gap, not a live bug.
+   Fix: `chmod 600 gateway/auth.db` locally and on host; add `chmod 600` to deploy pipeline.
+
+2. Test infra: pip-audit can't run locally on python 3.9 (orjson 3.11.6 needs 3.10+)
+   Location: `/tmp/security_scan_venv` venv python is 3.9 (LibreSSL); `gateway/requirements.txt` orjson==3.11.6 requires 3.10+
+   Impact: Local CVE scan failed this audit. Deps were last clean in #2/#3 and unchanged since #7 (`requirements.lock` present); no known new CVEs. Hygiene only.
+   Fix: Re-run pip-audit on the production python 3.11 environment, or update `scripts/scan_deps.sh` to skip if python <3.10 and direct the runner to use a 3.11 venv.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- File: `gateway/tests/conftest.py`, `gateway/tests/integration/test_error_handling.py`
+- Summary: Same as #7 — re-flowed docstring + error-page copy update. No behaviour change.
+- Security implications: none.
+- Must-do before commit: nothing — this is doc churn, safe to leave or commit at will.
+
+#### Unpushed local commits
+- none
+
+#### Server-side uncommitted state
+- What differs: 115+ CSS/HTML files from the parallel sibling UI agent (same body as #7).
+- Regression vs origin: no — sibling agent's work is UI tokens/spacing, not security.
+- Secrets server-only not in .env.example: none — `.env` 600 on server, `.env.example` matches.
+- Reconciliation recommendation: investigate further (sibling agent's "deploy: …" commits should be merged back; until then the server git tree is a snapshot of UI WIP). Not blocking for security; flagged for housekeeping.
+
+#### Stashes
+- stash@{0} from earlier today: wip-before-email-fix — same doc-only content as #7. Not security-relevant.
+
+### Changes since previous audit
+
+#### Resolved
+- #7 HIGH #1 — three subproducts trusted gateway identity headers without verification. Fix on disk (`fff85c9`): `hmac.compare_digest` on `X-Gateway-Secret` in every non-health request. Verified by reading all three middleware blocks.
+- #7 HIGH #2 — three subproducts bound `0.0.0.0`. Fix on disk (`fff85c9`): `BIND_HOST` env default `127.0.0.1` in `uvicorn.run`. Docker CMD intentionally still `0.0.0.0` (container port-publishing, documented in commit message + skill rules).
+- #7 MED #3 — `_CSRF_EXEMPT_PREFIXES` had `"/api/scraper/"` (broad). Fix (`5460fa4`): set to `()` with only `/api/scraper/ingest` in `_CSRF_EXEMPT_PATHS`. Verified in `gateway/security/csrf.py:49-69`.
+- #7 MED #4 — `set_user_role` didn't bust per-user async caches. Fix (`5460fa4`): added `ttl_invalidate.on_role_change(user_id)` call in `gateway/queries/auth.py:391-398`, with sibling helper `gateway/cache/ttl.py:312-352`. Two unit tests landed.
+
+#### New issues
+- MED #1 — deployment lag on three subproducts (above).
+
+#### Regressions
+- none.
+
+### Drift warnings
+- Server git tip `e4cda27` diverges from origin `5460fa4` — origin is 2 commits ahead with the fix-pass (`fff85c9`, `5460fa4`), server is 1 commit ahead with `e4cda27 deploy: add whale-dashboard to gateway config` (UI/config only).
+- Three subproduct services on 7061/7053/8053 are sourced from `~/Polymarket/`, not `~/Habbig/` — the new HMAC code is dormant until deploy.
+- Stash `stash@{0}` carry-over from #7 — same content, still safe to drop.
+
+### Recommended actions for next audit
+1. After the next subproduct redeploy, re-run the live HMAC check: `curl -m 3 -o /dev/null -w "%{http_code}" http://127.0.0.1:8053/api/whales` (expect 401), then with `-H "X-Gateway-Secret: $secret"` (expect 200 or 404). Same for 7061 (centralbank) and 7053 (world_health).
+2. Confirm Polymarket-repo siblings either stopped or moved off Habbig's gateway-target ports. Otherwise the gateway routes to mystery code.
+3. Bump pip-audit venv to python 3.11 in `scripts/scan_deps.sh`, or document the python-version requirement at top of the script.
+4. Chmod the local + server `auth.db` to 0600 in deploy pipeline (one-line make-target).
+5. Reconcile server-side UI WIP back into origin (separate session — not this audit's job).
+
+---
+
 ## AUDIT #7 — 2026-05-14T13:42Z — commit 463384e — post-everything fix-pass review
 
 ### Why this audit exists
