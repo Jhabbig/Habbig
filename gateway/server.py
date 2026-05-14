@@ -3458,9 +3458,27 @@ async def my_dashboards(request: Request):
         )
         return HTMLResponse(body)
 
-    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    # Perf audit #3: cache the DB-heavy subscription read per user (60s).
+    # The subs dict drives the dashboard card grid + plan-info; the page-frame
+    # (sidebar, badges, links) is rebuilt per request below so personalisation
+    # stays intact. Defensive import so a broken cache layer doesn't break the
+    # page — the un-cached path is identical to the original handler.
+    user_id = user["user_id"]
     is_admin_user = bool(user.get("is_admin"))
     now = int(time.time())
+    try:
+        from cache import cache as _async_cache
+
+        async def _build_dashboards_data() -> dict:
+            rows = [dict(r) for r in db.list_subscriptions(user_id)]
+            return {"subs_list": rows}
+
+        _cached = await _async_cache.get_or_set(
+            f"dashboards:user:{user_id}", _build_dashboards_data, ttl_seconds=60,
+        )
+        subs = {s["dashboard_key"]: s for s in _cached["subs_list"]}
+    except Exception:
+        subs = {s["dashboard_key"]: dict(s) for s in db.list_subscriptions(user_id)}
     pinfo = _user_plan_info(user, subs, now)
     local_mode = is_local_host(request)
     # Dashboard cards link to <sub>.<apex> on whichever apex the user is
@@ -6044,10 +6062,42 @@ async def settings_page(request: Request, saved: Optional[str] = None):
     if not user:
         return RedirectResponse("/token", status_code=302)
 
-    current_pref = db.get_default_dashboard(user["user_id"]) or ""
-    # Subscriptions the user has access to (admins get everything).
-    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    # Perf audit #3: cache the bundle of DB reads that drives /settings (60s).
+    # `subs` powers the default-dashboard <select>; the rest (market connections,
+    # bankroll, plan info, trading-addon, env prefs) is rebuilt downstream from
+    # cached primitives. HTML composition still runs per request so the sidebar,
+    # density, and saved-banner stay personalised.
+    user_id = user["user_id"]
     is_admin = bool(user.get("is_admin"))
+    try:
+        from cache import cache as _async_cache
+
+        async def _build_settings_data() -> dict:
+            return {
+                "current_pref": db.get_default_dashboard(user_id) or "",
+                "subs_list": [dict(r) for r in db.list_subscriptions(user_id)],
+                "market_conns": _get_market_connections(user_id),
+                "bankroll": db.get_user_bankroll(user_id),
+                "trading_status": db.get_trading_addon_status(user_id),
+                "env_prefs": db.get_user_env_preferences(user_id),
+            }
+
+        _cached = await _async_cache.get_or_set(
+            f"settings:user:{user_id}", _build_settings_data, ttl_seconds=60,
+        )
+        current_pref = _cached["current_pref"]
+        subs = {s["dashboard_key"]: s for s in _cached["subs_list"]}
+        _cached_market_conns = _cached["market_conns"]
+        _cached_bankroll = _cached["bankroll"]
+        _cached_trading_status = _cached["trading_status"]
+        _cached_env_prefs = _cached["env_prefs"]
+    except Exception:
+        current_pref = db.get_default_dashboard(user_id) or ""
+        subs = {s["dashboard_key"]: dict(s) for s in db.list_subscriptions(user_id)}
+        _cached_market_conns = _get_market_connections(user_id)
+        _cached_bankroll = db.get_user_bankroll(user_id)
+        _cached_trading_status = db.get_trading_addon_status(user_id)
+        _cached_env_prefs = db.get_user_env_preferences(user_id)
 
     option_html = ['<option value="">Always show the dashboards hub</option>']
     for key, cfg in DASHBOARDS.items():
@@ -6071,7 +6121,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
 
     # Connected market accounts section
-    market_conns = _get_market_connections(user["user_id"])
+    market_conns = _cached_market_conns
     mc_html = (
         '<div class="settings-card" style="margin-top:24px">'
         '<div class="settings-section">'
@@ -6149,7 +6199,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
     mc_html += '</div></div>'
 
     # Bankroll & Kelly fraction preferences
-    br_info = db.get_user_bankroll(user["user_id"])
+    br_info = _cached_bankroll
     bankroll_val = "" if br_info["bankroll"] is None else f'{br_info["bankroll"]:.2f}'
     kelly_opts: list[str] = []
     for _val, _label in (
@@ -6204,11 +6254,11 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         '</script>'
     )
 
-    # Billing / subscription section
-    subs_dict = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    # Billing / subscription section — reuses the cached `subs` dict from
+    # earlier in the handler; second `list_subscriptions` round-trip removed.
     now_ts = int(time.time())
-    pinfo = _user_plan_info(user, subs_dict, now_ts)
-    trading_status = db.get_trading_addon_status(user["user_id"])
+    pinfo = _user_plan_info(user, subs, now_ts)
+    trading_status = _cached_trading_status
 
     billing_html = (
         '<div class="settings-card" style="margin-top:24px">'
@@ -6274,7 +6324,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
     )
 
     # Environmental impact preferences (Feature 008)
-    env_prefs = db.get_user_env_preferences(user["user_id"])
+    env_prefs = _cached_env_prefs
     env_show_checked = "checked" if env_prefs.get("show") else ""
     _env_unit = env_prefs.get("unit", "co2_mt")
     env_unit_flags = {
@@ -6322,6 +6372,13 @@ async def settings_disconnect_market(request: Request, source: str):
         db.disconnect_market_credential(user["user_id"], source)
         db.delete_user_positions(user["user_id"], platform=source)
         log.info("User %s disconnected %s from settings", user.get("username"), source)
+        # Market connection state lives in the settings cache — bust it so the
+        # post-redirect render reflects the disconnect immediately.
+        try:
+            from cache import cache as _async_cache
+            await _async_cache.delete(f"settings:user:{user['user_id']}")
+        except Exception:
+            pass
     return RedirectResponse("/settings", status_code=302)
 
 
@@ -6403,6 +6460,14 @@ async def settings_save(
         db.set_user_env_preferences(user["user_id"], show=show, unit=unit)
     except Exception as exc:
         log.warning("settings_save: env prefs failed for %d: %s", user["user_id"], exc)
+
+    # Bust the user-scoped settings cache so the redirect lands on fresh data.
+    # Cache layer hiccup mustn't block the save — swallow and rely on TTL.
+    try:
+        from cache import cache as _async_cache
+        await _async_cache.delete(f"settings:user:{user['user_id']}")
+    except Exception as exc:
+        log.debug("settings_save: cache invalidation failed: %s", exc)
 
     return RedirectResponse("/settings?saved=1", status_code=302)
 
@@ -6736,10 +6801,31 @@ async def signal_search_page(request: Request):
     if not user:
         return RedirectResponse("/token", status_code=302)
     if not user.get("is_admin"):
-        subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
-        pinfo = _user_plan_info(user, subs, int(time.time()))
-        if pinfo["plan"] != "pro":
-            return RedirectResponse("/billing", status_code=302)
+        # Perf audit #3: cache the Pro-tier gate (30s — more dynamic, falls
+        # back on miss). Builder returns the access verdict as a small dict so
+        # it round-trips JSON safely; expensive part is db.list_subscriptions.
+        _ss_user_id = user["user_id"]
+        try:
+            from cache import cache as _async_cache
+
+            async def _build_signal_access() -> dict:
+                _subs = {s["dashboard_key"]: dict(s)
+                         for s in db.list_subscriptions(_ss_user_id)}
+                _pinfo = _user_plan_info(user, _subs, int(time.time()))
+                return {"plan": _pinfo["plan"]}
+
+            _access = await _async_cache.get_or_set(
+                f"signal_search:user:{_ss_user_id}",
+                _build_signal_access,
+                ttl_seconds=30,
+            )
+            if _access.get("plan") != "pro":
+                return RedirectResponse("/billing", status_code=302)
+        except Exception:
+            subs = {s["dashboard_key"]: s for s in db.list_subscriptions(_ss_user_id)}
+            pinfo = _user_plan_info(user, subs, int(time.time()))
+            if pinfo["plan"] != "pro":
+                return RedirectResponse("/billing", status_code=302)
     try:
         from engagement import log_event
         log_event(user["user_id"], "signal_search")

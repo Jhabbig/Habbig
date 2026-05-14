@@ -374,6 +374,7 @@ class invalidate:
         removed += await cache.delete(f"source:{handle}")
         removed += await cache.delete(f"source:v1:{handle}")
         removed += await cache.delete(f"source_calibration:{handle}")
+        removed += await cache.delete(f"source_profile:{handle}")
         removed += await cache.delete_pattern(f"source_history:{handle}*")
         removed += await cache.delete_pattern(f"credibility:{handle}*")
         return removed
@@ -387,6 +388,7 @@ class invalidate:
         removed += await cache.delete_pattern("sources:*")
         removed += await cache.delete_pattern("source_calibration:*")
         removed += await cache.delete_pattern("source_history:*")
+        removed += await cache.delete_pattern("source_profile:*")
         removed += await cache.delete_pattern("credibility:*")
         removed += await cache.delete_pattern("predictions:*")
         removed += await cache.delete_pattern("market_probability:*")

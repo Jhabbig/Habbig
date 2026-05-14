@@ -598,8 +598,44 @@ async def api_account_delete_cancel(request: Request):
 @app.get("/sources/{handle}", response_class=HTMLResponse)
 async def public_source_profile(request: Request, handle: str):
     handle = handle.strip().lstrip("@")
-    cred = db.get_source_credibility(handle) if hasattr(db, "get_source_credibility") else None
-    if not cred or not cred["accuracy_unlocked"]:
+    # Perf audit #3: cache the three credibility queries that drive the public
+    # profile page (300s — fully public, slow-changing). Anonymous data, so
+    # one shared key per handle is safe; we still render HTML per request to
+    # keep the meta tags / canonical URL request-aware. `not_found` sentinels
+    # are cached too so unknown handles stop hitting the DB.
+    try:
+        from cache import cache as _async_cache
+
+        async def _build_source_data() -> dict:
+            _cred = db.get_source_credibility(handle) if hasattr(db, "get_source_credibility") else None
+            if not _cred or not _cred["accuracy_unlocked"]:
+                return {"not_found": True}
+            _cats = db.get_all_category_credibilities(handle) if hasattr(db, "get_all_category_credibilities") else []
+            _preds = db.list_recent_predictions(limit=10) if hasattr(db, "list_recent_predictions") else []
+            return {
+                "not_found": False,
+                "cred": dict(_cred),
+                "cats": [dict(c) for c in _cats],
+                "preds": [dict(p) for p in _preds],
+            }
+
+        _data = await _async_cache.get_or_set(
+            f"source_profile:{handle}", _build_source_data, ttl_seconds=300,
+        )
+    except Exception:
+        # Cache layer down — fall through to direct DB reads.
+        _cred = db.get_source_credibility(handle) if hasattr(db, "get_source_credibility") else None
+        if not _cred or not _cred["accuracy_unlocked"]:
+            _data = {"not_found": True}
+        else:
+            _data = {
+                "not_found": False,
+                "cred": dict(_cred),
+                "cats": [dict(c) for c in (db.get_all_category_credibilities(handle) if hasattr(db, "get_all_category_credibilities") else [])],
+                "preds": [dict(p) for p in (db.list_recent_predictions(limit=10) if hasattr(db, "list_recent_predictions") else [])],
+            }
+
+    if _data.get("not_found"):
         return HTMLResponse(
             "<!DOCTYPE html><html><head><title>Source not found — narve.ai</title></head>"
             "<body><h1>Source not rated yet</h1>"
@@ -608,8 +644,9 @@ async def public_source_profile(request: Request, handle: str):
             status_code=404,
         )
 
-    cats = db.get_all_category_credibilities(handle) if hasattr(db, "get_all_category_credibilities") else []
-    preds = db.list_recent_predictions(limit=10) if hasattr(db, "list_recent_predictions") else []
+    cred = _data["cred"]
+    cats = _data["cats"]
+    preds = _data["preds"]
     total = cred["total_predictions"] or 0
     correct = cred["correct_predictions"] or 0
     accuracy = int(100 * correct / total) if total else 0

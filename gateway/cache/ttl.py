@@ -268,10 +268,44 @@ class ttl_invalidate:
     def on_subscription_change(user_id: int) -> int:
         """User's tier changed — their feed gate AND best-bets tier-scope
         both need a reset. best_bets is global but tier-keyed, so flush all
-        of it rather than guess which tier they moved to/from."""
+        of it rather than guess which tier they moved to/from.
+
+        Also fire-and-forgets the async (Redis-backed) keys that cache the
+        per-user landing surfaces — /dashboards, /settings, /signal-search.
+        Their TTLs are short (30-60s) so a missed bust self-heals, but
+        wiring it here means subscribe/unsubscribe reflects immediately.
+        """
         removed = 0
         removed += ttl_cache.delete_prefix(f"feed:user_{user_id}:")
         removed += ttl_cache.delete_prefix("best_bets:")
+
+        # Async cache invalidation. Imported locally so an absent cache.service
+        # module never breaks the sync helper. Schedule via the running event
+        # loop if we're already inside one (FastAPI handlers, ARQ workers);
+        # fall back to a transient loop for sync test scripts.
+        try:
+            import asyncio  # local import — keep this module dep-free at top.
+            from cache.service import cache as _async_cache
+
+            async def _bust() -> None:
+                await _async_cache.delete(f"dashboards:user:{user_id}")
+                await _async_cache.delete(f"settings:user:{user_id}")
+                await _async_cache.delete(f"signal_search:user:{user_id}")
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(_bust())
+                else:
+                    loop.run_until_complete(_bust())
+            except RuntimeError:
+                # No event loop at all (rare — sync tests). Drive a transient
+                # one so the bust still lands.
+                asyncio.run(_bust())
+        except Exception:
+            # Cache module missing or broken — TTL-based self-heal covers it.
+            pass
+
         return removed
 
     @staticmethod
