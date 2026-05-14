@@ -466,13 +466,24 @@ def _normalize_usgs(d: dict) -> list[dict]:
     return items
 
 
+# EONET tags wildfire events as "Wildfires" (plural) — collapse to the
+# canonical singular form used by GDACS + FIRMS so /api/categories doesn't
+# split the same physical hazard across two buckets.
+_EONET_CATEGORY_CANON = {
+    "Wildfires": "Wildfire",
+    "Severe Storms": "Storm",
+    "Sea and Lake Ice": "Sea Ice",
+}
+
+
 def _normalize_eonet(d: dict) -> list[dict]:
     items = []
     for e in d.get("events") or []:
+        raw_cat = (e.get("categories") or ["Unknown"])[0]
         items.append({
             "id": f"eonet-{e.get('id')}",
             "title": e.get("title"),
-            "category": (e.get("categories") or ["Unknown"])[0],
+            "category": _EONET_CATEGORY_CANON.get(raw_cat, raw_cat),
             "source": "NASA EONET",
             "link": e.get("url"),
             "lat": e.get("lat"),
@@ -726,6 +737,29 @@ def api_categories():
         "count": len(ordered),
         "categories": ordered,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.route("/api/sources")
+def api_sources():
+    """Per-source health snapshot — last-fetched timestamp, event count, status."""
+    out = []
+    for name, (fetcher, _norm) in _NORMALIZERS.items():
+        try:
+            d = fetcher() or {}
+            out.append({
+                "source": name,
+                "ok": bool(d),
+                "count": d.get("count", 0),
+                "fetched_at": d.get("fetched_at"),
+                "note": d.get("note"),
+            })
+        except Exception as e:
+            out.append({"source": name, "ok": False, "error": str(e)})
+    return jsonify({
+        "sources": out,
+        "firms_key_present": bool(FIRMS_MAP_KEY),
+        "ts": datetime.now(timezone.utc).isoformat(),
     })
 
 
