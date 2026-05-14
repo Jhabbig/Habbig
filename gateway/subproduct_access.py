@@ -15,9 +15,9 @@ Three-layer access model:
 that route handlers attach to sub-brand endpoints. The default behaviour
 for non-pro users in production is to *verify with Stripe live* the
 first time they hit a protected endpoint, then cache the verdict for
-60s. This catches subscriptions Stripe has deleted but our webhook hasn't
-seen yet (subscription lapse → immediate lockout instead of waiting
-for the next webhook).
+5 minutes. This catches subscriptions Stripe has deleted but our webhook
+hasn't seen yet (subscription lapse → eventual lockout instead of waiting
+indefinitely for the next webhook).
 
 The cache is in-process (dict keyed by user_id + slug). For multi-worker
 deployments that would drift, but we only run one uvicorn worker today.
@@ -27,6 +27,7 @@ supports it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -51,7 +52,7 @@ _ADMIN_LEVEL = 1
 # sub was cancelled we want the very next request to see it.
 _verify_cache: dict[tuple[int, str], tuple[float, bool]] = {}
 _verify_lock = Lock()
-_VERIFY_TTL_SECONDS = 60
+_VERIFY_TTL_SECONDS = 300
 
 
 def _pro_or_better(user_row: Any) -> bool:
@@ -160,12 +161,15 @@ def _store_verify(user_id: int, slug: str, verdict: bool) -> None:
         _verify_cache[(user_id, slug)] = (expires_at, verdict)
 
 
-def _live_stripe_status(entry: dict) -> Optional[str]:
+async def _live_stripe_status(entry: dict) -> Optional[str]:
     """Fetch the live subscription status from Stripe.
 
     Returns the status string (e.g. ``'active'``, ``'past_due'``,
     ``'canceled'``) or None if Stripe is unreachable / not configured.
     Callers treat None as "fall back to local DB state".
+
+    The Stripe SDK call is synchronous and blocks ~150-500ms; we run it
+    on a worker thread so the event loop stays free for other requests.
     """
     sub_id = entry.get("stripe_sub_id")
     api_key = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -174,7 +178,7 @@ def _live_stripe_status(entry: dict) -> Optional[str]:
     try:  # Lazy import so the dep is optional in dev/test.
         import stripe  # type: ignore[import]
         stripe.api_key = api_key
-        sub = stripe.Subscription.retrieve(sub_id)
+        sub = await asyncio.to_thread(stripe.Subscription.retrieve, sub_id)
         return (sub.get("status") or "").lower() or None
     except Exception as exc:
         log.warning("live stripe verify failed for %s: %s", sub_id, exc)
@@ -226,7 +230,7 @@ def require_subproduct_access(slug: str):
             )
 
         # Local DB says yes, but for non-pro users in production we
-        # verify with Stripe once per minute to catch a lapse that
+        # verify with Stripe once per 5 minutes to catch a lapse that
         # hasn't hit our webhook yet.
         if os.environ.get("PRODUCTION", "0") != "1":
             return
@@ -245,7 +249,7 @@ def require_subproduct_access(slug: str):
             )
 
         entry = _blob_entry(user, slug) or {}
-        live = _live_stripe_status(entry)
+        live = await _live_stripe_status(entry)
         if live is None:
             # Stripe unreachable — trust the DB (we already passed
             # has_subproduct_access above). Don't cache either verdict.

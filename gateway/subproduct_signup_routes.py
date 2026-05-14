@@ -24,6 +24,7 @@ import + call — no route code in server.py.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -106,15 +107,19 @@ def _create_or_get_shell_user(email: str) -> int:
         return int(cur.lastrowid)
 
 
-def _build_checkout_session(
+async def _build_checkout_session(
     *, email: str, price_id: str, slug: str, user_id: int,
 ) -> str:
-    """Create a Stripe Checkout session and return its hosted URL."""
+    """Create a Stripe Checkout session and return its hosted URL.
+
+    The Stripe SDK call is synchronous and blocks ~150-500ms; we run it
+    on a worker thread so the event loop stays free for other requests.
+    """
     import stripe  # type: ignore[import]
     stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
     app_url = _app_url()
-    session = stripe.checkout.Session.create(
+    session_params = dict(
         mode="subscription",
         customer_email=email,
         line_items=[{"price": price_id, "quantity": 1}],
@@ -132,6 +137,9 @@ def _build_checkout_session(
             "user_id": str(user_id),
             "subproduct_slug": slug,
         }},
+    )
+    session = await asyncio.to_thread(
+        stripe.checkout.Session.create, **session_params,
     )
     return str(session.url)
 
@@ -160,7 +168,7 @@ def register(app) -> None:
             )
         try:
             user_id = _create_or_get_shell_user(email)
-            url = _build_checkout_session(
+            url = await _build_checkout_session(
                 email=email, price_id=price_id, slug=slug, user_id=user_id,
             )
         except HTTPException:
@@ -203,7 +211,7 @@ def register(app) -> None:
             )
         try:
             user_id = _create_or_get_shell_user(email)
-            url = _build_checkout_session(
+            url = await _build_checkout_session(
                 email=email, price_id=price_id, slug=slug, user_id=user_id,
             )
         except Exception as exc:
