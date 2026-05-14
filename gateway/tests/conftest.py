@@ -45,6 +45,21 @@ def _module_uses_testdb(test_file_module: str) -> bool:
     return False
 
 
+@pytest.fixture(autouse=True, scope="class")
+def _maybe_force_shared_testdb_class(request):
+    """Class-scoped pin — fires BEFORE setUpClass so user/key seeding
+    done in setUpClass lands in the shared in-memory DB. Cleaning this
+    up at function scope only meant any test that set up state in
+    setUpClass (e.g. test_api_public.TestAuth) lost it the moment another
+    module's import-time monkey-patch had repointed db.conn at its own
+    per-file fake.
+    """
+    module_name = request.node.module.__name__ if hasattr(request.node, "module") else ""
+    if _module_uses_testdb(module_name):
+        db.conn = _SHARED_CONN_CM
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _maybe_force_shared_testdb(request):
     """Re-apply the shared-conn patch for tests that use _testdb, and
@@ -88,6 +103,15 @@ _os.environ.pop("SITE_ACCESS_TOKEN", None)
 _os.environ.pop("PRODUCTION", None)
 _os.environ["RATE_LIMIT_ENABLED"] = "true"
 _os.environ.setdefault("GLOBAL_RATE_LIMIT_PER_MIN", "10000")
+# The APScheduler-backed recurring jobs (health_check, etc.) run on a
+# background thread and write to the same in-memory sqlite3 connection
+# tests use. sqlite3 with check_same_thread=False is documented as
+# unsafe under concurrent use — the statement cache corrupts and
+# subsequent c.execute() calls raise KeyError: ('SELECT 1',) at
+# arbitrary points during the suite. Disable the scheduler for tests;
+# anything that needs to exercise scheduled-job logic invokes the job
+# function directly.
+_os.environ.setdefault("NARVE_SKIP_SCHEDULER", "1")
 try:
     from cryptography.fernet import Fernet as _Fernet
     _os.environ.setdefault("CREDENTIALS_ENCRYPTION_KEY",
