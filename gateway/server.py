@@ -6270,6 +6270,49 @@ except Exception as _exc:  # pragma: no cover
 
 
 # ── Admin: Audit log ─────────────────────────────────────────────────────────
+#
+# Forensic record of every administrative action. This is the primary
+# investigation surface when a credential rotation or trace-watermark
+# alert fires — so the filter bar, suspicious-pattern card, expandable
+# row JSON, and CSV export all need to be discoverable on a single screen.
+#
+# Filters honoured (all optional, all combinable):
+#   action            — one of audit.AuditAction
+#   admin_id          — exact numeric id
+#   admin_email       — case-insensitive substring (autocompleted from
+#                       distinct admin_emails in audit_log via datalist)
+#   target_type       — exact match against audit_log.target_type
+#   target_user_id    — exact match against audit_log.target_id
+#   from, to          — YYYY-MM-DD; converted to inclusive unix bounds
+#   range             — "today" | "24h" | "7d" | "30d" quick chip; if
+#                       present overrides from/to so the chip is a
+#                       single-click "snap to now"
+#   before_id         — cursor for pagination (matches the existing
+#                       list_all_users cursor pattern)
+
+
+def _audit_log_querystring(params, *, drop: tuple = (), **overrides) -> str:
+    """Build a `?…` querystring preserving the current filter set, dropping
+    any keys in `drop`, and applying `overrides`. Used to render the
+    "next page" cursor link and the chip-active CSS classes.
+    """
+    qs: dict[str, str] = {}
+    try:
+        for k, v in params.items():
+            if k in drop:
+                continue
+            qs[k] = str(v)
+    except Exception:
+        pass
+    for k, v in overrides.items():
+        if v is None:
+            qs.pop(k, None)
+        else:
+            qs[k] = str(v)
+    if not qs:
+        return ""
+    from urllib.parse import urlencode as _urlencode
+    return "?" + _urlencode(qs, doseq=False)
 
 
 @app.get("/admin/audit-log", response_class=HTMLResponse)
@@ -6280,116 +6323,302 @@ async def admin_audit_log_page(request: Request):
     if isinstance(user, Response):
         return user  # 2FA redirect
     from security import audit as _audit
+
+    filters = _audit.filter_to_search_kwargs(request.query_params)
+
+    # Cursor pagination. before_id ⇒ "next page" link the previous render
+    # emitted; the page itself doesn't track an absolute "page N" — the
+    # link the user clicks contains the next cursor.
     try:
-        page = max(1, int(request.query_params.get("page") or "1"))
+        before_id = int(request.query_params.get("before_id") or "0") or None
     except ValueError:
-        page = 1
-    filters = _audit.filter_to_query_kwargs(request.query_params)
-    rows, total = db.query_audit_log(page=page, page_size=50, **filters)
+        before_id = None
+
+    rows, next_cursor, total = db.search_audit_log(filters, limit=50, before_id=before_id)
+    stats = db.get_audit_stats(filters)
+    known_admin_emails = db.list_audit_admin_emails(limit=50)
 
     import datetime as _dt
     import json as _json
 
+    def _fmt_ts(ts: int) -> str:
+        return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    def _pretty_json(raw: str) -> str:
+        if not raw:
+            return ""
+        try:
+            return _json.dumps(_json.loads(raw), indent=2, sort_keys=True)
+        except Exception:
+            return raw
+
     def _render_row(r):
-        ts = _dt.datetime.fromtimestamp(r["timestamp"], tz=_dt.timezone.utc)
-        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S UTC")
-        label = _audit.ACTION_LABELS.get(r["action"], r["action"])
+        ts_str = _fmt_ts(r["timestamp"])
+        action = r["action"]
+        label = _audit.ACTION_LABELS.get(action, action)
         email = html.escape(r["admin_email"] or "—")
-        target = html.escape(r["target_description"] or r["target_id"] or r["target_type"] or "—")
-        ip = html.escape(r["ip_address"] or "—")
-        before = r["before_state"] or ""
-        after = r["after_state"] or ""
-        details = ""
-        if before or after:
-            try:
-                b_pretty = _json.dumps(_json.loads(before), indent=2) if before else ""
-                a_pretty = _json.dumps(_json.loads(after), indent=2) if after else ""
-            except Exception:
-                b_pretty, a_pretty = before, after
-            details = (
-                "<details style='margin-top:6px'><summary style='cursor:pointer;color:var(--text-secondary);font-size:11px'>diff</summary>"
-                f"<pre style='font-size:11px;color:var(--text-secondary);max-height:300px;overflow:auto'>before: {html.escape(b_pretty)}\n\nafter: {html.escape(a_pretty)}</pre>"
-                "</details>"
+        target_id = r["target_id"] or ""
+        target_desc = r["target_description"] or ""
+        # Render target as "<desc> · <type>:<id>" so the admin sees both
+        # the human label and the canonical id at a glance.
+        if target_desc and target_id:
+            target_html = (
+                f'<span>{html.escape(target_desc)}</span>'
+                f'<span style="display:block;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary)">'
+                f'{html.escape(r["target_type"] or "")}:{html.escape(target_id)}</span>'
             )
+        elif target_desc:
+            target_html = html.escape(target_desc)
+        elif target_id:
+            target_html = (
+                f'<span style="font-family:var(--font-mono);font-size:12px">'
+                f'{html.escape(r["target_type"] or "")}:{html.escape(target_id)}</span>'
+            )
+        else:
+            target_html = '<span style="color:var(--text-tertiary)">—</span>'
+
+        ip = html.escape(r["ip_address"] or "—")
+        notes = (r["notes"] or "").strip()
+        details_preview = ""
+        if notes:
+            short = notes if len(notes) <= 80 else notes[:77] + "…"
+            details_preview = html.escape(short)
+        elif r["target_description"]:
+            details_preview = html.escape(r["target_description"][:80])
+
+        before_pretty = _pretty_json(r["before_state"] or "")
+        after_pretty = _pretty_json(r["after_state"] or "")
+
+        ua = html.escape(r["user_agent"] or "—")
+        req_id = html.escape(r["request_id"] or "—")
+        expand_id = f"row-{int(r['id'])}"
+
+        expanded_html = (
+            f'<div class="audit-expand-grid">'
+            f'<div class="audit-expand-meta">'
+            f'<div><span class="audit-expand-key">User agent</span>'
+            f'<span class="audit-expand-val" style="font-family:var(--font-ui)">{ua}</span></div>'
+            f'<div><span class="audit-expand-key">Request id</span>'
+            f'<span class="audit-expand-val">{req_id}</span></div>'
+            f'<div><span class="audit-expand-key">Notes</span>'
+            f'<span class="audit-expand-val" style="font-family:var(--font-body)">{html.escape(notes or "—")}</span></div>'
+            f'</div>'
+        )
+        if before_pretty:
+            expanded_html += (
+                f'<div class="audit-expand-block">'
+                f'<div class="audit-expand-key">Before</div>'
+                f'<pre class="audit-json">{html.escape(before_pretty)}</pre></div>'
+            )
+        if after_pretty:
+            expanded_html += (
+                f'<div class="audit-expand-block">'
+                f'<div class="audit-expand-key">After</div>'
+                f'<pre class="audit-json">{html.escape(after_pretty)}</pre></div>'
+            )
+        expanded_html += '</div>'
+
+        _empty_details_cell = (
+            "<span style=\"color:var(--text-tertiary)\">—</span>"
+        )
+        details_cell = details_preview or _empty_details_cell
         return (
-            f'<tr>'
-            f'<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">{ts_str}</td>'
+            f'<tr class="audit-row" data-expand-target="{expand_id}" tabindex="0">'
+            f'<td class="audit-ts">{ts_str}</td>'
             f'<td>{email}</td>'
             f'<td><span class="badge">{html.escape(label)}</span></td>'
-            f'<td>{target}</td>'
-            f'<td style="font-family:var(--font-mono);font-size:11px">{ip}</td>'
-            f'<td>{details}</td>'
+            f'<td>{target_html}</td>'
+            f'<td class="audit-ip">{ip}</td>'
+            f'<td class="audit-details-preview">{details_cell}</td>'
+            f'</tr>'
+            f'<tr class="audit-expand" id="{expand_id}" hidden>'
+            f'<td colspan="6">{expanded_html}</td>'
             f'</tr>'
         )
 
-    table_rows = "".join(_render_row(r) for r in rows) or '<tr><td colspan="6" style="text-align:center;color:var(--text-tertiary);padding:24px">No audit entries match your filters.</td></tr>'
+    table_rows = "".join(_render_row(r) for r in rows) or (
+        '<tr><td colspan="6" style="text-align:center;color:var(--text-tertiary);padding:24px">'
+        'No audit entries match your filters.</td></tr>'
+    )
 
-    # Filter form
+    # ── Filter bar ─────────────────────────────────────────────────────
+    action_value = request.query_params.get("action") or ""
     action_opts = "<option value=''>All actions</option>" + "".join(
-        f'<option value="{a}"{" selected" if filters.get("action") == a else ""}>{html.escape(_audit.ACTION_LABELS.get(a, a))}</option>'
+        f'<option value="{a}"{" selected" if action_value == a else ""}>'
+        f'{html.escape(_audit.ACTION_LABELS.get(a, a))}</option>'
         for a in sorted(_audit.ALL_ACTIONS)
     )
-    cur_target = filters.get("target_type") or ""
-    cur_admin = filters.get("admin_user_id") or ""
-    cur_from = request.query_params.get("from") or ""
-    cur_to = request.query_params.get("to") or ""
+    admin_email_value = request.query_params.get("admin_email") or ""
+    target_user_value = request.query_params.get("target_user_id") or ""
+    target_type_value = request.query_params.get("target_type") or ""
+    from_value = request.query_params.get("from") or ""
+    to_value = request.query_params.get("to") or ""
+    current_range = (request.query_params.get("range") or "").lower()
+
+    admin_email_datalist = "".join(
+        f'<option value="{html.escape(e)}">' for e in known_admin_emails
+    )
+
+    def _chip(slug: str, label: str) -> str:
+        is_active = current_range == slug
+        href = _audit_log_querystring(
+            request.query_params,
+            drop=("before_id", "from", "to"),
+            range=(None if is_active else slug),
+        ) or "/admin/audit-log"
+        if href.startswith("?"):
+            href = "/admin/audit-log" + href
+        cls = "audit-chip" + (" audit-chip--on" if is_active else "")
+        return f'<a class="{cls}" href="{html.escape(href)}">{html.escape(label)}</a>'
+
+    chips_html = (
+        f'{_chip("today", "Today")}'
+        f'{_chip("24h", "Last 24h")}'
+        f'{_chip("7d", "Last 7d")}'
+        f'{_chip("30d", "Last 30d")}'
+    )
 
     filters_html = (
-        '<form method="get" action="/admin/audit-log" class="audit-filters" '
-        'style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:16px">'
-        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">Action<select name="action" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px;min-width:180px">{action_opts}</select></label>'
-        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">Target type<input type="text" name="target_type" value="{html.escape(cur_target)}" placeholder="user / token / …" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px;width:140px"></label>'
-        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">Admin ID<input type="text" name="admin_id" value="{html.escape(str(cur_admin))}" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px;width:80px"></label>'
-        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">From<input type="date" name="from" value="{html.escape(cur_from)}" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px"></label>'
-        f'<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-secondary)">To<input type="date" name="to" value="{html.escape(cur_to)}" style="padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);color:var(--text-primary);border-radius:6px"></label>'
-        '<button type="submit" class="btn">Filter</button>'
-        '<a href="/admin/audit-log" class="btn" style="text-decoration:none">Reset</a>'
-        f'<a href="/admin/audit-log/export.csv?{request.url.query}" class="btn" style="text-decoration:none">Download CSV</a>'
+        '<form method="get" action="/admin/audit-log" class="audit-filters">'
+        '<div class="audit-filters-row">'
+        f'<label class="audit-field"><span>Action</span>'
+        f'<select name="action">{action_opts}</select></label>'
+        f'<label class="audit-field"><span>Admin email</span>'
+        f'<input type="text" name="admin_email" list="audit-admin-emails" '
+        f'value="{html.escape(admin_email_value)}" placeholder="@narve.ai" autocomplete="off"></label>'
+        f'<datalist id="audit-admin-emails">{admin_email_datalist}</datalist>'
+        f'<label class="audit-field"><span>Target user id</span>'
+        f'<input type="text" name="target_user_id" inputmode="numeric" '
+        f'value="{html.escape(str(target_user_value))}" placeholder="e.g. 4012"></label>'
+        f'<label class="audit-field"><span>Target type</span>'
+        f'<input type="text" name="target_type" value="{html.escape(target_type_value)}" '
+        f'placeholder="user / token / …"></label>'
+        f'<label class="audit-field"><span>From</span>'
+        f'<input type="date" name="from" value="{html.escape(from_value)}"></label>'
+        f'<label class="audit-field"><span>To</span>'
+        f'<input type="date" name="to" value="{html.escape(to_value)}"></label>'
+        '<div class="audit-filters-actions">'
+        '<button type="submit" class="btn">Apply filters</button>'
+        '<a href="/admin/audit-log" class="btn btn--ghost">Reset</a>'
+        '</div></div>'
+        f'<div class="audit-chips" role="group" aria-label="Quick ranges">{chips_html}</div>'
         '</form>'
     )
 
-    # Pagination
-    pages = max(1, (total + 49) // 50)
-    qs_base = {k: v for k, v in request.query_params.items() if k != "page"}
-    def _link(p):
-        qs = dict(qs_base, page=str(p))
-        return "/admin/audit-log?" + "&".join(f"{k}={html.escape(v)}" for k, v in qs.items())
-    pagination = (
-        f'<div style="margin-top:16px;display:flex;gap:12px;align-items:center;color:var(--text-secondary);font-size:12px">'
-        f'Page {page} of {pages} &middot; {total} entries'
+    # ── Stats card ─────────────────────────────────────────────────────
+    suspicious = stats.get("suspicious") or []
+    if suspicious:
+        suspicious_html = (
+            '<div class="audit-flags">'
+            '<div class="audit-flags-title">Suspicious patterns</div>'
+            + "".join(
+                f'<div class="audit-flag">'
+                f'<span class="audit-flag-mark">!</span>'
+                f'<span class="audit-flag-text">{html.escape(s["label"])} — '
+                f'<strong>{html.escape(s["admin_email"])}</strong> · {s["count"]} hits '
+                f'(threshold {s["threshold"]}) on '
+                f'<span class="audit-mono">{html.escape(s["action"])}</span></span>'
+                f'</div>'
+                for s in suspicious
+            )
+            + '</div>'
+        )
+    else:
+        suspicious_html = (
+            '<div class="audit-flags audit-flags--clean">'
+            '<div class="audit-flags-title">Suspicious patterns</div>'
+            '<div class="audit-flag-clean">No threshold breaches in the filtered range.</div>'
+            '</div>'
+        )
+
+    def _stat_list(items):
+        if not items:
+            return '<li class="audit-stat-empty">No data in range</li>'
+        return "".join(
+            f'<li><span class="audit-stat-name">{html.escape(str(name))}</span>'
+            f'<span class="audit-stat-count audit-mono">{count}</span></li>'
+            for name, count in items
+        )
+
+    top_action_labels = [
+        (_audit.ACTION_LABELS.get(a, a), n) for a, n in stats.get("top_actions", [])
+    ]
+    stats_html = (
+        '<div class="audit-stats">'
+        '<div class="audit-stat-card">'
+        '<div class="audit-stat-label">Events in range</div>'
+        f'<div class="audit-stat-value audit-mono">{stats["total"]:,}</div>'
+        '</div>'
+        '<div class="audit-stat-card">'
+        '<div class="audit-stat-label">Top actions</div>'
+        f'<ul class="audit-stat-list">{_stat_list(top_action_labels)}</ul>'
+        '</div>'
+        '<div class="audit-stat-card">'
+        '<div class="audit-stat-label">Top admins by event count</div>'
+        f'<ul class="audit-stat-list">{_stat_list(stats.get("top_admins", []))}</ul>'
+        '</div>'
+        f'<div class="audit-stat-card audit-stat-card--flags">{suspicious_html}</div>'
+        '</div>'
     )
-    if page > 1:
-        pagination += f' &middot; <a href="{_link(page-1)}">← Prev</a>'
-    if page < pages:
-        pagination += f' &middot; <a href="{_link(page+1)}">Next →</a>'
-    pagination += '</div>'
+
+    # ── Cursor pagination ──────────────────────────────────────────────
+    pagination_bits: list[str] = [
+        f'<span class="audit-page-summary">'
+        f'Showing {len(rows)} of <span class="audit-mono">{total:,}</span> '
+        f'matching event{"s" if total != 1 else ""}</span>'
+    ]
+    if before_id:
+        first_href = _audit_log_querystring(request.query_params, drop=("before_id",))
+        pagination_bits.append(
+            f'<a class="audit-page-link" href="/admin/audit-log{first_href}">'
+            '&larr; Newest</a>'
+        )
+    if next_cursor:
+        next_href = _audit_log_querystring(
+            request.query_params, drop=("before_id",), before_id=next_cursor
+        )
+        pagination_bits.append(
+            f'<a class="audit-page-link" href="/admin/audit-log{next_href}">'
+            'Older &rarr;</a>'
+        )
+    pagination_html = (
+        '<div class="audit-pagination">' + " ".join(pagination_bits) + '</div>'
+    )
+
+    # ── CSV export link, preserves filters ─────────────────────────────
+    csv_qs = _audit_log_querystring(request.query_params, drop=("before_id",))
+    csv_link = f'/admin/audit-log/export.csv{csv_qs}'
 
     body = (
-        '<div style="padding:var(--space-6)">'
-        '<h2 style="font-family:var(--font-display);font-style:italic;'
-        'font-size:var(--text-3xl);font-weight:400;letter-spacing:-0.01em;'
-        'line-height:1.05;margin:0 0 8px;color:var(--text-primary)">Audit log</h2>'
-        '<p style="font-family:var(--font-body);font-size:var(--text-md);'
-        'color:var(--text-secondary);margin:0 0 24px;max-width:64ch">'
-        'Append-only record of every administrative action. '
-        'Filter, export, or open a diff to inspect before/after state.</p>'
+        '<div class="audit-page">'
+        '<header class="audit-hero">'
+        '<h2 class="audit-hero-title">Audit log</h2>'
+        '<p class="audit-hero-sub">'
+        'Append-only forensic record of every administrative action. '
+        'Filter by admin, target user, or action; click a row for the full '
+        'before / after payload, request id, and user agent.'
+        '</p>'
+        f'<a class="btn audit-csv-btn" href="{html.escape(csv_link)}">Export CSV</a>'
+        '</header>'
+        f'{stats_html}'
         f'{filters_html}'
-        '<div style="overflow:auto;border:1px solid var(--border-default);border-radius:8px">'
-        '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-        '<thead><tr style="background:var(--bg-surface);color:var(--text-tertiary);text-align:left;'
-        'font-family:var(--font-ui);text-transform:uppercase;letter-spacing:0.06em;font-size:11px">'
-        '<th style="padding:10px 12px">Timestamp</th>'
-        '<th style="padding:10px 12px">Admin</th>'
-        '<th style="padding:10px 12px">Action</th>'
-        '<th style="padding:10px 12px">Target</th>'
-        '<th style="padding:10px 12px">IP</th>'
-        '<th style="padding:10px 12px">Details</th>'
+        '<div class="audit-table-wrap">'
+        '<table class="audit-table">'
+        '<thead><tr>'
+        '<th scope="col">Timestamp</th>'
+        '<th scope="col">Admin</th>'
+        '<th scope="col">Action</th>'
+        '<th scope="col">Target</th>'
+        '<th scope="col">IP</th>'
+        '<th scope="col">Details</th>'
         '</tr></thead>'
         f'<tbody>{table_rows}</tbody>'
         '</table></div>'
-        f'{pagination}'
-        '<p style="margin-top:24px;font-family:var(--font-body);font-size:var(--text-sm);'
-        'color:var(--text-tertiary)">Audit log is append-only. Entries cannot be deleted or edited.</p>'
+        f'{pagination_html}'
+        '<p class="audit-footer-note">'
+        'Audit log is append-only. Entries cannot be deleted or edited. '
+        'Suspicious-pattern flags are computed per-admin within the filtered range.'
+        '</p>'
         '</div>'
     )
 
@@ -6407,14 +6636,51 @@ async def admin_audit_log_page(request: Request):
 
 @app.get("/admin/audit-log/export.csv")
 async def admin_audit_log_csv(request: Request):
-    _require_admin_user(request)  # auth side effect; user dict not needed below
+    """Streaming CSV export of audit_log, honouring the same filters as
+    /admin/audit-log. Rate-limited per-admin to bound damage from a
+    compromised credential — the streaming generator pages through the
+    table 500 rows at a time so an unbounded query can't OOM the gateway.
+    """
+    user = _require_admin_user(request, page=True)
+    if user is None:
+        return _denied_response(request)
+    if isinstance(user, Response):
+        return user
+
+    # Per-admin rate limit: 6 CSV exports per 5 minutes. Generous for
+    # genuine investigation work; tight enough that a stolen credential
+    # can't be used to mass-exfiltrate the audit log.
+    key = f"audit_csv:{user.get('email') or user.get('user_id')}"
+    if _is_rate_limited(key, 6, 300):
+        log.warning(
+            "audit CSV export rate limit tripped for %s", user.get("email"),
+        )
+        raise HTTPException(status_code=429, detail="Too many CSV exports. Slow down.")
+
     from security import audit as _audit
-    filters = _audit.filter_to_query_kwargs(request.query_params)
-    csv_text = db.export_audit_log_csv(**filters)
-    return Response(
-        content=csv_text,
+    from fastapi.responses import StreamingResponse as _StreamingResponse
+
+    filters = _audit.filter_to_search_kwargs(request.query_params)
+
+    try:
+        _audit.log_action(
+            admin_user_id=user.get("user_id"),
+            admin_email=user.get("email"),
+            action="audit.csv_export",
+            target_type="audit_log",
+            request=request,
+            notes=f"filters={filters}",
+        )
+    except Exception:
+        pass  # never block the export on a log-write failure
+
+    return _StreamingResponse(
+        db.export_audit_csv_stream(filters),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="narve-audit-log.csv"'},
+        headers={
+            "Content-Disposition": 'attachment; filename="narve-audit-log.csv"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
@@ -7828,6 +8094,21 @@ try:
         _br_importlib.reload(_br_sys.modules["billing_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("billing_routes import failed: %s — continuing without it", _exc)
+
+
+# Stripe webhook — POST /stripe/webhook. Replaces backend/payments/stripe_stub
+# (which raises NotImplementedError). IP allowlist + signature verification +
+# idempotency live in this module; helpers come from stripe_webhook_hardening.
+# Same side-effect-of-import pattern as billing_routes above. MUST land before
+# the catch-all so /stripe/webhook isn't 404'd.
+try:
+    import stripe_webhook_routes  # noqa: F401,E402
+    import sys as _swr_sys
+    if "stripe_webhook_routes" in _swr_sys.modules:
+        import importlib as _swr_importlib
+        _swr_importlib.reload(_swr_sys.modules["stripe_webhook_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("stripe_webhook_routes import failed: %s — continuing without it", _exc)
 
 
 # Engagement / in-app re-engagement prompts. Same reload-safe side-effect

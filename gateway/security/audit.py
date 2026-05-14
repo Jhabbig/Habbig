@@ -302,3 +302,87 @@ def filter_to_query_kwargs(query_params) -> dict:
     if to_ts:
         kwargs["to_ts"] = to_ts
     return kwargs
+
+
+def filter_to_search_kwargs(query_params) -> dict:
+    """v2 of `filter_to_query_kwargs` that also surfaces admin_email +
+    target_user_id, and resolves the "quick chip" range parameter
+    (``range=24h|7d|30d|today``) into a from_ts/to_ts pair.
+
+    The legacy helper above is preserved untouched because the older
+    /admin/audit-log call sites (and any third-party scripts importing it
+    via `db.query_audit_log`) shouldn't sprout new behaviour on this
+    polish pass.
+    """
+    import time as _time
+
+    def _parse_date(value: str, end_of_day: bool = False) -> Optional[int]:
+        value = (value or "").strip()
+        if not value:
+            return None
+        try:
+            tm = _time.strptime(value, "%Y-%m-%d")
+            ts = int(_time.mktime(tm))
+            if end_of_day:
+                ts += 86399
+            return ts
+        except (ValueError, TypeError):
+            return None
+
+    def _get(key: str) -> str:
+        try:
+            return (query_params.get(key) or "").strip()
+        except Exception:
+            return ""
+
+    kwargs: dict = {}
+
+    action = _get("action")
+    if action and action != "all":
+        kwargs["action"] = action
+
+    admin_id = _get("admin_id")
+    if admin_id.isdigit():
+        kwargs["admin_user_id"] = int(admin_id)
+
+    admin_email = _get("admin_email")
+    if admin_email:
+        kwargs["admin_email"] = admin_email
+
+    target_type = _get("target_type")
+    if target_type:
+        kwargs["target_type"] = target_type
+
+    target_user_id = _get("target_user_id")
+    if target_user_id:
+        kwargs["target_user_id"] = target_user_id
+
+    # Quick-chip range overrides explicit from/to so the chip behaves as
+    # a "snap to now" shortcut. The chip is mutually exclusive with the
+    # date inputs by JS, but server-side we honour from/to first when
+    # the chip is empty so a deep-link URL with from=YYYY-MM-DD still works.
+    rng = _get("range").lower()
+    now = int(_time.time())
+    chip_from = None
+    if rng == "today":
+        tm = _time.localtime(now)
+        chip_from = int(_time.mktime((tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0, 0, 0, 0, -1)))
+    elif rng in ("24h", "1d"):
+        chip_from = now - 86400
+    elif rng == "7d":
+        chip_from = now - 7 * 86400
+    elif rng == "30d":
+        chip_from = now - 30 * 86400
+
+    if chip_from is not None:
+        kwargs["from_ts"] = chip_from
+        kwargs["to_ts"] = now
+    else:
+        from_ts = _parse_date(_get("from"))
+        if from_ts:
+            kwargs["from_ts"] = from_ts
+        to_ts = _parse_date(_get("to"), end_of_day=True)
+        if to_ts:
+            kwargs["to_ts"] = to_ts
+
+    return kwargs

@@ -1080,6 +1080,18 @@ from queries.admin import (  # noqa: F401,E402
     delete_email_template,
 )
 
+# v2 audit-log surface (search + filters + stats + streaming CSV) — kept in
+# queries/audit.py so the audit-log polish in /admin/audit-log can extend
+# the filter set (admin_email substring, target_user_id, multi-action)
+# without disturbing the back-compat callers of `query_audit_log`.
+from queries.audit import (  # noqa: F401,E402
+    search_audit_log,
+    get_audit_stats,
+    detect_suspicious_patterns,
+    list_audit_admin_emails,
+    export_audit_csv_stream,
+)
+
 
 
 # ── API keys extended (Migration 128) + webhooks (Migration 129) ────────────

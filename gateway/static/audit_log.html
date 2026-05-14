@@ -30,5 +30,41 @@
 <script src="/_gateway_static/theme.js?v=2" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>
+  <script>
+    // Click any audit-row to reveal the matching audit-expand row that
+    // contains its before/after JSON, user agent, request id, and notes.
+    // Keyboard users get the same toggle via Enter/Space because rows
+    // carry tabindex="0".
+    (function () {
+      function toggleRow(row) {
+        var id = row.getAttribute('data-expand-target');
+        if (!id) return;
+        var target = document.getElementById(id);
+        if (!target) return;
+        var nowHidden = target.hasAttribute('hidden');
+        if (nowHidden) {
+          target.removeAttribute('hidden');
+          row.classList.add('audit-row--open');
+        } else {
+          target.setAttribute('hidden', '');
+          row.classList.remove('audit-row--open');
+        }
+      }
+      document.addEventListener('click', function (e) {
+        var row = e.target && e.target.closest && e.target.closest('.audit-row');
+        if (!row) return;
+        if (e.target.closest && e.target.closest('a, button')) return;
+        toggleRow(row);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var row = e.target && e.target.classList && e.target.classList.contains('audit-row')
+          ? e.target : null;
+        if (!row) return;
+        e.preventDefault();
+        toggleRow(row);
+      });
+    })();
+  </script>
 </body>
 </html>
