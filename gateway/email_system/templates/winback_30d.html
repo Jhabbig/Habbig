@@ -1,0 +1,13 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your seat at narve.ai is still here.</h1>
+<p style="margin:0 0 16px;color:#555;">It's been a month{% if display_name %}, {{ display_name }}{% endif %}. The signal flow hasn't stopped — and your account is exactly where you left it.</p>
+<p style="margin:0 0 20px;color:#555;">If price was the reason, we get it. Come back in the next 14 days and your first month is on us.</p>
+<div style="margin:24px 0;padding:14px 18px;border:1px solid #ebebeb;border-radius:6px;background:#fafafa;">
+  <div style="font-size:11px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Welcome-back offer</div>
+  <div style="font-size:14px;color:#0d0d0d;">One month free on any plan, applied automatically at checkout.</div>
+</div>
+<div style="margin:24px 0;">
+  <a href="{{ app_url }}/pricing" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Reactivate my account →</a>
+</div>
+<p style="margin:24px 0 0;color:#555;font-size:13px;">Questions? Reply to this email — a human reads them.</p>
+{% endblock %}

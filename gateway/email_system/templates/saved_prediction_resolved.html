@@ -1,0 +1,23 @@
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your saved prediction just resolved.</h1>
+<p style="margin:0 0 16px;color:#555;">{% if display_name %}{{ display_name }}, t{% endif %}{% if display_name %}{% endif %}he prediction you saved from <strong style="color:#0d0d0d;">@{{ source_handle }}</strong> has a final outcome.</p>
+
+<div style="margin:20px 0;padding:16px 18px;border:1px solid #ebebeb;border-radius:6px;background:#fafafa;">
+  <div style="font-size:11px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Prediction</div>
+  <div style="font-size:14px;color:#0d0d0d;line-height:1.5;margin-bottom:12px;">{{ prediction_text }}</div>
+  <div style="font-size:11px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Outcome</div>
+  <div style="font-size:14px;color:#0d0d0d;">Resolved <strong style="color:#0d0d0d;">{{ outcome }}</strong>.</div>
+</div>
+
+{% if user_note %}
+<div style="margin:16px 0;padding:12px 16px;border-left:2px solid #0d0d0d;background:#ffffff;">
+  <div style="font-size:11px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Your note when you saved this</div>
+  <div style="font-size:13px;color:#555;line-height:1.5;">{{ user_note }}</div>
+</div>
+{% endif %}
+
+<div style="margin:24px 0;">
+  <a href="{{ saved_url }}" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">See full breakdown →</a>
+</div>
+<p style="margin:24px 0 0;color:#555;font-size:13px;">Source credibility scores have been updated to reflect this outcome.</p>
+{% endblock %}

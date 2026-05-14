@@ -1,0 +1,35 @@
+{% block content %}
+<h1 style="margin:0 0 4px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your weekly intelligence report</h1>
+<p style="margin:0 0 20px;color:#aaaaaa;font-size:13px;">{% if stats.period_start %}{{ stats.period_start }} — {{ stats.period_end }}{% endif %}</p>
+
+{% if stats.hero_number %}
+<div style="margin:0 0 24px;padding:20px;border:1px solid #ebebeb;border-radius:6px;background:#fafafa;text-align:center;">
+  <div style="font-size:32px;font-weight:600;color:#0d0d0d;letter-spacing:-0.04em;line-height:1;">{{ stats.hero_number }}</div>
+  <div style="font-size:12px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.05em;margin-top:8px;">{{ stats.hero_label }}</div>
+</div>
+{% endif %}
+
+<h2 style="margin:24px 0 12px;font-size:14px;font-weight:600;color:#0d0d0d;text-transform:uppercase;letter-spacing:0.05em;">Top 5 signals</h2>
+{% for s in stats.top_signals %}
+<div style="padding:14px 0;border-bottom:1px solid #ebebeb;">
+  <div style="font-size:13px;color:#555;margin-bottom:4px;">{{ s.source }} · {{ s.category }}</div>
+  <div style="font-size:14px;color:#0d0d0d;line-height:1.5;">{{ s.content }}</div>
+  {% if s.credibility %}
+  <div style="font-size:11px;color:#aaaaaa;margin-top:6px;">Credibility: {{ s.credibility }}</div>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% if stats.summary %}
+<h2 style="margin:32px 0 12px;font-size:14px;font-weight:600;color:#0d0d0d;text-transform:uppercase;letter-spacing:0.05em;">This week's pattern</h2>
+<p style="margin:0 0 16px;color:#555;line-height:1.6;">{{ stats.summary }}</p>
+{% endif %}
+
+<div style="margin:28px 0 0;">
+  <a href="{{ app_url }}/signal-search" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Open Signal Search →</a>
+</div>
+
+{% if pdf_path %}
+<p style="margin:20px 0 0;color:#555;font-size:13px;">A PDF copy of this report is attached to your account dashboard.</p>
+{% endif %}
+{% endblock %}

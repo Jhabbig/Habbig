@@ -1,0 +1,16 @@
+{% block content %}
+<div style="margin:0 0 12px;padding:6px 10px;background:#0d0d0d;color:#ffffff;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;display:inline-block;border-radius:4px;">Admin only</div>
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Subscription drift detected</h1>
+<p style="margin:0 0 16px;color:#555;"><strong style="color:#0d0d0d;">{{ drift_count }}</strong> of <strong style="color:#0d0d0d;">{{ total_count }}</strong> subscriptions on the gateway don't match Stripe state (<strong style="color:#0d0d0d;">{{ drift_pct }}%</strong>).</p>
+
+<div style="margin:20px 0;padding:14px 18px;border:1px solid #ebebeb;border-radius:6px;background:#fafafa;">
+  <div style="font-size:11px;color:#aaaaaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">What this means</div>
+  <div style="font-size:13px;color:#0d0d0d;line-height:1.6;">Local DB rows disagree with the Stripe subscription status. Likely causes: a missed webhook, a manual Stripe edit, or a reconcile job race.</div>
+</div>
+
+<div style="margin:24px 0;">
+  <a href="{{ app_url }}/admin/reconcile" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Open /admin/reconcile →</a>
+</div>
+
+<p style="margin:24px 0 0;color:#555;font-size:13px;">The reconcile job re-runs hourly. If the count stays above threshold for &gt;6 hours, investigate webhook delivery in the Stripe dashboard.</p>
+{% endblock %}

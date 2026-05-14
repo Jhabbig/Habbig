@@ -229,20 +229,39 @@ def apply_subscription_cancelled(event: dict) -> None:
     # Enqueue the cancellation email.
     try:
         import asyncio
+        import db
         from jobs.email_jobs import enqueue_email
         if user_id:
-            coro = enqueue_email(
-                user_id=user_id,
-                template="subscription_cancelled",
-                context={"subproduct_slug": sub_slug or ""},
-                tags=["subscription_cancelled"],
-            )
-            # When called from a sync handler, schedule the coroutine on
-            # the running loop. In the job path we're already async.
-            try:
-                asyncio.get_event_loop().create_task(coro)  # type: ignore[arg-type]
-            except RuntimeError:
-                asyncio.run(coro)  # type: ignore[arg-type]
+            row = db.get_user_by_id(user_id)
+            user_email = row["email"] if row and "email" in row.keys() else None
+            if user_email:
+                # Stripe gives us cancel_at / canceled_at on the subscription
+                # object — surface it to the template so the body reads
+                # "expired on <date>" rather than the empty fallback.
+                import datetime as _dt
+                ts = obj.get("cancel_at") or obj.get("canceled_at") or obj.get("ended_at")
+                period_end_date = ""
+                if ts:
+                    try:
+                        period_end_date = _dt.date.fromtimestamp(int(ts)).isoformat()
+                    except Exception:
+                        period_end_date = ""
+                coro = enqueue_email(
+                    to=user_email,
+                    template="subscription_cancelled",
+                    context={
+                        "user_id": user_id,
+                        "subproduct_slug": sub_slug or "",
+                        "period_end_date": period_end_date,
+                    },
+                    tags=["subscription_cancelled"],
+                )
+                # When called from a sync handler, schedule the coroutine on
+                # the running loop. In the job path we're already async.
+                try:
+                    asyncio.get_event_loop().create_task(coro)  # type: ignore[arg-type]
+                except RuntimeError:
+                    asyncio.run(coro)  # type: ignore[arg-type]
     except Exception as exc:
         log.warning("cancellation email enqueue failed: %s", exc)
 

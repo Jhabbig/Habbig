@@ -198,6 +198,12 @@ _SUBJECTS = {
     "incident_update": "Incident update — narve.ai status",
     "incident_resolved": "Incident resolved — narve.ai status",
     "webhook_disabled": "Webhook disabled — narve.ai",
+    "winback_7d": "Your narve.ai dashboard is waiting",
+    "winback_30d": "Your seat at narve.ai is still here",
+    "saved_prediction_resolved": "Your saved prediction just resolved",
+    "weekly_intelligence": "narve.ai — Your weekly intelligence report",
+    "admin_cost_alert": "[admin] narve.ai Claude spend alert",
+    "admin_subscription_drift": "[admin] narve.ai subscription drift detected",
 }
 
 
