@@ -381,6 +381,29 @@ def has_any_active_subscription(user_id: int) -> bool:
     return row is not None
 
 
+def get_user_active_subproducts(user_id: int) -> set[str]:
+    """Return the set of dashboard_keys the user is actively subscribed to.
+
+    A user is considered "subscribed" to a subproduct when they have a
+    matching ``subscriptions`` row with status='active' that hasn't
+    expired. The synthetic ``__plan__`` dashboard_key (used by the
+    Pro/Trader plan upsert) is excluded — callers handle Pro tier
+    detection separately via ``get_user_subscription_tier``.
+
+    Admins return an empty set here on purpose: callers that want
+    "show everything" treat Pro / admin specially before calling.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT dashboard_key FROM subscriptions "
+            "WHERE user_id = ? AND status = 'active' "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (user_id, now),
+        ).fetchall()
+    return {r["dashboard_key"] for r in rows if r["dashboard_key"] != "__plan__"}
+
+
 __all__ = [
     'list_subscriptions',
     'has_active_subscription',
@@ -398,4 +421,5 @@ __all__ = [
     'get_user_subscription_tier',
     'get_user_primary_subscription',
     'has_any_active_subscription',
+    'get_user_active_subproducts',
 ]

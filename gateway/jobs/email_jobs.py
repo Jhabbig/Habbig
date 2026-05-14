@@ -71,6 +71,60 @@ async def enqueue_email(
     )
 
 
+def _subproduct_display_name(slug: str) -> str:
+    """Resolve a dashboard_key to a friendly label for the digest header.
+
+    Falls back to a title-cased slug if config can't be imported (tests
+    that don't boot the gateway). Keeps the import lazy so this module
+    stays cheap to import.
+    """
+    try:
+        from server import DASHBOARDS
+        cfg = DASHBOARDS.get(slug) or {}
+        name = cfg.get("display_name")
+        if name:
+            return name
+    except Exception:
+        pass
+    return slug.replace("_", " ").title()
+
+
+def _resolve_subproduct_filter(user_id: int) -> tuple[set[str] | None, list[str], bool]:
+    """Decide which subproducts a user's digest should cover.
+
+    Returns ``(category_filter, label_list, should_send)``:
+
+      * ``category_filter`` — set of prediction.category values to keep,
+        or ``None`` for "no filter, show everything" (Pro tier and admins).
+      * ``label_list`` — friendly labels for the "Your digest for: …"
+        header; empty when no filter applied.
+      * ``should_send`` — False when the user has no active subscription;
+        callers must skip the send.
+    """
+    import db
+    from subproduct_filters import categories_for
+
+    tier = db.get_user_subscription_tier(user_id) if hasattr(db, "get_user_subscription_tier") else "none"
+    if tier == "none":
+        return set(), [], False
+    if tier == "pro":
+        return None, [], True  # Pro: show everything across all 12 subproducts.
+
+    slugs = db.get_user_active_subproducts(user_id) if hasattr(db, "get_user_active_subproducts") else set()
+    if not slugs:
+        return set(), [], False
+
+    # Union the category whitelists across every slug the user owns.
+    cats: set[str] = set()
+    for slug in slugs:
+        cats.update(categories_for(slug))
+    labels = sorted(_subproduct_display_name(s) for s in slugs)
+    # Empty cats (e.g. only 'traders' which is a platform filter, not a
+    # category filter) means "no category narrowing" — fall back to None
+    # so the user still gets content. The label still scopes the header.
+    return (cats or None), labels, True
+
+
 @register_job("send_weekly_digest_batch")
 async def send_weekly_digest_batch() -> dict[str, Any]:
     """Send the weekly digest to every opted-in active subscriber.
@@ -78,6 +132,12 @@ async def send_weekly_digest_batch() -> dict[str, Any]:
     Processes in batches of 50 users to keep memory flat. Each user's
     digest is enqueued as an individual `send_email` job so a single
     rendering failure doesn't kill the whole run.
+
+    Content is filtered to each user's active subproducts: a Crypto-only
+    subscriber sees only crypto predictions/sources, not the other 11
+    subproducts they don't pay for. Pro users get every subproduct.
+    Users with no active subscription are skipped entirely so the
+    digest never reaches expired accounts.
     """
     import db
     import datetime as _dt
@@ -99,16 +159,25 @@ async def send_weekly_digest_batch() -> dict[str, Any]:
     enqueued = 0
     skipped = 0
     for u in users:
-        tier = db.get_user_subscription_tier(u["id"]) if hasattr(db, "get_user_subscription_tier") else "none"
-        if tier == "none":
+        category_filter, subproduct_labels, should_send = _resolve_subproduct_filter(u["id"])
+        if not should_send:
+            # tier='none' OR no active subproducts → skip the send entirely.
+            # Avoids spamming expired/cancelled users with content from
+            # the 11 subproducts they're not paying for.
             skipped += 1
             continue
 
-        # Top 5 high-EV predictions from the last week
+        # Top 5 high-EV predictions from the last week, restricted to
+        # the user's subproducts when a category filter is set.
         top_predictions: list[dict] = []
         try:
-            preds = db.list_recent_predictions(limit=5)
+            # Pull a wider window then filter in-memory so we still
+            # have 5 picks after the category narrow.
+            pull_limit = 5 if category_filter is None else 50
+            preds = db.list_recent_predictions(limit=pull_limit)
             for p in preds:
+                if category_filter is not None and p["category"] not in category_filter:
+                    continue
                 cred = p["global_credibility"] if "global_credibility" in p.keys() else None
                 top_predictions.append({
                     "source": f"@{p['source_handle']}",
@@ -116,13 +185,28 @@ async def send_weekly_digest_batch() -> dict[str, Any]:
                     "credibility": round(cred, 2) if cred is not None else None,
                     "category": p["category"],
                 })
+                if len(top_predictions) >= 5:
+                    break
         except Exception:
             pass
 
-        # Top 3 most accurate sources
+        # Top 3 most accurate sources, optionally restricted to sources
+        # that have been active in the user's categories this week.
         top_sources: list[dict] = []
         try:
             sources = db.list_all_source_credibilities() if hasattr(db, "list_all_source_credibilities") else []
+            if category_filter is not None:
+                # Keep only sources that have at least one prediction in
+                # one of the user's categories within the digest window.
+                placeholders = ",".join("?" * len(category_filter))
+                with db.conn() as c:
+                    allowed = c.execute(
+                        f"SELECT DISTINCT source_handle FROM predictions "
+                        f"WHERE category IN ({placeholders}) AND extracted_at >= ?",
+                        (*sorted(category_filter), week_start),
+                    ).fetchall()
+                allowed_handles = {r["source_handle"] for r in allowed}
+                sources = [s for s in sources if s["source_handle"] in allowed_handles]
             sources = sorted(
                 [s for s in sources if s["total_predictions"] >= 5],
                 key=lambda s: s["global_credibility"],
@@ -145,6 +229,7 @@ async def send_weekly_digest_batch() -> dict[str, Any]:
             "week_end": _dt.datetime.fromtimestamp(now).strftime("%b %d, %Y"),
             "top_predictions": top_predictions,
             "top_sources": top_sources,
+            "subproduct_labels": subproduct_labels,
             "unsubscribe_url": _unsub_url(u["id"], u["email"], "digest"),
         }
         await enqueue_email(
@@ -163,9 +248,13 @@ async def send_morning_briefings() -> dict[str, Any]:
     """Send personalised morning intelligence briefing emails (F7).
 
     For each opted-in user:
-      - Top 5 markets by |betyc_edge|
-      - New predictions from followed sources (last 24h)
-      - Markets approaching resolution
+      - Top 5 markets by |betyc_edge| (restricted to user's subproducts)
+      - New predictions from followed sources (last 24h, same restriction)
+      - Markets approaching resolution (same restriction)
+
+    Users with no active subscription are skipped — the briefing never
+    reaches expired accounts. Pro users see all 12 subproducts; single-
+    sub users see only the subproduct(s) they pay for.
     """
     import db
     import os
@@ -173,6 +262,7 @@ async def send_morning_briefings() -> dict[str, Any]:
     from backend.markets import unified_markets
     from backend.markets.polymarket_client import PolymarketClient
     from backend.markets.kalshi_client import KalshiClient
+    from subproduct_filters import filter_by_subproduct, categories_for
 
     app_url = os.environ.get("APP_URL", "https://narve.ai")
     now = int(_time.time())
@@ -204,38 +294,103 @@ async def send_morning_briefings() -> dict[str, Any]:
         log.exception("Morning briefing: market fetch failed: %s", e)
         return {"sent": 0, "error": str(e)}
 
-    # Top 5 by absolute edge
-    with_edge = [m for m in enriched if m.betyc_ev_score is not None and m.betyc_prediction_count >= 1]
-    with_edge.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
-    top_5 = with_edge[:5]
-
-    # Approaching resolutions (close_time within 7 days)
+    # Pre-compute approaching resolutions for the full pool once; we
+    # partition per-user later by filtering the same list.
     from datetime import datetime, timezone
-    approaching = []
+    approaching_all = []
     for m in enriched:
         if m.close_time:
             try:
                 close_dt = datetime.fromisoformat(m.close_time.replace("Z", "+00:00"))
                 days_until = (close_dt - datetime.now(timezone.utc)).days
                 if 0 <= days_until <= 7:
-                    approaching.append({"title": m.title, "close_time": close_dt.strftime("%b %d")})
+                    approaching_all.append((m, close_dt))
             except (ValueError, TypeError):
                 pass
-    approaching = approaching[:5]
 
     sent = 0
+    skipped = 0
     for user in users:
-        # New signals from followed sources (last 24h)
-        with db.conn() as c:
-            new_signals_rows = c.execute(
-                "SELECT p.source_handle, p.content, sc.global_credibility "
-                "FROM predictions p "
-                "JOIN followed_sources fs ON fs.source_handle = p.source_handle AND fs.user_id = ? "
-                "LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
-                "WHERE p.extracted_at >= ? "
-                "ORDER BY p.extracted_at DESC LIMIT 5",
-                (user["id"], yesterday),
-            ).fetchall()
+        # Resolve which subproducts this user should see content from.
+        tier = (
+            db.get_user_subscription_tier(user["id"])
+            if hasattr(db, "get_user_subscription_tier")
+            else "none"
+        )
+        if tier == "none":
+            skipped += 1
+            continue
+        is_pro = tier == "pro"
+        slugs = (
+            db.get_user_active_subproducts(user["id"])
+            if hasattr(db, "get_user_active_subproducts")
+            else set()
+        )
+        if not is_pro and not slugs:
+            # No active subproducts → skip. Avoids spamming expired
+            # users with the 11 subproducts they're not paying for.
+            skipped += 1
+            continue
+
+        # Build per-user market scope. Pro = full pool; everyone else =
+        # union of their subproducts' filters (deduped by market id).
+        if is_pro:
+            user_markets = enriched
+            category_filter: set[str] | None = None
+        else:
+            seen_ids: set = set()
+            user_markets = []
+            for slug in slugs:
+                for m in filter_by_subproduct(enriched, slug):
+                    if m.id in seen_ids:
+                        continue
+                    seen_ids.add(m.id)
+                    user_markets.append(m)
+            category_filter = set()
+            for slug in slugs:
+                category_filter.update(categories_for(slug))
+
+        # Top 5 by absolute edge within the user's market scope
+        with_edge = [m for m in user_markets if m.betyc_ev_score is not None and m.betyc_prediction_count >= 1]
+        with_edge.sort(key=lambda m: abs(m.betyc_ev_score or 0), reverse=True)
+        top_5 = with_edge[:5]
+
+        # Approaching resolutions, scoped to user_markets
+        if is_pro:
+            scoped_approaching = approaching_all
+        else:
+            user_market_ids = {m.id for m in user_markets}
+            scoped_approaching = [(m, dt) for m, dt in approaching_all if m.id in user_market_ids]
+        approaching = [
+            {"title": m.title, "close_time": dt.strftime("%b %d")}
+            for m, dt in scoped_approaching[:5]
+        ]
+
+        # New signals from followed sources (last 24h), gated by category
+        if is_pro or not category_filter:
+            with db.conn() as c:
+                new_signals_rows = c.execute(
+                    "SELECT p.source_handle, p.content, sc.global_credibility "
+                    "FROM predictions p "
+                    "JOIN followed_sources fs ON fs.source_handle = p.source_handle AND fs.user_id = ? "
+                    "LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
+                    "WHERE p.extracted_at >= ? "
+                    "ORDER BY p.extracted_at DESC LIMIT 5",
+                    (user["id"], yesterday),
+                ).fetchall()
+        else:
+            placeholders = ",".join("?" * len(category_filter))
+            with db.conn() as c:
+                new_signals_rows = c.execute(
+                    f"SELECT p.source_handle, p.content, sc.global_credibility "
+                    f"FROM predictions p "
+                    f"JOIN followed_sources fs ON fs.source_handle = p.source_handle AND fs.user_id = ? "
+                    f"LEFT JOIN source_credibility sc ON sc.source_handle = p.source_handle "
+                    f"WHERE p.extracted_at >= ? "
+                    f"AND p.category IN ({placeholders}) "
+                    f"ORDER BY p.extracted_at DESC LIMIT 5",
+                    (user["id"], yesterday, *sorted(category_filter)),
+                ).fetchall()
 
         new_signals = [
             {
@@ -245,6 +400,10 @@ async def send_morning_briefings() -> dict[str, Any]:
             }
             for r in new_signals_rows
         ]
+
+        subproduct_labels = (
+            [] if is_pro else sorted(_subproduct_display_name(s) for s in slugs)
+        )
 
         from datetime import date
         context = {
@@ -264,6 +423,7 @@ async def send_morning_briefings() -> dict[str, Any]:
             ],
             "new_signals": new_signals,
             "approaching_resolutions": approaching,
+            "subproduct_labels": subproduct_labels,
             "unsubscribe_url": f"{app_url}/unsubscribe?type=digest",
         }
 
@@ -278,7 +438,7 @@ async def send_morning_briefings() -> dict[str, Any]:
         except Exception as e:
             log.warning("Morning briefing send failed for user %d: %s", user["id"], e)
 
-    return {"sent": sent, "total_users": len(users)}
+    return {"sent": sent, "skipped": skipped, "total_users": len(users)}
 
 
 # Cron: every Monday at 08:00 UTC.

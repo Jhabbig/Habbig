@@ -981,6 +981,7 @@ from queries.subscriptions import (  # noqa: F401,E402
     get_user_subscription_tier,
     get_user_primary_subscription,
     has_any_active_subscription,
+    get_user_active_subproducts,
 )
 from queries.intelligence import (  # noqa: F401,E402
     create_intelligence_conversation,
