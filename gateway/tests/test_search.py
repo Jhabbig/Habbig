@@ -469,7 +469,7 @@ class TestAdminAnalytics(unittest.TestCase):
         r = client.get("/admin/search-analytics")
         self.assertEqual(r.status_code, 403)
 
-    def test_admin_page_renders(self):
+    def test_admin_page_renders_all_four_sections(self):
         # Seed a couple of queries so the dashboard has something to show
         client.get("/api/search?q=fed")
         client.get("/api/search?q=nothingheremakesitzero")
@@ -478,8 +478,179 @@ class TestAdminAnalytics(unittest.TestCase):
         cookies = _login_as(admin_uid)
         r = client.get("/admin/search-analytics", cookies=cookies)
         self.assertEqual(r.status_code, 200)
-        self.assertIn("Top queries", r.text)
-        self.assertIn("Zero-result queries", r.text)
+        # The four section headings — contract for the route.
+        self.assertIn("Top 50 queries", r.text)
+        self.assertIn("No-result queries", r.text)
+        self.assertIn("Conversion funnel", r.text)
+        self.assertIn("Time of day", r.text)
+        # SVG charts present.
+        self.assertIn("funnel-svg", r.text)
+        self.assertIn("hour-svg", r.text)
+
+
+# ── queries/search_analytics.py — direct accessor tests ────────────────────
+
+
+class TestSearchAnalyticsQueries(unittest.TestCase):
+    """Direct tests of the queries module that backs the admin route.
+
+    Touches each of the four public functions:
+      * top_queries
+      * no_result_queries
+      * query_to_conversion_rate
+      * hourly_distribution
+    """
+
+    def setUp(self):
+        # Fresh slate so seed counts are deterministic. Foreign keys mean
+        # we have to clear children before parents.
+        with db.conn() as c:
+            c.execute("DELETE FROM search_queries")
+
+    def _log(
+        self,
+        query: str,
+        *,
+        user_id: int | None = None,
+        result_count: int = 5,
+        clicked: bool = False,
+        ts: int | None = None,
+    ) -> int:
+        """Insert one row, return id. ts defaults to now."""
+        ts = ts if ts is not None else _now()
+        with db.conn() as c:
+            cur = c.execute(
+                "INSERT INTO search_queries "
+                "(user_id, query, result_count, clicked_at, ts) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, query, result_count, ts if clicked else None, ts),
+            )
+            return int(cur.lastrowid)
+
+    def test_top_queries_orders_by_hit_count(self):
+        from queries import search_analytics as qsa
+
+        uid_a = _make_user("topq_a@test.local", "topqa")
+        uid_b = _make_user("topq_b@test.local", "topqb")
+        # "fed" is searched 3x (2 distinct users); "btc" 1x.
+        self._log("fed", user_id=uid_a)
+        self._log("fed", user_id=uid_a)
+        self._log("fed", user_id=uid_b)
+        self._log("btc", user_id=uid_a)
+
+        rows = qsa.top_queries(window_days=7, limit=10)
+        # Index by query for stable assertion.
+        by_q = {r["query"]: r for r in rows}
+        self.assertIn("fed", by_q)
+        self.assertEqual(by_q["fed"]["hits"], 3)
+        self.assertEqual(by_q["fed"]["unique_users"], 2)
+        self.assertGreater(by_q["fed"]["last_searched"], 0)
+        # Ordering: fed first (3 hits), then btc (1 hit)
+        self.assertEqual(rows[0]["query"], "fed")
+
+    def test_no_result_queries_only_returns_zero_hits(self):
+        from queries import search_analytics as qsa
+
+        # Two zero-result, one non-zero — only the zeros should appear.
+        self._log("xyzzyabc", result_count=0)
+        self._log("xyzzyabc", result_count=0)
+        self._log("plover", result_count=0)
+        self._log("fed", result_count=12)
+
+        rows = qsa.no_result_queries(window_days=7, limit=10)
+        qs = {r["query"] for r in rows}
+        self.assertIn("xyzzyabc", qs)
+        self.assertIn("plover", qs)
+        self.assertNotIn("fed", qs)
+        # Most-hit zero query is first.
+        self.assertEqual(rows[0]["query"], "xyzzyabc")
+        self.assertEqual(rows[0]["hits"], 2)
+
+    def test_conversion_funnel_search_click_save_subscribe(self):
+        from queries import search_analytics as qsa
+        import time as _t
+
+        # User A: searched + clicked + saved + subscribed (full funnel)
+        # User B: searched + clicked only
+        # User C: searched, no click, no save, no sub
+        # Anon  : searched (excluded from funnel entirely)
+        uid_a = _make_user("funnel_a@test.local", "funa")
+        uid_b = _make_user("funnel_b@test.local", "funb")
+        uid_c = _make_user("funnel_c@test.local", "func")
+
+        # Seed a prediction we can save against.
+        with db.conn() as c:
+            cur = c.execute(
+                "INSERT INTO predictions (source_handle, category, content, extracted_at) "
+                "VALUES (?, ?, ?, ?)",
+                ("funnel_src", "test", "predicted content", _now()),
+            )
+            pred_id = int(cur.lastrowid)
+
+        t0 = _now()
+        self._log("fed", user_id=uid_a, clicked=True, ts=t0)
+        self._log("fed", user_id=uid_b, clicked=True, ts=t0)
+        self._log("fed", user_id=uid_c, clicked=False, ts=t0)
+        self._log("fed", user_id=None, clicked=False, ts=t0)  # anon
+
+        # Save + subscribe AFTER the first search ts.
+        with db.conn() as c:
+            c.execute(
+                "INSERT INTO saved_predictions (user_id, prediction_id, saved_at) "
+                "VALUES (?, ?, ?)",
+                (uid_a, pred_id, t0 + 60),
+            )
+            c.execute(
+                "INSERT INTO subscriptions (user_id, dashboard_key, plan, "
+                "status, started_at, source) "
+                "VALUES (?, ?, ?, 'active', ?, 'test')",
+                (uid_a, "intelligence", "monthly", t0 + 120),
+            )
+
+        funnel = qsa.query_to_conversion_rate(window_days=7)
+        self.assertEqual(funnel["searched"], 3)  # anon excluded
+        self.assertEqual(funnel["clicked"], 2)
+        self.assertEqual(funnel["saved"], 1)
+        self.assertEqual(funnel["subscribed"], 1)
+        # Rates derived from those counts.
+        self.assertAlmostEqual(funnel["click_rate"], 2 / 3, places=4)
+        self.assertAlmostEqual(funnel["save_rate"], 1 / 3, places=4)
+        self.assertAlmostEqual(funnel["subscribe_rate"], 1 / 3, places=4)
+
+    def test_conversion_funnel_empty_window_returns_zeros(self):
+        from queries import search_analytics as qsa
+
+        f = qsa.query_to_conversion_rate(window_days=7)
+        self.assertEqual(f["searched"], 0)
+        self.assertEqual(f["clicked"], 0)
+        self.assertEqual(f["saved"], 0)
+        self.assertEqual(f["subscribed"], 0)
+        self.assertEqual(f["click_rate"], 0.0)
+
+    def test_hourly_distribution_returns_24_buckets(self):
+        from queries import search_analytics as qsa
+
+        # Drop two queries into deterministic hour-of-day slots.
+        # Pick UTC midnight + offsets so the hour is unambiguous.
+        # 2026-01-01 00:00:00 UTC = 1767225600
+        utc_midnight = 1767225600
+        self._log("a", ts=utc_midnight)  # hour 0
+        self._log("b", ts=utc_midnight + 5 * 3600)  # hour 5
+        self._log("b", ts=utc_midnight + 5 * 3600 + 1)  # hour 5 again
+
+        # Use a wide enough window to include the seeded ts (Jan 2026
+        # is in the past relative to test execution; window_days big
+        # enough to span back to it). Default test date is 2026-05-14.
+        rows = qsa.hourly_distribution(window_days=365)
+        # Exactly 24 buckets in 0..23 order.
+        self.assertEqual(len(rows), 24)
+        hours = [r["hour"] for r in rows]
+        self.assertEqual(hours, list(range(24)))
+        # Hour 5 has 2 hits, hour 0 has 1, rest zero.
+        by_h = {r["hour"]: r["hits"] for r in rows}
+        self.assertEqual(by_h[0], 1)
+        self.assertEqual(by_h[5], 2)
+        self.assertEqual(by_h[12], 0)
 
 
 if __name__ == "__main__":

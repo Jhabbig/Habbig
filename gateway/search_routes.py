@@ -22,7 +22,7 @@ import logging
 import re
 import sqlite3
 import time
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -438,76 +438,171 @@ def _require_admin(request: Request) -> dict:
     return user
 
 
+def _fmt_ts(ts: int) -> str:
+    """Render a unix-second timestamp as "Nm ago" / "Nh ago" / "Nd ago"
+    for the last_searched column. Falls back to "—" for zero/None."""
+    if not ts:
+        return "—"
+    delta = max(0, int(time.time()) - int(ts))
+    if delta < 60:
+        return f"{delta}s ago"
+    if delta < 3600:
+        return f"{delta // 60}m ago"
+    if delta < 86400:
+        return f"{delta // 3600}h ago"
+    return f"{delta // 86400}d ago"
+
+
+def _funnel_svg(funnel: dict) -> str:
+    """Render the search → click → save → subscribe funnel as a
+    monochrome SVG bar chart. Width per stage proportional to count
+    relative to the first stage (searched). Bars are filled
+    ``--text-primary``; the chart uses no colour for categorisation."""
+    stages = [
+        ("Searched", int(funnel.get("searched") or 0)),
+        ("Clicked", int(funnel.get("clicked") or 0)),
+        ("Saved", int(funnel.get("saved") or 0)),
+        ("Subscribed", int(funnel.get("subscribed") or 0)),
+    ]
+    base = max(stages[0][1], 1)  # avoid div0 when no searches
+    rows: list[str] = []
+    bar_h = 28
+    gap = 14
+    label_w = 110
+    chart_w = 560
+    pct_w = 90
+    total_w = label_w + chart_w + pct_w
+    for i, (label, n) in enumerate(stages):
+        y = i * (bar_h + gap)
+        width = (n / base) * chart_w if base else 0
+        pct = (n / base * 100.0) if base else 0.0
+        first = i == 0
+        rows.append(
+            f"<text x='0' y='{y + bar_h - 9}' class='funnel-label'>{html.escape(label)}</text>"
+            f"<rect x='{label_w}' y='{y}' width='{width:.1f}' height='{bar_h}' class='funnel-bar' />"
+            f"<rect x='{label_w}' y='{y}' width='{chart_w}' height='{bar_h}' class='funnel-bar-track' />"
+            f"<text x='{label_w + 8}' y='{y + bar_h - 9}' class='funnel-n'>{n:,}</text>"
+            f"<text x='{total_w}' y='{y + bar_h - 9}' class='funnel-pct' text-anchor='end'>"
+            f"{'100%' if first else f'{pct:.1f}%'}</text>"
+        )
+    height = len(stages) * (bar_h + gap)
+    return (
+        f"<svg viewBox='0 0 {total_w} {height}' role='img' "
+        f"aria-label='Conversion funnel from search to subscribe' "
+        f"class='funnel-svg'>{''.join(rows)}</svg>"
+    )
+
+
+def _hourly_svg(buckets: list[dict]) -> str:
+    """24-bar monochrome bar chart of searches by hour-of-day (UTC).
+    Heights normalised to the busiest hour; zero-hit hours render as a
+    1px floor line so the chart never has visual gaps."""
+    counts = [int(b.get("hits") or 0) for b in buckets[:24]]
+    while len(counts) < 24:
+        counts.append(0)
+    peak = max(counts) if counts else 0
+    chart_w = 720
+    chart_h = 140
+    bar_w = chart_w / 24
+    inner_gap = 4
+    bars: list[str] = []
+    labels: list[str] = []
+    for h in range(24):
+        n = counts[h]
+        norm = (n / peak) if peak else 0.0
+        bh = max(1.0, norm * (chart_h - 24))
+        x = h * bar_w + inner_gap / 2
+        w = bar_w - inner_gap
+        y = chart_h - 18 - bh
+        bars.append(
+            f"<rect x='{x:.2f}' y='{y:.2f}' width='{w:.2f}' height='{bh:.2f}' "
+            f"class='hour-bar' />"
+            f"<title>{h:02d}:00 UTC — {n:,} searches</title>"
+        )
+        # Hour label every 3h so the axis stays legible at 720px wide.
+        if h % 3 == 0:
+            labels.append(
+                f"<text x='{x + w / 2:.2f}' y='{chart_h - 4}' "
+                f"class='hour-label' text-anchor='middle'>{h:02d}</text>"
+            )
+    return (
+        f"<svg viewBox='0 0 {chart_w} {chart_h}' role='img' "
+        f"aria-label='Searches by hour of day (UTC)' class='hour-svg'>"
+        f"{''.join(bars)}{''.join(labels)}</svg>"
+    )
+
+
 async def admin_search_analytics(request: Request):
-    """Top queries last 7d, zero-result rate, no-click rate."""
+    """Top queries, no-result queries, conversion funnel, hourly dist.
+
+    All four sections cover the same trailing-7-day window. Queries
+    live in ``queries/search_analytics.py`` so this handler is just
+    page assembly + escaping.
+    """
     _require_admin(request)
 
-    since = int(time.time()) - 7 * 86400
-    top_queries: list[dict] = []
-    zero_result: list[dict] = []
-    summary: dict[str, Any] = {"total": 0, "zero_count": 0, "no_click_count": 0}
+    # Local import keeps the route module importable in degraded test
+    # harnesses that stub gateway.queries but never use this route.
+    from queries import search_analytics as qsa
+
+    window_days = 7
     try:
-        with db.conn() as c:
-            rows = c.execute(
-                "SELECT query, COUNT(*) AS n, "
-                "       AVG(result_count) AS avg_results, "
-                "       SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicks "
-                "FROM search_queries WHERE ts >= ? "
-                "GROUP BY query ORDER BY n DESC LIMIT 20",
-                (since,),
-            ).fetchall()
-            top_queries = [dict(r) for r in rows]
-
-            rows = c.execute(
-                "SELECT query, COUNT(*) AS n FROM search_queries "
-                "WHERE ts >= ? AND result_count = 0 "
-                "GROUP BY query ORDER BY n DESC LIMIT 20",
-                (since,),
-            ).fetchall()
-            zero_result = [dict(r) for r in rows]
-
-            row = c.execute(
-                "SELECT COUNT(*) AS total, "
-                "       SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END) AS zero_count, "
-                "       SUM(CASE WHEN clicked_at IS NULL AND result_count > 0 THEN 1 ELSE 0 END) AS no_click_count "
-                "FROM search_queries WHERE ts >= ?",
-                (since,),
-            ).fetchone()
-            if row:
-                summary = dict(row)
-                for k in ("total", "zero_count", "no_click_count"):
-                    summary[k] = summary.get(k) or 0
+        top_qs = qsa.top_queries(window_days=window_days, limit=50)
     except sqlite3.Error as exc:
-        log.warning("admin_search_analytics query failed: %s", exc)
+        log.warning("top_queries failed: %s", exc)
+        top_qs = []
+    try:
+        no_results = qsa.no_result_queries(window_days=window_days, limit=50)
+    except sqlite3.Error as exc:
+        log.warning("no_result_queries failed: %s", exc)
+        no_results = []
+    try:
+        funnel = qsa.query_to_conversion_rate(window_days=window_days)
+    except sqlite3.Error as exc:
+        log.warning("query_to_conversion_rate failed: %s", exc)
+        funnel = {"searched": 0, "clicked": 0, "saved": 0, "subscribed": 0,
+                  "click_rate": 0.0, "save_rate": 0.0, "subscribe_rate": 0.0}
+    try:
+        hourly = qsa.hourly_distribution(window_days=window_days)
+    except sqlite3.Error as exc:
+        log.warning("hourly_distribution failed: %s", exc)
+        hourly = [{"hour": h, "hits": 0} for h in range(24)]
 
-    zero_rate = (summary["zero_count"] / summary["total"]) if summary["total"] else 0.0
-    no_click_rate = (
-        summary["no_click_count"] / max(summary["total"] - summary["zero_count"], 1)
-    )
+    # Header summary cards derived from the same data so we don't pay
+    # for a second pass over search_queries.
+    total_hits = sum(int(r.get("hits") or 0) for r in top_qs)
+    zero_hits = sum(int(r.get("hits") or 0) for r in no_results)
+    zero_rate = (zero_hits / total_hits) if total_hits else 0.0
 
-    def _row(r: dict, kind: str) -> str:
+    def _top_row(r: dict) -> str:
         q = html.escape(r.get("query") or "")
-        if kind == "top":
-            avg = float(r.get("avg_results") or 0)
-            clicks = int(r.get("clicks") or 0)
-            n = int(r.get("n") or 0)
-            return (
-                f"<tr><td><code>{q}</code></td>"
-                f"<td class='num'>{n}</td>"
-                f"<td class='num'>{avg:.1f}</td>"
-                f"<td class='num'>{clicks}</td></tr>"
-            )
         return (
             f"<tr><td><code>{q}</code></td>"
-            f"<td class='num'>{int(r.get('n') or 0)}</td></tr>"
+            f"<td class='num'>{int(r.get('hits') or 0):,}</td>"
+            f"<td class='num'>{int(r.get('unique_users') or 0):,}</td>"
+            f"<td class='num'>{_fmt_ts(int(r.get('last_searched') or 0))}</td>"
+            f"</tr>"
         )
 
-    top_html = "".join(_row(r, "top") for r in top_queries) or (
+    def _zero_row(r: dict) -> str:
+        q = html.escape(r.get("query") or "")
+        return (
+            f"<tr><td><code>{q}</code></td>"
+            f"<td class='num'>{int(r.get('hits') or 0):,}</td>"
+            f"<td class='num'>{int(r.get('unique_users') or 0):,}</td>"
+            f"<td class='num'>{_fmt_ts(int(r.get('last_searched') or 0))}</td>"
+            f"</tr>"
+        )
+
+    top_html = "".join(_top_row(r) for r in top_qs) or (
         "<tr><td colspan='4' class='muted'>No searches in last 7 days.</td></tr>"
     )
-    zero_html = "".join(_row(r, "zero") for r in zero_result) or (
-        "<tr><td colspan='2' class='muted'>No zero-result searches — nice.</td></tr>"
+    zero_html = "".join(_zero_row(r) for r in no_results) or (
+        "<tr><td colspan='4' class='muted'>No zero-result searches — nice.</td></tr>"
     )
+
+    funnel_svg = _funnel_svg(funnel)
+    hourly_svg = _hourly_svg(hourly)
 
     body = f"""<!DOCTYPE html><html lang='en'><head>
 <meta charset='utf-8'><title>Search analytics — narve admin</title>
@@ -526,6 +621,7 @@ border-radius:12px;padding:16px}}
 letter-spacing:0.08em;margin:0 0 8px;font-family:var(--font-mono)}}
 .card-value{{font-size:28px;font-weight:500;margin:0;font-variant-numeric:tabular-nums}}
 h2{{font-family:var(--font-display);font-style:italic;font-size:24px;margin:32px 0 8px}}
+.section-blurb{{color:var(--text-secondary);font-size:13px;margin:0 0 12px}}
 table{{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}}
 th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border-subtle)}}
 th{{color:var(--text-tertiary);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;
@@ -533,34 +629,66 @@ font-family:var(--font-mono);font-weight:500}}
 .num{{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--font-mono)}}
 code{{font-family:var(--font-mono);font-size:12px;color:var(--text-primary)}}
 .muted{{color:var(--text-tertiary);text-align:center;padding:24px;font-style:italic}}
+.chart-wrap{{background:var(--bg-raised);border:1px solid var(--border-default);
+border-radius:12px;padding:20px;margin-top:8px}}
+.funnel-svg,.hour-svg{{display:block;width:100%;height:auto;max-width:760px;margin:0 auto}}
+.funnel-label{{font-size:11px;fill:var(--text-secondary);font-family:var(--font-mono);
+text-transform:uppercase;letter-spacing:0.08em}}
+.funnel-n{{font-size:12px;fill:var(--text-inverse);font-family:var(--font-mono);
+font-variant-numeric:tabular-nums}}
+.funnel-pct{{font-size:11px;fill:var(--text-tertiary);font-family:var(--font-mono);
+font-variant-numeric:tabular-nums}}
+.funnel-bar-track{{fill:var(--border-subtle);opacity:0.6}}
+.funnel-bar{{fill:var(--text-primary)}}
+.hour-bar{{fill:var(--text-primary)}}
+.hour-label{{font-size:10px;fill:var(--text-tertiary);font-family:var(--font-mono)}}
+@media (max-width:640px){{
+  body{{padding:24px 16px}}
+  .grid{{grid-template-columns:1fr}}
+}}
 </style></head><body>
 <h1>Search analytics</h1>
-<p class='meta'>Unified ⌘K search · last 7 days</p>
+<p class='meta'>Unified ⌘K search · last 7 days · UTC</p>
 
 <div class='grid'>
   <div class='card'><p class='card-label'>Total queries</p>
-    <p class='card-value'>{summary['total']:,}</p></div>
-  <div class='card'><p class='card-label'>Zero-result rate</p>
+    <p class='card-value'>{total_hits:,}</p></div>
+  <div class='card'><p class='card-label'>Zero-result share</p>
     <p class='card-value'>{zero_rate * 100:.1f}%</p></div>
-  <div class='card'><p class='card-label'>No-click rate (non-zero)</p>
-    <p class='card-value'>{no_click_rate * 100:.1f}%</p></div>
+  <div class='card'><p class='card-label'>Search→subscribe rate</p>
+    <p class='card-value'>{float(funnel.get('subscribe_rate') or 0.0) * 100:.1f}%</p></div>
 </div>
 
-<h2>Top queries</h2>
+<h2>Top 50 queries</h2>
+<p class='section-blurb'>Last 7 days, ordered by hit count. Unique users
+counts authenticated searchers only.</p>
 <table>
-  <thead><tr><th>Query</th><th class='num'>Searches</th>
-    <th class='num'>Avg results</th><th class='num'>Clicks</th></tr></thead>
+  <thead><tr><th>Query</th><th class='num'>Hits</th>
+    <th class='num'>Unique users</th><th class='num'>Last searched</th></tr></thead>
   <tbody>{top_html}</tbody>
 </table>
 
-<h2>Zero-result queries</h2>
-<p style='color:var(--text-secondary);font-size:13px;margin:0 0 8px'>
-  Content users look for that we don't have. Candidates for new
-  categories, alias entries, or product gaps.</p>
+<h2>No-result queries</h2>
+<p class='section-blurb'>Searches that returned zero hits. Each row is a
+content gap — candidates for new categories, alias entries, or
+predictions we don't yet index.</p>
 <table>
-  <thead><tr><th>Query</th><th class='num'>Searches</th></tr></thead>
+  <thead><tr><th>Query</th><th class='num'>Hits</th>
+    <th class='num'>Unique users</th><th class='num'>Last searched</th></tr></thead>
   <tbody>{zero_html}</tbody>
 </table>
+
+<h2>Conversion funnel</h2>
+<p class='section-blurb'>Distinct authenticated users at each step.
+Save and subscribe count only events that occurred AFTER the user's
+first search in the window, so historical activity doesn't inflate.</p>
+<div class='chart-wrap'>{funnel_svg}</div>
+
+<h2>Time of day</h2>
+<p class='section-blurb'>Searches per hour of day (UTC) across the
+window. Reveals when our audience is awake — useful for digest
+scheduling.</p>
+<div class='chart-wrap'>{hourly_svg}</div>
 </body></html>"""
     return HTMLResponse(body)
 
