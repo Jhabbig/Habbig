@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -30,6 +31,50 @@ from security.rate_limiter import rate_limit, get_client_ip
 
 
 log = logging.getLogger("push_routes")
+
+
+# Canonical push-service hosts. Reject anything else so attackers can't
+# coerce the server into sending VAPID-signed payloads to arbitrary HTTPS
+# endpoints (SSRF + push-spam vector). Entries prefixed with "*." match
+# any host ending in that suffix.
+_PUSH_HOST_ALLOWLIST = frozenset({
+    # Google FCM (Chrome / Android / Edge)
+    "fcm.googleapis.com",
+    "android.googleapis.com",
+    "push.googleapis.com",
+    # Mozilla Autopush (Firefox)
+    "updates.push.services.mozilla.com",
+    "updates-autopush.push.services.mozilla.com",
+    # Apple WebPush (Safari)
+    "web.push.apple.com",
+    "api.push.apple.com",
+    # Microsoft WNS (Edge legacy / Windows)
+    "*.notify.windows.com",
+})
+
+
+def _is_allowed_push_host(endpoint: str) -> bool:
+    """Return True iff ``endpoint`` is https:// and points at a known
+    push service host (exact or wildcard-suffix match)."""
+    try:
+        u = urlparse(endpoint)
+    except Exception:
+        return False
+    if u.scheme != "https":
+        return False
+    host = (u.hostname or "").lower()
+    if not host:
+        return False
+    # Exact match
+    if host in _PUSH_HOST_ALLOWLIST:
+        return True
+    # Wildcard suffix match (entries like "*.notify.windows.com")
+    for entry in _PUSH_HOST_ALLOWLIST:
+        if entry.startswith("*."):
+            suffix = entry[1:]  # ".notify.windows.com"
+            if host.endswith(suffix) and len(host) > len(suffix):
+                return True
+    return False
 
 
 def _user_key(request: Request) -> str:
@@ -90,6 +135,8 @@ async def api_push_subscribe(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Missing endpoint or keys")
     if not endpoint.startswith(("https://",)):
         raise HTTPException(status_code=400, detail="endpoint must be https")
+    if not _is_allowed_push_host(endpoint):
+        raise HTTPException(status_code=422, detail="Unsupported push service host")
 
     ua = request.headers.get("user-agent", "")[:500] or None
     try:
