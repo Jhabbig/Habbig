@@ -70,6 +70,39 @@ def _maybe_force_shared_testdb(request):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_module_testclient_cookies(request):
+    """Clear cookies on any module-level TestClient between tests.
+
+    25+ test modules define ``client = TestClient(server.app)`` at
+    module scope and pass per-request ``cookies={...}`` to authed calls.
+    httpx 0.27 silently persists those cookies on the underlying client
+    (the suite emits a DeprecationWarning about exactly this). The next
+    "anonymous request should 401" test inherits the previous test's
+    session cookie. Walk the module's globals, find any TestClient,
+    wipe state before the test runs.
+    """
+    import sys as _sys
+    mod_name = request.node.module.__name__ if hasattr(request.node, "module") else ""
+    mod = _sys.modules.get(mod_name)
+    if mod is None:
+        yield
+        return
+    try:
+        from fastapi.testclient import TestClient as _TC
+    except Exception:
+        yield
+        return
+    for name in list(mod.__dict__):
+        obj = getattr(mod, name, None)
+        if isinstance(obj, _TC):
+            try:
+                obj.cookies.clear()
+            except Exception:
+                pass
+    yield
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Canonical fixtures — opt-in. Existing test files keep doing whatever they
 # do; new tests can lean on these to avoid re-writing boilerplate.

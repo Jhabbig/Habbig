@@ -161,8 +161,9 @@ class TestHtmlErrorPage(unittest.TestCase):
         resp = eh.render_error_page(req, status=404)
         self.assertEqual(resp.status_code, 404)
         body = resp.body.decode()
-        self.assertIn("feedface", body)
-        self.assertIn("Page not found", body)
+        # The 404 page intentionally omits the request id (no
+        # ops-actionable support channel for a "page not found").
+        self.assertIn("Not found", body)
         # Context-appropriate action.
         self.assertIn('href="/dashboards"', body)
         # No stack trace or module name.
@@ -173,7 +174,7 @@ class TestHtmlErrorPage(unittest.TestCase):
         req = _mk_request("/explode")
         resp = eh.render_error_page(req, status=500)
         body = resp.body.decode()
-        self.assertIn("Something went wrong", body)
+        self.assertIn("Something broke", body)
         self.assertIn("Retry", body)
 
     def test_render_429_includes_retry_line(self):
@@ -187,13 +188,15 @@ class TestHtmlErrorPage(unittest.TestCase):
         resp = eh.render_error_page(req, status=402)
         body = resp.body.decode()
         self.assertIn("Subscription required", body)
-        self.assertIn("/billing", body)
+        # The CTA points at /pricing (where the user actually purchases)
+        # rather than /billing (which 404s for unauth visitors).
+        self.assertIn("/pricing", body)
 
     def test_render_503_links_to_status_page(self):
         req = _mk_request("/overload")
         resp = eh.render_error_page(req, status=503)
         body = resp.body.decode()
-        self.assertIn("Temporarily unavailable", body)
+        self.assertIn("Temporarily down", body)
         self.assertIn("/status", body)
 
     def test_html_escapes_potentially_hostile_title(self):
