@@ -78,7 +78,11 @@ _CRITICAL_CSS = (
     '}'
     '*{box-sizing:border-box;margin:0;padding:0}'
     'html{color-scheme:light dark}'
-    'html,body{font-family:var(--font-body);background:var(--bg-base);color:var(--text-primary);'
+    # Don't set body font in critical CSS — pages own their font choice.
+    # Critical CSS only paints background + size; prerelease/landing/
+    # dashboards each declare their own font-family in page CSS without
+    # fighting an injected default.
+    'html,body{background:var(--bg-base);color:var(--text-primary);'
     '-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;'
     'min-height:100vh;min-height:100dvh;font-size:15px;line-height:1.5}'
     'a{color:var(--text-secondary);text-decoration:none}'

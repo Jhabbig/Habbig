@@ -1,0 +1,288 @@
+<!-- /admin/integrations — single-pane status for every external SaaS narve.ai
+     leans on. Wrapped by admin_shell. Body-only fragment.
+
+     Eight rows: Stripe / Anthropic / Polymarket / Kalshi / SMTP / Sentry /
+     BetterStack / Cloudflare. Status glyph is monochrome — solid dot for
+     connected, hollow dot for degraded, × for down. The aria-label spells
+     the status out so the page is readable past colour.
+
+     "Test connection" buttons POST to /api/admin/integrations/{slug}/test
+     and render the latency / error inline. CSRF rides via the global
+     middleware (cookie + header). -->
+
+<div class="int-page" style="max-width:1100px">
+
+  <div class="admin-section" style="margin-bottom:24px">
+    <p style="margin:0;color:var(--text-secondary);font-size:var(--text-md);line-height:1.55">
+      Configuration + live state for every external service narve.ai depends on.
+      <strong>{{ raw_integration_count }}</strong> integrations. Solid dot =
+      connected, hollow dot = degraded, × = down. The "Test connection" button
+      issues a live probe and reports latency.
+    </p>
+  </div>
+
+  <section class="int-tally" aria-label="Integration totals">
+    <div class="int-tally__cell"><span class="int-tally__num" id="int-tally-connected">{{ raw_tally_connected }}</span><span class="int-tally__lbl">Connected</span></div>
+    <div class="int-tally__cell"><span class="int-tally__num" id="int-tally-degraded">{{ raw_tally_degraded }}</span><span class="int-tally__lbl">Degraded</span></div>
+    <div class="int-tally__cell"><span class="int-tally__num" id="int-tally-down">{{ raw_tally_down }}</span><span class="int-tally__lbl">Down</span></div>
+    <div class="int-tally__refresh">
+      Last refresh:
+      <span id="int-last-refresh" class="int-mono">just now</span>
+    </div>
+  </section>
+
+  <div class="int-list" id="int-list">
+    {{ raw_integration_rows }}
+  </div>
+
+</div>
+
+<style>
+  .int-page { font-family: var(--font-ui); }
+
+  .int-tally {
+    display: flex;
+    align-items: baseline;
+    gap: 32px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .int-tally__cell { display: flex; align-items: baseline; gap: 8px; }
+  .int-tally__num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 17px;
+    color: var(--text-primary);
+  }
+  .int-tally__lbl {
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
+  }
+  .int-tally__refresh {
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-size: 12px;
+  }
+  .int-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .int-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .int-row {
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 14px 18px;
+    background: var(--bg-card, var(--bg-inset));
+  }
+  .int-row[data-status="degraded"] { border-color: var(--border-default); }
+  .int-row[data-status="down"]    { border-color: var(--border-strong, var(--border-default)); }
+
+  .int-row-head {
+    display: grid;
+    grid-template-columns: 22px 90px 1fr auto auto;
+    align-items: center;
+    gap: 14px;
+  }
+  .int-glyph {
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-primary);
+    text-align: center;
+  }
+  .int-status-label {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+  }
+  .int-name {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 15px;
+    margin: 0;
+    color: var(--text-primary);
+  }
+  .int-summary {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .int-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .int-test-btn {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 5px 10px;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    line-height: 1;
+  }
+  .int-test-btn:hover {
+    background: var(--bg-hover, var(--bg-inset));
+  }
+  .int-test-btn:disabled {
+    opacity: 0.5;
+    cursor: progress;
+  }
+  .int-test-result {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+    min-width: 90px;
+    text-align: right;
+  }
+  .int-test-result[data-result="ok"]   { color: var(--text-primary); }
+  .int-test-result[data-result="fail"] { color: var(--text-primary); font-weight: 600; }
+
+  .int-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px 18px;
+    margin: 12px 0 0 36px;
+    padding: 0;
+  }
+  .int-detail {
+    display: grid;
+    grid-template-columns: minmax(110px, auto) 1fr;
+    column-gap: 10px;
+    align-items: baseline;
+  }
+  .int-detail dt {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .int-detail dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 720px) {
+    .int-row-head {
+      grid-template-columns: 22px 1fr;
+      grid-template-rows: auto auto auto;
+      row-gap: 8px;
+    }
+    .int-status-label { grid-column: 2; }
+    .int-name { grid-column: 2; }
+    .int-summary { grid-column: 1 / -1; text-align: left; }
+    .int-actions { grid-column: 1 / -1; justify-content: flex-start; }
+    .int-details { margin-left: 0; }
+  }
+</style>
+
+<script>
+(function(){
+  function readCsrf(){
+    var m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/) ||
+            document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function fmtLatency(ms){
+    if (typeof ms !== 'number' || ms < 0) return '—';
+    if (ms < 1000) return ms + 'ms';
+    return (ms/1000).toFixed(2) + 's';
+  }
+
+  function runTest(btn){
+    var slug = btn.getAttribute('data-slug');
+    var resultEl = document.querySelector(
+      '.int-test-result[data-slug="' + slug + '"]'
+    );
+    if (!slug || !resultEl) return;
+    btn.disabled = true;
+    resultEl.textContent = 'testing…';
+    resultEl.removeAttribute('data-result');
+
+    var headers = {'Content-Type': 'application/json'};
+    var csrf = readCsrf();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+
+    fetch('/api/admin/integrations/' + encodeURIComponent(slug) + '/test', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: headers,
+      body: '{}'
+    })
+      .then(function(r){ return r.json().then(function(j){ return {ok: r.ok, body: j}; }); })
+      .then(function(payload){
+        var b = payload.body || {};
+        if (b.ok) {
+          resultEl.textContent = '✓ ' + fmtLatency(b.latency_ms);
+          resultEl.setAttribute('data-result', 'ok');
+        } else {
+          resultEl.textContent = '× ' + (b.error || ('http ' + (payload.ok ? '?' : 'err')));
+          resultEl.setAttribute('data-result', 'fail');
+        }
+      })
+      .catch(function(err){
+        resultEl.textContent = '× ' + (err && err.message || 'error');
+        resultEl.setAttribute('data-result', 'fail');
+      })
+      .then(function(){ btn.disabled = false; });
+  }
+
+  document.addEventListener('click', function(ev){
+    var btn = ev.target.closest && ev.target.closest('.int-test-btn');
+    if (!btn) return;
+    runTest(btn);
+  });
+
+  function refreshSnapshot(){
+    if (document.visibilityState !== 'visible') return;
+    fetch('/api/admin/integrations', {credentials: 'same-origin'})
+      .then(function(r){ if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
+      .then(function(data){
+        var int = (data && data.integrations) || {};
+        var tally = {connected: 0, degraded: 0, down: 0};
+        Object.keys(int).forEach(function(slug){
+          var s = int[slug].status;
+          if (tally[s] != null) tally[s]++;
+          var row = document.getElementById('int-row-' + slug);
+          if (row) row.setAttribute('data-status', s);
+        });
+        document.getElementById('int-tally-connected').textContent = tally.connected;
+        document.getElementById('int-tally-degraded').textContent = tally.degraded;
+        document.getElementById('int-tally-down').textContent = tally.down;
+        document.getElementById('int-last-refresh').textContent =
+          new Date().toLocaleTimeString();
+      })
+      .catch(function(){ /* silent — initial paint stays correct */ });
+  }
+  setInterval(refreshSnapshot, 30000);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') refreshSnapshot();
+  });
+})();
+</script>
