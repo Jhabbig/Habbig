@@ -162,6 +162,89 @@ Cloudflare caches HTML. After a CSS or JS change:
 | Email is dry-run only | `EMAIL_DRY_RUN=true` or no relay configured | Unset DRY_RUN and set `EMAIL_RELAY_URL` or `SMTP_HOST` in the env file |
 | Migration crashes at startup | Bad `revision` / `down_revision` chain | See [CONTRIBUTING.md](CONTRIBUTING.md#migration-rules) |
 
+## Backup + recovery
+
+Two backup pipelines run in parallel against narve.ai's SQLite stores:
+
+| Pipeline | Cadence | Scope | Driver |
+| --- | --- | --- | --- |
+| Legacy gateway crons | hourly :07, daily 03:14, Sun 03:42 offsite, Mon 04:07 verify | `gateway/auth.db` only | `gateway/scripts/backup_{hourly,daily,offsite,verify}.sh` installed via `install_backup_cron.sh` |
+| Unified daily snapshot | daily 03:00 UTC | `gateway/auth.db` + `voters-dashboard/voters.sqlite` + `whale-dashboard/whale.sqlite` | `scripts/backup.sh` invoked by `narve-backup.timer` systemd unit |
+
+Snapshots from both pipelines land under `gateway/backups/` (this directory is `.gitignore`d). The unified script uses SQLite's `VACUUM INTO` — atomic against a live writer, smaller artifact than a file copy — and gzips with `-9`. The legacy hourly cron uses `.backup` for fresher recovery points.
+
+### Retention policy (unified snapshot)
+
+`scripts/backup.sh` keeps:
+
+- **7 daily** snapshots — the 7 newest files, always
+- **4 weekly** anchors — one per ISO week, last 4 weeks
+- **12 monthly** anchors — one per calendar month, last 12 months
+- Hard cap: anything older than 90 days is deleted unconditionally
+
+Pruning runs at the tail of every backup invocation, so the working set converges to ≤23 gzipped files per DB on a steady-state daily cadence.
+
+### Install the systemd timer
+
+```bash
+sudo cp scripts/systemd/narve-backup.service /etc/systemd/system/
+sudo cp scripts/systemd/narve-backup.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now narve-backup.timer
+systemctl list-timers narve-backup.timer
+```
+
+Verify after a few days:
+
+```bash
+journalctl -u narve-backup --since "3 days ago"
+ls -la ~/Habbig/gateway/backups/
+```
+
+### Restore from a backup
+
+`scripts/restore.sh <backup-file>` is the operator-driven restore path:
+
+```bash
+# from anywhere on the prod box
+scripts/restore.sh ~/Habbig/gateway/backups/auth_20260514_030000.db.gz
+```
+
+The script:
+
+1. Decompresses (if `.gz`) into `gateway/backups/restore_staging/`.
+2. Validates the SQLite file header + runs `PRAGMA integrity_check`. Aborts on failure.
+3. Infers the live target from the filename prefix (`auth_`, `voters_`, `whale_`).
+4. Prints a confirmation summary and waits for the operator to type `RESTORE`. Anything else aborts and leaves the staged copy in place for inspection.
+5. Moves the current live DB aside as `<target>.preremove-<unix-ts>`, then copies the staged file into place. Does **not** restart services — that's manual.
+
+After restore: `systemctl restart narve-gateway`, hit `/health`, then `PRAGMA integrity_check` on the live DB. Once verified, delete the `.preremove-*` file.
+
+### Recovery drill (corruption detection)
+
+The APScheduler job `recovery_drill` (lives in `gateway/jobs/db_maintenance.py`, registered at 05:20 UTC on the first day of each quarter) is the canary for backup corruption:
+
+1. Snapshots the live `auth.db` via the `.backup` API.
+2. Runs `PRAGMA integrity_check` + `PRAGMA foreign_key_check` on the copy.
+3. Compares `COUNT(*)` on `users` and `predictions` live-vs-restore — divergence >1% is a FAIL.
+4. Writes a row to `drill_runs` (visible at `/admin/backups § Recovery drills`).
+
+**If a drill fails**: snapshots are corrupt at the source, not at rest. Treat as SEV-2:
+
+1. Page on-call; do not deploy until resolved.
+2. Pull the most recent gzip from `gateway/backups/` and run `scripts/restore.sh` against a staging path (do not overwrite prod): `HABBIG_ROOT=/tmp/staging scripts/restore.sh <gz>`.
+3. Walk backwards through retained snapshots until one passes `integrity_check`. That gives you the corruption window.
+4. If every retained snapshot fails: pull the offsite weekly (`gateway/scripts/backup_offsite.sh` target) — the offsite weekly is the disaster floor.
+5. If the offsite is also corrupt: declare data-loss incident, follow `playbooks/database_corruption.md`.
+
+The drill runs quarterly — if you suspect mid-cycle corruption (slow queries, FK violations in logs), invoke it manually:
+
+```bash
+# on the server, in a python shell under the gateway venv
+from gateway.jobs.db_maintenance import recovery_drill
+import asyncio; print(asyncio.run(recovery_drill()))
+```
+
 ## Incident response
 
 1. Check `/status` — any component red?

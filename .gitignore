@@ -119,6 +119,8 @@ cache/
 Polymarket_backup_*/
 .backup_*/
 **/.backup_*/
+# SQLite snapshots produced by scripts/backup.sh + gateway/scripts/backup_*.sh
+gateway/backups/
 
 # Scratch / work-in-progress directory with orphaned copies of files
 workdir/

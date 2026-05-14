@@ -1,0 +1,33 @@
+[Unit]
+Description=narve.ai daily SQLite backup
+After=network.target
+# Don't loop forever if the backup script itself is broken
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=julianhabbig
+Group=julianhabbig
+WorkingDirectory=/home/julianhabbig/Habbig
+ExecStart=/bin/bash /home/julianhabbig/Habbig/scripts/backup.sh
+
+# Hardening (narve doesn't need much; these are belt-and-suspenders)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Backup script writes into gateway/backups/ and reads everywhere under ~/Habbig
+ReadWritePaths=/home/julianhabbig/Habbig/gateway/backups
+ReadWritePaths=/tmp
+
+# Env file path (optional — HABBIG_ROOT, BACKUP_DIR can override defaults)
+EnvironmentFile=-/home/julianhabbig/Habbig/gateway/.env
+
+# Stdout/stderr go to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=narve-backup
+
+[Install]
+WantedBy=multi-user.target

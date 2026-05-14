@@ -1096,7 +1096,7 @@ _PUBLIC_PATHS = frozenset({
     "/offline",
     # Public SEO content pages — see seo_routes.py
     "/about", "/how-it-works", "/methodology", "/faq",
-    "/team", "/press", "/changelog", "/narve",
+    "/team", "/press", "/changelog", "/changelog.rss", "/narve",
     # Developer docs — public page describing /api/public/v1/* for SEO.
     "/api/docs",
 })
@@ -2997,6 +2997,7 @@ _SITEMAP_ENTRIES = [
     ("/how-it-works",   "monthly", "0.8"),
     ("/methodology",    "monthly", "0.7"),
     ("/faq",            "monthly", "0.7"),
+    ("/changelog",      "weekly",  "0.7"),
     ("/narve",          "monthly", "0.7"),
     ("/calendar",       "hourly",  "0.7"),
     ("/terms",          "yearly",  "0.3"),

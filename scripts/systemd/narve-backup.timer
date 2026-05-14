@@ -1,0 +1,19 @@
+[Unit]
+Description=narve.ai daily SQLite backup (timer)
+# Pair with narve-backup.service. Timer fires the service at 03:00 UTC
+# every day. Persistent=true catches missed runs after host downtime.
+
+[Timer]
+# 03:00 UTC daily. Pick a slot outside the hourly auth.db backups
+# (`gateway/scripts/backup_hourly.sh` runs at :07 of every hour) so the
+# two don't contend on the sqlite writer lock.
+OnCalendar=*-*-* 03:00:00 UTC
+# Re-run on next boot if the system was down at 03:00.
+Persistent=true
+# Spread the load across boxes by ±5 minutes — keeps a fleet of boxes
+# from all VACUUMing at exactly 03:00.
+RandomizedDelaySec=300
+Unit=narve-backup.service
+
+[Install]
+WantedBy=timers.target
