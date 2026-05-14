@@ -1,0 +1,33 @@
+[Unit]
+Description=narve.ai gateway service
+After=network.target tailscaled.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=julianhabbig
+Group=julianhabbig
+WorkingDirectory=/home/julianhabbig/Habbig
+ExecStart=/usr/bin/python3 -m uvicorn server:app --host 127.0.0.1 --port 7000 --app-dir gateway
+Restart=on-failure
+RestartSec=5
+
+# Hardening (narve doesn't need much; these are belt-and-suspenders)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/julianhabbig/Habbig
+ReadWritePaths=/tmp
+
+# Env file path
+EnvironmentFile=-/home/julianhabbig/Habbig/gateway/.env
+
+# Stdout/stderr go to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=narve-gateway
+
+[Install]
+WantedBy=multi-user.target

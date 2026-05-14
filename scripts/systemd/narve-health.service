@@ -1,0 +1,33 @@
+[Unit]
+Description=narve.ai health (world health) service
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=julianhabbig
+Group=julianhabbig
+WorkingDirectory=/home/julianhabbig/Habbig/world-health-dashboard
+ExecStart=/usr/bin/python3 server.py
+Restart=on-failure
+RestartSec=5
+
+# Hardening (narve doesn't need much; these are belt-and-suspenders)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/julianhabbig/Habbig/world-health-dashboard
+ReadWritePaths=/tmp
+
+# Env file path
+EnvironmentFile=-/home/julianhabbig/Habbig/gateway/.env
+
+# Stdout/stderr go to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=narve-health
+
+[Install]
+WantedBy=multi-user.target
