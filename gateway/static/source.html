@@ -3,14 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Source · narve.ai</title>
-  <meta name="description" content="Source profile on narve.ai.">
-  <meta name="robots" content="noindex, nofollow">
+  <title>@{{ handle }} · narve.ai</title>
+  <meta name="description" content="@{{ handle }} on narve.ai — credibility-scored prediction source.">
+  {{ raw_canonical }}
+  {{ raw_og }}
+  {{ raw_jsonld }}
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ static: pages/source.css }}">
-<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="icon" type="image/png" href="{{ static: img/logo.png }}">
   <link rel="apple-touch-icon" href="{{ static: img/logo.png }}">
   <link rel="stylesheet" href="/_gateway_static/css/share-button.css">
@@ -20,75 +22,83 @@
   <div class="src-shell">
     <a href="/" class="src-back">← narve.ai</a>
 
-    <header class="src-header">
-      <div class="src-eyebrow">Credibility-scored source</div>
-      <h1 class="src-handle">@{{ handle }}</h1>
-      <p class="src-lede">Prediction market source tracked by narve.ai. Credibility and accuracy below are updated as new predictions resolve.</p>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-        <a class="src-cta" href="/pricing">Unlock full signal history →</a>
-        <button type="button"
-                data-add-to-collection
-                data-item-type="source"
-                data-item-ref="{{ handle }}"
-                style="padding:10px 16px;border:1px solid var(--border,#e5e5e5);border-radius:6px;background:transparent;color:inherit;font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:0.06em">
-          + Collection
-        </button>
-        <span data-share
-              data-share-url="https://narve.ai/sources/{{ handle }}"
-              data-share-title="@{{ handle }} on narve.ai"
-              data-share-og="/og/source/{{ handle }}"></span>
-        <button class="narve-share-btn"
-                data-share-kind="source"
-                data-share-handle="{{ handle }}"
-                aria-label="Share this source profile as a public card">
-          Share card
-        </button>
+    <header class="src-hero">
+      <div class="src-hero__avatar" aria-hidden="true">{{ avatar_initial }}</div>
+      <div class="src-hero__body">
+        <h1 class="src-hero__name">@{{ handle }}</h1>
+        <p class="src-hero__desc">{{ description }}</p>
+        <div class="src-hero__actions">
+          <button type="button"
+                  data-add-to-collection
+                  data-item-type="source"
+                  data-item-ref="{{ handle }}"
+                  class="src-action-btn">
+            + Collection
+          </button>
+          <span data-share
+                data-share-url="https://narve.ai/sources/{{ handle }}"
+                data-share-title="@{{ handle }} on narve.ai"
+                data-share-og="/og/source/{{ handle }}"></span>
+          <button class="narve-share-btn src-action-btn"
+                  data-share-kind="source"
+                  data-share-handle="{{ handle }}"
+                  aria-label="Share this source profile as a public card">
+            Share card
+          </button>
+        </div>
       </div>
     </header>
     <script src="/_gateway_static/collections_widget.js" defer></script>
 
     <section class="src-stats" aria-label="Key statistics">
       <div class="src-stat">
-        <div class="src-stat-value">{{ global_credibility }}</div>
-        <div class="src-stat-label">Credibility score</div>
+        <div class="src-stat__value">{{ total_predictions }}</div>
+        <div class="src-stat__label">Predictions</div>
       </div>
       <div class="src-stat">
-        <div class="src-stat-value">{{ accuracy }}</div>
-        <div class="src-stat-label">Decay-weighted accuracy</div>
+        <div class="src-stat__value">{{ accuracy }}</div>
+        <div class="src-stat__label">Accuracy</div>
       </div>
       <div class="src-stat">
-        <div class="src-stat-value">{{ total_predictions }}</div>
-        <div class="src-stat-label">Tracked predictions</div>
-      </div>
-      <div class="src-stat">
-        <div class="src-stat-value">{{ correct_predictions }}</div>
-        <div class="src-stat-label">Correct resolutions</div>
+        <div class="src-stat__value">{{ global_credibility }}</div>
+        <div class="src-stat__label">Credibility</div>
       </div>
     </section>
 
-    <section id="main" class="src-section">
-      <h2>Category breakdown</h2>
-      <table class="src-table">
-        <thead>
-          <tr>
-            <th>Category</th>
-            <th class="num">Credibility</th>
-            <th class="num">Predictions</th>
-            <th class="num">Correct</th>
-          </tr>
-        </thead>
-        <tbody>
+    <nav class="src-tabs" role="tablist" aria-label="Source sections">
+      <button type="button" class="src-tab is-active" role="tab" aria-selected="true" aria-controls="src-panel-predictions" data-tab="predictions">Predictions</button>
+      <button type="button" class="src-tab" role="tab" aria-selected="false" aria-controls="src-panel-categories" data-tab="categories">Categories</button>
+      <button type="button" class="src-tab" role="tab" aria-selected="false" aria-controls="src-panel-stats" data-tab="stats">Stats</button>
+    </nav>
+
+    <main id="main">
+      <section id="src-panel-predictions" class="src-panel is-active" role="tabpanel">
+        <ul class="src-card-list" role="list">
+          {{ raw_prediction_rows }}
+        </ul>
+      </section>
+
+      <section id="src-panel-categories" class="src-panel" role="tabpanel" hidden>
+        <ul class="src-card-list" role="list">
           {{ raw_category_rows }}
-        </tbody>
-      </table>
-    </section>
+        </ul>
+      </section>
 
-    <section class="src-section">
-      <h2>How credibility is computed</h2>
-      <p style="color: var(--text-secondary); line-height: 1.7; font-size: 14px;">
-        narve.ai tracks this source's predictions across Polymarket and Kalshi and measures how often they resolved correctly, weighted by recency. Subscribers see per-market signals and edge scores on the <a href="/calendar" style="color: var(--text-primary); text-decoration: underline;">resolution calendar</a>.
-      </p>
-    </section>
+      <section id="src-panel-stats" class="src-panel" role="tabpanel" hidden>
+        <article class="src-card">
+          <h2 class="src-card__title">How credibility is computed</h2>
+          <p class="src-card__body">
+            narve.ai tracks this source's predictions across Polymarket and Kalshi and measures how often they resolved correctly, weighted by recency. Subscribers see per-market signals and edge scores on the <a href="/calendar" class="src-link">resolution calendar</a>.
+          </p>
+        </article>
+        <article class="src-card">
+          <h2 class="src-card__title">Tracked since</h2>
+          <p class="src-card__body">
+            Public credibility data has been collected since <span class="src-mono">{{ tracked_since }}</span> across <span class="src-mono">{{ category_count }}</span> categories.
+          </p>
+        </article>
+      </section>
+    </main>
 
     <footer class="src-footer">
       <div>
@@ -96,10 +106,31 @@
         <a href="/pricing">Pricing</a>
         <a href="/calendar">Calendar</a>
       </div>
-      <div>narve.ai · {{ category_count }} categories tracked</div>
+      <div>narve.ai</div>
     </footer>
   </div>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>
+  <script>
+    (function(){
+      var tabs = document.querySelectorAll('.src-tab');
+      var panels = document.querySelectorAll('.src-panel');
+      tabs.forEach(function(tab){
+        tab.addEventListener('click', function(){
+          var target = tab.getAttribute('data-tab');
+          tabs.forEach(function(t){
+            var active = t === tab;
+            t.classList.toggle('is-active', active);
+            t.setAttribute('aria-selected', active ? 'true' : 'false');
+          });
+          panels.forEach(function(p){
+            var active = p.id === ('src-panel-' + target);
+            p.classList.toggle('is-active', active);
+            if(active){ p.removeAttribute('hidden'); } else { p.setAttribute('hidden',''); }
+          });
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

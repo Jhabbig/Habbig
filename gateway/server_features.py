@@ -659,106 +659,92 @@ async def public_source_profile(request: Request, handle: str):
     preds = _data["preds"]
     total = cred["total_predictions"] or 0
     correct = cred["correct_predictions"] or 0
-    accuracy = int(100 * correct / total) if total else 0
+    accuracy_int = int(100 * correct / total) if total else 0
     score = round(cred["global_credibility"], 2)
     tracked_since = _dt.datetime.fromtimestamp(cred["last_computed_at"]).strftime("%B %Y")
-    category_rows = "".join(
-        f"<tr><td style='padding:10px 0;color:var(--text-primary)'>{_html.escape(c['category'].title())}</td>"
-        f"<td style='padding:10px 0;color:var(--text-secondary);text-align:right'>{round(c['category_credibility'], 2)}</td>"
-        f"<td style='padding:10px 0;color:var(--text-tertiary);text-align:right'>"
-        f"{c['prediction_count']} preds · {int(100 * c['correct_count'] / max(c['prediction_count'], 1))}%</td></tr>"
-        for c in cats
-    ) or "<tr><td colspan='3' style='padding:14px 0;color:var(--text-tertiary)'>No category breakdown yet.</td></tr>"
-    pred_rows = "".join(
-        f"<tr><td style='padding:10px 14px;color:var(--text-primary);font-size:13px'>{_html.escape((p['content'] or '')[:160])}</td>"
-        f"<td style='padding:10px 14px;color:var(--text-tertiary);font-size:12px'>{_html.escape(p['category'] or '')}</td>"
-        f"<td style='padding:10px 14px;color:var(--text-tertiary);font-size:12px'>"
-        f"{'resolved' if p['resolved'] else 'open'}</td></tr>"
+
+    # Build per-card prediction rows (full-width cards, body in --font-body).
+    pred_rows_html = "".join(
+        f'<li>'
+        f'<p class="src-card__body">{_html.escape((p["content"] or "")[:240])}</p>'
+        f'<div class="src-card__meta">'
+        f'<span>{_html.escape((p["category"] or "—"))}</span>'
+        f'<span>{"resolved" if p["resolved"] else "open"}</span>'
+        f'</div>'
+        f'</li>'
         for p in preds[:10]
-    ) or "<tr><td colspan='3' style='padding:14px 0;color:var(--text-tertiary)'>No recent predictions.</td></tr>"
+    ) or '<li class="src-card--empty">No recent predictions tracked yet.</li>'
+
+    # Categories tab — card-list of cat-row variants.
+    cat_rows_html = "".join(
+        f'<li>'
+        f'<div class="src-cat-row">'
+        f'<div class="src-cat-row__name">{_html.escape(c["category"].title())}</div>'
+        f'<div class="src-cat-row__score">{round(c["category_credibility"], 2)}</div>'
+        f'<div class="src-cat-row__sub">'
+        f'{c["prediction_count"]} preds · '
+        f'{int(100 * c["correct_count"] / max(c["prediction_count"], 1))}%'
+        f'</div>'
+        f'</div>'
+        f'</li>'
+        for c in cats
+    ) or '<li class="src-card--empty">No category breakdown yet.</li>'
 
     meta_desc = (
         f"@{handle} has a credibility score of {score} on narve.ai. "
-        f"{accuracy}% accuracy across {total} tracked predictions on Polymarket markets."
+        f"{accuracy_int}% accuracy across {total} tracked predictions on Polymarket markets."
     )
 
-    body = f"""<!DOCTYPE html><html lang='en'><head>
-<meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1.0'>
-<title>@{_html.escape(handle)} Prediction Credibility Score — narve.ai</title>
-<meta name='description' content='{_html.escape(meta_desc)}'>
-<link rel='canonical' href='{_APP_URL}/sources/{_html.escape(handle)}'>
-<meta name='robots' content='index, follow'>
-<meta property='og:type' content='profile'>
-<meta property='og:site_name' content='narve.ai'>
-<meta property='og:title' content='@{_html.escape(handle)} on narve.ai'>
-<meta property='og:description' content='{_html.escape(meta_desc)}'>
-<meta property='og:url' content='{_APP_URL}/sources/{_html.escape(handle)}'>
-<meta property='og:image' content='{_APP_URL}/og/source/{_html.escape(handle)}'>
-<meta property='og:image:width' content='1200'>
-<meta property='og:image:height' content='630'>
-<meta name='twitter:card' content='summary_large_image'>
-<meta name='twitter:site' content='@narveai'>
-<meta name='twitter:title' content='@{_html.escape(handle)} — narve.ai'>
-<meta name='twitter:description' content='{_html.escape(meta_desc)}'>
-<meta name='twitter:image' content='{_APP_URL}/og/source/{_html.escape(handle)}'>
-<script type='application/ld+json'>
-{{
-  "@context": "https://schema.org",
-  "@type": "Person",
-  "name": "@{handle}",
-  "description": "{meta_desc}",
-  "url": "{_APP_URL}/sources/{handle}"
-}}
-</script>
-<link rel='stylesheet' href='/_gateway_static/gateway.css?v=5'>
-<style>
-.wrap{{max-width:760px;margin:0 auto;padding:56px 24px 80px;font-family:var(--font-ui);color:var(--text-primary)}}
-.handle{{font-family:var(--font-display);font-size:36px;font-weight:500;margin:0 0 8px;letter-spacing:-0.02em}}
-.cred-card{{background:var(--bg-surface);border:1px solid var(--border-default);border-radius:12px;padding:28px 32px;margin:24px 0}}
-.cred-score{{font-family:var(--font-display);font-size:52px;font-weight:500;margin:0;letter-spacing:-0.02em}}
-.cred-label{{font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-tertiary);margin:0 0 4px}}
-.meta-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:24px 0}}
-.meta-grid div{{padding:14px 18px;background:var(--bg-raised);border:1px solid var(--border-default);border-radius:8px}}
-.meta-grid strong{{display:block;font-size:18px;margin-bottom:2px}}
-.meta-grid span{{font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em}}
-table{{width:100%;border-collapse:collapse}}
-th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-tertiary);padding:8px 0;border-bottom:1px solid var(--border-default)}}
-.cta{{display:inline-block;background:var(--text-primary);color:var(--interactive-text);padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;margin-top:24px}}
-</style></head><body style='background:var(--bg-base);margin:0'><div class='wrap'>
-<a href='/' style='font-size:12px;color:var(--text-tertiary);text-decoration:none'>← narve.ai</a>
-<h1 class='handle'>@{_html.escape(handle)}</h1>
-<p style='color:var(--text-secondary);font-size:14px'>Public credibility profile</p>
+    handle_safe = _html.escape(handle)
+    avatar_initial = (handle[:1] or "@").upper()
+    meta_desc_safe = _html.escape(meta_desc)
+    canonical_url = f"{_APP_URL}/sources/{handle_safe}"
+    og_meta = (
+        "<meta name='robots' content='index, follow'>\n"
+        "<meta property='og:type' content='profile'>\n"
+        "<meta property='og:site_name' content='narve.ai'>\n"
+        f"<meta property='og:title' content='@{handle_safe} on narve.ai'>\n"
+        f"<meta property='og:description' content='{meta_desc_safe}'>\n"
+        f"<meta property='og:url' content='{canonical_url}'>\n"
+        f"<meta property='og:image' content='{_APP_URL}/og/source/{handle_safe}'>\n"
+        "<meta property='og:image:width' content='1200'>\n"
+        "<meta property='og:image:height' content='630'>\n"
+        "<meta name='twitter:card' content='summary_large_image'>\n"
+        "<meta name='twitter:site' content='@narveai'>\n"
+        f"<meta name='twitter:title' content='@{handle_safe} — narve.ai'>\n"
+        f"<meta name='twitter:description' content='{meta_desc_safe}'>\n"
+        f"<meta name='twitter:image' content='{_APP_URL}/og/source/{handle_safe}'>"
+    )
+    jsonld_payload = (
+        '{"@context":"https://schema.org","@type":"Person",'
+        f'"name":"@{handle}","description":"{meta_desc}",'
+        f'"url":"{canonical_url}"'
+        '}'
+    ).replace("</", "<\\/")
+    description_body = (
+        f"Prediction market source tracked by narve.ai. "
+        f"Credibility and accuracy are updated as new predictions resolve. "
+        f"Rated since {tracked_since}."
+    )
 
-<div class='cred-card'>
-  <p class='cred-label'>Global credibility</p>
-  <p class='cred-score'>{score}</p>
-  <p style='color:var(--text-tertiary);font-size:13px;margin:8px 0 0'>
-    Rated · {accuracy}% accuracy across {total} tracked predictions
-  </p>
-</div>
-
-<div class='meta-grid'>
-  <div><strong>{total}</strong><span>Predictions tracked</span></div>
-  <div><strong>{correct}</strong><span>Correct</span></div>
-  <div><strong>{accuracy}%</strong><span>Accuracy</span></div>
-  <div><strong>{tracked_since}</strong><span>Tracked since</span></div>
-</div>
-
-<h2 style='font-family:var(--font-display);font-size:22px;margin:40px 0 12px;font-weight:500'>Category scores</h2>
-<table>
-<thead><tr><th>Category</th><th style='text-align:right'>Score</th><th style='text-align:right'>Accuracy</th></tr></thead>
-<tbody>{category_rows}</tbody>
-</table>
-
-<h2 style='font-family:var(--font-display);font-size:22px;margin:40px 0 12px;font-weight:500'>Recent predictions</h2>
-<table style='background:var(--bg-surface);border:1px solid var(--border-default);border-radius:8px'>
-<tbody>{pred_rows}</tbody>
-</table>
-
-<a class='cta' href='{_APP_URL}'>View live on narve.ai →</a>
-</div></body></html>"""
-    return HTMLResponse(body)
+    return render_page(
+        "source",
+        request=request,
+        handle=handle,
+        avatar_initial=avatar_initial,
+        description=description_body,
+        total_predictions=f"{total:,}",
+        accuracy=f"{accuracy_int}%",
+        global_credibility=f"{score:.2f}",
+        correct_predictions=f"{correct:,}",
+        tracked_since=tracked_since,
+        category_count=str(len(cats)),
+        raw_prediction_rows=pred_rows_html,
+        raw_category_rows=cat_rows_html,
+        raw_canonical=f"<link rel='canonical' href='{canonical_url}'>",
+        raw_og=og_meta,
+        raw_jsonld=f"<script type='application/ld+json'>{jsonld_payload}</script>",
+    )
 
 
 @app.get("/sitemap.xml")
