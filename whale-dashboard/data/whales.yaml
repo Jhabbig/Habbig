@@ -23,11 +23,11 @@ whales:
   - { cik: "0000831001", name: "Citigroup Inc",                short_name: "Citi",       kind: "fund",          aum_usd_b: 1700.0 }
   - { cik: "0000070858", name: "Bank of America Corp",         short_name: "BofA",       kind: "fund",          aum_usd_b: 1400.0 }
   - { cik: "0000936468", name: "Lockheed Martin Investment Mgmt", short_name: "Lockheed IM", kind: "fund" }
-  - { cik: "0001029160", name: "Wellington Management Group",  short_name: "Wellington", kind: "fund",          aum_usd_b: 1300.0 }
-  - { cik: "0000913760", name: "T Rowe Price Associates",      short_name: "T Rowe",     kind: "fund",          aum_usd_b: 1500.0 }
-  - { cik: "0001029160", name: "Capital Research Global Investors", short_name: "Capital Group", kind: "fund",  aum_usd_b: 2700.0 }
+  - { cik: "0000902219", name: "Wellington Management Group",  short_name: "Wellington", kind: "fund",          aum_usd_b: 1300.0 }
+  - { cik: "0000080255", name: "T Rowe Price Associates",      short_name: "T Rowe",     kind: "fund",          aum_usd_b: 1500.0 }
+  - { cik: "0000354204", name: "Capital Research Global Investors", short_name: "Capital Group", kind: "fund",  aum_usd_b: 2700.0 }
   - { cik: "0001423053", name: "Geode Capital Management",     short_name: "Geode",      kind: "fund",          aum_usd_b: 1200.0 }
-  - { cik: "0000913760", name: "Northern Trust Corp",          short_name: "NTRS",       kind: "fund",          aum_usd_b: 1200.0 }
+  - { cik: "0000073124", name: "Northern Trust Corp",          short_name: "NTRS",       kind: "fund",          aum_usd_b: 1200.0 }
   - { cik: "0001603466", name: "Invesco Ltd",                  short_name: "Invesco",    kind: "fund",          aum_usd_b: 1600.0 }
   - { cik: "0000909661", name: "Franklin Resources Inc",       short_name: "Franklin",   kind: "fund",          aum_usd_b: 1500.0 }
 
@@ -35,32 +35,32 @@ whales:
   - { cik: "0001167483", name: "Citadel Advisors LLC",         short_name: "Citadel",    kind: "fund",          aum_usd_b: 60.0,  notes: "Ken Griffin. Quant-driven multistrat; positions rotate fast." }
   - { cik: "0001037389", name: "Renaissance Technologies LLC", short_name: "RenTech",    kind: "fund",          aum_usd_b: 130.0 }
   - { cik: "0000875553", name: "Two Sigma Investments LP",     short_name: "Two Sigma",  kind: "fund",          aum_usd_b: 60.0 }
-  - { cik: "0001603466", name: "Bridgewater Associates LP",    short_name: "Bridgewater", kind: "fund",         aum_usd_b: 125.0 }
+  - { cik: "0001350694", name: "Bridgewater Associates LP",    short_name: "Bridgewater", kind: "fund",         aum_usd_b: 125.0 }
   - { cik: "0001536411", name: "Millennium Management LLC",    short_name: "Millennium", kind: "fund",          aum_usd_b: 70.0 }
   - { cik: "0001364571", name: "D.E. Shaw & Co LP",            short_name: "DE Shaw",    kind: "fund",          aum_usd_b: 60.0 }
   - { cik: "0001056903", name: "Tiger Global Management",      short_name: "Tiger",      kind: "fund",          aum_usd_b: 50.0 }
-  - { cik: "0001179015", name: "Coatue Management LLC",        short_name: "Coatue",     kind: "fund",          aum_usd_b: 50.0 }
-  - { cik: "0001423053", name: "Lone Pine Capital LLC",        short_name: "Lone Pine",  kind: "fund",          aum_usd_b: 18.0 }
-  - { cik: "0001603466", name: "Viking Global Investors",      short_name: "Viking",     kind: "fund",          aum_usd_b: 50.0 }
+  - { cik: "0001135730", name: "Coatue Management LLC",        short_name: "Coatue",     kind: "fund",          aum_usd_b: 50.0 }
+  - { cik: "0001061165", name: "Lone Pine Capital LLC",        short_name: "Lone Pine",  kind: "fund",          aum_usd_b: 18.0 }
+  - { cik: "0001137461", name: "Viking Global Investors",      short_name: "Viking",     kind: "fund",          aum_usd_b: 50.0 }
 
   # ── Activist / event-driven (13D dominant) ─────────────────────────
   - { cik: "0001336528", name: "Pershing Square Capital Management", short_name: "Pershing", kind: "activist", aum_usd_b: 18.0, twitter: "BillAckman", notes: "Bill Ackman. Concentrated long-only activist." }
   - { cik: "0001167730", name: "Elliott Investment Management LP",   short_name: "Elliott",  kind: "activist", aum_usd_b: 70.0, notes: "Paul Singer. Aggressive event-driven." }
   - { cik: "0001037389", name: "Third Point LLC",              short_name: "Third Point", kind: "activist",   aum_usd_b: 15.0, twitter: "DanLoebHedge" }
   - { cik: "0001345471", name: "Trian Fund Management LP",     short_name: "Trian",      kind: "activist",     aum_usd_b: 10.0, notes: "Nelson Peltz." }
-  - { cik: "0001603466", name: "Starboard Value LP",           short_name: "Starboard",  kind: "activist",     aum_usd_b: 8.0,  notes: "Jeff Smith." }
-  - { cik: "0001179015", name: "Engine No. 1 LLC",             short_name: "Engine No 1", kind: "activist",    notes: "ESG-flavoured activism; won 3 ExxonMobil board seats 2021." }
-  - { cik: "0001603466", name: "ValueAct Capital Management",  short_name: "ValueAct",   kind: "activist",     aum_usd_b: 12.0 }
+  - { cik: "0001517137", name: "Starboard Value LP",           short_name: "Starboard",  kind: "activist",     aum_usd_b: 8.0,  notes: "Jeff Smith." }
+  - { cik: "0001861342", name: "Engine No. 1 LLC",             short_name: "Engine No 1", kind: "activist",    notes: "ESG-flavoured activism; won 3 ExxonMobil board seats 2021." }
+  - { cik: "0001418814", name: "ValueAct Capital Management",  short_name: "ValueAct",   kind: "activist",     aum_usd_b: 12.0 }
   - { cik: "0001364571", name: "Carl Icahn (Icahn Enterprises LP)", short_name: "Icahn", kind: "activist",     aum_usd_b: 16.0, twitter: "Carl_C_Icahn" }
-  - { cik: "0001179015", name: "JANA Partners LLC",            short_name: "JANA",       kind: "activist",     aum_usd_b: 4.0 }
-  - { cik: "0001179015", name: "Politan Capital Management",   short_name: "Politan",    kind: "activist" }
+  - { cik: "0001159159", name: "JANA Partners LLC",            short_name: "JANA",       kind: "activist",     aum_usd_b: 4.0 }
+  - { cik: "0001874058", name: "Politan Capital Management",   short_name: "Politan",    kind: "activist" }
 
   # ── Family offices & individuals ───────────────────────────────────
   - { cik: "0001357955", name: "Soros Fund Management LLC",    short_name: "Soros",      kind: "family_office", aum_usd_b: 28.0, notes: "George Soros family office." }
   - { cik: "0001053507", name: "Duquesne Family Office",       short_name: "Duquesne",   kind: "family_office", notes: "Stanley Druckenmiller." }
   - { cik: "0001008894", name: "Appaloosa LP",                 short_name: "Appaloosa",  kind: "family_office", aum_usd_b: 8.0,  notes: "David Tepper." }
   - { cik: "0001167483", name: "Greenlight Capital Inc",       short_name: "Greenlight", kind: "fund",          aum_usd_b: 1.2,  notes: "David Einhorn." }
-  - { cik: "0001179015", name: "Pabrai Investment Funds",      short_name: "Pabrai",     kind: "family_office", notes: "Mohnish Pabrai. Concentrated value." }
+  - { cik: "0001173334", name: "Pabrai Investment Funds",      short_name: "Pabrai",     kind: "family_office", notes: "Mohnish Pabrai. Concentrated value." }
 
   # ── Notable insiders (Form 4 dominant) ─────────────────────────────
   - { cik: "0001494730", name: "Elon Musk",                    short_name: "Musk",       kind: "insider",       notes: "Filings span TSLA / X / SpaceX-related entities." }

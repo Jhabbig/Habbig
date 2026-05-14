@@ -24,10 +24,12 @@ Port: 8053 (matches gateway/config.json → whale.target).
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
 import sqlite3
+import sys
 import threading
 import time
 from pathlib import Path
@@ -39,6 +41,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+# Make ``scripts/`` importable so we can call the EDGAR seeder from startup.
+_SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # App init
@@ -47,6 +54,45 @@ from fastapi.staticfiles import StaticFiles
 app = FastAPI(title="Whale Watch")
 log = logging.getLogger("whale")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+
+# ── BetterStack / Logtail ─────────────────────────────────────────────────────
+# Ships structured logs to the central BetterStack source for the "whale"
+# subproduct. Falls back to the apex LOGTAIL_TOKEN if the per-service variable
+# is unset. If neither is set we silently skip — stdout/stderr handlers stay
+# attached so logs are never lost.
+class _ServiceTagFilter(logging.Filter):
+    """Stamps every record with service=<name> so BetterStack can route/group."""
+
+    def __init__(self, service_name: str) -> None:
+        super().__init__()
+        self._service = service_name
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+        if not hasattr(record, "service"):
+            record.service = self._service
+        return True
+
+
+_logtail_token = os.getenv("LOGTAIL_TOKEN_WHALE", os.getenv("LOGTAIL_TOKEN", "")).strip()
+# Always tag local records with the service name so downstream aggregators
+# (docker logs -> vector -> wherever) can group correctly even without Logtail.
+logging.getLogger().addFilter(_ServiceTagFilter("whale"))
+if _logtail_token:
+    try:
+        from logtail import LogtailHandler  # type: ignore
+
+        _handler = LogtailHandler(source_token=_logtail_token)
+        _handler.setLevel(logging.INFO)
+        _handler.addFilter(_ServiceTagFilter("whale"))
+        logging.getLogger().addHandler(_handler)
+        log.info("Logtail handler attached", extra={"service": "whale"})
+    except ImportError:
+        log.warning("logtail-python not installed; skipping BetterStack handler",
+                    extra={"service": "whale"})
+    except Exception as _exc:  # pragma: no cover — defensive: never crash on log init
+        log.warning("Logtail init failed: %s", _exc, extra={"service": "whale"})
+
 
 ROOT = Path(__file__).parent
 HTML_PATH = ROOT / "static" / "index.html"
@@ -232,10 +278,78 @@ def _seed_whales() -> None:
     log.info("seeded %d whales", inserted)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# EDGAR ingestion — backgrounded so startup isn't blocked on network I/O.
+#
+# Two phases:
+#   1. If the filings tables are empty (fresh install), run one full sweep
+#      immediately. This populates the Live Feed without waiting a day.
+#   2. Every ``EDGAR_REFRESH_SECONDS`` (default 24h), refresh the recent
+#      filings index for every active whale. INSERT OR IGNORE keeps the
+#      sweep idempotent — re-running costs at most a few CIK lookups.
+#
+# We import ``seed_13f`` lazily inside the task so a missing httpx in
+# some test/CI environment can't break server import.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# 24h. Override with ``EDGAR_REFRESH_SECONDS`` for local debugging.
+EDGAR_REFRESH_SECONDS = int(os.environ.get("EDGAR_REFRESH_SECONDS", str(24 * 3600)))
+# Skip the EDGAR fetch entirely in tests/CI: ``EDGAR_DISABLE_SCHEDULER=1``.
+EDGAR_DISABLE_SCHEDULER = os.environ.get("EDGAR_DISABLE_SCHEDULER", "").strip() == "1"
+
+
+async def _edgar_refresh_loop() -> None:
+    """Run an initial sweep if the DB has no filings, then refresh daily.
+
+    All work runs in a thread executor — the seeder uses blocking httpx +
+    sqlite3 and we don't want to block the event loop.
+    """
+    try:
+        import seed_13f  # type: ignore[import-not-found]
+    except ImportError as e:
+        log.warning("EDGAR seeder unavailable (%s) — refresh loop disabled", e)
+        return
+
+    loop = asyncio.get_running_loop()
+
+    # Phase 1: seed once if empty. Runs on the first iteration of the loop
+    # so a slow EDGAR doesn't delay server boot.
+    try:
+        with _db_lock:
+            empty = seed_13f.filings_view_is_empty(_conn)
+        if empty:
+            log.info("filings tables empty — kicking initial EDGAR sweep")
+            inserted = await loop.run_in_executor(None, seed_13f.main, DB_PATH)
+            log.info("initial EDGAR sweep complete — %d rows inserted", inserted)
+    except Exception as e:  # noqa: BLE001 — never let the loop die
+        log.warning("initial EDGAR sweep failed: %s", e)
+
+    # Phase 2: daily refresh forever.
+    while True:
+        try:
+            await asyncio.sleep(EDGAR_REFRESH_SECONDS)
+            log.info("starting scheduled EDGAR refresh")
+            inserted = await loop.run_in_executor(None, seed_13f.main, DB_PATH)
+            log.info("scheduled EDGAR refresh complete — %d rows inserted", inserted)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("scheduled EDGAR refresh failed: %s", e)
+
+
 @app.on_event("startup")
-def _on_startup() -> None:
+async def _on_startup() -> None:
     _init_schema()
     _seed_whales()
+    if EDGAR_DISABLE_SCHEDULER:
+        log.info("EDGAR_DISABLE_SCHEDULER=1 — refresh loop suppressed")
+        return
+    try:
+        asyncio.create_task(_edgar_refresh_loop())
+        log.info("EDGAR refresh loop scheduled (every %ds)", EDGAR_REFRESH_SECONDS)
+    except RuntimeError as e:
+        # No running event loop — startup outside a real ASGI server.
+        log.warning("could not schedule EDGAR refresh loop: %s", e)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
