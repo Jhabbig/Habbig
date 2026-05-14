@@ -390,6 +390,55 @@ app = FastAPI(
 APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
 APP_ENVIRONMENT = os.environ.get("ENVIRONMENT", "production" if IS_PRODUCTION else "dev")
 APP_START_TIME = time.time()
+APP_SERVICE_NAME = "narve-gateway"
+
+
+def _read_git_sha() -> Optional[str]:
+    """Return a short git SHA (4-12 hex chars) or None.
+
+    Read order: GIT_SHA env, GIT_COMMIT env, then `<repo>/GIT_SHA` file.
+    Anything malformed is silently dropped so /health stays cheap.
+    """
+    for env_key in ("GIT_SHA", "GIT_COMMIT"):
+        v = os.environ.get(env_key, "").strip()
+        if v:
+            short = v[:12]
+            if 4 <= len(short) <= 12 and all(ch in "0123456789abcdefABCDEF" for ch in short):
+                return short
+    try:
+        repo_root = Path(__file__).resolve().parent.parent
+        for fname in ("GIT_SHA", "GIT_COMMIT"):
+            f = repo_root / fname
+            if f.exists():
+                v = f.read_text().strip()[:12]
+                if 4 <= len(v) <= 12 and all(ch in "0123456789abcdefABCDEF" for ch in v):
+                    return v
+    except Exception:
+        pass
+    return None
+
+
+def _read_deployed_at() -> Optional[str]:
+    """Return an ISO-8601 deployment timestamp or None.
+
+    Read order: DEPLOYED_AT env, then mtime of `<repo>/DEPLOYED_AT` file.
+    """
+    v = os.environ.get("DEPLOYED_AT", "").strip()
+    if v:
+        return v
+    try:
+        repo_root = Path(__file__).resolve().parent.parent
+        f = repo_root / "DEPLOYED_AT"
+        if f.exists():
+            import datetime as _dt
+            return _dt.datetime.fromtimestamp(f.stat().st_mtime, tz=_dt.timezone.utc).isoformat()
+    except Exception:
+        pass
+    return None
+
+
+APP_GIT_SHA = _read_git_sha()
+APP_DEPLOYED_AT = _read_deployed_at()
 
 
 # ── OpenAPI customization ──────────────────────────────────────────────────
@@ -2960,16 +3009,113 @@ def _check_site_access_token() -> tuple[str, Optional[str]]:
     return "ok", None
 
 
+def _check_redis() -> tuple[str, Optional[str]]:
+    """Cheap PING on the configured Redis URL. Disabled when REDIS_URL unset."""
+    if not _REDIS_URL:
+        return "disabled", None
+    try:
+        if _redis_client is None:
+            return "error", "redis client not initialized"
+        # Re-use the module-level client; it was configured with a 1s socket timeout.
+        ok = _redis_client.ping()
+        return ("ok", None) if ok else ("error", "ping returned falsey")
+    except Exception as exc:
+        return "error", str(exc)[:200]
+
+
+def _check_scheduler() -> tuple[str, Optional[str]]:
+    """Report whether the in-process scheduler is running.
+
+    Returns ``disabled`` when the worker is intentionally turned off via the
+    ``NARVE_SKIP_SCHEDULER`` environment variable (used in tests and the
+    `--web-only` deploy mode).
+    """
+    if os.environ.get("NARVE_SKIP_SCHEDULER", "").strip():
+        return "disabled", None
+    try:
+        sched = globals().get("_scheduler") or globals().get("scheduler")
+        if sched is None:
+            return "disabled", None
+        running = getattr(sched, "running", None)
+        if running is None and hasattr(sched, "state"):
+            running = bool(sched.state)
+        return ("ok", None) if running else ("error", "scheduler not running")
+    except Exception as exc:
+        return "error", str(exc)[:200]
+
+
+def _check_subproducts() -> tuple[str, dict]:
+    """Probe each subproduct dashboard. Slow — only called in deep mode."""
+    summary: dict = {"summary": "", "down": [], "slow": []}
+    try:
+        total = 0
+        up = 0
+        import urllib.request as _ur
+        for slug, cfg in (DASHBOARDS or {}).items():
+            total += 1
+            target = cfg.get("upstream") if isinstance(cfg, dict) else None
+            if not target:
+                up += 1
+                continue
+            try:
+                with _ur.urlopen(target, timeout=1.0) as r:  # nosec
+                    if 200 <= getattr(r, "status", 200) < 500:
+                        up += 1
+                    else:
+                        summary["down"].append(slug)
+            except Exception:
+                summary["down"].append(slug)
+        summary["summary"] = f"{up}/{total} up"
+        status = "ok" if not summary["down"] else "error"
+        return status, summary
+    except Exception as exc:
+        summary["summary"] = f"probe error: {str(exc)[:100]}"
+        return "error", summary
+
+
+def _is_truthy_query(v: Optional[str]) -> bool:
+    """Whether a query-string param represents "on/true".
+
+    The bare presence of a flag (``?deep``) parses to an empty string in
+    Starlette; we treat that as truthy. Anything explicit is parsed
+    case-insensitively against a small allow-list.
+    """
+    if v is None:
+        return False
+    if v == "":
+        return True
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
 @app.get("/health", include_in_schema=False)
-async def health_check():
-    """Structured health report. Exposed publicly, no auth, no rate limit."""
+@app.get("/health/deep", include_in_schema=False)
+async def health_check(request: Request = None):
+    """Structured health report. Exposed publicly, no auth, no rate limit.
+
+    Deep mode (``/health/deep`` or ``/health?deep=...``) additionally probes
+    Redis + every subproduct dashboard. Subproduct failures are non-critical
+    so a downed dashboard never trips the load balancer.
+    """
     import datetime as _dt
+
+    # Decide deep-mode once: explicit path alias or a truthy query param.
+    deep = False
+    if request is not None:
+        if request.url.path.endswith("/deep"):
+            deep = True
+        else:
+            qp = request.query_params
+            if "deep" in qp and _is_truthy_query(qp.get("deep")):
+                deep = True
 
     checks: dict = {}
     errors: list[str] = []
+    deep_meta: dict = {}
 
     db_status, db_err = _check_database()
     checks["database"] = db_status
+    # Tests assert ``db`` is the canonical key and ``database`` a legacy alias.
+    checks["db"] = db_status
     if db_err:
         errors.append(f"database: {db_err}")
 
@@ -2993,10 +3139,27 @@ async def health_check():
     if gate_err:
         errors.append(f"gate: {gate_err}")
 
+    sched_status, sched_err = _check_scheduler()
+    checks["scheduler"] = sched_status
+    if sched_err:
+        errors.append(f"scheduler: {sched_err}")
+
     checks["email"] = _check_email_dry_run()
+
+    if deep:
+        redis_status, redis_err = _check_redis()
+        checks["redis"] = redis_status
+        if redis_err:
+            errors.append(f"redis: {redis_err}")
+
+        sub_status, sub_meta = _check_subproducts()
+        checks["subproducts"] = sub_status
+        deep_meta["subproducts"] = sub_meta
 
     # Critical checks — any error here downgrades the whole report to "error"
     # and returns HTTP 503. Non-critical warnings only flip to "degraded".
+    # ``subproducts`` is intentionally non-critical: the LB should not pull
+    # the gateway out of rotation because a downstream dashboard is wobbly.
     critical = {"database", "gate"}
     critical_failed = any(
         checks[k] == "error" for k in critical if k in checks
@@ -3015,12 +3178,17 @@ async def health_check():
 
     payload = {
         "status": status,
+        "service": APP_SERVICE_NAME,
         "version": APP_VERSION,
         "environment": APP_ENVIRONMENT,
         "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "uptime_seconds": int(time.time() - APP_START_TIME),
+        "git_sha": APP_GIT_SHA,
+        "deployed_at": APP_DEPLOYED_AT,
         "checks": checks,
     }
+    if deep_meta:
+        payload["deep"] = deep_meta
     if errors and not IS_PRODUCTION:
         # Only reveal the specific failure strings outside production.
         payload["errors"] = errors
