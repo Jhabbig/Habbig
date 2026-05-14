@@ -3044,6 +3044,29 @@ async def seo_sitemap_xml(request: Request):
             f"<changefreq>{freq}</changefreq>"
             f"<priority>{priority}</priority></url>"
         )
+    # Dynamic source profile pages — only sources whose credibility has
+    # been unlocked (>=10 predictions resolved) are crawl-worthy. Unrated
+    # sources show a sparse "not enough signal yet" stub, so we keep them
+    # out of the sitemap to avoid Google indexing thin content.
+    try:
+        with db.conn() as _c:
+            rated = _c.execute(
+                "SELECT source_handle FROM source_credibility "
+                "WHERE accuracy_unlocked = 1 "
+                "ORDER BY global_credibility DESC LIMIT 5000",
+            ).fetchall()
+        for row in rated:
+            handle = row[0] if not isinstance(row, dict) else row.get("source_handle")
+            if not handle:
+                continue
+            parts.append(
+                f"<url><loc>https://{apex}/sources/{handle}</loc>"
+                f"<lastmod>{today}</lastmod>"
+                f"<changefreq>weekly</changefreq>"
+                f"<priority>0.6</priority></url>"
+            )
+    except Exception:
+        pass
     parts.append('</urlset>')
     return Response("".join(parts), media_type="application/xml; charset=utf-8")
 
