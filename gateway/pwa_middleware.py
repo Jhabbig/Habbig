@@ -67,6 +67,20 @@ _PWA_HEAD = (
     f'<link rel="stylesheet" href="/_gateway_static/narve-redesign.css?v={_NARVE_REDESIGN_VER}">\n'
 )
 
+# Default social card. Only injected when the response HTML doesn't
+# already declare an og:image (per-page cards on profile_public,
+# shared_*, _base.html-rendered pages keep their own). 1200×630 static
+# PNG lives at gateway/static/og/default.png; the dynamic /og/default
+# endpoint remains for templates that prefer the rendered card.
+_OG_DEFAULT = (
+    '<!--narve-og-default-->\n'
+    '<meta property="og:image" content="https://narve.ai/_gateway_static/og/default.png" />\n'
+    '<meta property="og:image:width" content="1200" />\n'
+    '<meta property="og:image:height" content="630" />\n'
+    '<meta name="twitter:card" content="summary_large_image" />\n'
+    '<meta name="twitter:image" content="https://narve.ai/_gateway_static/og/default.png" />\n'
+)
+
 _BODY_INJECT = (
     '<a class="narve-skip-link" href="#main">Skip to main content</a>\n'
     # Mobile sidebar drawer affordances. The hamburger + backdrop are
@@ -115,6 +129,14 @@ def _inject_into_html(body: bytes) -> bytes:
         idx = body.rfind(b'</head>')
         if idx != -1:
             body = body[:idx] + _PWA_HEAD.encode() + body[idx:]
+
+    # 1b. Default og:image — only when the page doesn't already declare
+    # one. Per-page cards (profile_public, shared_*, render_page _base
+    # head) keep theirs; the rest fall back to the monochrome wordmark.
+    if b'og:image' not in body and b'narve-og-default' not in body:
+        idx = body.rfind(b'</head>')
+        if idx != -1:
+            body = body[:idx] + _OG_DEFAULT.encode() + body[idx:]
 
     # 2. Viewport normalisation
     body = _VIEWPORT_RE.sub(
