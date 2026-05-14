@@ -1030,7 +1030,10 @@ body {
      the value via [data-density]. */
   padding: var(--page-pad, 24px) !important;
   background: var(--bg-base);
+  /* 100dvh sidesteps the iOS Safari 100vh crop. 100vh stays as the
+     fallback for browsers that don't grok the dynamic-viewport unit. */
   min-height: 100vh;
+  min-height: 100dvh;
   box-sizing: border-box;
 }
 
@@ -1055,6 +1058,7 @@ body > article {
   background: var(--bg-surface, var(--surface, var(--bg-base))) !important;
   padding: var(--space-6, 32px) var(--space-6, 32px) !important;
   min-height: calc(100vh - 96px);
+  min-height: calc(100dvh - 96px);
   box-sizing: border-box;
   overflow: hidden;
 }

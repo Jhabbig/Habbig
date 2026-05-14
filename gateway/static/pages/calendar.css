@@ -5,7 +5,8 @@
  * components.css, lift it in a follow-up pass — but do NOT
  * rewrite selectors here without a visual QA pass. */
 
-body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); min-height: 100vh; }
+body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); min-height: 100vh;
+  min-height: 100dvh; }
     .cal-shell { max-width: 880px; margin: 0 auto; padding: 56px 24px 96px; }
     .cal-back { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--text-secondary); text-decoration: none; margin-bottom: 28px; }
     .cal-back:hover { color: var(--text-primary); }

@@ -38,11 +38,19 @@ AUTHED_PAGES = [
 
 # Phrases that count as a "subtitle" or "explainer". Any one of these in
 # the rendered HTML means the page told the user what they're looking at.
+# The redesigned pages (2026-05-14) use `feed-lede` / `dash-hero__lede` /
+# `pr-section-sub` etc. instead of the older `.page-subtitle` convention;
+# accept any of the redesign lede classes too so the test reflects the
+# current product surface rather than the previous design vocabulary.
 _SUBTITLE_MARKERS = (
     'class="page-subtitle"', "class='page-subtitle'",
     'class="meta"', "class='meta'",
     'class="page-meta"', "class='page-meta'",
     "data-explain=", "data-tooltip=",
+    # Redesign-era lede / sub-headline classes.
+    "feed-lede", "dash-hero__lede", "pr-section-sub", "pr-hero-sub",
+    "src-hero__desc", "sub-hero__lede",
+    'class="lede"', "class='lede'",
 )
 
 

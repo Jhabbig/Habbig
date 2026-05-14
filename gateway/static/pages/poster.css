@@ -6,7 +6,8 @@
  * rewrite selectors here without a visual QA pass. */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { min-height: 100vh; background: #fafafa; color: #0d0d0d; font-family: 'Inter', -apple-system, sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; }
+    body { min-height: 100vh;
+  min-height: 100dvh; background: #fafafa; color: #0d0d0d; font-family: 'Inter', -apple-system, sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; }
 
     body::before {
       content: '';

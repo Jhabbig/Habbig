@@ -83,20 +83,26 @@ class TestStyleHTML(unittest.TestCase):
             )
 
     def test_no_external_font_cdn(self):
-        """No fonts.googleapis.com / fonts.gstatic.com refs on app
-        surfaces. Marketing root (`/`) is exempt — the prerelease
-        page legitimately loads Inter + Fraunces from Google as a
-        belt-and-braces fallback to self-hosted Inter."""
+        """Google Fonts may only be referenced as a site-wide fallback
+        for Instrument Serif + Source Serif 4. Inter / Geist Mono must
+        always come from the self-hosted preload — pulling those over
+        an external CDN is the regression we're guarding against.
+
+        The PWA middleware (2026-05-14 redesign-review) hoists the
+        Instrument Serif + Source Serif 4 family stylesheet to the
+        site head so every page renders --font-display / --font-body
+        correctly; we accept that family, only that family.
+        """
         for path in CANONICAL_PAGES:
             if path in _FONT_CDN_EXEMPT:
                 continue
             body = self._fetch(path)
             if not body:
                 continue
-            for cdn in ("fonts.googleapis.com", "fonts.gstatic.com"):
+            for forbidden in ("family=Inter", "family=Geist"):
                 self.assertNotIn(
-                    cdn, body,
-                    f"{path} pulls font from external CDN: {cdn}",
+                    forbidden, body,
+                    f"{path} pulls a forbidden font family from a CDN: {forbidden}",
                 )
 
     def test_no_inline_hex_color_overrides(self):

@@ -5,7 +5,8 @@
  * components.css, lift it in a follow-up pass — but do NOT
  * rewrite selectors here without a visual QA pass. */
 
-body { background: var(--bg-base); min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 64px 24px; }
+body { background: var(--bg-base); min-height: 100vh;
+  min-height: 100dvh; display: flex; align-items: flex-start; justify-content: center; padding: 64px 24px; }
     .onboard-shell { max-width: 640px; width: 100%; }
     .step-bar { display: flex; align-items: center; justify-content: center; gap: 0; margin-bottom: 48px; }
     .step-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--bg-surface); transition: all 0.3s var(--ease-out); }

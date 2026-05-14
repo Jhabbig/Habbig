@@ -5,8 +5,10 @@
  * components.css, lift it in a follow-up pass — but do NOT
  * rewrite selectors here without a visual QA pass. */
 
-body { display: flex; min-height: 100vh; }
-    .intel-shell { display: grid; grid-template-columns: 260px 1fr; width: 100%; min-height: 100vh; background: var(--bg-base); }
+body { display: flex; min-height: 100vh;
+  min-height: 100dvh; }
+    .intel-shell { display: grid; grid-template-columns: 260px 1fr; width: 100%; min-height: 100vh;
+  min-height: 100dvh; background: var(--bg-base); }
     .intel-sidebar { background: var(--bg-surface); border-right: 1px solid var(--border-default); padding: 24px 16px; display: flex; flex-direction: column; gap: 16px; }
     .intel-sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .intel-sidebar-title { font-size: var(--text-base); font-weight: 600; color: var(--text-primary); }
@@ -20,7 +22,8 @@ body { display: flex; min-height: 100vh; }
     .intel-back { font-size: 12px; color: var(--text-tertiary); text-decoration: none; margin-top: auto; }
     .intel-back:hover { color: var(--text-secondary); }
 
-    .intel-main { display: flex; flex-direction: column; min-height: 100vh; }
+    .intel-main { display: flex; flex-direction: column; min-height: 100vh;
+  min-height: 100dvh; }
     .intel-header { padding: 24px 32px 0; }
     .intel-title { font-family: var(--font-display); font-size: 28px; font-weight: 500; letter-spacing: -0.02em; margin: 0; color: var(--text-primary); }
     .intel-sub { font-size: var(--text-sm); color: var(--text-secondary); margin: 4px 0 0; }

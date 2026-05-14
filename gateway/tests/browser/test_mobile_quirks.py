@@ -27,6 +27,13 @@ import pytest
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
 
 
+def _strip_css_comments(text: str) -> str:
+    """Drop /* … */ blocks so the lint regex doesn't trip on the word
+    ``body`` mentioned in a header comment right before an unrelated
+    rule. Preserves line count for readability of any future debug."""
+    return re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+
+
 def test_css_uses_dvh_not_raw_vh_for_hero_heights():
     """iOS Safari 100vh bug — layout-critical heights should use 100dvh.
 
@@ -37,9 +44,12 @@ def test_css_uses_dvh_not_raw_vh_for_hero_heights():
     offenders: list[tuple[str, str]] = []
     for css in STATIC_DIR.rglob("*.css"):
         try:
-            text = css.read_text(errors="ignore")
+            raw = css.read_text(errors="ignore")
         except OSError:
             continue
+        # Strip comments first so the regex matches real CSS, not the
+        # word ``body`` in a file-header comment block.
+        text = _strip_css_comments(raw)
         for match in re.finditer(r"(?P<sel>[^{}]+){[^}]*?(?P<prop>min-height|height)\s*:\s*100vh[^;]*;", text):
             selector = match.group("sel").strip()
             # Allow small utility classes where 100vh is intentional
@@ -47,7 +57,13 @@ def test_css_uses_dvh_not_raw_vh_for_hero_heights():
             # targets are the ones that break on iOS.
             if re.search(r"\b(body|html|\.shell|main|\.hero|\.landing-hero|\.hero-grid)\b", selector):
                 snippet = match.group(0)[:120]
-                if "100dvh" not in text[max(0, match.start() - 400): match.end()]:
+                # Look both before and after the offending declaration —
+                # the common CSS-progressive-enhancement idiom is to
+                # declare 100vh first and 100dvh on the next line so the
+                # newer unit overrides on browsers that support it.
+                window_start = max(0, match.start() - 400)
+                window_end = min(len(text), match.end() + 400)
+                if "100dvh" not in text[window_start:window_end]:
                     offenders.append((str(css.relative_to(STATIC_DIR)), snippet))
     assert not offenders, (
         "Raw 100vh on a page-level surface will crop on iOS Safari. "

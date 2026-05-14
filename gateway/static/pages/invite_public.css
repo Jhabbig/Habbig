@@ -10,6 +10,7 @@ body {
       color: var(--text-primary);
       font-family: var(--font-ui);
       min-height: 100vh;
+  min-height: 100dvh;
       display: flex;
       flex-direction: column;
       align-items: center;
