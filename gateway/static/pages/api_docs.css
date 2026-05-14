@@ -1,33 +1,512 @@
-/* Per-page CSS for static/api_docs.html — extracted from the
- * previous inline <style> block by the foundation bundle
- * auto-migration. Rules live here unchanged; if anything in
- * this file should instead live in gateway.css or
- * components.css, lift it in a follow-up pass — but do NOT
- * rewrite selectors here without a visual QA pass. */
+/* Per-page CSS for static/api_docs.html — narve.ai API reference page.
+ *
+ * Strict monochrome: tokens only, no hardcoded colours, no decorative
+ * chrome. Works in both light and dark themes via the canonical
+ * [data-theme] token swap in tokens.css. Mobile-responsive down to
+ * 360px. Three typefaces only: Inter (body), Instrument Serif
+ * (display), Geist Mono (paths + code).
+ */
 
-body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.65; }
-    .wrap { max-width: 820px; margin: 0 auto; padding: 72px 24px 120px; }
-    .backlink { opacity: 0.55; color: inherit; text-decoration: none; font-size: var(--text-sm); }
-    h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin: 16px 0 6px; }
-    .tagline { font-size: 17px; opacity: 0.7; margin: 0 0 40px; }
-    h2 { font-size: 22px; font-weight: 600; margin: 52px 0 14px; letter-spacing: -0.01em; }
-    h3 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
-    p { margin: 0 0 14px; }
-    ul { padding-left: 22px; margin: 0 0 18px; }
-    li { margin-bottom: 6px; }
-    code { font-family: ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; font-size: var(--text-sm); }
-    pre { font-family: ui-monospace, Menlo, monospace; background: #141414; border: 1px solid rgba(255,255,255,0.06); border-radius: var(--radius-md); padding: 18px 22px; margin: 16px 0; font-size: 12.5px; line-height: 1.6; white-space: pre; overflow-x: auto; }
-    .toc { background: #141414; border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-md); padding: 16px 22px; margin-bottom: 40px; }
-    .toc h4 { margin: 0 0 10px; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6; }
-    .toc ol { padding-left: 22px; margin: 0; }
-    .toc a { color: inherit; text-decoration: none; opacity: 0.9; }
-    .toc a:hover { text-decoration: underline; }
-    .endpoint { border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: var(--radius-md); padding: 18px 22px; margin: 16px 0; background: #141414; }
-    .endpoint h3 { margin-top: 0; font-family: ui-monospace, Menlo, monospace; text-transform: none; letter-spacing: 0; opacity: 1; font-size: var(--text-base); }
-    .endpoint .method { display: inline-block; font-family: ui-monospace, Menlo, monospace; font-weight: 600; font-size: var(--text-xs); padding: 3px 8px; border-radius: var(--radius-xs); margin-right: 8px; background: rgba(255,255,255,0.08); }
-    .endpoint .method.post { background: rgba(34,197,94,0.15); color: #22c55e; }
-    .note-box { border-left: 2px solid var(--text-primary, #fff); padding: 8px 14px; margin: 14px 0; font-size: var(--text-sm); opacity: 0.85; background: rgba(255,255,255,0.03); }
-    .error-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-    .error-table th, .error-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
-    .error-table th { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6; }
-    a.inline { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+/* ── Layout shell ─────────────────────────────────────────────── */
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.apidoc {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-5) var(--space-9);
+}
+
+.apidoc-backlink {
+  display: inline-block;
+  color: var(--text-tertiary);
+  text-decoration: none;
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-6);
+  transition: color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.apidoc-backlink:hover { color: var(--text-primary); }
+
+/* ── Hero ─────────────────────────────────────────────────────── */
+
+.apidoc-hero { margin-bottom: var(--space-7); }
+
+.apidoc-title {
+  font-family: var(--font-ui);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-4xl);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.apidoc-title__brand {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: var(--weight-normal);
+  letter-spacing: 0;
+}
+.apidoc-title__slash {
+  color: var(--text-tertiary);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0;
+}
+.apidoc-title__sub {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semibold);
+  font-size: 0.7em;
+  letter-spacing: 0;
+}
+.apidoc-title__version {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0;
+  align-self: center;
+  margin-left: var(--space-2);
+}
+
+.apidoc-tagline {
+  font-size: var(--text-lg);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-5);
+  max-width: 60ch;
+}
+
+.apidoc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: 0;
+}
+.apidoc-meta__chip {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  transition: border-color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1),
+              color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.apidoc-meta__chip:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
+/* ── Table of contents ───────────────────────────────────────── */
+
+.apidoc-toc {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-7);
+}
+.apidoc-toc__heading {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-3);
+}
+.apidoc-toc__list {
+  list-style: decimal;
+  padding-left: 22px;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1) var(--space-5);
+}
+.apidoc-toc__list li { padding: 2px 0; }
+.apidoc-toc__list a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: var(--text-sm);
+}
+.apidoc-toc__list a:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ── Sections ────────────────────────────────────────────────── */
+
+.apidoc-section {
+  padding-top: var(--space-6);
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--border-ghost);
+}
+.apidoc-section:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+.apidoc-section__title {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--space-3);
+  scroll-margin-top: var(--space-5);
+}
+.apidoc-section__lede {
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-5);
+  max-width: 68ch;
+}
+
+.apidoc-subhead {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin: var(--space-5) 0 var(--space-3);
+}
+
+.apidoc-list {
+  padding-left: 22px;
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+}
+.apidoc-list li { margin-bottom: var(--space-2); }
+
+.apidoc-note {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  border-left: 2px solid var(--border-default);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-4) 0 0;
+}
+
+/* ── Auth grid ───────────────────────────────────────────────── */
+
+.apidoc-auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.apidoc-auth {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+.apidoc-auth__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.apidoc-auth__name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+  letter-spacing: -0.005em;
+}
+.apidoc-auth__badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.apidoc-auth p {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2);
+}
+.apidoc-auth pre { margin-top: var(--space-2); margin-bottom: 0; }
+
+/* ── Endpoint cards ──────────────────────────────────────────── */
+
+.apidoc-endpoint {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  margin: 0 0 var(--space-3);
+  scroll-margin-top: var(--space-5);
+}
+.apidoc-endpoint__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.apidoc-endpoint p {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+}
+.apidoc-endpoint p:last-child { margin-bottom: 0; }
+.apidoc-endpoint p strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.apidoc-query { font-size: var(--text-sm); }
+
+/* Method chip — monochrome via weight + outline, never coloured. */
+.apidoc-method {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  text-transform: uppercase;
+  min-width: 56px;
+  text-align: center;
+}
+.apidoc-method--post,
+.apidoc-method--patch,
+.apidoc-method--delete {
+  /* Mutating verbs invert to convey "writes data" via weight + contrast,
+   * still pure monochrome — no green/red/blue cues. */
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  border-color: var(--interactive-bg);
+}
+
+.apidoc-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.apidoc-auth-tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}
+
+/* ── Code blocks ─────────────────────────────────────────────── */
+
+.apidoc-mono,
+.apidoc-endpoint code,
+.apidoc-auth code,
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+}
+
+.apidoc-code {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  white-space: pre;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.apidoc-code code {
+  font-family: inherit;
+  font-size: inherit;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+}
+
+/* Copy button (injected client-side). */
+.apidoc-copy {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 4px 10px;
+  min-height: 28px;
+  cursor: pointer;
+  transition: color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1),
+              border-color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.apidoc-copy:hover,
+.apidoc-copy:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+  outline: none;
+}
+
+/* ── Tables ──────────────────────────────────────────────────── */
+
+.apidoc-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-md);
+}
+.apidoc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.apidoc-table th,
+.apidoc-table td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-ghost);
+}
+.apidoc-table tr:last-child td { border-bottom: 0; }
+.apidoc-table th {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-semibold);
+  background: var(--bg-surface);
+}
+.apidoc-table td {
+  color: var(--text-secondary);
+}
+.apidoc-table td:first-child {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+/* ── Links ────────────────────────────────────────────────────── */
+
+.apidoc-link {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--border-strong);
+  transition: text-decoration-color var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.apidoc-link:hover {
+  text-decoration-color: var(--text-primary);
+}
+
+/* ── Footer ──────────────────────────────────────────────────── */
+
+.apidoc-footer {
+  margin-top: var(--space-8);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-ghost);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+.apidoc-footer p { margin: 0 0 var(--space-2); }
+.apidoc-footer__legal {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.apidoc-footer__legal .apidoc-link {
+  color: var(--text-tertiary);
+  text-decoration-color: transparent;
+}
+.apidoc-footer__legal .apidoc-link:hover {
+  color: var(--text-primary);
+  text-decoration-color: var(--text-primary);
+}
+
+/* ── Mobile ──────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .apidoc {
+    padding: var(--space-5) var(--space-4) var(--space-7);
+  }
+  .apidoc-title {
+    font-size: var(--text-3xl);
+  }
+  .apidoc-tagline {
+    font-size: var(--text-base);
+  }
+  .apidoc-toc__list {
+    grid-template-columns: 1fr;
+  }
+  .apidoc-auth-grid {
+    grid-template-columns: 1fr;
+  }
+  .apidoc-endpoint__head {
+    gap: var(--space-2);
+  }
+  .apidoc-auth-tag {
+    margin-left: 0;
+    width: 100%;
+  }
+  .apidoc-section__title {
+    font-size: var(--text-xl);
+  }
+  .apidoc-code {
+    font-size: 12px;
+    padding: var(--space-3);
+  }
+  .apidoc-copy {
+    /* iOS auto-zoom is defeated by ≥16px input fonts, not buttons; the
+     * 44×44 tap-target rule applies regardless. */
+    min-height: 32px;
+    min-width: 44px;
+  }
+}
+
+@media (max-width: 380px) {
+  .apidoc-title {
+    font-size: var(--text-2xl);
+  }
+  .apidoc-meta {
+    gap: var(--space-1);
+  }
+  .apidoc-meta__chip {
+    height: 30px;
+    font-size: 12px;
+  }
+}
+
+/* ── Reduced motion ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .apidoc-backlink,
+  .apidoc-meta__chip,
+  .apidoc-copy,
+  .apidoc-link {
+    transition: none;
+  }
+}

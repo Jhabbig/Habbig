@@ -3,205 +3,506 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Developer API — narve.ai</title>
-  <meta name="description" content="Documentation for the narve.ai public developer API. Authenticate with a Bearer API key and query markets, sources, predictions, best-bets, and submit your own predictions programmatically.">
+  <title>API reference · narve.ai</title>
+  <meta name="description" content="narve.ai developer API reference. Public market and source endpoints, session-scoped user data, embed widgets, and subproduct SSO. Machine-readable OpenAPI schema available.">
   <link rel="canonical" href="https://narve.ai/api/docs">
+  <script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+
   <meta property="og:type" content="article">
-  <meta property="og:title" content="Developer API — narve.ai">
-  <meta property="og:description" content="Bearer-authenticated JSON API for markets, sources, predictions, and webhooks.">
+  <meta property="og:title" content="narve.ai API · v1">
+  <meta property="og:description" content="REST reference for narve.ai. Public, user-scoped, subscribed, embed, and subproduct surfaces.">
   <meta property="og:url" content="https://narve.ai/api/docs">
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:image" content="https://narve.ai/og/default">
+  <meta name="twitter:card" content="summary_large_image">
+
   <link rel="stylesheet" href="{{ static: pages/api_docs.css }}">
 </head>
 <body>
-  <main class="wrap" id="main">
-    
-    {{ raw_breadcrumb }}
-    <a class="backlink" href="/">← narve.ai</a>
-    <h1>Developer API</h1>
-    <p class="tagline">narve.ai v1 — Bearer-authenticated JSON over HTTPS.</p>
+  <main class="apidoc" id="main">
 
-    <div class="toc">
-      <h4>Contents</h4>
-      <ol>
+    <a class="apidoc-backlink" href="/">&larr; narve.ai</a>
+
+    <header class="apidoc-hero">
+      <h1 class="apidoc-title">
+        <span class="apidoc-title__brand">narve.ai</span><span class="apidoc-title__slash"> / </span><span class="apidoc-title__sub">API</span>
+        <span class="apidoc-title__version">v1</span>
+      </h1>
+      <p class="apidoc-tagline">Public REST surface. JSON over HTTPS. Five auth modes.</p>
+      <div class="apidoc-meta">
+        <a class="apidoc-meta__chip" href="/api/openapi.json">OpenAPI schema</a>
+        <a class="apidoc-meta__chip" href="/settings/api-keys">Manage keys</a>
+        <a class="apidoc-meta__chip" href="/changelog">Changelog</a>
+        <a class="apidoc-meta__chip" href="mailto:hello@narve.ai">Email support</a>
+      </div>
+    </header>
+
+    <nav class="apidoc-toc" aria-label="Sections">
+      <h2 class="apidoc-toc__heading">Contents</h2>
+      <ol class="apidoc-toc__list">
         <li><a href="#auth">Authentication</a></li>
         <li><a href="#limits">Rate limits</a></li>
-        <li><a href="#endpoints">Endpoints</a></li>
+        <li><a href="#group-public">Public endpoints</a></li>
+        <li><a href="#group-user">User-scoped endpoints</a></li>
+        <li><a href="#group-subscribed">Subscribed (Pro / add-on)</a></li>
+        <li><a href="#group-embed">Embed widgets</a></li>
+        <li><a href="#group-subproducts">Subproducts (SSO)</a></li>
         <li><a href="#errors">Error codes</a></li>
-        <li><a href="#webhooks">Webhooks</a></li>
-        <li><a href="#changelog">Change log</a></li>
+        <li><a href="#openapi">Machine-readable schema</a></li>
       </ol>
-    </div>
+    </nav>
 
-    <p>Everything under <code>/api/public/v1/*</code> is the stable developer surface. The older <code>/api/v1/*</code> paths continue to work for historical clients but new integrations should point here.</p>
+    <!-- ───────── Authentication ───────── -->
+    <section class="apidoc-section" id="auth">
+      <h2 class="apidoc-section__title">Authentication</h2>
+      <p class="apidoc-section__lede">narve.ai uses five auth modes. Pick the one that matches the endpoint group.</p>
 
-    <h2 id="auth">1. Authentication</h2>
-    <p>Every request carries a Bearer token:</p>
-    <pre>Authorization: Bearer narve_&lt;your-api-key&gt;</pre>
-    <p>Mint keys at <a class="inline" href="/settings/api-keys">/settings/api-keys</a>. Each key is displayed <strong>once</strong> at creation — we store only the SHA-256 hash. If you lose a key, revoke it and mint a new one.</p>
-    <p>Keys carry one or both scopes:</p>
-    <ul>
-      <li><code>read</code> — all GET endpoints. Granted automatically to every key.</li>
-      <li><code>write</code> — POST endpoints (currently <code>POST /predictions</code>). Request on key creation; granted automatically on Pro / Enterprise tiers.</li>
-    </ul>
+      <div class="apidoc-auth-grid">
+        <article class="apidoc-auth">
+          <header class="apidoc-auth__head">
+            <h3 class="apidoc-auth__name">Anonymous</h3>
+            <span class="apidoc-auth__badge">Public</span>
+          </header>
+          <p>No credentials needed. Cacheable. Used by feed, markets, source profiles, changelog, health.</p>
+        </article>
 
-    <h2 id="limits">2. Rate limits</h2>
-    <p>Per-key, measured in requests per clock hour (UTC). Resets at the top of every hour.</p>
-    <ul>
-      <li>Free / Trader tier — <strong>1 key, 1,000 req/hr</strong></li>
-      <li>Pro tier — <strong>5 keys, 10,000 req/hr each</strong></li>
-      <li>Enterprise — <strong>custom, contact us</strong></li>
-    </ul>
-    <p>When you exceed a limit you get a <code>429</code> with <code>Retry-After</code> in seconds and <code>X-RateLimit-*</code> headers telling you where you stand. Your current hour's usage is also queryable at <code>GET /api/public/v1/usage</code>.</p>
+        <article class="apidoc-auth">
+          <header class="apidoc-auth__head">
+            <h3 class="apidoc-auth__name">Session cookie</h3>
+            <span class="apidoc-auth__badge">User</span>
+          </header>
+          <p>Browser-only. Cookie <code class="apidoc-mono">narve_session</code> set by <code class="apidoc-mono">/auth/login</code>. Mutating verbs also require a CSRF pair.</p>
+          <pre class="apidoc-code"><code>Cookie: narve_session=&lt;opaque&gt;
+x-csrf-token: &lt;value of _csrf cookie&gt;</code></pre>
+        </article>
 
-    <h2 id="endpoints">3. Endpoints</h2>
+        <article class="apidoc-auth">
+          <header class="apidoc-auth__head">
+            <h3 class="apidoc-auth__name">Bearer key</h3>
+            <span class="apidoc-auth__badge">Pro / Enterprise</span>
+          </header>
+          <p>For server-to-server access on <code class="apidoc-mono">/api/public/v1/*</code>. Mint at <a class="apidoc-link" href="/settings/api-keys">/settings/api-keys</a>. Scopes: <code class="apidoc-mono">read</code>, <code class="apidoc-mono">write</code>.</p>
+          <pre class="apidoc-code"><code>Authorization: Bearer narve_sk_...your-key...</code></pre>
+        </article>
 
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/markets</h3>
-      <p>Search live markets. Query params: <code>q</code> (search term), <code>limit</code> (max 200).</p>
-      <pre>curl -H "Authorization: Bearer narve_$KEY" \
-  "https://narve.ai/api/public/v1/markets?q=election&amp;limit=20"
+        <article class="apidoc-auth">
+          <header class="apidoc-auth__head">
+            <h3 class="apidoc-auth__name">Embed key</h3>
+            <span class="apidoc-auth__badge">Embed</span>
+          </header>
+          <p>Per-widget key for embeddable JSON endpoints. Origin-locked at issuance.</p>
+          <pre class="apidoc-code"><code>X-API-Key: nve_pub_...your-key...</code></pre>
+        </article>
 
-{"markets": [...], "limit": 20, "q": "election"}</pre>
-    </div>
+        <article class="apidoc-auth">
+          <header class="apidoc-auth__head">
+            <h3 class="apidoc-auth__name">Subdomain HMAC SSO</h3>
+            <span class="apidoc-auth__badge">Subproducts</span>
+          </header>
+          <p>Subproduct APIs (whale, voters, climate, &hellip;) live on per-product subdomains. The gateway proxies authenticated requests and injects <code class="apidoc-mono">X-Gateway-Secret</code> (HMAC-derived shared secret) so the upstream can trust the identity headers. Direct subdomain access without going through narve.ai is rejected.</p>
+        </article>
+      </div>
 
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/markets/{slug}</h3>
-      <p>One market by slug. Returns the latest snapshot.</p>
-      <pre>curl -H "Authorization: Bearer narve_$KEY" \
-  https://narve.ai/api/public/v1/markets/us-election-2028</pre>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/markets/{slug}/predictions</h3>
-      <p>All predictions narve has extracted for this market. Query: <code>limit</code> (max 500).</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/markets/{slug}/history</h3>
-      <p>Time-series of market price + narve credibility-weighted probability. Query: <code>limit</code> (max 2000).</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/sources</h3>
-      <p>Credibility-scored sources. Query: <code>limit</code> (max 500), <code>offset</code>.</p>
-      <pre>{"sources": [{"source_handle": "nate_silver", "global_credibility": 0.68,
-  "accuracy_unlocked": true, "total_predictions": 412, ...}],
- "total": 1843, "limit": 100, "offset": 0}</pre>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/sources/{handle}</h3>
-      <p>Full profile for one source, including calibration + category breakdown.</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/sources/{handle}/predictions</h3>
-      <p>Every tracked prediction for a source, newest first. Query: <code>limit</code> (max 500).</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/sources/{handle}/history</h3>
-      <p>Credibility snapshots over time. Useful for charting.</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/feed</h3>
-      <p>Recent extracted predictions across all sources. Query: <code>limit</code> (max 500), <code>category</code>.</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/best-bets</h3>
-      <p>Current top edge opportunities — narve-probability vs market-price delta. Query: <code>limit</code> (max 100).</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/calendar</h3>
-      <p>Upcoming market resolutions with deadlines.</p>
-    </div>
-
-    <div class="endpoint">
-      <h3><span class="method post">POST</span>/predictions <em style="opacity:.55;font-weight:400">— requires write scope</em></h3>
-      <p>Submit your own prediction on any market. Body is JSON.</p>
-      <pre>curl -X POST \
-  -H "Authorization: Bearer narve_$KEY" \
+      <h3 class="apidoc-subhead">CSRF on mutating verbs</h3>
+      <p>Any <code class="apidoc-mono">POST</code>/<code class="apidoc-mono">PUT</code>/<code class="apidoc-mono">PATCH</code>/<code class="apidoc-mono">DELETE</code> issued with a session cookie must echo the CSRF cookie back as a header:</p>
+      <pre class="apidoc-code" data-copy><code>curl -X POST https://narve.ai/api/saved \
+  -H "Cookie: narve_session=$SESSION; _csrf=$CSRF" \
+  -H "x-csrf-token: $CSRF" \
   -H "Content-Type: application/json" \
-  -d '{"market_slug":"btc-gt-100k-eoy",
-       "predicted_outcome":"YES",
-       "predicted_probability":0.72,
-       "reasoning":"Mining hashrate + spot ETF flows…",
-       "is_public":true}' \
-  https://narve.ai/api/public/v1/predictions
+  -d '{"prediction_id": 19281}'</code></pre>
 
-{"prediction_id": 19281, "status": "ok"}</pre>
-      <div class="note-box">Direction (YES/NO) is locked at submission. You can edit probability / reasoning for 24 hours from your browser at <a class="inline" href="/predictions">/predictions</a>.</div>
-    </div>
+      <h3 class="apidoc-subhead">Secret handling</h3>
+      <ul class="apidoc-list">
+        <li>Bearer keys are shown once at creation; we store only the SHA-256 hash. Rotate via revoke + mint.</li>
+        <li>Embed keys are origin-locked and rate-limited per widget. Rotate via <code class="apidoc-mono">POST /api/embeds/{id}/rotate-token</code>.</li>
+        <li>Never commit keys to source control. Treat <code class="apidoc-mono">sk_&hellip;</code> values the way you'd treat a database password.</li>
+      </ul>
+    </section>
 
-    <div class="endpoint">
-      <h3><span class="method">GET</span>/usage</h3>
-      <p>Your current hour's request count and reset time. No params.</p>
-      <pre>{"key_id": 42, "key_prefix": "narve_AbC12", "name": "backtest bot",
- "scopes": ["read", "write"], "rate_limit_hour": 10000,
- "requests_this_hour": 1247, "hour_bucket_start": 1714928400,
- "bucket_resets_at": 1714932000}</pre>
-    </div>
+    <!-- ───────── Rate limits ───────── -->
+    <section class="apidoc-section" id="limits">
+      <h2 class="apidoc-section__title">Rate limits</h2>
+      <p>Limits are per-key or per-IP and reset on a rolling clock window. <code class="apidoc-mono">429</code> responses carry <code class="apidoc-mono">Retry-After</code> seconds plus <code class="apidoc-mono">X-RateLimit-*</code> headers.</p>
+      <div class="apidoc-table-wrap">
+        <table class="apidoc-table">
+          <thead>
+            <tr><th>Surface</th><th>Limit</th><th>Window</th><th>Identity</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Public (anon)</td><td>120</td><td>per minute</td><td>Client IP</td></tr>
+            <tr><td>User session</td><td>600</td><td>per minute</td><td>User ID</td></tr>
+            <tr><td>Bearer · Free / Trader</td><td>1,000</td><td>per hour</td><td>Key ID</td></tr>
+            <tr><td>Bearer · Pro</td><td>10,000</td><td>per hour</td><td>Key ID</td></tr>
+            <tr><td>Bearer · Enterprise</td><td>Custom</td><td>per hour</td><td>Key ID</td></tr>
+            <tr><td>Embed key</td><td>60</td><td>per minute</td><td>Key ID + origin</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-    <h2 id="errors">4. Error codes</h2>
-    <table class="error-table">
-      <thead><tr><th>Status</th><th>Meaning</th><th>Action</th></tr></thead>
-      <tbody>
-        <tr><td>400</td><td>Bad request (invalid params / body)</td><td>Check the error detail; fix the payload.</td></tr>
-        <tr><td>401</td><td>Missing, malformed, or revoked API key</td><td>Mint a new key at /settings/api-keys.</td></tr>
-        <tr><td>402</td><td>Your plan doesn't include API access</td><td>Upgrade at /pricing.</td></tr>
-        <tr><td>403</td><td>Key lacks required scope (e.g. write)</td><td>Re-create the key with the right scope.</td></tr>
-        <tr><td>404</td><td>Market / source / prediction not found</td><td>Check the slug / handle.</td></tr>
-        <tr><td>409</td><td>Conflict (e.g. duplicate active prediction)</td><td>Wait for resolution or edit the existing row.</td></tr>
-        <tr><td>429</td><td>Hourly rate limit exceeded</td><td>Honour <code>Retry-After</code>; shard across multiple keys if you have a higher tier.</td></tr>
-        <tr><td>500</td><td>Server error</td><td>Retry; escalate to <a class="inline" href="mailto:hello@narve.ai">hello@narve.ai</a> if it persists.</td></tr>
-      </tbody>
-    </table>
+    <!-- ───────── Public group ───────── -->
+    <section class="apidoc-section" id="group-public">
+      <h2 class="apidoc-section__title">Public endpoints</h2>
+      <p class="apidoc-section__lede">No authentication. Safe to call from a browser or a crawler.</p>
 
-    <h2 id="webhooks">5. Webhooks</h2>
-    <p>Register endpoints to receive push events instead of polling. Configure at <a class="inline" href="/settings/webhooks">/settings/webhooks</a>.</p>
+      <article class="apidoc-endpoint" id="ep-feed">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/feed</span>
+          <span class="apidoc-auth-tag">no auth</span>
+        </header>
+        <p>Recent extracted predictions across every tracked source. Newest first.</p>
+        <p class="apidoc-query"><strong>Query:</strong> <code class="apidoc-mono">limit</code> (max 500), <code class="apidoc-mono">category</code>, <code class="apidoc-mono">since</code> (unix seconds).</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/feed?limit=20</code></pre>
+        <pre class="apidoc-code"><code>{
+  "feed": [
+    {
+      "prediction_id": 19281,
+      "source_handle": "nate_silver",
+      "market_slug": "us-election-2028",
+      "direction": "YES",
+      "predicted_probability": 0.62,
+      "extracted_at": 1714928400
+    }
+  ],
+  "limit": 20
+}</code></pre>
+      </article>
 
-    <h3>Event types</h3>
-    <ul>
-      <li><code>best_bet.new</code> — a new high-edge opportunity appears</li>
-      <li><code>market.resolved</code> — a tracked market resolves</li>
-      <li><code>source.credibility_updated</code> — a source's credibility score changes</li>
-      <li><code>insider_signal.new</code> — a high-conviction source posts a new prediction</li>
-      <li><code>user.prediction.resolved</code> — one of your own predictions resolves</li>
-    </ul>
+      <article class="apidoc-endpoint" id="ep-markets">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/markets</span>
+          <span class="apidoc-auth-tag">no auth</span>
+        </header>
+        <p>Search live Polymarket + Kalshi markets. Returns the latest snapshot per market.</p>
+        <p class="apidoc-query"><strong>Query:</strong> <code class="apidoc-mono">q</code>, <code class="apidoc-mono">limit</code> (max 200), <code class="apidoc-mono">category</code>.</p>
+        <pre class="apidoc-code" data-copy><code>curl "https://narve.ai/api/markets?q=election&amp;limit=10"</code></pre>
+        <pre class="apidoc-code"><code>{
+  "markets": [
+    {
+      "slug": "us-election-2028",
+      "title": "Who wins the 2028 US presidential election?",
+      "price_yes": 0.41,
+      "venue": "polymarket",
+      "narve_probability": 0.48,
+      "edge": 0.07
+    }
+  ],
+  "limit": 10
+}</code></pre>
+      </article>
 
-    <h3>Payload + signature</h3>
-    <p>Every delivery is an HTTP POST of JSON. narve computes <code>HMAC-SHA256(secret, raw_body)</code> and sends it as <code>X-Narve-Signature: sha256=&lt;hex&gt;</code>. Verify server-side:</p>
-    <pre>import hmac, hashlib
+      <article class="apidoc-endpoint" id="ep-source">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/sources/{handle}</span>
+          <span class="apidoc-auth-tag">no auth</span>
+        </header>
+        <p>Full credibility profile for one source: calibration, accuracy, category breakdown, scorecard.</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/sources/nate_silver</code></pre>
+        <pre class="apidoc-code"><code>{
+  "source_handle": "nate_silver",
+  "global_credibility": 0.68,
+  "total_predictions": 412,
+  "correct_predictions": 281,
+  "categories": {"politics": 0.74, "sports": 0.61},
+  "last_computed_at": 1714928400
+}</code></pre>
+      </article>
 
-def verify(raw_body: bytes, signature: str, secret: str) -> bool:
-    expected = "sha256=" + hmac.new(
-        secret.encode(), raw_body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)</pre>
+      <article class="apidoc-endpoint" id="ep-prediction">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/predictions/{id}</span>
+          <span class="apidoc-auth-tag">no auth</span>
+        </header>
+        <p>One prediction by ID. Includes provenance link, market snapshot at extraction, and current resolution state.</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/predictions/19281</code></pre>
+      </article>
 
-    <h3>Retries</h3>
-    <p>Non-2xx responses are retried 5 times with exponential backoff: <strong>30s, 5m, 30m, 1h, 4h</strong>. Five consecutive failed deliveries (across any event) auto-disable the subscription and email you.</p>
+      <article class="apidoc-endpoint" id="ep-changelog">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/changelog</span>
+          <span class="apidoc-auth-tag">no auth</span>
+        </header>
+        <p>Structured changelog entries powering <a class="apidoc-link" href="/changelog">/changelog</a> and the in-app widget.</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/changelog?limit=10</code></pre>
+      </article>
 
-    <h3>Test firing</h3>
-    <p>The webhooks settings page has a <strong>Test</strong> button that sends a synthetic <code>test.ping</code> event so you can verify your endpoint before wiring up real events.</p>
+      <article class="apidoc-endpoint" id="ep-health">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/health</span>
+          <span class="apidoc-auth-tag">no auth</span>
+        </header>
+        <p>Structured health report. Database, static assets, dashboard reachability, encryption key, scheduler status.</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/health</code></pre>
+        <pre class="apidoc-code"><code>{
+  "ok": true,
+  "version": "1.0.0",
+  "environment": "production",
+  "uptime_seconds": 86400,
+  "checks": {
+    "database": "ok",
+    "static": "ok",
+    "dashboards": "ok",
+    "encryption": "ok"
+  }
+}</code></pre>
+      </article>
+    </section>
 
-    <h2 id="changelog">6. Change log</h2>
-    <ul>
-      <li><strong>2026-04-22</strong> — v1.0: public API at <code>/api/public/v1/*</code>, webhooks with HMAC signatures and retries.</li>
-      <li><strong>2026-01-14</strong> — Legacy API keys shipped on <code>/api/v1/*</code>.</li>
-    </ul>
+    <!-- ───────── User-scoped group ───────── -->
+    <section class="apidoc-section" id="group-user">
+      <h2 class="apidoc-section__title">User-scoped endpoints</h2>
+      <p class="apidoc-section__lede">Session cookie required. Mutating verbs additionally require the CSRF header pair.</p>
 
-    <p style="margin-top: 48px; opacity: 0.55; font-size: 14px;">
-      Questions? Email <a class="inline" href="mailto:hello@narve.ai">hello@narve.ai</a> — we read every API-tagged message within two business days.
-    </p>
+      <article class="apidoc-endpoint" id="ep-me-profile">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/me/profile</span>
+          <span class="apidoc-auth-tag">session</span>
+        </header>
+        <p>The signed-in user's profile: handle, email, plan, add-ons, created date, notification preferences.</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/me/profile \
+  -H "Cookie: narve_session=$SESSION"</code></pre>
+        <pre class="apidoc-code"><code>{
+  "user_id": 4711,
+  "email": "you@example.com",
+  "username": "you",
+  "plan": "pro_monthly",
+  "addons": ["trading", "voters"],
+  "created_at": 1700000000
+}</code></pre>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-me-positions">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/me/positions</span>
+          <span class="apidoc-auth-tag">session</span>
+        </header>
+        <p>All open and closed positions tied to your connected Polymarket + Kalshi accounts. Newest first.</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/me/positions?status=open \
+  -H "Cookie: narve_session=$SESSION"</code></pre>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-me-bankroll">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/me/bankroll</span>
+          <span class="apidoc-auth-tag">session</span>
+        </header>
+        <p>Current bankroll, target sizing parameters, and historical PnL. Update with <code class="apidoc-mono">PATCH</code>.</p>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-me-export">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--post">POST</span>
+          <span class="apidoc-path">/api/me/export</span>
+          <span class="apidoc-auth-tag">session + csrf</span>
+        </header>
+        <p>Request a GDPR-style data export. Runs as a background job; you receive an email with a signed download link when ready.</p>
+        <pre class="apidoc-code" data-copy><code>curl -X POST https://narve.ai/api/me/export \
+  -H "Cookie: narve_session=$SESSION; _csrf=$CSRF" \
+  -H "x-csrf-token: $CSRF"</code></pre>
+      </article>
+    </section>
+
+    <!-- ───────── Subscribed group ───────── -->
+    <section class="apidoc-section" id="group-subscribed">
+      <h2 class="apidoc-section__title">Subscribed endpoints</h2>
+      <p class="apidoc-section__lede">Pro plan or matching add-on required. Returns <code class="apidoc-mono">402</code> if your plan doesn't include the feature.</p>
+
+      <article class="apidoc-endpoint" id="ep-signal-search">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/signal-search</span>
+          <span class="apidoc-auth-tag">session · Pro</span>
+        </header>
+        <p>Full-text search across every tracked prediction. Saved-search topics can be persisted via <code class="apidoc-mono">/api/topics</code>.</p>
+        <p class="apidoc-query"><strong>Query:</strong> <code class="apidoc-mono">q</code> (required), <code class="apidoc-mono">limit</code>, <code class="apidoc-mono">since</code>, <code class="apidoc-mono">categories</code>.</p>
+        <pre class="apidoc-code" data-copy><code>curl "https://narve.ai/api/signal-search?q=bitcoin+halving" \
+  -H "Cookie: narve_session=$SESSION"</code></pre>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-kelly">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--post">POST</span>
+          <span class="apidoc-path">/api/kelly/calculate</span>
+          <span class="apidoc-auth-tag">session · Trading add-on</span>
+        </header>
+        <p>Compute Kelly-criterion stake size for a market given your bankroll and an estimated edge. Returns full, half, and quarter-Kelly recommendations.</p>
+        <pre class="apidoc-code" data-copy><code>curl -X POST https://narve.ai/api/kelly/calculate \
+  -H "Cookie: narve_session=$SESSION; _csrf=$CSRF" \
+  -H "x-csrf-token: $CSRF" \
+  -H "Content-Type: application/json" \
+  -d '{"probability":0.62,"market_price":0.41,"bankroll":10000}'</code></pre>
+        <pre class="apidoc-code"><code>{
+  "full_kelly_pct": 0.355,
+  "full_kelly_stake": 3550,
+  "half_kelly_stake": 1775,
+  "quarter_kelly_stake": 887,
+  "edge": 0.21
+}</code></pre>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-portfolio">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/markets/portfolio</span>
+          <span class="apidoc-auth-tag">session · Trading add-on</span>
+        </header>
+        <p>Unified portfolio view across all connected venues. Aggregated by market, by venue, and over time.</p>
+      </article>
+    </section>
+
+    <!-- ───────── Embed group ───────── -->
+    <section class="apidoc-section" id="group-embed">
+      <h2 class="apidoc-section__title">Embed widgets</h2>
+      <p class="apidoc-section__lede">Per-widget API key. Origin-locked to the domains you registered at <a class="apidoc-link" href="/settings/embeds">/settings/embeds</a>.</p>
+
+      <article class="apidoc-endpoint" id="ep-embed-bb">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/embed/best-bets</span>
+          <span class="apidoc-auth-tag">embed key</span>
+        </header>
+        <p>Top edge opportunities for the widget. Cached at the edge for 60 seconds.</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/embed/best-bets \
+  -H "X-API-Key: nve_pub_...your-key..."</code></pre>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-embed-markets">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/embed/markets</span>
+          <span class="apidoc-auth-tag">embed key</span>
+        </header>
+        <p>Filtered market list for the widget's configured scope (category, venue, limit).</p>
+        <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/embed/markets \
+  -H "X-API-Key: nve_pub_...your-key..."</code></pre>
+      </article>
+    </section>
+
+    <!-- ───────── Subproducts group ───────── -->
+    <section class="apidoc-section" id="group-subproducts">
+      <h2 class="apidoc-section__title">Subproduct endpoints</h2>
+      <p class="apidoc-section__lede">Routed through subdomain SSO. Each call must originate from <code class="apidoc-mono">narve.ai</code> — the gateway injects an HMAC-derived <code class="apidoc-mono">X-Gateway-Secret</code> header that the upstream dashboard validates. Subscription to the specific subproduct (or a Pro plan that bundles it) is required.</p>
+
+      <article class="apidoc-endpoint" id="ep-whale">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/whale/whales</span>
+          <span class="apidoc-auth-tag">session · whale</span>
+        </header>
+        <p>Institutional 13F filings cross-referenced against live Polymarket positions. Whale Watch surface.</p>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-voters">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/voters/elections</span>
+          <span class="apidoc-auth-tag">session · voters</span>
+        </header>
+        <p>National polling, V-Dem democracy indicators, election markets per country. Voters Atlas surface.</p>
+      </article>
+
+      <article class="apidoc-endpoint" id="ep-climate">
+        <header class="apidoc-endpoint__head">
+          <span class="apidoc-method apidoc-method--get">GET</span>
+          <span class="apidoc-path">/api/climate/co2</span>
+          <span class="apidoc-auth-tag">session · climate</span>
+        </header>
+        <p>Live CO2 (NOAA), GISTEMP, ENSO, sea-ice and methane indicators. Climate Change subproduct.</p>
+      </article>
+
+      <p class="apidoc-note">Other subproducts (Sports, Weather, World, Crypto, Midterm, Traders, Eco Disasters, Central Bank, World Health, &hellip;) follow the same pattern — <code class="apidoc-mono">/api/{slug}/&hellip;</code> on the same auth + HMAC SSO chain. See <a class="apidoc-link" href="/dashboards">/dashboards</a> for the full subproduct catalogue.</p>
+    </section>
+
+    <!-- ───────── Errors ───────── -->
+    <section class="apidoc-section" id="errors">
+      <h2 class="apidoc-section__title">Error codes</h2>
+      <div class="apidoc-table-wrap">
+        <table class="apidoc-table">
+          <thead><tr><th>Status</th><th>Meaning</th><th>What to do</th></tr></thead>
+          <tbody>
+            <tr><td>400</td><td>Bad request — invalid query or body</td><td>Inspect <code class="apidoc-mono">error.detail</code> and fix the payload.</td></tr>
+            <tr><td>401</td><td>Missing / invalid credential</td><td>Check session cookie, Bearer key, or X-API-Key.</td></tr>
+            <tr><td>402</td><td>Plan / add-on doesn't include this feature</td><td>Upgrade at <a class="apidoc-link" href="/pricing">/pricing</a>.</td></tr>
+            <tr><td>403</td><td>Key lacks scope, CSRF mismatch, or origin mismatch</td><td>Re-mint with the right scope, or send the CSRF header pair.</td></tr>
+            <tr><td>404</td><td>Resource not found</td><td>Confirm the slug / handle / ID.</td></tr>
+            <tr><td>409</td><td>Conflict (duplicate, stale state)</td><td>Refetch and retry with the latest state.</td></tr>
+            <tr><td>429</td><td>Rate limit exceeded</td><td>Honour <code class="apidoc-mono">Retry-After</code>. Shard across keys if you have a higher tier.</td></tr>
+            <tr><td>500</td><td>Server error</td><td>Retry with backoff. Persistent? <a class="apidoc-link" href="mailto:hello@narve.ai">hello@narve.ai</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ───────── OpenAPI ───────── -->
+    <section class="apidoc-section" id="openapi">
+      <h2 class="apidoc-section__title">Machine-readable schema</h2>
+      <p>The full OpenAPI 3 schema is published at <a class="apidoc-link apidoc-mono" href="/api/openapi.json">/api/openapi.json</a>. Pass it to SDK generators, agent tooling, or Postman.</p>
+      <pre class="apidoc-code" data-copy><code>curl https://narve.ai/api/openapi.json | jq .info</code></pre>
+      <p class="apidoc-note">Internal and admin routes set <code class="apidoc-mono">include_in_schema=False</code> and do not appear in the published schema.</p>
+    </section>
+
+    <footer class="apidoc-footer">
+      <p>Questions? Email <a class="apidoc-link" href="mailto:hello@narve.ai">hello@narve.ai</a> — API-tagged messages get a response within two business days.</p>
+      <p class="apidoc-footer__legal">narve.ai &middot; <a class="apidoc-link" href="/terms">Terms</a> &middot; <a class="apidoc-link" href="/privacy">Privacy</a> &middot; <a class="apidoc-link" href="/dpa">DPA</a> &middot; <a class="apidoc-link" href="/changelog">Changelog</a></p>
+    </footer>
+
   </main>
-  <script src="/_gateway_static/js/cmdk.js" defer></script>
-  <script src="/_gateway_static/js/share_menu.js" defer></script>
+
+  <script>
+    (function(){
+      // Copy-button on every <pre data-copy>. Inserted client-side so the
+      // server template stays static; no copy button in JS-off environments.
+      var blocks = document.querySelectorAll('pre.apidoc-code[data-copy]');
+      for (var i = 0; i < blocks.length; i++) {
+        (function(pre){
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'apidoc-copy';
+          btn.setAttribute('aria-label', 'Copy code to clipboard');
+          btn.textContent = 'Copy';
+          btn.addEventListener('click', function(){
+            var text = pre.querySelector('code') ? pre.querySelector('code').textContent : pre.textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(text).then(function(){
+                btn.textContent = 'Copied';
+                setTimeout(function(){ btn.textContent = 'Copy'; }, 1400);
+              }).catch(function(){
+                btn.textContent = 'Copy failed';
+              });
+            } else {
+              // Fallback: select + execCommand.
+              try {
+                var r = document.createRange();
+                r.selectNodeContents(pre);
+                var sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(r);
+                document.execCommand('copy');
+                sel.removeAllRanges();
+                btn.textContent = 'Copied';
+                setTimeout(function(){ btn.textContent = 'Copy'; }, 1400);
+              } catch(e) {
+                btn.textContent = 'Copy failed';
+              }
+            }
+          });
+          pre.appendChild(btn);
+        })(blocks[i]);
+      }
+    })();
+  </script>
 </body>
 </html>

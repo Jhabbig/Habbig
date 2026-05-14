@@ -1146,6 +1146,8 @@ _PUBLIC_PATHS = frozenset({
     "/unsubscribe",
     # Public API endpoints called from the prerelease page
     "/api/newsletter", "/api/newsletter/position",
+    # Double-opt-in confirmation + footer unsubscribe (no session by design).
+    "/api/newsletter/confirm", "/api/newsletter/unsubscribe",
     # Anonymous analytics beacon (POST) — fires from landing/dashboards
     # before any session exists. See analytics.js + the
     # /api/analytics/event handler near _hash_ip.
@@ -5906,9 +5908,16 @@ except Exception as _exc:  # pragma: no cover
     log.exception("webhooks.register_with_hub failed: %s", _exc)
 
 
-@app.get("/api/docs", response_class=HTMLResponse)
+@app.get("/api/docs", response_class=HTMLResponse, include_in_schema=False)
 async def api_docs_page(request: Request):
-    """Developer docs for /api/public/v1/*. Static; no auth required."""
+    """Human-readable developer reference for the narve.ai public API.
+
+    Documents every public-facing endpoint group: Public (no auth),
+    User-scoped (session), Subscribed (Pro / add-on), Embed (X-API-Key),
+    and Subproducts (subdomain HMAC SSO). Anonymous; no auth required.
+    The companion machine-readable OpenAPI schema lives at
+    /api/openapi.json.
+    """
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/api/docs")
@@ -5916,7 +5925,7 @@ async def api_docs_page(request: Request):
         "api_docs", request=request,
         breadcrumb=[
             ("narve.ai", "/dashboards"),
-            ("API docs", None),
+            ("API", None),
         ],
     )
 
