@@ -1,0 +1,49 @@
+# Last-known-good central-bank policy rates.
+# Used as fallback when external APIs (FRED, ECB SDW, BoE database) are
+# unreachable. Conservative May 2026 estimates — refresh on each release.
+#
+# rate_pct values are headline policy rates (target midpoint where a band
+# is published, e.g. Fed funds 4.50–4.75 → 4.625 midpoint).
+#
+# Source URLs are kept here so the snapshot is self-documenting; the server
+# does not hit them at build time.
+
+as_of: 2026-05-01
+units: percent
+fallback: true
+
+banks:
+  fed:
+    name: Federal Reserve
+    rate_name: Federal Funds Target Rate
+    rate_pct: 4.625
+    band_low_pct: 4.50
+    band_high_pct: 4.75
+    last_move_bp: -25
+    last_move_date: 2026-03-19
+    next_meeting: 2026-06-17
+    source: "FRED series DFEDTARU/DFEDTARL"
+  ecb:
+    name: European Central Bank
+    rate_name: Deposit Facility Rate
+    rate_pct: 3.25
+    last_move_bp: -25
+    last_move_date: 2026-04-10
+    next_meeting: 2026-06-05
+    source: "ECB SDW FM.D.U2.EUR.4F.KR.DFR.LEV"
+  boe:
+    name: Bank of England
+    rate_name: Bank Rate
+    rate_pct: 4.75
+    last_move_bp: -25
+    last_move_date: 2026-05-08
+    next_meeting: 2026-06-19
+    source: "BoE database IUDSOIA / IUMABEDR"
+  boj:
+    name: Bank of Japan
+    rate_name: Policy Rate (uncollateralised overnight call)
+    rate_pct: 0.50
+    last_move_bp: +25
+    last_move_date: 2026-01-23
+    next_meeting: 2026-06-16
+    source: "BoJ statistical release"

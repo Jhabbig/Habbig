@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Central Bank Tracker — narve.ai</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@1&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-base: #0a0a0a;
+    --bg-surface: #111111;
+    --bg-raised: #1a1a1a;
+    --border-subtle: #1f1f1f;
+    --border-default: #2a2a2a;
+    --border-strong: #3a3a3a;
+    --text-primary: #f5f5f5;
+    --text-secondary: #a3a3a3;
+    --text-tertiary: #737373;
+    --text-quaternary: #525252;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-12: 48px;
+    --space-16: 64px;
+    --radius-md: 8px;
+    --radius-lg: 16px;
+    --serif: "Instrument Serif", serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  /* ── Wordmark / header ────────────────────────────────────────────── */
+  header.nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-4) var(--space-6);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .wordmark {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+  }
+  .wordmark-slash { color: var(--text-tertiary); margin: 0 var(--space-1); }
+  .wordmark-sub {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .nav-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  /* ── Hero ─────────────────────────────────────────────────────────── */
+  .hero {
+    padding: var(--space-16) var(--space-6) var(--space-12);
+    max-width: 1280px;
+    margin: 0 auto;
+    text-align: center;
+  }
+  .hero h1 {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(48px, 8vw, 80px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-4);
+  }
+  .hero h1 .line { display: block; }
+  .hero p.sub {
+    color: var(--text-secondary);
+    font-size: 16px;
+    max-width: 480px;
+    margin: 0 auto var(--space-8);
+  }
+  .stat-pills {
+    display: flex;
+    justify-content: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .stat-pill {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    padding: var(--space-1) var(--space-3);
+  }
+  /* ── Tabs ─────────────────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0 var(--space-6);
+    max-width: 1280px;
+    margin: var(--space-12) auto 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    background: none;
+    border: 0;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.12s cubic-bezier(0.2, 0, 0, 1);
+  }
+  .tab:hover { color: var(--text-secondary); }
+  .tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
+  }
+  /* ── Main body ────────────────────────────────────────────────────── */
+  main {
+    padding: var(--space-8) var(--space-6) var(--space-16);
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  .section-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    margin: 0 0 var(--space-4);
+  }
+  .rate-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--space-4);
+    margin-bottom: var(--space-12);
+  }
+  .rate-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-6);
+  }
+  .rate-card .bank-name {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-2);
+  }
+  .rate-card .rate-value {
+    font-family: var(--mono);
+    font-size: 44px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin-bottom: var(--space-2);
+  }
+  .rate-card .rate-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+  }
+  .rate-card .rate-meta .move {
+    font-family: var(--mono);
+    color: var(--text-tertiary);
+  }
+  .spark {
+    width: 100%;
+    height: 56px;
+    display: block;
+  }
+  .spark-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-quaternary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: var(--space-2);
+  }
+  /* ── Meetings table ───────────────────────────────────────────────── */
+  table.meetings {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: var(--space-12);
+  }
+  table.meetings th,
+  table.meetings td {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 13px;
+  }
+  table.meetings th {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    font-weight: 500;
+  }
+  table.meetings td.num,
+  table.meetings th.num {
+    text-align: right;
+    font-family: var(--mono);
+  }
+  table.meetings td.dir {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  /* ── Footer ───────────────────────────────────────────────────────── */
+  footer {
+    padding: var(--space-6);
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-quaternary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .empty {
+    color: var(--text-tertiary);
+    font-size: 13px;
+    padding: var(--space-6);
+    text-align: center;
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-md);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<header class="nav">
+  <div>
+    <span class="wordmark">narve.ai</span><span class="wordmark-slash">/</span><span class="wordmark-sub">cb</span>
+  </div>
+  <div class="nav-meta" id="nav-meta">loading…</div>
+</header>
+
+<section class="hero">
+  <h1>
+    <span class="line">What the</span>
+    <span class="line">world's bankers</span>
+    <span class="line">are about to do.</span>
+  </h1>
+  <p class="sub">Fed, ECB, BoE rates. The implied path. Polymarket FOMC edge. Updated hourly.</p>
+  <div class="stat-pills">
+    <span class="stat-pill">Fed - ECB - BoE</span>
+    <span class="stat-pill">OIS implied path</span>
+    <span class="stat-pill">FOMC edge</span>
+  </div>
+</section>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="fed">Fed</button>
+  <button class="tab" data-tab="ecb">ECB</button>
+  <button class="tab" data-tab="boe">BoE</button>
+  <button class="tab" data-tab="boj">BoJ</button>
+  <button class="tab" data-tab="other">Other</button>
+  <button class="tab" data-tab="polymarket">Polymarket FOMC</button>
+</nav>
+
+<main>
+  <h2 class="section-title">Policy rates</h2>
+  <div class="rate-grid" id="rate-grid">
+    <div class="empty">Loading rates…</div>
+  </div>
+
+  <h2 class="section-title">Upcoming meetings</h2>
+  <div id="meetings-wrap">
+    <div class="empty">Loading meetings…</div>
+  </div>
+
+  <h2 class="section-title">Polymarket FOMC edge</h2>
+  <div id="edge-wrap">
+    <div class="empty">Loading markets…</div>
+  </div>
+</main>
+
+<footer>
+  narve.ai · Central Bank Tracker · stateless · updated hourly
+</footer>
+
+<script>
+  // Visible-tab filter — purely cosmetic; the data behind every tab is the
+  // same. We just hide the cards that don't belong to the active tab.
+  const TABS = document.getElementById("tabs");
+  const ACTIVE = { current: "fed" };
+  TABS.addEventListener("click", (e) => {
+    const t = e.target.closest(".tab");
+    if (!t) return;
+    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+    t.classList.add("active");
+    ACTIVE.current = t.dataset.tab;
+    applyFilter();
+  });
+
+  function fmtPct(v) {
+    if (v == null || isNaN(v)) return "—";
+    return Number(v).toFixed(2) + "%";
+  }
+  function fmtBp(v) {
+    if (v == null || isNaN(v)) return "—";
+    const s = v > 0 ? "+" : "";
+    return s + Number(v).toFixed(0) + "bp";
+  }
+  function fmtDate(d) {
+    if (!d) return "—";
+    try { return new Date(d).toISOString().slice(0, 10); } catch { return d; }
+  }
+
+  function sparkSvg(path) {
+    if (!path || path.length < 2) return "";
+    const w = 240, h = 56, pad = 4;
+    const xs = path.map((_, i) => i);
+    const ys = path.map((p) => p.implied_pct);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const dy = (maxY - minY) || 0.1;
+    const sx = (i) => pad + (i / (xs.length - 1)) * (w - 2 * pad);
+    const sy = (v) => h - pad - ((v - minY) / dy) * (h - 2 * pad);
+    const d = path.map((p, i) => (i === 0 ? "M" : "L") + sx(i).toFixed(1) + "," + sy(p.implied_pct).toFixed(1)).join(" ");
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+      <path d="${d}" fill="none" stroke="#a3a3a3" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round" />
+    </svg>`;
+  }
+
+  async function loadRates() {
+    const r = await fetch("/api/rates");
+    if (!r.ok) throw new Error("rates fetch failed: " + r.status);
+    return r.json();
+  }
+  async function loadPath(bank) {
+    const r = await fetch("/api/implied-path?bank=" + encodeURIComponent(bank) + "&horizon=12m");
+    if (!r.ok) return null;
+    return r.json();
+  }
+  async function loadMeetings() {
+    const r = await fetch("/api/fomc-meetings");
+    if (!r.ok) return { meetings: [] };
+    return r.json();
+  }
+  async function loadEdge() {
+    const r = await fetch("/api/polymarket-edge");
+    if (!r.ok) return { markets: [] };
+    return r.json();
+  }
+
+  function renderRateCard(id, bank, path) {
+    const move = (bank.last_move_bp != null) ? fmtBp(bank.last_move_bp) : "—";
+    const moveDate = bank.last_move_date ? fmtDate(bank.last_move_date) : "—";
+    const band = (bank.band_low_pct != null && bank.band_high_pct != null)
+      ? `${fmtPct(bank.band_low_pct)} – ${fmtPct(bank.band_high_pct)}`
+      : null;
+    return `
+      <div class="rate-card" data-bank="${id}">
+        <div class="bank-name">${bank.name || id}</div>
+        <div class="rate-value">${fmtPct(bank.rate_pct)}</div>
+        <div class="rate-meta">
+          <span>${band || (bank.rate_name || "")}</span>
+          <span class="move">${move} · ${moveDate}</span>
+        </div>
+        ${sparkSvg((path && path.path) || [])}
+        <div class="spark-label">
+          <span>now ${fmtPct(bank.rate_pct)}</span>
+          <span>12m → ${path ? fmtPct(path.terminal_pct) : "—"}</span>
+        </div>
+      </div>`;
+  }
+
+  function applyFilter() {
+    const tab = ACTIVE.current;
+    document.querySelectorAll(".rate-card").forEach((el) => {
+      const id = el.dataset.bank;
+      let show;
+      if (tab === "other") show = !["fed", "ecb", "boe", "boj"].includes(id);
+      else if (tab === "polymarket") show = id === "fed";
+      else show = id === tab;
+      el.style.display = show ? "" : "none";
+    });
+    document.getElementById("meetings-wrap").style.display =
+      (tab === "polymarket") ? "none" : "";
+    document.getElementById("edge-wrap").style.display =
+      (tab === "polymarket") ? "" : "none";
+  }
+
+  function renderMeetings(rows) {
+    const wrap = document.getElementById("meetings-wrap");
+    if (!rows || !rows.length) {
+      wrap.innerHTML = '<div class="empty">No upcoming meetings on file.</div>';
+      return;
+    }
+    let html = `<table class="meetings">
+      <thead><tr>
+        <th>Date</th><th>Bank</th><th class="num">Current</th>
+        <th class="num">Implied</th><th class="num">Δ bp</th>
+        <th class="num">P(move)</th><th>Direction</th>
+      </tr></thead><tbody>`;
+    for (const r of rows) {
+      html += `<tr>
+        <td>${fmtDate(r.date)}</td>
+        <td>${r.bank.toUpperCase()}</td>
+        <td class="num">${fmtPct(r.current_pct)}</td>
+        <td class="num">${fmtPct(r.implied_pct)}</td>
+        <td class="num">${fmtBp(r.delta_bp)}</td>
+        <td class="num">${(r.p_move * 100).toFixed(0)}%</td>
+        <td class="dir">${r.direction}</td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+    wrap.innerHTML = html;
+  }
+
+  function renderEdge(payload) {
+    const wrap = document.getElementById("edge-wrap");
+    const rows = (payload && payload.markets) || [];
+    if (!rows.length) {
+      wrap.innerHTML = '<div class="empty">No Polymarket FOMC markets matched. Gateway feed may be offline; check /api/polymarket-edge.</div>';
+      return;
+    }
+    let html = `<table class="meetings">
+      <thead><tr>
+        <th>Question</th><th>Meeting</th>
+        <th class="num">Implied</th><th class="num">Model</th>
+        <th class="num">Edge (pp)</th>
+      </tr></thead><tbody>`;
+    for (const m of rows) {
+      html += `<tr>
+        <td>${m.question || "—"}</td>
+        <td>${fmtDate(m.meeting_date)}</td>
+        <td class="num">${(m.implied_p * 100).toFixed(1)}%</td>
+        <td class="num">${(m.model_p * 100).toFixed(1)}%</td>
+        <td class="num">${m.edge_pp > 0 ? "+" : ""}${m.edge_pp}</td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+    wrap.innerHTML = html;
+  }
+
+  (async function init() {
+    try {
+      const rates = await loadRates();
+      const banks = rates.banks || {};
+      const ids = Object.keys(banks);
+      const paths = {};
+      await Promise.all(ids.map(async (id) => {
+        paths[id] = await loadPath(id).catch(() => null);
+      }));
+      const cards = ids.map((id) => renderRateCard(id, banks[id] || {}, paths[id])).join("");
+      document.getElementById("rate-grid").innerHTML = cards || '<div class="empty">No banks in snapshot.</div>';
+      document.getElementById("nav-meta").textContent =
+        (rates.fallback ? "snapshot" : "live") + " · " + (rates.as_of || "—");
+      const meetings = await loadMeetings();
+      renderMeetings(meetings.meetings || []);
+      const edge = await loadEdge();
+      renderEdge(edge);
+      applyFilter();
+    } catch (e) {
+      document.getElementById("rate-grid").innerHTML =
+        `<div class="empty">Failed to load: ${(e && e.message) || e}</div>`;
+    }
+  })();
+</script>
+</body>
+</html>

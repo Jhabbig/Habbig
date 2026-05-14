@@ -1,0 +1,49 @@
+# Central banks tracked by the Central Bank Tracker.
+#
+# canonical_source: URL where the headline policy rate is published. Used
+# for the "source" link on the rate card, not fetched at runtime.
+# meeting_cadence: expected gap between scheduled meetings — used to flag
+# stale rate readings and to estimate the next decision date if we miss
+# a calendar update.
+
+banks:
+  - id: fed
+    name: Federal Reserve
+    region: United States
+    rate_name: Federal Funds Target Rate
+    meeting_cadence_days: 42      # ~8 meetings per year
+    canonical_source: "https://www.federalreserve.gov/monetarypolicy/openmarket.htm"
+    fred_series_upper: DFEDTARU
+    fred_series_lower: DFEDTARL
+  - id: ecb
+    name: European Central Bank
+    region: Euro area
+    rate_name: Deposit Facility Rate
+    meeting_cadence_days: 42
+    canonical_source: "https://www.ecb.europa.eu/stats/policy_and_exchange_rates/key_ecb_interest_rates/html/index.en.html"
+    sdw_series: "FM.D.U2.EUR.4F.KR.DFR.LEV"
+  - id: boe
+    name: Bank of England
+    region: United Kingdom
+    rate_name: Bank Rate
+    meeting_cadence_days: 42
+    canonical_source: "https://www.bankofengland.co.uk/monetary-policy/the-interest-rate-bank-rate"
+    boe_series: "IUMABEDR"
+  - id: boj
+    name: Bank of Japan
+    region: Japan
+    rate_name: Policy Rate
+    meeting_cadence_days: 49      # ~8 meetings, slightly longer cadence
+    canonical_source: "https://www.boj.or.jp/en/mopo/mpmsche_minu/index.htm"
+  - id: snb
+    name: Swiss National Bank
+    region: Switzerland
+    rate_name: SNB Policy Rate
+    meeting_cadence_days: 91      # quarterly
+    canonical_source: "https://www.snb.ch/en/iabout/monpol/id/monpol_current"
+  - id: rba
+    name: Reserve Bank of Australia
+    region: Australia
+    rate_name: Cash Rate Target
+    meeting_cadence_days: 42
+    canonical_source: "https://www.rba.gov.au/statistics/cash-rate/"
